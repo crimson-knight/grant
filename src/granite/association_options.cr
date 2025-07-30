@@ -73,7 +73,7 @@ module Granite::AssociationOptions
       
       # Handle counter updates when association changes
       before_update do
-        if changed?("{{association_name}}_id")
+        if attribute_changed?("{{association_name}}_id")
           old_id = attribute_was("{{association_name}}_id")
           new_id = self.{{association_name}}_id
           

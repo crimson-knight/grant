@@ -126,6 +126,8 @@ end
 
 The `autosave` option automatically saves associated records when the parent is saved.
 
+### Basic Usage
+
 ```crystal
 class Order < Granite::Base
   has_many :line_items, autosave: true
@@ -141,6 +143,52 @@ order.customer = Customer.new(name: "John Doe")
 # Saves order and all associated records in one call
 order.save! # => Also saves line_items, invoice, and customer
 ```
+
+### How Autosave Works
+
+1. **For new records**: Autosave will create the associated records when the parent is saved
+2. **For existing records**: Autosave will update any modified associated records
+3. **Validation**: If any associated record fails validation, the entire save operation fails
+
+### Autosave with has_many
+
+```crystal
+class Blog < Granite::Base
+  has_many :posts, autosave: true
+end
+
+blog = Blog.create!(title: "My Blog")
+
+# Add new posts
+post1 = Post.new(title: "First Post")
+post2 = Post.new(title: "Second Post")
+blog.posts = [post1, post2]
+
+blog.save! # Creates both posts
+
+# Modify existing posts
+blog.posts.first.title = "Updated First Post"
+blog.save! # Updates the modified post
+```
+
+### Autosave with belongs_to
+
+```crystal
+class Comment < Granite::Base
+  belongs_to :author, autosave: true
+end
+
+# Create a new author along with the comment
+new_author = Author.new(name: "Jane Doe")
+comment = Comment.new(content: "Great article!", author: new_author)
+comment.save! # Also saves the new author
+```
+
+### Important Notes
+
+- Autosave only works with records assigned via the association setter
+- Direct manipulation of foreign keys bypasses autosave
+- Autosave respects validation - if associated records are invalid, nothing is saved
 
 ## Combining Options
 
@@ -258,5 +306,67 @@ end
 
 class Profile < Granite::Base
   belongs_to :user, autosave: true
+end
+```
+
+## Testing Associations
+
+When testing models with advanced association options:
+
+### Testing Dependent Options
+
+```crystal
+it "destroys associated records" do
+  author = Author.create!(name: "Jane")
+  post = Post.create!(author: author)
+  
+  author.destroy!
+  
+  Post.find_by(id: post.id).should be_nil
+end
+```
+
+### Testing Counter Cache
+
+```crystal
+it "maintains accurate count" do
+  blog = Blog.create!(posts_count: 0)
+  
+  Post.create!(blog: blog, title: "Post 1")
+  blog.reload.posts_count.should eq(1)
+  
+  Post.create!(blog: blog, title: "Post 2")
+  blog.reload.posts_count.should eq(2)
+end
+```
+
+### Testing Touch
+
+```crystal
+it "updates parent timestamp" do
+  post = Post.create!(title: "Post")
+  original_updated_at = post.updated_at
+  
+  sleep 0.001 # Ensure timestamp difference
+  Comment.create!(post: post, content: "Comment")
+  
+  post.reload.updated_at.should_not eq(original_updated_at)
+end
+```
+
+### Testing Autosave
+
+```crystal
+it "saves associated records" do
+  order = Order.new
+  order.line_items = [
+    LineItem.new(product: "Widget", quantity: 1),
+    LineItem.new(product: "Gadget", quantity: 2)
+  ]
+  
+  order.save!
+  
+  order.line_items.all?(&.persisted?).should be_true
+  LineItem.count.should eq(2)
 end
 ```

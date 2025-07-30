@@ -107,6 +107,25 @@ photo = Photo.find!(1)
 photo_comments = photo.comments.to_a
 ```
 
+### Querying Polymorphic Associations
+
+```crystal
+# Find all comments on posts
+post_comments = Comment.where(commentable_type: "Post")
+
+# Find all comments by a specific type and ID
+specific_comments = Comment.where(
+  commentable_type: "Photo",
+  commentable_id: photo.id
+)
+
+# Query with joins (requires string-based joins currently)
+recent_post_comments = Comment
+  .where(commentable_type: "Post")
+  .where("created_at > ?", 1.day.ago)
+  .order(created_at: :desc)
+```
+
 ## Advanced Options
 
 ### Custom Column Names
@@ -139,6 +158,61 @@ end
 
 class User < Granite::Base
   has_one :avatar, class_name: Image, as: :imageable
+end
+```
+
+## Combining with Other Association Options
+
+Polymorphic associations work seamlessly with other association options:
+
+### With Dependent Options
+
+```crystal
+class Author < Granite::Base
+  # Destroy all notes when author is destroyed
+  has_many :notes, as: :notable, dependent: :destroy
+end
+
+class Product < Granite::Base
+  # Nullify attachments when product is destroyed
+  has_many :attachments, as: :attachable, dependent: :nullify
+end
+```
+
+### With Counter Cache
+
+```crystal
+class Reaction < Granite::Base
+  belongs_to :reactable, polymorphic: true, counter_cache: :reactions_count
+end
+
+class Post < Granite::Base
+  column reactions_count : Int32
+  has_many :reactions, as: :reactable
+end
+```
+
+### With Touch
+
+```crystal
+class Activity < Granite::Base
+  # Updates trackable's updated_at when activity is saved
+  belongs_to :trackable, polymorphic: true, touch: true
+end
+
+class Task < Granite::Base
+  # Updates last_activity_at specifically
+  belongs_to :trackable, polymorphic: true, touch: :last_activity_at
+end
+```
+
+### With Optional
+
+```crystal
+class Tagging < Granite::Base
+  # Tag is required, but taggable is optional
+  belongs_to :tag
+  belongs_to :taggable, polymorphic: true, optional: true
 end
 ```
 

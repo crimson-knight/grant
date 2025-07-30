@@ -216,8 +216,11 @@ module Granite::Associations
     {% if options[:autosave] %}
       setup_autosave({{method_name.id}}, :has_many)
       
-      # Add method to track autosave records
-      def add_{{method_name.id}}_for_autosave(records : Array({{class_name.id}}))
+      # Override accessor to track autosave records
+      def {{method_name.id}}=(records : Array({{class_name.id}}))
+        records.each do |record|
+          record.{{foreign_key.id}} = self.{{primary_key.id}}
+        end
         @_{{method_name.id}}_for_autosave = records
       end
     {% end %}
