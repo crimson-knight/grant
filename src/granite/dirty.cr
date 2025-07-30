@@ -15,11 +15,7 @@ module Granite::Dirty
     @[YAML::Field(ignore: true)]
     @previous_changes = {} of String => Tuple(Granite::Columns::Type, Granite::Columns::Type)
     
-    # Override from_rs to capture original state
-    def from_rs(result : DB::ResultSet) : Nil
-      previous_def
-      capture_original_attributes
-    end
+    # We'll hook into from_rs after it's defined by overriding it later
     
     # Override initialize to set up tracking for new records
     def initialize(**args)
@@ -184,4 +180,5 @@ module Granite::Dirty
     \{% end %}
     end
   end
+  
 end

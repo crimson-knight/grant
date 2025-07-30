@@ -57,6 +57,11 @@ module Granite::Columns
         end
       end
     {% end %}
+    
+    # Hook for dirty tracking if included
+    if responds_to?(:capture_original_attributes)
+      capture_original_attributes
+    end
   end
 
   # Defines a column *decl* with the given *options*.
