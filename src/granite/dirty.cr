@@ -146,40 +146,42 @@ module Granite::Dirty
   
   # Macro to generate dirty tracking for each column
   macro setup_dirty_tracking
-    {% for column in @type.instance_vars.select { |ivar| ivar.annotation(Granite::Column) } %}
-      {% column_name = column.name.id.stringify %}
+    macro finished
+      \{% for column in @type.instance_vars.select { |ivar| ivar.annotation(Granite::Column) } %}
+      \{% column_name = column.name.id.stringify %}
       
       # Generate attribute_changed? method
-      def {{column.name.id}}_changed? : Bool
-        attribute_changed?({{column_name}})
+      def \{{column.name.id}}_changed? : Bool
+        attribute_changed?(\{{column_name}})
       end
       
       # Generate attribute_was method
-      def {{column.name.id}}_was : {{column.type}}
-        value = attribute_was({{column_name}})
-        value.as({{column.type}}) if value
+      def \{{column.name.id}}_was : \{{column.type}}
+        value = attribute_was(\{{column_name}})
+        value.as(\{{column.type}}) if value
       end
       
       # Generate attribute_change method
-      def {{column.name.id}}_change : Tuple({{column.type}}, {{column.type}})?
-        if change = attribute_change({{column_name}})
-          {change[0].as({{column.type}}), change[1].as({{column.type}})}
+      def \{{column.name.id}}_change : Tuple(\{{column.type}}, \{{column.type}})?
+        if change = attribute_change(\{{column_name}})
+          {change[0].as(\{{column.type}}), change[1].as(\{{column.type}})}
         end
       end
       
       # Generate attribute_before_last_save method
-      def {{column.name.id}}_before_last_save : {{column.type}}
-        value = attribute_before_last_save({{column_name}})
-        value.as({{column.type}}) if value
+      def \{{column.name.id}}_before_last_save : \{{column.type}}
+        value = attribute_before_last_save(\{{column_name}})
+        value.as(\{{column.type}}) if value
       end
       
       # Override setter to track changes
-      def {{column.name.id}}=(value : {{column.type}})
-        old_value = @{{column.name.id}}.as(Granite::Columns::Type)
+      def \{{column.name.id}}=(value : \{{column.type}})
+        old_value = @\{{column.name.id}}.as(Granite::Columns::Type)
         previous_def
-        new_value = @{{column.name.id}}.as(Granite::Columns::Type)
-        track_attribute_change({{column_name}}, old_value, new_value)
+        new_value = @\{{column.name.id}}.as(Granite::Columns::Type)
+        track_attribute_change(\{{column_name}}, old_value, new_value)
       end
-    {% end %}
+    \{% end %}
+    end
   end
 end

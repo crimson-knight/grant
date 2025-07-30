@@ -50,7 +50,7 @@ class Granite::Query::Builder(Model)
     when DbType::Sqlite
       Assembler::Sqlite(Model).new self
     else
-      raise "Database type not supported"
+      raise "Unknown database type: #{@db_type}"
     end
   end
 
@@ -320,20 +320,6 @@ class Granite::Query::Builder(Model)
     end
     
     records
-  end
-  
-  # Add all method for convenience
-  def all
-    select
-  end
-  
-  # Add first method
-  def first
-    limit(1).select.first?
-  end
-  
-  def first!
-    first || raise Granite::Querying::NotFound.new("No record found")
   end
   
   # Create a new query builder for OR conditions

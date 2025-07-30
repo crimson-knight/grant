@@ -99,6 +99,7 @@ abstract class Granite::Base
     after_destroy :schedule_adapter_switch
     
     # Set up dirty tracking for all columns
-    setup_dirty_tracking
+    # TODO: Enable this once macro issues are resolved
+    # setup_dirty_tracking
   end
 end

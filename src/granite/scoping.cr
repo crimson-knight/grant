@@ -5,8 +5,6 @@ module Granite::Scoping
       @@default_scope : Proc(Granite::Query::Builder(\{{@type}}), Granite::Query::Builder(\{{@type}}))? = nil
       
       # Flag to track if we're in unscoped mode
-      @[JSON::Field(ignore: true)]
-      @[YAML::Field(ignore: true)]
       class_property? _unscoped : Bool = false
     end
   end
@@ -29,7 +27,16 @@ module Granite::Scoping
     
     # Get the current scope (with default scope applied unless unscoped)
     def current_scope
-      query = Granite::Query::Builder(self).new(adapter.database_type)
+      db_type = case adapter.class.to_s
+                when "Granite::Adapter::Pg"
+                  Granite::Query::Builder::DbType::Pg
+                when "Granite::Adapter::Mysql"
+                  Granite::Query::Builder::DbType::Mysql
+                else
+                  Granite::Query::Builder::DbType::Sqlite
+                end
+      
+      query = Granite::Query::Builder(self).new(db_type)
       
       # Apply default scope unless we're in unscoped mode
       if !_unscoped? && @@default_scope
@@ -44,7 +51,16 @@ module Granite::Scoping
       old_unscoped = _unscoped?
       self._unscoped = true
       
-      query = Granite::Query::Builder(self).new(adapter.database_type)
+      db_type = case adapter.class.to_s
+                when "Granite::Adapter::Pg"
+                  Granite::Query::Builder::DbType::Pg
+                when "Granite::Adapter::Mysql"
+                  Granite::Query::Builder::DbType::Mysql
+                else
+                  Granite::Query::Builder::DbType::Sqlite
+                end
+      
+      query = Granite::Query::Builder(self).new(db_type)
       
       if block_given?
         begin
