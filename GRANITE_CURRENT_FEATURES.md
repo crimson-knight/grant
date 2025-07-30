@@ -479,3 +479,184 @@ end
 ```
 
 For comprehensive documentation, see [docs/advanced_associations.md](docs/advanced_associations.md).
+
+## Enum Attributes (Phase 3 - COMPLETE)
+
+Grant now provides Rails-style enum attributes with full helper method support.
+
+### Usage
+
+```crystal
+class Article < Granite::Base
+  enum Status
+    Draft
+    Published
+    Archived
+  end
+  
+  enum_attribute status : Status = :draft
+  
+  # Multiple enums at once
+  enum_attributes(
+    category : Category = :general,
+    visibility : Visibility = :public
+  )
+end
+```
+
+### Generated Methods
+
+For each enum attribute, the following methods are automatically generated:
+
+```crystal
+article = Article.new
+
+# Predicate methods
+article.draft?      # => true
+article.published?  # => false
+
+# Bang methods to set values
+article.published!  # Sets status to published
+article.draft!      # Sets status to draft
+
+# Class methods
+Article.statuses         # => [:draft, :published, :archived]
+Article.status_mapping   # => {draft: 0, published: 1, archived: 2}
+
+# Scopes
+Article.draft.count     # Count draft articles
+Article.published       # Get published articles
+Article.not_archived    # Get non-archived articles
+```
+
+### Features
+- Automatic converter integration
+- Default value support
+- String and integer storage
+- Query scope generation
+- Full Rails API compatibility
+
+For comprehensive documentation, see [docs/enum_attributes.md](docs/enum_attributes.md).
+
+## Built-in Validators (Phase 3 - COMPLETE)
+
+Grant now includes a comprehensive set of Rails-compatible validators with conditional support.
+
+### Available Validators
+
+#### Numericality
+```crystal
+validates_numericality_of :price, greater_than: 0
+validates_numericality_of :age, in: 18..65
+validates_numericality_of :quantity, only_integer: true
+```
+
+#### Format
+```crystal
+validates_format_of :phone, with: /\A\d{3}-\d{3}-\d{4}\z/
+validates_format_of :username, without: /\A(admin|root)\z/
+```
+
+#### Length
+```crystal
+validates_length_of :username, in: 3..20
+validates_length_of :bio, maximum: 500
+validates_length_of :code, is: 4
+```
+
+#### Email and URL
+```crystal
+validates_email :email
+validates_url :website
+```
+
+#### Confirmation
+```crystal
+validates_confirmation_of :password
+validates_confirmation_of :email
+```
+
+#### Acceptance
+```crystal
+validates_acceptance_of :terms_of_service
+validates_acceptance_of :privacy_policy, accept: ["yes", "accepted"]
+```
+
+#### Inclusion/Exclusion
+```crystal
+validates_inclusion_of :plan, in: ["free", "basic", "premium"]
+validates_exclusion_of :username, in: RESERVED_NAMES
+```
+
+#### Associated Records
+```crystal
+validates_associated :line_items
+validates_associated :address
+```
+
+### Conditional Validation
+
+All validators support `:if` and `:unless` options:
+
+```crystal
+validates_numericality_of :total, greater_than: 0, if: :completed?
+validates_length_of :bio, minimum: 100, unless: :draft?
+```
+
+### Features
+- Rails-compatible API
+- Custom error messages
+- Allow nil/blank options
+- Conditional validation
+- Type-safe implementation
+
+For comprehensive documentation, see [docs/built_in_validators.md](docs/built_in_validators.md).
+
+## Attribute API (Phase 3 - COMPLETE)
+
+Grant now provides a flexible Attribute API for defining custom attributes with virtual fields, defaults, and custom types.
+
+### Features
+
+#### Virtual Attributes
+```crystal
+class Product < Granite::Base
+  # Virtual attribute not stored in database
+  attribute price_in_cents : Int32, virtual: true
+  
+  def price : Float64?
+    price_in_cents.try { |cents| cents / 100.0 }
+  end
+end
+```
+
+#### Default Values
+```crystal
+class Article < Granite::Base
+  # Static default
+  attribute status : String?, default: "draft"
+  
+  # Dynamic default with proc
+  attribute code : String?, default: ->(article : Granite::Base) { 
+    "ART-#{article.as(Article).id || "NEW"}" 
+  }
+end
+```
+
+#### Custom Types with Converters
+```crystal
+class Product < Granite::Base
+  attribute metadata : ProductMetadata?, 
+    converter: ProductMetadataConverter,
+    column_type: "TEXT"
+end
+```
+
+### Features
+- Virtual attributes for computed values
+- Static and dynamic default values
+- Full dirty tracking integration
+- Custom type support via converters
+- Attribute introspection methods
+
+For comprehensive documentation, see [docs/attribute_api.md](docs/attribute_api.md).
