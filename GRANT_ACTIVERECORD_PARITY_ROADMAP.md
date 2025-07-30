@@ -2,48 +2,58 @@
 
 This document outlines the missing features in Grant when compared to Rails ActiveRecord v8, organized by priority for implementation.
 
+## Implementation Status
+
+### Phase 1 - COMPLETED ✅
+- **Eager Loading & Query Optimization** - Implemented includes, preload, eager_load
+- **Dirty Tracking API** - Full implementation with Rails-compatible API
+- **Advanced Callbacks** - Added after_initialize, after_find, validation callbacks, commit callbacks
+- **Named Scopes & Advanced Querying** - Implemented scope, default_scope, unscoped
+
 ## Priority 1: Critical Missing Features (Core Functionality)
 
-### 1.1 Eager Loading & Query Optimization
-- **Eager Loading (`includes`)** - Prevent N+1 queries by loading associations in advance
-- **Preloading (`preload`)** - Load associations in separate queries
+### 1.1 Eager Loading & Query Optimization ✅ COMPLETED
+- **Eager Loading (`includes`)** - ✅ Prevent N+1 queries by loading associations in advance
+- **Preloading (`preload`)** - ✅ Load associations in separate queries
+- **Eager Load (`eager_load`)** - ✅ Force eager loading with LEFT OUTER JOIN
 - **Strict Loading (`strict_loading`)** - Raise errors when accessing non-loaded associations
 - **Association Query Caching** - Cache association results after first query within same object instance
 - **Joins with Association Names** - `.joins(:posts, :comments)` instead of raw SQL
 
-### 1.2 Attribute Dirty Tracking API
-- **Dirty Attributes** - Track changes to model attributes
-  - `attribute_changed?`
-  - `attribute_was`
-  - `attribute_change`
-  - `changes`
-  - `changed?`
-  - `changed_attributes`
-  - `previous_changes`
-  - `saved_changes`
-  - `saved_change_to_attribute?`
-  - `attribute_before_last_save`
-  - `restore_attributes`
+### 1.2 Attribute Dirty Tracking API ✅ COMPLETED
+- **Dirty Attributes** - ✅ Track changes to model attributes
+  - ✅ `attribute_changed?`
+  - ✅ `attribute_was`
+  - ✅ `attribute_change`
+  - ✅ `changes`
+  - ✅ `changed?`
+  - ✅ `changed_attributes`
+  - ✅ `previous_changes`
+  - ✅ `saved_changes`
+  - ✅ `saved_change_to_attribute?`
+  - ✅ `attribute_before_last_save`
+  - ✅ `restore_attributes`
+  - ✅ Per-attribute methods (`<attr>_changed?`, `<attr>_was`, `<attr>_change`, `<attr>_before_last_save`)
 
-### 1.3 Advanced Callbacks
+### 1.3 Advanced Callbacks ✅ PARTIALLY COMPLETED
 - **Missing Lifecycle Callbacks:**
-  - `after_initialize`
-  - `after_find`
+  - ✅ `after_initialize`
+  - ✅ `after_find`
   - `after_touch`
-  - `before_validation`
-  - `after_validation`
-  - `after_commit`
-  - `after_rollback`
-  - `after_create_commit`
-  - `after_update_commit`
-  - `after_destroy_commit`
+  - ✅ `before_validation`
+  - ✅ `after_validation`
+  - ✅ `after_commit`
+  - ✅ `after_rollback`
+  - ✅ `after_create_commit`
+  - ✅ `after_update_commit`
+  - ✅ `after_destroy_commit`
 - **Conditional Callbacks** - `:if` and `:unless` options
 - **Callback Chains** - Ability to define execution order
 
-### 1.4 Scopes & Advanced Querying
-- **Named Scopes** - `scope :published, -> { where(published: true) }`
-- **Default Scopes** - `default_scope { order(created_at: :desc) }`
-- **Unscoped** - Bypass default scope
+### 1.4 Scopes & Advanced Querying ✅ PARTIALLY COMPLETED
+- ✅ **Named Scopes** - `scope :published, -> { where(published: true) }`
+- ✅ **Default Scopes** - `default_scope { order(created_at: :desc) }`
+- ✅ **Unscoped** - Bypass default scope
 - **Merge** - Combine query conditions from multiple scopes
 - **Extending Queries** - Add methods to query chains
 - **Or Queries** - Proper `or` query support (currently basic)

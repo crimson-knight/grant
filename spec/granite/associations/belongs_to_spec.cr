@@ -11,7 +11,7 @@ describe "belongs_to" do
     klass.teacher_id = teacher.id
     klass.save
 
-    klass.teacher.id.should eq teacher.id
+    klass.teacher.not_nil!.id.should eq teacher.id
   end
 
   it "provides a setter for the foreign entity" do
@@ -37,7 +37,7 @@ describe "belongs_to" do
     review.body = "Best book ever!"
     review.save
 
-    review.book.name.should eq "Screw driver"
+    review.book.not_nil!.name.should eq "Screw driver"
   end
 
   it "supports custom method name" do
@@ -50,7 +50,7 @@ describe "belongs_to" do
     book.author = author
     book.save
 
-    book.author.name.should eq "John Titor"
+    book.author.not_nil!.name.should eq "John Titor"
   end
 
   it "supports both custom method name and custom types for the join" do
@@ -63,7 +63,7 @@ describe "belongs_to" do
     book.publisher = publisher
     book.save
 
-    book.publisher.name.should eq "Amber Framework"
+    book.publisher.not_nil!.name.should eq "Amber Framework"
   end
 
   it "supports json_options" do

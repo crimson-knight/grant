@@ -340,3 +340,89 @@ Model.migrator(table_options: "ENGINE=InnoDB").create
 - Custom annotations support
 
 This comprehensive list represents the current state of Granite ORM's features. When comparing to ActiveRecord v8, we can identify gaps and plan implementations to achieve feature parity.
+## Dirty Tracking API (Phase 1 - COMPLETE)
+
+Grant now includes a comprehensive dirty tracking API that provides full compatibility with Rails ActiveRecord's dirty tracking functionality.
+
+### Core Dirty Tracking Methods
+
+#### Instance Methods
+- `changed?` - Returns true if any attributes have been changed
+- `changes` - Returns hash of changed attributes with {original, new} values
+- `changed_attributes` - Returns array of changed attribute names
+- `previous_changes` - Returns changes from last save
+- `saved_changes` - Alias for previous_changes (Rails compatibility)
+- `attribute_changed?(name)` - Check if specific attribute changed
+- `attribute_was(name)` - Get original value of attribute
+- `saved_change_to_attribute?(name)` - Check if attribute changed in last save
+- `attribute_before_last_save(name)` - Get value before last save
+- `restore_attributes(attrs = nil)` - Restore changed attributes to original values
+
+### Per-Attribute Methods
+
+For each column, the following methods are automatically generated:
+
+```crystal
+class User < Granite::Base
+  column name : String
+  column email : String
+end
+
+user = User.find\!(1)
+user.name = "New Name"
+
+# Generated methods:
+user.name_changed?           # => true
+user.name_was               # => "Original Name"
+user.name_change            # => {"Original Name", "New Name"}
+user.name_before_last_save  # => "Original Name" (after save)
+```
+
+### Usage Examples
+
+#### Basic Change Tracking
+```crystal
+user = User.find\!(1)
+user.changed? # => false
+
+user.name = "Jane"
+user.email = "jane@example.com"
+
+user.changed? # => true
+user.changed_attributes # => ["name", "email"]
+user.changes # => {"name" => {"John", "Jane"}, "email" => {"john@example.com", "jane@example.com"}}
+```
+
+#### Working with Saves
+```crystal
+user.name = "Jane"
+user.save
+
+user.changed? # => false (cleared after save)
+user.previous_changes # => {"name" => {"John", "Jane"}}
+user.saved_change_to_attribute?("name") # => true
+```
+
+#### Restoring Changes
+```crystal
+user.name = "Jane"
+user.email = "jane@example.com"
+
+user.restore_attributes(["name"]) # Restore only name
+user.name # => "John"
+user.email # => "jane@example.com"
+
+user.restore_attributes # Restore all
+user.email # => "john@example.com"
+```
+
+### Implementation Details
+
+- Dirty tracking is built directly into the column macro
+- Compatible with JSON::Serializable and YAML::Serializable
+- Works with all column types including enums with converters
+- Minimal performance impact with lazy initialization
+- Full Rails ActiveRecord API compatibility
+
+For comprehensive documentation, see [docs/dirty_tracking.md](docs/dirty_tracking.md).
+EOF < /dev/null

@@ -1,5 +1,7 @@
 module Granite::EagerLoading
   macro included
+    @[JSON::Field(ignore: true)]
+    @[YAML::Field(ignore: true)]
     @loaded_associations = {} of String => Array(Granite::Base) | Granite::Base | Nil
     
     # Check if an association has been loaded

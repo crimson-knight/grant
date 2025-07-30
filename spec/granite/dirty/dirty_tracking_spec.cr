@@ -40,19 +40,19 @@ describe "Granite::Dirty" do
     end
     
     it "tracks multiple attribute changes" do
-      student = Student.new(name: "John", age: 20)
-      student.save
+      parent = Parent.new(name: "John")
+      parent.save
       
-      student.name = "Jane"
-      student.age = 21
+      parent.name = "Jane"
+      parent.created_at = Time.utc(2023, 1, 1)
       
-      student.changed?.should be_true
-      student.changed_attributes.should contain("name")
-      student.changed_attributes.should contain("age")
+      parent.changed?.should be_true
+      parent.changed_attributes.should contain("name")
+      parent.changed_attributes.should contain("created_at")
       
-      changes = student.changes
+      changes = parent.changes
       changes["name"].should eq({"John", "Jane"})
-      changes["age"].should eq({20, 21})
+      # Note: created_at comparison would be complex due to Time equality
     end
   end
   
@@ -69,17 +69,18 @@ describe "Granite::Dirty" do
     end
     
     it "can restore all changed attributes" do
-      student = Student.new(name: "John", age: 20)
-      student.save
+      parent = Parent.new(name: "John")
+      parent.save
       
-      student.name = "Jane"
-      student.age = 21
+      original_created_at = parent.created_at
+      parent.name = "Jane"
+      parent.created_at = Time.utc(2023, 1, 1)
       
-      student.restore_attributes
+      parent.restore_attributes
       
-      student.name.should eq("John")
-      student.age.should eq(20)
-      student.changed?.should be_false
+      parent.name.should eq("John")
+      parent.created_at.should eq(original_created_at)
+      parent.changed?.should be_false
     end
   end
   

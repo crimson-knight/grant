@@ -56,7 +56,7 @@ class Granite::LoadedAssociationCollection(Owner, Target)
   
   def find_by(**args)
     @records.find do |record|
-      args.all? do |key, value|
+      args.to_h.all? do |key, value|
         record.read_attribute(key.to_s) == value
       end
     end
