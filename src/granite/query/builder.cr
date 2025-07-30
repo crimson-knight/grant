@@ -64,6 +64,10 @@ class Granite::Query::Builder(Model)
         and(field: field.to_s, operator: :in, value: value.compact)
       elsif value.is_a?(Enum)
         and(field: field.to_s, operator: :eq, value: value.to_s)
+      elsif value.is_a?(Range)
+        # Handle range as BETWEEN operation
+        and(field: field.to_s, operator: :gteq, value: value.begin)
+        and(field: field.to_s, operator: :lteq, value: value.end)
       else
         and(field: field.to_s, operator: :eq, value: value)
       end
@@ -102,6 +106,10 @@ class Granite::Query::Builder(Model)
         and(field: field.to_s, operator: :in, value: value.compact)
       elsif value.is_a?(Enum)
         and(field: field.to_s, operator: :eq, value: value.to_s)
+      elsif value.is_a?(Range)
+        # Handle range as BETWEEN operation
+        and(field: field.to_s, operator: :gteq, value: value.begin)
+        and(field: field.to_s, operator: :lteq, value: value.end)
       else
         and(field: field.to_s, operator: :eq, value: value)
       end
@@ -119,6 +127,10 @@ class Granite::Query::Builder(Model)
         or(field: field.to_s, operator: :in, value: value.compact)
       elsif value.is_a?(Enum)
         or(field: field.to_s, operator: :eq, value: value.to_s)
+      elsif value.is_a?(Range)
+        # Handle range as BETWEEN operation - for OR, we need to group these
+        or(field: field.to_s, operator: :gteq, value: value.begin)
+        or(field: field.to_s, operator: :lteq, value: value.end)
       else
         or(field: field.to_s, operator: :eq, value: value)
       end

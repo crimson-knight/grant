@@ -660,3 +660,55 @@ end
 - Attribute introspection methods
 
 For comprehensive documentation, see [docs/attribute_api.md](docs/attribute_api.md).
+
+## Phase 4 - Convenience Methods (In Progress)
+
+### Query Methods
+- **pluck** - Extract one or more column values without instantiating models
+  ```crystal
+  User.where(active: true).pluck(:id, :name)
+  # => [[1, "John"], [2, "Jane"]]
+  ```
+
+- **pick** - Get values from first record
+  ```crystal
+  User.pick(:id, :name)
+  # => [1, "John"]
+  ```
+
+- **annotate** - Add SQL comments for debugging
+  ```crystal
+  User.where(active: true).annotate("Dashboard query").select
+  ```
+
+### Batch Processing
+- **in_batches** - Process records in configurable batches
+  ```crystal
+  User.in_batches(of: 100) do |batch|
+    batch.each { |user| user.update(processed: true) }
+  end
+  ```
+
+### Bulk Operations
+- **insert_all** - Bulk insert with options
+  ```crystal
+  User.insert_all([
+    {name: "John", email: "john@example.com"},
+    {name: "Jane", email: "jane@example.com"}
+  ])
+  ```
+
+- **upsert_all** - Insert or update on conflict
+  ```crystal
+  User.upsert_all(
+    [{name: "John", email: "john@example.com", age: 26}],
+    unique_by: [:email],
+    update_only: [:age]
+  )
+  ```
+
+### Implementation Status
+- ✅ Basic implementation complete
+- ⚠️ Range query handling needs refinement
+- ⚠️ Some edge cases with NULL constraints
+- ⚠️ Cross-database SQL generation differences
