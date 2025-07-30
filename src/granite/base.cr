@@ -7,9 +7,11 @@ require "./columns"
 require "./query/executors/base"
 require "./query/**"
 require "./query_extensions"
+require "./enum_attributes"
 require "./settings"
 require "./table"
 require "./validators"
+require "./validators/**"
 require "./validation_helpers/**"
 require "./migrator"
 require "./select"
@@ -23,6 +25,7 @@ require "./eager_loading"
 require "./association_loader"
 require "./commit_callbacks"
 require "./scoping"
+require "./attribute_api"
 
 # Granite::Base is the base class for your model objects.
 abstract class Granite::Base
@@ -44,6 +47,7 @@ abstract class Granite::Base
   include Scoping
 
   include ConnectionManagement
+  include AttributeApi
   
   # Auto-register class for polymorphic associations
   macro inherited

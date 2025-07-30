@@ -77,3 +77,9 @@ end
 [Polymorphic Associations](./polymorphic_associations.md) - Associations that can belong to multiple models
 
 [Advanced Associations](./advanced_associations.md) - Dependent options, counter cache, touch, and more
+
+[Enum Attributes](./enum_attributes.md) - Rails-style enum attributes with helper methods
+
+[Built-in Validators](./built_in_validators.md) - Common validators for format, length, numericality, and more
+
+[Attribute API](./attribute_api.md) - Flexible attributes with virtual fields, defaults, and custom types
