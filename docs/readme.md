@@ -71,3 +71,5 @@ end
 [Migrations](./migrations.md)
 
 [Imports](./imports.md)
+
+[Dirty Tracking](./dirty_tracking.md) - Track changes to model attributes

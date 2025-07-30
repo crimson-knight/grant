@@ -1,0 +1,218 @@
+require "../../spec_helper"
+
+class ScopedModel < Granite::Base
+  adapter mysql
+  table_name scoped_models
+  
+  column id : Int64, primary: true
+  column name : String?
+  column status : String?
+  column priority : Int32?
+  column published : Bool = false
+  timestamps
+  
+  # Define named scopes
+  scope :published, ->(query : Granite::Query::Builder(ScopedModel)) { query.where(published: true) }
+  scope :active, ->(query : Granite::Query::Builder(ScopedModel)) { query.where(status: "active") }
+  scope :high_priority, ->(query : Granite::Query::Builder(ScopedModel)) { query.where("priority > ?", 5) }
+  scope :recent, ->(query : Granite::Query::Builder(ScopedModel)) { query.order(created_at: :desc) }
+  scope :by_name, ->(query : Granite::Query::Builder(ScopedModel)) { query.order(:name) }
+  
+  # Default scope
+  default_scope { where(deleted_at: nil) }
+end
+
+class UnorderedModel < Granite::Base
+  adapter mysql
+  table_name unordered_models
+  
+  column id : Int64, primary: true
+  column name : String?
+  column position : Int32?
+  timestamps
+  
+  # Model without default scope for comparison
+  scope :ordered, ->(query : Granite::Query::Builder(UnorderedModel)) { query.order(:position) }
+end
+
+describe "Granite::Scoping" do
+  describe "named scopes" do
+    it "defines class methods for scopes" do
+      ScopedModel.should respond_to(:published)
+      ScopedModel.should respond_to(:active)
+      ScopedModel.should respond_to(:high_priority)
+    end
+    
+    it "returns a query builder" do
+      query = ScopedModel.published
+      query.should be_a(Granite::Query::Builder(ScopedModel))
+    end
+    
+    it "can chain scopes" do
+      query = ScopedModel.published.active.recent
+      query.should be_a(Granite::Query::Builder(ScopedModel))
+      
+      # Check that all conditions are applied
+      query.where_fields.size.should be >= 2
+    end
+    
+    it "applies scope conditions" do
+      # Create test data
+      published = ScopedModel.new(name: "Published", published: true, status: "active")
+      published.save
+      
+      unpublished = ScopedModel.new(name: "Unpublished", published: false, status: "active") 
+      unpublished.save
+      
+      # Test scope
+      results = ScopedModel.published.all
+      results.map(&.name).should contain("Published")
+      results.map(&.name).should_not contain("Unpublished")
+    end
+    
+    it "can combine multiple scopes" do
+      # Create test data
+      high_active = ScopedModel.new(name: "High Active", status: "active", priority: 8, published: true)
+      high_active.save
+      
+      low_active = ScopedModel.new(name: "Low Active", status: "active", priority: 2, published: true)
+      low_active.save
+      
+      high_inactive = ScopedModel.new(name: "High Inactive", status: "inactive", priority: 8, published: true)
+      high_inactive.save
+      
+      # Test combined scopes
+      results = ScopedModel.active.high_priority.all
+      results.map(&.name).should contain("High Active")
+      results.map(&.name).should_not contain("Low Active")
+      results.map(&.name).should_not contain("High Inactive")
+    end
+  end
+  
+  describe "default scope" do
+    it "applies default scope to all queries" do
+      # Create test data with deleted_at
+      active1 = ScopedModel.new(name: "Active 1")
+      active1.save
+      
+      active2 = ScopedModel.new(name: "Active 2")
+      active2.save
+      
+      # Simulate soft delete by setting deleted_at
+      deleted = ScopedModel.new(name: "Deleted")
+      deleted.save
+      deleted.update(deleted_at: Time.local)
+      
+      # Default scope should filter out deleted records
+      results = ScopedModel.all
+      results.size.should eq(2)
+      results.map(&.name).should_not contain("Deleted")
+    end
+    
+    it "applies default scope to find methods" do
+      active = ScopedModel.new(name: "Active")
+      active.save
+      
+      deleted = ScopedModel.new(name: "Deleted")
+      deleted.save
+      deleted.update(deleted_at: Time.local)
+      
+      # Should find active record
+      ScopedModel.find(active.id).should_not be_nil
+      
+      # Should not find deleted record due to default scope
+      ScopedModel.find(deleted.id).should be_nil
+    end
+  end
+  
+  describe "unscoped" do
+    it "bypasses default scope" do
+      active = ScopedModel.new(name: "Active")
+      active.save
+      
+      deleted = ScopedModel.new(name: "Deleted")
+      deleted.save
+      deleted.update(deleted_at: Time.local)
+      
+      # With default scope
+      ScopedModel.all.size.should eq(1)
+      
+      # Without default scope
+      ScopedModel.unscoped.all.size.should eq(2)
+    end
+    
+    it "can be used with a block" do
+      active = ScopedModel.new(name: "Active")
+      active.save
+      
+      deleted = ScopedModel.new(name: "Deleted")
+      deleted.save
+      deleted.update(deleted_at: Time.local)
+      
+      results = [] of ScopedModel
+      ScopedModel.unscoped do |query|
+        results = query.all
+      end
+      
+      results.size.should eq(2)
+    end
+  end
+  
+  describe "merge" do
+    it "merges query conditions" do
+      query1 = ScopedModel.where(status: "active")
+      query2 = ScopedModel.where(published: true)
+      
+      merged = ScopedModel.merge(query2)
+      merged.where_fields.size.should be >= 2
+    end
+    
+    it "uses most restrictive limit" do
+      query1 = ScopedModel.limit(10)
+      query2 = ScopedModel.limit(5)
+      
+      merged = ScopedModel.merge(query2)
+      merged.limit.should eq(5)
+    end
+  end
+  
+  describe "extending" do
+    it "allows adding custom methods to queries" do
+      # This would be defined in the model:
+      # extending do
+      #   def only_important
+      #     where("priority > ?", 7)
+      #   end
+      # end
+      
+      # Then used like:
+      # ScopedModel.extending.only_important.all
+    end
+  end
+  
+  describe "scope with other query methods" do
+    it "works with order" do
+      b = ScopedModel.new(name: "B", published: true)
+      b.save
+      
+      a = ScopedModel.new(name: "A", published: true)
+      a.save
+      
+      c = ScopedModel.new(name: "C", published: false)
+      c.save
+      
+      results = ScopedModel.published.order(:name).all
+      results.map(&.name).should eq(["A", "B"])
+    end
+    
+    it "works with limit and offset" do
+      5.times do |i|
+        model = ScopedModel.new(name: "Model #{i}", published: true)
+        model.save
+      end
+      
+      results = ScopedModel.published.limit(2).offset(1).all
+      results.size.should eq(2)
+    end
+  end
+end

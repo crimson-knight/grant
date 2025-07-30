@@ -57,6 +57,25 @@ module Granite::Columns
         end
       end
     {% end %}
+    
+    # Capture original attributes for dirty tracking if not a new record
+    if !new_record?
+      ensure_dirty_tracking_initialized
+      @original_attributes.not_nil!.clear
+      @changed_attributes.not_nil!.clear
+      {% for column in @type.instance_vars.select { |ivar| ivar.annotation(Granite::Column) } %}
+        {% column_name = column.name.id.stringify %}
+        {% ann = column.annotation(Granite::Column) %}
+        # Convert value for storage if there's a converter
+        {% if ann[:converter] %}
+          @original_attributes.not_nil![{{column_name}}] = {{ann[:converter]}}.to_db(@{{column.name.id}}).as(Granite::Base::DirtyValue)
+        {% else %}
+          # Store the raw value for dirty tracking
+          raw_value = @{{column.name.id}}
+          @original_attributes.not_nil![{{column_name}}] = raw_value.is_a?(Granite::Base::DirtyValue) ? raw_value : raw_value.to_s.as(Granite::Base::DirtyValue)
+        {% end %}
+      {% end %}
+    end
   end
 
   # Defines a column *decl* with the given *options*.
@@ -82,7 +101,44 @@ module Granite::Columns
     @{{decl.var}} : {{decl.type}}? {% unless decl.value.is_a? Nop %} = {{decl.value}} {% end %}
 
     {% if nilable || primary %}
-      def {{decl.var.id}}=(@{{decl.var.id}} : {{not_nilable_type}}?); end
+      def {{decl.var.id}}=(value : {{not_nilable_type}}?)
+        # Dirty tracking - only track if we're not a new record
+        ensure_dirty_tracking_initialized
+        
+        if !new_record?
+          # Capture original value if not already captured
+          if !@original_attributes.not_nil!.has_key?({{decl.var.stringify}})
+            {% if converter %}
+              @original_attributes.not_nil![{{decl.var.stringify}}] = {{converter}}.to_db(@{{decl.var.id}}).as(Granite::Base::DirtyValue)
+            {% else %}
+              old_value = @{{decl.var.id}}
+              @original_attributes.not_nil![{{decl.var.stringify}}] = old_value.is_a?(Granite::Base::DirtyValue) ? old_value : old_value.to_s.as(Granite::Base::DirtyValue)
+            {% end %}
+          end
+          
+          # Convert values for comparison if there's a converter
+          {% if converter %}
+            old_db_value = {{converter}}.to_db(@{{decl.var.id}}).as(Granite::Base::DirtyValue)
+            new_db_value = {{converter}}.to_db(value).as(Granite::Base::DirtyValue)
+          {% else %}
+            # Handle values that might not be in DirtyValue union
+            old_value = @{{decl.var.id}}
+            old_db_value = old_value.is_a?(Granite::Base::DirtyValue) ? old_value : old_value.to_s.as(Granite::Base::DirtyValue)
+            new_db_value = value.is_a?(Granite::Base::DirtyValue) ? value : value.to_s.as(Granite::Base::DirtyValue)
+          {% end %}
+          
+          if old_db_value != new_db_value
+            original = @original_attributes.not_nil![{{decl.var.stringify}}]
+            if original == new_db_value
+              @changed_attributes.not_nil!.delete({{decl.var.stringify}})
+            else
+              @changed_attributes.not_nil![{{decl.var.stringify}}] = {original, new_db_value}
+            end
+          end
+        end
+        
+        @{{decl.var.id}} = value
+      end
 
       def {{decl.var.id}} : {{not_nilable_type}}?
         @{{decl.var}}
@@ -92,12 +148,185 @@ module Granite::Columns
         raise NilAssertionError.new {{@type.name.stringify}} + "#" + {{decl.var.stringify}} + " cannot be nil" if @{{decl.var}}.nil?
         @{{decl.var}}.not_nil!
       end
+      
+      # Dirty tracking methods
+      
+      # Returns true if the {{decl.var.id}} attribute has been changed.
+      #
+      # This is a convenience method equivalent to `attribute_changed?({{decl.var.stringify}})`.
+      #
+      # ```
+      # user.{{decl.var.id}} = "new value"
+      # user.{{decl.var.id}}_changed? # => true
+      # ```
+      def {{decl.var.id}}_changed? : Bool
+        ensure_dirty_tracking_initialized
+        @changed_attributes.not_nil!.has_key?({{decl.var.stringify}})
+      end
+      
+      # Returns the original value of {{decl.var.id}} before it was changed.
+      #
+      # If the attribute hasn't changed, returns the current value.
+      # This is a convenience method equivalent to `attribute_was({{decl.var.stringify}})`.
+      #
+      # ```
+      # original_value = user.{{decl.var.id}}
+      # user.{{decl.var.id}} = "new value"
+      # user.{{decl.var.id}}_was # => original_value
+      # ```
+      def {{decl.var.id}}_was : {{not_nilable_type}}?
+        ensure_dirty_tracking_initialized
+        if @changed_attributes.not_nil!.has_key?({{decl.var.stringify}})
+          @changed_attributes.not_nil![{{decl.var.stringify}}][0].as({{not_nilable_type}}?)
+        else
+          @{{decl.var.id}}
+        end
+      end
+      
+      # Returns a tuple of the original and new values if {{decl.var.id}} has changed.
+      #
+      # Returns nil if the attribute hasn't changed.
+      #
+      # ```
+      # user.{{decl.var.id}} # => "old value"
+      # user.{{decl.var.id}} = "new value"
+      # user.{{decl.var.id}}_change # => {"old value", "new value"}
+      # ```
+      def {{decl.var.id}}_change : Tuple({{not_nilable_type}}?, {{not_nilable_type}}?)?
+        ensure_dirty_tracking_initialized
+        if change = @changed_attributes.not_nil![{{decl.var.stringify}}]?
+          {change[0].as({{not_nilable_type}}?), change[1].as({{not_nilable_type}}?)}
+        end
+      end
+      
+      # Returns the value of {{decl.var.id}} before the last save.
+      #
+      # If the attribute wasn't changed in the last save, returns current value.
+      #
+      # ```
+      # user.{{decl.var.id}} = "new value"
+      # user.save
+      # user.{{decl.var.id}}_before_last_save # => "old value"
+      # ```
+      def {{decl.var.id}}_before_last_save : {{not_nilable_type}}?
+        ensure_dirty_tracking_initialized
+        if @previous_changes.not_nil!.has_key?({{decl.var.stringify}})
+          @previous_changes.not_nil![{{decl.var.stringify}}][0].as({{not_nilable_type}}?)
+        else
+          @{{decl.var.id}}
+        end
+      end
     {% else %}
-      def {{decl.var.id}}=(@{{decl.var.id}} : {{type.id}}); end
+      def {{decl.var.id}}=(value : {{type.id}})
+        # Dirty tracking - only track if we're not a new record
+        ensure_dirty_tracking_initialized
+        
+        if !new_record?
+          # Capture original value if not already captured
+          if !@original_attributes.not_nil!.has_key?({{decl.var.stringify}})
+            {% if converter %}
+              @original_attributes.not_nil![{{decl.var.stringify}}] = {{converter}}.to_db(@{{decl.var.id}}).as(Granite::Base::DirtyValue)
+            {% else %}
+              old_value = @{{decl.var.id}}
+              @original_attributes.not_nil![{{decl.var.stringify}}] = old_value.is_a?(Granite::Base::DirtyValue) ? old_value : old_value.to_s.as(Granite::Base::DirtyValue)
+            {% end %}
+          end
+          
+          # Convert values for comparison if there's a converter
+          {% if converter %}
+            old_db_value = {{converter}}.to_db(@{{decl.var.id}}).as(Granite::Base::DirtyValue)
+            new_db_value = {{converter}}.to_db(value).as(Granite::Base::DirtyValue)
+          {% else %}
+            # Handle values that might not be in DirtyValue union
+            old_value = @{{decl.var.id}}
+            old_db_value = old_value.is_a?(Granite::Base::DirtyValue) ? old_value : old_value.to_s.as(Granite::Base::DirtyValue) 
+            new_db_value = value.is_a?(Granite::Base::DirtyValue) ? value : value.to_s.as(Granite::Base::DirtyValue)
+          {% end %}
+          
+          if old_db_value != new_db_value
+            original = @original_attributes.not_nil![{{decl.var.stringify}}]
+            if original == new_db_value
+              @changed_attributes.not_nil!.delete({{decl.var.stringify}})
+            else
+              @changed_attributes.not_nil![{{decl.var.stringify}}] = {original, new_db_value}
+            end
+          end
+        end
+        
+        @{{decl.var.id}} = value
+      end
 
       def {{decl.var.id}} : {{type.id}}
         raise NilAssertionError.new {{@type.name.stringify}} + "#" + {{decl.var.stringify}} + " cannot be nil" if @{{decl.var}}.nil?
         @{{decl.var}}.not_nil!
+      end
+      
+      # Dirty tracking methods
+      
+      # Returns true if the {{decl.var.id}} attribute has been changed.
+      #
+      # This is a convenience method equivalent to `attribute_changed?({{decl.var.stringify}})`.
+      #
+      # ```
+      # user.{{decl.var.id}} = "new value"
+      # user.{{decl.var.id}}_changed? # => true
+      # ```
+      def {{decl.var.id}}_changed? : Bool
+        ensure_dirty_tracking_initialized
+        @changed_attributes.not_nil!.has_key?({{decl.var.stringify}})
+      end
+      
+      # Returns the original value of {{decl.var.id}} before it was changed.
+      #
+      # If the attribute hasn't changed, returns the current value.
+      # This is a convenience method equivalent to `attribute_was({{decl.var.stringify}})`.
+      #
+      # ```
+      # original_value = user.{{decl.var.id}}
+      # user.{{decl.var.id}} = "new value"
+      # user.{{decl.var.id}}_was # => original_value
+      # ```
+      def {{decl.var.id}}_was : {{type.id}}
+        ensure_dirty_tracking_initialized
+        if @changed_attributes.not_nil!.has_key?({{decl.var.stringify}})
+          @changed_attributes.not_nil![{{decl.var.stringify}}][0].as({{type.id}})
+        else
+          @{{decl.var.id}}
+        end
+      end
+      
+      # Returns a tuple of the original and new values if {{decl.var.id}} has changed.
+      #
+      # Returns nil if the attribute hasn't changed.
+      #
+      # ```
+      # user.{{decl.var.id}} # => "old value"
+      # user.{{decl.var.id}} = "new value"
+      # user.{{decl.var.id}}_change # => {"old value", "new value"}
+      # ```
+      def {{decl.var.id}}_change : Tuple({{type.id}}, {{type.id}})?
+        ensure_dirty_tracking_initialized
+        if change = @changed_attributes.not_nil![{{decl.var.stringify}}]?
+          {change[0].as({{type.id}}), change[1].as({{type.id}})}
+        end
+      end
+      
+      # Returns the value of {{decl.var.id}} before the last save.
+      #
+      # If the attribute wasn't changed in the last save, returns current value.
+      #
+      # ```
+      # user.{{decl.var.id}} = "new value"
+      # user.save
+      # user.{{decl.var.id}}_before_last_save # => "old value"
+      # ```
+      def {{decl.var.id}}_before_last_save : {{type.id}}
+        ensure_dirty_tracking_initialized
+        if @previous_changes.not_nil!.has_key?({{decl.var.stringify}})
+          @previous_changes.not_nil![{{decl.var.stringify}}][0].as({{type.id}})
+        else
+          @{{decl.var.id}}
+        end
       end
     {% end %}
   end
@@ -171,11 +400,41 @@ module Granite::Columns
     {% end %}
   end
 
+  def write_attribute(attribute_name : String | Symbol, value : Granite::Columns::Type)
+    {% begin %}
+      case attribute_name.to_s
+      {% for column in @type.instance_vars.select(&.annotation(Granite::Column)) %}
+        when {{column.name.stringify}}
+          self.{{column.name.id}} = value.as({{column.type}})
+      {% end %}
+      else
+        raise "Cannot write attribute #{attribute_name}, invalid attribute"
+      end
+    {% end %}
+  end
+
   def primary_key_value
     {% begin %}
       {% primary_key = @type.instance_vars.find { |ivar| (ann = ivar.annotation(Granite::Column)) && ann[:primary] } %}
       {% raise raise "A primary key must be defined for #{@type.name}." unless primary_key %}
       {{primary_key.id}}
+    {% end %}
+  end
+  
+  # Capture current values as original attributes after save
+  protected def capture_original_attributes
+    ensure_dirty_tracking_initialized
+    {% for column in @type.instance_vars.select { |ivar| ivar.annotation(Granite::Column) } %}
+      {% column_name = column.name.id.stringify %}
+      {% ann = column.annotation(Granite::Column) %}
+      # Convert value for storage if there's a converter
+      {% if ann[:converter] %}
+        @original_attributes.not_nil![{{column_name}}] = {{ann[:converter]}}.to_db(@{{column.name.id}}).as(Granite::Base::DirtyValue)
+      {% else %}
+        # Store the raw value for dirty tracking
+        raw_value = @{{column.name.id}}
+        @original_attributes.not_nil![{{column_name}}] = raw_value.is_a?(Granite::Base::DirtyValue) ? raw_value : raw_value.to_s.as(Granite::Base::DirtyValue)
+      {% end %}
     {% end %}
   end
 end

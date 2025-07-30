@@ -1,3 +1,5 @@
+require "./association_registry"
+
 module Granite::Associations
   macro belongs_to(model, **options)
     {% if model.is_a? TypeDeclaration %}
@@ -20,7 +22,9 @@ module Granite::Associations
     @[Granite::Relationship(target: {{class_name.id}}, type: :belongs_to,
       primary_key: {{primary_key.id}}, foreign_key: {{foreign_key.id}})]
     def {{method_name.id}} : {{class_name.id}}?
-      if parent = {{class_name.id}}.find_by({{primary_key.id}}: {{foreign_key.id}})
+      if association_loaded?({{method_name.stringify}})
+        get_loaded_association({{method_name.stringify}}).as({{class_name.id}}?)
+      elsif parent = {{class_name.id}}.find_by({{primary_key.id}}: {{foreign_key.id}})
         parent
       else
         {{class_name.id}}.new
@@ -34,6 +38,15 @@ module Granite::Associations
     def {{method_name.id}}=(parent : {{class_name.id}})
       @{{foreign_key.id}} = parent.{{primary_key.id}}
     end
+    
+    # Store association metadata
+    class_getter _{{method_name.id}}_association_meta = {
+      type: :belongs_to,
+      target_class_name: {{class_name.id.stringify}},
+      foreign_key: {{foreign_key.id.stringify}},
+      primary_key: {{primary_key.id.stringify}},
+      through: nil
+    }
   end
 
   macro has_one(model, **options)
@@ -57,7 +70,11 @@ module Granite::Associations
       primary_key: {{primary_key.id}}, foreign_key: {{foreign_key.id}})]
 
     def {{method_name}} : {{class_name}}?
-      {{class_name.id}}.find_by({{foreign_key.id}}: self.{{primary_key.id}})
+      if association_loaded?({{method_name.stringify}})
+        get_loaded_association({{method_name.stringify}}).as({{class_name.id}}?)
+      else
+        {{class_name.id}}.find_by({{foreign_key.id}}: self.{{primary_key.id}})
+      end
     end
 
     def {{method_name}}! : {{class_name}}
@@ -67,6 +84,15 @@ module Granite::Associations
     def {{method_name}}=(child)
       child.{{foreign_key.id}} = self.{{primary_key.id}}
     end
+    
+    # Store association metadata
+    class_getter _{{method_name.id}}_association_meta = {
+      type: :has_one,
+      target_class_name: {{class_name.id.stringify}},
+      foreign_key: {{foreign_key.id.stringify}},
+      primary_key: {{primary_key.id.stringify}},
+      through: nil
+    }
   end
 
   macro has_many(model, **options)
@@ -83,7 +109,31 @@ module Granite::Associations
     @[Granite::Relationship(target: {{class_name.id}}, through: {{through.id}}, type: :has_many,
       primary_key: {{through}}, foreign_key: {{foreign_key.id}})]
     def {{method_name.id}}
-      Granite::AssociationCollection(self, {{class_name.id}}).new(self, {{foreign_key}}, {{through}}, {{primary_key}})
+      if association_loaded?({{method_name.stringify}})
+        loaded_data = get_loaded_association({{method_name.stringify}})
+        if loaded_data.is_a?(Array(Granite::Base))
+          # Return a wrapper that behaves like AssociationCollection but uses loaded data
+          Granite::LoadedAssociationCollection(self, {{class_name.id}}).new(loaded_data.map(&.as({{class_name.id}})))
+        else
+          Granite::AssociationCollection(self, {{class_name.id}}).new(self, {{foreign_key}}, {{through}}, {{primary_key}})
+        end
+      else
+        Granite::AssociationCollection(self, {{class_name.id}}).new(self, {{foreign_key}}, {{through}}, {{primary_key}})
+      end
     end
+    
+    # Store association metadata
+    class_getter _{{method_name.id}}_association_meta = {
+      type: :has_many,
+      target_class_name: {{class_name.id.stringify}},
+      foreign_key: {{foreign_key.id.stringify}},
+      primary_key: {{primary_key.id.stringify}},
+      through: {{through ? through.id.stringify : nil}}
+    }
+  end
+  
+  # Helper method to get association metadata
+  macro association_metadata(name)
+    self.class._{{name.id}}_association_meta
   end
 end
