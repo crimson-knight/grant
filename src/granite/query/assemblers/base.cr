@@ -101,14 +101,17 @@ module Granite::Query::Assembler
       end
 
       order_clauses = order_fields.map do |expression|
-        add_aggregate_field expression[:field]
+        field = expression[:field]
+        next unless field
+        
+        add_aggregate_field field
 
         if expression[:direction] == Builder::Sort::Ascending
-          "#{expression[:field]} ASC"
+          "#{field} ASC"
         else
-          "#{expression[:field]} DESC"
+          "#{field} DESC"
         end
-      end
+      end.compact
 
       @order = "ORDER BY #{order_clauses.join ", "}"
     end

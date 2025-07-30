@@ -6,6 +6,7 @@ require "./callbacks"
 require "./columns"
 require "./query/executors/base"
 require "./query/**"
+require "./query_extensions"
 require "./settings"
 require "./table"
 require "./validators"
@@ -43,6 +44,11 @@ abstract class Granite::Base
   include Scoping
 
   include ConnectionManagement
+  
+  # Auto-register class for polymorphic associations
+  macro inherited
+    Granite::Polymorphic.register_type({{@type.name.stringify}}, {{@type.id}})
+  end
 
   extend Columns::ClassMethods
   extend Tables::ClassMethods

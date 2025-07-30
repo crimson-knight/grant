@@ -60,16 +60,16 @@ This document outlines the missing features in Grant when compared to Rails Acti
 
 ## Priority 2: Essential Features (Common Use Cases)
 
-### 2.1 Advanced Associations
-- **Polymorphic Associations** - `belongs_to :imageable, polymorphic: true`
+### 2.1 Advanced Associations ✅ PARTIALLY COMPLETED
+- ✅ **Polymorphic Associations** - `belongs_to :imageable, polymorphic: true`
 - **Self-Referential Associations** - Better support for tree structures
 - **Association Options:**
-  - `dependent: :destroy/:nullify/:restrict`
-  - `counter_cache: true`
+  - ✅ `dependent: :destroy/:nullify/:restrict`
+  - ✅ `counter_cache: true`
   - `inverse_of:`
-  - `optional: true` for belongs_to
-  - `autosave: true`
-  - `touch: true`
+  - ✅ `optional: true` for belongs_to
+  - ✅ `autosave: true`
+  - ✅ `touch: true`
 - **Association Extensions** - Add custom methods to associations
 - **Has Many Through with Source** - `has_many :subscribers, through: :subscriptions, source: :user`
 

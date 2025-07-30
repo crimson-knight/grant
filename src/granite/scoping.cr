@@ -1,9 +1,6 @@
 module Granite::Scoping
   macro included
     macro inherited
-      # Storage for default scope
-      @@default_scope : Proc(Granite::Query::Builder(\{{@type}}), Granite::Query::Builder(\{{@type}}))? = nil
-      
       # Flag to track if we're in unscoped mode
       class_property? _unscoped : Bool = false
     end
@@ -20,7 +17,7 @@ module Granite::Scoping
     
     # Define a default scope
     macro default_scope(&block)
-      @@default_scope = ->(query : Granite::Query::Builder(\{{@type}})) {
+      DEFAULT_SCOPE = ->(query : Granite::Query::Builder(\{{@type}})) {
         {{block.body}}
       }
     end
@@ -39,9 +36,11 @@ module Granite::Scoping
       query = Granite::Query::Builder(self).new(db_type)
       
       # Apply default scope unless we're in unscoped mode
-      if !_unscoped? && @@default_scope
-        query = @@default_scope.not_nil!.call(query)
-      end
+      {% if @type.has_constant?("DEFAULT_SCOPE") %}
+        if !_unscoped?
+          query = DEFAULT_SCOPE.call(query)
+        end
+      {% end %}
       
       query
     end

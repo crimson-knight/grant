@@ -425,4 +425,57 @@ user.email # => "john@example.com"
 - Full Rails ActiveRecord API compatibility
 
 For comprehensive documentation, see [docs/dirty_tracking.md](docs/dirty_tracking.md).
-EOF < /dev/null
+
+## Polymorphic Associations (Phase 2 - COMPLETE)
+
+Grant now supports polymorphic associations, allowing a model to belong to more than one other model type.
+
+### Usage
+
+```crystal
+class Comment < Granite::Base
+  belongs_to :commentable, polymorphic: true
+end
+
+class Post < Granite::Base
+  has_many :comments, as: :commentable
+end
+
+class Photo < Granite::Base
+  has_many :comments, as: :commentable
+end
+```
+
+This creates:
+- `commentable_id` (Int64?) - stores the associated record ID
+- `commentable_type` (String?) - stores the associated record class name
+
+For detailed documentation, see [docs/polymorphic_associations.md](docs/polymorphic_associations.md).
+
+## Advanced Association Options (Phase 2 - COMPLETE)
+
+Grant now includes comprehensive association options for fine-grained control:
+
+### Dependent Options
+- `dependent: :destroy` - Destroy associated records
+- `dependent: :nullify` - Set foreign keys to NULL
+- `dependent: :restrict` - Prevent deletion if associations exist
+
+### Other Options
+- `optional: true` - Allow nil foreign keys on belongs_to
+- `counter_cache: true` - Maintain count on parent model
+- `touch: true` - Update parent timestamps on changes
+- `autosave: true` - Save associations automatically
+
+### Example
+```crystal
+class Author < Granite::Base
+  has_many :posts, dependent: :destroy, counter_cache: true
+end
+
+class Post < Granite::Base
+  belongs_to :author, optional: true, touch: true
+end
+```
+
+For comprehensive documentation, see [docs/advanced_associations.md](docs/advanced_associations.md).

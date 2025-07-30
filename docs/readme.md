@@ -73,3 +73,7 @@ end
 [Imports](./imports.md)
 
 [Dirty Tracking](./dirty_tracking.md) - Track changes to model attributes
+
+[Polymorphic Associations](./polymorphic_associations.md) - Associations that can belong to multiple models
+
+[Advanced Associations](./advanced_associations.md) - Dependent options, counter cache, touch, and more

@@ -1,7 +1,19 @@
 require "./association_registry"
+require "./polymorphic"
+require "./association_options"
 
 module Granite::Associations
+  include Granite::Polymorphic
+  include Granite::AssociationOptions::DependentCallbacks
+  include Granite::AssociationOptions::CounterCache
+  include Granite::AssociationOptions::TouchCallbacks
+  include Granite::AssociationOptions::AutosaveCallbacks
+  include Granite::AssociationOptions::OptionalValidation
+  
   macro belongs_to(model, **options)
+    {% if options[:polymorphic] %}
+      belongs_to_polymorphic({{model}}, {{options.double_splat}})
+    {% else %}
     {% if model.is_a? TypeDeclaration %}
       {% method_name = model.var %}
       {% class_name = model.type %}
@@ -47,9 +59,41 @@ module Granite::Associations
       primary_key: {{primary_key.id.stringify}},
       through: nil
     }
+    
+    # Handle optional validation
+    {% unless options[:optional] %}
+      setup_optional_validation({{method_name.id}}, {{foreign_key.id}}, false)
+    {% end %}
+    
+    # Handle counter cache
+    {% if options[:counter_cache] %}
+      {% counter_column = options[:counter_cache] == true ? @type.stringify.split("::").last.underscore + "s_count" : options[:counter_cache] %}
+      setup_counter_cache({{method_name.id}}, {{class_name.id}}, {{counter_column}})
+    {% end %}
+    
+    # Handle touch
+    {% if options[:touch] %}
+      {% touch_column = options[:touch] == true ? nil : options[:touch] %}
+      setup_touch({{method_name.id}}, {{touch_column}})
+    {% end %}
+    
+    # Handle autosave
+    {% if options[:autosave] %}
+      setup_autosave({{method_name.id}}, :belongs_to)
+      
+      # Override setter to track autosave
+      def {{method_name.id}}=(parent : {{class_name.id}})
+        @{{foreign_key.id}} = parent.{{primary_key.id}}
+        @_{{method_name.id}}_for_autosave = parent if {{options[:autosave]}}
+      end
+    {% end %}
+    {% end %}
   end
 
   macro has_one(model, **options)
+    {% if options[:as] %}
+      has_one_polymorphic({{model}}, {{options[:as]}}, {{options.double_splat}})
+    {% else %}
     {% if model.is_a? TypeDeclaration %}
       {% method_name = model.var %}
       {% class_name = model.type %}
@@ -93,9 +137,35 @@ module Granite::Associations
       primary_key: {{primary_key.id.stringify}},
       through: nil
     }
+    
+    # Handle dependent option
+    {% if options[:dependent] %}
+      {% if options[:dependent] == :destroy %}
+        setup_dependent_destroy({{method_name.id}}, :has_one, {{class_name.id}}, {{foreign_key.id}})
+      {% elsif options[:dependent] == :nullify %}
+        setup_dependent_nullify({{method_name.id}}, :has_one, {{class_name.id}}, {{foreign_key.id}})
+      {% elsif options[:dependent] == :restrict %}
+        setup_dependent_restrict({{method_name.id}}, :has_one, {{class_name.id}}, {{foreign_key.id}})
+      {% end %}
+    {% end %}
+    
+    # Handle autosave
+    {% if options[:autosave] %}
+      setup_autosave({{method_name.id}}, :has_one)
+      
+      # Override setter to track autosave
+      def {{method_name}}=(child)
+        child.{{foreign_key.id}} = self.{{primary_key.id}}
+        @_{{method_name.id}}_for_autosave = child if {{options[:autosave]}}
+      end
+    {% end %}
+    {% end %}
   end
 
   macro has_many(model, **options)
+    {% if options[:as] %}
+      has_many_polymorphic({{model}}, {{options[:as]}}, {{options.double_splat}})
+    {% else %}
     {% if model.is_a? TypeDeclaration %}
       {% method_name = model.var %}
       {% class_name = model.type %}
@@ -130,6 +200,28 @@ module Granite::Associations
       primary_key: {{primary_key.id.stringify}},
       through: {{through ? through.id.stringify : nil}}
     }
+    
+    # Handle dependent option
+    {% if options[:dependent] %}
+      {% if options[:dependent] == :destroy %}
+        setup_dependent_destroy({{method_name.id}}, :has_many, {{class_name.id}}, {{foreign_key.id}})
+      {% elsif options[:dependent] == :nullify %}
+        setup_dependent_nullify({{method_name.id}}, :has_many, {{class_name.id}}, {{foreign_key.id}})
+      {% elsif options[:dependent] == :restrict %}
+        setup_dependent_restrict({{method_name.id}}, :has_many, {{class_name.id}}, {{foreign_key.id}})
+      {% end %}
+    {% end %}
+    
+    # Handle autosave
+    {% if options[:autosave] %}
+      setup_autosave({{method_name.id}}, :has_many)
+      
+      # Add method to track autosave records
+      def add_{{method_name.id}}_for_autosave(records : Array({{class_name.id}}))
+        @_{{method_name.id}}_for_autosave = records
+      end
+    {% end %}
+    {% end %}
   end
   
   # Helper method to get association metadata
