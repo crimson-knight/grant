@@ -34,6 +34,9 @@ class Granite::Query::Builder(Model)
   getter group_fields = [] of NamedTuple(field: String)
   getter offset : Int64?
   getter limit : Int64?
+  getter eager_load_associations = [] of Symbol | Hash(Symbol, Array(Symbol))
+  getter preload_associations = [] of Symbol | Hash(Symbol, Array(Symbol))
+  getter includes_associations = [] of Symbol | Hash(Symbol, Array(Symbol))
 
   def initialize(@db_type, @boolean_operator = :and)
   end
@@ -261,5 +264,109 @@ class Granite::Query::Builder(Model)
     assembler.select.run.map do |record|
       yield record
     end
+  end
+
+  # Eager loading methods
+  def includes(*associations)
+    associations.each do |assoc|
+      @includes_associations << assoc
+    end
+    self
+  end
+  
+  def includes(**nested_associations)
+    nested_associations.each do |name, nested|
+      @includes_associations << {name => nested.is_a?(Array) ? nested : [nested]}
+    end
+    self
+  end
+  
+  def preload(*associations)
+    associations.each do |assoc|
+      @preload_associations << assoc
+    end
+    self
+  end
+  
+  def preload(**nested_associations)
+    nested_associations.each do |name, nested|
+      @preload_associations << {name => nested.is_a?(Array) ? nested : [nested]}
+    end
+    self
+  end
+  
+  def eager_load(*associations)
+    associations.each do |assoc|
+      @eager_load_associations << assoc
+    end
+    self
+  end
+  
+  def eager_load(**nested_associations)
+    nested_associations.each do |name, nested|
+      @eager_load_associations << {name => nested.is_a?(Array) ? nested : [nested]}
+    end
+    self
+  end
+  
+  # Override select to handle eager loading
+  def select
+    records = assembler.select.run
+    
+    # Apply eager loading if any associations are specified
+    all_associations = @includes_associations + @preload_associations + @eager_load_associations
+    unless all_associations.empty?
+      Granite::AssociationLoader.load_associations(records, all_associations)
+    end
+    
+    records
+  end
+  
+  # Add all method for convenience
+  def all
+    select
+  end
+  
+  # Add first method
+  def first
+    limit(1).select.first?
+  end
+  
+  def first!
+    first || raise Granite::Querying::NotFound.new("No record found")
+  end
+  
+  # Create a new query builder for OR conditions
+  def or
+    or_builder = self.class.new(@db_type, :or)
+    yield or_builder
+    
+    # Add the OR conditions as a group
+    if or_builder.where_fields.any?
+      @where_fields << {
+        join: :and,
+        stmt: "(#{or_builder.assembler.where_clause(or_builder.where_fields)})",
+        value: nil
+      }
+    end
+    
+    self
+  end
+  
+  # Support for not conditions
+  def not
+    not_builder = self.class.new(@db_type)
+    yield not_builder
+    
+    # Add the NOT conditions as a negated group
+    if not_builder.where_fields.any?
+      @where_fields << {
+        join: :and,
+        stmt: "NOT (#{not_builder.assembler.where_clause(not_builder.where_fields)})",
+        value: nil
+      }
+    end
+    
+    self
   end
 end

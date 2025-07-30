@@ -8,6 +8,7 @@ module Granite::Querying
       model = new
       model.new_record = false
       model.from_rs result
+      model.after_find if model.responds_to?(:after_find)
       model
     end
 
@@ -31,7 +32,17 @@ module Granite::Querying
     # Lazy load prevent running unnecessary queries from unused variables.
     def all(clause = "", params = [] of Granite::Columns::Type, use_primary_adapter = true)
       switch_to_writer_adapter if use_primary_adapter == true
-      Collection(self).new(->{ raw_all(clause, params) })
+      
+      # If we have scoping support, use current_scope
+      if responds_to?(:current_scope)
+        query = current_scope
+        if !clause.empty?
+          query.where(clause, params.first? || nil)
+        end
+        query.select
+      else
+        Collection(self).new(->{ raw_all(clause, params) })
+      end
     end
 
     # First adds a `LIMIT 1` clause to the query and returns the first result

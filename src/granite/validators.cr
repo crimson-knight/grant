@@ -55,12 +55,18 @@ module Granite::Validators
     return false if errors.any? ConversionError
 
     errors.clear
+    
+    # Run before_validation callbacks
+    before_validation if responds_to?(:before_validation)
 
     @@validators.each do |validator|
       unless validator[:block].call(self)
         errors << Error.new(validator[:field], validator[:message])
       end
     end
+    
+    # Run after_validation callbacks
+    after_validation if responds_to?(:after_validation)
 
     errors.empty?
   end

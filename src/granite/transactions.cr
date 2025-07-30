@@ -234,17 +234,22 @@ module Granite::Transactions
         __before_update
         __update(skip_timestamps: skip_timestamps)
         __after_update
+        queue_commit_callback(:after_update_commit) if responds_to?(:queue_commit_callback)
       else
         __before_create
         __create(skip_timestamps: skip_timestamps)
         __after_create
+        queue_commit_callback(:after_create_commit) if responds_to?(:queue_commit_callback)
       end
       __after_save
+      queue_commit_callback(:after_commit) if responds_to?(:queue_commit_callback)
+      run_commit_callbacks if responds_to?(:run_commit_callbacks)
     rescue ex : DB::Error | Granite::Callbacks::Abort
       if message = ex.message
         Log.error { "Save Exception: #{message}" }
         errors << Granite::Error.new(:base, message)
       end
+      run_rollback_callbacks if responds_to?(:run_rollback_callbacks)
       return false
     end
     true
@@ -293,11 +298,15 @@ module Granite::Transactions
       __before_destroy
       __destroy
       __after_destroy
+      queue_commit_callback(:after_destroy_commit) if responds_to?(:queue_commit_callback)
+      queue_commit_callback(:after_commit) if responds_to?(:queue_commit_callback)
+      run_commit_callbacks if responds_to?(:run_commit_callbacks)
     rescue ex : DB::Error | Granite::Callbacks::Abort
       if message = ex.message
         Log.error { "Destroy Exception: #{message}" }
         errors << Granite::Error.new(:base, message)
       end
+      run_rollback_callbacks if responds_to?(:run_rollback_callbacks)
       return false
     end
     true
@@ -329,6 +338,8 @@ module Granite::Transactions
       end
     {% end %}
     set_timestamps mode: :update
-    save
+    result = save
+    after_touch if result && responds_to?(:after_touch)
+    result
   end
 end
