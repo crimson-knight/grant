@@ -33,9 +33,9 @@ class Post < Granite::Base
   has_one :image, as: :imageable
 end
 
-class Book < Granite::Base
+class PolyBook < Granite::Base
   connection sqlite
-  table books
+  table poly_books
   
   column id : Int64, primary: true
   column name : String

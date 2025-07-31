@@ -2,6 +2,9 @@ module Granite::Querying
   class NotFound < Exception
   end
 
+  class NotUnique < Exception
+  end
+
   module ClassMethods
     # Entrypoint for creating a new object from a result set.
     def from_rs(result : DB::ResultSet) : self
@@ -37,7 +40,12 @@ module Granite::Querying
       if responds_to?(:current_scope)
         query = current_scope
         if !clause.empty?
-          query.where(clause, params.first? || nil)
+          # Handle WHERE clause - strip the WHERE prefix if present
+          clean_clause = clause.strip
+          if clean_clause.starts_with?("WHERE ")
+            clean_clause = clean_clause[6..-1]  # Remove "WHERE " prefix
+          end
+          query.where(clean_clause, params.first? || nil)
         end
         query.select
       else
@@ -47,7 +55,21 @@ module Granite::Querying
 
     # First adds a `LIMIT 1` clause to the query and returns the first result
     def first(clause = "", params = [] of Granite::Columns::Type)
-      all([clause.strip, "LIMIT 1"].join(" "), params, false).first?
+      # If we have scoping support, use current_scope with limit
+      if responds_to?(:current_scope)
+        query = current_scope
+        if !clause.empty?
+          # Handle WHERE clause - strip the WHERE prefix if present
+          clean_clause = clause.strip
+          if clean_clause.starts_with?("WHERE ")
+            clean_clause = clean_clause[6..-1]  # Remove "WHERE " prefix
+          end
+          query.where(clean_clause, params.first? || nil)
+        end
+        query.limit(1).select.first?
+      else
+        all([clause.strip, "LIMIT 1"].join(" "), params, false).first?
+      end
     end
 
     def first!(clause = "", params = [] of Granite::Columns::Type)
@@ -83,6 +105,156 @@ module Granite::Querying
     # :ditto:
     def find_by!(criteria : Granite::ModelArgs)
       find_by(criteria) || raise NotFound.new("No #{{{@type.name.stringify}}} found where #{criteria.map { |k, v| %(#{k} #{v.nil? ? "is NULL" : "= #{v}"}) }.join(" and ")}")
+    end
+
+    # Returns the single record that matches the criteria. Raises `NotFound` if no record found.
+    # Raises `NotUnique` if more than one record found.
+    def sole(clause = "", params = [] of Granite::Columns::Type)
+      # If we have scoping support, use current_scope
+      if responds_to?(:current_scope)
+        query = current_scope
+        if !clause.empty?
+          # Handle WHERE clause - strip the WHERE prefix if present
+          clean_clause = clause.strip
+          if clean_clause.starts_with?("WHERE ")
+            clean_clause = clean_clause[6..-1]  # Remove "WHERE " prefix
+          end
+          query.where(clean_clause, params.first? || nil)
+        end
+        results = query.select.to_a
+      else
+        results = all(clause, params, false).to_a
+      end
+      
+      case results.size
+      when 0
+        raise NotFound.new("No #{{{@type.name.stringify}}} found")
+      when 1
+        results.first
+      else
+        raise NotUnique.new("Multiple #{{{@type.name.stringify}}} records found (expected exactly one)")
+      end
+    end
+
+    # Returns the single record that matches the given criteria. Raises `NotFound` if no record found.
+    # Raises `NotUnique` if more than one record found.
+    def find_sole_by(**criteria : Granite::Columns::Type)
+      find_sole_by(criteria.to_h)
+    end
+
+    # :ditto:
+    def find_sole_by(criteria : Granite::ModelArgs)
+      if criteria.empty?
+        sole
+      else
+        clause, params = build_find_by_clause(criteria)
+        sole("WHERE #{clause}", params)
+      end
+    end
+
+    # Finds and destroys all records matching the given criteria
+    def destroy_by(**criteria : Granite::Columns::Type) : Int32
+      destroy_by(criteria.to_h)
+    end
+
+    # :ditto:
+    def destroy_by(criteria : Granite::ModelArgs) : Int32
+      records = all
+      if !criteria.empty?
+        clause, params = build_find_by_clause(criteria)
+        records = all("WHERE #{clause}", params, false)
+      end
+      
+      count = 0
+      records.each do |record|
+        if record.destroy
+          count += 1
+        end
+      end
+      count
+    end
+
+    # Finds and deletes all records matching the given criteria (skips callbacks)
+    def delete_by(**criteria : Granite::Columns::Type) : Int64
+      delete_by(criteria.to_h)
+    end
+
+    # :ditto:
+    def delete_by(criteria : Granite::ModelArgs) : Int64
+      switch_to_writer_adapter
+      
+      if criteria.empty?
+        # Delete all records
+        sql = "DELETE FROM #{quoted_table_name}"
+        result = adapter.open do |db|
+          db.exec(sql).rows_affected
+        end
+        result
+      else
+        clause, params = build_find_by_clause(criteria)
+        sql = "DELETE FROM #{quoted_table_name} WHERE #{clause}"
+        result = adapter.open do |db|
+          db.exec(sql, args: params).rows_affected
+        end
+        result
+      end
+    end
+
+    # Updates updated_at timestamp for all records matching the given criteria
+    def touch_all(*fields, time : Time = Time.local(Granite.settings.default_timezone)) : Int64
+      time = time.at_beginning_of_second
+      
+      set_clause = ["#{quote("updated_at")} = ?"]
+      values = [time] of Granite::Columns::Type
+      
+      # Add any additional fields to touch
+      fields.each do |field|
+        set_clause << "#{quote(field.to_s)} = ?"
+        values << time
+      end
+      
+      sql = "UPDATE #{quoted_table_name} SET #{set_clause.join(", ")}"
+      
+      switch_to_writer_adapter
+      rows_affected = adapter.open do |db|
+        db.exec(sql, args: values).rows_affected
+      end
+      
+      rows_affected
+    end
+
+    # Updates counter columns for all records
+    def update_counters(id : Number | String, counters : Hash(Symbol, Int32)) : Int64
+      set_clause = [] of String
+      values = [] of Granite::Columns::Type
+      
+      counters.each do |column, value|
+        column_name = quote(column.to_s)
+        if value > 0
+          set_clause << "#{column_name} = #{column_name} + ?"
+        else
+          set_clause << "#{column_name} = #{column_name} - ?"
+        end
+        values << value.abs
+      end
+      
+      return 0_i64 if set_clause.empty?
+      
+      # Also update the updated_at timestamp
+      {% if @type.instance_vars.select { |ivar| ivar.annotation(Granite::Column) && ivar.name == "updated_at" }.size > 0 %}
+        set_clause << "#{quote("updated_at")} = ?"
+        values << Time.local(Granite.settings.default_timezone).at_beginning_of_second
+      {% end %}
+      
+      sql = "UPDATE #{quoted_table_name} SET #{set_clause.join(", ")} WHERE #{quote(primary_name)} = ?"
+      values << id
+      
+      switch_to_writer_adapter
+      rows_affected = adapter.open do |db|
+        db.exec(sql, args: values).rows_affected
+      end
+      
+      rows_affected
     end
 
     def find_each(clause = "", params = [] of Granite::Columns::Type, batch_size limit = 100, offset = 0, &)

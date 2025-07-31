@@ -6,7 +6,7 @@ describe "Granite::Associations::Polymorphic" do
     Comment.migrator.drop_and_create
     Image.migrator.drop_and_create
     Post.migrator.drop_and_create
-    Book.migrator.drop_and_create
+    PolyBook.migrator.drop_and_create
   end
   describe "polymorphic belongs_to" do
     it "creates the necessary columns" do
@@ -36,13 +36,13 @@ describe "Granite::Associations::Polymorphic" do
 
     it "handles different polymorphic types" do
       post = Post.create!(name: "Test Post")
-      book = Book.create!(name: "Test Book")
+      book = PolyBook.create!(name: "Test PolyBook")
       
       comment1 = Comment.create!(content: "About the post", commentable: post)
       comment2 = Comment.create!(content: "About the book", commentable: book)
       
       Comment.find!(comment1.id.not_nil!).commentable.should be_a(Post)
-      Comment.find!(comment2.id.not_nil!).commentable.should be_a(Book)
+      Comment.find!(comment2.id.not_nil!).commentable.should be_a(PolyBook)
     end
 
     it "handles nil polymorphic associations" do
@@ -56,11 +56,11 @@ describe "Granite::Associations::Polymorphic" do
   describe "polymorphic has_many" do
     it "retrieves associated records through polymorphic association" do
       post = Post.create!(name: "Test Post")
-      book = Book.create!(name: "Test Book")
+      book = PolyBook.create!(name: "Test PolyBook")
       
       comment1 = Comment.create!(content: "First post comment", commentable: post)
       comment2 = Comment.create!(content: "Second post comment", commentable: post)
-      comment3 = Comment.create!(content: "Book comment", commentable: book)
+      comment3 = Comment.create!(content: "PolyBook comment", commentable: book)
       
       post_comments = post.comments.to_a
       post_comments.size.should eq(2)
@@ -69,14 +69,14 @@ describe "Granite::Associations::Polymorphic" do
       
       book_comments = book.comments.to_a
       book_comments.size.should eq(1)
-      book_comments.first.content.should eq("Book comment")
+      book_comments.first.content.should eq("PolyBook comment")
     end
   end
 
   describe "polymorphic has_one" do
     it "retrieves a single associated record through polymorphic association" do
       post = Post.create!(name: "Test Post")
-      book = Book.create!(name: "Test Book")
+      book = PolyBook.create!(name: "Test PolyBook")
       
       post_image = Image.create!(url: "post.jpg", imageable: post)
       book_image = Image.create!(url: "book.jpg", imageable: book)

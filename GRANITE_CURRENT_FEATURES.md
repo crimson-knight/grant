@@ -709,6 +709,20 @@ For comprehensive documentation, see [docs/attribute_api.md](docs/attribute_api.
 
 ### Implementation Status
 - ✅ Basic implementation complete
-- ⚠️ Range query handling needs refinement
-- ⚠️ Some edge cases with NULL constraints
-- ⚠️ Cross-database SQL generation differences
+- ✅ Range query handling fixed (supports inclusive ranges with :gteq/:lteq operators)
+- ✅ Bulk operation parameter passing fixed
+- ✅ in_batches with start/finish constraints working correctly
+- ⚠️ SQLite-specific upsert behavior differs from PostgreSQL/MySQL
+- ⚠️ Some test isolation issues may occur
+
+### Known Issues Resolved
+1. **Range Query Support** - Fixed operator mapping for ranges (30..40 now correctly translates to >= and <= queries)
+2. **Parameter Passing** - Fixed issue where query parameters weren't being passed to executors by caching assembler instances
+3. **Bulk Operations** - Fixed NULL constraint errors by ensuring proper parameter collection
+4. **in_batches** - Fixed batch iteration logic to properly handle all records
+
+### Technical Notes
+- Query builder now properly uses `:gteq` and `:lteq` operators for range queries
+- Assembler instances are cached per query to preserve parameters
+- Bulk operations (insert_all/upsert_all) properly collect and pass parameters
+- SQLite requires unique indexes for ON CONFLICT clauses in upsert operations

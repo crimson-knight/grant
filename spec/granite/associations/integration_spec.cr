@@ -89,15 +89,15 @@ describe "Granite::Associations Integration Tests" do
   
   describe "autosave option" do
     it "saves new associated records on parent save" do
-      company = Company.create!(name: "ACME Corp")
+      company = AutosaveCompany.create!(name: "ACME Corp")
       
-      employee1 = Employee.new(name: "John Doe")
-      employee2 = Employee.new(name: "Jane Smith")
+      employee1 = AutosaveEmployee.new(name: "John Doe")
+      employee2 = AutosaveEmployee.new(name: "Jane Smith")
       
       company.employees = [employee1, employee2]
       company.save!
       
-      Employee.where(company_id: company.id).count.should eq(2)
+      AutosaveEmployee.where(autosave_company_id: company.id).count.should eq(2)
       employee1.persisted?.should be_true
       employee2.persisted?.should be_true
     end
@@ -258,23 +258,23 @@ class OrderItem < Granite::Base
 end
 
 # Has many autosave
-class Company < Granite::Base
+class AutosaveCompany < Granite::Base
   connection sqlite
-  table companies
+  table autosave_companies
   
   column id : Int64, primary: true
   column name : String
   
-  has_many :employees, autosave: true
+  has_many :employees, class_name: AutosaveEmployee, autosave: true
 end
 
-class Employee < Granite::Base
+class AutosaveEmployee < Granite::Base
   connection sqlite
-  table employees
+  table autosave_employees
   
   column id : Int64, primary: true
   column name : String
-  column company_id : Int64?
+  column autosave_company_id : Int64?
 end
 
 # Has one autosave
