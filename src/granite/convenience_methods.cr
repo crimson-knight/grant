@@ -42,9 +42,23 @@ module Granite::ConvenienceMethods(Model)
   # Extract values for specific columns
   def pluck(*fields : Symbol) : Array(Array(Granite::Columns::Type))
     field_names = fields.to_a.map(&.to_s)
-    sql = assembler.pluck_sql(field_names)
     
-    Granite::Query::Executor::Pluck(Model).new(sql, assembler.numbered_parameters, field_names).run
+    # Create assembler instance once to preserve parameters
+    @_cached_assembler ||= begin
+      case @db_type
+      when Granite::Query::Builder::DbType::Pg
+        Granite::Query::Assembler::Pg(Model).new(self)
+      when Granite::Query::Builder::DbType::Mysql
+        Granite::Query::Assembler::Mysql(Model).new(self)
+      when Granite::Query::Builder::DbType::Sqlite
+        Granite::Query::Assembler::Sqlite(Model).new(self)
+      else
+        raise "Unknown database type: #{@db_type}"
+      end
+    end
+    
+    sql = @_cached_assembler.not_nil!.pluck_sql(field_names)
+    Granite::Query::Executor::Pluck(Model).new(sql, @_cached_assembler.not_nil!.numbered_parameters, field_names).run
   end
   
   # Extract values from the first record
@@ -88,12 +102,8 @@ module Granite::ConvenienceMethods(Model)
       
       # Update relation for next batch
       op = batch_order == Granite::Query::Builder::Sort::Ascending ? :gt : :lt
-      # Create a new query builder for the same model
-      new_builder = Granite::Query::Builder(Model).new(@db_type)
-      # Copy existing where conditions
-      @where_fields.each { |field| new_builder.where_fields << field }
-      # Add new condition
-      relation = new_builder.where(primary_key, op, last_id)
+      # Update the where condition on the same relation
+      relation = relation.where(primary_key, op, last_id)
     end
   end
   
@@ -142,7 +152,8 @@ module Granite::BulkOperations
     
     # Create a query builder to get assembler
     builder = __builder
-    sql = builder.assembler.insert_all_sql(
+    assembler = builder.assembler
+    sql = assembler.insert_all_sql(
       attributes: string_attributes,
       returning: returning,
       unique_by: unique_by
@@ -152,7 +163,7 @@ module Granite::BulkOperations
     
     switch_to_writer_adapter
     adapter.open do |db|
-      db.query(sql, args: builder.assembler.numbered_parameters) do |rs|
+      db.query(sql, args: assembler.numbered_parameters) do |rs|
         rs.each do
           record = self.new
           # Populate record from result set if returning was specified
@@ -197,7 +208,8 @@ module Granite::BulkOperations
     
     # Create a query builder to get assembler
     builder = __builder
-    sql = builder.assembler.upsert_all_sql(
+    assembler = builder.assembler
+    sql = assembler.upsert_all_sql(
       attributes: string_attributes,
       returning: returning,
       unique_by: unique_by,
@@ -208,7 +220,7 @@ module Granite::BulkOperations
     
     switch_to_writer_adapter
     adapter.open do |db|
-      db.query(sql, args: builder.assembler.numbered_parameters) do |rs|
+      db.query(sql, args: assembler.numbered_parameters) do |rs|
         rs.each do
           record = self.new
           # Populate record from result set if returning was specified
@@ -256,6 +268,7 @@ class Granite::Query::Builder(Model)
   include Granite::ConvenienceMethods(Model)
   
   @query_annotation : String?
+  @_cached_assembler : Granite::Query::Assembler::Base(Model)?
 end
 
 # Include in Base

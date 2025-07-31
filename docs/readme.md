@@ -37,6 +37,16 @@ Granite::Connections << Granite::Adapter::Mysql.new(name: "mysql", url: "YOUR_DA
 
 Supported adapters include: `Mysql, Pg, and Sqlite`.
 
+#### Database Version Requirements
+
+Grant requires modern database versions for full feature support:
+
+- **PostgreSQL**: 9.5+ (for ON CONFLICT support)
+- **MySQL**: 5.6+ (for ON DUPLICATE KEY UPDATE)  
+- **SQLite**: 3.24.0+ (for ON CONFLICT support, enforced at runtime)
+
+Note: For SQLite, the library will automatically check the version on startup and raise an error if using a version older than 3.24.0. This ensures proper support for upsert operations using the modern `ON CONFLICT` syntax.
+
 ### Example Model
 
 Here is an example Granite model using the connection registered above.

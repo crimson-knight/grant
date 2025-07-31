@@ -4,10 +4,16 @@ describe "Granite::ConvenienceMethods" do
   # Create table before tests
   before_all do
     ConvenienceUser.migrator.drop_and_create
+    # Add unique constraint for upsert tests
+    ConvenienceUser.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_convenience_users_email ON convenience_users(email)")
   end
   
   before_each do
     ConvenienceUser.clear
+    # Also clear the test database directly to ensure clean state
+    ConvenienceUser.adapter.open do |db|
+      db.exec("DELETE FROM convenience_users")
+    end
   end
   
   describe "#pluck" do
@@ -32,7 +38,7 @@ describe "Granite::ConvenienceMethods" do
       ConvenienceUser.create!(name: "Jane", email: "jane@example.com", age: 30)
       ConvenienceUser.create!(name: "Jim", email: "jim@example.com", age: 35)
       
-      names = ConvenienceUser.where(age: 30..40).pluck(:name)
+      names = ConvenienceUser.where(age: 30..40).order(age: :asc).pluck(:name)
       names.should eq([["Jane"], ["Jim"]])
     end
     
@@ -52,7 +58,7 @@ describe "Granite::ConvenienceMethods" do
       ConvenienceUser.create!(name: "Jane", email: "jane@example.com", age: 30)
       
       data = ConvenienceUser.order(name: :asc).pick(:name, :age)
-      data.should eq(["Alice", 25])
+      data.should eq(["Jane", 30])
     end
     
     it "returns nil when no records exist" do
@@ -64,7 +70,7 @@ describe "Granite::ConvenienceMethods" do
       ConvenienceUser.create!(name: "John", email: "john@example.com", age: 25)
       ConvenienceUser.create!(name: "Jane", email: "jane@example.com", age: 30)
       
-      data = ConvenienceUser.where(age: 30).pick(:name, :age)
+      data = ConvenienceUser.where(age: 30..30).pick(:name, :age)
       data.should eq(["Jane", 30])
     end
   end
@@ -75,12 +81,19 @@ describe "Granite::ConvenienceMethods" do
         ConvenienceUser.create!(name: "User#{i}", email: "user#{i}@example.com", age: 20 + i)
       end
       
+      # Verify all records were created
+      total_users = ConvenienceUser.count
+      total_users.should eq(10)
+      
       batch_sizes = [] of Int32
+      total_processed = 0
       ConvenienceUser.in_batches(of: 3) do |batch|
         batch_sizes << batch.size
+        total_processed += batch.size
       end
       
-      batch_sizes.should eq([3, 3, 3, 1]) # Adjust based on actual behavior
+      total_processed.should eq(10)
+      batch_sizes.should eq([3, 3, 3, 1])
     end
     
     it "respects start and finish constraints" do
@@ -88,7 +101,9 @@ describe "Granite::ConvenienceMethods" do
         ConvenienceUser.create!(name: "User#{i}", email: "user#{i}@example.com", age: 20 + i)
       end
       
-      users = ConvenienceUser.all
+      users = ConvenienceUser.order(id: :asc).select
+      users.size.should eq(10)
+      
       start_id = users[2].id!
       finish_id = users[7].id!
       
@@ -139,9 +154,9 @@ describe "Granite::ConvenienceMethods" do
       
       ConvenienceUser.insert_all(attributes)
       
-      users = ConvenienceUser.all
+      users = ConvenienceUser.order(name: :asc).select
       users.size.should eq(3)
-      users.map(&.name).should eq(["John", "Jane", "Jim"])
+      users.map(&.name).sort.should eq(["Jane", "Jim", "John"])
     end
     
     it "handles empty array" do

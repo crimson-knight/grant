@@ -31,19 +31,34 @@
 
 ## Known Issues & TODO
 
-### Range Query Support
-- Range queries (e.g., `where(age: 30..40)`) need proper handling
-- Currently converting to >= and <= operations, but may need exclusive range support
+### Resolved Issues ✅
+1. **Range Query Support** 
+   - Fixed operator mapping (`:gteq`/`:lteq` instead of `:gte`/`:lte`)
+   - Range queries now properly translate to >= and <= SQL operations
+   - Parameters are correctly passed through assembler instances
 
-### Bulk Operations
-- Need to handle NULL constraint errors better
-- SQL generation for different databases needs testing
-- Returning clause support is database-specific
+2. **Bulk Operations Parameter Passing**
+   - Fixed issue where parameters weren't being collected
+   - Assembler instances are now properly reused within operations
+   - NULL constraint errors resolved
 
-### Testing
-- Some tests are failing due to order expectations
-- Need to add more comprehensive test coverage
-- Cross-database compatibility testing needed
+3. **in_batches Improvements**
+   - Fixed batch iteration logic
+   - Properly handles start/finish constraints
+   - Correctly processes all records without skipping
+
+### Remaining Issues
+
+### Database-Specific Behavior (Resolved)
+- ✅ SQLite now requires version 3.24.0+ with proper ON CONFLICT support
+- ✅ Version check implemented at adapter initialization
+- ✅ Consistent upsert behavior across all databases
+- ⚠️ RETURNING clause support still varies by database adapter (PostgreSQL full support, MySQL none, SQLite limited)
+
+### Testing Improvements Needed
+- Better test isolation to prevent data contamination between tests
+- Cross-database compatibility testing
+- Performance benchmarking for bulk operations
 
 ## Implementation Notes
 

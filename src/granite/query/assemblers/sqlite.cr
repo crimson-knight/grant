@@ -73,31 +73,38 @@ module Granite::Query::Assembler
         "(#{values.join(", ")})"
       end.join(", ")
       
-      # SQLite uses INSERT OR REPLACE for upsert
-      sql = "INSERT OR REPLACE INTO #{table_name} (#{column_list}) VALUES #{values_list}"
+      # SQLite 3.24+ supports proper ON CONFLICT syntax
+      sql = "INSERT INTO #{table_name} (#{column_list}) VALUES #{values_list}"
       
-      # Note: SQLite's INSERT OR REPLACE is not exactly the same as PostgreSQL's
-      # ON CONFLICT DO UPDATE. It will delete and re-insert the row, which can
-      # affect foreign key constraints and triggers.
-      # A more accurate implementation would use multiple statements or
-      # the newer ON CONFLICT syntax in SQLite 3.24+
-      
-      if unique_by && !unique_by.empty? && update_only && !update_only.empty?
-        # For SQLite 3.24+, we could use ON CONFLICT
+      if unique_by && !unique_by.empty?
         conflict_columns = unique_by.map(&.to_s).join(", ")
         
         # Determine which columns to update
-        update_columns = update_only.map(&.to_s)
-        
-        # Build update assignments
-        updates = update_columns.map do |col|
-          "#{col} = excluded.#{col}"
+        update_columns = if update_only && !update_only.empty?
+          update_only.map(&.to_s)
+        else
+          # Update all columns except primary key and unique columns
+          excluded = [Model.primary_name]
+          excluded += unique_by.map(&.to_s) if unique_by
+          columns.reject { |col| excluded.includes?(col) }
         end
         
-        sql = "INSERT INTO #{table_name} (#{column_list}) VALUES #{values_list}"
-        sql += " ON CONFLICT(#{conflict_columns}) DO UPDATE SET "
-        sql += updates.join(", ")
+        if update_columns.empty?
+          # If no columns to update, use DO NOTHING
+          sql += " ON CONFLICT(#{conflict_columns}) DO NOTHING"
+        else
+          # Build update assignments
+          updates = update_columns.map do |col|
+            "#{col} = excluded.#{col}"
+          end
+          
+          sql += " ON CONFLICT(#{conflict_columns}) DO UPDATE SET "
+          sql += updates.join(", ")
+        end
       end
+      
+      # Note: SQLite doesn't support RETURNING clause in the same way as PostgreSQL
+      # This would need to be handled differently if returning is requested
       
       sql
     end

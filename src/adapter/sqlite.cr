@@ -1,9 +1,16 @@
 require "./base"
 require "sqlite3"
+require "../granite/sqlite_version_check"
 
 # Sqlite implementation of the Adapter
 class Granite::Adapter::Sqlite < Granite::Adapter::Base
   QUOTING_CHAR = '"'
+  
+  def initialize(@name : String, @url : String)
+    super
+    # Check SQLite version on first connection
+    Granite::SQLiteVersionCheck.ensure_supported!
+  end
 
   module Schema
     TYPES = {
@@ -57,11 +64,14 @@ class Granite::Adapter::Sqlite < Granite::Adapter::Base
     params = [] of Granite::Columns::Type
 
     statement = String.build do |stmt|
-      stmt << "INSERT "
       if options["update_on_duplicate"]?
-        stmt << "OR REPLACE "
+        # Note: This is legacy code. New code should use upsert_all
+        # which properly handles ON CONFLICT for SQLite 3.24+
+        stmt << "INSERT OR REPLACE "
       elsif options["ignore_on_duplicate"]?
-        stmt << "OR IGNORE "
+        stmt << "INSERT OR IGNORE "
+      else
+        stmt << "INSERT "
       end
       stmt << "INTO #{quote(table_name)} ("
       stmt << fields.map { |field| quote(field) }.join(", ")
