@@ -13,4 +13,5 @@ module Granite::Query::BuilderMethods
   end
 
   delegate where, order, offset, limit, to: __builder
+  delegate pluck, pick, in_batches, annotate, to: __builder
 end
