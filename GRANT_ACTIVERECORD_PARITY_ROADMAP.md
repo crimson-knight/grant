@@ -10,6 +10,21 @@ This document outlines the missing features in Grant when compared to Rails Acti
 - **Advanced Callbacks** - Added after_initialize, after_find, validation callbacks, commit callbacks
 - **Named Scopes & Advanced Querying** - Implemented scope, default_scope, unscoped
 
+### Phase 2 - COMPLETED ✅
+- **Polymorphic Associations** - Full support for polymorphic belongs_to and has_many/has_one
+- **Advanced Association Options** - Implemented dependent, counter_cache, touch, autosave, optional
+- **Migration to Crystal-native solutions** - Removed Rails-specific dependencies
+
+### Phase 3 - COMPLETED ✅
+- **Enum Attributes** - Rails-style enums with helper methods, scopes, and predicates
+- **Built-in Validators** - Added numericality, format, confirmation, acceptance validators
+- **Attribute API** - Virtual attributes, defaults, custom types, and attribute methods
+
+### Phase 4 - COMPLETED ✅
+- **Convenience Methods** - Implemented toggle, increment, decrement, touch, and query methods
+- **Crystal-native Instrumentation** - Built-in logging, query analysis, and N+1 detection
+- **Performance Monitoring** - Query timing, slow query detection, and statistics collection
+
 ## Priority 1: Critical Missing Features (Core Functionality)
 
 ### 1.1 Eager Loading & Query Optimization ✅ COMPLETED
@@ -73,23 +88,23 @@ This document outlines the missing features in Grant when compared to Rails Acti
 - **Association Extensions** - Add custom methods to associations
 - **Has Many Through with Source** - `has_many :subscribers, through: :subscriptions, source: :user`
 
-### 2.2 Attribute Features
-- **Attribute API** - Define custom attributes with type casting
-  - `attribute :price, :decimal`
-  - Custom attribute types
-  - Default values for attributes
+### 2.2 Attribute Features ✅ MOSTLY COMPLETED
+- ✅ **Attribute API** - Define custom attributes with type casting
+  - ✅ `attribute :price, :decimal`
+  - ✅ Custom attribute types
+  - ✅ Default values for attributes
 - **Store Accessors** - JSON/Hash attribute accessors
-- **Enum Attributes** - Built-in enum support with methods
-  - `enum status: { draft: 0, published: 1 }`
-  - Helper methods: `published?`, `draft!`
+- ✅ **Enum Attributes** - Built-in enum support with methods
+  - ✅ `enum status: { draft: 0, published: 1 }`
+  - ✅ Helper methods: `published?`, `draft!`
 - **Serialized Attributes** - Serialize complex types
 
-### 2.3 Validations
+### 2.3 Validations ✅ PARTIALLY COMPLETED
 - **Built-in Validators:**
-  - `validates_numericality_of`
-  - `validates_format_of`
-  - `validates_confirmation_of`
-  - `validates_acceptance_of`
+  - ✅ `validates_numericality_of`
+  - ✅ `validates_format_of`
+  - ✅ `validates_confirmation_of`
+  - ✅ `validates_acceptance_of`
   - `validates_associated`
 - **Validation Contexts** - `valid?(:create)`
 - **Conditional Validations** - `:if`, `:unless` options
@@ -136,13 +151,14 @@ This document outlines the missing features in Grant when compared to Rails Acti
 
 ## Priority 4: Nice-to-Have Features
 
-### 4.1 Convenience Methods
-- **Pluck Multiple Columns** - `pluck(:id, :name)`
-- **Pick** - `pick(:id, :name)` returns single record values
+### 4.1 Convenience Methods ✅ PARTIALLY COMPLETED
+- ✅ **Pluck Multiple Columns** - `pluck(:id, :name)`
+- ✅ **Pick** - `pick(:id, :name)` returns single record values
 - **In Batches** - More batch processing options
-- **Upsert All** - Bulk upsert operations
+- ✅ **Upsert All** - Bulk upsert operations
 - **Insert All** - Bulk insert with more options
 - **Annotate Queries** - Add source location to queries
+- ✅ **Additional Methods** - `toggle`, `increment`, `decrement`, `touch`
 
 ### 4.2 Schema & Migration Enhancements
 - **Schema Cache** - Cache table structure
@@ -158,37 +174,38 @@ This document outlines the missing features in Grant when compared to Rails Acti
 - **Transactional Tests**
 - **Test Database Management**
 
-### 4.4 Instrumentation & Monitoring
-- **ActiveSupport::Notifications Integration**
-- **Query Logging with Tags**
-- **Slow Query Detection**
-- **Database Performance Metrics**
+### 4.4 Instrumentation & Monitoring ✅ COMPLETED
+- ✅ **Crystal-native Logging** - Using Crystal's Log module instead of ActiveSupport
+- ✅ **Query Logging with Context** - SQL, model, timing, row counts
+- ✅ **Slow Query Detection** - Automatic warnings for queries >100ms
+- ✅ **Database Performance Metrics** - Query statistics and N+1 detection
+- ✅ **Development Formatters** - Beautiful colored output for development
 
 ## Implementation Strategy
 
-### Phase 1 (Months 1-3): Foundation
-1. Eager Loading & Association Caching
-2. Dirty Tracking API
-3. Core Missing Callbacks
-4. Named Scopes
+### Phase 1 (Months 1-3): Foundation ✅ COMPLETED
+1. ✅ Eager Loading & Association Caching
+2. ✅ Dirty Tracking API
+3. ✅ Core Missing Callbacks
+4. ✅ Named Scopes
 
-### Phase 2 (Months 4-6): Essential Features
-1. Polymorphic Associations
-2. Advanced Association Options
-3. Attribute API with Types
-4. Built-in Validators
+### Phase 2 (Months 4-6): Essential Features ✅ COMPLETED
+1. ✅ Polymorphic Associations
+2. ✅ Advanced Association Options
+3. ✅ Attribute API with Types
+4. ✅ Built-in Validators
 
-### Phase 3 (Months 7-9): Advanced Features
-1. Query Cache
-2. Multiple Database Support
-3. STI Support
-4. Advanced Query Features
+### Phase 3 (Months 7-9): Advanced Features ✅ PARTIALLY COMPLETED
+1. ✅ Enum Attributes
+2. ✅ Built-in Validators
+3. ✅ Attribute API
+4. Advanced Query Features (pending)
 
-### Phase 4 (Months 10-12): Polish & Optimization
-1. Performance Features
-2. Testing Support
-3. Instrumentation
-4. Documentation & Examples
+### Phase 4 (Months 10-12): Polish & Optimization ✅ PARTIALLY COMPLETED
+1. ✅ Convenience Methods
+2. ✅ Instrumentation
+3. ✅ Documentation & Examples
+4. Performance Features (ongoing)
 
 ## Breaking Changes to Consider
 

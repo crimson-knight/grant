@@ -28,6 +28,8 @@ require "./association_loader"
 require "./commit_callbacks"
 require "./scoping"
 require "./attribute_api"
+require "./logging"
+require "./query_analysis"
 
 # Granite::Base is the base class for your model objects.
 abstract class Granite::Base

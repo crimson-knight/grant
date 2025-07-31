@@ -7,15 +7,30 @@ module Granite::Query::Executor
 
     def run : Array(Model)
       log @sql, @args
-
+      
+      start_time = Time.monotonic
       results = [] of Model
 
-      Model.adapter.open do |db|
-        db.query @sql, args: @args do |record_set|
-          record_set.each do
-            results << Model.from_rs record_set
+      begin
+        Model.adapter.open do |db|
+          db.query @sql, args: @args do |record_set|
+            record_set.each do
+              results << Model.from_rs record_set
+            end
           end
         end
+        
+        duration = Time.monotonic - start_time
+        log_query_with_timing(@sql, @args, duration, results.size, Model.name)
+      rescue e
+        duration = Time.monotonic - start_time
+        Granite::Logs::SQL.error &.emit("Query failed",
+          sql: @sql,
+          model: Model.name,
+          duration_ms: duration.total_milliseconds,
+          error: e.message
+        )
+        raise e
       end
 
       results

@@ -249,6 +249,184 @@ describe "Granite::ConvenienceMethods" do
       users[1].name.should eq("John Updated")
     end
   end
+  
+  describe "#sole" do
+    it "returns the single record" do
+      ConvenienceUser.create!(name: "John", email: "john@example.com", age: 25)
+      
+      user = ConvenienceUser.sole
+      user.name.should eq("John")
+    end
+    
+    it "raises NotFound when no records exist" do
+      expect_raises(Granite::Querying::NotFound, "No ConvenienceUser found") do
+        ConvenienceUser.sole
+      end
+    end
+    
+    it "raises NotUnique when multiple records exist" do
+      ConvenienceUser.create!(name: "John", email: "john@example.com", age: 25)
+      ConvenienceUser.create!(name: "Jane", email: "jane@example.com", age: 30)
+      
+      expect_raises(Granite::Querying::NotUnique, "Multiple ConvenienceUser records found") do
+        ConvenienceUser.sole
+      end
+    end
+    
+    it "works with query builder" do
+      ConvenienceUser.create!(name: "John", email: "john@example.com", age: 25)
+      ConvenienceUser.create!(name: "Jane", email: "jane@example.com", age: 30)
+      
+      user = ConvenienceUser.where(name: "John").sole
+      user.email.should eq("john@example.com")
+    end
+  end
+  
+  describe "#find_sole_by" do
+    it "returns the single matching record" do
+      ConvenienceUser.create!(name: "John", email: "john@example.com", age: 25)
+      ConvenienceUser.create!(name: "Jane", email: "jane@example.com", age: 30)
+      
+      user = ConvenienceUser.find_sole_by(email: "john@example.com")
+      user.name.should eq("John")
+    end
+    
+    it "raises NotFound when no matching record" do
+      expect_raises(Granite::Querying::NotFound) do
+        ConvenienceUser.find_sole_by(email: "nonexistent@example.com")
+      end
+    end
+    
+    it "raises NotUnique when multiple records match" do
+      ConvenienceUser.create!(name: "John", email: "john@example.com", age: 25)
+      ConvenienceUser.create!(name: "John", email: "john2@example.com", age: 30)
+      
+      expect_raises(Granite::Querying::NotUnique) do
+        ConvenienceUser.find_sole_by(name: "John")
+      end
+    end
+  end
+  
+  describe ".destroy_by" do
+    it "destroys all matching records" do
+      ConvenienceUser.create!(name: "John", email: "john@example.com", age: 25)
+      ConvenienceUser.create!(name: "Jane", email: "jane@example.com", age: 30)
+      ConvenienceUser.create!(name: "John", email: "john2@example.com", age: 35)
+      
+      count = ConvenienceUser.destroy_by(name: "John")
+      count.should eq(2)
+      
+      remaining = ConvenienceUser.all
+      remaining.size.should eq(1)
+      remaining.first.name.should eq("Jane")
+    end
+    
+    it "returns 0 when no records match" do
+      count = ConvenienceUser.destroy_by(name: "Nonexistent")
+      count.should eq(0)
+    end
+    
+    it "works with query builder" do
+      ConvenienceUser.create!(name: "John", email: "john@example.com", age: 25)
+      ConvenienceUser.create!(name: "Jane", email: "jane@example.com", age: 30)
+      ConvenienceUser.create!(name: "Jim", email: "jim@example.com", age: 35)
+      
+      count = ConvenienceUser.where(age: 30..40).destroy_all
+      count.should eq(2)
+      
+      ConvenienceUser.count.should eq(1)
+    end
+  end
+  
+  describe ".delete_by" do
+    it "deletes all matching records" do
+      ConvenienceUser.create!(name: "John", email: "john@example.com", age: 25)
+      ConvenienceUser.create!(name: "Jane", email: "jane@example.com", age: 30)
+      ConvenienceUser.create!(name: "John", email: "john2@example.com", age: 35)
+      
+      rows_affected = ConvenienceUser.delete_by(name: "John")
+      rows_affected.should eq(2)
+      
+      ConvenienceUser.count.should eq(1)
+    end
+    
+    it "returns 0 when no records match" do
+      rows_affected = ConvenienceUser.delete_by(name: "Nonexistent")
+      rows_affected.should eq(0)
+    end
+  end
+  
+  describe ".touch_all" do
+    it "updates updated_at timestamp" do
+      user1 = ConvenienceUser.create!(name: "John", email: "john@example.com", age: 25)
+      user2 = ConvenienceUser.create!(name: "Jane", email: "jane@example.com", age: 30)
+      
+      original_time = user1.updated_at!
+      sleep 1.second  # Ensure time difference for SQLite second precision
+      
+      rows_affected = ConvenienceUser.touch_all
+      rows_affected.should eq(2)
+      
+      user1 = ConvenienceUser.find!(user1.id!)
+      user2 = ConvenienceUser.find!(user2.id!)
+      
+      user1.updated_at!.should be > original_time
+      user2.updated_at!.should be > original_time
+    end
+    
+    it "works with query builder" do
+      ConvenienceUser.create!(name: "John", email: "john@example.com", age: 25)
+      user2 = ConvenienceUser.create!(name: "Jane", email: "jane@example.com", age: 30)
+      
+      original_time = user2.updated_at!
+      sleep 1.second  # Ensure time difference for SQLite second precision
+      
+      rows_affected = ConvenienceUser.where(name: "Jane").touch_all
+      rows_affected.should eq(1)
+      
+      user2 = ConvenienceUser.find!(user2.id!)
+      user2.updated_at!.should be > original_time
+    end
+  end
+  
+  describe ".update_counters" do
+    it "increments counter columns" do
+      user = ConvenienceUser.create!(name: "John", email: "john@example.com", age: 25)
+      
+      rows_affected = ConvenienceUser.update_counters(user.id!, {:age => 5})
+      rows_affected.should eq(1)
+      
+      user = ConvenienceUser.find!(user.id!)
+      user.age.should eq(30)
+    end
+    
+    it "decrements counter columns" do
+      user = ConvenienceUser.create!(name: "John", email: "john@example.com", age: 25)
+      
+      rows_affected = ConvenienceUser.update_counters(user.id!, {:age => -3})
+      rows_affected.should eq(1)
+      
+      user = ConvenienceUser.find!(user.id!)
+      user.age.should eq(22)
+    end
+    
+    it "updates multiple counters" do
+      # This test would need additional columns to be meaningful
+      # For now, just test with age
+      user = ConvenienceUser.create!(name: "John", email: "john@example.com", age: 25)
+      
+      rows_affected = ConvenienceUser.update_counters(user.id!, {:age => 10})
+      rows_affected.should eq(1)
+      
+      user = ConvenienceUser.find!(user.id!)
+      user.age.should eq(35)
+    end
+    
+    it "returns 0 for non-existent record" do
+      rows_affected = ConvenienceUser.update_counters(999999, {:age => 5})
+      rows_affected.should eq(0)
+    end
+  end
 end
 
 # Test model

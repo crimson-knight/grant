@@ -5,17 +5,43 @@ class Granite::AssociationCollection(Owner, Target)
   end
 
   def all(clause = "", params = [] of DB::Any)
-    Target.all(
+    start_time = Time.monotonic
+    results = Target.all(
       [query, clause].join(" "),
       [owner.primary_key_value] + params
     )
+    duration = Time.monotonic - start_time
+    
+    Granite::Logs::Association.info &.emit("Loaded has_many association",
+      model: Owner.name,
+      target_class: Target.name,
+      foreign_key: @foreign_key.to_s,
+      records_loaded: results.size,
+      duration_ms: duration.total_milliseconds
+    )
+    
+    results
   end
 
   def find_by(**args)
-    Target.first(
+    start_time = Time.monotonic
+    result = Target.first(
       "#{query} AND #{args.map { |arg| "#{Target.quote(Target.table_name)}.#{Target.quote(arg.to_s)} = ?" }.join(" AND ")}",
       [owner.primary_key_value] + args.values.to_a
     )
+    duration = Time.monotonic - start_time
+    
+    if result
+      Granite::Logs::Association.debug &.emit("Found record in association",
+        model: Owner.name,
+        target_class: Target.name,
+        foreign_key: @foreign_key.to_s,
+        duration_ms: duration.total_milliseconds,
+        criteria: args.to_h
+      )
+    end
+    
+    result
   end
 
   def find_by!(**args)

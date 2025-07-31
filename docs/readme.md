@@ -93,3 +93,7 @@ end
 [Built-in Validators](./built_in_validators.md) - Common validators for format, length, numericality, and more
 
 [Attribute API](./attribute_api.md) - Flexible attributes with virtual fields, defaults, and custom types
+
+[Convenience Methods](./convenience_methods.md) - Rails-style convenience methods like toggle, increment, and decrement
+
+[Instrumentation](./instrumentation.md) - Built-in logging, query analysis, and performance monitoring

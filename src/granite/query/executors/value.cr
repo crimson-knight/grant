@@ -13,8 +13,24 @@ module Granite::Query::Executor
       if @default.nil?
         raise "No default provided"
       else
-        Model.adapter.open do |db|
-          db.query_one?(@sql, args: @args, as: Scalar) || @default
+        start_time = Time.monotonic
+        begin
+          result = Model.adapter.open do |db|
+            db.query_one?(@sql, args: @args, as: Scalar) || @default
+          end
+          
+          duration = Time.monotonic - start_time
+          log_query_with_timing(@sql, @args, duration, 1, Model.name)
+          result
+        rescue e
+          duration = Time.monotonic - start_time
+          Granite::Logs::SQL.error &.emit("Query failed",
+            sql: @sql,
+            model: Model.name,
+            duration_ms: duration.total_milliseconds,
+            error: e.message
+          )
+          raise e
         end
       end
     end

@@ -86,13 +86,18 @@
 3. Create usage examples for each convenience method
 4. Performance benchmarking of bulk operations
 
+### Implemented Additional Methods (Phase 4 Extended)
+1. ✅ `sole` and `find_sole_by` - Find single record, raise if multiple found
+2. ✅ `destroy_by` - Find and destroy records matching criteria  
+3. ✅ `delete_by` - Find and delete records matching criteria
+4. ✅ `touch_all` - Update timestamps on all matching records
+5. ✅ `update_counters` - Increment/decrement counter columns
+
 ### Future Enhancements
 1. Additional Rails 8 convenience methods:
-   - `sole` and `find_sole_by` - Find single record, raise if multiple found
-   - `destroy_by` - Find and destroy records matching criteria
-   - `delete_by` - Find and delete records matching criteria
-   - `touch_all` - Update timestamps on all matching records
-   - `update_counters` - Increment/decrement counter columns
+   - `insert_all!` with strict validation
+   - `touch` with specific fields
+   - `delete_all` with conditions
 
 2. Implement Crystal-native instrumentation using Log module (see [instrumentation_design.md](../../docs/instrumentation_design.md))
 

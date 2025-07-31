@@ -138,6 +138,11 @@ module Granite::Transactions
       {% raise "Composite primary keys are not yet supported for '#{@type.name}'." if @type.instance_vars.select { |ivar| ann = ivar.annotation(Granite::Column); ann && ann[:primary] }.size > 1 %}
       {% ann = primary_key.annotation(Granite::Column) %}
 
+      Granite::Logs::Model.debug &.emit("Creating record",
+        model: self.class.name,
+        attributes: attributes_hash
+      )
+
       set_timestamps unless skip_timestamps
       fields = self.class.content_fields.dup
       params = content_values
@@ -174,11 +179,30 @@ module Granite::Transactions
       {% end %}
     {% end %}
   rescue err : DB::Error
+    Granite::Logs::Model.error &.emit("Failed to create record",
+      model: self.class.name,
+      error: err.message,
+      attributes: attributes_hash
+    )
     raise err
   rescue err
+    Granite::Logs::Model.error &.emit("Failed to create record",
+      model: self.class.name,
+      error: err.message,
+      attributes: attributes_hash
+    )
     raise DB::Error.new(err.message, cause: err)
   else
     self.new_record = false
+    
+    {% begin %}
+      {% primary_key = @type.instance_vars.find { |ivar| (ann = ivar.annotation(Granite::Column)) && ann[:primary] } %}
+      Granite::Logs::Model.info &.emit("Record created",
+        model: self.class.name,
+        id: @{{primary_key.name.id}},
+        attributes: attributes_hash
+      )
+    {% end %}
   end
 
   private def __update(skip_timestamps : Bool = false)
@@ -186,6 +210,13 @@ module Granite::Transactions
     {% primary_key = @type.instance_vars.find { |ivar| (ann = ivar.annotation(Granite::Column)) && ann[:primary] } %}
     {% raise raise "A primary key must be defined for #{@type.name}." unless primary_key %}
     {% ann = primary_key.annotation(Granite::Column) %}
+    
+    Granite::Logs::Model.debug &.emit("Updating record",
+      model: self.class.name,
+      id: @{{primary_key.name.id}},
+      attributes: attributes_hash
+    )
+    
     set_timestamps(mode: :update) unless skip_timestamps
     fields = self.class.content_fields.dup
     params = content_values + [@{{primary_key.name.id}}]
@@ -198,7 +229,18 @@ module Granite::Transactions
 
     begin
      self.class.adapter.update(self.class.table_name, self.class.primary_name, fields, params)
+     
+     Granite::Logs::Model.info &.emit("Record updated",
+       model: self.class.name,
+       id: @{{primary_key.name.id}},
+       attributes: attributes_hash
+     )
     rescue err
+      Granite::Logs::Model.error &.emit("Failed to update record",
+        model: self.class.name,
+        id: @{{primary_key.name.id}},
+        error: err.message
+      )
       raise DB::Error.new(err.message, cause: err)
     end
   {% end %}
@@ -209,8 +251,19 @@ module Granite::Transactions
     {% primary_key = @type.instance_vars.find { |ivar| (ann = ivar.annotation(Granite::Column)) && ann[:primary] } %}
     {% raise raise "A primary key must be defined for #{@type.name}." unless primary_key %}
     {% ann = primary_key.annotation(Granite::Column) %}
+    
+    Granite::Logs::Model.debug &.emit("Destroying record",
+      model: self.class.name,
+      id: @{{primary_key.name.id}}
+    )
+    
     self.class.adapter.delete(self.class.table_name, self.class.primary_name, @{{primary_key.name.id}})
     @destroyed = true
+    
+    Granite::Logs::Model.info &.emit("Record destroyed",
+      model: self.class.name,
+      id: @{{primary_key.name.id}}
+    )
   {% end %}
   end
 
@@ -248,6 +301,16 @@ module Granite::Transactions
       if message = ex.message
         Log.error { "Save Exception: #{message}" }
         errors << Granite::Error.new(:base, message)
+        
+        {% begin %}
+        {% primary_key = @type.instance_vars.find { |ivar| (ann = ivar.annotation(Granite::Column)) && ann[:primary] } %}
+        Granite::Logs::Model.error &.emit("Failed to save record",
+          model: self.class.name,
+          id: @{{primary_key.name.id}},
+          error: message,
+          new_record: new_record?
+        )
+        {% end %}
       end
       run_rollback_callbacks if responds_to?(:run_rollback_callbacks)
       return false
@@ -305,6 +368,15 @@ module Granite::Transactions
       if message = ex.message
         Log.error { "Destroy Exception: #{message}" }
         errors << Granite::Error.new(:base, message)
+        
+        {% begin %}
+        {% primary_key = @type.instance_vars.find { |ivar| (ann = ivar.annotation(Granite::Column)) && ann[:primary] } %}
+        Granite::Logs::Model.error &.emit("Failed to destroy record",
+          model: self.class.name,
+          id: @{{primary_key.name.id}},
+          error: message
+        )
+        {% end %}
       end
       run_rollback_callbacks if responds_to?(:run_rollback_callbacks)
       return false

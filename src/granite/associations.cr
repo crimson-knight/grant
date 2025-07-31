@@ -37,6 +37,13 @@ module Granite::Associations
       if association_loaded?({{method_name.stringify}})
         get_loaded_association({{method_name.stringify}}).as({{class_name.id}}?)
       elsif parent = {{class_name.id}}.find_by({{primary_key.id}}: {{foreign_key.id}})
+        Granite::Logs::Association.debug &.emit("Loaded belongs_to association",
+          model: self.class.name,
+          association: {{method_name.stringify}},
+          target_class: {{class_name.id.stringify}},
+          foreign_key: {{foreign_key.id.stringify}},
+          foreign_key_value: {{foreign_key.id}}
+        )
         parent
       else
         {{class_name.id}}.new
@@ -120,7 +127,17 @@ module Granite::Associations
       if association_loaded?({{method_name.stringify}})
         get_loaded_association({{method_name.stringify}}).as({{class_name.id}}?)
       else
-        {{class_name.id}}.find_by({{foreign_key.id}}: self.{{primary_key.id}})
+        result = {{class_name.id}}.find_by({{foreign_key.id}}: self.{{primary_key.id}})
+        if result
+          Granite::Logs::Association.debug &.emit("Loaded has_one association",
+            model: self.class.name,
+            association: {{method_name.stringify}},
+            target_class: {{class_name.id.stringify}},
+            foreign_key: {{foreign_key.id.stringify}},
+            primary_key_value: self.{{primary_key.id}}
+          )
+        end
+        result
       end
     end
 
@@ -194,6 +211,13 @@ module Granite::Associations
           Granite::AssociationCollection(self, {{class_name.id}}).new(self, {{foreign_key}}, {{through}}, {{primary_key}})
         end
       else
+        Granite::Logs::Association.debug &.emit("Created has_many association collection",
+          model: self.class.name,
+          association: {{method_name.stringify}},
+          target_class: {{class_name.id.stringify}},
+          foreign_key: {{foreign_key.id.stringify}},
+          through: {{through ? through.id.stringify : nil}}
+        )
         Granite::AssociationCollection(self, {{class_name.id}}).new(self, {{foreign_key}}, {{through}}, {{primary_key}})
       end
     end

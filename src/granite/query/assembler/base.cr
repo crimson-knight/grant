@@ -29,6 +29,7 @@ module Granite::Query::Assembler
                                 returning : Array(Symbol)?, 
                                 unique_by : Array(Symbol)?,
                                 update_only : Array(Symbol)?) : String
+    abstract def touch_all(fields : Tuple, time : Time) : Int64
 
     def where_clause(where_fields = @query.where_fields)
       clauses = where_fields.map do |clause|

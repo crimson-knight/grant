@@ -185,8 +185,31 @@ module Granite::Query::Assembler
       end
 
       log sql, numbered_parameters
-      Model.adapter.open do |db|
-        db.exec sql, args: numbered_parameters
+      
+      start_time = Time.monotonic
+      begin
+        result = Model.adapter.open do |db|
+          db.exec sql, args: numbered_parameters
+        end
+        
+        duration = Time.monotonic - start_time
+        Granite::Logs::SQL.info &.emit("Delete executed",
+          sql: sql,
+          model: Model.name,
+          duration_ms: duration.total_milliseconds,
+          rows_affected: result.rows_affected
+        )
+        
+        result
+      rescue e
+        duration = Time.monotonic - start_time
+        Granite::Logs::SQL.error &.emit("Delete failed",
+          sql: sql,
+          model: Model.name,
+          duration_ms: duration.total_milliseconds,
+          error: e.message
+        )
+        raise e
       end
     end
 
@@ -213,6 +236,52 @@ module Granite::Query::Assembler
       end
 
       Executor::Value(Model, Bool).new sql, numbered_parameters, default: false
+    end
+
+    def touch_all(fields : Tuple, time : Time) : Int64
+      time = time.at_beginning_of_second
+      
+      set_parts = ["#{Model.quote("updated_at")} = #{add_parameter(time)}"]
+      
+      # Add any additional fields to touch
+      fields.each do |field|
+        set_parts << "#{Model.quote(field.to_s)} = #{add_parameter(time)}"
+      end
+      
+      sql = build_sql do |s|
+        s << "UPDATE #{table_name}"
+        s << "SET #{set_parts.join(", ")}"
+        s << where
+      end
+      
+      log sql, numbered_parameters
+      
+      start_time = Time.monotonic
+      begin
+        rows_affected = Model.adapter.open do |db|
+          db.exec(sql, args: numbered_parameters).rows_affected
+        end
+        
+        duration = Time.monotonic - start_time
+        Granite::Logs::SQL.info &.emit("Touch all executed",
+          sql: sql,
+          model: Model.name,
+          duration_ms: duration.total_milliseconds,
+          rows_affected: rows_affected,
+          fields: fields.to_a.map(&.to_s)
+        )
+        
+        rows_affected
+      rescue e
+        duration = Time.monotonic - start_time
+        Granite::Logs::SQL.error &.emit("Touch all failed",
+          sql: sql,
+          model: Model.name,
+          duration_ms: duration.total_milliseconds,
+          error: e.message
+        )
+        raise e
+      end
     end
 
     OPERATORS = {"eq": "=", "gteq": ">=", "lteq": "<=", "neq": "!=", "ltgt": "<>", "gt": ">", "lt": "<", "ngt": "!>", "nlt": "!<", "in": "IN", "nin": "NOT IN", "like": "LIKE", "nlike": "NOT LIKE"}

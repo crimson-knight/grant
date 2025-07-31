@@ -201,7 +201,7 @@ class Granite::Query::Builder(Model)
   end
 
   def group_by(dsl)
-    dsl.each do |field|
+    dsl.each do |field, _|
       @group_fields << {field: field.to_s}
     end
 
@@ -220,6 +220,19 @@ class Granite::Query::Builder(Model)
     self
   end
 
+  # Override select to handle eager loading
+  def select
+    records = assembler.select.run
+
+    # Apply eager loading if any associations are specified
+    all_associations = @includes_associations + @preload_associations + @eager_load_associations
+    unless all_associations.empty?
+      Granite::AssociationLoader.load_associations(records, all_associations)
+    end
+
+    records
+  end
+
   def raw_sql
     assembler.select.raw_sql
   end
@@ -229,7 +242,7 @@ class Granite::Query::Builder(Model)
   end
 
   def first! : Model
-    first || raise Granite::Querying::NotFound.new("No #{Model.name} found")
+    first || raise Granite::Querying::NotFound.new("No record found")
   end
 
   def first(n : Int32) : Array(Model)
@@ -240,13 +253,41 @@ class Granite::Query::Builder(Model)
     !first.nil?
   end
 
+  # Returns the single record. Raises `NotFound` if no record found.
+  # Raises `NotUnique` if more than one record found.
+  def sole : Model
+    results = self.select
+
+    if results.size == 0
+      raise Granite::Querying::NotFound.new("No record found")
+    elsif results.size == 1
+      results.first
+    else
+      raise Granite::Querying::NotUnique.new("Multiple records found (expected exactly one)")
+    end
+  end
+
+  # Finds and destroys all records matching the query
+  def destroy_all : Int32
+    records = self.select
+    count = 0
+    records.each do |record|
+      if record.destroy
+        count += 1
+      end
+    end
+    count
+  end
+
   def delete
     Model.switch_to_writer_adapter
     assembler.delete
   end
 
-  def select
-    assembler.select.run
+  # Updates updated_at timestamp for all matching records
+  def touch_all(*fields, time : Time = Time.local(Granite.settings.default_timezone)) : Int64
+    Model.switch_to_writer_adapter
+    assembler.touch_all(fields, time: time)
   end
 
   def count
@@ -288,86 +329,73 @@ class Granite::Query::Builder(Model)
     end
     self
   end
-  
+
   def includes(**nested_associations)
     nested_associations.each do |name, nested|
       @includes_associations << {name => nested.is_a?(Array) ? nested : [nested]}
     end
     self
   end
-  
+
   def preload(*associations)
     associations.each do |assoc|
       @preload_associations << assoc
     end
     self
   end
-  
+
   def preload(**nested_associations)
     nested_associations.each do |name, nested|
       @preload_associations << {name => nested.is_a?(Array) ? nested : [nested]}
     end
     self
   end
-  
+
   def eager_load(*associations)
     associations.each do |assoc|
       @eager_load_associations << assoc
     end
     self
   end
-  
+
   def eager_load(**nested_associations)
     nested_associations.each do |name, nested|
       @eager_load_associations << {name => nested.is_a?(Array) ? nested : [nested]}
     end
     self
   end
-  
-  # Override select to handle eager loading
-  def select
-    records = assembler.select.run
-    
-    # Apply eager loading if any associations are specified
-    all_associations = @includes_associations + @preload_associations + @eager_load_associations
-    unless all_associations.empty?
-      Granite::AssociationLoader.load_associations(records, all_associations)
-    end
-    
-    records
-  end
-  
+
   # Create a new query builder for OR conditions
-  def or
+  def or(&)
     or_builder = self.class.new(@db_type, :or)
     yield or_builder
-    
+
     # Add the OR conditions as a group
     if or_builder.where_fields.any?
       @where_fields << {
-        join: :and,
-        stmt: "(#{or_builder.assembler.where_clause(or_builder.where_fields)})",
-        value: nil
+        join:  :and,
+        stmt:  "(#{or_builder.assembler.where_clause(or_builder.where_fields)})",
+        value: nil,
       }
     end
-    
+
     self
   end
-  
+
   # Support for not conditions
-  def not
+  def not(&)
     not_builder = self.class.new(@db_type)
     yield not_builder
-    
+
     # Add the NOT conditions as a negated group
     if not_builder.where_fields.any?
       @where_fields << {
-        join: :and,
-        stmt: "NOT (#{not_builder.assembler.where_clause(not_builder.where_fields)})",
-        value: nil
+        join:  :and,
+        stmt:  "NOT (#{not_builder.assembler.where_clause(not_builder.where_fields)})",
+        value: nil,
       }
     end
-    
+
     self
   end
 end

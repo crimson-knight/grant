@@ -232,6 +232,101 @@ end
 5. Test bulk operations with your specific database adapter
 6. Create necessary indexes before using upsert operations
 
+## Additional Query Methods
+
+### sole / find_sole_by
+
+Find exactly one record. Raises an exception if zero or multiple records match.
+
+```crystal
+# Find sole record matching conditions
+admin = User.where(role: "admin").sole
+# => Returns the single admin user
+
+# Find by specific criteria
+user = User.find_sole_by(email: "john@example.com")
+# => Returns the single user with that email
+
+# Raises NotFound if no records
+User.find_sole_by(email: "nobody@example.com")
+# => Granite::Querying::NotFound: No User found
+
+# Raises NotUnique if multiple records
+User.find_sole_by(active: true)
+# => Granite::Querying::NotUnique: Multiple User records found (expected exactly one)
+```
+
+## Record Manipulation Methods
+
+### destroy_by
+
+Find and destroy all records matching criteria. Runs callbacks and associations.
+
+```crystal
+# Destroy by single criterion
+destroyed_count = User.destroy_by(active: false)
+# => 5 (number of records destroyed)
+
+# Destroy by multiple criteria
+User.destroy_by(role: "guest", confirmed: false)
+
+# With query builder
+User.where(created_at: ..30.days.ago).destroy_all
+```
+
+### delete_by
+
+Find and delete records without callbacks (faster than destroy_by).
+
+```crystal
+# Delete by criteria
+deleted_count = User.delete_by(spam: true)
+# => 10 (number of rows deleted)
+
+# Delete with multiple criteria
+User.delete_by(role: "guest", last_login: ..1.year.ago)
+```
+
+### touch_all
+
+Update updated_at timestamp for all matching records.
+
+```crystal
+# Touch all records
+User.touch_all
+# => 100 (number of records updated)
+
+# Touch with custom timestamp
+User.touch_all(time: 1.hour.ago)
+
+# Touch additional fields
+User.touch_all(:last_seen_at, :modified_at)
+
+# With conditions
+User.where(active: true).touch_all
+```
+
+### update_counters
+
+Efficiently increment or decrement counter columns without loading records.
+
+```crystal
+# Increment a counter
+Post.update_counters(post_id, {:views => 1})
+
+# Decrement a counter
+Post.update_counters(post_id, {:likes => -1})
+
+# Update multiple counters
+Post.update_counters(post_id, {
+  :views => 1,
+  :comments_count => 2,
+  :shares => -1
+})
+
+# Also updates updated_at timestamp automatically
+```
+
 ## Migration from ActiveRecord
 
 If you're coming from Rails, here's a quick mapping:
@@ -244,5 +339,11 @@ If you're coming from Rails, here's a quick mapping:
 | `insert_all` | `insert_all` |
 | `upsert_all` | `upsert_all` |
 | `annotate("comment")` | `annotate("comment")` |
+| `sole` | `sole` |
+| `find_sole_by` | `find_sole_by` |
+| `destroy_by` | `destroy_by` |
+| `delete_by` | `delete_by` |
+| `touch_all` | `touch_all` |
+| `update_counters` | `update_counters` |
 
 The API is designed to be familiar to Rails developers while taking advantage of Crystal's type safety and performance.
