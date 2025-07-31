@@ -81,10 +81,13 @@ module Granite::Associations
     {% if options[:autosave] %}
       setup_autosave({{method_name.id}}, :belongs_to)
       
+      # Define instance variable for tracking autosave
+      @_{{method_name.id}}_for_autosave : {{class_name.id}}? = nil
+      
       # Override setter to track autosave
       def {{method_name.id}}=(parent : {{class_name.id}})
         @{{foreign_key.id}} = parent.{{primary_key.id}}
-        @_{{method_name.id}}_for_autosave = parent if {{options[:autosave]}}
+        @_{{method_name.id}}_for_autosave = parent
       end
     {% end %}
     {% end %}
@@ -153,10 +156,13 @@ module Granite::Associations
     {% if options[:autosave] %}
       setup_autosave({{method_name.id}}, :has_one)
       
+      # Define instance variable for tracking autosave
+      @_{{method_name.id}}_for_autosave : {{class_name.id}}? = nil
+      
       # Override setter to track autosave
       def {{method_name}}=(child)
         child.{{foreign_key.id}} = self.{{primary_key.id}}
-        @_{{method_name.id}}_for_autosave = child if {{options[:autosave]}}
+        @_{{method_name.id}}_for_autosave = child
       end
     {% end %}
     {% end %}
@@ -215,6 +221,9 @@ module Granite::Associations
     # Handle autosave
     {% if options[:autosave] %}
       setup_autosave({{method_name.id}}, :has_many)
+      
+      # Define instance variable for tracking autosave records
+      @_{{method_name.id}}_for_autosave : Array({{class_name.id}})? = nil
       
       # Override accessor to track autosave records
       def {{method_name.id}}=(records : Array({{class_name.id}}))

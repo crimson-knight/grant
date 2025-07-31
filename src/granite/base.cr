@@ -327,10 +327,24 @@ abstract class Granite::Base
       ensure_dirty_tracking_initialized
       attrs = attributes || @changed_attributes.not_nil!.keys
       
+      # Temporarily store changed attributes to restore
+      changes_to_restore = {} of String => {Granite::Columns::Type, Granite::Columns::Type}
       attrs.each do |attr|
         if change = @changed_attributes.not_nil![attr]?
-          write_attribute(attr, change[0])
+          changes_to_restore[attr] = change
         end
+      end
+      
+      # Clear the changes for the attributes being restored
+      attrs.each do |attr|
+        @changed_attributes.not_nil!.delete(attr)
+      end
+      
+      # Restore the values using write_attribute
+      changes_to_restore.each do |attr, change|
+        write_attribute(attr, change[0])
+        # Remove the change that write_attribute just added
+        @changed_attributes.not_nil!.delete(attr)
       end
     end
     

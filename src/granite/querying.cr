@@ -47,7 +47,16 @@ module Granite::Querying
 
     # First adds a `LIMIT 1` clause to the query and returns the first result
     def first(clause = "", params = [] of Granite::Columns::Type)
-      all([clause.strip, "LIMIT 1"].join(" "), params, false).first?
+      # If we have scoping support, use current_scope with limit
+      if responds_to?(:current_scope)
+        query = current_scope
+        if !clause.empty?
+          query.where(clause, params.first? || nil)
+        end
+        query.limit(1).select.first?
+      else
+        all([clause.strip, "LIMIT 1"].join(" "), params, false).first?
+      end
     end
 
     def first!(clause = "", params = [] of Granite::Columns::Type)

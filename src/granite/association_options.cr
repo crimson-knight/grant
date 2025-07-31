@@ -60,14 +60,14 @@ module Granite::AssociationOptions
       # Increment counter on create
       after_create do
         if parent = self.{{association_name}}
-          {{model_class.id}}.where(id: parent.id).update_all("{{counter_column}} = {{counter_column}} + 1")
+          {{model_class.id}}.where(id: parent.id).update_all({{counter_column.stringify}} + " = " + {{counter_column.stringify}} + " + 1")
         end
       end
       
       # Decrement counter on destroy
       after_destroy do
         if parent = self.{{association_name}}
-          {{model_class.id}}.where(id: parent.id).update_all("{{counter_column}} = {{counter_column}} - 1")
+          {{model_class.id}}.where(id: parent.id).update_all({{counter_column.stringify}} + " = " + {{counter_column.stringify}} + " - 1")
         end
       end
       
@@ -79,12 +79,12 @@ module Granite::AssociationOptions
           
           # Decrement old parent's counter
           if old_id
-            {{model_class.id}}.where(id: old_id).update_all("{{counter_column}} = {{counter_column}} - 1")
+            {{model_class.id}}.where(id: old_id).update_all({{counter_column.stringify}} + " = " + {{counter_column.stringify}} + " - 1")
           end
           
           # Increment new parent's counter
           if new_id
-            {{model_class.id}}.where(id: new_id).update_all("{{counter_column}} = {{counter_column}} + 1")
+            {{model_class.id}}.where(id: new_id).update_all({{counter_column.stringify}} + " = " + {{counter_column.stringify}} + " + 1")
           end
         end
       end

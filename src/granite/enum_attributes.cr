@@ -42,37 +42,50 @@ module Granite::EnumAttributes
     {% if converter %}
       column {{name}} : {{type}}, converter: {{converter}}
     {% else %}
-      column {{name}} : {{type}}, converter: Granite::Converters::Enum({{type}}, {{column_type}})
+      {% if type.resolve.nilable? %}
+        {% enum_converter_type = type.resolve.union_types.find { |t| t != Nil } %}
+      {% else %}
+        {% enum_converter_type = type %}
+      {% end %}
+      column {{name}} : {{type}}, converter: Granite::Converters::Enum({{enum_converter_type}}, {{column_type}})
     {% end %}
     
     # Generate helper methods for each enum value
-    {% for member in type.resolve.constants %}
+    {% if type.resolve.nilable? %}
+      {% enum_type = type.resolve.union_types.find { |t| t != Nil } %}
+    {% else %}
+      {% enum_type = type.resolve %}
+    {% end %}
+    
+    {% for member in enum_type.constants %}
       # Predicate method (e.g., draft?)
       def {{member.underscore}}? : Bool
-        {{name}} == {{type}}::{{member}}
+        {{name}} == {{enum_type}}::{{member}}
       end
       
       # Bang method to set value (e.g., published!)
-      def {{member.underscore}}! : {{type}}
-        self.{{name}} = {{type}}::{{member}}
+      def {{member.underscore}}! : {{enum_type}}
+        self.{{name}} = {{enum_type}}::{{member}}
       end
     {% end %}
     
     # Scope for each enum value
-    {% for member in type.resolve.constants %}
-      scope :{{member.underscore}}, -> { where({{name}}: {{type}}::{{member}}) }
+    {% for member in enum_type.constants %}
+      def self.{{member.underscore}}
+        where({{name}}: {{enum_type}}::{{member}})
+      end
     {% end %}
     
     # Class methods to access enum values
     def self.{{name.id}}s
-      {{type}}.values
+      {{enum_type}}.values
     end
     
     # Return mapping of enum names to values
     def self.{{name.id}}_mapping
       {
-        {% for member in type.resolve.constants %}
-          {{member.underscore.stringify}} => {{type}}::{{member}},
+        {% for member in enum_type.constants %}
+          {{member.underscore.stringify}} => {{enum_type}}::{{member}},
         {% end %}
       }
     end
@@ -82,7 +95,7 @@ module Granite::EnumAttributes
       after_initialize do
         if @{{name}}.nil? && new_record?
           @{{name}} = {% if default.is_a?(SymbolLiteral) %}
-            {{type}}::{{default.id.camelcase}}
+            {{enum_type}}::{{default.id.camelcase}}
           {% else %}
             {{default}}
           {% end %}

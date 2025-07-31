@@ -224,14 +224,17 @@ class Granite::Query::Builder(Model)
     assembler.select.raw_sql
   end
 
-  # TODO: replace `querying.first` with this
-  # def first : Model?
-  #   first(1).first?
-  # end
+  def first : Model?
+    limit(1).select.first?
+  end
 
-  # def first(n : Int32) : Executor::List(Model)
-  #   assembler.first(n)
-  # end
+  def first! : Model
+    first || raise Granite::Querying::NotFound.new("No #{Model.name} found")
+  end
+
+  def first(n : Int32) : Array(Model)
+    limit(n).select
+  end
 
   def any? : Bool
     !first.nil?
