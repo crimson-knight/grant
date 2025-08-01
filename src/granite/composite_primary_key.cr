@@ -50,13 +50,9 @@ module Granite::CompositePrimaryKey
         # Return first column for backward compatibility
         ck.columns.first.to_s
       else
-        # Fall back to standard primary key method from Granite::Tables
-        {% begin %}
-          {% primary_key = @type.instance_vars.find { |ivar| (ann = ivar.annotation(Granite::Column)) && ann[:primary] } %}
-          {% if pk = primary_key %}
-            {{pk.name.stringify}}
-          {% end %}
-        {% end %}
+        # Use empty string as fallback - the actual primary key
+        # will be handled by Granite::Tables module
+        ""
       end
     end
     

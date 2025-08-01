@@ -268,7 +268,7 @@ module Granite::Query::Assembler
           model: Model.name,
           duration_ms: duration.total_milliseconds,
           rows_affected: rows_affected,
-          fields: fields.to_a.map(&.to_s)
+          fields: fields.to_a.map { |f| f.to_s.as(String) }
         )
         
         rows_affected

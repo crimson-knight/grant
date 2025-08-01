@@ -200,7 +200,7 @@ module Granite::Transactions
       {% primary_key = @type.instance_vars.find { |ivar| (ann = ivar.annotation(Granite::Column)) && ann[:primary] } %}
       Granite::Logs::Model.info &.emit("Record created",
         model: self.class.name,
-        id: @{{primary_key.name.id}}
+        id: @{{primary_key.name.id}}.to_s
       )
     {% end %}
   end
@@ -213,7 +213,7 @@ module Granite::Transactions
     
     Granite::Logs::Model.debug &.emit("Updating record",
       model: self.class.name,
-      id: @{{primary_key.name.id}}
+      id: @{{primary_key.name.id}}.to_s
     )
     
     set_timestamps(mode: :update) unless skip_timestamps
@@ -231,12 +231,12 @@ module Granite::Transactions
      
      Granite::Logs::Model.info &.emit("Record updated",
        model: self.class.name,
-       id: @{{primary_key.name.id}}
+       id: @{{primary_key.name.id}}.to_s
      )
     rescue err
       Granite::Logs::Model.error &.emit("Failed to update record",
         model: self.class.name,
-        id: @{{primary_key.name.id}},
+        id: @{{primary_key.name.id}}.to_s,
         error: err.message
       )
       raise DB::Error.new(err.message, cause: err)
@@ -252,7 +252,7 @@ module Granite::Transactions
     
     Granite::Logs::Model.debug &.emit("Destroying record",
       model: self.class.name,
-      id: @{{primary_key.name.id}}
+      id: @{{primary_key.name.id}}.to_s
     )
     
     self.class.adapter.delete(self.class.table_name, self.class.primary_name, @{{primary_key.name.id}})
@@ -260,7 +260,7 @@ module Granite::Transactions
     
     Granite::Logs::Model.info &.emit("Record destroyed",
       model: self.class.name,
-      id: @{{primary_key.name.id}}
+      id: @{{primary_key.name.id}}.to_s
     )
   {% end %}
   end
@@ -304,7 +304,7 @@ module Granite::Transactions
         {% primary_key = @type.instance_vars.find { |ivar| (ann = ivar.annotation(Granite::Column)) && ann[:primary] } %}
         Granite::Logs::Model.error &.emit("Failed to save record",
           model: self.class.name,
-          id: @{{primary_key.name.id}},
+          id: @{{primary_key.name.id}}.to_s,
           error: message,
           new_record: new_record?
         )
@@ -371,7 +371,7 @@ module Granite::Transactions
         {% primary_key = @type.instance_vars.find { |ivar| (ann = ivar.annotation(Granite::Column)) && ann[:primary] } %}
         Granite::Logs::Model.error &.emit("Failed to destroy record",
           model: self.class.name,
-          id: @{{primary_key.name.id}},
+          id: @{{primary_key.name.id}}.to_s,
           error: message
         )
         {% end %}

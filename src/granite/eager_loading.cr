@@ -27,19 +27,19 @@ module Granite::EagerLoading
   
   module ClassMethods
     def includes(*associations)
-      query = Granite::Query::Builder(self).new
+      query = current_scope
       query.includes(*associations)
       query
     end
     
     def preload(*associations)
-      query = Granite::Query::Builder(self).new
+      query = current_scope
       query.preload(*associations)
       query
     end
     
     def eager_load(*associations)
-      query = Granite::Query::Builder(self).new
+      query = current_scope
       query.eager_load(*associations)
       query
     end

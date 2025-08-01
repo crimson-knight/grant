@@ -1,8 +1,8 @@
 require "../../spec_helper"
 
 class CallbackTest < Granite::Base
-  adapter mysql
-  table_name callback_tests
+  connection sqlite
+  table callback_tests
   
   column id : Int64, primary: true
   column name : String?
