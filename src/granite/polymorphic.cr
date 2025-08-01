@@ -34,7 +34,11 @@ module Granite::Polymorphic
       case type_name
       {% for name, klass in REGISTERED_TYPES %}
       when {{name}}
-        {{klass}}.find(id)
+        {% if name.starts_with?("Validators::") || name.starts_with?("Spec::") %}
+          nil
+        {% else %}
+          {{klass}}.find(id)
+        {% end %}
       {% end %}
       else
         nil
@@ -51,7 +55,11 @@ module Granite::Polymorphic
       case type_name
       {% for name, klass in REGISTERED_TYPES %}
       when {{name}}
-        true
+        {% if name.starts_with?("Validators::") || name.starts_with?("Spec::") %}
+          false
+        {% else %}
+          true
+        {% end %}
       {% end %}
       else
         false
@@ -168,7 +176,20 @@ module Granite::Polymorphic
     {% end %}
     
     def {{method_name.id}}
-      {{class_name.id}}.where({{type_column.id}}: self.class.name, {{foreign_key.id}}: primary_key_value)
+      if association_loaded?({{method_name.stringify}})
+        loaded_data = get_loaded_association({{method_name.stringify}})
+        if loaded_data.is_a?(Array(Granite::Base))
+          Granite::LoadedAssociationCollection(self, {{class_name.id}}).new(loaded_data.map(&.as({{class_name.id}})))
+        else
+          # For polymorphic, we need to use where query with both type and id
+          records = {{class_name.id}}.where({{type_column.id}}: self.class.name, {{foreign_key.id}}: primary_key_value).select
+          Granite::LoadedAssociationCollection(self, {{class_name.id}}).new(records)
+        end
+      else
+        # For polymorphic, we need to use where query with both type and id
+        records = {{class_name.id}}.where({{type_column.id}}: self.class.name, {{foreign_key.id}}: primary_key_value).select
+        Granite::LoadedAssociationCollection(self, {{class_name.id}}).new(records)
+      end
     end
     
     # Store association metadata
@@ -208,11 +229,11 @@ module Granite::Polymorphic
     {% end %}
     
     def {{method_name.id}} : {{class_name.id}}?
-      {{class_name.id}}.find_by({{type_column.id}}: self.class.name, {{foreign_key.id}}: primary_key_value)
+      {{class_name.id}}.where({{type_column.id}}: self.class.name, {{foreign_key.id}}: primary_key_value).first
     end
     
     def {{method_name.id}}! : {{class_name.id}}
-      {{class_name.id}}.find_by!({{type_column.id}}: self.class.name, {{foreign_key.id}}: primary_key_value)
+      {{class_name.id}}.where({{type_column.id}}: self.class.name, {{foreign_key.id}}: primary_key_value).first || raise Granite::Querying::NotFound.new("No {{class_name.id}} found for #{self.class.name} with id #{primary_key_value}")
     end
     
     # Store association metadata

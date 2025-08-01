@@ -27,19 +27,28 @@ describe "Granite::Associations::Polymorphic" do
 
     it "retrieves the polymorphic association" do
       post = Post.create!(name: "Test Post")
-      comment = Comment.create!(content: "Great post!", commentable: post)
+      comment = Comment.new(content: "Great post!")
+      comment.commentable = post
+      comment.save!
 
       loaded_comment = Comment.find!(comment.id.not_nil!)
       loaded_comment.commentable.should be_a(Post)
-      loaded_comment.commentable.not_nil!.id.should eq(post.id)
+      loaded_commentable = loaded_comment.commentable.not_nil!
+      loaded_commentable.should be_a(Post)
+      loaded_commentable.as(Post).id.should eq(post.id)
     end
 
     it "handles different polymorphic types" do
       post = Post.create!(name: "Test Post")
       book = PolyBook.create!(name: "Test PolyBook")
 
-      comment1 = Comment.create!(content: "About the post", commentable: post)
-      comment2 = Comment.create!(content: "About the book", commentable: book)
+      comment1 = Comment.new(content: "About the post")
+      comment1.commentable = post
+      comment1.save!
+      
+      comment2 = Comment.new(content: "About the book")
+      comment2.commentable = book
+      comment2.save!
 
       Comment.find!(comment1.id.not_nil!).commentable.should be_a(Post)
       Comment.find!(comment2.id.not_nil!).commentable.should be_a(PolyBook)
@@ -58,9 +67,17 @@ describe "Granite::Associations::Polymorphic" do
       post = Post.create!(name: "Test Post")
       book = PolyBook.create!(name: "Test PolyBook")
 
-      comment1 = Comment.create!(content: "First post comment", commentable: post)
-      comment2 = Comment.create!(content: "Second post comment", commentable: post)
-      comment3 = Comment.create!(content: "PolyBook comment", commentable: book)
+      comment1 = Comment.new(content: "First post comment")
+      comment1.commentable = post
+      comment1.save!
+      
+      comment2 = Comment.new(content: "Second post comment")
+      comment2.commentable = post
+      comment2.save!
+      
+      comment3 = Comment.new(content: "PolyBook comment")
+      comment3.commentable = book
+      comment3.save!
 
       post_comments = post.comments.to_a
       post_comments.size.should eq(2)
@@ -78,8 +95,13 @@ describe "Granite::Associations::Polymorphic" do
       post = Post.create!(name: "Test Post")
       book = PolyBook.create!(name: "Test PolyBook")
 
-      post_image = Image.create!(url: "post.jpg", imageable: post)
-      book_image = Image.create!(url: "book.jpg", imageable: book)
+      post_image = Image.new(url: "post.jpg")
+      post_image.imageable = post
+      post_image.save!
+      
+      book_image = Image.new(url: "book.jpg")
+      book_image.imageable = book
+      book_image.save!
 
       post.image.not_nil!.url.should eq("post.jpg")
       book.image.not_nil!.url.should eq("book.jpg")
