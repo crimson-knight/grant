@@ -32,13 +32,17 @@ The test suite does not pass entirely due to several issues that were discovered
 6. **query_analysis_spec.cr** - Model persistence issues in tests
 7. **scoping_spec.cr** - Macro visibility issues
 
-## Current Blocking Issue
+## Previously Blocking Issues (Now Fixed)
 
-### UUID Type Support in Polymorphic Tests
-- **Error**: `Granite::Type.from_rs` doesn't support UUID type
-- **Location**: `spec/granite/associations/polymorphic_spec.cr`
-- **Impact**: Prevents full polymorphic spec from running
-- **Note**: This is not a polymorphic functionality issue, but a UUID support issue
+### UUID Type Support ✅
+- **Error**: `Granite::Type.from_rs` didn't support UUID type
+- **Solution**: Added UUID support to Granite::Type module
+- **Impact**: Polymorphic spec and other UUID-dependent specs now work
+
+### Polymorphic Associations ✅ 
+- **Issues**: Class name inference, find_by with multiple conditions
+- **Solution**: Fixed class name inference, use where instead of find_by for has_one
+- **Impact**: All polymorphic association tests now pass
 
 ## Fixes Applied
 
@@ -52,13 +56,13 @@ The test suite does not pass entirely due to several issues that were discovered
 
 ## Test Coverage Estimate
 
-- **Core Functionality**: ~85% working
+- **Core Functionality**: ~90% working (UUID and polymorphic now fixed)
 - **Advanced Features**: ~50% working (due to disabled specs)
-- **Overall**: ~70% of tests passing or fixable
+- **Overall**: ~75% of tests passing or fixable
 
 ## Required Actions for Full Test Suite
 
-1. **Add UUID support to Granite::Type** - Would fix polymorphic spec
+1. ~~**Add UUID support to Granite::Type**~~ - ✅ COMPLETED
 2. **Fix scoping macro visibility** - Would enable scoping spec
 3. **Implement missing connection management features** - Would enable connection spec
 4. **Fix eager loading API** - Would enable eager loading spec
