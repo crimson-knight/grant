@@ -12,6 +12,7 @@ require "./enum_attributes"
 require "./convenience_methods"
 require "./settings"
 require "./table"
+require "./transactions"
 require "./validators"
 require "./validators/**"
 require "./validation_helpers/**"
@@ -30,6 +31,7 @@ require "./scoping"
 require "./attribute_api"
 require "./logging"
 require "./query_analysis"
+require "./composite_primary_key"
 
 # Granite::Base is the base class for your model objects.
 abstract class Granite::Base
@@ -64,7 +66,7 @@ abstract class Granite::Base
 
   extend Querying::ClassMethods
   extend Query::BuilderMethods
-  extend Transactions::ClassMethods
+  extend Granite::Transactions::ClassMethods
   extend Integrators
   extend Select
   extend EagerLoading::ClassMethods

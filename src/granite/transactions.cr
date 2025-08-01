@@ -135,7 +135,11 @@ module Granite::Transactions
     {% begin %}
       {% primary_key = @type.instance_vars.find { |ivar| (ann = ivar.annotation(Granite::Column)) && ann[:primary] } %}
       {% raise raise "A primary key must be defined for #{@type.name}." unless primary_key %}
-      {% raise "Composite primary keys are not yet supported for '#{@type.name}'." if @type.instance_vars.select { |ivar| ann = ivar.annotation(Granite::Column); ann && ann[:primary] }.size > 1 %}
+      # Composite keys handled by CompositePrimaryKey module
+      {% if @type.instance_vars.select { |ivar| ann = ivar.annotation(Granite::Column); ann && ann[:primary] }.size > 1 %}
+        # Skip standard implementation for composite keys
+        return if self.class.responds_to?(:composite_primary_key?) && self.class.composite_primary_key?
+      {% end %}
       {% ann = primary_key.annotation(Granite::Column) %}
 
       Granite::Logs::Model.debug &.emit("Creating record",

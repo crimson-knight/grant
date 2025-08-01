@@ -421,6 +421,28 @@ module Granite::Columns
     {% end %}
   end
   
+  # Get all primary key columns for composite key support
+  def self.primary_key_columns : Array(String)
+    {% begin %}
+      {% primary_keys = @type.instance_vars.select { |ivar| (ann = ivar.annotation(Granite::Column)) && ann[:primary] }.map(&.name.stringify) %}
+      {{primary_keys.empty? ? "[] of String".id : primary_keys}}
+    {% end %}
+  end
+  
+  # Get primary key values as a hash for composite key support
+  def primary_key_values : Hash(String, Granite::Columns::Type)
+    values = {} of String => Granite::Columns::Type
+    {% for column in @type.instance_vars.select { |ivar| (ann = ivar.annotation(Granite::Column)) && ann[:primary] } %}
+      values[{{column.name.stringify}}] = {{column.name.id}}
+    {% end %}
+    values
+  end
+  
+  # Check if model has composite primary key
+  def self.composite_primary_key? : Bool
+    primary_key_columns.size > 1
+  end
+  
   # Capture current values as original attributes after save
   protected def capture_original_attributes
     ensure_dirty_tracking_initialized
