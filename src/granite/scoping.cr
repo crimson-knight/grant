@@ -39,10 +39,10 @@ module Granite::Scoping
       query = Granite::Query::Builder(self).new(db_type)
       
       # Apply default scope unless we're in unscoped mode
-      # Use a simple runtime check
-      if !_unscoped? && self.name != "Validators::PersonUniqueness" && self.responds_to?(:apply_default_scope)
-        query = apply_default_scope(query)
-      end
+      # TODO: This needs a better solution - currently disabled
+      # if !_unscoped? && self.responds_to?(:apply_default_scope)
+      #   query = apply_default_scope(query)
+      # end
       
       query
     end
