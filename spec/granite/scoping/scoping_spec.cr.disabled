@@ -9,6 +9,7 @@ class ScopedModel < Granite::Base
   column status : String?
   column priority : Int32?
   column published : Bool = false
+  column deleted_at : Time?
   timestamps
   
   # Define named scopes
@@ -36,11 +37,16 @@ class UnorderedModel < Granite::Base
 end
 
 describe "Granite::Scoping" do
+  before_all do
+    ScopedModel.migrator.drop_and_create
+    UnorderedModel.migrator.drop_and_create
+  end
+  
   describe "named scopes" do
     it "defines class methods for scopes" do
-      ScopedModel.should respond_to(:published)
-      ScopedModel.should respond_to(:active)
-      ScopedModel.should respond_to(:high_priority)
+      ScopedModel.responds_to?(:published).should be_true
+      ScopedModel.responds_to?(:active).should be_true
+      ScopedModel.responds_to?(:high_priority).should be_true
     end
     
     it "returns a query builder" do
@@ -59,10 +65,10 @@ describe "Granite::Scoping" do
     it "applies scope conditions" do
       # Create test data
       published = ScopedModel.new(name: "Published", published: true, status: "active")
-      published.save
+      published.save!
       
       unpublished = ScopedModel.new(name: "Unpublished", published: false, status: "active") 
-      unpublished.save
+      unpublished.save!
       
       # Test scope
       results = ScopedModel.published.all
@@ -73,13 +79,13 @@ describe "Granite::Scoping" do
     it "can combine multiple scopes" do
       # Create test data
       high_active = ScopedModel.new(name: "High Active", status: "active", priority: 8, published: true)
-      high_active.save
+      high_active.save!
       
       low_active = ScopedModel.new(name: "Low Active", status: "active", priority: 2, published: true)
-      low_active.save
+      low_active.save!
       
       high_inactive = ScopedModel.new(name: "High Inactive", status: "inactive", priority: 8, published: true)
-      high_inactive.save
+      high_inactive.save!
       
       # Test combined scopes
       results = ScopedModel.active.high_priority.all
@@ -93,14 +99,14 @@ describe "Granite::Scoping" do
     it "applies default scope to all queries" do
       # Create test data with deleted_at
       active1 = ScopedModel.new(name: "Active 1")
-      active1.save
+      active1.save!
       
       active2 = ScopedModel.new(name: "Active 2")
-      active2.save
+      active2.save!
       
       # Simulate soft delete by setting deleted_at
       deleted = ScopedModel.new(name: "Deleted")
-      deleted.save
+      deleted.save!
       deleted.update(deleted_at: Time.local)
       
       # Default scope should filter out deleted records
@@ -111,10 +117,10 @@ describe "Granite::Scoping" do
     
     it "applies default scope to find methods" do
       active = ScopedModel.new(name: "Active")
-      active.save
+      active.save!
       
       deleted = ScopedModel.new(name: "Deleted")
-      deleted.save
+      deleted.save!
       deleted.update(deleted_at: Time.local)
       
       # Should find active record
@@ -128,10 +134,10 @@ describe "Granite::Scoping" do
   describe "unscoped" do
     it "bypasses default scope" do
       active = ScopedModel.new(name: "Active")
-      active.save
+      active.save!
       
       deleted = ScopedModel.new(name: "Deleted")
-      deleted.save
+      deleted.save!
       deleted.update(deleted_at: Time.local)
       
       # With default scope
@@ -143,10 +149,10 @@ describe "Granite::Scoping" do
     
     it "can be used with a block" do
       active = ScopedModel.new(name: "Active")
-      active.save
+      active.save!
       
       deleted = ScopedModel.new(name: "Deleted")
-      deleted.save
+      deleted.save!
       deleted.update(deleted_at: Time.local)
       
       results = [] of ScopedModel
@@ -193,13 +199,13 @@ describe "Granite::Scoping" do
   describe "scope with other query methods" do
     it "works with order" do
       b = ScopedModel.new(name: "B", published: true)
-      b.save
+      b.save!
       
       a = ScopedModel.new(name: "A", published: true)
-      a.save
+      a.save!
       
       c = ScopedModel.new(name: "C", published: false)
-      c.save
+      c.save!
       
       results = ScopedModel.published.order(:name).all
       results.map(&.name).should eq(["A", "B"])
@@ -208,7 +214,7 @@ describe "Granite::Scoping" do
     it "works with limit and offset" do
       5.times do |i|
         model = ScopedModel.new(name: "Model #{i}", published: true)
-        model.save
+        model.save!
       end
       
       results = ScopedModel.published.limit(2).offset(1).all
