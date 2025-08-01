@@ -1,7 +1,7 @@
 require "../../spec_helper"
-# require "../../support/polymorphic_models" # Disabled due to polymorphic type system issue
+require "../../support/polymorphic_models"
 
-pending "Granite::Associations::Polymorphic (Crystal type system issue - see POLYMORPHIC_TYPE_SYSTEM_ISSUE.md)" do
+describe "Granite::Associations::Polymorphic" do
   before_all do
     Comment.migrator.drop_and_create
     Image.migrator.drop_and_create

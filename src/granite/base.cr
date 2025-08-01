@@ -55,10 +55,7 @@ abstract class Granite::Base
   include ConnectionManagement
   include AttributeApi
   
-  # Auto-register class for polymorphic associations
-  macro inherited
-    Granite::Polymorphic.register_type({{@type.name.stringify}}, {{@type.id}})
-  end
+  # Auto-register class for polymorphic associations will be handled in the main inherited macro
 
   extend Columns::ClassMethods
   extend Tables::ClassMethods
@@ -74,6 +71,9 @@ abstract class Granite::Base
 
   macro inherited
     protected class_getter select_container : Container = Container.new(table_name: table_name, fields: fields)
+    
+    # Auto-register for polymorphic associations
+    Granite::Polymorphic.register_polymorphic_type({{@type.name.stringify}}, {{@type}})
 
     # Returns true if this object hasn't been saved yet.
     @[JSON::Field(ignore: true)]
