@@ -139,8 +139,7 @@ module Granite::Transactions
       {% ann = primary_key.annotation(Granite::Column) %}
 
       Granite::Logs::Model.debug &.emit("Creating record",
-        model: self.class.name,
-        attributes: attributes_hash
+        model: self.class.name
       )
 
       set_timestamps unless skip_timestamps
@@ -181,15 +180,13 @@ module Granite::Transactions
   rescue err : DB::Error
     Granite::Logs::Model.error &.emit("Failed to create record",
       model: self.class.name,
-      error: err.message,
-      attributes: attributes_hash
+      error: err.message
     )
     raise err
   rescue err
     Granite::Logs::Model.error &.emit("Failed to create record",
       model: self.class.name,
-      error: err.message,
-      attributes: attributes_hash
+      error: err.message
     )
     raise DB::Error.new(err.message, cause: err)
   else
@@ -199,8 +196,7 @@ module Granite::Transactions
       {% primary_key = @type.instance_vars.find { |ivar| (ann = ivar.annotation(Granite::Column)) && ann[:primary] } %}
       Granite::Logs::Model.info &.emit("Record created",
         model: self.class.name,
-        id: @{{primary_key.name.id}},
-        attributes: attributes_hash
+        id: @{{primary_key.name.id}}
       )
     {% end %}
   end
@@ -213,8 +209,7 @@ module Granite::Transactions
     
     Granite::Logs::Model.debug &.emit("Updating record",
       model: self.class.name,
-      id: @{{primary_key.name.id}},
-      attributes: attributes_hash
+      id: @{{primary_key.name.id}}
     )
     
     set_timestamps(mode: :update) unless skip_timestamps
@@ -232,8 +227,7 @@ module Granite::Transactions
      
      Granite::Logs::Model.info &.emit("Record updated",
        model: self.class.name,
-       id: @{{primary_key.name.id}},
-       attributes: attributes_hash
+       id: @{{primary_key.name.id}}
      )
     rescue err
       Granite::Logs::Model.error &.emit("Failed to update record",
