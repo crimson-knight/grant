@@ -280,13 +280,13 @@ class Granite::Query::Builder(Model)
   end
 
   def delete
-    Model.switch_to_writer_adapter
+    Model.mark_write_operation
     assembler.delete
   end
 
   # Updates updated_at timestamp for all matching records
   def touch_all(*fields, time : Time = Time.local(Granite.settings.default_timezone)) : Int64
-    Model.switch_to_writer_adapter
+    Model.mark_write_operation
     assembler.touch_all(fields, time: time)
   end
 

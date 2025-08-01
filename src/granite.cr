@@ -15,4 +15,5 @@ module Granite
   annotation Table; end
 end
 
+require "./granite/connection_registry"
 require "./granite/base"

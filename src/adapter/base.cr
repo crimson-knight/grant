@@ -98,9 +98,39 @@ abstract class Granite::Adapter::Base
 
   # This will update a row in the database.
   abstract def update(table_name : String, primary_name : String, fields, params)
+  
+  # Update with custom WHERE clause for composite keys
+  def update_with_where(table_name : String, fields : Array(String), params : Array(DB::Any), where_clause : String)
+    statement = String.build do |stmt|
+      stmt << "UPDATE #{quote(table_name)} SET "
+      stmt << fields.map { |field| "#{quote(field)} = ?" }.join(", ")
+      stmt << " WHERE #{where_clause}"
+    end
+    
+    elapsed_time = Time.measure do
+      open do |db|
+        db.exec statement, args: params
+      end
+    end
+    
+    log statement, elapsed_time, params
+  end
 
   # This will delete a row from the database.
   abstract def delete(table_name : String, primary_name : String, value)
+  
+  # Delete with custom WHERE clause for composite keys
+  def delete_with_where(table_name : String, where_clause : String, params : Array(DB::Any))
+    statement = "DELETE FROM #{quote(table_name)} WHERE #{where_clause}"
+    
+    elapsed_time = Time.measure do
+      open do |db|
+        db.exec statement, args: params
+      end
+    end
+    
+    log statement, elapsed_time, params
+  end
 
   module Schema
     TYPES = {

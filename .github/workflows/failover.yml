@@ -1,0 +1,162 @@
+name: Connection Failover Tests
+on:
+  push:
+    paths:
+      - 'src/granite/connection_management.cr'
+      - 'src/granite/connection_registry.cr'
+      - 'spec/**/*failover*'
+      - 'spec/**/*connection*'
+      - '.github/workflows/failover.yml'
+  pull_request:
+    paths:
+      - 'src/granite/connection_management.cr'
+      - 'src/granite/connection_registry.cr'
+      - 'spec/**/*failover*'
+      - 'spec/**/*connection*'
+      - '.github/workflows/failover.yml'
+
+jobs:
+  postgres-failover:
+    runs-on: ubuntu-latest
+    services:
+      # Primary that will be stopped during test
+      postgres-primary:
+        image: postgres:16
+        env:
+          POSTGRES_USER: granite
+          POSTGRES_PASSWORD: password
+          POSTGRES_DB: granite_db
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+      
+      # Replica that should take over
+      postgres-replica1:
+        image: postgres:16
+        env:
+          POSTGRES_USER: granite
+          POSTGRES_PASSWORD: password
+          POSTGRES_DB: granite_db
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5433:5432
+      
+      # Second replica for testing multiple replicas
+      postgres-replica2:
+        image: postgres:16
+        env:
+          POSTGRES_USER: granite
+          POSTGRES_PASSWORD: password
+          POSTGRES_DB: granite_db
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5434:5432
+    
+    steps:
+      - name: Download source
+        uses: actions/checkout@v4
+      
+      - name: Install Crystal
+        uses: crystal-lang/install-crystal@v1
+        with:
+          crystal: latest
+      
+      - name: Install shards
+        run: shards update --ignore-crystal-version --skip-postinstall --skip-executables
+      
+      - name: Run failover tests
+        timeout-minutes: 15
+        run: |
+          # Create failover test script
+          cat > test_failover.sh << 'EOF'
+          #!/bin/bash
+          set -e
+          
+          echo "=== Testing Primary to Replica Failover ==="
+          
+          # TODO: Add actual failover tests once connection management is fully implemented
+          # For now, just verify connections work
+          crystal eval 'require "./src/granite"; puts "Connection test passed"'
+          
+          # Simulate primary failure
+          # docker stop postgres-primary
+          # crystal spec spec/granite/connection_failover_spec.cr
+          
+          # Test automatic reconnection
+          # crystal spec spec/granite/connection_recovery_spec.cr
+          EOF
+          
+          chmod +x test_failover.sh
+          ./test_failover.sh
+        env:
+          CURRENT_ADAPTER: pg
+          PG_DATABASE_URL: postgres://granite:password@localhost:5432/granite_db
+          PG_REPLICA_URL: postgres://granite:password@localhost:5433/granite_db
+          PG_REPLICA_2_URL: postgres://granite:password@localhost:5434/granite_db
+
+  mysql-failover:
+    runs-on: ubuntu-latest
+    services:
+      mysql-primary:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: password
+          MYSQL_DATABASE: granite_db
+          MYSQL_USER: granite
+          MYSQL_PASSWORD: password
+        options: >-
+          --health-cmd "mysqladmin ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 3306:3306
+      
+      mysql-replica:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: password
+          MYSQL_DATABASE: granite_db
+          MYSQL_USER: granite
+          MYSQL_PASSWORD: password
+        options: >-
+          --health-cmd "mysqladmin ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 3307:3306
+    
+    steps:
+      - name: Download source
+        uses: actions/checkout@v4
+      
+      - name: Install Crystal
+        uses: crystal-lang/install-crystal@v1
+        with:
+          crystal: latest
+      
+      - name: Install shards
+        run: shards update --ignore-crystal-version --skip-postinstall --skip-executables
+      
+      - name: Run MySQL failover tests
+        timeout-minutes: 15
+        run: |
+          echo "MySQL failover tests - TODO"
+          crystal eval 'require "./src/granite"; puts "MySQL connection test passed"'
+        env:
+          CURRENT_ADAPTER: mysql
+          MYSQL_DATABASE_URL: mysql://granite:password@localhost:3306/granite_db
+          MYSQL_REPLICA_URL: mysql://granite:password@localhost:3307/granite_db

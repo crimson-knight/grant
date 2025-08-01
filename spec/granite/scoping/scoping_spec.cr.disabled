@@ -1,8 +1,8 @@
 require "../../spec_helper"
 
 class ScopedModel < Granite::Base
-  adapter mysql
-  table_name scoped_models
+  connection sqlite
+  table scoped_models
   
   column id : Int64, primary: true
   column name : String?
@@ -23,8 +23,8 @@ class ScopedModel < Granite::Base
 end
 
 class UnorderedModel < Granite::Base
-  adapter mysql
-  table_name unordered_models
+  connection sqlite
+  table unordered_models
   
   column id : Int64, primary: true
   column name : String?

@@ -12,6 +12,7 @@ require "./enum_attributes"
 require "./convenience_methods"
 require "./settings"
 require "./table"
+require "./transactions"
 require "./validators"
 require "./validators/**"
 require "./validation_helpers/**"
@@ -30,6 +31,7 @@ require "./scoping"
 require "./attribute_api"
 require "./logging"
 require "./query_analysis"
+require "./composite_primary_key"
 
 # Granite::Base is the base class for your model objects.
 abstract class Granite::Base
@@ -64,7 +66,7 @@ abstract class Granite::Base
 
   extend Querying::ClassMethods
   extend Query::BuilderMethods
-  extend Transactions::ClassMethods
+  extend Granite::Transactions::ClassMethods
   extend Integrators
   extend Select
   extend EagerLoading::ClassMethods
@@ -134,13 +136,10 @@ abstract class Granite::Base
       end
     end
 
-    before_save :switch_to_writer_adapter
-    before_destroy :switch_to_writer_adapter
-    after_save :update_last_write_time
-    after_save :schedule_adapter_switch
+    # Connection handling is automatic now
+    before_save { self.class.mark_write_operation }
+    before_destroy { self.class.mark_write_operation }
     after_save :clear_dirty_state
-    after_destroy :update_last_write_time
-    after_destroy :schedule_adapter_switch
     
     # Dirty tracking API methods
     

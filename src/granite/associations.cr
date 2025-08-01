@@ -197,7 +197,7 @@ module Granite::Associations
       {% class_name = options[:class_name] || model.id.camelcase %}
     {% end %}
     {% foreign_key = options[:foreign_key] || @type.stringify.split("::").last.underscore + "_id" %}
-    {% primary_key = options[:primary_key] || class_name.stringify.split("::").last.underscore + "_id" %}
+    {% primary_key = options[:primary_key] || "id" %}
     {% through = options[:through] %}
     @[Granite::Relationship(target: {{class_name.id}}, through: {{through.id}}, type: :has_many,
       primary_key: {{through}}, foreign_key: {{foreign_key.id}})]

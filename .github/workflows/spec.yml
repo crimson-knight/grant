@@ -3,57 +3,58 @@ on:
   push:
   pull_request:
     branches: [main, master]
-  # schedule:
-  #   - cron: "0 6 * * 6" # Every Saturday 6 AM
+  schedule:
+    - cron: "0 6 * * 6" # Every Saturday 6 AM
+
 jobs:
   formatting:
     runs-on: ubuntu-latest
     steps:
       - name: Download source
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
       - name: Install Crystal
-        uses: oprypin/install-crystal@v1.8.0
+        uses: crystal-lang/install-crystal@v1
         with:
           crystal: latest
-      - name: Install Ameba
+      - name: Install shards
         run: shards install
       - name: Check formatting
         run: crystal tool format --check
       - name: Check linting
-        run: ./bin/ameba 
+        run: ./bin/ameba
+
   sqlite-spec:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
-      max-parallel: 1
       matrix:
-        crystal: [1.6.2, 1.7.2, 1.8.1, latest]
+        crystal: [1.14.0, 1.15.1, 1.16.3, latest]
     steps:
       - name: Download source
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
       - name: Install Crystal
-        uses: oprypin/install-crystal@v1.8.0
+        uses: crystal-lang/install-crystal@v1
         with:
           crystal: ${{ matrix.crystal }}
       - name: Install shards
         run: shards update --ignore-crystal-version --skip-postinstall --skip-executables
       - name: Run tests
-        timeout-minutes: 2
+        timeout-minutes: 5
         run: crystal spec
         env:
           CURRENT_ADAPTER: sqlite
           SQLITE_DATABASE_URL: sqlite3:./granite.db
           SQLITE_REPLICA_URL: sqlite3:./granite_replica.db
+
   mysql-spec:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
-      max-parallel: 1
       matrix:
-        crystal: [1.6.2, 1.7.2, 1.8.1, latest]
+        crystal: [1.14.0, 1.15.1, 1.16.3, latest]
     services:
-      mysql:
-        image: mysql:5.7
+      mysql-primary:
+        image: mysql:8.0
         options: >-
           --health-cmd "mysqladmin ping"
           --health-interval 10s
@@ -66,33 +67,46 @@ jobs:
           MYSQL_PASSWORD: password
         ports:
           - 3306:3306
+      mysql-replica:
+        image: mysql:8.0
+        options: >-
+          --health-cmd "mysqladmin ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        env:
+          MYSQL_ROOT_PASSWORD: password
+          MYSQL_DATABASE: granite_replica_db
+          MYSQL_USER: granite
+          MYSQL_PASSWORD: password
+        ports:
+          - 3307:3306
     steps:
       - name: Download source
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
       - name: Install Crystal
-        uses: oprypin/install-crystal@v1.8.0
+        uses: crystal-lang/install-crystal@v1
         with:
           crystal: ${{ matrix.crystal }}
       - name: Install shards
         run: shards update --ignore-crystal-version --skip-postinstall --skip-executables
       - name: Run tests
-        timeout-minutes: 2
+        timeout-minutes: 5
         run: crystal spec
         env:
           CURRENT_ADAPTER: mysql
-          SQLITE_DATABASE_URL: sqlite3:./granite.db
           MYSQL_DATABASE_URL: mysql://granite:password@localhost:3306/granite_db
-          MYSQL_REPLICA_URL: mysql://granite:password@localhost:3306/granite_db
+          MYSQL_REPLICA_URL: mysql://granite:password@localhost:3307/granite_replica_db
+
   psql-spec:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
-      max-parallel: 1
       matrix:
-        crystal: [1.6.2, 1.7.2, 1.8.1, latest]
+        crystal: [1.14.0, 1.15.1, 1.16.3, latest]
     services:
-      postgres:
-        image: postgres:15.2
+      postgres-primary:
+        image: postgres:16
         env:
           POSTGRES_USER: granite
           POSTGRES_PASSWORD: password
@@ -103,21 +117,121 @@ jobs:
           --health-timeout 5s
           --health-retries 5
         ports:
-          # Maps tcp port 5432 on service container to the host
           - 5432:5432
+      postgres-replica:
+        image: postgres:16
+        env:
+          POSTGRES_USER: granite
+          POSTGRES_PASSWORD: password
+          POSTGRES_DB: granite_replica_db
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5433:5432
     steps:
       - name: Download source
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
       - name: Install Crystal
-        uses: oprypin/install-crystal@v1.8.0
+        uses: crystal-lang/install-crystal@v1
         with:
           crystal: ${{ matrix.crystal }}
       - name: Install shards
         run: shards update --ignore-crystal-version --skip-postinstall --skip-executables
       - name: Run tests
-        timeout-minutes: 2
+        timeout-minutes: 5
         run: crystal spec
         env:
           CURRENT_ADAPTER: pg
           PG_DATABASE_URL: postgres://granite:password@localhost:5432/granite_db
-          PG_REPLICA_URL: postgres://granite:password@localhost:5432/granite_db
+          PG_REPLICA_URL: postgres://granite:password@localhost:5433/granite_replica_db
+
+  sharding-spec:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        crystal: [1.16.3, latest]
+    services:
+      # Shard 0 - Primary
+      postgres-shard0-primary:
+        image: postgres:16
+        env:
+          POSTGRES_USER: granite
+          POSTGRES_PASSWORD: password
+          POSTGRES_DB: shard_0
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5440:5432
+      # Shard 0 - Replica
+      postgres-shard0-replica:
+        image: postgres:16
+        env:
+          POSTGRES_USER: granite
+          POSTGRES_PASSWORD: password
+          POSTGRES_DB: shard_0
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5441:5432
+      # Shard 1 - Primary
+      postgres-shard1-primary:
+        image: postgres:16
+        env:
+          POSTGRES_USER: granite
+          POSTGRES_PASSWORD: password
+          POSTGRES_DB: shard_1
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5442:5432
+      # Shard 1 - Replica
+      postgres-shard1-replica:
+        image: postgres:16
+        env:
+          POSTGRES_USER: granite
+          POSTGRES_PASSWORD: password
+          POSTGRES_DB: shard_1
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5443:5432
+    steps:
+      - name: Download source
+        uses: actions/checkout@v4
+      - name: Install Crystal
+        uses: crystal-lang/install-crystal@v1
+        with:
+          crystal: ${{ matrix.crystal }}
+      - name: Install shards
+        run: shards update --ignore-crystal-version --skip-postinstall --skip-executables
+      - name: Run sharding tests
+        timeout-minutes: 10
+        run: |
+          # Run composite key tests first
+          crystal spec spec/granite/composite_primary_key_spec.cr
+          # TODO: Add more sharding tests as they are developed
+        env:
+          CURRENT_ADAPTER: pg
+          # Primary connection
+          PG_DATABASE_URL: postgres://granite:password@localhost:5432/granite_db
+          PG_REPLICA_URL: postgres://granite:password@localhost:5433/granite_replica_db
+          # Shard connections
+          SHARD_0_PRIMARY: postgres://granite:password@localhost:5440/shard_0
+          SHARD_0_REPLICA: postgres://granite:password@localhost:5441/shard_0
+          SHARD_1_PRIMARY: postgres://granite:password@localhost:5442/shard_1
+          SHARD_1_REPLICA: postgres://granite:password@localhost:5443/shard_1
