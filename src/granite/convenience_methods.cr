@@ -161,7 +161,7 @@ module Granite::BulkOperations
     
     records = [] of self
     
-    switch_to_writer_adapter
+    mark_write_operation
     adapter.open do |db|
       db.query(sql, args: assembler.numbered_parameters) do |rs|
         rs.each do
@@ -218,7 +218,7 @@ module Granite::BulkOperations
     
     records = [] of self
     
-    switch_to_writer_adapter
+    mark_write_operation
     adapter.open do |db|
       db.query(sql, args: assembler.numbered_parameters) do |rs|
         rs.each do

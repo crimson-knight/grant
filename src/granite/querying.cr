@@ -34,7 +34,7 @@ module Granite::Querying
     # DSL.
     # Lazy load prevent running unnecessary queries from unused variables.
     def all(clause = "", params = [] of Granite::Columns::Type, use_primary_adapter = true)
-      switch_to_writer_adapter if use_primary_adapter == true
+      mark_write_operation if use_primary_adapter == true
       
       # If we have scoping support, use current_scope
       if responds_to?(:current_scope)
@@ -181,7 +181,7 @@ module Granite::Querying
 
     # :ditto:
     def delete_by(criteria : Granite::ModelArgs) : Int64
-      switch_to_writer_adapter
+      mark_write_operation
       
       if criteria.empty?
         # Delete all records
@@ -215,7 +215,7 @@ module Granite::Querying
       
       sql = "UPDATE #{quoted_table_name} SET #{set_clause.join(", ")}"
       
-      switch_to_writer_adapter
+      mark_write_operation
       rows_affected = adapter.open do |db|
         db.exec(sql, args: values).rows_affected
       end
@@ -249,7 +249,7 @@ module Granite::Querying
       sql = "UPDATE #{quoted_table_name} SET #{set_clause.join(", ")} WHERE #{quote(primary_name)} = ?"
       values << id
       
-      switch_to_writer_adapter
+      mark_write_operation
       rows_affected = adapter.open do |db|
         db.exec(sql, args: values).rows_affected
       end
@@ -300,17 +300,17 @@ module Granite::Querying
     end
 
     def exec(clause = "")
-      switch_to_writer_adapter
+      mark_write_operation
       adapter.open(&.exec(clause))
     end
 
     def query(clause = "", params = [] of Granite::Columns::Type, &)
-      switch_to_writer_adapter
+      mark_write_operation
       adapter.open { |db| yield db.query(clause, args: params) }
     end
 
     def scalar(clause = "", &)
-      switch_to_writer_adapter
+      mark_write_operation
       adapter.open { |db| yield db.scalar(clause) }
     end
 

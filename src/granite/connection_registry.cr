@@ -1,6 +1,5 @@
 module Granite
-  # Registry for managing database connections and adapters
-  # This works alongside the existing Granite::Connections system
+  # Central registry for managing database connections
   class ConnectionRegistry
     # Connection specification
     struct ConnectionSpec

@@ -2,7 +2,6 @@ require "../spec_helper"
 
 # Test models defined at top level
 class TestConnectionModel < Granite::Base
-  include Granite::ConnectionManagementV2
   
   table test_models
   column id : Int64, primary: true
@@ -18,7 +17,6 @@ class TestConnectionModel < Granite::Base
 end
 
 class ShardedModel < Granite::Base
-  include Granite::ConnectionManagementV2
   
   table sharded_models
   column id : Int64, primary: true
@@ -39,7 +37,6 @@ class ShardedModel < Granite::Base
 end
 
 class ContextModel < Granite::Base
-  include Granite::ConnectionManagementV2
   
   table context_models
   column id : Int64, primary: true
@@ -54,7 +51,6 @@ class ContextModel < Granite::Base
 end
 
 class WriteProtectedModel < Granite::Base
-  include Granite::ConnectionManagementV2
   
   table protected_models
   column id : Int64, primary: true
@@ -62,7 +58,6 @@ class WriteProtectedModel < Granite::Base
 end
 
 class MultiDbModel < Granite::Base
-  include Granite::ConnectionManagementV2
   
   table multi_db_models
   column id : Int64, primary: true
@@ -71,7 +66,6 @@ class MultiDbModel < Granite::Base
 end
 
 class ReadWriteModel < Granite::Base
-  include Granite::ConnectionManagementV2
   
   table rw_models
   column id : Int64, primary: true

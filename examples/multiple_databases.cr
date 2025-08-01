@@ -28,8 +28,6 @@ Granite::ConnectionRegistry.establish_connections({
 
 # 2. Models with different database connections
 class User < Granite::Base
-  include Granite::ConnectionManagementV2
-  
   # Connect to primary database with read/write splitting
   connects_to database: "primary"
   
@@ -41,8 +39,6 @@ class User < Granite::Base
 end
 
 class AnalyticsEvent < Granite::Base
-  include Granite::ConnectionManagementV2
-  
   # Connect to analytics database
   connects_to database: "analytics"
   
@@ -55,8 +51,6 @@ class AnalyticsEvent < Granite::Base
 end
 
 class CachedResult < Granite::Base
-  include Granite::ConnectionManagementV2
-  
   # Connect to local SQLite cache
   connects_to database: "cache"
   

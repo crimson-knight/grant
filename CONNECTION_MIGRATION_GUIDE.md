@@ -1,15 +1,15 @@
 # Connection System Migration Guide
 
-This guide helps you migrate from the old connection management system to the new Phase 1 connection infrastructure.
+This guide helps you migrate to the new simplified connection management system in Grant.
 
 ## Overview
 
-The new connection system provides:
-- Enhanced connection pooling with crystal-db
-- Multiple database support with role-based connections
+The new connection system is now built directly into Granite::Base and provides:
+- Multiple database support with role-based connections (reading/writing)
 - Horizontal sharding capabilities
-- Better monitoring and health checks
-- Automatic read/write splitting
+- Automatic read/write splitting based on time delays
+- Connection context switching
+- Write prevention mode
 
 ## Migration Steps
 
@@ -82,10 +82,9 @@ end
 #### New Way:
 ```crystal
 class User < Granite::Base
-  # Use the new connection management module
-  include Granite::ConnectionManagementV2
+  # Connection management is now built-in - no module needed!
   
-  # Configure connections with the new DSL
+  # Configure connections with the DSL
   connects_to database: "my_app"
   
   # Or with roles
@@ -137,10 +136,10 @@ end
 
 ### Step 4: Sharded Models
 
-#### New Feature - Not available in old system:
+#### New Feature - Sharding:
 ```crystal
 class ShardedUser < Granite::Base
-  include Granite::ConnectionManagementV2
+  # No module needed - sharding is built-in!
   
   connects_to(
     shards: {
@@ -219,19 +218,20 @@ databases = Granite::ConnectionRegistry.databases
 shards = Granite::ConnectionRegistry.shards_for_database("my_app")
 ```
 
-## Backward Compatibility
-
-The system maintains backward compatibility through:
-
-1. The old `connection` macro still works but uses the new system internally
-2. Old adapter properties map to the new connection pool system
-3. Existing callbacks continue to function
-
 ## Breaking Changes
 
-1. Direct adapter manipulation is discouraged - use connection contexts instead
-2. Some internal APIs have changed (e.g., `@@current_adapter` is now managed differently)
-3. Connection registration must happen before model usage
+1. Connection management is now built into Granite::Base - no separate module needed
+2. The `connection` macro is simplified and just sets the database name
+3. Direct adapter manipulation should be replaced with connection contexts
+4. Connection registration must happen before model usage
+5. The old reader/writer adapter properties are replaced by the new role-based system
+
+## Benefits of the New System
+
+1. **Simpler API** - No need to include extra modules
+2. **More Powerful** - Built-in support for sharding and multiple databases
+3. **Better Performance** - Automatic read/write splitting with configurable delays
+4. **Type Safe** - Connection contexts are properly typed
 
 ## Performance Improvements
 

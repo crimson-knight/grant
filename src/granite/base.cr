@@ -134,13 +134,10 @@ abstract class Granite::Base
       end
     end
 
-    before_save :switch_to_writer_adapter
-    before_destroy :switch_to_writer_adapter
-    after_save :update_last_write_time
-    after_save :schedule_adapter_switch
+    # Connection handling is automatic now
+    before_save { self.class.mark_write_operation }
+    before_destroy { self.class.mark_write_operation }
     after_save :clear_dirty_state
-    after_destroy :update_last_write_time
-    after_destroy :schedule_adapter_switch
     
     # Dirty tracking API methods
     
