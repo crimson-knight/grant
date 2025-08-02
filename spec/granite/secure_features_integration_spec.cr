@@ -7,7 +7,6 @@ require "../spec_helper"
     connection {{ adapter_literal }}
     table secure_users
     
-    extend Granite::SecureToken
     include Granite::SignedId
     include Granite::TokenFor
     

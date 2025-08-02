@@ -7,7 +7,6 @@ require "../spec_helper"
     connection {{ adapter_literal }}
     table secure_token_test_models
     
-    extend Granite::SecureToken
     
     has_secure_token :auth_token
     has_secure_token :api_key, length: 36, alphabet: :hex

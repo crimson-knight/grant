@@ -53,7 +53,7 @@ module Granite::SignedId
     
     def verify_signed_token(token : String) : Hash(String, JSON::Any)?
       # Decode outer wrapper
-      wrapper_json = Base64.urlsafe_decode_string(token)
+      wrapper_json = String.new(Base64.decode(token))
       wrapper = JSON.parse(wrapper_json)
       
       # Extract data and signature
@@ -61,7 +61,7 @@ module Granite::SignedId
       signature = wrapper["signature"].as_s
       
       # Decode and verify
-      json = Base64.urlsafe_decode_string(data)
+      json = String.new(Base64.decode(data))
       
       # Verify signature
       expected_signature = generate_signature(json)
