@@ -32,6 +32,9 @@ require "./attribute_api"
 require "./logging"
 require "./query_analysis"
 require "./composite_primary_key"
+require "./secure_token"
+require "./signed_id"
+require "./token_for"
 
 # Granite::Base is the base class for your model objects.
 abstract class Granite::Base
@@ -55,6 +58,12 @@ abstract class Granite::Base
   include ConnectionManagement
   include AttributeApi
   
+  # Make secure token macros available
+  macro has_secure_token(name, length = 24, alphabet = :base58)
+    Granite::SecureToken.has_secure_token({{ name }}, {{ length }}, {{ alphabet }})
+  end
+  
+  
   # Auto-register class for polymorphic associations will be handled in the main inherited macro
 
   extend Columns::ClassMethods
@@ -74,6 +83,13 @@ abstract class Granite::Base
     
     # Auto-register for polymorphic associations
     Granite::Polymorphic.register_polymorphic_type({{@type.name.stringify}}, {{@type}})
+    
+    # Make generates_token_for available
+    macro generates_token_for(purpose, expires_in = nil, &block)
+      Granite::TokenFor.generates_token_for(\{{ purpose }}, \{{ expires_in }}) do
+        \{{ block.body }}
+      end
+    end
 
     # Returns true if this object hasn't been saved yet.
     @[JSON::Field(ignore: true)]
