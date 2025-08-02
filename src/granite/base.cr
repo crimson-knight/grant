@@ -36,6 +36,7 @@ require "./secure_token"
 require "./signed_id"
 require "./token_for"
 require "./serialized_column"
+require "./normalization"
 
 # Granite::Base is the base class for your model objects.
 abstract class Granite::Base
@@ -79,6 +80,11 @@ abstract class Granite::Base
   extend Select
   extend EagerLoading::ClassMethods
   extend Scoping::ClassMethods
+  
+  # Make normalization macro available
+  macro normalizes(attribute, **options, &block)
+    Granite::Normalization.normalizes({{attribute}}, {{**options}}) {{block}}
+  end
 
   macro inherited
     protected class_getter select_container : Container = Container.new(table_name: table_name, fields: fields)
