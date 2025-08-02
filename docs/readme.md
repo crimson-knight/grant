@@ -97,3 +97,5 @@ end
 [Convenience Methods](./convenience_methods.md) - Rails-style convenience methods like toggle, increment, and decrement
 
 [Instrumentation](./instrumentation.md) - Built-in logging, query analysis, and performance monitoring
+
+[Data Normalization](./normalization.md) - Automatic data normalization before validation

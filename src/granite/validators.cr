@@ -22,6 +22,10 @@ module Granite::Validators
   # Returns all errors on the model.
   getter errors = [] of Error
 
+  @[JSON::Field(ignore: true)]
+  @[YAML::Field(ignore: true)]
+  @_skip_normalization : Bool = false
+
   macro included
     macro inherited
       @@validators = Array({field: String, message: String, block: Proc(self, Bool)}).new
@@ -49,13 +53,16 @@ module Granite::Validators
   #
   # If the validation fails, `#errors` will contain all the errors responsible for
   # the failing.
-  def valid?
+  def valid?(skip_normalization : Bool = false)
     # Return false if any `ConversionError` were added
     # when setting model properties
     return false if errors.any? ConversionError
 
     errors.clear
-    
+
+    # Set flag for normalization to check
+    @_skip_normalization = skip_normalization
+
     # Run before_validation callbacks
     before_validation if responds_to?(:before_validation)
 
@@ -64,9 +71,12 @@ module Granite::Validators
         errors << Error.new(validator[:field], validator[:message])
       end
     end
-    
+
     # Run after_validation callbacks
     after_validation if responds_to?(:after_validation)
+
+    # Reset the flag
+    @_skip_normalization = false
 
     errors.empty?
   end
