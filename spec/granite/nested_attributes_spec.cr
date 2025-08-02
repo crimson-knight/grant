@@ -13,11 +13,13 @@ class Author < Granite::Base
   
   # Enable nested attributes
   accepts_nested_attributes_for :posts, 
+    class_name: Post,
     allow_destroy: true,
     reject_if: :all_blank,
     limit: 5
     
   accepts_nested_attributes_for :profile,
+    class_name: Profile,
     update_only: true
 end
 
@@ -34,6 +36,7 @@ class Post < Granite::Base
   has_many :comments
   
   accepts_nested_attributes_for :comments,
+    class_name: Comment,
     allow_destroy: true
 end
 
