@@ -32,6 +32,9 @@ require "./attribute_api"
 require "./logging"
 require "./query_analysis"
 require "./composite_primary_key"
+require "./secure_token"
+require "./signed_id"
+require "./token_for"
 
 # Granite::Base is the base class for your model objects.
 abstract class Granite::Base
