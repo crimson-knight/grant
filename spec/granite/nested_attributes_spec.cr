@@ -7,6 +7,7 @@ class Author < Granite::Base
   
   column id : Int64, primary: true
   column name : String
+  timestamps
   
   has_many :posts
   has_one :profile
@@ -19,6 +20,9 @@ class Author < Granite::Base
     
   accepts_nested_attributes_for profile : Profile,
     update_only: true
+    
+  # Enable automatic nested saves via callbacks
+  enable_nested_saves
 end
 
 class Post < Granite::Base
@@ -29,12 +33,15 @@ class Post < Granite::Base
   column title : String
   column content : String?
   column author_id : Int64?
+  timestamps
   
   belongs_to :author
   has_many :comments
   
   accepts_nested_attributes_for comments : Comment,
     allow_destroy: true
+    
+  enable_nested_saves
 end
 
 class Comment < Granite::Base
@@ -44,6 +51,7 @@ class Comment < Granite::Base
   column id : Int64, primary: true
   column body : String
   column post_id : Int64?
+  timestamps
   
   belongs_to :post
 end
@@ -56,6 +64,7 @@ class Profile < Granite::Base
   column bio : String?
   column website : String?
   column author_id : Int64?
+  timestamps
   
   belongs_to :author
 end
@@ -234,8 +243,9 @@ describe Granite::NestedAttributes do
       # Verify posts were created
       posts = Post.where(author_id: author.id).select
       posts.size.should eq(2)
-      posts[0].title.should eq("First Post")
-      posts[1].title.should eq("Second Post")
+      
+      titles = posts.map(&.title).sort
+      titles.should eq(["First Post", "Second Post"])
     end
     
     it "creates child record with has_one association" do

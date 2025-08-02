@@ -1,4 +1,4 @@
-# Improved nested attributes implementation with explicit types
+# Improved nested attributes implementation with explicit types  
 module Granite::NestedAttributes
   macro included
     # Storage for nested attributes data
@@ -6,63 +6,35 @@ module Granite::NestedAttributes
     
     # Track if we have nested attributes to avoid unnecessary overhead
     @_has_nested_attributes = false
+  end
+  
+  # Macro to enable automatic nested saves via callbacks
+  # Call this after all accepts_nested_attributes_for declarations
+  macro enable_nested_saves
+    after_save :save_all_nested_attributes
     
-    # Override save to handle nested attributes if configured
-    macro finished
-      {% if @type.methods.any? { |m| m.name.ends_with?("_attributes=") } %}
-        def save(**args)
-          if @_has_nested_attributes && !@_nested_attributes_data.empty?
-            transaction do
-              # Save parent first
-              result = previous_def
-              
-              # If parent saved successfully, process nested attributes
-              if result
-                save_nested_attributes
-              else
-                raise Granite::Callbacks::Abort.new("Parent record failed to save")
-              end
-            end
-          else
-            previous_def
-          end
-        end
-        
-        def save!(**args)
-          if @_has_nested_attributes && !@_nested_attributes_data.empty?
-            transaction do
-              # Save parent first
-              previous_def
-              
-              # Process nested attributes (will raise on failure)
-              save_nested_attributes
-            end
-          else
-            previous_def
-          end
-        end
-        
-        private def save_nested_attributes
-          success = true
-          
-          # Process each association's nested attributes
-          {% for method in @type.methods.select { |m| m.name.ends_with?("_attributes=") } %}
-            {% assoc_name = method.name.gsub(/_attributes=$/, "") %}
-            if attrs = @_nested_attributes_data[{{ assoc_name.stringify }}]?
-              success = save_nested_{{ assoc_name.id }} && success
-            end
-          {% end %}
-          
-          # Clear nested data after processing
-          @_nested_attributes_data.clear if success
-          
-          success
+    private def save_all_nested_attributes
+      return true unless @_has_nested_attributes
+      return true if @_nested_attributes_data.empty?
+      
+      success = true
+      
+      # Process each association's nested attributes
+      {% for method in @type.methods.select { |m| m.name.starts_with?("save_nested_") } %}
+        {% assoc_name = method.name.gsub(/^save_nested_/, "") %}
+        if attrs = @_nested_attributes_data[{{ assoc_name.stringify }}]?
+          success = {{ method.name.id }} && success
         end
       {% end %}
+      
+      # Clear nested data after processing
+      @_nested_attributes_data.clear if success
+      
+      success
     end
   end
   
-  # Improved macro that works with association definitions
+  # Improved macro that validates association exists and requires explicit types
   macro accepts_nested_attributes_for(association, **options)
     {% 
       # Extract association name and class from the declaration
@@ -70,25 +42,8 @@ module Granite::NestedAttributes
         assoc_name = association.var
         target_class = association.type
       else
-        assoc_name = association.id
-        # Try to find the association definition to get the class
-        target_class = nil
-        @type.methods.each do |method|
-          if method.name == assoc_name.id
-            # Look for the return type annotation
-            if method.return_type
-              target_class = method.return_type
-              break
-            end
-          end
-        end
-        
-        # If not found, try to get from association metadata
-        if !target_class && @type.has_constant?("_#{assoc_name.id}_association_meta")
-          # This will be resolved at runtime, but we need compile-time type
-          # So we'll require explicit type in this case
-          raise "Cannot infer type for association #{assoc_name}. Please use: accepts_nested_attributes_for #{assoc_name} : ClassName"
-        end
+        # Require explicit type declaration for compile-time safety
+        raise "accepts_nested_attributes_for requires explicit type declaration. Use: accepts_nested_attributes_for #{association} : ClassName"
       end
     %}
     
@@ -224,10 +179,6 @@ module Granite::NestedAttributes
     end
   end
   
-  # Alternative syntax that's more explicit
-  macro accepts_nested_attributes_for(association_name, target_class, **options)
-    accepts_nested_attributes_for({{association_name.id}} : {{target_class}}, {{**options}})
-  end
   
   # Process single set of attributes with config
   private def process_single_nested_attributes(attrs, config : NamedTuple) : Hash(String, Granite::Columns::Type)?
