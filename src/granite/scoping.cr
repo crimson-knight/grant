@@ -6,8 +6,9 @@ module Granite::Scoping
     end
   end
   
-  # Define a named scope
+  # Define a named scope - simpler approach
   macro scope(name, body)
+    # Define on the model class
     def self.{{name.id}}
       query = current_scope
       {{body}}.call(query)
@@ -36,19 +37,20 @@ module Granite::Scoping
                   Granite::Query::Builder::DbType::Sqlite
                 end
       
+      # Always use the standard QueryBuilder for now
       query = Granite::Query::Builder(self).new(db_type)
       
       # Apply default scope unless we're in unscoped mode
-      # TODO: This needs a better solution - currently disabled
-      # if !_unscoped? && self.responds_to?(:apply_default_scope)
-      #   query = apply_default_scope(query)
-      # end
+      if !_unscoped? && self.responds_to?(:_has_default_scope?) && self.responds_to?(:apply_default_scope) && self._has_default_scope?
+        query = self.apply_default_scope(query)
+      end
       
       query
     end
     
-    # Execute a block without the default scope
-    def unscoped
+    # Execute without the default scope (with block)
+    def unscoped(&block : Granite::Query::Builder(self) -> T) forall T
+      # Temporarily disable default scope
       old_unscoped = _unscoped?
       self._unscoped = true
       
@@ -63,15 +65,25 @@ module Granite::Scoping
       
       query = Granite::Query::Builder(self).new(db_type)
       
-      if block_given?
-        begin
-          yield query
-        ensure
-          self._unscoped = old_unscoped
-        end
-      else
-        query
+      begin
+        yield query
+      ensure
+        self._unscoped = old_unscoped
       end
+    end
+    
+    # Return unscoped query builder (for chaining)
+    def unscoped
+      db_type = case adapter.class.to_s
+                when "Granite::Adapter::Pg"
+                  Granite::Query::Builder::DbType::Pg
+                when "Granite::Adapter::Mysql"
+                  Granite::Query::Builder::DbType::Mysql
+                else
+                  Granite::Query::Builder::DbType::Sqlite
+                end
+      
+      Granite::Query::Builder(self).new(db_type)
     end
     
     # Merge scopes together
@@ -151,6 +163,11 @@ module Granite::Scoping
   
   # Override all to respect default scope
   def self.all
+    current_scope.select
+  end
+  
+  # Override select to respect default scope
+  def self.select
     current_scope.select
   end
   

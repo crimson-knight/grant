@@ -1,6 +1,36 @@
 require "../../spec_helper"
 
 describe "Granite::Associations::AdditionalOptions" do
+  before_all do
+    # Counter cache models
+    UpdateBlog.migrator.drop_and_create
+    UpdatePost.migrator.drop_and_create
+    CustomAuthor.migrator.drop_and_create
+    CustomArticle.migrator.drop_and_create
+    
+    # Touch models
+    TouchPost.migrator.drop_and_create
+    TouchComment.migrator.drop_and_create
+    TouchUpdateUser.migrator.drop_and_create
+    UserActivity.migrator.drop_and_create
+    
+    # Dependent models
+    Account.migrator.drop_and_create
+    AccountPreferences.migrator.drop_and_create
+    NullifyProfile.migrator.drop_and_create
+    ProfileAvatar.migrator.drop_and_create
+    
+    # Polymorphic models
+    Attachment.migrator.drop_and_create
+    Document.migrator.drop_and_create
+    
+    # Autosave models
+    FailedOrder.migrator.drop_and_create
+    FailedLineItem.migrator.drop_and_create
+    Vendor.migrator.drop_and_create
+    VendorProduct.migrator.drop_and_create
+  end
+  
   describe "counter_cache with updates" do
     it "updates counter when association changes" do
       blog1 = UpdateBlog.create!(title: "Blog 1", posts_count: 0)
@@ -83,13 +113,16 @@ describe "Granite::Associations::AdditionalOptions" do
   describe "polymorphic with custom columns" do
     it "uses custom foreign key and type columns" do
       document = Document.create!(title: "Report")
-      attachment = Attachment.create!(filename: "report.pdf", owner: document)
+      attachment = Attachment.new(filename: "report.pdf")
+      attachment.owner = document
+      attachment.save!
       
       attachment.owner_id.should eq(document.id)
       attachment.owner_class.should eq("Document")
       
       loaded = Attachment.find!(attachment.id.not_nil!)
-      loaded.owner.not_nil!.id.should eq(document.id)
+      loaded.owner.should be_a(Document)
+      loaded.owner.not_nil!.as(Document).id.should eq(document.id)
     end
   end
   
@@ -109,7 +142,8 @@ describe "Granite::Associations::AdditionalOptions" do
     
     it "handles belongs_to autosave" do
       new_vendor = Vendor.new(name: "ACME Supplies")
-      product = VendorProduct.new(name: "Widget", vendor: new_vendor)
+      product = VendorProduct.new(name: "Widget")
+      product.vendor = new_vendor
       
       product.save!
       
@@ -250,7 +284,7 @@ class Attachment < Granite::Base
   column id : Int64, primary: true
   column filename : String
   
-  belongs_to :owner, polymorphic: true, foreign_key: :owner_id, type_column: :owner_class
+  belongs_to :owner, polymorphic: true, foreign_key: :owner_id, type_column: :owner_class, optional: true
 end
 
 class Document < Granite::Base

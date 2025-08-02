@@ -124,15 +124,18 @@ abstract class Granite::Base
       disable_granite_docs? def initialize(**args : Granite::Columns::Type)
         ensure_dirty_tracking_initialized
         set_attributes(args.to_h.transform_keys(&.to_s))
+        __after_initialize
       end
 
       disable_granite_docs? def initialize(args : Granite::ModelArgs)
         ensure_dirty_tracking_initialized
         set_attributes(args.transform_keys(&.to_s))
+        __after_initialize
       end
 
       disable_granite_docs? def initialize
         ensure_dirty_tracking_initialized
+        __after_initialize
       end
     end
 

@@ -1,3 +1,5 @@
+require "../columns"
+
 # Data structure which will allow chaining of query components,
 # nesting of boolean logic, etc.
 #
@@ -27,16 +29,19 @@ class Granite::Query::Builder(Model)
     Descending
   end
 
+  alias WhereField = NamedTuple(join: Symbol, field: String, operator: Symbol, value: Granite::Columns::Type) |
+                     NamedTuple(join: Symbol, stmt: String, value: Granite::Columns::Type)
+  alias AssociationQuery = Symbol | Hash(Symbol, Array(Symbol))
+  
   getter db_type : DbType
-  getter where_fields = [] of (NamedTuple(join: Symbol, field: String, operator: Symbol, value: Granite::Columns::Type) |
-                               NamedTuple(join: Symbol, stmt: String, value: Granite::Columns::Type))
+  getter where_fields : Array(WhereField) = [] of WhereField
   getter order_fields = [] of NamedTuple(field: String, direction: Sort)
   getter group_fields = [] of NamedTuple(field: String)
   getter offset : Int64?
   getter limit : Int64?
-  getter eager_load_associations = [] of Symbol | Hash(Symbol, Array(Symbol))
-  getter preload_associations = [] of Symbol | Hash(Symbol, Array(Symbol))
-  getter includes_associations = [] of Symbol | Hash(Symbol, Array(Symbol))
+  getter eager_load_associations : Array(AssociationQuery) = [] of AssociationQuery
+  getter preload_associations : Array(AssociationQuery) = [] of AssociationQuery
+  getter includes_associations : Array(AssociationQuery) = [] of AssociationQuery
 
   def initialize(@db_type, @boolean_operator = :and)
   end
@@ -233,6 +238,10 @@ class Granite::Query::Builder(Model)
     records
   end
 
+  def all
+    self.select
+  end
+
   def raw_sql
     assembler.select.raw_sql
   end
@@ -397,5 +406,11 @@ class Granite::Query::Builder(Model)
     end
 
     self
+  end
+  
+  # Delete all records matching the query
+  def delete_all : Int64
+    result = assembler.delete
+    result.rows_affected
   end
 end

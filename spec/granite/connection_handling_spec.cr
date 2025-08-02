@@ -78,8 +78,8 @@ class ReadWriteModel < Granite::Base
     }
   )
   
-  # Set a short delay for testing
-  self.read_delay = 0.1.seconds
+  # Set a short delay for testing (100ms)
+  self.connection_switch_wait_period = 100
 end
 
 # Now define the actual tests

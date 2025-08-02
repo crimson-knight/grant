@@ -1,41 +1,73 @@
 require "../../spec_helper"
 
+# Set up a test backend that we can use across tests
+class TestLogBackend < Log::Backend
+  getter messages = [] of String
+  
+  def write(entry : Log::Entry) : Nil
+    messages << "#{entry.severity} - #{entry.source}: #{entry.message}"
+  end
+  
+  def clear
+    messages.clear
+  end
+end
+
 describe "Granite::QueryAnalysis" do
+  # Set up a shared test backend
+  backend = TestLogBackend.new
+  
+  before_each do
+    # Clear messages before each test
+    backend.clear
+    
+    # Configure logging fresh for each test
+    Log.setup do |c|
+      c.bind "*", :trace, backend
+      c.bind "granite.*", :trace, backend
+      c.bind "granite.query", :trace, backend
+    end
+  end
   describe "N+1 Detection" do
     it "detects N+1 queries" do
       # Create test data
-      School.clear
+      Teacher.clear
+      Klass.clear
       Student.clear
+      Enrollment.clear
       
-      schools = [] of School
+      teachers = [] of Teacher
       3.times do |i|
-        school = School.create(name: "School #{i + 1}")
-        schools << school
+        teacher = Teacher.create(name: "Teacher #{i + 1}")
+        teachers << teacher
         
-        # Create students for each school
+        # Create klasses for each teacher
         2.times do |j|
-          Student.create(name: "Student #{j + 1}", school_id: school.id)
+          Klass.create(name: "Klass #{j + 1}", teacher_id: teacher.id)
         end
       end
       
       # Run N+1 detection
       analysis = Granite::QueryAnalysis::N1Detector.detect do
         # This should trigger N+1 queries
-        schools.each do |school|
-          # Each access to students triggers a new query
-          school.students.all
+        teachers.each do |teacher|
+          # Each access to klasses triggers a new query
+          teacher.klasses.all
         end
       end
       
-      analysis.has_issues?.should be_true
+      analysis.should_not be_nil
+      if analysis
+        analysis.has_issues?.should be_true
       analysis.potential_n1_issues.size.should be > 0
       
-      # Find the Student select issue
-      student_issue = analysis.potential_n1_issues.find { |issue| issue.model == "Student" && issue.operation == "select" }
-      student_issue.should_not be_nil
+      # Find the Klass select issue
+      klass_issue = analysis.potential_n1_issues.find { |issue| issue.model == "Klass" && issue.operation == "select" }
+      klass_issue.should_not be_nil
       
-      if issue = student_issue
-        issue.query_count.should eq(3) # One query per school
+        if issue = klass_issue
+          issue.query_count.should eq(3) # One query per teacher
+        end
       end
     end
     
@@ -53,6 +85,7 @@ describe "Granite::QueryAnalysis" do
         teachers.size.should eq(3)
       end
       
+      analysis.should_not be_nil
       analysis.has_issues?.should be_false
     end
     
@@ -65,25 +98,27 @@ describe "Granite::QueryAnalysis" do
         Teacher.first
       end
       
+      analysis.should_not be_nil
       analysis.total_duration_ms.should be > 0
       analysis.total_queries.should eq(2)
     end
     
     it "provides useful analysis output" do
-      School.clear
-      Student.clear
+      Teacher.clear
+      Klass.clear
       
-      school = School.create(name: "Test School")
-      Student.create(name: "Student 1", school_id: school.id)
-      Student.create(name: "Student 2", school_id: school.id)
+      teacher = Teacher.create(name: "Test Teacher")
+      Klass.create(name: "Klass 1", teacher_id: teacher.id)
+      Klass.create(name: "Klass 2", teacher_id: teacher.id)
       
       analysis = Granite::QueryAnalysis::N1Detector.detect do
-        schools = School.all
-        schools.each do |s|
-          s.students.all
+        teachers = Teacher.all
+        teachers.each do |t|
+          t.klasses.all
         end
       end
       
+      analysis.should_not be_nil
       output = analysis.to_s
       output.should contain("Query Analysis:")
       output.should contain("Total queries:")
@@ -111,44 +146,33 @@ describe "Granite::QueryAnalysis" do
   describe "Query Statistics" do
     it "collects query statistics" do
       stats = Granite::QueryAnalysis::QueryStats.instance
-      stats.enable!
+      stats.disable!
       stats.clear
       
-      Teacher.clear
-      
-      # Execute various queries
-      Teacher.create(name: "Teacher 1")
-      Teacher.create(name: "Teacher 2")
-      Teacher.all
-      Teacher.first
-      
       # Record some stats manually for testing
+      stats.enable!
       stats.record("Teacher", "select", 5.2)
       stats.record("Teacher", "select", 3.8)
       stats.record("Teacher", "insert", 2.5)
       
-      # Check stats were recorded
-      stats.@stats.size.should be > 0
+      # Manually access stats through reflection since @stats is private
+      # Check stats were recorded - the query should have stats
+      # Since we can't access @stats directly, let's test through report output
       
-      # Test stat aggregation
-      select_stat = stats.@stats["Teacher#select"]?
-      select_stat.should_not be_nil
+      stats.report
+      sleep 100.milliseconds
+      messages = backend.messages.join("\n")
       
-      if stat = select_stat
-        stat.count.should eq(2)
-        stat.avg_duration_ms.should eq(4.5)
-        stat.min_duration_ms.should eq(3.8)
-        stat.max_duration_ms.should eq(5.2)
-      end
+      # Verify the stats were recorded correctly
+      messages.should contain("Query Stats - Teacher#select: 2 queries")
+      messages.should contain("avg: 4.5ms")
+      messages.should contain("min: 3.8ms")
+      messages.should contain("max: 5.2ms")
       
       stats.disable!
     end
     
     it "generates statistics report" do
-      io = IO::Memory.new
-      backend = Log::IOBackend.new(io)
-      Log.builder.bind "granite.query", :info, backend
-      
       stats = Granite::QueryAnalysis::QueryStats.instance
       stats.enable!
       stats.clear
@@ -160,12 +184,12 @@ describe "Granite::QueryAnalysis" do
       
       stats.report
       
-      io.rewind
-      log_output = io.gets_to_end
+      sleep 100.milliseconds
+      messages = backend.messages.join("\n")
       
-      log_output.should contain("Query Statistics Summary")
-      log_output.should contain("User")
-      log_output.should contain("select")
+      messages.should contain("Query Statistics Summary")
+      messages.should contain("User")
+      messages.should contain("select")
       
       stats.disable!
     end

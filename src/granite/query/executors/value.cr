@@ -24,12 +24,7 @@ module Granite::Query::Executor
           result
         rescue e
           duration = Time.monotonic - start_time
-          Granite::Logs::SQL.error &.emit("Query failed",
-            sql: @sql,
-            model: Model.name,
-            duration_ms: duration.total_milliseconds,
-            error: e.message
-          )
+          Granite::Logs::SQL.error { "Query failed (#{duration.total_milliseconds}ms) - #{@sql} [#{Model.name}] - #{e.message}" }
           raise e
         end
       end

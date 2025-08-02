@@ -83,7 +83,32 @@ class CallbackTest < Granite::Base
   end
 end
 
+# Model for testing rollback callbacks
+class FailingCallbackTest < Granite::Base
+  connection sqlite
+  table failing_callback_tests
+  
+  column id : Int64, primary: true
+  column name : String?
+  
+  property callback_history = [] of String
+  
+  before_save do
+    callback_history << "before_save"
+    abort!("Force failure")
+  end
+  
+  after_rollback do
+    callback_history << "after_rollback"
+  end
+end
+
 describe "Granite::Callbacks::Lifecycle" do
+  before_all do
+    CallbackTest.migrator.drop_and_create
+    FailingCallbackTest.migrator.drop_and_create
+  end
+  
   describe "after_initialize" do
     it "runs after new" do
       model = CallbackTest.new
@@ -203,15 +228,10 @@ describe "Granite::Callbacks::Lifecycle" do
   
   describe "rollback callbacks" do
     it "runs after_rollback on save failure" do
-      model = CallbackTest.new(name: "Test")
-      
-      # Force a save failure by making validation fail
-      model.before_save do
-        abort!("Force failure")
-      end
-      
+      model = FailingCallbackTest.new(name: "Test")
       model.save
       
+      model.callback_history.should contain("before_save")
       model.callback_history.should contain("after_rollback")
     end
   end
