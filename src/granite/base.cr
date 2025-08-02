@@ -35,6 +35,7 @@ require "./composite_primary_key"
 require "./secure_token"
 require "./signed_id"
 require "./token_for"
+require "./serialized_column"
 
 # Granite::Base is the base class for your model objects.
 abstract class Granite::Base
@@ -57,6 +58,7 @@ abstract class Granite::Base
 
   include ConnectionManagement
   include AttributeApi
+  include SerializedColumn
   
   # Make secure token macros available
   macro has_secure_token(name, length = 24, alphabet = :base58)
