@@ -1,5 +1,22 @@
 require "../spec_helper"
 
+# Forward declarations for test
+class Post < Granite::Base
+  connection {{ CURRENT_ADAPTER }}
+  table posts
+  column id : Int64, primary: true
+  column title : String
+  column author_id : Int64?
+end
+
+class Profile < Granite::Base
+  connection {{ CURRENT_ADAPTER }}
+  table profiles
+  column id : Int64, primary: true
+  column bio : String?
+  column author_id : Int64?
+end
+
 # Test model
 class TestAuthor < Granite::Base
   connection {{ CURRENT_ADAPTER }}
@@ -8,13 +25,13 @@ class TestAuthor < Granite::Base
   column id : Int64, primary: true
   column name : String
   
-  # Enable nested attributes with various options
-  accepts_nested_attributes_for :posts, 
+  # Enable nested attributes with various options - using type declaration syntax
+  accepts_nested_attributes_for posts : Post, 
     allow_destroy: true,
     reject_if: :all_blank,
     limit: 3
     
-  accepts_nested_attributes_for :profile,
+  accepts_nested_attributes_for profile : Profile,
     update_only: true
 end
 

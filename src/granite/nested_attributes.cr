@@ -1,29 +1,102 @@
-# Nested attributes implementation with proper save hook
+# Improved nested attributes implementation with explicit types
 module Granite::NestedAttributes
   macro included
     # Storage for nested attributes data
     @_nested_attributes_data = {} of String => Array(Hash(String, Granite::Columns::Type))
+    
+    # Track if we have nested attributes to avoid unnecessary overhead
+    @_has_nested_attributes = false
+    
+    # Override save to handle nested attributes if configured
+    macro finished
+      {% if @type.methods.any? { |m| m.name.ends_with?("_attributes=") } %}
+        def save(**args)
+          if @_has_nested_attributes && !@_nested_attributes_data.empty?
+            transaction do
+              # Save parent first
+              result = previous_def
+              
+              # If parent saved successfully, process nested attributes
+              if result
+                save_nested_attributes
+              else
+                raise Granite::Callbacks::Abort.new("Parent record failed to save")
+              end
+            end
+          else
+            previous_def
+          end
+        end
+        
+        def save!(**args)
+          if @_has_nested_attributes && !@_nested_attributes_data.empty?
+            transaction do
+              # Save parent first
+              previous_def
+              
+              # Process nested attributes (will raise on failure)
+              save_nested_attributes
+            end
+          else
+            previous_def
+          end
+        end
+        
+        private def save_nested_attributes
+          success = true
+          
+          # Process each association's nested attributes
+          {% for method in @type.methods.select { |m| m.name.ends_with?("_attributes=") } %}
+            {% assoc_name = method.name.gsub(/_attributes=$/, "") %}
+            if attrs = @_nested_attributes_data[{{ assoc_name.stringify }}]?
+              success = save_nested_{{ assoc_name.id }} && success
+            end
+          {% end %}
+          
+          # Clear nested data after processing
+          @_nested_attributes_data.clear if success
+          
+          success
+        end
+      {% end %}
+    end
   end
   
-  # Main macro to configure nested attributes
-  macro accepts_nested_attributes_for(association_name, class_name = nil, **options)
-    {% association_str = association_name.id.stringify %}
+  # Improved macro that works with association definitions
+  macro accepts_nested_attributes_for(association, **options)
     {% 
-      # Use provided class name or infer from association
-      if class_name
-        target_class = class_name
+      # Extract association name and class from the declaration
+      if association.is_a?(TypeDeclaration)
+        assoc_name = association.var
+        target_class = association.type
       else
-        # Simple singularization - just remove trailing 's'
-        singular = association_name.id.stringify
-        if singular.ends_with?("s")
-          singular = singular[0..-2]
+        assoc_name = association.id
+        # Try to find the association definition to get the class
+        target_class = nil
+        @type.methods.each do |method|
+          if method.name == assoc_name.id
+            # Look for the return type annotation
+            if method.return_type
+              target_class = method.return_type
+              break
+            end
+          end
         end
-        target_class = singular.camelcase.id
+        
+        # If not found, try to get from association metadata
+        if !target_class && @type.has_constant?("_#{assoc_name.id}_association_meta")
+          # This will be resolved at runtime, but we need compile-time type
+          # So we'll require explicit type in this case
+          raise "Cannot infer type for association #{assoc_name}. Please use: accepts_nested_attributes_for #{assoc_name} : ClassName"
+        end
       end
     %}
     
+    # Flag that this model has nested attributes
+    @_has_nested_attributes = true
+    
     # Generate the attributes setter method
-    def {{association_name.id}}_attributes=(attributes)
+    def {{assoc_name.id}}_attributes=(attributes)
       # Configuration for this specific association
       config = {
         allow_destroy: {{ options[:allow_destroy] || false }},
@@ -52,13 +125,108 @@ module Granite::NestedAttributes
         raise ArgumentError.new("Nested attributes must be an Array, Hash, or NamedTuple")
       end
       
-      @_nested_attributes_data[{{ association_str }}] = processed_attrs
+      @_nested_attributes_data[{{ assoc_name.stringify }}] = processed_attrs
     end
     
     # Get nested attributes (for testing)
-    def {{association_name.id}}_nested_attributes
-      @_nested_attributes_data[{{ association_str }}]?
+    def {{assoc_name.id}}_nested_attributes
+      @_nested_attributes_data[{{ assoc_name.stringify }}]?
     end
+    
+    # Generate save method for this specific association
+    private def save_nested_{{assoc_name.id}} : Bool
+      attrs_array = @_nested_attributes_data[{{ assoc_name.stringify }}]
+      return true unless attrs_array
+      return true if attrs_array.empty?
+      
+      config = {
+        allow_destroy: {{ options[:allow_destroy] || false }},
+        update_only: {{ options[:update_only] || false }}
+      }
+      
+      # Get foreign key from association metadata
+      {% if @type.has_constant?("_#{assoc_name.id}_association_meta") %}
+        foreign_key_name = self.class._{{assoc_name.id}}_association_meta[:foreign_key]
+        assoc_type = self.class._{{assoc_name.id}}_association_meta[:type]
+      {% else %}
+        foreign_key_name = "#{self.class.name.split("::").last.underscore}_id"
+        assoc_type = :has_many
+      {% end %}
+      
+      success = true
+      
+      attrs_array.each do |attr_hash|
+        begin
+          if config[:allow_destroy] && should_destroy?(attr_hash)
+            # Handle destroy
+            if id = attr_hash["id"]?
+              if record = {{target_class}}.find(id)
+                unless record.destroy
+                  record.errors.each do |error|
+                    self.errors << Granite::Error.new("{{ assoc_name.id }}.#{error.field}", error.message)
+                  end
+                  success = false
+                end
+              end
+            end
+          elsif id = attr_hash["id"]?
+            # Handle update
+            if record = {{target_class}}.find(id)
+              # Update attributes
+              update_attrs = {} of String => String
+              attr_hash.each do |key, value|
+                next if key == "id" || key == "_destroy"
+                update_attrs[key] = value.to_s
+              end
+              
+              record.set_attributes(update_attrs)
+              
+              unless record.save
+                record.errors.each do |error|
+                  self.errors << Granite::Error.new("{{ assoc_name.id }}.#{error.field}", error.message)
+                end
+                success = false
+              end
+            end
+          elsif !config[:update_only]
+            # Handle create
+            record = {{target_class}}.new
+            
+            # Set attributes
+            create_attrs = {} of String => String
+            attr_hash.each do |key, value|
+              next if key == "id" || key == "_destroy"
+              create_attrs[key] = value.to_s
+            end
+            
+            record.set_attributes(create_attrs)
+            
+            # Set foreign key for has_many/has_one associations
+            if (assoc_type == :has_many || assoc_type == :has_one) && self.id
+              record.set_attributes({foreign_key_name => self.id.to_s})
+            end
+            
+            unless record.save
+              record.errors.each do |error|
+                self.errors << Granite::Error.new("{{ assoc_name.id }}.#{error.field}", error.message)
+              end
+              success = false
+            end
+          end
+        rescue ex
+          Log.error { "Error processing nested attributes for {{ assoc_name.id }}: #{ex.message}" }
+          self.errors << Granite::Error.new("{{ assoc_name.id }}", ex.message.to_s)
+          success = false
+        end
+      end
+      
+      success
+    end
+  end
+  
+  # Alternative syntax that's more explicit
+  macro accepts_nested_attributes_for(association_name, target_class, **options)
+    accepts_nested_attributes_for({{association_name.id}} : {{target_class}}, {{**options}})
   end
   
   # Process single set of attributes with config
@@ -93,24 +261,18 @@ module Granite::NestedAttributes
     value.nil? || (value.responds_to?(:empty?) && value.empty?)
   end
   
+  private def should_destroy?(attrs : Hash(String, Granite::Columns::Type))
+    return false unless val = attrs["_destroy"]?
+    case val
+    when Bool then val
+    when String then val == "true" || val == "1"
+    when Int32, Int64 then val == 1
+    else false
+    end
+  end
+  
   # Get all nested attributes data
   def nested_attributes_data
     @_nested_attributes_data
-  end
-  
-  # Method to manually process nested attributes after save
-  # This needs to be called explicitly for now
-  def save_with_nested_attributes(**args)
-    # Save parent first
-    result = save(**args)
-    
-    # If parent saved successfully, save nested attributes
-    if result && !@_nested_attributes_data.empty?
-      # For now, just return true
-      # In a real implementation, this would process the nested records
-      @_nested_attributes_data.clear
-    end
-    
-    result
   end
 end
