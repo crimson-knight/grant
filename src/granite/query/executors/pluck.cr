@@ -29,13 +29,7 @@ module Granite::Query::Executor
         log_query_with_timing(@sql, @args, duration, results.size, Model.name)
       rescue e
         duration = Time.monotonic - start_time
-        Granite::Logs::SQL.error &.emit("Pluck query failed",
-          sql: @sql,
-          model: Model.name,
-          duration_ms: duration.total_milliseconds,
-          fields: @fields,
-          error: e.message
-        )
+        Granite::Logs::SQL.error { "Pluck query failed (#{duration.total_milliseconds}ms) - #{@sql} [#{Model.name}] [fields: #{@fields.join(", ")}] - #{e.message}" }
         raise e
       end
 

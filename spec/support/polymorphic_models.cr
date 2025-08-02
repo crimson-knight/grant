@@ -10,7 +10,7 @@
     column content : String
 
     # Polymorphic association
-    belongs_to :commentable, polymorphic: true
+    belongs_to :commentable, polymorphic: true, optional: true
   end
 
   class Image < Granite::Base
@@ -21,7 +21,7 @@
     column url : String
 
     # Polymorphic association
-    belongs_to :imageable, polymorphic: true
+    belongs_to :imageable, polymorphic: true, optional: true
   end
 
   class Post < Granite::Base
@@ -32,8 +32,8 @@
     column name : String
 
     # Polymorphic associations
-    has_many :comments, as: :commentable
-    has_one :image, as: :imageable
+    has_many :comments, as: :commentable, class_name: "Comment"
+    has_one :image, as: :imageable, class_name: "Image"
   end
 
   class PolyBook < Granite::Base
@@ -44,7 +44,7 @@
     column name : String
 
     # Polymorphic associations
-    has_many :comments, as: :commentable
-    has_one :image, as: :imageable
+    has_many :comments, as: :commentable, class_name: "Comment"
+    has_one :image, as: :imageable, class_name: "Image"
   end
 {% end %}

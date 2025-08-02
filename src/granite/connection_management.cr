@@ -25,7 +25,6 @@ module Granite::ConnectionManagement
     
     # Track last write time for read/write splitting
     class_property last_write_time : Time::Span = Time.monotonic
-    class_property read_delay : Time::Span = 2.seconds
   end
   
   # DSL for configuring connections
@@ -60,6 +59,15 @@ module Granite::ConnectionManagement
   end
   
   module ClassMethods
+    # Delegate connection_switch_wait_period to Granite::Connections for backward compatibility
+    def connection_switch_wait_period
+      Granite::Connections.connection_switch_wait_period
+    end
+    
+    def connection_switch_wait_period=(value : Int32)
+      Granite::Connections.connection_switch_wait_period = value
+    end
+    
     # Switch connection for a block
     def connected_to(
       database : String? = nil,
@@ -164,7 +172,9 @@ module Granite::ConnectionManagement
       return false unless connection_config.has_key?(:reading)
       return false if connection_context.try(&.role)
       
-      Time.monotonic - last_write_time > read_delay
+      # Convert connection_switch_wait_period (milliseconds) to Time::Span
+      wait_period = connection_switch_wait_period.milliseconds
+      Time.monotonic - last_write_time > wait_period
     end
   end
   

@@ -1,3 +1,5 @@
+require "uuid"
+
 module Granite::Type
   extend self
 
@@ -63,6 +65,45 @@ module Granite::Type
     result.read(Time?).try &.in(Granite.settings.default_timezone)
   end
 
+  # Converts a `DB::ResultSet` to `UUID`.
+  def from_rs(result : DB::ResultSet, t : UUID.class) : UUID
+    value = result.read(String | Bytes)
+    case value
+    when String
+      UUID.new(value)
+    when Bytes
+      UUID.new(value)
+    else
+      raise "Cannot convert #{value.class} to UUID"
+    end
+  end
+
+  # Converts a `DB::ResultSet` to `UUID?`.
+  def from_rs(result : DB::ResultSet, t : UUID?.class) : UUID?
+    value = result.read(String? | Bytes?)
+    return nil if value.nil?
+    
+    case value
+    when String
+      UUID.new(value)
+    when Bytes
+      UUID.new(value)
+    else
+      raise "Cannot convert #{value.class} to UUID"
+    end
+  end
+
+  # Converts an `DB::ResultSet` to `Array(UUID)`.
+  def from_rs(result : DB::ResultSet, t : Array(UUID).class) : Array(UUID)
+    result.read(Array(String)).map { |s| UUID.new(s) }
+  end
+
+  # Converts an `DB::ResultSet` to `Array(UUID)?`.
+  def from_rs(result : DB::ResultSet, t : Array(UUID)?.class) : Array(UUID)?
+    value = result.read(Array(String)?)
+    value.try &.map { |s| UUID.new(s) }
+  end
+
   {% for type, method in NUMERIC_TYPES %}
     # Converts a `String` to `{{type}}`.
     def convert_type(value : String, t : {{type.id}}.class) : {{type.id}}
@@ -81,5 +122,19 @@ module Granite::Type
 
   def convert_type(value, type : Bool?.class) : Bool
     ["1", "yes", "true", true, 1].includes?(value)
+  end
+
+  # Converts a value to UUID
+  def convert_type(value : String, type : UUID.class) : UUID
+    UUID.new(value)
+  end
+
+  # Converts a value to UUID?
+  def convert_type(value : String, type : UUID?.class) : UUID?
+    UUID.new(value)
+  end
+
+  def convert_type(value : Nil, type : UUID?.class) : UUID?
+    nil
   end
 end

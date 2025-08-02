@@ -12,13 +12,7 @@ class Granite::AssociationCollection(Owner, Target)
     )
     duration = Time.monotonic - start_time
     
-    Granite::Logs::Association.info &.emit("Loaded has_many association",
-      model: Owner.name,
-      target_class: Target.name,
-      foreign_key: @foreign_key.to_s,
-      records_loaded: results.size,
-      duration_ms: duration.total_milliseconds
-    )
+    Granite::Logs::Association.info { "Loaded has_many association - #{Owner.name} [#{Target.name}] [fk: #{@foreign_key}] - #{results.size} records (#{duration.total_milliseconds}ms)" }
     
     results
   end
@@ -32,13 +26,7 @@ class Granite::AssociationCollection(Owner, Target)
     duration = Time.monotonic - start_time
     
     if result
-      Granite::Logs::Association.debug &.emit("Found record in association",
-        model: Owner.name,
-        target_class: Target.name,
-        foreign_key: @foreign_key.to_s,
-        duration_ms: duration.total_milliseconds,
-        criteria: args.to_h
-      )
+      Granite::Logs::Association.debug { "Found record in association - #{Owner.name} [#{Target.name}] [fk: #{@foreign_key}] (#{duration.total_milliseconds}ms) - #{args.to_h}" }
     end
     
     result

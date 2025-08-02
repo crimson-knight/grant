@@ -85,9 +85,10 @@ module Granite::QueryAnalysis
     end
     
     # Run a block with N+1 detection enabled
-    def self.detect(&)
+    def self.detect(&) : Analysis
       detector = instance
       detector.enable!
+      analysis = nil
       
       begin
         yield
@@ -97,26 +98,15 @@ module Granite::QueryAnalysis
         detector.clear
         
         if analysis.has_issues?
-          Granite::Logs::Query.warn &.emit("Potential N+1 queries detected",
-            issues_count: analysis.potential_n1_issues.size,
-            total_queries: analysis.total_queries,
-            total_duration_ms: analysis.total_duration_ms
-          )
+          Granite::Logs::Query.warn { "Potential N+1 queries detected - #{analysis.potential_n1_issues.size} issues, #{analysis.total_queries} total queries (#{analysis.total_duration_ms}ms)" }
           
           analysis.potential_n1_issues.each do |issue|
-            Granite::Logs::Query.warn &.emit("N+1 Query Pattern",
-              model: issue.model,
-              operation: issue.operation,
-              query_count: issue.query_count,
-              total_duration_ms: issue.total_duration_ms,
-              association: issue.association,
-              sample_sql: issue.sample_sql
-            )
+            Granite::Logs::Query.warn { "N+1 Query Pattern - #{issue.model}##{issue.operation}: #{issue.query_count} queries (#{issue.total_duration_ms}ms) [#{issue.association || "no association"}]" }
           end
         end
-        
-        analysis
       end
+      
+      analysis.not_nil!
     end
     
     private def extract_operation(sql : String) : String
@@ -255,11 +245,7 @@ module Granite::QueryAnalysis
     def report
       return if @stats.empty?
       
-      Granite::Logs::Query.info &.emit("Query Statistics Summary",
-        total_operations: @stats.size,
-        total_queries: @stats.values.sum(&.count),
-        total_duration_ms: @stats.values.sum(&.total_duration_ms)
-      )
+      Granite::Logs::Query.info { "Query Statistics Summary - #{@stats.size} operations, #{@stats.values.sum(&.count)} queries (#{@stats.values.sum(&.total_duration_ms)}ms)" }
       
       # Sort by total duration (descending)
       sorted_stats = @stats.to_a.sort_by { |_, stat| -stat.total_duration_ms }
@@ -267,15 +253,7 @@ module Granite::QueryAnalysis
       sorted_stats.each do |key, stat|
         model, operation = key.split("#", 2)
         
-        Granite::Logs::Query.info &.emit("Query Stats",
-          model: model,
-          operation: operation,
-          count: stat.count,
-          total_ms: stat.total_duration_ms.round(2),
-          avg_ms: stat.avg_duration_ms.round(2),
-          min_ms: stat.min_duration_ms.round(2),
-          max_ms: stat.max_duration_ms.round(2)
-        )
+        Granite::Logs::Query.info { "Query Stats - #{model}##{operation}: #{stat.count} queries, total: #{stat.total_duration_ms.round(2)}ms, avg: #{stat.avg_duration_ms.round(2)}ms, min: #{stat.min_duration_ms.round(2)}ms, max: #{stat.max_duration_ms.round(2)}ms" }
       end
     end
     

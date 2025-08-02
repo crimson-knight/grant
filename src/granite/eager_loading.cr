@@ -27,21 +27,63 @@ module Granite::EagerLoading
   
   module ClassMethods
     def includes(*associations)
-      query = current_scope
+      query = get_query_builder
       query.includes(*associations)
       query
     end
     
+    def includes(**nested_associations)
+      query = get_query_builder
+      nested_associations.each do |name, nested|
+        query.includes({name => nested.is_a?(Array) ? nested : [nested]})
+      end
+      query
+    end
+    
     def preload(*associations)
-      query = current_scope
+      query = get_query_builder
       query.preload(*associations)
       query
     end
     
+    def preload(**nested_associations)
+      query = get_query_builder
+      nested_associations.each do |name, nested|
+        query.preload({name => nested.is_a?(Array) ? nested : [nested]})
+      end
+      query
+    end
+    
     def eager_load(*associations)
-      query = current_scope
+      query = get_query_builder
       query.eager_load(*associations)
       query
+    end
+    
+    def eager_load(**nested_associations)
+      query = get_query_builder
+      nested_associations.each do |name, nested|
+        query.eager_load({name => nested.is_a?(Array) ? nested : [nested]})
+      end
+      query
+    end
+    
+    private def get_query_builder
+      # Try to use current_scope if available (from Scoping module)
+      if self.responds_to?(:current_scope)
+        current_scope
+      else
+        # Fallback to creating a new query builder
+        db_type = case adapter.class.to_s
+                  when /Pg/
+                    Granite::Query::Builder::DbType::Pg
+                  when /Mysql/
+                    Granite::Query::Builder::DbType::Mysql
+                  else
+                    Granite::Query::Builder::DbType::Sqlite
+                  end
+        Granite::Query::Builder(self).new(db_type)
+      end
     end
   end
 end

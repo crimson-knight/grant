@@ -53,32 +53,42 @@ module Granite
     
     # Set up pretty SQL logging for development
     def self.setup_sql_logging
-      backend = Log::IOBackend.new
-      Log.builder.bind "granite.sql", :debug, backend
+      backend = ::Log::IOBackend.new(STDOUT)
+      ::Log.setup do |c|
+        c.bind "granite.sql", :debug, backend
+      end
     end
     
     # Set up model logging for development
     def self.setup_model_logging
-      backend = Log::IOBackend.new
-      Log.builder.bind "granite.model", :debug, backend
+      backend = ::Log::IOBackend.new(STDOUT)
+      ::Log.setup do |c|
+        c.bind "granite.model", :debug, backend
+      end
     end
     
     # Set up association logging for development
     def self.setup_association_logging
-      backend = Log::IOBackend.new
-      Log.builder.bind "granite.association", :debug, backend
+      backend = ::Log::IOBackend.new(STDOUT)
+      ::Log.setup do |c|
+        c.bind "granite.association", :debug, backend
+      end
     end
     
     # Set up transaction logging for development
     def self.setup_transaction_logging
-      backend = Log::IOBackend.new
-      Log.builder.bind "granite.transaction", :debug, backend
+      backend = ::Log::IOBackend.new(STDOUT)
+      ::Log.setup do |c|
+        c.bind "granite.transaction", :debug, backend
+      end
     end
     
     # Set up query builder logging for development
     def self.setup_query_logging
-      backend = Log::IOBackend.new
-      Log.builder.bind "granite.query", :debug, backend
+      backend = ::Log::IOBackend.new(STDOUT)
+      ::Log.setup do |c|
+        c.bind "granite.query", :debug, backend
+      end
     end
     
     # Note: Custom formatters removed due to Crystal Log API changes
