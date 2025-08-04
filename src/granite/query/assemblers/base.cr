@@ -1,5 +1,8 @@
+require "../../aggregations"
+
 module Granite::Query::Assembler
   abstract class Base(Model)
+    include Granite::Aggregations::QueryMethods
     @placeholder : String = ""
     @where : String?
     @order : String?
