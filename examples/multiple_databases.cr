@@ -2,7 +2,7 @@ require "../src/granite"
 
 # Example: Multiple Database Configuration with Grant
 
-# 1. Set up multiple databases
+# 1. Set up multiple databases with advanced configuration
 Granite::ConnectionRegistry.establish_connections({
   "primary" => {
     adapter: Granite::Adapter::Pg,
@@ -10,19 +10,34 @@ Granite::ConnectionRegistry.establish_connections({
     reader: ENV["PRIMARY_REPLICA_URL"]?,
     pool: {
       max_pool_size: 25,
-      checkout_timeout: 5.seconds
+      initial_pool_size: 5,
+      checkout_timeout: 5.seconds,
+      retry_attempts: 3,
+      retry_delay: 0.2.seconds
+    },
+    health_check: {
+      interval: 30.seconds,
+      timeout: 5.seconds
     }
   },
   "analytics" => {
     adapter: Granite::Adapter::Pg,
     url: ENV["ANALYTICS_DATABASE_URL"],
     pool: {
-      max_pool_size: 10
+      max_pool_size: 10,
+      checkout_timeout: 3.seconds
+    },
+    health_check: {
+      interval: 60.seconds,
+      timeout: 10.seconds
     }
   },
   "cache" => {
     adapter: Granite::Adapter::Sqlite,
-    url: "sqlite3://./cache.db"
+    url: "sqlite3://./cache.db",
+    pool: {
+      max_pool_size: 5
+    }
   }
 })
 
@@ -30,6 +45,13 @@ Granite::ConnectionRegistry.establish_connections({
 class User < Granite::Base
   # Connect to primary database with read/write splitting
   connects_to database: "primary"
+  
+  # Configure connection behavior
+  connection_config(
+    replica_lag_threshold: 3.seconds,
+    failover_retry_attempts: 5,
+    connection_switch_wait_period: 2500 # milliseconds
+  )
   
   table users
   column id : Int64, primary: true
@@ -181,3 +203,51 @@ puts "\n=== Connection Statistics ==="
 Granite::ConnectionRegistry.adapter_names.each do |name|
   puts "Adapter: #{name}"
 end
+
+# 7. Advanced Features: Health Monitoring and Load Balancing
+puts "\n=== Health Monitoring ==="
+
+# Check system health
+if Granite::ConnectionRegistry.system_healthy?
+  puts "All connections are healthy"
+else
+  puts "Some connections are unhealthy"
+end
+
+# Get detailed health status
+Granite::ConnectionRegistry.health_status.each do |status|
+  puts "#{status[:key]} - Healthy: #{status[:healthy]} (Database: #{status[:database]}, Role: #{status[:role]})"
+end
+
+# Check load balancer status for primary database
+if lb = Granite::ConnectionRegistry.get_load_balancer("primary")
+  puts "\nPrimary database load balancer:"
+  puts "Total replicas: #{lb.size}"
+  puts "Healthy replicas: #{lb.healthy_count}"
+  
+  lb.status.each do |replica|
+    puts "  #{replica[:adapter]} - Healthy: #{replica[:healthy]}"
+  end
+end
+
+# 8. Sticky Sessions Example
+puts "\n=== Sticky Sessions Example ==="
+
+# Force primary usage for critical operations
+User.stick_to_primary(10.seconds)
+user = User.create(email: "critical@example.com", name: "Critical User")
+puts "Created critical user with sticky primary connection"
+
+# Subsequent reads will use primary for 10 seconds
+found_user = User.find(user.id.not_nil!)
+puts "Found user on primary due to sticky session"
+
+# 9. Manual Health Check
+puts "\n=== Manual Health Check ==="
+
+# Trigger immediate health check for all connections
+Granite::HealthMonitorRegistry.status.each do |monitor_status|
+  puts "Connection #{monitor_status[:key]} - Healthy: #{monitor_status[:healthy]}, Last check: #{monitor_status[:last_check]}"
+end
+
+puts "\n=== Example Complete ==="
