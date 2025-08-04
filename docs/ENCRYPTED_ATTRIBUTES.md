@@ -18,7 +18,7 @@ Grant provides transparent encryption for sensitive data in your models using in
 ### Features
 
 - **Transparent encryption/decryption** - Work with encrypted attributes as if they were regular attributes
-- **AES-256-GCM encryption** - Industry-standard authenticated encryption
+- **AES-256-CBC with HMAC-SHA256** - Authenticated encryption using Encrypt-then-MAC
 - **Deterministic and non-deterministic encryption** - Choose based on your needs
 - **Query support** - Search deterministic encrypted fields
 - **Key rotation** - Rotate encryption keys without downtime

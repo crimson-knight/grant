@@ -21,9 +21,10 @@ describe Granite::Encryption do
   before_each do
     # Configure encryption
     Granite::Encryption.configure do |config|
-      config.primary_key = "test_primary_key_1234567890123456789012"
-      config.deterministic_key = "test_deterministic_key_123456789012"
-      config.key_derivation_salt = "test_salt_1234567890"
+      # Generate proper Base64-encoded 32-byte keys
+      config.primary_key = Base64.strict_encode(Random::Secure.random_bytes(32))
+      config.deterministic_key = Base64.strict_encode(Random::Secure.random_bytes(32))
+      config.key_derivation_salt = Base64.strict_encode(Random::Secure.random_bytes(32))
     end
   end
   

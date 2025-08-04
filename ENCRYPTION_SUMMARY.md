@@ -2,12 +2,12 @@
 
 ## Overview
 
-I've successfully implemented a comprehensive encrypted attributes feature for Grant that provides transparent encryption for sensitive data using AES-256-GCM encryption.
+I've successfully implemented a comprehensive encrypted attributes feature for Grant that provides transparent encryption for sensitive data using AES-256-CBC with HMAC-SHA256 authentication.
 
 ## Key Features Implemented
 
 ### 1. Core Encryption Infrastructure
-- **AES-256-GCM encryption** with authenticated encryption
+- **AES-256-CBC with HMAC-SHA256** using Encrypt-then-MAC construction
 - **Key management** using HKDF for key derivation
 - **Support for both deterministic and non-deterministic encryption**
 - **Binary format** with version header for future compatibility
@@ -76,25 +76,31 @@ found = User.find_by_email("john@example.com")
 4. **Header format** - Version byte + flags for future extensibility
 5. **Avoided where() override** - Used helper methods to prevent type conflicts
 
-## Known Issues
+## Implementation Changes
 
-### LibSSL Binding Issue
-There's currently a linker error with the low-level OpenSSL GCM functions (`evp_cipher_ctx_ctrl`). This prevents the tests from running but doesn't affect the core implementation. The issue is that Crystal's OpenSSL bindings don't expose the EVP_CIPHER_CTX_ctrl function needed for GCM tag handling.
+### Switched from AES-256-GCM to AES-256-CBC + HMAC
+Initially attempted to use AES-256-GCM (Galois/Counter Mode) for authenticated encryption, but Crystal's OpenSSL bindings don't expose the `EVP_CIPHER_CTX_ctrl` function needed for GCM authentication tag handling. 
 
-### Workarounds Needed
+Switched to **AES-256-CBC with HMAC-SHA256** using the Encrypt-then-MAC construction, which provides:
+- Strong encryption (AES-256)
+- Authentication and integrity verification (HMAC)
+- Full compatibility with Crystal's standard library
+- Protection against padding oracle attacks
+
+### Workarounds Applied
 1. The value_objects module had a callback registration issue that was temporarily commented out
-2. Direct instance variable access for encrypted values instead of write_attribute to avoid type casting issues
+2. Used dirty tracking API directly instead of write_attribute to avoid type casting issues with Slice(UInt8)
 
 ## Next Steps
 
-1. **Fix OpenSSL bindings** - Either contribute to Crystal's stdlib or use alternative encryption approach
-2. **Add integration tests** - Once linking issue is resolved
-3. **Performance benchmarks** - Measure encryption overhead
-4. **Additional features**:
-   - Encryption contexts
-   - Partial field encryption
+1. **Add integration tests** - Test with actual database operations
+2. **Performance benchmarks** - Measure encryption overhead
+3. **Additional features**:
+   - Encryption contexts (additional authenticated data)
+   - Partial field encryption (mask/unmask portions)
    - Hardware security module support
    - Multiple key provider support
+   - Consider adding support for other algorithms (ChaCha20-Poly1305)
 
 ## Security Considerations
 
