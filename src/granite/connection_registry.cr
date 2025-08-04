@@ -7,7 +7,7 @@ module Granite
     # Connection specification with pool configuration
     struct ConnectionSpec
       property database : String
-      property adapter_class : Adapter::Base.class
+      property adapter_class : Granite::Adapter::Base.class
       property url : String
       property role : Symbol
       property shard : Symbol?
@@ -55,7 +55,7 @@ module Granite
     end
     
     # Class-level storage
-    @@adapters = {} of String => Adapter::Base
+    @@adapters = {} of String => Granite::Adapter::Base
     @@specifications = {} of String => ConnectionSpec
     @@load_balancers = {} of String => ReplicaLoadBalancer
     @@mutex = Mutex.new
@@ -64,7 +64,7 @@ module Granite
     # Establish a new connection with pool configuration
     def self.establish_connection(
       database : String,
-      adapter : Adapter::Base.class,
+      adapter : Granite::Adapter::Base.class,
       url : String,
       role : Symbol = :primary,
       shard : Symbol? = nil,
@@ -101,7 +101,7 @@ module Granite
           
           # Create load balancer if it doesn't exist
           unless @@load_balancers.has_key?(lb_key)
-            @@load_balancers[lb_key] = ReplicaLoadBalancer.new([] of Adapter::Base)
+            @@load_balancers[lb_key] = ReplicaLoadBalancer.new([] of Granite::Adapter::Base)
             LoadBalancerRegistry.register(lb_key, @@load_balancers[lb_key])
           end
           
@@ -194,7 +194,7 @@ module Granite
     end
     
     # Get an adapter with load balancing and failover support
-    def self.get_adapter(database : String, role : Symbol = :primary, shard : Symbol? = nil) : Adapter::Base
+    def self.get_adapter(database : String, role : Symbol = :primary, shard : Symbol? = nil) : Granite::Adapter::Base
       key = if shard
         "#{database}:#{role}:#{shard}"
       else
@@ -235,7 +235,7 @@ module Granite
     end
     
     # Try to find a fallback adapter
-    private def self.try_fallback_adapter(database : String, role : Symbol, shard : Symbol?) : Adapter::Base?
+    private def self.try_fallback_adapter(database : String, role : Symbol, shard : Symbol?) : Granite::Adapter::Base?
       # Fallback to primary role if specific role not found
       if role != :primary
         key = shard ? "#{database}:primary:#{shard}" : "#{database}:primary"
@@ -272,7 +272,7 @@ module Granite
     end
     
     # Get all adapters for a database
-    def self.adapters_for_database(database : String) : Array(Adapter::Base)
+    def self.adapters_for_database(database : String) : Array(Granite::Adapter::Base)
       @@mutex.synchronize do
         @@adapters.select { |key, _| key.starts_with?("#{database}:") }.values
       end

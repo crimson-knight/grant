@@ -5,14 +5,14 @@ module Granite
   class HealthMonitor
     Log = ::Log.for("granite.health_monitor")
     
-    @adapter : Adapter::Base
+    @adapter : Granite::Adapter::Base
     @config : ConnectionRegistry::ConnectionSpec
     @healthy : Atomic(Bool) = Atomic(Bool).new(true)
     @last_check_timestamp : Atomic(Int64) = Atomic(Int64).new(Time.utc.to_unix)
     @check_fiber : Fiber?
     @running : Atomic(Bool) = Atomic(Bool).new(false)
     
-    def initialize(@adapter : Adapter::Base, @config : ConnectionRegistry::ConnectionSpec)
+    def initialize(@adapter : Granite::Adapter::Base, @config : ConnectionRegistry::ConnectionSpec)
     end
     
     def start
@@ -116,7 +116,7 @@ module Granite
     @@monitors = {} of String => HealthMonitor
     @@mutex = Mutex.new
     
-    def self.register(key : String, adapter : Adapter::Base, config : ConnectionRegistry::ConnectionSpec)
+    def self.register(key : String, adapter : Granite::Adapter::Base, config : ConnectionRegistry::ConnectionSpec)
       @@mutex.synchronize do
         # Stop existing monitor if any
         @@monitors[key]?.try(&.stop)

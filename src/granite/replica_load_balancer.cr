@@ -79,17 +79,17 @@ module Granite
   class ReplicaLoadBalancer
     Log = ::Log.for("granite.replica_load_balancer")
     
-    @adapters : Array(Adapter::Base)
+    @adapters : Array(Granite::Adapter::Base)
     @strategy : LoadBalancingStrategy
     @health_monitors : Array(HealthMonitor?)
     @mutex = Mutex.new
     
-    def initialize(@adapters : Array(Adapter::Base), @strategy : LoadBalancingStrategy = RoundRobinStrategy.new)
+    def initialize(@adapters : Array(Granite::Adapter::Base), @strategy : LoadBalancingStrategy = RoundRobinStrategy.new)
       @health_monitors = Array(HealthMonitor?).new(@adapters.size, nil)
     end
     
     # Add a replica to the pool
-    def add_replica(adapter : Adapter::Base, monitor : HealthMonitor? = nil)
+    def add_replica(adapter : Granite::Adapter::Base, monitor : HealthMonitor? = nil)
       @mutex.synchronize do
         @adapters << adapter
         @health_monitors << monitor
@@ -98,7 +98,7 @@ module Granite
     end
     
     # Remove a replica from the pool
-    def remove_replica(adapter : Adapter::Base)
+    def remove_replica(adapter : Granite::Adapter::Base)
       @mutex.synchronize do
         if index = @adapters.index(adapter)
           @adapters.delete_at(index)
@@ -110,7 +110,7 @@ module Granite
     end
     
     # Get next available replica using the strategy
-    def next_replica : Adapter::Base?
+    def next_replica : Granite::Adapter::Base?
       @mutex.synchronize do
         return nil if @adapters.empty?
         
@@ -133,7 +133,7 @@ module Granite
     end
     
     # Get next replica with fallback to any replica if all unhealthy
-    def next_replica_with_fallback : Adapter::Base?
+    def next_replica_with_fallback : Granite::Adapter::Base?
       # Try to get a healthy replica first
       if replica = next_replica
         return replica
@@ -162,7 +162,7 @@ module Granite
     end
     
     # Get all healthy replicas
-    def healthy_replicas : Array(Adapter::Base)
+    def healthy_replicas : Array(Granite::Adapter::Base)
       @mutex.synchronize do
         get_healthy_indices.map { |i| @adapters[i] }
       end
@@ -194,7 +194,7 @@ module Granite
     end
     
     # Set health monitor for an adapter
-    def set_health_monitor(adapter : Adapter::Base, monitor : HealthMonitor)
+    def set_health_monitor(adapter : Granite::Adapter::Base, monitor : HealthMonitor)
       @mutex.synchronize do
         if index = @adapters.index(adapter)
           @health_monitors[index] = monitor

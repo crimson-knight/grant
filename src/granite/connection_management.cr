@@ -181,7 +181,7 @@ module Granite::ConnectionManagement
     end
     
     # Get the current adapter
-    def adapter : Adapter::Base
+    def adapter : Granite::Adapter::Base
       # Determine database name
       db_name = if shard = current_shard
         # For sharded connections, look up the database name
