@@ -40,6 +40,7 @@ require "./normalization"
 require "./nested_attributes"
 require "./async"
 require "./aggregations"
+require "./value_objects"
 
 # Granite::Base is the base class for your model objects.
 abstract class Granite::Base
@@ -64,6 +65,7 @@ abstract class Granite::Base
   include AttributeApi
   include SerializedColumn
   include NestedAttributes
+  include ValueObjects
   
   # Make secure token macros available
   macro has_secure_token(name, length = 24, alphabet = :base58)
@@ -86,6 +88,7 @@ abstract class Granite::Base
   extend Scoping::ClassMethods
   extend Granite::Async::ClassMethods
   extend Granite::Aggregations::ClassMethods
+  extend ValueObjects::ClassMethods
   
   # Make normalization macro available
   macro normalizes(attribute, **options, &block)
