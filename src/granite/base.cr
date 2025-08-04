@@ -13,6 +13,10 @@ require "./convenience_methods"
 require "./settings"
 require "./table"
 require "./transactions"
+require "./transaction"
+require "./locking"
+require "./locking/pessimistic"
+require "./locking/optimistic"
 require "./validators"
 require "./validators/**"
 require "./validation_helpers/**"
@@ -68,6 +72,8 @@ abstract class Granite::Base
   include NestedAttributes
   include ValueObjects
   include Encryption::Model
+  include Locking::Pessimistic
+  include Transaction
   
   # Make secure token macros available
   macro has_secure_token(name, length = 24, alphabet = :base58)
@@ -84,6 +90,7 @@ abstract class Granite::Base
   extend Querying::ClassMethods
   extend Query::BuilderMethods
   extend Granite::Transactions::ClassMethods
+  extend Granite::Transaction::ClassMethods
   extend Integrators
   extend Select
   extend EagerLoading::ClassMethods

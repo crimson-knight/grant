@@ -45,6 +45,7 @@ class Granite::Query::Builder(Model)
   getter eager_load_associations : Array(AssociationQuery) = [] of AssociationQuery
   getter preload_associations : Array(AssociationQuery) = [] of AssociationQuery
   getter includes_associations : Array(AssociationQuery) = [] of AssociationQuery
+  getter lock_mode : Granite::Locking::LockMode?
 
   def initialize(@db_type, @boolean_operator = :and)
   end
@@ -213,6 +214,11 @@ class Granite::Query::Builder(Model)
       @group_fields << {field: field.to_s}
     end
 
+    self
+  end
+
+  def lock(mode : Granite::Locking::LockMode = Granite::Locking::LockMode::Update)
+    @lock_mode = mode
     self
   end
 

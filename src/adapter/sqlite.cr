@@ -129,4 +129,16 @@ class Granite::Adapter::Sqlite < Granite::Adapter::Base
 
     log statement, elapsed_time, value
   end
+  
+  def supports_lock_mode?(mode : Granite::Locking::LockMode) : Bool
+    false
+  end
+  
+  def supports_isolation_level?(level : Granite::Transaction::IsolationLevel) : Bool
+    false
+  end
+  
+  def supports_savepoints? : Bool
+    true
+  end
 end
