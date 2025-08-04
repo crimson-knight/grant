@@ -45,8 +45,14 @@ module Granite::Encryption
           unencrypted_value = record.read_attribute(attribute_str)
           next if unencrypted_value.nil?
           
-          # Set via the virtual setter to encrypt
-          record.public_send("#{attribute}=", unencrypted_value)
+          # Encrypt and set the value directly
+          encrypted_value = Granite::Encryption.encrypt(
+            unencrypted_value.as(String),
+            model_class.name,
+            attribute_str,
+            model_class.encrypted_attributes[attribute_str].deterministic
+          )
+          record.write_attribute("#{attribute_str}_encrypted", encrypted_value)
           record.save!(validate: false)
           
           processed += 1
@@ -100,8 +106,16 @@ module Granite::Encryption
         break if records.empty?
         
         records.each do |record|
-          # Get the decrypted value via virtual getter
-          decrypted_value = record.public_send(attribute)
+          # Get the encrypted value
+          encrypted_value = record.read_attribute("#{attribute_str}_encrypted")
+          next if encrypted_value.nil?
+          
+          # Decrypt the value
+          decrypted_value = Granite::Encryption.decrypt(
+            encrypted_value.as(String),
+            model_class.name,
+            attribute_str
+          )
           next if decrypted_value.nil?
           
           # Write to target column
@@ -175,13 +189,24 @@ module Granite::Encryption
             KeyProvider.primary_key = old_keys[:primary]
             KeyProvider.deterministic_key = old_keys[:deterministic] if encrypted_attr.deterministic && old_keys[:deterministic]
             
-            decrypted = record.public_send(attribute)
+            decrypted = Granite::Encryption.decrypt(
+              encrypted_value.as(String),
+              model_class.name,
+              attribute_str
+            )
             
             # Re-encrypt with new keys
             KeyProvider.primary_key = current_primary
             KeyProvider.deterministic_key = current_deterministic if current_deterministic
             
-            record.public_send("#{attribute}=", decrypted)
+            new_encrypted = Granite::Encryption.encrypt(
+              decrypted,
+              model_class.name,
+              attribute_str,
+              encrypted_attr.deterministic
+            )
+            
+            record.write_attribute("#{attribute_str}_encrypted", new_encrypted)
             record.save!(validate: false)
             
             processed += 1
@@ -214,7 +239,7 @@ module Granite::Encryption
       <<-MIGRATION
       # Add encrypted column for #{attribute}
       alter_table :#{table_name} do
-        add_column :#{column_name}, :blob
+        add_column :#{column_name}, :text
         add_index :#{column_name} if deterministic # Only for deterministic encryption
       end
       

@@ -232,7 +232,7 @@ end
 class AddEncryptedSsnToUsers < Granite::Migration
   def up
     alter_table :users do
-      add_column :ssn_encrypted, :blob
+      add_column :ssn_encrypted, :text
     end
   end
   

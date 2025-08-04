@@ -105,11 +105,18 @@ module Granite::Encryption
       # Check if deterministic
       deterministic = (header & Flags::DETERMINISTIC) != 0
       
+      # For deterministic encryption, derive IV from ciphertext
+      actual_iv = if deterministic
+        derive_deterministic_iv(ciphertext, enc_key)
+      else
+        iv
+      end
+      
       # Initialize cipher
       cipher = OpenSSL::Cipher.new(ALGORITHM)
       cipher.decrypt
       cipher.key = enc_key
-      cipher.iv = iv
+      cipher.iv = actual_iv
       
       # Decrypt
       plaintext = IO::Memory.new

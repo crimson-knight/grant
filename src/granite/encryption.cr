@@ -17,25 +17,33 @@ module Granite::Encryption
   end
   
   # Encrypt a value for a specific model/attribute
-  def self.encrypt(value : String?, model_name : String, attribute_name : String, deterministic : Bool = false) : Bytes?
+  def self.encrypt(value : String?, model_name : String, attribute_name : String, deterministic : Bool = false) : String?
     return nil if value.nil?
     
     key = KeyProvider.derive_key(model_name, attribute_name, deterministic)
-    Cipher.encrypt(value, key, deterministic)
+    encrypted_bytes = Cipher.encrypt(value, key, deterministic)
+    Base64.strict_encode(encrypted_bytes)
   end
   
   # Decrypt a value for a specific model/attribute
-  def self.decrypt(encrypted : Bytes?, model_name : String, attribute_name : String) : String?
+  def self.decrypt(encrypted : String?, model_name : String, attribute_name : String) : String?
     return nil if encrypted.nil? || encrypted.empty?
+    
+    # Decode the Base64 string to bytes
+    begin
+      encrypted_bytes = Base64.decode(encrypted)
+    rescue e
+      raise "Failed to decode Base64: #{e.message}"
+    end
     
     # Try both keys in case it was encrypted with either
     begin
       key = KeyProvider.derive_key(model_name, attribute_name, false)
-      Cipher.decrypt(encrypted, key)
+      Cipher.decrypt(encrypted_bytes, key)
     rescue Cipher::DecryptionError
       # Try with deterministic key
       key = KeyProvider.derive_key(model_name, attribute_name, true)
-      Cipher.decrypt(encrypted, key)
+      Cipher.decrypt(encrypted_bytes, key)
     end
   end
   
@@ -79,8 +87,8 @@ module Granite::Encryption
       # Store in registry
       @@encrypted_attributes[{{attr_name}}] = {{attribute.id}}_encrypted_attribute
       
-      # Create the encrypted column
-      column {{attribute.id}}_encrypted : Slice(UInt8)?
+      # Create the encrypted column (stores Base64-encoded string)
+      column {{attribute.id}}_encrypted : String?
       
       # Create virtual getter with caching
       def {{attribute.id}} : String?
