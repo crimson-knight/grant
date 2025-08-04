@@ -1,4 +1,5 @@
 require "../columns"
+require "../async"
 
 # Data structure which will allow chaining of query components,
 # nesting of boolean logic, etc.
@@ -18,6 +19,8 @@ require "../columns"
 # or
 # - Model.where(field: value).or { whehre(field3: value3) }
 class Granite::Query::Builder(Model)
+  include Granite::Async::QueryMethods(Model)
+  
   enum DbType
     Mysql
     Sqlite
