@@ -9,6 +9,7 @@ module Granite::Query::Assembler
     @limit : String?
     @offset : String?
     @group_by : String?
+    @lock : String?
 
     def initialize(@query : Builder(Model))
       @numbered_parameters = [] of Granite::Columns::Type
@@ -142,6 +143,12 @@ module Granite::Query::Assembler
                   end
     end
 
+    def lock
+      @lock ||= if lock_mode = @query.lock_mode
+                  lock_mode.to_sql(Model.adapter)
+                end
+    end
+
     def log(*stuff)
     end
 
@@ -176,6 +183,7 @@ module Granite::Query::Assembler
         s << order
         s << "LIMIT #{n}"
         s << offset
+        s << lock
       end
 
       Executor::List(Model).new sql, numbered_parameters
@@ -225,6 +233,7 @@ module Granite::Query::Assembler
         s << order
         s << limit
         s << offset
+        s << lock
       end
 
       Executor::List(Model).new sql, numbered_parameters

@@ -190,4 +190,9 @@ abstract class Granite::Adapter::Base
       "<1ns".colorize.green
     end
   end
+  
+  # Methods for checking database capabilities
+  abstract def supports_lock_mode?(mode : Granite::Locking::LockMode) : Bool
+  abstract def supports_isolation_level?(level : Granite::Transaction::IsolationLevel) : Bool
+  abstract def supports_savepoints? : Bool
 end

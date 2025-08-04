@@ -125,4 +125,21 @@ class Granite::Adapter::Mysql < Granite::Adapter::Base
 
     log statement, elapsed_time, value
   end
+  
+  def supports_lock_mode?(mode : Granite::Locking::LockMode) : Bool
+    case mode
+    when .update?, .share?, .update_no_wait?, .update_skip_locked?
+      true
+    else
+      false
+    end
+  end
+  
+  def supports_isolation_level?(level : Granite::Transaction::IsolationLevel) : Bool
+    true
+  end
+  
+  def supports_savepoints? : Bool
+    true
+  end
 end

@@ -164,4 +164,16 @@ class Granite::Adapter::Pg < Granite::Adapter::Base
       end
     end
   end
+  
+  def supports_lock_mode?(mode : Granite::Locking::LockMode) : Bool
+    true
+  end
+  
+  def supports_isolation_level?(level : Granite::Transaction::IsolationLevel) : Bool
+    true
+  end
+  
+  def supports_savepoints? : Bool
+    true
+  end
 end
