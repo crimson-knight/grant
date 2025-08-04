@@ -99,3 +99,5 @@ end
 [Instrumentation](./instrumentation.md) - Built-in logging, query analysis, and performance monitoring
 
 [Data Normalization](./normalization.md) - Automatic data normalization before validation
+
+[Value Objects](./value_objects.md) - Domain-Driven Design aggregations for composing columns into objects
