@@ -41,6 +41,7 @@ require "./nested_attributes"
 require "./async"
 require "./aggregations"
 require "./value_objects"
+require "./encryption"
 
 # Granite::Base is the base class for your model objects.
 abstract class Granite::Base
@@ -66,6 +67,7 @@ abstract class Granite::Base
   include SerializedColumn
   include NestedAttributes
   include ValueObjects
+  include Encryption::Model
   
   # Make secure token macros available
   macro has_secure_token(name, length = 24, alphabet = :base58)
