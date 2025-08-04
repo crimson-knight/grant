@@ -249,9 +249,10 @@ module Granite::ValueObjects
     end
     
     # Clear aggregation changes after save
-    after_save do
-      @aggregation_changes.clear if @aggregation_changes
-    end
+    # TODO: Fix callback registration in value objects
+    # after_save do
+    #   @aggregation_changes.clear if @aggregation_changes
+    # end
     
     # Override set_attributes to handle value objects
     def set_attributes(args : Granite::ModelArgs)
