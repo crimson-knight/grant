@@ -95,7 +95,8 @@ describe Granite::ConnectionRegistry do
       )
       
       adapter = Granite::ConnectionRegistry.get_adapter("replace_db")
-      adapter.url.should eq "sqlite3://new.db"
+      # URL now includes pool parameters
+      adapter.url.should start_with("sqlite3://new.db?")
     end
   end
   

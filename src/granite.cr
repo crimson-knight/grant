@@ -15,5 +15,6 @@ module Granite
   annotation Table; end
 end
 
+require "./adapter/base"
 require "./granite/connection_registry"
 require "./granite/base"

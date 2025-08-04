@@ -2,6 +2,10 @@ require "mysql"
 require "pg"
 require "sqlite3"
 
+# Enable test mode for HealthMonitor to prevent background fibers in tests
+require "../src/granite"
+Granite::HealthMonitor.test_mode = true
+
 CURRENT_ADAPTER     = ENV["CURRENT_ADAPTER"]
 ADAPTER_URL         = ENV["#{CURRENT_ADAPTER.upcase}_DATABASE_URL"]
 ADAPTER_REPLICA_URL = ENV["#{CURRENT_ADAPTER.upcase}_REPLICA_URL"]? || ADAPTER_URL

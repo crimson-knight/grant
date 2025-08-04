@@ -14,6 +14,38 @@ module Granite::ConnectionManagement
     end
   end
   
+  # Replica lag tracking per database/shard
+  struct ReplicaLagTracker
+    property last_write_time : Time::Span
+    property sticky_until : Time::Span?
+    property lag_threshold : Time::Span
+    
+    def initialize(@last_write_time = Time.monotonic, 
+                   @sticky_until = nil,
+                   @lag_threshold = 2.seconds)
+    end
+    
+    def mark_write
+      @last_write_time = Time.monotonic
+    end
+    
+    def stick_to_primary(duration : Time::Span)
+      @sticky_until = Time.monotonic + duration
+    end
+    
+    def can_use_replica?(wait_period : Time::Span) : Bool
+      now = Time.monotonic
+      
+      # Check if we're in sticky period
+      if sticky = @sticky_until
+        return false if now < sticky
+      end
+      
+      # Check if enough time has passed since last write
+      now - @last_write_time > wait_period
+    end
+  end
+  
   macro included
     # Connection configuration
     class_property database_name : String = "primary"
@@ -23,8 +55,13 @@ module Granite::ConnectionManagement
     # Thread-local connection context
     class_property connection_context : ConnectionContext?
     
-    # Track last write time for read/write splitting
-    class_property last_write_time : Time::Span = Time.monotonic
+    # Enhanced replica lag tracking per database/shard
+    class_property replica_lag_trackers = {} of String => ReplicaLagTracker
+    
+    # Connection behavior configuration
+    class_property replica_lag_threshold : Time::Span = 2.seconds
+    class_property failover_retry_attempts : Int32 = 3
+    class_property health_check_interval : Time::Span = 30.seconds
   end
   
   # DSL for configuring connections
@@ -54,6 +91,25 @@ module Granite::ConnectionManagement
             } of Symbol => String,
           {% end %}
         } of Symbol => Hash(Symbol, String)
+      {% end %}
+    {% end %}
+  end
+  
+  # DSL macro for configuring connection behavior
+  macro connection_config(**options)
+    {% for key, value in options %}
+      {% if key == :replica_lag_threshold %}
+        self.replica_lag_threshold = {{value}}
+      {% elsif key == :failover_retry_attempts %}
+        self.failover_retry_attempts = {{value}}
+      {% elsif key == :health_check_interval %}
+        self.health_check_interval = {{value}}
+      {% elsif key == :connection_switch_wait_period %}
+        self.connection_switch_wait_period = {{value}}
+      {% elsif key == :load_balancing_strategy %}
+        self.load_balancing_strategy = {{value}}
+      {% else %}
+        {% raise "Unknown connection config option: #{key}" %}
       {% end %}
     {% end %}
   end
@@ -127,7 +183,7 @@ module Granite::ConnectionManagement
     end
     
     # Get the current adapter
-    def adapter : Adapter::Base
+    def adapter : Granite::Adapter::Base
       # Determine database name
       db_name = if shard = current_shard
         # For sharded connections, look up the database name
@@ -158,23 +214,53 @@ module Granite::ConnectionManagement
       end
     end
     
-    # Mark write operation
+    # Mark write operation with enhanced tracking
     def mark_write_operation
-      self.last_write_time = Time.monotonic
+      key = replica_tracker_key
+      tracker = replica_lag_trackers[key] ||= ReplicaLagTracker.new(lag_threshold: replica_lag_threshold)
+      tracker.mark_write
+      replica_lag_trackers[key] = tracker
     end
     
-    # Check if should use reader
+    # Stick to primary for a duration
+    def stick_to_primary(duration : Time::Span = 5.seconds)
+      key = replica_tracker_key
+      tracker = replica_lag_trackers[key] ||= ReplicaLagTracker.new(lag_threshold: replica_lag_threshold)
+      tracker.stick_to_primary(duration)
+      replica_lag_trackers[key] = tracker
+    end
+    
+    # Check if should use reader with enhanced logic
     private def should_use_reader? : Bool
       # Only use reader if:
       # 1. We have a reading role configured
       # 2. Enough time has passed since last write
       # 3. We're not explicitly using a different role
+      # 4. Read replicas are healthy
       return false unless connection_config.has_key?(:reading)
       return false if connection_context.try(&.role)
       
+      # Check replica health
+      if lb = ConnectionRegistry.get_load_balancer(current_database, current_shard)
+        return false unless lb.any_healthy?
+      end
+      
+      # Check replica lag tracking
+      key = replica_tracker_key
+      tracker = replica_lag_trackers[key]? || ReplicaLagTracker.new(lag_threshold: replica_lag_threshold)
+      
       # Convert connection_switch_wait_period (milliseconds) to Time::Span
       wait_period = connection_switch_wait_period.milliseconds
-      Time.monotonic - last_write_time > wait_period
+      tracker.can_use_replica?(wait_period)
+    end
+    
+    # Get key for replica tracker
+    private def replica_tracker_key : String
+      if shard = current_shard
+        "#{current_database}:#{shard}"
+      else
+        current_database
+      end
     end
   end
   
