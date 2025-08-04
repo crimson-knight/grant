@@ -46,23 +46,6 @@ module Granite::ConnectionManagement
     end
   end
   
-  # DSL for configuring connection behavior
-  macro connection_config(**options)
-    {% for key, value in options %}
-      {% if key == :replica_lag_threshold %}
-        self.replica_lag_threshold = {{value}}
-      {% elsif key == :failover_retry_attempts %}
-        self.failover_retry_attempts = {{value}}
-      {% elsif key == :health_check_interval %}
-        self.health_check_interval = {{value}}
-      {% elsif key == :connection_switch_wait_period %}
-        self.connection_switch_wait_period = {{value}}
-      {% else %}
-        {% raise "Unknown connection config option: #{key}" %}
-      {% end %}
-    {% end %}
-  end
-  
   macro included
     # Connection configuration
     class_property database_name : String = "primary"
@@ -108,6 +91,25 @@ module Granite::ConnectionManagement
             } of Symbol => String,
           {% end %}
         } of Symbol => Hash(Symbol, String)
+      {% end %}
+    {% end %}
+  end
+  
+  # DSL macro for configuring connection behavior
+  macro connection_config(**options)
+    {% for key, value in options %}
+      {% if key == :replica_lag_threshold %}
+        self.replica_lag_threshold = {{value}}
+      {% elsif key == :failover_retry_attempts %}
+        self.failover_retry_attempts = {{value}}
+      {% elsif key == :health_check_interval %}
+        self.health_check_interval = {{value}}
+      {% elsif key == :connection_switch_wait_period %}
+        self.connection_switch_wait_period = {{value}}
+      {% elsif key == :load_balancing_strategy %}
+        self.load_balancing_strategy = {{value}}
+      {% else %}
+        {% raise "Unknown connection config option: #{key}" %}
       {% end %}
     {% end %}
   end

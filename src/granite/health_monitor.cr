@@ -5,6 +5,9 @@ module Granite
   class HealthMonitor
     Log = ::Log.for("granite.health_monitor")
     
+    # Test mode flag to disable background operations
+    class_property test_mode : Bool = false
+    
     @adapter : Granite::Adapter::Base
     @config : ConnectionRegistry::ConnectionSpec
     @healthy : Atomic(Bool) = Atomic(Bool).new(true)
@@ -16,7 +19,7 @@ module Granite
     end
     
     def start
-      return if @running.get
+      return if @@test_mode || @running.get
       
       @running.set(true)
       @check_fiber = spawn do
@@ -123,7 +126,7 @@ module Granite
         
         # Create and start new monitor
         monitor = HealthMonitor.new(adapter, config)
-        monitor.start
+        monitor.start unless HealthMonitor.test_mode
         @@monitors[key] = monitor
       end
     end

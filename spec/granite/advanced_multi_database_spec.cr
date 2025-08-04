@@ -71,10 +71,9 @@ describe "Advanced Multi-Database Support" do
   
   describe Granite::ReplicaLoadBalancer do
     it "distributes load across replicas" do
-      adapters = [
-        Granite::Adapter::Sqlite.new("replica1", "sqlite3::memory:"),
-        Granite::Adapter::Sqlite.new("replica2", "sqlite3::memory:")
-      ]
+      adapters = Array(Granite::Adapter::Base).new
+      adapters << Granite::Adapter::Sqlite.new("replica1", "sqlite3::memory:")
+      adapters << Granite::Adapter::Sqlite.new("replica2", "sqlite3::memory:")
       
       balancer = Granite::ReplicaLoadBalancer.new(adapters)
       balancer.size.should eq 2
@@ -89,10 +88,9 @@ describe "Advanced Multi-Database Support" do
     end
     
     it "supports different load balancing strategies" do
-      adapters = [
-        Granite::Adapter::Sqlite.new("replica1", "sqlite3::memory:"),
-        Granite::Adapter::Sqlite.new("replica2", "sqlite3::memory:")
-      ]
+      adapters = Array(Granite::Adapter::Base).new
+      adapters << Granite::Adapter::Sqlite.new("replica1", "sqlite3::memory:")
+      adapters << Granite::Adapter::Sqlite.new("replica2", "sqlite3::memory:")
       
       # Test round-robin strategy
       balancer = Granite::ReplicaLoadBalancer.new(adapters, Granite::RoundRobinStrategy.new)

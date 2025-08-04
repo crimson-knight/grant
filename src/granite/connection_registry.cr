@@ -92,8 +92,10 @@ module Granite
         adapter_instance = adapter.new(key, spec.build_pool_url)
         @@adapters[key] = adapter_instance
         
-        # Create and register health monitor
-        HealthMonitorRegistry.register(key, adapter_instance, spec)
+        # Create and register health monitor (unless in test mode)
+        unless HealthMonitor.test_mode
+          HealthMonitorRegistry.register(key, adapter_instance, spec)
+        end
         
         # Track read replicas for load balancing
         if role == :reading
@@ -107,6 +109,7 @@ module Granite
           
           # Add replica to load balancer
           load_balancer = @@load_balancers[lb_key]
+          # Health monitor is optional
           health_monitor = HealthMonitorRegistry.get(key)
           load_balancer.add_replica(adapter_instance, health_monitor)
         end
@@ -217,7 +220,7 @@ module Granite
         # Direct adapter lookup
         adapter = @@adapters[key]?
         
-        # Check adapter health if not using load balancer
+        # Check adapter health if not using load balancer (optional)
         if adapter && role != :reading
           if monitor = HealthMonitorRegistry.get(key)
             unless monitor.healthy?
@@ -225,6 +228,7 @@ module Granite
               adapter = try_fallback_adapter(database, role, shard)
             end
           end
+          # If no monitor registered, assume healthy
         end
         
         # Standard fallback logic if adapter not found
