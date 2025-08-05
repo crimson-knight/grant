@@ -1,298 +1,260 @@
-# Sharding Implementation Plan for Grant ORM
+# Horizontal Sharding Implementation Plan
 
 ## Overview
 
-This document tracks the implementation of sharding support in Grant ORM, including composite primary keys, shard resolvers, cross-shard operations, and comprehensive CI testing with multiple databases.
+This document outlines a pragmatic implementation plan for horizontal sharding in Grant, focusing on delivering value incrementally while building on existing infrastructure.
 
-## Phase 1: Composite Primary Key Support (Week 1)
+## Current State Analysis
 
-### 1.1 Core Implementation
-- [x] Create `Granite::CompositePrimaryKey` module
-- [x] Modify `Granite::Columns` to support multiple primary keys
-- [x] Update `find` method to accept composite keys
-- [x] Update `save` and `destroy` to work with composite keys
-- [x] Add composite key validation
+### What We Have:
+1. **Basic Shard Resolvers**: Hash, Range, and Lookup resolvers
+2. **Connection Registry**: Shard-aware connection management  
+3. **Async Infrastructure**: ShardedExecutor for parallel operations
+4. **Model Integration**: Basic sharding DSL and shard context
 
-### 1.2 Query Support
-- [x] Update WHERE clause generation for composite keys
-- [x] Modify unique constraint validation
-- [ ] Update associations to work with composite foreign keys
+### What's Missing:
+1. **ShardManager**: Central coordination for shard operations
+2. **Query Router**: Intelligent routing for cross-shard queries
+3. **Result Merging**: Combining results from multiple shards
+4. **Distributed Transactions**: Cross-shard transaction support
+5. **Testing Infrastructure**: Virtual sharding for tests
+6. **Production Tools**: Migration, monitoring, rebalancing
 
-### 1.3 Tests
-- [x] Unit tests for composite key CRUD operations
-- [ ] Integration tests with PostgreSQL and SQLite
-- [ ] Migration tests for composite key tables
+## Phased Implementation Approach
 
-**Files to create/modify:**
-- `src/granite/composite_primary_key.cr`
-- `src/granite/columns.cr` (modifications)
-- `src/granite/querying.cr` (modifications)
-- `spec/granite/composite_primary_key_spec.cr`
+### Phase 1: Core Infrastructure (Priority: HIGH)
+**Goal**: Get basic sharding working end-to-end
 
-## Phase 2: Sharding Infrastructure (Week 2)
-
-### 2.1 Shard Resolvers
-- [ ] Implement `ShardResolver` abstract class
-- [ ] Create `HashResolver` for modulo sharding
-- [ ] Create `RangeResolver` for range-based sharding
-- [ ] Create `LookupResolver` for custom mappings
-- [ ] Create `ConsistentHashResolver` for dynamic scaling
-
-### 2.2 Model Integration
-- [ ] Add `Granite::Sharding::Model` module
-- [ ] Implement `shards_by` macro
-- [ ] Add `on_shard` and `on_all_shards` query methods
-- [ ] Integrate shard resolution with connection management
-
-### 2.3 Configuration
-- [ ] Create shard configuration DSL
-- [ ] Add shard connection mapping
-- [ ] Support for dynamic shard addition/removal
-
-**Files to create:**
-- `src/granite/sharding.cr` (already started)
-- `src/granite/sharding/resolvers/*.cr`
-- `src/granite/sharding/model.cr`
-- `src/granite/sharding/configuration.cr`
-
-## Phase 3: Cross-Shard Operations (Week 3)
-
-### 3.1 Query Execution
-- [ ] Implement `ShardedQuery` builder
-- [ ] Add `MultiShardQuery` for parallel execution
-- [ ] Create scatter-gather aggregations
-- [ ] Handle ordered queries across shards
-
-### 3.2 Distributed Operations
-- [ ] Implement cross-shard transactions (2PC)
-- [ ] Add distributed lock management
-- [ ] Handle shard failures gracefully
-- [ ] Implement circuit breakers for shard health
-
-### 3.3 Performance Optimizations
-- [ ] Connection pooling per shard
-- [ ] Query result caching
-- [ ] Parallel query execution using fibers
-- [ ] Shard resolution caching
-
-**Files to create:**
-- `src/granite/sharding/query_builder.cr`
-- `src/granite/sharding/distributed_transaction.cr`
-- `src/granite/sharding/connection_manager.cr`
-
-## Phase 4: CI Testing Infrastructure (Week 4)
-
-### 4.1 GitHub Actions Configuration
-
-#### PostgreSQL Multi-Database Setup
-```yaml
-# .github/workflows/sharding_tests.yml
-name: Sharding Tests
-
-on: [push, pull_request]
-
-jobs:
-  test-postgresql-sharding:
-    runs-on: ubuntu-latest
-    
-    services:
-      # Primary database cluster
-      postgres-primary-1:
-        image: postgres:15
-        env:
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: shard_0
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-      
-      # Replica for primary-1
-      postgres-replica-1:
-        image: postgres:15
-        env:
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: shard_0
-        ports:
-          - 5433:5432
-          
-      # Additional shards
-      postgres-primary-2:
-        image: postgres:15
-        env:
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: shard_1
-        ports:
-          - 5434:5432
-          
-      postgres-replica-2:
-        image: postgres:15
-        env:
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: shard_1
-        ports:
-          - 5435:5432
-          
-    steps:
-      - uses: actions/checkout@v3
-      
-      - name: Install Crystal
-        uses: crystal-lang/install-crystal@v1
-        
-      - name: Install dependencies
-        run: shards install
-        
-      - name: Setup PostgreSQL replication
-        run: |
-          # Configure primary-replica replication
-          ./scripts/setup_pg_replication.sh
-          
-      - name: Run sharding tests
-        env:
-          SHARD_0_PRIMARY: postgres://postgres:postgres@localhost:5432/shard_0
-          SHARD_0_REPLICA: postgres://postgres:postgres@localhost:5433/shard_0
-          SHARD_1_PRIMARY: postgres://postgres:postgres@localhost:5434/shard_1
-          SHARD_1_REPLICA: postgres://postgres:postgres@localhost:5435/shard_1
-        run: |
-          crystal spec spec/granite/sharding/**/*_spec.cr
+#### 1.1 ShardManager Implementation
+```crystal
+# src/granite/sharding/shard_manager.cr
+module Granite
+  class ShardManager
+    # Centralized shard configuration and context management
+  end
+end
 ```
 
-### 4.2 SQLite Multi-Database Testing
-- [ ] Create SQLite sharding test setup
-- [ ] Implement file-based shard separation
-- [ ] Test failover with backup databases
-- [ ] Add performance benchmarks
+**Tasks**:
+- [ ] Create ShardManager with shard registration
+- [ ] Implement with_shard context management
+- [ ] Add current_shard tracking per fiber
+- [ ] Integration with ConnectionRegistry
 
-### 4.3 Replica Failover Testing
-- [ ] Implement health check monitoring
-- [ ] Test automatic failover to replicas
-- [ ] Verify write redirection on primary failure
-- [ ] Test split-brain scenarios
+#### 1.2 Fix Existing Integration Issues
+**Tasks**:
+- [ ] Update ShardedExecutor to use Grant::ShardManager
+- [ ] Fix Thread.current usage (should be Fiber-aware)
+- [ ] Ensure ConnectionRegistry properly routes shard connections
+- [ ] Add missing error handling
 
-**Files to create:**
-- `.github/workflows/sharding_tests.yml`
-- `scripts/setup_pg_replication.sh`
-- `scripts/test_failover.sh`
-- `spec/support/sharding_test_helper.cr`
+#### 1.3 Basic Query Routing
+```crystal
+# src/granite/sharding/query_router.cr
+module Granite::Sharding
+  class QueryRouter
+    # Route queries to appropriate shards
+  end
+end
+```
 
-## Phase 5: Integration Testing (Week 5)
+**Tasks**:
+- [ ] Implement single-shard query detection
+- [ ] Add scatter-gather for queries without shard key
+- [ ] Basic result merging (no sorting/limit yet)
 
-### 5.1 Real-World Scenarios
-- [ ] Multi-tenant application tests
-- [ ] Time-series data sharding tests
-- [ ] Geographic sharding tests
-- [ ] High-volume write tests
+### Phase 2: Testing Infrastructure (Priority: HIGH)
+**Goal**: Enable testing without multiple physical databases
 
-### 5.2 Performance Benchmarks
-- [ ] Benchmark shard resolution overhead
-- [ ] Compare sharded vs non-sharded performance
-- [ ] Test cross-shard query performance
-- [ ] Measure failover impact
+#### 2.1 Virtual Sharding
+```crystal
+# spec/support/virtual_sharding.cr
+module Granite::Testing
+  class VirtualShardAdapter
+    # Simulate multiple shards in memory
+  end
+end
+```
 
-### 5.3 Chaos Testing
-- [ ] Random shard failures
-- [ ] Network partition simulation
-- [ ] Primary/replica split scenarios
-- [ ] Connection pool exhaustion
+**Tasks**:
+- [ ] Create in-memory shard simulation
+- [ ] Route queries to virtual shards
+- [ ] Track query execution per shard
+- [ ] Add test helpers and matchers
 
-**Files to create:**
-- `spec/integration/sharding_scenarios_spec.cr`
-- `benchmarks/sharding_performance.cr`
-- `spec/chaos/shard_failure_spec.cr`
+#### 2.2 Basic Test Suite
+**Tasks**:
+- [ ] Test shard resolution strategies
+- [ ] Test single-shard queries
+- [ ] Test cross-shard queries
+- [ ] Test connection routing
 
-## Phase 6: Documentation & Examples (Week 6)
+### Phase 3: Enhanced Query Support (Priority: MEDIUM)
+**Goal**: Full query functionality across shards
 
-### 6.1 Documentation
-- [ ] Sharding guide with best practices
-- [ ] Migration guide from non-sharded to sharded
-- [ ] Troubleshooting guide
-- [ ] Performance tuning guide
+#### 3.1 Advanced Result Merging
+**Tasks**:
+- [ ] Implement ORDER BY across shards
+- [ ] Handle LIMIT/OFFSET correctly
+- [ ] Aggregate functions (COUNT, SUM, etc.)
+- [ ] GROUP BY support
 
-### 6.2 Examples
-- [ ] Multi-tenant SaaS example
-- [ ] Time-series data example
-- [ ] Geographic sharding example
-- [ ] E-commerce platform example
+#### 3.2 Query Optimization
+**Tasks**:
+- [ ] Push down filters to shards
+- [ ] Optimize COUNT queries
+- [ ] Implement query result caching
+- [ ] Add query execution explain plan
 
-### 6.3 Tooling
-- [ ] Shard rebalancing tool
-- [ ] Shard health monitoring
-- [ ] Query analysis tool
-- [ ] Migration helper scripts
+### Phase 4: Distributed Transactions (Priority: MEDIUM)
+**Goal**: Enable safe multi-shard writes
+
+#### 4.1 Basic Transaction Support
+```crystal
+# src/granite/sharding/distributed_transaction.cr
+module Granite::Sharding
+  class DistributedTransaction
+    # Coordinate transactions across shards
+  end
+end
+```
+
+**Tasks**:
+- [ ] Implement two-phase commit
+- [ ] Add transaction recovery
+- [ ] Handle partial failures
+- [ ] Add transaction timeout
+
+#### 4.2 Saga Pattern (Optional)
+**Tasks**:
+- [ ] Implement saga orchestrator
+- [ ] Add compensation support
+- [ ] Create saga DSL
+- [ ] Add saga monitoring
+
+### Phase 5: Production Tools (Priority: LOW)
+**Goal**: Operations and management tools
+
+#### 5.1 Monitoring
+**Tasks**:
+- [ ] Shard health metrics
+- [ ] Query distribution analytics
+- [ ] Performance monitoring
+- [ ] Alert integration
+
+#### 5.2 Migration Tools
+**Tasks**:
+- [ ] Data migration between shards
+- [ ] Online resharding support
+- [ ] Consistency verification
+- [ ] Progress tracking
+
+## Minimum Viable Implementation
+
+For the first iteration, focus on:
+
+1. **ShardManager**: Central coordination
+2. **Query Router**: Basic routing and merging
+3. **Virtual Sharding**: Enable testing
+4. **Documentation**: Clear examples
+
+This provides a working sharding solution that can be enhanced incrementally.
+
+## Implementation Timeline
+
+### Week 1-2: Core Infrastructure
+- Implement ShardManager
+- Fix integration issues
+- Basic query routing
+
+### Week 3-4: Testing Infrastructure
+- Virtual sharding adapter
+- Test helpers
+- Initial test suite
+
+### Week 5-6: Query Enhancement
+- Result merging
+- Query optimization
+- Performance testing
+
+### Week 7-8: Documentation & Examples
+- User guide
+- API documentation
+- Example applications
+
+## Technical Decisions
+
+### 1. Fiber vs Thread Context
+Use Fiber-local storage instead of Thread-local:
+```crystal
+@@current_shard = {} of Fiber => Symbol?
+```
+
+### 2. Connection Pooling
+Each shard gets its own connection pool to prevent contention.
+
+### 3. Error Handling
+Fail fast on shard resolution errors, but gracefully handle shard unavailability.
+
+### 4. Query Language
+Keep ActiveRecord-compatible syntax where possible:
+```crystal
+User.on_shard(:shard_1).where(active: true)
+User.on_all_shards.count
+```
 
 ## Testing Strategy
 
-### Unit Tests
-Each component will have comprehensive unit tests covering:
-- Happy path scenarios
-- Edge cases
-- Error conditions
-- Concurrent access
+### 1. Unit Tests
+- Shard resolver logic
+- Query routing decisions
+- Result merging algorithms
 
-### Integration Tests
-- Multi-database scenarios with real PostgreSQL/SQLite
-- Replica failover scenarios
-- Cross-shard transactions
-- Performance under load
+### 2. Integration Tests
+- End-to-end query execution
+- Connection management
+- Transaction coordination
 
-### CI Configuration
-```yaml
-# Test matrix for comprehensive coverage
-strategy:
-  matrix:
-    crystal: [1.9, 1.10, latest]
-    database: [postgresql, sqlite]
-    shards: [2, 4, 8]
-    include:
-      - database: postgresql
-        replica: true
-      - database: sqlite
-        replica: false
-```
+### 3. Performance Tests
+- Parallel query execution
+- Connection pool efficiency
+- Large result set handling
+
+### 4. Chaos Tests
+- Shard failure scenarios
+- Network partitions
+- Partial failures
 
 ## Success Criteria
 
-1. **Functionality**
-   - Composite primary keys work across all adapters
-   - All sharding strategies implemented and tested
-   - Cross-shard operations work reliably
-   - Failover works seamlessly
-
-2. **Performance**
-   - Shard resolution < 1μs
-   - Minimal overhead for sharded queries
-   - Efficient cross-shard aggregations
-   - Connection pooling prevents exhaustion
-
-3. **Reliability**
-   - 100% test coverage for sharding code
-   - All CI tests passing on PostgreSQL and SQLite
-   - Graceful handling of shard failures
-   - No data loss during failover
-
-4. **Usability**
-   - Clear, intuitive DSL
-   - Helpful error messages
-   - Comprehensive documentation
-   - Working examples
+1. **Functional**: Can perform CRUD operations on sharded data
+2. **Performant**: Parallel execution faster than sequential
+3. **Reliable**: Handles failures gracefully
+4. **Testable**: Can test sharding without multiple databases
+5. **Documented**: Clear examples and migration guide
 
 ## Risk Mitigation
 
-1. **Complexity**: Start with simple hash sharding, add features incrementally
-2. **Performance**: Benchmark early and often
-3. **Compatibility**: Test with all supported databases from day 1
-4. **Reliability**: Implement comprehensive error handling and retries
+### Risk: Complexity Explosion
+**Mitigation**: Start simple, add features based on user feedback
 
-## Timeline
+### Risk: Performance Regression
+**Mitigation**: Benchmark from day one, optimize critical paths
 
-- Week 1: Composite Primary Keys
-- Week 2: Sharding Infrastructure  
-- Week 3: Cross-Shard Operations
-- Week 4: CI Testing Setup
-- Week 5: Integration Testing
-- Week 6: Documentation & Polish
+### Risk: Breaking Changes
+**Mitigation**: New APIs are additive, existing code continues to work
 
-Total: 6 weeks to production-ready sharding support
+### Risk: Testing Complexity
+**Mitigation**: Virtual sharding makes tests simple and fast
+
+## Next Steps
+
+1. Review and approve implementation plan
+2. Set up development environment
+3. Create initial ShardManager implementation
+4. Build minimal working example
+5. Gather feedback and iterate
+
+## Conclusion
+
+This plan provides a pragmatic path to implementing horizontal sharding in Grant. By focusing on core functionality first and building incrementally, we can deliver value quickly while maintaining quality and reliability.
