@@ -10,7 +10,7 @@ module Granite
         results = {} of Symbol => AsyncResult(T)
         
         shards.each do |shard|
-          results[shard] = Grant::ShardManager.with_shard(shard) do
+          results[shard] = Granite::ShardManager.with_shard(shard) do
             block.call(shard)
           end
         end
@@ -91,14 +91,14 @@ module Granite
                                     fallback_shards : Array(Symbol),
                                     &block : Symbol -> AsyncResult(T)) : T forall T
         begin
-          Grant::ShardManager.with_shard(primary_shard) do
+          Granite::ShardManager.with_shard(primary_shard) do
             block.call(primary_shard).wait
           end
         rescue e
           # Try fallback shards
           fallback_shards.each do |shard|
             begin
-              return Grant::ShardManager.with_shard(shard) do
+              return Granite::ShardManager.with_shard(shard) do
                 block.call(shard).wait
               end
             rescue
