@@ -13,6 +13,10 @@ Granite is looking for volunteers to take over maintainership of the repository,
 
 [Documentation](docs/readme.md)
 
+### Experimental Features
+
+- **[Horizontal Sharding](docs/SHARDING.md)** ⚠️ - Distribute data across multiple databases (Alpha - not production ready)
+
 ## Contributing
 
 1. Fork it ( https://github.com/amberframework/granite/fork )
