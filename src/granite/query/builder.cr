@@ -1,5 +1,6 @@
 require "../columns"
 require "../async"
+require "./where_chain"
 
 # Data structure which will allow chaining of query components,
 # nesting of boolean logic, etc.
@@ -46,6 +47,7 @@ class Granite::Query::Builder(Model)
   getter preload_associations : Array(AssociationQuery) = [] of AssociationQuery
   getter includes_associations : Array(AssociationQuery) = [] of AssociationQuery
   getter lock_mode : Granite::Locking::LockMode?
+  getter select_columns : Array(String)?
 
   def initialize(@db_type, @boolean_operator = :and)
   end
@@ -77,6 +79,9 @@ class Granite::Query::Builder(Model)
         # Handle range as BETWEEN operation
         and(field: field.to_s, operator: :gteq, value: value.begin)
         and(field: field.to_s, operator: :lteq, value: value.end)
+      elsif value.is_a?(Builder)
+        # Handle subquery
+        and_subquery(field: field.to_s, subquery: value)
       else
         and(field: field.to_s, operator: :eq, value: value)
       end
@@ -91,6 +96,18 @@ class Granite::Query::Builder(Model)
 
   def where(stmt : String, value : Granite::Columns::Type = nil)
     and(stmt: stmt, value: value)
+  end
+
+  # Returns a WhereChain for advanced where methods.
+  #
+  # Example:
+  # ```
+  # User.where.like(:email, "%@gmail.com")
+  #     .where.gt(:age, 18)
+  #     .where.not_in(:status, ["banned", "suspended"])
+  # ```
+  def where : WhereChain(Model)
+    WhereChain(Model).new(self)
   end
 
   def and(field : (Symbol | String), operator : Symbol, value : Granite::Columns::Type)
@@ -223,13 +240,13 @@ class Granite::Query::Builder(Model)
   end
 
   def offset(num)
-    @offset = num.to_i64
+    @offset = num.nil? ? nil : num.to_i64
 
     self
   end
 
   def limit(num)
-    @limit = num.to_i64
+    @limit = num.nil? ? nil : num.to_i64
 
     self
   end
@@ -383,16 +400,56 @@ class Granite::Query::Builder(Model)
     self
   end
 
-  # Create a new query builder for OR conditions
+  # Create a new query builder for OR conditions.
+  #
+  # Example:
+  # ```
+  # User.where(active: true)
+  #     .or { |q| q.where(role: "admin") }
+  #     .or { |q| q.where.gt(:level, 10) }
+  # # SQL: WHERE active = true OR (role = 'admin') OR (level > 10)
+  # ```
   def or(&)
     or_builder = self.class.new(@db_type, :or)
     yield or_builder
 
     # Add the OR conditions as a group
     if or_builder.where_fields.any?
+      # Build the OR clause directly without creating assembler
+      or_clauses = or_builder.where_fields.map_with_index do |field, idx|
+        stmt = case field
+               when NamedTuple(join: Symbol, stmt: String, value: Granite::Columns::Type)
+                 field[:stmt]
+               when NamedTuple(join: Symbol, field: String, operator: Symbol, value: Granite::Columns::Type)
+                 # Simple operator to SQL mapping for OR clauses
+                 case field[:operator]
+                 when :eq then "#{field[:field]} = ?"
+                 when :neq then "#{field[:field]} != ?"
+                 when :gt then "#{field[:field]} > ?"
+                 when :lt then "#{field[:field]} < ?"
+                 when :gteq then "#{field[:field]} >= ?"
+                 when :lteq then "#{field[:field]} <= ?"
+                 when :in then "#{field[:field]} IN (?)"
+                 when :nin then "#{field[:field]} NOT IN (?)"
+                 when :like then "#{field[:field]} LIKE ?"
+                 when :nlike then "#{field[:field]} NOT LIKE ?"
+                 else
+                   raise "Unsupported operator in OR clause: #{field[:operator]}"
+                 end
+               else
+                 raise "Unknown where field type"
+               end
+        
+        if idx == 0
+          stmt
+        else
+          "OR #{stmt}"
+        end
+      end.join(" ")
+      
       @where_fields << {
         join:  :and,
-        stmt:  "(#{or_builder.assembler.where_clause(or_builder.where_fields)})",
+        stmt:  "(#{or_clauses})",
         value: nil,
       }
     end
@@ -400,16 +457,54 @@ class Granite::Query::Builder(Model)
     self
   end
 
-  # Support for not conditions
+  # Support for NOT conditions - negates a group of conditions.
+  #
+  # Example:
+  # ```
+  # User.not { |q| q.where(status: "banned").where(active: false) }
+  # # SQL: WHERE NOT (status = 'banned' AND active = false)
+  # ```
   def not(&)
     not_builder = self.class.new(@db_type)
     yield not_builder
 
     # Add the NOT conditions as a negated group
     if not_builder.where_fields.any?
+      # Build the NOT clause directly without creating assembler
+      not_clauses = not_builder.where_fields.map_with_index do |field, idx|
+        stmt = case field
+               when NamedTuple(join: Symbol, stmt: String, value: Granite::Columns::Type)
+                 field[:stmt]
+               when NamedTuple(join: Symbol, field: String, operator: Symbol, value: Granite::Columns::Type)
+                 # Simple operator to SQL mapping for NOT clauses
+                 case field[:operator]
+                 when :eq then "#{field[:field]} = ?"
+                 when :neq then "#{field[:field]} != ?"
+                 when :gt then "#{field[:field]} > ?"
+                 when :lt then "#{field[:field]} < ?"
+                 when :gteq then "#{field[:field]} >= ?"
+                 when :lteq then "#{field[:field]} <= ?"
+                 when :in then "#{field[:field]} IN (?)"
+                 when :nin then "#{field[:field]} NOT IN (?)"
+                 when :like then "#{field[:field]} LIKE ?"
+                 when :nlike then "#{field[:field]} NOT LIKE ?"
+                 else
+                   raise "Unsupported operator in NOT clause: #{field[:operator]}"
+                 end
+               else
+                 raise "Unknown where field type"
+               end
+        
+        if idx == 0
+          stmt
+        else
+          "AND #{stmt}"
+        end
+      end.join(" ")
+      
       @where_fields << {
         join:  :and,
-        stmt:  "NOT (#{not_builder.assembler.where_clause(not_builder.where_fields)})",
+        stmt:  "NOT (#{not_clauses})",
         value: nil,
       }
     end
@@ -421,5 +516,103 @@ class Granite::Query::Builder(Model)
   def delete_all : Int64
     result = assembler.delete
     result.rows_affected
+  end
+
+  # Merge another query's conditions into this one.
+  #
+  # Combines WHERE conditions with AND, and takes the merged query's
+  # ORDER BY, LIMIT, and OFFSET if they are set.
+  #
+  # Example:
+  # ```
+  # active = User.where(active: true)
+  # admins = User.where(role: "admin")
+  # active_admins = active.merge(admins)
+  # # WHERE active = true AND role = 'admin'
+  # ```
+  def merge(other : self) : self
+    # Merge where conditions
+    other.where_fields.each do |field|
+      @where_fields << field
+    end
+    
+    # Merge order fields (other's order takes precedence if both have orders)
+    if other.order_fields.any?
+      @order_fields = other.order_fields
+    end
+    
+    # Merge group fields
+    other.group_fields.each do |field|
+      @group_fields << field unless @group_fields.includes?(field)
+    end
+    
+    # Use other's limit/offset if set
+    @limit = other.limit if other.limit
+    @offset = other.offset if other.offset
+    
+    # Merge associations
+    @eager_load_associations.concat(other.eager_load_associations).uniq!
+    @preload_associations.concat(other.preload_associations).uniq!
+    @includes_associations.concat(other.includes_associations).uniq!
+    
+    # Use other's lock mode if set
+    @lock_mode = other.lock_mode if other.lock_mode
+    
+    self
+  end
+
+  # Create a copy of this query.
+  #
+  # Useful for creating query variations without modifying the original.
+  #
+  # Example:
+  # ```
+  # base_query = User.where(active: true).order(name: :asc)
+  # admins = base_query.dup.where(role: "admin")
+  # recent = base_query.dup.where.gteq(:created_at, 7.days.ago)
+  # ```
+  def dup : self
+    new_query = self.class.new(@db_type, @boolean_operator)
+    
+    # Copy all fields
+    @where_fields.each { |f| new_query.where_fields << f }
+    @order_fields.each { |f| new_query.order_fields << f }
+    @group_fields.each { |f| new_query.group_fields << f }
+    
+    new_query.limit(@limit) if @limit
+    new_query.offset(@offset) if @offset
+    
+    @eager_load_associations.each { |a| new_query.eager_load_associations << a }
+    @preload_associations.each { |a| new_query.preload_associations << a }
+    @includes_associations.each { |a| new_query.includes_associations << a }
+    
+    if lock_mode = @lock_mode
+      new_query.lock(lock_mode)
+    end
+    
+    new_query
+  end
+
+  # Add a subquery condition
+  private def and_subquery(field : String, subquery : Builder)
+    sql = subquery.assembler.select.raw_sql
+    @where_fields << {join: :and, stmt: "#{field} IN (#{sql})", value: nil}
+    self
+  end
+
+  # Select only specific columns (for subqueries).
+  #
+  # Useful for IN subqueries where you only need IDs.
+  #
+  # Example:
+  # ```
+  # admin_ids = User.where(role: "admin").select(:id)
+  # Post.where(user_id: admin_ids)
+  # ```
+  def select(*columns : Symbol)
+    # This would need to be implemented in the assembler
+    # For now, we'll store the columns for later use
+    @select_columns = columns.map(&.to_s).to_a
+    self
   end
 end

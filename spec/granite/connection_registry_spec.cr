@@ -19,6 +19,18 @@ class MockAdapter < Granite::Adapter::Base
   
   def delete(table_name : String, primary_name : String, value)
   end
+  
+  def supports_lock_mode?(mode : Granite::Locking::LockMode) : Bool
+    true
+  end
+  
+  def supports_isolation_level?(level : Granite::Transaction::IsolationLevel) : Bool
+    true
+  end
+  
+  def supports_savepoints? : Bool
+    true
+  end
 end
 
 describe Granite::ConnectionRegistry do

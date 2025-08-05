@@ -12,6 +12,7 @@ module Granite::Query::BuilderMethods
     Builder(self).new(db_type)
   end
 
-  delegate where, order, offset, limit, lock, to: __builder
+  delegate where, order, offset, limit, lock, group_by, to: __builder
   delegate pluck, pick, in_batches, annotate, to: __builder
+  delegate includes, preload, eager_load, to: __builder
 end

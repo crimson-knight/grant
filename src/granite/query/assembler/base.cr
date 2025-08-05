@@ -33,10 +33,12 @@ module Granite::Query::Assembler
 
     def where_clause(where_fields = @query.where_fields)
       clauses = where_fields.map do |clause|
-        if stmt = clause[:stmt]?
+        # Check if this is a statement-based condition
+        case clause
+        when NamedTuple(join: Symbol, stmt: String, value: Granite::Columns::Type)
           add_parameter(clause[:value])
-          stmt
-        else
+          clause[:stmt]
+        when NamedTuple(join: Symbol, field: String, operator: Symbol, value: Granite::Columns::Type)
           field = clause[:field]
           operator = clause[:operator]
           value = clause[:value]
@@ -63,13 +65,36 @@ module Granite::Query::Assembler
             else
               "#{quote_identifier(field)} = ?"
             end
+          when :nin
+            if value.is_a?(Array)
+              placeholders = value.map { "?" }.join(", ")
+              "#{quote_identifier(field)} NOT IN (#{placeholders})"
+            else
+              "#{quote_identifier(field)} != ?"
+            end
           when :like
             "#{quote_identifier(field)} LIKE ?"
+          when :nlike
+            "#{quote_identifier(field)} NOT LIKE ?"
           when :ilike
             "LOWER(#{quote_identifier(field)}) LIKE LOWER(?)"
+          when :neq
+            "#{quote_identifier(field)} != ?"
+          when :ltgt
+            "#{quote_identifier(field)} <> ?"
+          when :gteq
+            "#{quote_identifier(field)} >= ?"
+          when :lteq
+            "#{quote_identifier(field)} <= ?"
+          when :ngt
+            "#{quote_identifier(field)} !> ?"
+          when :nlt
+            "#{quote_identifier(field)} !< ?"
           else
             raise "Unknown operator: #{operator}"
           end
+        else
+          raise "Unknown where clause type"
         end
       end
 
