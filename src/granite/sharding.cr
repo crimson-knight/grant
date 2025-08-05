@@ -1,7 +1,3 @@
-require "./sharding/shard_manager"
-require "./sharding/query_router"
-require "./sharding/sharded_query_builder"
-
 module Granite::Sharding
   # Base class for all shard resolvers
   abstract class ShardResolver
@@ -204,26 +200,59 @@ module Granite::Sharding
             {{options[:prefix] || "shard"}}.to_s
           )
         )
-        
-        # Register with ShardManager
-        Granite::ShardManager.register(
-          {{@type.name.stringify}},
-          self.sharding_config.not_nil!
+      {% elsif strategy == :range %}
+        {% unless options[:ranges] %}
+          {% raise "Range sharding requires :ranges option" %}
+        {% end %}
+        self.sharding_config = Granite::Sharding::ShardConfig.new(
+          key_columns: [{% for col in columns %} {{col.id.symbolize}}, {% end %}],
+          resolver: Granite::Sharding::RangeResolver.new(
+            [{% for col in columns %} {{col.id.symbolize}}, {% end %}],
+            {{options[:ranges]}}
+          )
         )
-        
-        # Override query builder to use sharded version
-        def self.__builder
-          # For sharded models, we can't call adapter directly since it requires shard context
-          # Instead, we'll default to sqlite for now - the actual adapter will be determined
-          # when the query is executed with proper shard context
-          db_type = Granite::Query::Builder::DbType::Sqlite
-          
-          Granite::Sharding::ShardedQueryBuilder({{@type}}).new(db_type, :and, self.sharding_config)
-        end
+      {% elsif strategy == :time_range %}
+        {% unless options[:ranges] %}
+          {% raise "Time range sharding requires :ranges option" %}
+        {% end %}
+        self.sharding_config = Granite::Sharding::ShardConfig.new(
+          key_columns: [{% for col in columns %} {{col.id.symbolize}}, {% end %}],
+          resolver: Granite::Sharding::TimeRangeResolver.new(
+            [{% for col in columns %} {{col.id.symbolize}}, {% end %}],
+            {{options[:ranges]}}
+          )
+        )
+      {% elsif strategy == :geo %}
+        {% unless options[:regions] %}
+          {% raise "Geo sharding requires :regions option" %}
+        {% end %}
+        self.sharding_config = Granite::Sharding::ShardConfig.new(
+          key_columns: [{% for col in columns %} {{col.id.symbolize}}, {% end %}],
+          resolver: Granite::Sharding::GeoResolver.new(
+            [{% for col in columns %} {{col.id.symbolize}}, {% end %}],
+            {{options[:regions]}},
+            {{options[:default_shard] || :shard_global}}
+          )
+        )
       {% else %}
-        # Other strategies would be implemented similarly
         {% raise "Unsupported sharding strategy: #{strategy}" %}
       {% end %}
+      
+      # Register with ShardManager
+      Granite::ShardManager.register(
+        {{@type.name.stringify}},
+        self.sharding_config.not_nil!
+      )
+      
+      # Override query builder to use sharded version
+      def self.__builder
+        # For sharded models, we can't call adapter directly since it requires shard context
+        # Instead, we'll default to sqlite for now - the actual adapter will be determined
+        # when the query is executed with proper shard context
+        db_type = Granite::Query::Builder::DbType::Sqlite
+        
+        Granite::Sharding::ShardedQueryBuilder({{@type}}).new(db_type, :and, self.sharding_config)
+      end
     end
     
     # Determine shard for a model instance
@@ -303,3 +332,10 @@ module Granite::Sharding
     end
   end
 end
+
+# Require additional resolvers after base classes are defined
+require "./sharding/shard_manager"
+require "./sharding/query_router"
+require "./sharding/sharded_query_builder"
+require "./sharding/range_resolver"
+require "./sharding/geo_resolver"
