@@ -11,15 +11,15 @@ This document tracks the progress of reorganizing Grant's documentation for opti
   - [x] Create `/docs/getting-started/quick-start.md` (15-minute tutorial)
   - [x] Extract database setup → `/docs/getting-started/database-setup.md`
   - [x] Create `/docs/getting-started/first-model.md` (tutorial format)
-- [ ] Consolidate core features documentation
-  - [ ] Merge `models.md` + enhancements → `/docs/core-features/models-and-columns.md`
-  - [ ] Update `crud.md` with examples → `/docs/core-features/crud-operations.md`
-  - [ ] Merge `querying.md` + scoping → `/docs/core-features/querying-and-scopes.md`
-  - [ ] Combine `relationships.md` + `advanced_associations.md` → `/docs/core-features/relationships.md`
-  - [ ] Consolidate validation docs → `/docs/core-features/validations.md`
+- [x] Consolidate core features documentation
+  - [x] Merge `models.md` + enhancements → `/docs/core-features/models-and-columns.md`
+  - [x] Update `crud.md` with examples → `/docs/core-features/crud-operations.md`
+  - [x] Merge `querying.md` + scoping → `/docs/core-features/querying-and-scopes.md`
+  - [x] Combine `relationships.md` + `advanced_associations.md` → `/docs/core-features/relationships.md`
+  - [x] Consolidate validation docs → `/docs/core-features/validations.md`
   - [ ] Update callbacks → `/docs/core-features/callbacks-lifecycle.md`
-- [ ] Merge overlapping query documentation
-  - [ ] Combine 3 query docs → `/docs/api-reference/query-builder-api.md`
+- [x] Merge overlapping query documentation
+  - [x] Combine 4 query docs → `/docs/core-features/querying-and-scopes.md`
 - [ ] Create comprehensive API reference
   - [ ] Extract model methods → `/docs/api-reference/model-methods.md`
   - [ ] Document association options → `/docs/api-reference/association-options.md`
@@ -127,10 +127,10 @@ database_support: ["postgresql", "mysql", "sqlite"]
 ## Progress Metrics
 - Total files to process: ~80
 - Target file count: ~35
-- Files processed: 6
-- Files merged: 3 (README.md + docs/readme.md → installation.md, models.md → models-and-columns.md)
+- Files processed: 20
+- Files merged: 12 (README+readme→installation, models→models-and-columns, 4 query docs→querying-and-scopes, 3 relationship docs→relationships, 2 validation docs→validations)
 - Files deleted: 0
-- Files with metadata: 5 (all new docs have metadata)
+- Files with metadata: 11 (all new docs have metadata)
 
 ## Notes
 - Prioritize user-facing documentation first
