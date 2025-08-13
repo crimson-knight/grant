@@ -1,6 +1,6 @@
 # Dirty Tracking API
 
-Grant (formerly Granite) provides a comprehensive dirty tracking API that allows you to track changes to your model attributes. This feature is inspired by Rails' ActiveRecord dirty tracking and provides full compatibility with the Rails API.
+Grant (formerly Grant) provides a comprehensive dirty tracking API that allows you to track changes to your model attributes. This feature is inspired by Rails' ActiveRecord dirty tracking and provides full compatibility with the Rails API.
 
 ## Overview
 
@@ -161,7 +161,7 @@ user.changed? # => false
 Dirty tracking is particularly useful in callbacks:
 
 ```crystal
-class User < Granite::Base
+class User < Grant::Base
   column name : String
   column email : String
   column email_verified : Bool = false
@@ -216,10 +216,10 @@ user.company_id_changed? # => true
 Dirty tracking works with all Grant column types, including those with converters:
 
 ```crystal
-class Product < Granite::Base
+class Product < Grant::Base
   column price : Float64
-  column metadata : JSON::Any, converter: Granite::Converters::Json(JSON::Any)
-  column status : ProductStatus, converter: Granite::Converters::Enum(ProductStatus, String)
+  column metadata : JSON::Any, converter: Grant::Converters::Json(JSON::Any)
+  column status : ProductStatus, converter: Grant::Converters::Enum(ProductStatus, String)
 end
 
 product.price = 19.99

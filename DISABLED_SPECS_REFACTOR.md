@@ -10,14 +10,14 @@ During the stabilization of the test suite at commit 13b84f3c99ff72f6bd25ab442dc
 
 ### 1. Polymorphic Associations
 **Files:**
-- `spec/granite/associations/polymorphic_spec.cr.disabled`
-- `spec/granite/associations/polymorphic_simple_spec.cr.disabled`
+- `spec/grant/associations/polymorphic_spec.cr.disabled`
+- `spec/grant/associations/polymorphic_simple_spec.cr.disabled`
 - `spec/support/polymorphic_models.cr.disabled`
 
-**Issue:** Crystal type system issue - attempting to instantiate abstract class `Granite::Base`
+**Issue:** Crystal type system issue - attempting to instantiate abstract class `Grant::Base`
 
 **Details:**
-The polymorphic association implementation appears to have a fundamental issue with Crystal's type system. When polymorphic associations are used, the code attempts to instantiate the abstract `Granite::Base` class directly, which is not allowed.
+The polymorphic association implementation appears to have a fundamental issue with Crystal's type system. When polymorphic associations are used, the code attempts to instantiate the abstract `Grant::Base` class directly, which is not allowed.
 
 **Required Fix:**
 - Review the polymorphic association implementation
@@ -25,7 +25,7 @@ The polymorphic association implementation appears to have a fundamental issue w
 - May require redesigning how polymorphic types are registered and resolved
 
 ### 2. Additional Options Spec
-**File:** `spec/granite/associations/additional_options_spec.cr.disabled`
+**File:** `spec/grant/associations/additional_options_spec.cr.disabled`
 
 **Issue:** Uses polymorphic associations
 
@@ -37,7 +37,7 @@ This spec tests additional association options including counter_cache and custo
 - May need to split polymorphic tests into a separate file
 
 ### 3. Lifecycle Callbacks
-**File:** `spec/granite/callbacks/lifecycle_callbacks_spec.cr.disabled`
+**File:** `spec/grant/callbacks/lifecycle_callbacks_spec.cr.disabled`
 
 **Issue:** Attempts to dynamically add callbacks to instances
 
@@ -49,7 +49,7 @@ model.before_save do
 end
 ```
 
-This is not how Granite callbacks work - they are defined at the class level, not instance level.
+This is not how Grant callbacks work - they are defined at the class level, not instance level.
 
 **Required Fix:**
 - Rewrite tests to use proper callback definition patterns
@@ -57,7 +57,7 @@ This is not how Granite callbacks work - they are defined at the class level, no
 - May need to implement a different approach for testing callback failures
 
 ### 4. Connection Management
-**File:** `spec/granite/connection_management_spec.cr.disabled`
+**File:** `spec/grant/connection_management_spec.cr.disabled`
 
 **Issue:** Missing `connection_switch_wait_period` method
 
@@ -70,7 +70,7 @@ The spec expects a `connection_switch_wait_period` class method on models that d
 - Ensure proper read/write adapter switching based on time since last write
 
 ### 5. Eager Loading
-**File:** `spec/granite/eager_loading/eager_loading_spec.cr.disabled`
+**File:** `spec/grant/eager_loading/eager_loading_spec.cr.disabled`
 
 **Issue:** API incompatibility - incorrect method signature
 
@@ -83,7 +83,7 @@ The spec uses `Parent.includes(children: :school)` syntax which doesn't match th
 - Ensure compatibility with Rails-like eager loading patterns
 
 ### 6. Instrumentation - Logging
-**File:** `spec/granite/instrumentation/logging_spec.cr.disabled`
+**File:** `spec/grant/instrumentation/logging_spec.cr.disabled`
 
 **Issue:** Model creation returns nil instead of persisted objects
 
@@ -96,7 +96,7 @@ The spec expects `School.create(name: "Test School")` to return a persisted obje
 - May be related to missing migrations or database setup
 
 ### 7. Instrumentation - Query Analysis
-**File:** `spec/granite/instrumentation/query_analysis_spec.cr.disabled`
+**File:** `spec/grant/instrumentation/query_analysis_spec.cr.disabled`
 
 **Issue:** Same as logging spec - model creation issues
 
@@ -108,7 +108,7 @@ Similar to the logging spec, this spec fails because created models don't have I
 - Ensure proper test database setup
 
 ### 8. Scoping
-**File:** `spec/granite/scoping/scoping_spec.cr.disabled`
+**File:** `spec/grant/scoping/scoping_spec.cr.disabled`
 
 **Issue:** Macro visibility - `scope` method not found
 

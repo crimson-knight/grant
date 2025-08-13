@@ -9,8 +9,8 @@ This guide provides a step-by-step implementation plan for adding Rails-like mul
 ### 1.1 Create New Connection Pool Implementation
 
 ```crystal
-# src/granite/connection_pool.cr
-module Granite
+# src/grant/connection_pool.cr
+module Grant
   class ConnectionPool(T)
     property max_pool_size : Int32
     property checkout_timeout : Time::Span
@@ -87,8 +87,8 @@ end
 ### 1.2 Enhanced Connection Specification
 
 ```crystal
-# src/granite/connection_specification.cr
-module Granite
+# src/grant/connection_specification.cr
+module Grant
   struct ConnectionSpecification
     getter adapter_class : Adapter::Base.class
     getter database : String
@@ -127,8 +127,8 @@ end
 ### 1.3 New Connection Handler
 
 ```crystal
-# src/granite/connection_handler.cr
-module Granite
+# src/grant/connection_handler.cr
+module Grant
   class ConnectionHandler
     @@specifications = {} of String => ConnectionSpecification
     @@connection_pools = {} of String => ConnectionPool(Adapter::Base)
@@ -209,8 +209,8 @@ end
 ### 2.1 Enhanced Base Class
 
 ```crystal
-# src/granite/base.cr (additions)
-abstract class Granite::Base
+# src/grant/base.cr (additions)
+abstract class Grant::Base
   # Connection configuration
   class_property database_name : String = "primary"
   class_property connection_roles : Hash(Symbol, String) = {} of Symbol => String
@@ -318,8 +318,8 @@ end
 ### 2.2 Query Execution Updates
 
 ```crystal
-# src/granite/querying.cr (modifications)
-module Granite::Querying
+# src/grant/querying.cr (modifications)
+module Grant::Querying
   macro included
     def self.first(**args)
       connected_to(role: :reading) do
@@ -346,8 +346,8 @@ module Granite::Querying
   end
 end
 
-# src/granite/transactions.cr (modifications)
-module Granite::Transactions
+# src/grant/transactions.cr (modifications)
+module Grant::Transactions
   private def __create(**args)
     self.class.connected_to(role: :writing) do
       if self.class.preventing_writes?
@@ -367,10 +367,10 @@ end
 ### 3.1 Shard Resolution
 
 ```crystal
-# src/granite/sharding/shard_resolver.cr
-module Granite::Sharding
+# src/grant/sharding/shard_resolver.cr
+module Grant::Sharding
   abstract class ShardResolver
-    abstract def resolve(key : Granite::Columns::Type) : Symbol
+    abstract def resolve(key : Grant::Columns::Type) : Symbol
   end
   
   class ModuloShardResolver < ShardResolver
@@ -380,7 +380,7 @@ module Granite::Sharding
       raise ArgumentError.new("Must have at least one shard") if @shards.empty?
     end
     
-    def resolve(key : Granite::Columns::Type) : Symbol
+    def resolve(key : Grant::Columns::Type) : Symbol
       numeric_key = case key
       when Int32, Int64
         key.to_i64
@@ -401,7 +401,7 @@ module Granite::Sharding
     def initialize(@ranges : Array({Range(Int64, Int64), Symbol}))
     end
     
-    def resolve(key : Granite::Columns::Type) : Symbol
+    def resolve(key : Grant::Columns::Type) : Symbol
       numeric_key = key.to_s.to_i64
       
       @ranges.each do |(range, shard)|
@@ -413,10 +413,10 @@ module Granite::Sharding
   end
   
   class CustomShardResolver < ShardResolver
-    def initialize(&@resolver : Granite::Columns::Type -> Symbol)
+    def initialize(&@resolver : Grant::Columns::Type -> Symbol)
     end
     
-    def resolve(key : Granite::Columns::Type) : Symbol
+    def resolve(key : Grant::Columns::Type) : Symbol
       @resolver.call(key)
     end
   end
@@ -426,8 +426,8 @@ end
 ### 3.2 Sharded Model Support
 
 ```crystal
-# src/granite/sharding/sharded_model.cr
-module Granite::Sharding
+# src/grant/sharding/sharded_model.cr
+module Grant::Sharding
   module ShardedModel
     macro included
       class_property shard_resolver : ShardResolver?
@@ -501,8 +501,8 @@ end
 ### 4.1 Database-Specific Migrations
 
 ```crystal
-# src/granite/migrations/database_migration.cr
-module Granite::Migrations
+# src/grant/migrations/database_migration.cr
+module Grant::Migrations
   abstract class DatabaseMigration < Migration
     class_property target_database : String = "primary"
     
@@ -511,13 +511,13 @@ module Granite::Migrations
     end
     
     def up
-      Granite::Base.connected_to(database: self.class.target_database, role: :writing) do
+      Grant::Base.connected_to(database: self.class.target_database, role: :writing) do
         execute_up
       end
     end
     
     def down
-      Granite::Base.connected_to(database: self.class.target_database, role: :writing) do
+      Grant::Base.connected_to(database: self.class.target_database, role: :writing) do
         execute_down
       end
     end
@@ -536,7 +536,7 @@ module Granite::Migrations
       Dir.mkdir_p("db/migrate/#{database}")
       
       File.write(filepath, <<-MIGRATION)
-      class #{name.camelcase} < Granite::Migrations::DatabaseMigration
+      class #{name.camelcase} < Grant::Migrations::DatabaseMigration
         database "#{database}"
         
         def execute_up
@@ -556,8 +556,8 @@ end
 ### 4.2 Migration Runner Updates
 
 ```crystal
-# src/granite/migrations/runner.cr
-module Granite::Migrations
+# src/grant/migrations/runner.cr
+module Grant::Migrations
   class Runner
     def self.migrate(database : String? = nil, version : String? = nil)
       migrations = if database
@@ -611,38 +611,38 @@ end
 
 ```crystal
 # config/database.cr
-require "granite"
+require "grant"
 
 # Configure primary database with read replica
-Granite::ConnectionHandler.establish_connection(
+Grant::ConnectionHandler.establish_connection(
   database: "primary",
-  adapter: Granite::Adapter::Pg,
+  adapter: Grant::Adapter::Pg,
   url: ENV["DATABASE_URL"],
   role: :writing,
-  pool: Granite::ConnectionSpecification::PoolConfig.new(size: 25)
+  pool: Grant::ConnectionSpecification::PoolConfig.new(size: 25)
 )
 
-Granite::ConnectionHandler.establish_connection(
+Grant::ConnectionHandler.establish_connection(
   database: "primary_replica", 
-  adapter: Granite::Adapter::Pg,
+  adapter: Grant::Adapter::Pg,
   url: ENV["DATABASE_REPLICA_URL"],
   role: :reading,
-  pool: Granite::ConnectionSpecification::PoolConfig.new(size: 15)
+  pool: Grant::ConnectionSpecification::PoolConfig.new(size: 15)
 )
 
 # Configure analytics database
-Granite::ConnectionHandler.establish_connection(
+Grant::ConnectionHandler.establish_connection(
   database: "analytics",
-  adapter: Granite::Adapter::Pg,
+  adapter: Grant::Adapter::Pg,
   url: ENV["ANALYTICS_DATABASE_URL"],
   role: :writing
 )
 
 # Configure sharded databases
 ["shard1", "shard2", "shard3"].each do |shard|
-  Granite::ConnectionHandler.establish_connection(
+  Grant::ConnectionHandler.establish_connection(
     database: "orders_#{shard}",
-    adapter: Granite::Adapter::Pg,
+    adapter: Grant::Adapter::Pg,
     url: ENV["ORDERS_#{shard.upcase}_URL"],
     role: :writing,
     shard: shard.to_sym
@@ -654,14 +654,14 @@ end
 
 ```crystal
 # Base classes for different databases
-abstract class ApplicationRecord < Granite::Base
+abstract class ApplicationRecord < Grant::Base
   connects_to database: {
     writing: "primary",
     reading: "primary_replica"
   }
 end
 
-abstract class AnalyticsRecord < Granite::Base
+abstract class AnalyticsRecord < Grant::Base
   connects_to database: "analytics"
 end
 
@@ -688,7 +688,7 @@ end
 
 # Sharded model
 class Order < ApplicationRecord
-  include Granite::Sharding::ShardedModel
+  include Grant::Sharding::ShardedModel
   
   connects_to shards: {
     shard1: { writing: "orders_shard1", reading: "orders_shard1" },
@@ -748,7 +748,7 @@ all_pending = Order.on_all_shards do
 end
 
 # Prevent writes (useful for maintenance)
-Granite::Base.while_preventing_writes do
+Grant::Base.while_preventing_writes do
   user = User.find(1)
   user.name = "New Name"
   user.save  # Raises ReadOnlyError
@@ -766,13 +766,13 @@ The implementation maintains backward compatibility by:
 
 ```crystal
 # Legacy code continues to work
-class LegacyModel < Granite::Base
+class LegacyModel < Grant::Base
   connection "postgres"  # Maps to new system
   table legacy_models
 end
 
 # New code uses enhanced features
-class NewModel < Granite::Base
+class NewModel < Grant::Base
   connects_to database: { writing: :primary, reading: :replica }
   table new_models
 end
@@ -784,16 +784,16 @@ end
 # spec_helper.cr
 Spec.before_each do
   # Use single connection for tests
-  Granite::ConnectionHandler.clear_all_connections!
-  Granite::ConnectionHandler.establish_connection(
+  Grant::ConnectionHandler.clear_all_connections!
+  Grant::ConnectionHandler.establish_connection(
     database: "test",
-    adapter: Granite::Adapter::Sqlite,
+    adapter: Grant::Adapter::Sqlite,
     url: "sqlite3::memory:",
     role: :writing
   )
-  Granite::ConnectionHandler.establish_connection(
+  Grant::ConnectionHandler.establish_connection(
     database: "test",
-    adapter: Granite::Adapter::Sqlite, 
+    adapter: Grant::Adapter::Sqlite, 
     url: "sqlite3::memory:",
     role: :reading
   )
@@ -810,7 +810,7 @@ describe "Multiple Database Support" do
   
   it "prevents writes when configured" do
     User.while_preventing_writes do
-      expect_raises(Granite::ReadOnlyError) do
+      expect_raises(Grant::ReadOnlyError) do
         User.create(name: "Test")
       end
     end

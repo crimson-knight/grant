@@ -27,8 +27,8 @@ This document outlines a pragmatic implementation plan for horizontal sharding i
 
 #### 1.1 ShardManager Implementation
 ```crystal
-# src/granite/sharding/shard_manager.cr
-module Granite
+# src/grant/sharding/shard_manager.cr
+module Grant
   class ShardManager
     # Centralized shard configuration and context management
   end
@@ -50,8 +50,8 @@ end
 
 #### 1.3 Basic Query Routing
 ```crystal
-# src/granite/sharding/query_router.cr
-module Granite::Sharding
+# src/grant/sharding/query_router.cr
+module Grant::Sharding
   class QueryRouter
     # Route queries to appropriate shards
   end
@@ -69,7 +69,7 @@ end
 #### 2.1 Virtual Sharding
 ```crystal
 # spec/support/virtual_sharding.cr
-module Granite::Testing
+module Grant::Testing
   class VirtualShardAdapter
     # Simulate multiple shards in memory
   end
@@ -111,8 +111,8 @@ end
 
 #### 4.1 Basic Transaction Support
 ```crystal
-# src/granite/sharding/distributed_transaction.cr
-module Granite::Sharding
+# src/grant/sharding/distributed_transaction.cr
+module Grant::Sharding
   class DistributedTransaction
     # Coordinate transactions across shards
   end

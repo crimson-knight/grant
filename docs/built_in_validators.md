@@ -18,7 +18,7 @@ Built-in validators provide:
 Validates that attributes have numeric values and optionally match specific criteria.
 
 ```crystal
-class Product < Granite::Base
+class Product < Grant::Base
   column price : Float64
   column quantity : Int32
   column discount : Float64
@@ -50,7 +50,7 @@ end
 Validates attributes match or don't match a regular expression.
 
 ```crystal
-class User < Granite::Base
+class User < Grant::Base
   column username : String
   column phone : String
   column zip_code : String
@@ -74,7 +74,7 @@ end
 Validates the length of string attributes or size of arrays.
 
 ```crystal
-class Article < Granite::Base
+class Article < Grant::Base
   column title : String
   column body : String
   column tags : Array(String)
@@ -99,7 +99,7 @@ end
 Validates email format using a standard email regex.
 
 ```crystal
-class Contact < Granite::Base
+class Contact < Grant::Base
   column email : String
   column backup_email : String?
   
@@ -113,7 +113,7 @@ end
 Validates URL format for http/https URLs.
 
 ```crystal
-class Link < Granite::Base
+class Link < Grant::Base
   column url : String
   column canonical_url : String?
   
@@ -127,7 +127,7 @@ end
 Validates that a field matches its confirmation field.
 
 ```crystal
-class Account < Granite::Base
+class Account < Grant::Base
   column email : String
   column password : String
   
@@ -150,7 +150,7 @@ account.valid? # => true
 Validates acceptance of terms, agreements, etc.
 
 ```crystal
-class Signup < Granite::Base
+class Signup < Grant::Base
   column email : String
   
   validates_acceptance_of :terms_of_service
@@ -173,7 +173,7 @@ signup.valid? # => true
 Validates that values are included in a given set.
 
 ```crystal
-class Subscription < Granite::Base
+class Subscription < Grant::Base
   column plan : String
   column status : String
   
@@ -187,7 +187,7 @@ end
 Validates that values are NOT in a given set.
 
 ```crystal
-class User < Granite::Base
+class User < Grant::Base
   column username : String
   column subdomain : String
   
@@ -201,7 +201,7 @@ end
 Validates that associated objects are also valid.
 
 ```crystal
-class Order < Granite::Base
+class Order < Grant::Base
   has_many :line_items
   has_one :shipping_address
   
@@ -219,7 +219,7 @@ All validators support conditional execution using `:if` and `:unless` options.
 ### Using Symbols
 
 ```crystal
-class Order < Granite::Base
+class Order < Grant::Base
   column total : Float64?
   column status : String
   
@@ -234,7 +234,7 @@ end
 ### Using Procs
 
 ```crystal
-class Post < Granite::Base
+class Post < Grant::Base
   column title : String
   column published : Bool
   
@@ -248,7 +248,7 @@ end
 All validators accept a custom `:message` option:
 
 ```crystal
-class User < Granite::Base
+class User < Grant::Base
   column age : Int32
   column email : String
   
@@ -267,7 +267,7 @@ end
 You can use multiple validators on the same field:
 
 ```crystal
-class Account < Granite::Base
+class Account < Grant::Base
   column username : String
   column password : String
   
@@ -291,7 +291,7 @@ end
 - `allow_blank: true` - Skips validation if the value is `nil`, empty string, or whitespace
 
 ```crystal
-class Profile < Granite::Base
+class Profile < Grant::Base
   column bio : String?
   column website : String?
   
@@ -320,7 +320,7 @@ validates_format_of :website, with: URL_REGEX
 ### 2. Group Related Validations
 
 ```crystal
-class User < Granite::Base
+class User < Grant::Base
   # Authentication fields
   validates_presence_of :email
   validates_email :email
@@ -339,7 +339,7 @@ end
 ### 3. Use Conditional Validation Wisely
 
 ```crystal
-class Order < Granite::Base
+class Order < Grant::Base
   # Only validate payment details when order is being finalized
   validates_presence_of :credit_card_number, if: :finalizing?
   validates_length_of :credit_card_number, is: 16, if: :finalizing?
@@ -353,7 +353,7 @@ end
 ### 4. Provide Clear Error Messages
 
 ```crystal
-class Registration < Granite::Base
+class Registration < Grant::Base
   validates_numericality_of :age, 
     greater_than_or_equal_to: 13,
     message: "You must be at least 13 years old to register"
@@ -378,7 +378,7 @@ end
 
 ### Grant
 ```crystal
-class User < Granite::Base
+class User < Grant::Base
   validates_presence_of :email  # From validation_helpers
   validates_email :email        # Built-in email validator
   validates_numericality_of :age, greater_than: 17
@@ -399,7 +399,7 @@ module MyValidators
   end
 end
 
-class Contact < Granite::Base
+class Contact < Grant::Base
   extend MyValidators
   
   column phone : String

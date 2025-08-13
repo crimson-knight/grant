@@ -45,7 +45,7 @@ This document outlines the design for implementing comprehensive horizontal shar
 ### 1. Enhanced Shard Configuration
 
 ```crystal
-module Granite::Sharding
+module Grant::Sharding
   # Enhanced configuration with more options
   class ShardConfig
     property strategy : ShardingStrategy
@@ -76,7 +76,7 @@ end
 ### 2. Shard Manager (Missing Component)
 
 ```crystal
-module Granite
+module Grant
   class ShardManager
     @@shard_configs = {} of String => Sharding::ShardConfig
     @@current_shard = {} of Fiber => Symbol?
@@ -92,12 +92,12 @@ module Granite
       @@current_shard[Fiber.current] = shard
       
       # Set connection context
-      Thread.current[:granite_current_shard] = shard
+      Thread.current[:grant_current_shard] = shard
       
       yield
     ensure
       @@current_shard[Fiber.current] = previous
-      Thread.current[:granite_current_shard] = previous
+      Thread.current[:grant_current_shard] = previous
     end
     
     # Get current shard for fiber
@@ -127,9 +127,9 @@ end
 ### 3. Query Router (New Component)
 
 ```crystal
-module Granite::Sharding
+module Grant::Sharding
   class QueryRouter
-    def initialize(@model : Granite::Base.class)
+    def initialize(@model : Grant::Base.class)
       @shard_config = @model.shard_config.not_nil!
     end
     
@@ -182,7 +182,7 @@ module Granite::Sharding
   end
   
   class SingleShardExecution < QueryExecution
-    def initialize(@model : Granite::Base.class, @query : Query::Builder, @shard : Symbol)
+    def initialize(@model : Grant::Base.class, @query : Query::Builder, @shard : Symbol)
     end
     
     def execute : ResultSet
@@ -193,7 +193,7 @@ module Granite::Sharding
   end
   
   class ScatterGatherExecution < QueryExecution
-    def initialize(@model : Granite::Base.class, @query : Query::Builder, @shards : Array(Symbol))
+    def initialize(@model : Grant::Base.class, @query : Query::Builder, @shards : Array(Symbol))
     end
     
     def execute : ResultSet
@@ -247,7 +247,7 @@ end
 ### 4. Distributed Transaction Coordinator
 
 ```crystal
-module Granite::Sharding
+module Grant::Sharding
   class DistributedTransaction
     enum State
       Preparing
@@ -413,9 +413,9 @@ end
 ### 5. Shard Migration and Rebalancing
 
 ```crystal
-module Granite::Sharding
+module Grant::Sharding
   class ShardMigrator
-    def initialize(@model : Granite::Base.class)
+    def initialize(@model : Grant::Base.class)
       @shard_config = @model.shard_config.not_nil!
     end
     
@@ -490,7 +490,7 @@ module Granite::Sharding
   
   # Shard health monitoring
   class ShardMonitor
-    def initialize(@model : Granite::Base.class)
+    def initialize(@model : Grant::Base.class)
       @metrics = {} of Symbol => ShardMetrics
     end
     
@@ -527,7 +527,7 @@ end
 ### 6. Enhanced Model Integration
 
 ```crystal
-module Granite::Sharding::Model
+module Grant::Sharding::Model
   macro sharded(strategy = :hash, on = nil, count = nil, **options)
     {% if strategy == :hash %}
       {% if on.nil? %}
@@ -537,15 +537,15 @@ module Granite::Sharding::Model
       {% key_columns = on.is_a?(ArrayLiteral) ? on : [on] %}
       
       # Configure sharding
-      class_property shard_config : Granite::Sharding::ShardConfig?
+      class_property shard_config : Grant::Sharding::ShardConfig?
       
       # Register with ShardManager
-      Granite::ShardManager.register(
+      Grant::ShardManager.register(
         {{@type.name.stringify}},
-        Granite::Sharding::ShardConfig.new(
-          strategy: Granite::Sharding::ShardingStrategy::Hash,
+        Grant::Sharding::ShardConfig.new(
+          strategy: Grant::Sharding::ShardingStrategy::Hash,
           key_columns: {{key_columns}}.map(&.to_s.to_sym),
-          resolver: Granite::Sharding::HashResolver.new(
+          resolver: Grant::Sharding::HashResolver.new(
             {{key_columns}}.map(&.to_s.to_sym),
             {{count || 4}},
             {{options[:prefix]?.try(&.to_s) || @type.name.underscore}}
@@ -557,7 +557,7 @@ module Granite::Sharding::Model
       
       # Override query builder to use router
       def self.__builder
-        router = Granite::Sharding::QueryRouter.new(self)
+        router = Grant::Sharding::QueryRouter.new(self)
         ShardedQueryBuilder.new(router, super)
       end
       
@@ -565,7 +565,7 @@ module Granite::Sharding::Model
       # Range sharding configuration
       {% key_column = on || raise "Must specify shard key column for range sharding" %}
       
-      resolver = Granite::Sharding::RangeResolver.new({{key_column}}.to_sym)
+      resolver = Grant::Sharding::RangeResolver.new({{key_column}}.to_sym)
       
       # Add ranges from options
       {% if ranges = options[:ranges] %}
@@ -574,10 +574,10 @@ module Granite::Sharding::Model
         {% end %}
       {% end %}
       
-      Granite::ShardManager.register(
+      Grant::ShardManager.register(
         {{@type.name.stringify}},
-        Granite::Sharding::ShardConfig.new(
-          strategy: Granite::Sharding::ShardingStrategy::Range,
+        Grant::Sharding::ShardConfig.new(
+          strategy: Grant::Sharding::ShardingStrategy::Range,
           key_columns: [{{key_column}}.to_sym],
           resolver: resolver
         )
@@ -588,16 +588,16 @@ module Granite::Sharding::Model
       {% key_column = on || :region %}
       {% mapping = options[:mapping] || raise "Must provide region mapping" %}
       
-      resolver = Granite::Sharding::LookupResolver.new(
+      resolver = Grant::Sharding::LookupResolver.new(
         {{key_column}}.to_sym,
         {{mapping}},
         {{options[:default_shard]?}}
       )
       
-      Granite::ShardManager.register(
+      Grant::ShardManager.register(
         {{@type.name.stringify}},
-        Granite::Sharding::ShardConfig.new(
-          strategy: Granite::Sharding::ShardingStrategy::Geographic,
+        Grant::Sharding::ShardConfig.new(
+          strategy: Grant::Sharding::ShardingStrategy::Geographic,
           key_columns: [{{key_column}}.to_sym],
           resolver: resolver
         )
@@ -623,7 +623,7 @@ module Granite::Sharding::Model
     
     # Distributed transaction support
     def self.distributed_transaction(&block)
-      tx = Granite::Sharding::DistributedTransaction.new
+      tx = Grant::Sharding::DistributedTransaction.new
       tx.execute(&block)
     end
   end
@@ -657,11 +657,11 @@ end
 ### 1. Virtual Sharding for Tests
 
 ```crystal
-module Granite::Testing
-  class VirtualShardAdapter < Granite::Adapter::Base
+module Grant::Testing
+  class VirtualShardAdapter < Grant::Adapter::Base
     @@shards = {} of Symbol => MockDatabase
     
-    def initialize(@shard : Symbol, @base_adapter : Granite::Adapter::Base)
+    def initialize(@shard : Symbol, @base_adapter : Grant::Adapter::Base)
       @@shards[@shard] ||= MockDatabase.new
     end
     
@@ -807,8 +807,8 @@ end
 
 ### Basic Hash Sharding
 ```crystal
-class User < Granite::Base
-  include Granite::Sharding::Model
+class User < Grant::Base
+  include Grant::Sharding::Model
   
   sharded strategy: :hash,
           on: :id,
@@ -819,8 +819,8 @@ end
 
 ### Geographic Sharding
 ```crystal
-class Order < Granite::Base
-  include Granite::Sharding::Model
+class Order < Grant::Base
+  include Grant::Sharding::Model
   
   sharded strategy: :geographic,
           on: :region,
@@ -836,8 +836,8 @@ end
 
 ### Range-Based Sharding
 ```crystal
-class Event < Granite::Base
-  include Granite::Sharding::Model
+class Event < Grant::Base
+  include Grant::Sharding::Model
   
   sharded strategy: :range,
           on: :created_at,
@@ -851,8 +851,8 @@ end
 
 ### Composite Sharding
 ```crystal
-class Transaction < Granite::Base
-  include Granite::Sharding::Model
+class Transaction < Grant::Base
+  include Grant::Sharding::Model
   
   sharded strategy: :composite,
           primary: {strategy: :hash, on: :account_id, count: 4},

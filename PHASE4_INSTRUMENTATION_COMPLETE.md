@@ -2,19 +2,19 @@
 
 ## Overview
 
-Successfully implemented a comprehensive Crystal-native instrumentation system for Granite ORM, providing structured logging, query analysis, and performance monitoring without the overhead of a pub-sub system.
+Successfully implemented a comprehensive Crystal-native instrumentation system for Grant ORM, providing structured logging, query analysis, and performance monitoring without the overhead of a pub-sub system.
 
 ## Implemented Features
 
-### 1. Core Logging Infrastructure (`/src/granite/logging.cr`)
+### 1. Core Logging Infrastructure (`/src/grant/logging.cr`)
 
-- **Granite::Log** - Main logger module
+- **Grant::Log** - Main logger module
 - **Sub-loggers**:
-  - `Granite::Logs::SQL` - SQL query logging with timing
-  - `Granite::Logs::Model` - Model lifecycle events
-  - `Granite::Logs::Transaction` - Transaction operations
-  - `Granite::Logs::Association` - Association loading
-  - `Granite::Logs::Query` - Query builder operations
+  - `Grant::Logs::SQL` - SQL query logging with timing
+  - `Grant::Logs::Model` - Model lifecycle events
+  - `Grant::Logs::Transaction` - Transaction operations
+  - `Grant::Logs::Association` - Association loading
+  - `Grant::Logs::Query` - Query builder operations
 
 ### 2. SQL Query Logging
 
@@ -77,7 +77,7 @@ Beautiful, colored console output for development:
 - **TransactionFormatter**:
   - Transaction state icons (▶ BEGIN, ✓ COMMIT, ⟲ ROLLBACK)
 
-### 6. Query Analysis (`/src/granite/query_analysis.cr`)
+### 6. Query Analysis (`/src/grant/query_analysis.cr`)
 
 - **N+1 Query Detection**:
   - `N1Detector` class tracks and analyzes query patterns
@@ -93,29 +93,29 @@ Beautiful, colored console output for development:
 ### 7. Integration Points
 
 - Modified query executors to add logging hooks:
-  - `/src/granite/query/executors/base.cr` - Base logging methods
-  - `/src/granite/query/executors/list.cr` - List query logging
-  - `/src/granite/query/executors/value.cr` - Scalar query logging
-  - `/src/granite/query/executors/pluck.cr` - Pluck operation logging
+  - `/src/grant/query/executors/base.cr` - Base logging methods
+  - `/src/grant/query/executors/list.cr` - List query logging
+  - `/src/grant/query/executors/value.cr` - Scalar query logging
+  - `/src/grant/query/executors/pluck.cr` - Pluck operation logging
 
 - Modified assemblers for DML operations:
-  - `/src/granite/query/assemblers/base.cr` - DELETE and touch_all logging
+  - `/src/grant/query/assemblers/base.cr` - DELETE and touch_all logging
 
 - Enhanced association collection:
-  - `/src/granite/association_collection.cr` - Association query logging
+  - `/src/grant/association_collection.cr` - Association query logging
 
 ### 8. Tests
 
 Created comprehensive test suites:
 
-- `/spec/granite/instrumentation/logging_spec.cr`:
+- `/spec/grant/instrumentation/logging_spec.cr`:
   - SQL logging with timing
   - Slow query warnings
   - Model lifecycle logging
   - Association loading logs
   - Development formatter output
 
-- `/spec/granite/instrumentation/query_analysis_spec.cr`:
+- `/spec/grant/instrumentation/query_analysis_spec.cr`:
   - N+1 query detection
   - Query statistics collection
   - Integration with query execution
@@ -144,23 +144,23 @@ Created comprehensive test suites:
 
 ```crystal
 # Enable in development
-Granite::Development.setup_logging
+Grant::Development.setup_logging
 
 # Basic configuration
 Log.setup do |c|
   backend = Log::IOBackend.new
-  c.bind "granite.sql", :debug, backend
-  c.bind "granite.model", :info, backend
+  c.bind "grant.sql", :debug, backend
+  c.bind "grant.model", :info, backend
 end
 
 # Detect N+1 queries
-Granite::QueryAnalysis::N1Detector.detect do
+Grant::QueryAnalysis::N1Detector.detect do
   User.all.each { |u| u.posts.count }
 end
 # Warns: Potential N+1 queries detected
 
 # Collect statistics
-stats = Granite::QueryAnalysis::QueryStats.instance
+stats = Grant::QueryAnalysis::QueryStats.instance
 stats.enable!
 # ... run queries ...
 stats.report
@@ -176,6 +176,6 @@ stats.report
 
 ## Next Steps
 
-The only remaining item from the Phase 4 roadmap is transaction logging, which is pending because Granite doesn't currently have transaction support implemented. When transactions are added, the logging infrastructure is ready to support them.
+The only remaining item from the Phase 4 roadmap is transaction logging, which is pending because Grant doesn't currently have transaction support implemented. When transactions are added, the logging infrastructure is ready to support them.
 
 This completes the Crystal-native instrumentation implementation for Phase 4!

@@ -16,7 +16,7 @@ User.raw_query("SELECT * FROM users WHERE name = ?", [params[:name]])
 
 ### Proposed Grant Implementation
 ```crystal
-module Granite::Sanitization
+module Grant::Sanitization
   def self.quote(value)
     case value
     when Nil then "NULL"
@@ -64,8 +64,8 @@ end
 
 ### Proposed Grant Implementation
 ```crystal
-class User < Granite::Base
-  include Granite::Encryption
+class User < Grant::Base
+  include Grant::Encryption
   
   encrypts :email, :ssn
   encrypts :credit_card, deterministic: true
@@ -73,10 +73,10 @@ end
 ```
 
 ### Components Needed
-- `Granite::Encryption::EncryptableRecord`
-- `Granite::Encryption::Cipher`
-- `Granite::Encryption::KeyProvider`
-- `Granite::Encryption::EncryptedAttribute`
+- `Grant::Encryption::EncryptableRecord`
+- `Grant::Encryption::Cipher`
+- `Grant::Encryption::KeyProvider`
+- `Grant::Encryption::EncryptedAttribute`
 
 **Priority**: Critical - Security requirement
 **Effort**: High - Need key management, cipher selection, attribute handling
@@ -101,7 +101,7 @@ end
 
 ### Proposed Grant Implementation
 ```crystal
-class Customer < Granite::Base
+class Customer < Grant::Base
   aggregation :address,
     class_name: Address,
     mapping: {
@@ -140,7 +140,7 @@ User.create(
 
 ### Proposed Grant Implementation
 ```crystal
-class User < Granite::Base
+class User < Grant::Base
   has_many :posts
   accepts_nested_attributes_for :posts,
     allow_destroy: true,
@@ -166,10 +166,10 @@ ActiveRecord::QueryLogs.tags = [:application, :controller, :action]
 
 ### Proposed Grant Implementation
 ```crystal
-Granite::QueryLogs.tags = [:application, :request_id, :user_id]
+Grant::QueryLogs.tags = [:application, :request_id, :user_id]
 
 # In middleware
-Granite::QueryLogs.with_context(
+Grant::QueryLogs.with_context(
   request_id: request.id,
   user_id: current_user.id
 ) do
@@ -195,8 +195,8 @@ end
 
 ### Proposed Grant Implementation
 ```crystal
-class User < Granite::Base
-  include Granite::SecureToken
+class User < Grant::Base
+  include Grant::SecureToken
   
   has_secure_token :auth_token
   has_secure_token :password_reset_token, length: 36
@@ -241,8 +241,8 @@ end
 
 ### Proposed Grant Implementation
 ```crystal
-class User < Granite::Base
-  include Granite::Normalization
+class User < Grant::Base
+  include Grant::Normalization
   
   normalizes :email, &.downcase.strip
   normalizes :phone, &.gsub(/\D/, "")
@@ -267,8 +267,8 @@ end
 
 ### Proposed Grant Implementation
 ```crystal
-class User < Granite::Base
-  include Granite::Store
+class User < Grant::Base
+  include Grant::Store
   
   json_accessor :settings, {
     color: String,
@@ -305,8 +305,8 @@ user = User.find_by_token_for(:password_reset, token)
 
 ### Proposed Grant Implementation
 ```crystal
-class User < Granite::Base
-  include Granite::TokenFor
+class User < Grant::Base
+  include Grant::TokenFor
   
   generates_token_for :password_reset, expires_in: 15.minutes do
     password_salt

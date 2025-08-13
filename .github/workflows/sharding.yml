@@ -2,15 +2,15 @@ name: Sharding Tests
 on:
   push:
     paths:
-      - 'src/granite/sharding/**'
-      - 'src/granite/composite_primary_key/**'
+      - 'src/grant/sharding/**'
+      - 'src/grant/composite_primary_key/**'
       - 'spec/**/*sharding*'
       - 'spec/**/*composite*'
       - '.github/workflows/sharding.yml'
   pull_request:
     paths:
-      - 'src/granite/sharding/**'
-      - 'src/granite/composite_primary_key/**'
+      - 'src/grant/sharding/**'
+      - 'src/grant/composite_primary_key/**'
       - 'spec/**/*sharding*'
       - 'spec/**/*composite*'
       - '.github/workflows/sharding.yml'
@@ -23,7 +23,7 @@ jobs:
       postgres-config:
         image: postgres:16
         env:
-          POSTGRES_USER: granite
+          POSTGRES_USER: grant
           POSTGRES_PASSWORD: password
           POSTGRES_DB: config_db
         options: >-
@@ -38,7 +38,7 @@ jobs:
       postgres-shard0-primary:
         image: postgres:16
         env:
-          POSTGRES_USER: granite
+          POSTGRES_USER: grant
           POSTGRES_PASSWORD: password
           POSTGRES_DB: shard_0
         options: >-
@@ -52,7 +52,7 @@ jobs:
       postgres-shard0-replica:
         image: postgres:16
         env:
-          POSTGRES_USER: granite
+          POSTGRES_USER: grant
           POSTGRES_PASSWORD: password
           POSTGRES_DB: shard_0
         options: >-
@@ -67,7 +67,7 @@ jobs:
       postgres-shard1-primary:
         image: postgres:16
         env:
-          POSTGRES_USER: granite
+          POSTGRES_USER: grant
           POSTGRES_PASSWORD: password
           POSTGRES_DB: shard_1
         options: >-
@@ -81,7 +81,7 @@ jobs:
       postgres-shard1-replica:
         image: postgres:16
         env:
-          POSTGRES_USER: granite
+          POSTGRES_USER: grant
           POSTGRES_PASSWORD: password
           POSTGRES_DB: shard_1
         options: >-
@@ -96,7 +96,7 @@ jobs:
       postgres-shard2-primary:
         image: postgres:16
         env:
-          POSTGRES_USER: granite
+          POSTGRES_USER: grant
           POSTGRES_PASSWORD: password
           POSTGRES_DB: shard_2
         options: >-
@@ -110,7 +110,7 @@ jobs:
       postgres-shard2-replica:
         image: postgres:16
         env:
-          POSTGRES_USER: granite
+          POSTGRES_USER: grant
           POSTGRES_PASSWORD: password
           POSTGRES_DB: shard_2
         options: >-
@@ -125,7 +125,7 @@ jobs:
       postgres-shard3-primary:
         image: postgres:16
         env:
-          POSTGRES_USER: granite
+          POSTGRES_USER: grant
           POSTGRES_PASSWORD: password
           POSTGRES_DB: shard_3
         options: >-
@@ -139,7 +139,7 @@ jobs:
       postgres-shard3-replica:
         image: postgres:16
         env:
-          POSTGRES_USER: granite
+          POSTGRES_USER: grant
           POSTGRES_PASSWORD: password
           POSTGRES_DB: shard_3
         options: >-
@@ -171,17 +171,17 @@ jobs:
           set -e
           
           echo "=== Running Composite Primary Key Tests ==="
-          crystal spec spec/granite/composite_primary_key_spec.cr
+          crystal spec spec/grant/composite_primary_key_spec.cr
           
           # TODO: Add more tests as sharding features are implemented
           # echo "=== Running Shard Resolver Tests ==="
-          # crystal spec spec/granite/sharding/resolvers_spec.cr
+          # crystal spec spec/grant/sharding/resolvers_spec.cr
           
           # echo "=== Running Cross-Shard Query Tests ==="
-          # crystal spec spec/granite/sharding/cross_shard_spec.cr
+          # crystal spec spec/grant/sharding/cross_shard_spec.cr
           
           # echo "=== Running Failover Tests ==="
-          # crystal spec spec/granite/sharding/failover_spec.cr
+          # crystal spec spec/grant/sharding/failover_spec.cr
           EOF
           
           chmod +x run_sharding_tests.sh
@@ -189,19 +189,19 @@ jobs:
         env:
           CURRENT_ADAPTER: pg
           # Configuration database
-          CONFIG_DATABASE_URL: postgres://granite:password@localhost:5400/config_db
+          CONFIG_DATABASE_URL: postgres://grant:password@localhost:5400/config_db
           # Shard 0
-          SHARD_0_PRIMARY: postgres://granite:password@localhost:5410/shard_0
-          SHARD_0_REPLICA: postgres://granite:password@localhost:5411/shard_0
+          SHARD_0_PRIMARY: postgres://grant:password@localhost:5410/shard_0
+          SHARD_0_REPLICA: postgres://grant:password@localhost:5411/shard_0
           # Shard 1
-          SHARD_1_PRIMARY: postgres://granite:password@localhost:5420/shard_1
-          SHARD_1_REPLICA: postgres://granite:password@localhost:5421/shard_1
+          SHARD_1_PRIMARY: postgres://grant:password@localhost:5420/shard_1
+          SHARD_1_REPLICA: postgres://grant:password@localhost:5421/shard_1
           # Shard 2
-          SHARD_2_PRIMARY: postgres://granite:password@localhost:5430/shard_2
-          SHARD_2_REPLICA: postgres://granite:password@localhost:5431/shard_2
+          SHARD_2_PRIMARY: postgres://grant:password@localhost:5430/shard_2
+          SHARD_2_REPLICA: postgres://grant:password@localhost:5431/shard_2
           # Shard 3
-          SHARD_3_PRIMARY: postgres://granite:password@localhost:5440/shard_3
-          SHARD_3_REPLICA: postgres://granite:password@localhost:5441/shard_3
+          SHARD_3_PRIMARY: postgres://grant:password@localhost:5440/shard_3
+          SHARD_3_REPLICA: postgres://grant:password@localhost:5441/shard_3
   
   mysql-sharding:
     runs-on: ubuntu-latest
@@ -212,7 +212,7 @@ jobs:
         env:
           MYSQL_ROOT_PASSWORD: password
           MYSQL_DATABASE: config_db
-          MYSQL_USER: granite
+          MYSQL_USER: grant
           MYSQL_PASSWORD: password
         options: >-
           --health-cmd "mysqladmin ping"
@@ -228,7 +228,7 @@ jobs:
         env:
           MYSQL_ROOT_PASSWORD: password
           MYSQL_DATABASE: shard_0
-          MYSQL_USER: granite
+          MYSQL_USER: grant
           MYSQL_PASSWORD: password
         options: >-
           --health-cmd "mysqladmin ping"
@@ -244,7 +244,7 @@ jobs:
         env:
           MYSQL_ROOT_PASSWORD: password
           MYSQL_DATABASE: shard_1
-          MYSQL_USER: granite
+          MYSQL_USER: grant
           MYSQL_PASSWORD: password
         options: >-
           --health-cmd "mysqladmin ping"
@@ -269,11 +269,11 @@ jobs:
       - name: Run MySQL sharding tests
         timeout-minutes: 15
         run: |
-          crystal spec spec/granite/composite_primary_key_spec.cr
+          crystal spec spec/grant/composite_primary_key_spec.cr
         env:
           CURRENT_ADAPTER: mysql
           # Configuration database
-          CONFIG_DATABASE_URL: mysql://granite:password@localhost:3300/config_db
+          CONFIG_DATABASE_URL: mysql://grant:password@localhost:3300/config_db
           # Shards
-          SHARD_0_PRIMARY: mysql://granite:password@localhost:3310/shard_0
-          SHARD_1_PRIMARY: mysql://granite:password@localhost:3320/shard_1
+          SHARD_0_PRIMARY: mysql://grant:password@localhost:3310/shard_0
+          SHARD_1_PRIMARY: mysql://grant:password@localhost:3320/shard_1

@@ -11,7 +11,7 @@ Using crystal-db as the foundation:
 
 ```crystal
 # Week 1-2: Connection Pool Wrapper
-module Granite
+module Grant
   class ConnectionPool
     @db : DB::Database
     @name : String
@@ -29,7 +29,7 @@ module Granite
 end
 
 # Week 3-4: Connection Registry
-module Granite
+module Grant
   class ConnectionRegistry
     @@pools = {} of String => ConnectionPool
     @@configurations = {} of String => NamedTuple(
@@ -69,7 +69,7 @@ end
 
 ```crystal
 # Week 5-6: connects_to DSL
-abstract class Granite::Base
+abstract class Grant::Base
   macro connects_to(database = nil, shards = nil)
     {% if database %}
       class_property database_config = {
@@ -113,7 +113,7 @@ end
 
 ```crystal
 # Week 9-10: Shard Resolution
-module Granite::Sharding
+module Grant::Sharding
   abstract class ShardResolver
     abstract def resolve(key : DB::Any) : Symbol
   end
@@ -143,7 +143,7 @@ module Granite::Sharding
 end
 
 # Week 11-12: Sharded Model Support
-module Granite::Sharding::ShardedModel
+module Grant::Sharding::ShardedModel
   macro included
     class_property shard_resolver : ShardResolver?
     class_property shard_key : Symbol = :id
@@ -165,7 +165,7 @@ end
 
 ```crystal
 # Week 13-14: Basic Transactions
-module Granite::Transactions
+module Grant::Transactions
   def self.transaction(isolation : Symbol? = nil, &)
     connection = current_connection
     
@@ -185,7 +185,7 @@ module Granite::Transactions
 end
 
 # Week 15-16: Distributed Transactions (for sharding)
-module Granite::DistributedTransaction
+module Grant::DistributedTransaction
   def self.transaction(&)
     transactions = {} of Symbol => DB::Transaction
     
@@ -215,7 +215,7 @@ end
 
 ```crystal
 # Week 17-18: SQL Sanitization
-module Granite::Sanitization
+module Grant::Sanitization
   extend self
   
   def quote(value : Nil) : String
@@ -270,7 +270,7 @@ module Granite::Sanitization
 end
 
 # Week 19-20: Raw Query Interface
-class Granite::RawQuery
+class Grant::RawQuery
   def self.select_all(sql : String, *args)
     query = prepare_query(sql, args.to_a)
     
@@ -300,7 +300,7 @@ end
 
 ```crystal
 # Week 21-22: Async Calculations
-module Granite::AsyncMethods
+module Grant::AsyncMethods
   macro define_async_method(name, return_type)
     def self.async_{{name.id}}(*args, **options) : Channel({{return_type}})
       channel = Channel({{return_type}}).new
@@ -327,7 +327,7 @@ module Granite::AsyncMethods
 end
 
 # Week 23-24: Multi-DB Async Queries
-module Granite::AsyncMethods
+module Grant::AsyncMethods
   def self.gather(**queries)
     channels = {} of Symbol => Channel(DB::Any)
     
@@ -364,7 +364,7 @@ module Granite::AsyncMethods
 end
 
 # Usage
-results = Granite::AsyncMethods.gather(
+results = Grant::AsyncMethods.gather(
   users: -> { User.count },
   posts: -> { Post.where(published: true).count },
   analytics: -> {
@@ -379,7 +379,7 @@ results = Granite::AsyncMethods.gather(
 
 ```crystal
 # Week 23-24: Locking Implementation
-module Granite::Locking
+module Grant::Locking
   module Optimistic
     macro included
       column lock_version : Int32 = 0

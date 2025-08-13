@@ -11,7 +11,7 @@ The `dependent` option controls what happens to associated records when the pare
 Destroys all associated records when the parent is destroyed.
 
 ```crystal
-class Author < Granite::Base
+class Author < Grant::Base
   has_many :posts, dependent: :destroy
   has_one :profile, dependent: :destroy
 end
@@ -25,7 +25,7 @@ author.destroy! # => Also destroys all associated posts and profile
 Sets the foreign key to NULL on all associated records when the parent is destroyed.
 
 ```crystal
-class Category < Granite::Base
+class Category < Grant::Base
   has_many :articles, dependent: :nullify
 end
 
@@ -38,12 +38,12 @@ category.destroy! # => Sets category_id = NULL on all articles
 Prevents deletion of the parent record if any associated records exist.
 
 ```crystal
-class Team < Granite::Base
+class Team < Grant::Base
   has_many :members, dependent: :restrict
 end
 
 # Raises error if trying to destroy team with members
-team.destroy! # => Raises Granite::RecordNotDestroyed if members exist
+team.destroy! # => Raises Grant::RecordNotDestroyed if members exist
 ```
 
 ## Optional Associations
@@ -51,7 +51,7 @@ team.destroy! # => Raises Granite::RecordNotDestroyed if members exist
 By default, `belongs_to` associations are required (the foreign key cannot be NULL). Use `optional: true` to allow NULL foreign keys.
 
 ```crystal
-class Product < Granite::Base
+class Product < Grant::Base
   # Required by default - validates presence of category_id
   belongs_to :category
   
@@ -74,18 +74,18 @@ product.valid? # => true (if category is set)
 Counter cache maintains a count of associated records on the parent model, avoiding expensive COUNT queries.
 
 ```crystal
-class Blog < Granite::Base
+class Blog < Grant::Base
   column posts_count : Int32
   has_many :posts
 end
 
-class Post < Granite::Base
+class Post < Grant::Base
   # Updates blogs.posts_count automatically
   belongs_to :blog, counter_cache: true
 end
 
 # Or with a custom column name
-class Comment < Granite::Base
+class Comment < Grant::Base
   belongs_to :article, counter_cache: :comments_total
 end
 ```
@@ -109,7 +109,7 @@ blog.reload.posts_count # => 0
 The `touch` option updates the parent record's `updated_at` timestamp whenever the child record is saved or destroyed.
 
 ```crystal
-class Profile < Granite::Base
+class Profile < Grant::Base
   belongs_to :user, touch: true
 end
 
@@ -117,7 +117,7 @@ end
 profile.update!(bio: "New bio") # => Also touches user.updated_at
 
 # Touch a specific column instead
-class Comment < Granite::Base
+class Comment < Grant::Base
   belongs_to :post, touch: :last_commented_at
 end
 ```
@@ -129,7 +129,7 @@ The `autosave` option automatically saves associated records when the parent is 
 ### Basic Usage
 
 ```crystal
-class Order < Granite::Base
+class Order < Grant::Base
   has_many :line_items, autosave: true
   has_one :invoice, autosave: true
   belongs_to :customer, autosave: true
@@ -153,7 +153,7 @@ order.save! # => Also saves line_items, invoice, and customer
 ### Autosave with has_many
 
 ```crystal
-class Blog < Granite::Base
+class Blog < Grant::Base
   has_many :posts, autosave: true
 end
 
@@ -174,7 +174,7 @@ blog.save! # Updates the modified post
 ### Autosave with belongs_to
 
 ```crystal
-class Comment < Granite::Base
+class Comment < Grant::Base
   belongs_to :author, autosave: true
 end
 
@@ -195,7 +195,7 @@ comment.save! # Also saves the new author
 You can combine multiple options on a single association:
 
 ```crystal
-class Article < Granite::Base
+class Article < Grant::Base
   # Posts count is maintained, destroyed with article, touches article on changes
   has_many :comments, 
     dependent: :destroy,
@@ -280,7 +280,7 @@ add_index :comments, [:commentable_type, :commentable_id] # For polymorphic
 If counter caches become inaccurate:
 
 ```crystal
-class Blog < Granite::Base
+class Blog < Grant::Base
   def reset_posts_count!
     update!(posts_count: posts.count)
   end
@@ -300,11 +300,11 @@ Be careful with bidirectional autosave:
 
 ```crystal
 # This can cause infinite loops
-class User < Granite::Base
+class User < Grant::Base
   has_one :profile, autosave: true
 end
 
-class Profile < Granite::Base
+class Profile < Grant::Base
   belongs_to :user, autosave: true
 end
 ```

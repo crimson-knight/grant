@@ -23,13 +23,13 @@ Rails-style enum attributes with full helper method support.
 - Class methods: `Article.statuses`, `Article.status_mapping`
 
 **Files Added:**
-- `src/granite/enum_attributes.cr` - Core implementation
-- `spec/granite/enum_attributes_spec.cr` - Comprehensive tests
+- `src/grant/enum_attributes.cr` - Core implementation
+- `spec/grant/enum_attributes_spec.cr` - Comprehensive tests
 - `docs/enum_attributes.md` - Complete documentation
 
 **Example:**
 ```crystal
-class Article < Granite::Base
+class Article < Grant::Base
   enum Status
     Draft
     Published
@@ -68,13 +68,13 @@ Comprehensive set of Rails-compatible validators with conditional support.
 - Rails-compatible API
 
 **Files Added:**
-- `src/granite/validators/built_in.cr` - All validator implementations
-- `spec/granite/validators/built_in_spec.cr` - Comprehensive tests
+- `src/grant/validators/built_in.cr` - All validator implementations
+- `spec/grant/validators/built_in_spec.cr` - Comprehensive tests
 - `docs/built_in_validators.md` - Complete documentation
 
 **Example:**
 ```crystal
-class User < Granite::Base
+class User < Grant::Base
   validates_numericality_of :age, greater_than: 17
   validates_email :email
   validates_length_of :username, in: 3..20
@@ -102,13 +102,13 @@ Flexible attribute system with support for virtual fields and defaults.
 - Helper methods for attribute introspection
 
 **Files Added:**
-- `src/granite/attribute_api.cr` - Core implementation
-- `spec/granite/attribute_api_spec.cr` - Comprehensive tests
+- `src/grant/attribute_api.cr` - Core implementation
+- `spec/grant/attribute_api_spec.cr` - Comprehensive tests
 - `docs/attribute_api.md` - Complete documentation
 
 **Example:**
 ```crystal
-class Product < Granite::Base
+class Product < Grant::Base
   # Virtual attribute
   attribute price_in_cents : Int32, virtual: true
   
@@ -116,7 +116,7 @@ class Product < Granite::Base
   attribute status : String?, default: "active"
   
   # Dynamic default with proc
-  attribute code : String?, default: ->(p : Granite::Base) { "PROD-#{p.id}" }
+  attribute code : String?, default: ->(p : Grant::Base) { "PROD-#{p.id}" }
   
   # Custom type with converter
   attribute metadata : ProductMetadata?, 

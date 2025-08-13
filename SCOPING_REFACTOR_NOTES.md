@@ -59,4 +59,4 @@ Before refactoring scoping, consider:
 
 ## Recommendation
 
-This requires a deeper architectural change to Granite's query system. It should be tackled as a separate feature branch with careful consideration of the entire query API.
+This requires a deeper architectural change to Grant's query system. It should be tackled as a separate feature branch with careful consideration of the entire query API.

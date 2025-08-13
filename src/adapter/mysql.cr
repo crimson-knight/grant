@@ -2,7 +2,7 @@ require "./base"
 require "mysql"
 
 # Mysql implementation of the Adapter
-class Granite::Adapter::Mysql < Granite::Adapter::Base
+class Grant::Adapter::Mysql < Grant::Adapter::Base
   QUOTING_CHAR = '`'
 
   module Schema
@@ -53,7 +53,7 @@ class Granite::Adapter::Mysql < Granite::Adapter::Base
   end
 
   def import(table_name : String, primary_name : String, auto : Bool, fields, model_array, **options)
-    params = [] of Granite::Columns::Type
+    params = [] of Grant::Columns::Type
 
     statement = String.build do |stmt|
       stmt << "INSERT"
@@ -126,7 +126,7 @@ class Granite::Adapter::Mysql < Granite::Adapter::Base
     log statement, elapsed_time, value
   end
   
-  def supports_lock_mode?(mode : Granite::Locking::LockMode) : Bool
+  def supports_lock_mode?(mode : Grant::Locking::LockMode) : Bool
     case mode
     when .update?, .share?, .update_no_wait?, .update_skip_locked?
       true
@@ -135,7 +135,7 @@ class Granite::Adapter::Mysql < Granite::Adapter::Base
     end
   end
   
-  def supports_isolation_level?(level : Granite::Transaction::IsolationLevel) : Bool
+  def supports_isolation_level?(level : Grant::Transaction::IsolationLevel) : Bool
     true
   end
   

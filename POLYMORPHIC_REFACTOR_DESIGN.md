@@ -3,18 +3,18 @@
 ## Problem Statement
 
 The current polymorphic association implementation fails because:
-1. The type registry uses `Granite::Base.class` as the value type
-2. `Granite::Base` is abstract and cannot be instantiated
+1. The type registry uses `Grant::Base.class` as the value type
+2. `Grant::Base` is abstract and cannot be instantiated
 3. Crystal's type system doesn't allow runtime type resolution in the way we need
 
 ## Current Implementation Issues
 
 ```crystal
 # This creates a compile-time issue
-class_property polymorphic_type_map = {} of String => Granite::Base.class
+class_property polymorphic_type_map = {} of String => Grant::Base.class
 
-# When resolve_type returns Granite::Base.class?, calling find on it fails
-klass = Granite::Polymorphic.resolve_type(type_value)
+# When resolve_type returns Grant::Base.class?, calling find on it fails
+klass = Grant::Polymorphic.resolve_type(type_value)
 klass.find(id_value)  # Error: can't instantiate abstract class
 ```
 
@@ -32,10 +32,10 @@ klass.find(id_value)  # Error: can't instantiate abstract class
 Instead of a runtime hash, use compile-time registration with a macro that generates a case statement:
 
 ```crystal
-module Granite::Polymorphic
+module Grant::Polymorphic
   # Each model registers itself at compile time
   macro register_polymorphic_type(name, klass)
-    {% Granite::Polymorphic::REGISTERED_TYPES[name] = klass %}
+    {% Grant::Polymorphic::REGISTERED_TYPES[name] = klass %}
   end
   
   # Generate a loader method at compile time
@@ -64,7 +64,7 @@ struct PolymorphicProxy
   
   def load
     return nil unless @type && @id
-    Granite::Polymorphic.load_polymorphic(@type, @id)
+    Grant::Polymorphic.load_polymorphic(@type, @id)
   end
   
   def reload
@@ -125,7 +125,7 @@ end
 ## Benefits
 
 1. **Type Safety**: All types are known at compile time
-2. **No Abstract Instantiation**: We never try to instantiate Granite::Base
+2. **No Abstract Instantiation**: We never try to instantiate Grant::Base
 3. **Performance**: Case statement is optimized by compiler
 4. **Clarity**: Clear separation between proxy and actual loading
 

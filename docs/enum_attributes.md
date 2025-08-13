@@ -17,7 +17,7 @@ Enum attributes provide:
 ### Defining an Enum Attribute
 
 ```crystal
-class Article < Granite::Base
+class Article < Grant::Base
   connection postgres
   table articles
   
@@ -88,7 +88,7 @@ puts "Published: #{Article.published.count}"
 By default, enums are stored as strings. You can use integers for better performance:
 
 ```crystal
-class User < Granite::Base
+class User < Grant::Base
   enum Role
     Guest = 0
     Member = 1
@@ -105,7 +105,7 @@ end
 You can define multiple enums using `enum_attributes`:
 
 ```crystal
-class Task < Granite::Base
+class Task < Grant::Base
   enum Status
     Pending
     InProgress
@@ -136,7 +136,7 @@ task.urgent!   # Sets priority to urgent
 Enum attributes can be nilable:
 
 ```crystal
-class Product < Granite::Base
+class Product < Grant::Base
   enum Category
     Electronics
     Clothing
@@ -159,7 +159,7 @@ product.category    # => Product::Category::Electronics
 If you need custom serialization logic:
 
 ```crystal
-class Order < Granite::Base
+class Order < Grant::Base
   enum Status
     Pending
     Processing
@@ -178,7 +178,7 @@ end
 Enum attributes automatically validate that values are within the allowed set:
 
 ```crystal
-class Post < Granite::Base
+class Post < Grant::Base
   enum Visibility
     Public
     Private
@@ -284,7 +284,7 @@ enum_attribute category : Category?  # No default, can be nil
 ### 4. Use Scopes for Complex Queries
 
 ```crystal
-class Article < Granite::Base
+class Article < Grant::Base
   enum Status
     Draft
     Published
@@ -315,7 +315,7 @@ end
 
 ### Grant
 ```crystal
-class Article < Granite::Base
+class Article < Grant::Base
   enum Status
     Draft = 0
     Published = 1

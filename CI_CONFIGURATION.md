@@ -34,15 +34,15 @@ Dedicated workflow for testing sharding functionality.
 #### Environment Variables:
 ```bash
 # PostgreSQL Sharding
-CONFIG_DATABASE_URL: postgres://granite:password@localhost:5400/config_db
-SHARD_0_PRIMARY: postgres://granite:password@localhost:5410/shard_0
-SHARD_0_REPLICA: postgres://granite:password@localhost:5411/shard_0
+CONFIG_DATABASE_URL: postgres://grant:password@localhost:5400/config_db
+SHARD_0_PRIMARY: postgres://grant:password@localhost:5410/shard_0
+SHARD_0_REPLICA: postgres://grant:password@localhost:5411/shard_0
 # ... (continues for shards 1-3)
 
 # MySQL Sharding
-CONFIG_DATABASE_URL: mysql://granite:password@localhost:3300/config_db
-SHARD_0_PRIMARY: mysql://granite:password@localhost:3310/shard_0
-SHARD_1_PRIMARY: mysql://granite:password@localhost:3320/shard_1
+CONFIG_DATABASE_URL: mysql://grant:password@localhost:3300/config_db
+SHARD_0_PRIMARY: mysql://grant:password@localhost:3310/shard_0
+SHARD_1_PRIMARY: mysql://grant:password@localhost:3320/shard_1
 ```
 
 ### 3. Failover Tests (`failover.yml`)
@@ -74,7 +74,7 @@ CURRENT_ADAPTER=mysql MYSQL_DATABASE_URL=mysql://user:pass@localhost/db crystal 
 # Set up multiple database URLs
 export SHARD_0_PRIMARY=postgres://user:pass@localhost:5410/shard_0
 export SHARD_1_PRIMARY=postgres://user:pass@localhost:5420/shard_1
-crystal spec spec/granite/composite_primary_key_spec.cr
+crystal spec spec/grant/composite_primary_key_spec.cr
 ```
 
 ## Adding New Tests

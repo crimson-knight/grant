@@ -3,10 +3,10 @@
 ## Completed Features
 
 ### 1. Connection Registry System
-- Created `Granite::ConnectionRegistry` for managing multiple database adapters
+- Created `Grant::ConnectionRegistry` for managing multiple database adapters
 - Supports role-based connections (reading/writing/primary)
 - Supports sharded connections
-- Backward compatible with existing `Granite::Connections` system
+- Backward compatible with existing `Grant::Connections` system
 
 ### 2. Connection Handling DSL
 - Implemented `connects_to` macro for models
@@ -35,7 +35,7 @@
 ## Code Structure
 
 ```
-src/granite/
+src/grant/
 ├── connection_registry.cr      # Central registry for all database connections
 ├── connection_handling.cr      # DSL and connection switching logic
 ├── connection_management_v2.cr # Bridge between old and new systems
@@ -45,16 +45,16 @@ src/granite/
 
 ```crystal
 # Register connections
-Granite::ConnectionRegistry.establish_connection(
+Grant::ConnectionRegistry.establish_connection(
   database: "primary",
-  adapter: Granite::Adapter::Pg,
+  adapter: Grant::Adapter::Pg,
   url: "postgres://writer@localhost/myapp",
   role: :writing
 )
 
 # Model configuration
-class User < Granite::Base
-  include Granite::ConnectionManagementV2
+class User < Grant::Base
+  include Grant::ConnectionManagementV2
   
   connects_to database: "primary"
   

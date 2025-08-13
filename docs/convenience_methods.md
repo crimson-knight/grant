@@ -212,7 +212,7 @@ While the API is consistent across databases, some implementation details vary:
 ```crystal
 begin
   User.insert_all(invalid_data)
-rescue e : Granite::RecordNotSaved
+rescue e : Grant::RecordNotSaved
   # Handle validation or constraint errors
 end
 
@@ -249,11 +249,11 @@ user = User.find_sole_by(email: "john@example.com")
 
 # Raises NotFound if no records
 User.find_sole_by(email: "nobody@example.com")
-# => Granite::Querying::NotFound: No User found
+# => Grant::Querying::NotFound: No User found
 
 # Raises NotUnique if multiple records
 User.find_sole_by(active: true)
-# => Granite::Querying::NotUnique: Multiple User records found (expected exactly one)
+# => Grant::Querying::NotUnique: Multiple User records found (expected exactly one)
 ```
 
 ## Record Manipulation Methods

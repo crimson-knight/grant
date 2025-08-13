@@ -34,7 +34,7 @@ export ANALYTICS_DATABASE_URL="mysql://root:password@localhost:3306/test_analyti
 Create `test_multi_db.cr`:
 
 ```crystal
-require "./src/granite"
+require "./src/grant"
 
 # Configure logging to see health checks
 Log.setup(:debug)
@@ -42,9 +42,9 @@ Log.setup(:debug)
 # 1. Test Connection Pool Configuration
 puts "=== Testing Connection Pool Configuration ==="
 
-Granite::ConnectionRegistry.establish_connections({
+Grant::ConnectionRegistry.establish_connections({
   "primary" => {
-    adapter: Granite::Adapter::Pg,
+    adapter: Grant::Adapter::Pg,
     writer: ENV["PRIMARY_DATABASE_URL"],
     reader: ENV["PRIMARY_REPLICA_URL"],
     pool: {
@@ -60,7 +60,7 @@ Granite::ConnectionRegistry.establish_connections({
     }
   },
   "analytics" => {
-    adapter: Granite::Adapter::Mysql,
+    adapter: Grant::Adapter::Mysql,
     url: ENV["ANALYTICS_DATABASE_URL"],
     pool: {
       max_pool_size: 5
@@ -81,17 +81,17 @@ puts "\n=== Testing Health Monitoring ==="
 sleep 2
 
 # Check health status
-health_status = Granite::ConnectionRegistry.health_status
+health_status = Grant::ConnectionRegistry.health_status
 health_status.each do |status|
   puts "#{status[:key]} - Healthy: #{status[:healthy]} (DB: #{status[:database]}, Role: #{status[:role]})"
 end
 
-puts "System healthy: #{Granite::ConnectionRegistry.system_healthy?}"
+puts "System healthy: #{Grant::ConnectionRegistry.system_healthy?}"
 
 # 3. Test Load Balancing
 puts "\n=== Testing Load Balancing ==="
 
-class User < Granite::Base
+class User < Grant::Base
   connects_to database: "primary"
   
   connection_config(
@@ -150,7 +150,7 @@ end
 puts "\n=== Testing Failover Behavior ==="
 
 # Get load balancer info
-if lb = Granite::ConnectionRegistry.get_load_balancer("primary")
+if lb = Grant::ConnectionRegistry.get_load_balancer("primary")
   puts "Load balancer status:"
   puts "  Total replicas: #{lb.size}"
   puts "  Healthy replicas: #{lb.healthy_count}"
@@ -163,7 +163,7 @@ end
 # 6. Test Multiple Database Access
 puts "\n=== Testing Multiple Database Access ==="
 
-class AnalyticsEvent < Granite::Base
+class AnalyticsEvent < Grant::Base
   connects_to database: "analytics"
   
   table events
@@ -201,7 +201,7 @@ puts "\n✓ Monitoring complete"
 
 # Final health report
 puts "\n=== Final Health Report ==="
-Granite::HealthMonitorRegistry.status.each do |status|
+Grant::HealthMonitorRegistry.status.each do |status|
   puts "#{status[:key]} - Healthy: #{status[:healthy]}, Last check: #{status[:last_check]}"
 end
 
@@ -210,13 +210,13 @@ puts "\n✓ All tests completed!"
 
 ## 2. Unit Test Suite
 
-Create `spec/granite/multi_database_integration_spec.cr`:
+Create `spec/grant/multi_database_integration_spec.cr`:
 
 ```crystal
 require "../spec_helper"
 
 # Mock adapter that tracks calls
-class TrackingAdapter < Granite::Adapter::Base
+class TrackingAdapter < Grant::Adapter::Base
   QUOTING_CHAR = '"'
   
   getter call_count = 0
@@ -263,16 +263,16 @@ end
 
 describe "Advanced Multi-Database Features" do
   after_each do
-    Granite::ConnectionRegistry.clear_all
-    Granite::HealthMonitorRegistry.clear
-    Granite::LoadBalancerRegistry.clear
+    Grant::ConnectionRegistry.clear_all
+    Grant::HealthMonitorRegistry.clear
+    Grant::LoadBalancerRegistry.clear
   end
   
   describe "Connection Pooling" do
     it "configures pool parameters in URL" do
-      spec = Granite::ConnectionRegistry::ConnectionSpec.new(
+      spec = Grant::ConnectionRegistry::ConnectionSpec.new(
         database: "test",
-        adapter_class: Granite::Adapter::Sqlite,
+        adapter_class: Grant::Adapter::Sqlite,
         url: "sqlite3://test.db",
         role: :primary,
         pool_size: 20,
@@ -294,7 +294,7 @@ describe "Advanced Multi-Database Features" do
   describe "Health Monitoring" do
     it "monitors adapter health" do
       adapter = TrackingAdapter.new("test", "mock://test")
-      spec = Granite::ConnectionRegistry::ConnectionSpec.new(
+      spec = Grant::ConnectionRegistry::ConnectionSpec.new(
         database: "test",
         adapter_class: TrackingAdapter,
         url: "mock://test",
@@ -303,7 +303,7 @@ describe "Advanced Multi-Database Features" do
         health_check_timeout: 0.05.seconds
       )
       
-      monitor = Granite::HealthMonitor.new(adapter, spec)
+      monitor = Grant::HealthMonitor.new(adapter, spec)
       
       # Initially healthy
       monitor.healthy?.should be_true
@@ -328,7 +328,7 @@ describe "Advanced Multi-Database Features" do
         TrackingAdapter.new("replica3", "mock://replica3")
       ]
       
-      balancer = Granite::ReplicaLoadBalancer.new(replicas)
+      balancer = Grant::ReplicaLoadBalancer.new(replicas)
       
       # Round-robin distribution
       selected = [] of String
@@ -350,16 +350,16 @@ describe "Advanced Multi-Database Features" do
       
       # Create monitors
       monitors = replicas.map do |replica|
-        spec = Granite::ConnectionRegistry::ConnectionSpec.new(
+        spec = Grant::ConnectionRegistry::ConnectionSpec.new(
           database: "test",
           adapter_class: TrackingAdapter,
           url: replica.url,
           role: :reading
         )
-        Granite::HealthMonitor.new(replica, spec)
+        Grant::HealthMonitor.new(replica, spec)
       end
       
-      balancer = Granite::ReplicaLoadBalancer.new(replicas)
+      balancer = Grant::ReplicaLoadBalancer.new(replicas)
       monitors.each_with_index do |monitor, i|
         balancer.set_health_monitor(replicas[i], monitor)
       end
@@ -378,7 +378,7 @@ describe "Advanced Multi-Database Features" do
   
   describe "Replica Lag Tracking" do
     it "prevents replica use after writes" do
-      tracker = Granite::ConnectionManagement::ReplicaLagTracker.new(
+      tracker = Grant::ConnectionManagement::ReplicaLagTracker.new(
         lag_threshold: 1.second
       )
       
@@ -395,7 +395,7 @@ describe "Advanced Multi-Database Features" do
     end
     
     it "supports sticky sessions" do
-      tracker = Granite::ConnectionManagement::ReplicaLagTracker.new
+      tracker = Grant::ConnectionManagement::ReplicaLagTracker.new
       
       # Stick to primary
       tracker.stick_to_primary(2.seconds)
@@ -409,14 +409,14 @@ describe "Advanced Multi-Database Features" do
   
   describe "Failover" do
     it "falls back to primary when replicas fail" do
-      Granite::ConnectionRegistry.establish_connection(
+      Grant::ConnectionRegistry.establish_connection(
         database: "failover_test",
         adapter: TrackingAdapter,
         url: "mock://primary",
         role: :primary
       )
       
-      Granite::ConnectionRegistry.establish_connection(
+      Grant::ConnectionRegistry.establish_connection(
         database: "failover_test",
         adapter: TrackingAdapter,
         url: "mock://replica",
@@ -424,10 +424,10 @@ describe "Advanced Multi-Database Features" do
       )
       
       # Get adapters
-      primary = Granite::ConnectionRegistry.get_adapter("failover_test", :primary)
+      primary = Grant::ConnectionRegistry.get_adapter("failover_test", :primary)
       
       # Should get replica normally
-      replica = Granite::ConnectionRegistry.get_adapter("failover_test", :reading)
+      replica = Grant::ConnectionRegistry.get_adapter("failover_test", :reading)
       replica.url.should eq("mock://replica")
       
       # Simulate replica failure
@@ -448,7 +448,7 @@ end
 ### Unit Tests
 ```bash
 # Run the specific test file
-crystal spec spec/granite/multi_database_integration_spec.cr
+crystal spec spec/grant/multi_database_integration_spec.cr
 
 # Run all tests
 crystal spec
@@ -495,13 +495,13 @@ crystal run test_multi_db.cr
 Create a performance test to verify pooling and load balancing:
 
 ```crystal
-require "./src/granite"
+require "./src/grant"
 require "benchmark"
 
 # Configure connections
-Granite::ConnectionRegistry.establish_connections({
+Grant::ConnectionRegistry.establish_connections({
   "perf_test" => {
-    adapter: Granite::Adapter::Sqlite,
+    adapter: Grant::Adapter::Sqlite,
     writer: "sqlite3://perf_test.db",
     reader: "sqlite3://perf_test_replica.db",
     pool: {
@@ -511,7 +511,7 @@ Granite::ConnectionRegistry.establish_connections({
   }
 })
 
-class PerfModel < Granite::Base
+class PerfModel < Grant::Base
   connects_to database: "perf_test"
   table perf_records
   column id : Int64, primary: true

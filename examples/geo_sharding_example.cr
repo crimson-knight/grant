@@ -1,13 +1,13 @@
-require "../src/granite"
-require "../src/granite/sharding"
+require "../src/grant"
+require "../src/grant/sharding"
 
 # Example 1: E-commerce with regional sharding
-class Customer < Granite::Base
+class Customer < Grant::Base
   connection "primary"
   table customers
   
-  include Granite::Sharding::Model
-  include Granite::Sharding::RegionDetermination::ExplicitRegion
+  include Grant::Sharding::Model
+  include Grant::Sharding::RegionDetermination::ExplicitRegion
   
   # Shard by customer location
   shards_by [:country, :state], strategy: :geo,
@@ -57,12 +57,12 @@ class Customer < Granite::Base
 end
 
 # Example 2: Orders inherit region from customer
-class RegionalOrder < Granite::Base
+class RegionalOrder < Grant::Base
   connection "primary"
   table regional_orders
   
-  include Granite::Sharding::Model
-  include Granite::Sharding::RegionDetermination::DerivedRegion
+  include Grant::Sharding::Model
+  include Grant::Sharding::RegionDetermination::DerivedRegion
   
   belongs_to customer : Customer
   
@@ -89,7 +89,7 @@ class RegionalOrder < Granite::Base
 end
 
 # Example 3: Multi-tenant SaaS with tenant-based regions
-class Tenant < Granite::Base
+class Tenant < Grant::Base
   connection "primary"
   table tenants
   
@@ -101,11 +101,11 @@ class Tenant < Granite::Base
   column created_at : Time = Time.utc
 end
 
-class TenantData < Granite::Base
+class TenantData < Grant::Base
   connection "primary"
   table tenant_data
   
-  include Granite::Sharding::Model
+  include Grant::Sharding::Model
   
   belongs_to tenant : Tenant
   
@@ -132,11 +132,11 @@ class TenantData < Granite::Base
 end
 
 # Example 4: Using region context (e.g., from HTTP request)
-class PageView < Granite::Base
+class PageView < Grant::Base
   connection "primary"
   table page_views
   
-  include Granite::Sharding::Model
+  include Grant::Sharding::Model
   
   # Simple region-based sharding
   shards_by :region, strategy: :geo,
@@ -187,7 +187,7 @@ us_customers = Customer.where(country: "US").select
 class PageViewController
   def track_page_view(context)
     # Middleware has already set region context based on IP
-    Granite::Sharding::RegionDetermination::Context.with(
+    Grant::Sharding::RegionDetermination::Context.with(
       country: context.get("geo_country"),
       state: context.get("geo_state")
     ) do
@@ -223,8 +223,8 @@ def regional_order_totals
 end
 
 # 7. Data residency validation
-class GDPRCompliantModel < Granite::Base
-  include Granite::Sharding::Model
+class GDPRCompliantModel < Grant::Base
+  include Grant::Sharding::Model
   
   validate :ensure_eu_data_stays_in_eu
   

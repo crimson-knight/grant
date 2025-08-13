@@ -12,12 +12,12 @@ You are working on the Grant ORM project, which aims to achieve feature parity w
 ## Priority Issues to Fix (Related to Current PR)
 
 ### 1. Polymorphic Associations - Critical Bug (Issue #17)
-**Problem**: Crystal's type system prevents instantiation of abstract `Granite::Base` class
+**Problem**: Crystal's type system prevents instantiation of abstract `Grant::Base` class
 **Files**: 
-- `spec/granite/associations/polymorphic_spec.cr.disabled`
-- `spec/granite/associations/polymorphic_simple_spec.cr.disabled`
+- `spec/grant/associations/polymorphic_spec.cr.disabled`
+- `spec/grant/associations/polymorphic_simple_spec.cr.disabled`
 - `spec/support/polymorphic_models.cr.disabled`
-- `spec/granite/associations/additional_options_spec.cr.disabled`
+- `spec/grant/associations/additional_options_spec.cr.disabled`
 
 **Requirements**:
 - Implement a type registry or factory pattern for polymorphic types
@@ -28,7 +28,7 @@ You are working on the Grant ORM project, which aims to achieve feature parity w
 ### 2. Eager Loading API Incompatibility (Issue #18)
 **Problem**: Current API doesn't support Rails-style nested association syntax
 **Files**: 
-- `spec/granite/eager_loading/eager_loading_spec.cr.disabled`
+- `spec/grant/eager_loading/eager_loading_spec.cr.disabled`
 
 **Current**: Only supports `includes(:posts, :comments)`
 **Needed**: Support for:
@@ -47,7 +47,7 @@ User.includes(posts: { comments: :author })
 ### 3. Scoping Macro Visibility (Issue #19)
 **Problem**: Scope macros have visibility issues preventing proper usage
 **Files**: 
-- `spec/granite/scoping/named_scopes_spec.cr.disabled`
+- `spec/grant/scoping/named_scopes_spec.cr.disabled`
 
 **Requirements**:
 - Fix macro scope and visibility modifiers
@@ -58,7 +58,7 @@ User.includes(posts: { comments: :author })
 ### 4. Connection Management Features (Issue #11)
 **Problem**: Missing read/write replica switching functionality
 **Files**: 
-- `spec/granite/connection_management_spec.cr.disabled`
+- `spec/grant/connection_management_spec.cr.disabled`
 
 **Missing**:
 - `connection_switch_wait_period` method
@@ -74,15 +74,15 @@ User.includes(posts: { comments: :author })
 
 ### 5. Lifecycle Callbacks Test Implementation
 **Files**: 
-- `spec/granite/callbacks/lifecycle_callbacks_spec.cr.disabled`
+- `spec/grant/callbacks/lifecycle_callbacks_spec.cr.disabled`
 
 **Problem**: Tests try to add callbacks to instances rather than classes
 **Fix**: Rewrite tests to use class-level callback definitions
 
 ### 6. Instrumentation Tests - Model Persistence
 **Files**:
-- `spec/granite/instrumentation/logging_spec.cr.disabled`
-- `spec/granite/instrumentation/query_analysis_spec.cr.disabled`
+- `spec/grant/instrumentation/logging_spec.cr.disabled`
+- `spec/grant/instrumentation/query_analysis_spec.cr.disabled`
 
 **Problem**: `Model.create` returns nil or unpersisted objects in tests
 **Fix**: Investigate why models aren't persisting properly in test environment
@@ -107,7 +107,7 @@ User.includes(posts: { comments: :author })
 **Tasks:**
 1. Analyze polymorphic association implementation and Crystal type system constraints
 2. Design type registry or factory pattern for polymorphic type instantiation
-3. Implement polymorphic type resolution to avoid abstract Granite::Base instantiation
+3. Implement polymorphic type resolution to avoid abstract Grant::Base instantiation
 4. Re-enable and fix polymorphic_spec.cr, polymorphic_simple_spec.cr, and polymorphic_models.cr
 5. Fix additional_options_spec.cr (depends on polymorphic fix)
 
@@ -181,20 +181,20 @@ User.includes(posts: { comments: :author })
 crystal spec
 
 # Run specific re-enabled test
-crystal spec spec/granite/associations/polymorphic_spec.cr
+crystal spec spec/grant/associations/polymorphic_spec.cr
 
 # Run with verbose output
 crystal spec -v
 ```
 
 ## Resources
-- Current implementation: Check `src/granite/associations/` for association code
+- Current implementation: Check `src/grant/associations/` for association code
 - Rails Active Record source for reference patterns
 - Crystal documentation for type system constraints
 - Existing working tests for patterns to follow
 
 ## Notes
-- The codebase uses the Granite namespace (will be renamed to Grant later)
+- The codebase uses the Grant namespace (will be renamed to Grant later)
 - Maintain compatibility with PostgreSQL, MySQL, and SQLite
 - Follow existing code style and patterns
 - Add comments explaining any complex type system workarounds

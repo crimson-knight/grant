@@ -1,11 +1,11 @@
-require "../granite"
+require "../grant"
 require "db"
 require "colorize"
 
 # The Base Adapter specifies the interface that will be used by the model
 # objects to perform actions against a specific database.  Each adapter needs
 # to implement these methods.
-abstract class Granite::Adapter::Base
+abstract class Grant::Adapter::Base
   getter name : String
   getter url : String
   private property _database : DB::Database?
@@ -51,7 +51,7 @@ abstract class Granite::Adapter::Base
   # fields (configured using the sql_mapping directive in your model), and an optional
   # raw query string.  The clause and params is the query and params that is passed
   # in via .all() method
-  def select(query : Granite::Select::Container, clause = "", params = [] of DB::Any, &)
+  def select(query : Grant::Select::Container, clause = "", params = [] of DB::Any, &)
     clause = ensure_clause_template(clause)
     statement = query.custom ? "#{query.custom} #{clause}" : String.build do |stmt|
       stmt << "SELECT "
@@ -71,7 +71,7 @@ abstract class Granite::Adapter::Base
   end
 
   # Returns `true` if a record exists that matches *criteria*, otherwise `false`.
-  def exists?(table_name : String, criteria : String, params = [] of Granite::Columns::Type) : Bool
+  def exists?(table_name : String, criteria : String, params = [] of Grant::Columns::Type) : Bool
     statement = "SELECT EXISTS(SELECT 1 FROM #{table_name} WHERE #{ensure_clause_template(criteria)})"
 
     exists = false
@@ -157,7 +157,7 @@ abstract class Granite::Adapter::Base
 
     # converts the crystal class to database type of this adapter
     def self.schema_type?(key : String) : String?
-      Schema::TYPES[key]? || Granite::Adapter::Base::Schema::TYPES[key]?
+      Schema::TYPES[key]? || Grant::Adapter::Base::Schema::TYPES[key]?
     end
   end
 
@@ -192,7 +192,7 @@ abstract class Granite::Adapter::Base
   end
   
   # Methods for checking database capabilities
-  abstract def supports_lock_mode?(mode : Granite::Locking::LockMode) : Bool
-  abstract def supports_isolation_level?(level : Granite::Transaction::IsolationLevel) : Bool
+  abstract def supports_lock_mode?(mode : Grant::Locking::LockMode) : Bool
+  abstract def supports_isolation_level?(level : Grant::Transaction::IsolationLevel) : Bool
   abstract def supports_savepoints? : Bool
 end

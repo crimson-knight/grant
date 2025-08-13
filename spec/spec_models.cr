@@ -1,6 +1,6 @@
 require "uuid"
 
-class Granite::Base
+class Grant::Base
   def self.drop_and_create
   end
 end
@@ -8,7 +8,7 @@ end
 {% begin %}
   {% adapter_literal = env("CURRENT_ADAPTER").id %}
 
-  class ReplicatedChat < Granite::Base
+  class ReplicatedChat < Grant::Base
     connection {{ "#{adapter_literal}_with_replica" }}
     table replicated_chats
 
@@ -16,7 +16,7 @@ end
     column content : String
   end
 
-  class Chat < Granite::Base
+  class Chat < Grant::Base
     connection {{ adapter_literal }}
     table chats
 
@@ -27,7 +27,7 @@ end
     has_one settings : ChatSettings, foreign_key: :chat_id
   end
 
-  class ChatSettings < Granite::Base
+  class ChatSettings < Grant::Base
     connection {{ adapter_literal }}
     table chat_settings
 
@@ -36,7 +36,7 @@ end
     column flood_limit : Int32
   end
 
-  class Parent < Granite::Base
+  class Parent < Grant::Base
     connection {{ adapter_literal }}
     table parents
 
@@ -51,7 +51,7 @@ end
     end
   end
 
-  class Teacher < Granite::Base
+  class Teacher < Grant::Base
     connection {{ adapter_literal }}
     table teachers
 
@@ -61,7 +61,7 @@ end
     has_many :klasses, class_name: Klass
   end
 
-  class Student < Granite::Base
+  class Student < Grant::Base
     connection {{ adapter_literal }}
     table students
 
@@ -72,7 +72,7 @@ end
     has_many :klasses, class_name: Klass, through: :enrollments
   end
 
-  class Klass < Granite::Base
+  class Klass < Grant::Base
     connection {{ adapter_literal }}
     table klasses
 
@@ -85,7 +85,7 @@ end
     has_many :students, class_name: Student, through: :enrollments
   end
 
-  class Enrollment < Granite::Base
+  class Enrollment < Grant::Base
     connection {{ adapter_literal }}
     table enrollments
 
@@ -95,7 +95,7 @@ end
     belongs_to :klass
   end
 
-  class School < Granite::Base
+  class School < Grant::Base
     connection {{ adapter_literal }}
     table schools
 
@@ -103,7 +103,7 @@ end
     column name : String?
   end
 
-  class User < Granite::Base
+  class User < Grant::Base
     connection {{ adapter_literal }}
     table users
 
@@ -113,7 +113,7 @@ end
     has_one :profile
   end
 
-  class Character < Granite::Base
+  class Character < Grant::Base
     connection {{ adapter_literal }}
     table characters
 
@@ -121,7 +121,7 @@ end
     column name : String
   end
 
-  class Courier < Granite::Base
+  class Courier < Grant::Base
     connection {{ adapter_literal }}
     table couriers
 
@@ -132,7 +132,7 @@ end
     has_one issuer : Character, primary_key: "issuer_id", foreign_key: "character_id"
   end
 
-  class CourierService < Granite::Base
+  class CourierService < Grant::Base
     connection {{ adapter_literal }}
     table services
 
@@ -142,7 +142,7 @@ end
     has_many :couriers, class_name: Courier, foreign_key: "service_id"
   end
 
-  class Profile < Granite::Base
+  class Profile < Grant::Base
     connection {{ adapter_literal }}
     table profiles
 
@@ -152,7 +152,7 @@ end
     belongs_to :user
   end
 
-  class Nation::County < Granite::Base
+  class Nation::County < Grant::Base
     connection {{ adapter_literal }}
     table nation_counties
 
@@ -160,7 +160,7 @@ end
     column name : String?
   end
 
-  class Review < Granite::Base
+  class Review < Grant::Base
     connection {{ adapter_literal }}
     table reviews
 
@@ -174,14 +174,14 @@ end
     column created_at : Time?
   end
 
-  class Empty < Granite::Base
+  class Empty < Grant::Base
     connection {{ adapter_literal }}
     table empties
 
     column id : Int64, primary: true
   end
 
-  class ReservedWord < Granite::Base
+  class ReservedWord < Grant::Base
     connection {{ adapter_literal }}
     table "select"
 
@@ -189,7 +189,7 @@ end
     column all : String?
   end
 
-  class Callback < Granite::Base
+  class Callback < Grant::Base
     connection {{ adapter_literal }}
     table callbacks
 
@@ -198,7 +198,7 @@ end
 
     property history : IO::Memory = IO::Memory.new
 
-    {% for name in Granite::Callbacks::CALLBACK_NAMES %}
+    {% for name in Grant::Callbacks::CALLBACK_NAMES %}
       {{name.id}} _{{name.id}}
       private def _{{name.id}}
         history << "{{name.id}}\n"
@@ -206,7 +206,7 @@ end
     {% end %}
   end
 
-  class CallbackWithAbort < Granite::Base
+  class CallbackWithAbort < Grant::Base
     connection {{ adapter_literal }}
     table callbacks_with_abort
 
@@ -216,7 +216,7 @@ end
 
     property history : IO::Memory = IO::Memory.new
 
-    {% for name in Granite::Callbacks::CALLBACK_NAMES %}
+    {% for name in Grant::Callbacks::CALLBACK_NAMES %}
       {{name.id}} do
         abort! if do_abort && abort_at == "{{name.id}}"
         history << "{{name.id}}\n"
@@ -224,7 +224,7 @@ end
     {% end %}
   end
 
-  class Kvs < Granite::Base
+  class Kvs < Grant::Base
     connection {{ adapter_literal }}
     table kvs
 
@@ -232,7 +232,7 @@ end
     column v : String?
   end
 
-  class Person < Granite::Base
+  class Person < Grant::Base
     connection {{ adapter_literal }}
     table people
 
@@ -240,7 +240,7 @@ end
     column name : String?
   end
 
-  class Company < Granite::Base
+  class Company < Grant::Base
     connection {{ adapter_literal }}
     table companies
 
@@ -248,7 +248,7 @@ end
     column name : String?
   end
 
-  class Book < Granite::Base
+  class Book < Grant::Base
     connection {{ adapter_literal }}
     table books
 
@@ -262,7 +262,7 @@ end
     belongs_to author : Person
   end
 
-  class BookReview < Granite::Base
+  class BookReview < Grant::Base
     connection {{ adapter_literal }}
     table book_reviews
 
@@ -272,7 +272,7 @@ end
     belongs_to book : Book, foreign_key: book_id : Int32?
   end
 
-  class Item < Granite::Base
+  class Item < Grant::Base
     connection {{ adapter_literal }}
     table items
 
@@ -286,7 +286,7 @@ end
     end
   end
 
-  class NonAutoDefaultPK < Granite::Base
+  class NonAutoDefaultPK < Grant::Base
     connection {{ adapter_literal }}
     table non_auto_default_pk
 
@@ -294,7 +294,7 @@ end
     column name : String?
   end
 
-  class NonAutoCustomPK < Granite::Base
+  class NonAutoCustomPK < Grant::Base
     connection {{ adapter_literal }}
     table non_auto_custom_pk
 
@@ -302,7 +302,7 @@ end
     column name : String?
   end
 
-  class Article < Granite::Base
+  class Article < Grant::Base
     connection {{ adapter_literal }}
     table articles
 
@@ -310,7 +310,7 @@ end
     column articlebody : String?
   end
 
-  class Comment < Granite::Base
+  class Comment < Grant::Base
     connection {{ adapter_literal }}
     table comments
 
@@ -319,14 +319,14 @@ end
     column articleid : Int64?
   end
 
-  class SongThread < Granite::Base
+  class SongThread < Grant::Base
     connection {{ env("CURRENT_ADAPTER").id }}
 
     column id : Int64, primary: true
     column name : String?
   end
 
-  class CustomSongThread < Granite::Base
+  class CustomSongThread < Grant::Base
     connection {{ env("CURRENT_ADAPTER").id }}
     table custom_table_name
 
@@ -336,7 +336,7 @@ end
 
   @[JSON::Serializable::Options(emit_nulls: true)]
   @[YAML::Serializable::Options(emit_nulls: true)]
-  class TodoEmitNull < Granite::Base
+  class TodoEmitNull < Grant::Base
     connection {{ adapter_literal }}
     table todos
 
@@ -346,7 +346,7 @@ end
     timestamps
   end
 
-  class Todo < Granite::Base
+  class Todo < Grant::Base
     connection {{ adapter_literal }}
     table todos
 
@@ -356,7 +356,7 @@ end
     timestamps
   end
 
-  class AfterInit < Granite::Base
+  class AfterInit < Grant::Base
     connection {{ adapter_literal }}
     table after_json_init
 
@@ -369,7 +369,7 @@ end
     end
   end
 
-  class ArticleViewModel < Granite::Base
+  class ArticleViewModel < Grant::Base
     connection {{ adapter_literal }}
 
     column id : Int64, primary: true
@@ -383,7 +383,7 @@ end
 
   # Only PG supports array types
   {% if env("CURRENT_ADAPTER") == "pg" %}
-    class ArrayModel < Granite::Base
+    class ArrayModel < Grant::Base
       connection {{ adapter_literal }}
 
       column id : Int32, primary: true
@@ -398,22 +398,22 @@ end
     ArrayModel.migrator.drop_and_create
   {% end %}
 
-  class UUIDModel < Granite::Base
+  class UUIDModel < Grant::Base
     connection {{ adapter_literal }}
     table uuids
 
     column uuid : UUID?, primary: true
   end
 
-  class UUIDRelation < Granite::Base
+  class UUIDRelation < Grant::Base
     connection {{ adapter_literal }}
     table uuid_relations
 
-    column uuid : UUID?, primary: true, converter: Granite::Converters::Uuid(String)
-    belongs_to uuid_model : UUIDModel, foreign_key: uuid_model_id : UUID, primary_key: :uuid, converter: Granite::Converters::Uuid(String)
+    column uuid : UUID?, primary: true, converter: Grant::Converters::Uuid(String)
+    belongs_to uuid_model : UUIDModel, foreign_key: uuid_model_id : UUID, primary_key: :uuid, converter: Grant::Converters::Uuid(String)
   end
 
-  class UUIDNaturalModel < Granite::Base
+  class UUIDNaturalModel < Grant::Base
     connection {{ adapter_literal }}
     table uuids
 
@@ -421,7 +421,7 @@ end
     column field_uuid : UUID?
   end
 
-  class TodoJsonOptions < Granite::Base
+  class TodoJsonOptions < Grant::Base
     connection {{ adapter_literal }}
     table todos_json
 
@@ -440,7 +440,7 @@ end
     column created_at : Time?
   end
 
-  class TodoYamlOptions < Granite::Base
+  class TodoYamlOptions < Grant::Base
     connection {{ adapter_literal }}
     table todos_yaml
 
@@ -459,7 +459,7 @@ end
     column created_at : Time?
   end
 
-  class DefaultValues < Granite::Base
+  class DefaultValues < Grant::Base
     connection {{ adapter_literal }}
     table defaults
 
@@ -469,7 +469,7 @@ end
     column age : Float64 = 0.0
   end
 
-  class TimeTest < Granite::Base
+  class TimeTest < Grant::Base
     connection {{ adapter_literal }}
     table times
 
@@ -479,7 +479,7 @@ end
     timestamps
   end
 
-  class ManualColumnType < Granite::Base
+  class ManualColumnType < Grant::Base
     connection {{ adapter_literal }}
     table manual_column_types
 
@@ -487,7 +487,7 @@ end
     column foo : UUID?, column_type: "DECIMAL(12, 10)"
   end
 
-  class EventCon < Granite::Base
+  class EventCon < Grant::Base
     connection {{ adapter_literal }}
     table "event_cons"
 
@@ -500,7 +500,7 @@ end
     SQL
   end
 
-  class StringConversion < Granite::Base
+  class StringConversion < Grant::Base
     connection {{ adapter_literal }}
     table "string_conversions"
 
@@ -512,7 +512,7 @@ end
     column float : Float64
   end
 
-  class BoolModel < Granite::Base
+  class BoolModel < Grant::Base
     connection {{ adapter_literal }}
     table "bool_model"
 
@@ -537,38 +537,38 @@ end
     Four
   end
 
-  class EnumModel < Granite::Base
+  class EnumModel < Grant::Base
     connection {{ adapter_literal }}
     table enum_model
 
     column id : Int64, primary: true
-    column my_enum : MyEnum?, column_type: "TEXT", converter: Granite::Converters::Enum(MyEnum, String)
+    column my_enum : MyEnum?, column_type: "TEXT", converter: Grant::Converters::Enum(MyEnum, String)
   end
 
-  class MyApp::Namespace::Model < Granite::Base
+  class MyApp::Namespace::Model < Grant::Base
     connection {{ adapter_literal }}
 
     column id : Int64, primary: true
   end
 
   {% if env("CURRENT_ADAPTER") == "pg" %}
-    class ConverterModel < Granite::Base
+    class ConverterModel < Grant::Base
       connection {{ adapter_literal }}
       table converters
 
       column id : Int64, primary: true
 
-      column binary_json : MyType?, column_type: "BYTEA", converter: Granite::Converters::Json(MyType, Bytes)
-      column string_json : MyType?, column_type: "JSON", converter: Granite::Converters::Json(MyType, JSON::Any)
-      column string_jsonb : MyType?, column_type: "JSONB", converter: Granite::Converters::Json(MyType, JSON::Any)
+      column binary_json : MyType?, column_type: "BYTEA", converter: Grant::Converters::Json(MyType, Bytes)
+      column string_json : MyType?, column_type: "JSON", converter: Grant::Converters::Json(MyType, JSON::Any)
+      column string_jsonb : MyType?, column_type: "JSONB", converter: Grant::Converters::Json(MyType, JSON::Any)
 
-      column smallint_enum : MyEnum?, column_type: "SMALLINT", converter: Granite::Converters::Enum(MyEnum, Int16)
-      column bigint_enum : MyEnum?, column_type: "BIGINT", converter: Granite::Converters::Enum(MyEnum, Int64)
-      column string_enum : MyEnum?, column_type: "TEXT", converter: Granite::Converters::Enum(MyEnum, String)
-      column enum_enum : MyEnum?, column_type: "my_enum_type", converter: Granite::Converters::Enum(MyEnum, Bytes)
-      column binary_enum : MyEnum?, column_type: "BYTEA", converter: Granite::Converters::Enum(MyEnum, Bytes)
+      column smallint_enum : MyEnum?, column_type: "SMALLINT", converter: Grant::Converters::Enum(MyEnum, Int16)
+      column bigint_enum : MyEnum?, column_type: "BIGINT", converter: Grant::Converters::Enum(MyEnum, Int64)
+      column string_enum : MyEnum?, column_type: "TEXT", converter: Grant::Converters::Enum(MyEnum, String)
+      column enum_enum : MyEnum?, column_type: "my_enum_type", converter: Grant::Converters::Enum(MyEnum, Bytes)
+      column binary_enum : MyEnum?, column_type: "BYTEA", converter: Grant::Converters::Enum(MyEnum, Bytes)
 
-      column numeric : Float64?, column_type: "DECIMAL(21, 20)", converter: Granite::Converters::PgNumeric
+      column numeric : Float64?, column_type: "DECIMAL(21, 20)", converter: Grant::Converters::PgNumeric
     end
     ConverterModel.exec(<<-TYPE
       DO $$
@@ -580,38 +580,38 @@ end
       TYPE
     )
   {% elsif env("CURRENT_ADAPTER") == "sqlite" %}
-    class ConverterModel < Granite::Base
+    class ConverterModel < Grant::Base
       connection {{ adapter_literal }}
       table converters
 
       column id : Int64, primary: true
 
-      column binary_json : MyType?, column_type: "BLOB", converter: Granite::Converters::Json(MyType, Bytes)
-      column string_json : MyType?, column_type: "TEXT", converter: Granite::Converters::Json(MyType, String)
+      column binary_json : MyType?, column_type: "BLOB", converter: Grant::Converters::Json(MyType, Bytes)
+      column string_json : MyType?, column_type: "TEXT", converter: Grant::Converters::Json(MyType, String)
 
-      column int_enum : MyEnum?, column_type: "INTEGER", converter: Granite::Converters::Enum(MyEnum, Int64)
-      column string_enum : MyEnum?, column_type: "TEXT", converter: Granite::Converters::Enum(MyEnum, String)
-      column binary_enum : MyEnum?, column_type: "BLOB", converter: Granite::Converters::Enum(MyEnum, String)
+      column int_enum : MyEnum?, column_type: "INTEGER", converter: Grant::Converters::Enum(MyEnum, Int64)
+      column string_enum : MyEnum?, column_type: "TEXT", converter: Grant::Converters::Enum(MyEnum, String)
+      column binary_enum : MyEnum?, column_type: "BLOB", converter: Grant::Converters::Enum(MyEnum, String)
     end
   {% elsif env("CURRENT_ADAPTER") == "mysql" %}
-    class ConverterModel < Granite::Base
+    class ConverterModel < Grant::Base
       connection {{ adapter_literal }}
       table converters
 
       column id : Int64, primary: true
 
-      column binary_json : MyType?, column_type: "BLOB", converter: Granite::Converters::Json(MyType, Bytes)
-      column string_json : MyType?, column_type: "TEXT", converter: Granite::Converters::Json(MyType, String)
+      column binary_json : MyType?, column_type: "BLOB", converter: Grant::Converters::Json(MyType, Bytes)
+      column string_json : MyType?, column_type: "TEXT", converter: Grant::Converters::Json(MyType, String)
 
-      column int_enum : MyEnum?, column_type: "INTEGER", converter: Granite::Converters::Enum(MyEnum, Int32)
-      column string_enum : MyEnum?, column_type: "VARCHAR(5)", converter: Granite::Converters::Enum(MyEnum, String)
-      column enum_enum : MyEnum?, column_type: "ENUM('Zero', 'One', 'Two', 'Three', 'Four')", converter: Granite::Converters::Enum(MyEnum, String)
-      column binary_enum : MyEnum?, column_type: "BLOB", converter: Granite::Converters::Enum(MyEnum, Bytes)
+      column int_enum : MyEnum?, column_type: "INTEGER", converter: Grant::Converters::Enum(MyEnum, Int32)
+      column string_enum : MyEnum?, column_type: "VARCHAR(5)", converter: Grant::Converters::Enum(MyEnum, String)
+      column enum_enum : MyEnum?, column_type: "ENUM('Zero', 'One', 'Two', 'Three', 'Four')", converter: Grant::Converters::Enum(MyEnum, String)
+      column binary_enum : MyEnum?, column_type: "BLOB", converter: Grant::Converters::Enum(MyEnum, Bytes)
     end
   {% end %}
 
   module Validators
-    class NilTest < Granite::Base
+    class NilTest < Grant::Base
       connection {{ adapter_literal }}
 
       column id : Int64, primary: true
@@ -641,7 +641,7 @@ end
       validate_is_nil :value
     end
 
-    class BlankTest < Granite::Base
+    class BlankTest < Grant::Base
       connection {{ adapter_literal }}
 
       column id : Int64, primary: true
@@ -659,7 +659,7 @@ end
       validate_is_blank "last_name_is_blank"
     end
 
-    class ChoiceTest < Granite::Base
+    class ChoiceTest < Grant::Base
       connection {{ adapter_literal }}
 
       column id : Int64, primary: true
@@ -676,7 +676,7 @@ end
       validate_is_valid_choice "type_array_string", ["internal", "external", "third_party"]
     end
 
-    class LessThanTest < Granite::Base
+    class LessThanTest < Grant::Base
       connection {{ adapter_literal }}
 
       column id : Int64, primary: true
@@ -694,7 +694,7 @@ end
       validate_less_than "float_32_lte", 100.25, true
     end
 
-    class GreaterThanTest < Granite::Base
+    class GreaterThanTest < Grant::Base
       connection {{ adapter_literal }}
 
       column id : Int64, primary: true
@@ -712,7 +712,7 @@ end
       validate_greater_than "float_32_lte", 100.25, true
     end
 
-    class LengthTest < Granite::Base
+    class LengthTest < Grant::Base
       connection {{ adapter_literal }}
 
       column id : Int64, primary: true
@@ -723,7 +723,7 @@ end
       validate_max_length :description, 25
     end
 
-    class PersonUniqueness < Granite::Base
+    class PersonUniqueness < Grant::Base
       connection {{ adapter_literal }}
 
       column id : Int64, primary: true
@@ -732,7 +732,7 @@ end
       validate_uniqueness :name
     end
 
-    class ExclusionTest < Granite::Base
+    class ExclusionTest < Grant::Base
       connection {{ adapter_literal }}
 
       column id : Int64, primary: true
@@ -743,6 +743,6 @@ end
   end
 {% end %}
 
-{% for model in Granite::Base.all_subclasses %}
+{% for model in Grant::Base.all_subclasses %}
   {{model.id}}.migrator.drop_and_create
 {% end %}

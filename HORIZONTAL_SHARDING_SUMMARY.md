@@ -30,8 +30,8 @@ I've designed a type-safe, Crystal-idiomatic API that leverages the language's s
 Instead of Ruby's hash-based configuration, I've designed enum-based strategies:
 
 ```crystal
-class User < Granite::Base
-  include Granite::Sharding::Model
+class User < Grant::Base
+  include Grant::Sharding::Model
   
   # Hash sharding on user ID
   sharded strategy: :hash,
@@ -39,7 +39,7 @@ class User < Granite::Base
           count: 8
 end
 
-class Order < Granite::Base
+class Order < Grant::Base
   # Geographic sharding
   sharded strategy: :geographic,
           on: :region,
@@ -82,7 +82,7 @@ User.distributed_transaction do |tx|
 end
 
 # Saga pattern for eventual consistency
-saga = Granite::Sharding::Saga.new
+saga = Grant::Sharding::Saga.new
 saga.add_step(
   forward: -> { debit_account(100) },
   compensate: -> { credit_account(100) }

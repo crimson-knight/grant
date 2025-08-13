@@ -5,9 +5,9 @@ Call a specified method on a specific life cycle event.
 Here is an example:
 
 ```crystal
-require "granite/adapter/pg"
+require "grant/adapter/pg"
 
-class Post < Granite::Base
+class Post < Grant::Base
   connection pg
 
   before_save :upcase_title

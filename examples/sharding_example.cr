@@ -1,12 +1,12 @@
-require "../src/granite"
-require "../src/granite/sharding"
+require "../src/grant"
+require "../src/grant/sharding"
 
 # Example: E-commerce platform with user data sharded by user_id
-class User < Granite::Base
+class User < Grant::Base
   connection "primary"
   table users
   
-  include Granite::Sharding::Model
+  include Grant::Sharding::Model
   
   # Shard users across 4 shards using hash strategy
   shards_by :id, strategy: :hash, count: 4
@@ -19,11 +19,11 @@ class User < Granite::Base
   has_many orders : Order
 end
 
-class Order < Granite::Base
+class Order < Grant::Base
   connection "primary"
   table orders
   
-  include Granite::Sharding::Model
+  include Grant::Sharding::Model
   
   # Shard orders by user_id to keep user data together
   shards_by :user_id, strategy: :hash, count: 4
@@ -38,7 +38,7 @@ class Order < Granite::Base
 end
 
 # Example: Multi-tenant SaaS application
-class Tenant < Granite::Base
+class Tenant < Grant::Base
   connection "primary"
   table tenants
   
@@ -49,11 +49,11 @@ class Tenant < Granite::Base
   column created_at : Time = Time.utc
 end
 
-class TenantData < Granite::Base
+class TenantData < Grant::Base
   connection "primary"
   table tenant_data
   
-  include Granite::Sharding::Model
+  include Grant::Sharding::Model
   
   # Shard by tenant_id for data isolation
   shards_by :tenant_id, strategy: :hash, count: 8
@@ -66,12 +66,12 @@ class TenantData < Granite::Base
 end
 
 # Example: Range-based sharding for time-series data
-class Event < Granite::Base
+class Event < Grant::Base
   connection "primary"
   table events
   
-  include Granite::Sharding::Model
-  extend Granite::Sharding::CompositeId
+  include Grant::Sharding::Model
+  extend Grant::Sharding::CompositeId
   
   # Shard by composite ID with time prefix
   shards_by :id, strategy: :range, ranges: [
@@ -93,12 +93,12 @@ class Event < Granite::Base
 end
 
 # Example: Geo-based sharding for global applications
-class RegionalCustomer < Granite::Base
+class RegionalCustomer < Grant::Base
   connection "primary"
   table regional_customers
   
-  include Granite::Sharding::Model
-  include Granite::Sharding::RegionDetermination::ExplicitRegion
+  include Grant::Sharding::Model
+  include Grant::Sharding::RegionDetermination::ExplicitRegion
   
   # Shard by location
   shards_by [:country, :state], strategy: :geo,
@@ -148,9 +148,9 @@ end
 
 # 8. Transaction within a shard
 user_id = 456_i64
-shard = Granite::ShardManager.resolve_shard("User", id: user_id)
+shard = Grant::ShardManager.resolve_shard("User", id: user_id)
 
-Granite::ShardManager.with_shard(shard) do
+Grant::ShardManager.with_shard(shard) do
   User.transaction do
     user = User.find!(user_id)
     user.name = "Updated Name"
@@ -186,7 +186,7 @@ ca_customers = RegionalCustomer.where(country: "US", state: "CA").select
 class WebController
   def handle_request(context)
     # Set region from IP geolocation
-    Granite::Sharding::RegionDetermination::Context.with(
+    Grant::Sharding::RegionDetermination::Context.with(
       country: detect_country(context.request.remote_address)
     ) do
       # All models created here can use the context

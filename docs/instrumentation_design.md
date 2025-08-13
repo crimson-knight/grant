@@ -1,8 +1,8 @@
-# Granite Instrumentation Design
+# Grant Instrumentation Design
 
 ## Overview
 
-This document outlines a Crystal-native approach to instrumenting Granite ORM operations using Crystal's built-in logging capabilities rather than attempting to replicate Rails' ActiveSupport::Notifications.
+This document outlines a Crystal-native approach to instrumenting Grant ORM operations using Crystal's built-in logging capabilities rather than attempting to replicate Rails' ActiveSupport::Notifications.
 
 ## Design Philosophy
 
@@ -15,18 +15,18 @@ Instead of creating a pub-sub notification system, we leverage Crystal's `Log` m
 
 ## Implementation Approach
 
-### 1. Create Granite-Specific Log Source
+### 1. Create Grant-Specific Log Source
 
 ```crystal
-module Granite
-  Log = ::Log.for("granite")
+module Grant
+  Log = ::Log.for("grant")
   
   # Sub-loggers for different components
   module Logs
-    SQL = ::Log.for("granite.sql")
-    Model = ::Log.for("granite.model")
-    Transaction = ::Log.for("granite.transaction")
-    Association = ::Log.for("granite.association")
+    SQL = ::Log.for("grant.sql")
+    Model = ::Log.for("grant.model")
+    Transaction = ::Log.for("grant.transaction")
+    Association = ::Log.for("grant.association")
   end
 end
 ```
@@ -45,7 +45,7 @@ def run
     
     duration = Time.monotonic - start_time
     
-    Granite::Logs::SQL.debug &.emit("Query executed",
+    Grant::Logs::SQL.debug &.emit("Query executed",
       sql: raw_sql,
       model: Model.name,
       duration_ms: duration.total_milliseconds,
@@ -57,7 +57,7 @@ def run
   rescue e
     duration = Time.monotonic - start_time
     
-    Granite::Logs::SQL.error &.emit("Query failed",
+    Grant::Logs::SQL.error &.emit("Query failed",
       sql: raw_sql,
       model: Model.name,
       duration_ms: duration.total_milliseconds,
@@ -76,7 +76,7 @@ end
 def save
   operation = new_record? ? "create" : "update"
   
-  Granite::Logs::Model.debug &.emit("Model #{operation}",
+  Grant::Logs::Model.debug &.emit("Model #{operation}",
     model: self.class.name,
     id: id,
     operation: operation,
@@ -98,19 +98,19 @@ Log.setup do |c|
   backend = Log::IOBackend.new(formatter: Log::ShortFormat)
   
   # Only show SQL queries in development
-  c.bind "granite.sql", :debug, backend
+  c.bind "grant.sql", :debug, backend
   
   # Show warnings and above for models
-  c.bind "granite.model", :warn, backend
+  c.bind "grant.model", :warn, backend
   
   # Silence transaction logs
-  c.bind "granite.transaction", :none, backend
+  c.bind "grant.transaction", :none, backend
 end
 
 # Or use JSON formatting for production
 Log.setup do |c|
   backend = Log::IOBackend.new(formatter: Log::JSONFormatter.new)
-  c.bind "granite.*", :info, backend
+  c.bind "grant.*", :info, backend
 end
 ```
 
@@ -121,7 +121,7 @@ Instrumentation libraries can provide custom log backends:
 ```crystal
 class DataDogBackend < Log::Backend
   def write(entry : Log::Entry)
-    if entry.source == "granite.sql"
+    if entry.source == "grant.sql"
       # Send metrics to DataDog
       StatsD.timing("database.query.duration", entry.data[:duration_ms])
       StatsD.increment("database.query.count")
@@ -131,21 +131,21 @@ end
 
 # Users can add this backend
 Log.setup do |c|
-  c.bind "granite.*", :debug, DataDogBackend.new
+  c.bind "grant.*", :debug, DataDogBackend.new
 end
 ```
 
 ### 6. Development Helpers
 
 ```crystal
-module Granite
+module Grant
   module Development
     # Pretty print SQL queries in development
     def self.setup_query_logging
       Log.setup do |c|
         backend = Log::IOBackend.new
         backend.formatter = SQLFormatter.new
-        c.bind "granite.sql", :debug, backend
+        c.bind "grant.sql", :debug, backend
       end
     end
     
@@ -171,7 +171,7 @@ end
 ## Implementation Phases
 
 ### Phase 1: Core Infrastructure
-- Set up Granite::Log and sub-loggers
+- Set up Grant::Log and sub-loggers
 - Add basic SQL query logging
 - Document configuration examples
 
@@ -195,35 +195,35 @@ end
 
 For Rails developers, we can provide a migration guide showing the equivalent patterns:
 
-| Rails Pattern | Granite Pattern |
+| Rails Pattern | Grant Pattern |
 |--------------|-----------------|
-| `ActiveSupport::Notifications.instrument` | `Granite::Log.debug &.emit` |
+| `ActiveSupport::Notifications.instrument` | `Grant::Log.debug &.emit` |
 | `ActiveSupport::Notifications.subscribe` | Custom Log::Backend |
 | Event payloads | Structured log data |
-| Event names | Log sources (granite.sql, etc.) |
+| Event names | Log sources (grant.sql, etc.) |
 
 ## Example Usage
 
 ```crystal
 # Development setup
-Granite::Development.setup_query_logging if Amber.env.development?
+Grant::Development.setup_query_logging if Amber.env.development?
 
 # Production with metrics
 if Amber.env.production?
   Log.setup do |c|
     # JSON logs to stdout
     json_backend = Log::IOBackend.new(formatter: Log::JSONFormatter.new)
-    c.bind "granite.*", :info, json_backend
+    c.bind "grant.*", :info, json_backend
     
     # Metrics to monitoring service
-    c.bind "granite.sql", :debug, MetricsBackend.new
+    c.bind "grant.sql", :debug, MetricsBackend.new
   end
 end
 
 # Debugging specific issues
 Log.setup do |c|
   # Temporarily enable association logging
-  c.bind "granite.association", :debug, Log::IOBackend.new
+  c.bind "grant.association", :debug, Log::IOBackend.new
 end
 ```
 

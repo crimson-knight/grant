@@ -30,7 +30,7 @@ Based on research and design analysis, here's the implementation plan for encryp
 ## Implementation Order
 
 ### Phase 1: Core Infrastructure (Days 1-2)
-1. Create `Granite::Encryption` module structure
+1. Create `Grant::Encryption` module structure
 2. Implement `KeyProvider` class
    - Master key loading from ENV
    - HKDF key derivation

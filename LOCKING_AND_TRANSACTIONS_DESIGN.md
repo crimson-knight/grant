@@ -23,7 +23,7 @@ We're implementing two critical features for data integrity:
 Instead of allowing arbitrary SQL strings, we'll use an enum to represent lock modes:
 
 ```crystal
-module Granite::Locking
+module Grant::Locking
   enum LockMode
     # Standard SQL locks
     Update       # FOR UPDATE
@@ -86,7 +86,7 @@ end
 ### Pessimistic Locking API
 
 ```crystal
-module Granite::Locking::Pessimistic
+module Grant::Locking::Pessimistic
   # Add locking to query builder
   def lock(mode : LockMode = LockMode::Update) : self
     @lock_mode = mode
@@ -132,7 +132,7 @@ users = User.where(active: true).lock_all(LockMode::Share)
 ### Implementation
 
 ```crystal
-module Granite::Locking::Optimistic
+module Grant::Locking::Optimistic
   macro included
     column lock_version : Int32 = 0
     
@@ -141,7 +141,7 @@ module Granite::Locking::Optimistic
   end
   
   class StaleObjectError < Exception
-    def initialize(record : Granite::Base)
+    def initialize(record : Grant::Base)
       super("Attempted to update a stale object: #{record.class.name}")
     end
   end
@@ -170,7 +170,7 @@ end
 ### Type-Safe Isolation Levels
 
 ```crystal
-module Granite::Transaction
+module Grant::Transaction
   enum IsolationLevel
     ReadUncommitted
     ReadCommitted
@@ -198,7 +198,7 @@ end
 ### Transaction API
 
 ```crystal
-module Granite::Transaction
+module Grant::Transaction
   class Rollback < Exception; end
   
   module ClassMethods
@@ -269,11 +269,11 @@ module Granite::Transaction
     
     private def start_transaction(db : DB::Connection, options : Transaction::Options)
       case adapter
-      when Granite::Adapter::Pg
+      when Grant::Adapter::Pg
         start_pg_transaction(db, options)
-      when Granite::Adapter::Mysql
+      when Grant::Adapter::Mysql
         start_mysql_transaction(db, options)
-      when Granite::Adapter::Sqlite
+      when Grant::Adapter::Sqlite
         start_sqlite_transaction(db, options)
       end
     end
@@ -313,7 +313,7 @@ User.transaction do
   User.transaction do
     # This uses a savepoint
     temporary_record.save!
-    raise Granite::Transaction::Rollback.new if condition
+    raise Grant::Transaction::Rollback.new if condition
   end
 end
 
@@ -327,9 +327,9 @@ end
 ## 4. Integration with Query Builder
 
 ```crystal
-# Extension to Granite::Query::Builder
-module Granite::Query::Builder(T)
-  property lock_mode : Granite::Locking::LockMode? = nil
+# Extension to Grant::Query::Builder
+module Grant::Query::Builder(T)
+  property lock_mode : Grant::Locking::LockMode? = nil
   
   def to_sql
     sql = super
@@ -347,18 +347,18 @@ end
 
 ```crystal
 # Base adapter extension
-abstract class Granite::Adapter::Base
-  abstract def supports_lock_mode?(mode : Granite::Locking::LockMode) : Bool
-  abstract def supports_isolation_level?(level : Granite::Transaction::IsolationLevel) : Bool
+abstract class Grant::Adapter::Base
+  abstract def supports_lock_mode?(mode : Grant::Locking::LockMode) : Bool
+  abstract def supports_isolation_level?(level : Grant::Transaction::IsolationLevel) : Bool
   abstract def supports_savepoints? : Bool
 end
 
-class Granite::Adapter::Pg < Granite::Adapter::Base
-  def supports_lock_mode?(mode : Granite::Locking::LockMode) : Bool
+class Grant::Adapter::Pg < Grant::Adapter::Base
+  def supports_lock_mode?(mode : Grant::Locking::LockMode) : Bool
     true # PostgreSQL supports all lock modes
   end
   
-  def supports_isolation_level?(level : Granite::Transaction::IsolationLevel) : Bool
+  def supports_isolation_level?(level : Grant::Transaction::IsolationLevel) : Bool
     true # PostgreSQL supports all isolation levels
   end
   
@@ -367,8 +367,8 @@ class Granite::Adapter::Pg < Granite::Adapter::Base
   end
 end
 
-class Granite::Adapter::Mysql < Granite::Adapter::Base
-  def supports_lock_mode?(mode : Granite::Locking::LockMode) : Bool
+class Grant::Adapter::Mysql < Grant::Adapter::Base
+  def supports_lock_mode?(mode : Grant::Locking::LockMode) : Bool
     case mode
     when .update?, .share?, .update_no_wait?
       true
@@ -377,7 +377,7 @@ class Granite::Adapter::Mysql < Granite::Adapter::Base
     end
   end
   
-  def supports_isolation_level?(level : Granite::Transaction::IsolationLevel) : Bool
+  def supports_isolation_level?(level : Grant::Transaction::IsolationLevel) : Bool
     true # MySQL supports all standard isolation levels
   end
   
@@ -386,12 +386,12 @@ class Granite::Adapter::Mysql < Granite::Adapter::Base
   end
 end
 
-class Granite::Adapter::Sqlite < Granite::Adapter::Base
-  def supports_lock_mode?(mode : Granite::Locking::LockMode) : Bool
+class Grant::Adapter::Sqlite < Grant::Adapter::Base
+  def supports_lock_mode?(mode : Grant::Locking::LockMode) : Bool
     false # SQLite uses database-level locking
   end
   
-  def supports_isolation_level?(level : Granite::Transaction::IsolationLevel) : Bool
+  def supports_isolation_level?(level : Grant::Transaction::IsolationLevel) : Bool
     false # SQLite has limited transaction control
   end
   
@@ -404,13 +404,13 @@ end
 ## 6. Error Handling
 
 ```crystal
-module Granite::Locking
+module Grant::Locking
   class LockWaitTimeoutError < Exception; end
   class LockNotAvailableError < Exception; end
   class DeadlockError < Exception; end
 end
 
-module Granite::Transaction
+module Grant::Transaction
   class SerializationError < Exception; end
   class ReadOnlyError < Exception; end
 end
@@ -427,7 +427,7 @@ end
 ## 8. Migration Helpers
 
 ```crystal
-module Granite::Migration
+module Grant::Migration
   def add_lock_version(table_name : String)
     add_column table_name, :lock_version, :integer, default: 0, null: false
     add_index table_name, :lock_version

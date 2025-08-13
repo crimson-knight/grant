@@ -2,7 +2,7 @@
 
 ## Database Migrations with micrate
 
-If you're using Granite to query your data, you likely want to manage your database schema as well. Migrations are a great way to do that, so let's take a look at [micrate](https://github.com/juanedi/micrate), a project to manage migrations. We'll use it as a dependency instead of a pre-build binary.
+If you're using Grant to query your data, you likely want to manage your database schema as well. Migrations are a great way to do that, so let's take a look at [micrate](https://github.com/juanedi/micrate), a project to manage migrations. We'll use it as a dependency instead of a pre-build binary.
 
 ### Install
 
@@ -20,7 +20,7 @@ Update shards
 $ shards update
 ```
 
-Create an executable to run the `Micrate::Cli`. For this example, we'll create `bin/micrate` in the root of our project where we're using Granite ORM. This assumes you're exporting the `DATABASE_URL` for your project and an environment variable instead of using a `database.yml`.
+Create an executable to run the `Micrate::Cli`. For this example, we'll create `bin/micrate` in the root of our project where we're using Grant ORM. This assumes you're exporting the `DATABASE_URL` for your project and an environment variable instead of using a `database.yml`.
 
 ```crystal
 #! /usr/bin/env crystal

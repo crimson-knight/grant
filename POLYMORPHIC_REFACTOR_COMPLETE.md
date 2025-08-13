@@ -22,7 +22,7 @@ The polymorphic associations feature has been successfully refactored to work wi
 - `has_one_polymorphic`: Similar to has_many, works with concrete types
 
 ### 4. Auto-Registration
-- All Granite::Base subclasses are automatically registered
+- All Grant::Base subclasses are automatically registered
 - No manual registration needed
 - Works seamlessly with existing models
 
@@ -32,12 +32,12 @@ The API remains largely the same for end users:
 
 ```crystal
 # Define polymorphic belongs_to
-class Comment < Granite::Base
+class Comment < Grant::Base
   belongs_to :commentable, polymorphic: true
 end
 
 # Define polymorphic has_many
-class Post < Granite::Base
+class Post < Grant::Base
   has_many :comments, as: :commentable
 end
 ```

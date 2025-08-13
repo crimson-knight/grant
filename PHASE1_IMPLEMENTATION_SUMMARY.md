@@ -1,18 +1,18 @@
 # Phase 1 Implementation Summary
 
 ## Overview
-Phase 1 of the Grant (formerly Granite) ORM upgrade has been completed. This phase focused on implementing critical missing features needed for ActiveRecord parity.
+Phase 1 of the Grant (formerly Grant) ORM upgrade has been completed. This phase focused on implementing critical missing features needed for ActiveRecord parity.
 
 ## Implemented Features
 
 ### 1. Eager Loading & Association Optimization
 **Files Created/Modified:**
-- `src/granite/eager_loading.cr` - Core eager loading module
-- `src/granite/association_loader.cr` - Association batch loading logic
-- `src/granite/loaded_association_collection.cr` - Collection wrapper for pre-loaded associations
-- `src/granite/associations.cr` - Modified to support eager loading cache
-- `src/granite/query/builder.cr` - Added includes, preload, eager_load methods
-- `spec/granite/eager_loading/eager_loading_spec.cr` - Tests
+- `src/grant/eager_loading.cr` - Core eager loading module
+- `src/grant/association_loader.cr` - Association batch loading logic
+- `src/grant/loaded_association_collection.cr` - Collection wrapper for pre-loaded associations
+- `src/grant/associations.cr` - Modified to support eager loading cache
+- `src/grant/query/builder.cr` - Added includes, preload, eager_load methods
+- `spec/grant/eager_loading/eager_loading_spec.cr` - Tests
 
 **Features:**
 - `Model.includes(:association)` - Eager load associations
@@ -39,8 +39,8 @@ end
 
 ### 2. Dirty Tracking API
 **Files Created/Modified:**
-- `src/granite/dirty.cr` - Complete dirty tracking implementation
-- `spec/granite/dirty/dirty_tracking_spec.cr` - Comprehensive tests
+- `src/grant/dirty.cr` - Complete dirty tracking implementation
+- `spec/grant/dirty/dirty_tracking_spec.cr` - Comprehensive tests
 
 **Features:**
 - Track attribute changes before save
@@ -73,10 +73,10 @@ user.previous_changes # => {"name" => ["John", "Jane"]}
 
 ### 3. Lifecycle Callbacks
 **Files Created/Modified:**
-- `src/granite/callbacks.cr` - Extended with new callbacks and conditional support
-- `src/granite/commit_callbacks.cr` - Transaction-aware callbacks
+- `src/grant/callbacks.cr` - Extended with new callbacks and conditional support
+- `src/grant/commit_callbacks.cr` - Transaction-aware callbacks
 - Various files updated to trigger callbacks at appropriate times
-- `spec/granite/callbacks/lifecycle_callbacks_spec.cr` - Tests
+- `spec/grant/callbacks/lifecycle_callbacks_spec.cr` - Tests
 
 **New Callbacks:**
 - `after_initialize` - After object instantiation
@@ -97,9 +97,9 @@ after_update :send_email, unless: :skip_notifications?
 
 ### 4. Named Scopes & Advanced Querying
 **Files Created/Modified:**
-- `src/granite/scoping.cr` - Complete scoping system
-- `src/granite/query/builder.cr` - Enhanced with or/not support
-- `spec/granite/scoping/scoping_spec.cr` - Tests
+- `src/grant/scoping.cr` - Complete scoping system
+- `src/grant/query/builder.cr` - Enhanced with or/not support
+- `spec/grant/scoping/scoping_spec.cr` - Tests
 
 **Features:**
 - Named scopes with `scope` macro
@@ -111,7 +111,7 @@ after_update :send_email, unless: :skip_notifications?
 
 **Usage:**
 ```crystal
-class Post < Granite::Base
+class Post < Grant::Base
   # Named scopes
   scope :published, ->(q) { q.where(published: true) }
   scope :recent, ->(q) { q.order(created_at: :desc) }
@@ -139,7 +139,7 @@ end
 
 ## Integration Notes
 
-All new features have been integrated into the `Granite::Base` class and are automatically available to all models. The implementation maintains backward compatibility while adding these new capabilities.
+All new features have been integrated into the `Grant::Base` class and are automatically available to all models. The implementation maintains backward compatibility while adding these new capabilities.
 
 ## Testing
 
@@ -167,9 +167,9 @@ None. All Phase 1 features are additive and maintain backward compatibility.
 - Callbacks add slight overhead but follow the same pattern as existing callbacks
 - Scoping adds no runtime overhead for models without scopes
 
-## Migration from Granite to Grant
+## Migration from Grant to Grant
 
-To use these new features in existing Granite applications:
+To use these new features in existing Grant applications:
 1. Update your dependency to use Grant
 2. No code changes required for existing functionality
 3. New features are opt-in and can be adopted gradually

@@ -78,7 +78,7 @@ class CrossShardJoinDetector
 end
 
 # Approach 2: Runtime Detection (Lower Complexity)
-class Order < Granite::Base
+class Order < Grant::Base
   belongs_to user : User
   
   # Override association to check sharding
@@ -97,7 +97,7 @@ end
 
 ### Option 1: Documentation + Best Practices (Low Effort)
 ```crystal
-module Granite::Sharding
+module Grant::Sharding
   module Documentation
     # Document patterns to avoid
     ANTI_PATTERNS = [
@@ -118,7 +118,7 @@ end
 
 ### Option 2: Basic Safety Rails (Medium Effort)
 ```crystal
-module Granite::Sharding
+module Grant::Sharding
   # Detect obvious cross-shard issues
   module SafetyChecks
     macro belongs_to(name, **options)
@@ -142,7 +142,7 @@ end
 
 ### Option 3: Distributed Transaction Lite (High Effort)
 ```crystal
-module Granite::Sharding
+module Grant::Sharding
   # Simple eventually consistent transactions
   class DistributedTransaction
     def initialize

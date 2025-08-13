@@ -1,13 +1,13 @@
-# Architectural Plan: Implementing Chainable Scopes in Grant/Granite
+# Architectural Plan: Implementing Chainable Scopes in Grant/Grant
 
 ## Executive Summary
 
-This document outlines the architectural changes required to implement Rails-style chainable scopes in Grant/Granite. The implementation requires replacing the generic `Query::Builder(T)` with model-specific query builder classes that include scope methods.
+This document outlines the architectural changes required to implement Rails-style chainable scopes in Grant/Grant. The implementation requires replacing the generic `Query::Builder(T)` with model-specific query builder classes that include scope methods.
 
 ## Current Architecture
 
 ### Query Building Flow
-1. **Model Class** (e.g., `User < Granite::Base`)
+1. **Model Class** (e.g., `User < Grant::Base`)
    - Extends `Query::BuilderMethods` which delegates to `__builder`
    - Query methods like `where`, `order` create a new `Query::Builder(Model)`
 
@@ -24,13 +24,13 @@ This document outlines the architectural changes required to implement Rails-sty
 ## Proposed Architecture
 
 ### New Query Building Flow
-1. **Model Class** (e.g., `User < Granite::Base`)
-   - Generates a custom `User::QueryBuilder < Granite::Query::Builder(User)`
+1. **Model Class** (e.g., `User < Grant::Base`)
+   - Generates a custom `User::QueryBuilder < Grant::Query::Builder(User)`
    - All query methods return `User::QueryBuilder` instead of generic builder
 
 2. **Model::QueryBuilder**
    - Custom class for each model
-   - Inherits from `Granite::Query::Builder(Model)`
+   - Inherits from `Grant::Query::Builder(Model)`
    - Contains all scope methods defined for that model
    - All methods return `Model::QueryBuilder` for chaining
 
@@ -41,7 +41,7 @@ This document outlines the architectural changes required to implement Rails-sty
 ## Required Code Changes
 
 ### 1. Query::Builder Base Class Modifications
-**File**: `src/granite/query/builder.cr`
+**File**: `src/grant/query/builder.cr`
 
 **Changes**:
 - Make it easier to subclass by extracting type-specific logic
@@ -49,7 +49,7 @@ This document outlines the architectural changes required to implement Rails-sty
 - Add macro helpers for generating typed returns
 
 ```crystal
-class Granite::Query::Builder(Model)
+class Grant::Query::Builder(Model)
   # Change return types to use `self` instead of hardcoded class
   macro define_chainable_method(name, &block)
     def {{name}}(*args, **kwargs) : self
@@ -61,17 +61,17 @@ end
 ```
 
 ### 2. Base Model Modifications
-**File**: `src/granite/base.cr`
+**File**: `src/grant/base.cr`
 
 **Changes**:
 - Generate custom QueryBuilder class in `inherited` macro
 - Override query initiation methods to use custom builder
 
 ```crystal
-abstract class Granite::Base
+abstract class Grant::Base
   macro inherited
     # Generate custom query builder
-    class QueryBuilder < ::Granite::Query::Builder({{@type}})
+    class QueryBuilder < ::Grant::Query::Builder({{@type}})
       # This will include scope methods
     end
     
@@ -85,14 +85,14 @@ end
 ```
 
 ### 3. Scoping Module Redesign
-**File**: `src/granite/scoping.cr`
+**File**: `src/grant/scoping.cr`
 
 **Changes**:
 - Modify `scope` macro to add methods to both model and QueryBuilder
 - Ensure proper type returns for chaining
 
 ```crystal
-module Granite::Scoping
+module Grant::Scoping
   macro scope(name, body)
     # Add to model class
     def self.{{name.id}}
@@ -113,12 +113,12 @@ end
 
 ### 4. Query Method Return Types
 **Files**: All query-related files need updates
-- `src/granite/query/builder.cr` - Update all methods to return `self`
-- `src/granite/query/builder_methods.cr` - Delegate to custom builder
-- `src/granite/querying.cr` - Use custom builder in class methods
+- `src/grant/query/builder.cr` - Update all methods to return `self`
+- `src/grant/query/builder_methods.cr` - Delegate to custom builder
+- `src/grant/querying.cr` - Use custom builder in class methods
 
 ### 5. Association Loading
-**File**: `src/granite/eager_loading.cr`
+**File**: `src/grant/eager_loading.cr`
 
 **Changes**:
 - Ensure eager loading methods return the custom builder type
@@ -131,7 +131,7 @@ end
 1. **API Changes**
    - Return types change from `Query::Builder(Model)` to `Model::QueryBuilder`
    - May break code that explicitly types query results
-   - Example: `query : Granite::Query::Builder(User) = User.where(active: true)`
+   - Example: `query : Grant::Query::Builder(User) = User.where(active: true)`
 
 2. **Custom Query Extensions**
    - Any code extending `Query::Builder` needs updates
@@ -190,7 +190,7 @@ end
 
 ```crystal
 # Before
-class User < Granite::Base
+class User < Grant::Base
   scope :active, ->(q : Query::Builder(User)) { q.where(active: true) }
   scope :recent, ->(q : Query::Builder(User)) { q.order(created_at: :desc) }
 end
@@ -198,7 +198,7 @@ end
 User.active  # Returns Query::Builder(User) - can't chain .recent
 
 # After  
-class User < Granite::Base
+class User < Grant::Base
   scope :active, ->(q) { q.where(active: true) }
   scope :recent, ->(q) { q.order(created_at: :desc) }
 end

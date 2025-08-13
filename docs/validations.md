@@ -1,6 +1,6 @@
 # Errors
 
-All database errors are added to the `errors` array used by `Granite::Validators` with the symbol `:base`
+All database errors are added to the `errors` array used by `Grant::Validators` with the symbol `:base`
 
 ```crystal
 post = Post.new
@@ -17,7 +17,7 @@ Models that do not pass the validations will not be saved, and will have the err
 For example, asserting that the title on a post is not blank:
 
 ```Crystal
-class Post < Granite::Base
+class Post < Grant::Base
   connection mysql
 
   column id : Int64, primary: true
@@ -59,7 +59,7 @@ A set of common validation macros exist to make validations easier to manage/cre
 Using the helpers, the previous example could have been written like:
 
 ```Crystal
-class Post < Granite::Base
+class Post < Grant::Base
   connection mysql
 
   column id : Int64, primary: true

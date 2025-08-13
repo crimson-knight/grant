@@ -1,9 +1,9 @@
-require "../../src/granite"
-require "../../src/granite/sharding"
+require "../../src/grant"
+require "../../src/grant/sharding"
 
-module Granite::Testing
+module Grant::Testing
   # Simplified virtual sharding for tests
-  class VirtualShardAdapter < Granite::Adapter::Base
+  class VirtualShardAdapter < Grant::Adapter::Base
     QUOTING_CHAR = '"'
     
     @@shard_queries = {} of Symbol => Array(String)
@@ -99,7 +99,7 @@ module Granite::Testing
       track_query("DELETE FROM #{table_name}")
     end
     
-    def select(query : Granite::Select::Container, clause = "", params = [] of Granite::Columns::Type, &)
+    def select(query : Grant::Select::Container, clause = "", params = [] of Grant::Columns::Type, &)
       statement = String.build do |stmt|
         stmt << "SELECT "
         stmt << query.fields.join(", ")
@@ -113,7 +113,12 @@ module Granite::Testing
       # This simulates an empty result set
     end
     
-    def exists?(table_name : String, criteria : String, params = [] of Granite::Columns::Type) : Bool
+    def query_one?(statement : String, args = [] of Grant::Columns::Type, as type = Bool) : Bool?
+      track_query(statement)
+      false # Always return false for testing
+    end
+    
+    def exists?(table_name : String, criteria : String, params = [] of Grant::Columns::Type) : Bool
       statement = "SELECT EXISTS(SELECT 1 FROM #{table_name} WHERE #{criteria})"
       track_query(statement)
       false # Always return false for testing
@@ -144,11 +149,11 @@ module Granite::Testing
       "#{QUOTING_CHAR}#{name}#{QUOTING_CHAR}"
     end
     
-    def supports_lock_mode?(mode : Granite::Locking::LockMode) : Bool
+    def supports_lock_mode?(mode : Grant::Locking::LockMode) : Bool
       false
     end
     
-    def supports_isolation_level?(level : Granite::Transaction::IsolationLevel) : Bool
+    def supports_isolation_level?(level : Grant::Transaction::IsolationLevel) : Bool
       false
     end
     
@@ -161,14 +166,14 @@ module Granite::Testing
   module ShardingHelpers
     def with_virtual_shards(count : Int32, &block)
       VirtualShardAdapter.clear_all
-      Granite::HealthMonitor.test_mode = true
+      Grant::HealthMonitor.test_mode = true
       
       begin
         # Create virtual shards
         # Crystal doesn't support dynamic symbol creation, so we need to handle known counts
         case count
         when 1
-          Granite::ConnectionRegistry.establish_connection(
+          Grant::ConnectionRegistry.establish_connection(
             database: "test",
             adapter: VirtualShardAdapter,
             url: "virtual://shard_0",
@@ -176,14 +181,14 @@ module Granite::Testing
             shard: :shard_0
           )
         when 2
-          Granite::ConnectionRegistry.establish_connection(
+          Grant::ConnectionRegistry.establish_connection(
             database: "test",
             adapter: VirtualShardAdapter,
             url: "virtual://shard_0",
             role: :primary,
             shard: :shard_0
           )
-          Granite::ConnectionRegistry.establish_connection(
+          Grant::ConnectionRegistry.establish_connection(
             database: "test",
             adapter: VirtualShardAdapter,
             url: "virtual://shard_1",
@@ -191,28 +196,28 @@ module Granite::Testing
             shard: :shard_1
           )
         when 4
-          Granite::ConnectionRegistry.establish_connection(
+          Grant::ConnectionRegistry.establish_connection(
             database: "test",
             adapter: VirtualShardAdapter,
             url: "virtual://shard_0",
             role: :primary,
             shard: :shard_0
           )
-          Granite::ConnectionRegistry.establish_connection(
+          Grant::ConnectionRegistry.establish_connection(
             database: "test",
             adapter: VirtualShardAdapter,
             url: "virtual://shard_1",
             role: :primary,
             shard: :shard_1
           )
-          Granite::ConnectionRegistry.establish_connection(
+          Grant::ConnectionRegistry.establish_connection(
             database: "test",
             adapter: VirtualShardAdapter,
             url: "virtual://shard_2",
             role: :primary,
             shard: :shard_2
           )
-          Granite::ConnectionRegistry.establish_connection(
+          Grant::ConnectionRegistry.establish_connection(
             database: "test",
             adapter: VirtualShardAdapter,
             url: "virtual://shard_3",
@@ -227,7 +232,7 @@ module Granite::Testing
         
         yield
       ensure
-        Granite::ConnectionRegistry.clear_all
+        Grant::ConnectionRegistry.clear_all
         # Don't clear ShardManager - let model configurations persist
         VirtualShardAdapter.clear_all
       end

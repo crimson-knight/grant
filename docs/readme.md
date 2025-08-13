@@ -11,8 +11,8 @@ with Kemal or any other framework as well.
 
 ```yaml
 dependencies:
-  granite:
-    github: amberframework/granite
+  grant:
+    github: amberframework/grant
 
   # Pick your database
   mysql:
@@ -27,10 +27,10 @@ dependencies:
 
 ### Register a Connection
 
-Next you will need to register a connection. This should be one of the first things in your main Crystal file, before Granite is required.
+Next you will need to register a connection. This should be one of the first things in your main Crystal file, before Grant is required.
 
 ```crystal
-Granite::Connections << Granite::Adapter::Mysql.new(name: "mysql", url: "YOUR_DATABASE_URL")
+Grant::Connections << Grant::Adapter::Mysql.new(name: "mysql", url: "YOUR_DATABASE_URL")
 
 # Rest of code...
 ```
@@ -49,12 +49,12 @@ Note: For SQLite, the library will automatically check the version on startup an
 
 ### Example Model
 
-Here is an example Granite model using the connection registered above.
+Here is an example Grant model using the connection registered above.
 
 ```crystal
-require "granite/adapter/mysql"
+require "grant/adapter/mysql"
 
-class Post < Granite::Base
+class Post < Grant::Base
   connection mysql
   table posts # Name of the table to use for the model, defaults to class name snake cased
 

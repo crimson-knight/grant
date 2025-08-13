@@ -39,7 +39,7 @@ Grant provides transparent encryption for sensitive data in your models using in
 
 ```crystal
 # config/initializers/encryption.cr
-Granite::Encryption.configure do |config|
+Grant::Encryption.configure do |config|
   # Required: Set your encryption keys (use secure random values in production!)
   config.primary_key = ENV["GRANITE_ENCRYPTION_PRIMARY_KEY"]
   config.deterministic_key = ENV["GRANITE_ENCRYPTION_DETERMINISTIC_KEY"]
@@ -53,7 +53,7 @@ end
 ### 2. Add Encrypted Attributes to Your Model
 
 ```crystal
-class User < Granite::Base
+class User < Grant::Base
   connection sqlite
   table users
   
@@ -99,9 +99,9 @@ user.save!
 
 ```crystal
 # Generate random keys for your configuration
-primary_key = Granite::Encryption::Config.generate_key
-deterministic_key = Granite::Encryption::Config.generate_key
-salt = Granite::Encryption::Config.generate_key
+primary_key = Grant::Encryption::Config.generate_key
+deterministic_key = Grant::Encryption::Config.generate_key
+salt = Grant::Encryption::Config.generate_key
 
 puts "GRANITE_ENCRYPTION_PRIMARY_KEY=#{primary_key}"
 puts "GRANITE_ENCRYPTION_DETERMINISTIC_KEY=#{deterministic_key}"
@@ -111,7 +111,7 @@ puts "GRANITE_ENCRYPTION_SALT=#{salt}"
 ### Configuration Options
 
 ```crystal
-Granite::Encryption.configure do |config|
+Grant::Encryption.configure do |config|
   # Primary key for non-deterministic encryption (required)
   config.primary_key = "your-base64-encoded-32-byte-key"
   
@@ -134,7 +134,7 @@ end
 ### Basic Encryption
 
 ```crystal
-class Patient < Granite::Base
+class Patient < Grant::Base
   connection sqlite
   table patients
   
@@ -158,7 +158,7 @@ patient.save!
 ### Deterministic Encryption
 
 ```crystal
-class Customer < Granite::Base
+class Customer < Grant::Base
   connection sqlite
   table customers
   
@@ -224,12 +224,12 @@ users = User.all.select { |u| u.ssn == "123-45-6789" }
 
 ```crystal
 # 1. Add the encrypted attribute to your model
-class User < Granite::Base
+class User < Grant::Base
   encrypts :ssn
 end
 
 # 2. Create a migration to add the encrypted column
-class AddEncryptedSsnToUsers < Granite::Migration
+class AddEncryptedSsnToUsers < Grant::Migration
   def up
     alter_table :users do
       add_column :ssn_encrypted, :text
@@ -244,7 +244,7 @@ class AddEncryptedSsnToUsers < Granite::Migration
 end
 
 # 3. Encrypt existing data
-Granite::Encryption::MigrationHelpers.encrypt_column(
+Grant::Encryption::MigrationHelpers.encrypt_column(
   User,
   :ssn,
   batch_size: 1000,
@@ -252,7 +252,7 @@ Granite::Encryption::MigrationHelpers.encrypt_column(
 )
 
 # 4. Remove the original column (after verification)
-class RemovePlaintextSsn < Granite::Migration
+class RemovePlaintextSsn < Grant::Migration
   def up
     alter_table :users do
       drop_column :ssn
@@ -265,13 +265,13 @@ end
 
 ```crystal
 # 1. Set new keys in configuration
-Granite::Encryption.configure do |config|
+Grant::Encryption.configure do |config|
   config.primary_key = new_primary_key
   config.deterministic_key = new_deterministic_key
 end
 
 # 2. Rotate encrypted data
-Granite::Encryption::MigrationHelpers.rotate_encryption(
+Grant::Encryption::MigrationHelpers.rotate_encryption(
   User,
   :ssn,
   old_keys: {
@@ -287,7 +287,7 @@ Granite::Encryption::MigrationHelpers.rotate_encryption(
 
 ```crystal
 # Decrypt data back to plaintext column
-Granite::Encryption::MigrationHelpers.decrypt_column(
+Grant::Encryption::MigrationHelpers.decrypt_column(
   User,
   :ssn,
   target_column: :ssn_plain,
@@ -352,7 +352,7 @@ Granite::Encryption::MigrationHelpers.decrypt_column(
 ### Custom Key Providers
 
 ```crystal
-class CustomKeyProvider < Granite::Encryption::KeyProvider
+class CustomKeyProvider < Grant::Encryption::KeyProvider
   def self.derive_key(model_name : String, attribute_name : String, deterministic : Bool) : Bytes
     # Custom key derivation logic
     # e.g., fetch from HSM, KMS, etc.
@@ -360,7 +360,7 @@ class CustomKeyProvider < Granite::Encryption::KeyProvider
 end
 
 # Use in model
-class SecureModel < Granite::Base
+class SecureModel < Grant::Base
   encrypts :data, key_provider: CustomKeyProvider
 end
 ```
@@ -435,9 +435,9 @@ end
 
 ### Configuration
 
-- `Granite::Encryption.configure(&block)` - Configure encryption settings
-- `Granite::Encryption.configured?` - Check if properly configured
-- `Granite::Encryption::Config.generate_key` - Generate a secure key
+- `Grant::Encryption.configure(&block)` - Configure encryption settings
+- `Grant::Encryption.configured?` - Check if properly configured
+- `Grant::Encryption::Config.generate_key` - Generate a secure key
 
 ## License
 

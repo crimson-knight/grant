@@ -1,11 +1,11 @@
-require "../src/granite"
+require "../src/grant"
 
 # Example: Multiple Database Configuration with Grant
 
 # 1. Set up multiple databases with advanced configuration
-Granite::ConnectionRegistry.establish_connections({
+Grant::ConnectionRegistry.establish_connections({
   "primary" => {
-    adapter: Granite::Adapter::Pg,
+    adapter: Grant::Adapter::Pg,
     writer: ENV["PRIMARY_DATABASE_URL"],
     reader: ENV["PRIMARY_REPLICA_URL"]?,
     pool: {
@@ -21,7 +21,7 @@ Granite::ConnectionRegistry.establish_connections({
     }
   },
   "analytics" => {
-    adapter: Granite::Adapter::Pg,
+    adapter: Grant::Adapter::Pg,
     url: ENV["ANALYTICS_DATABASE_URL"],
     pool: {
       max_pool_size: 10,
@@ -33,7 +33,7 @@ Granite::ConnectionRegistry.establish_connections({
     }
   },
   "cache" => {
-    adapter: Granite::Adapter::Sqlite,
+    adapter: Grant::Adapter::Sqlite,
     url: "sqlite3://./cache.db",
     pool: {
       max_pool_size: 5
@@ -42,7 +42,7 @@ Granite::ConnectionRegistry.establish_connections({
 })
 
 # 2. Models with different database connections
-class User < Granite::Base
+class User < Grant::Base
   # Connect to primary database with read/write splitting
   connects_to database: "primary"
   
@@ -60,7 +60,7 @@ class User < Granite::Base
   column created_at : Time
 end
 
-class AnalyticsEvent < Granite::Base
+class AnalyticsEvent < Grant::Base
   # Connect to analytics database
   connects_to database: "analytics"
   
@@ -72,7 +72,7 @@ class AnalyticsEvent < Granite::Base
   column occurred_at : Time
 end
 
-class CachedResult < Granite::Base
+class CachedResult < Grant::Base
   # Connect to local SQLite cache
   connects_to database: "cache"
   
@@ -140,8 +140,8 @@ User.while_preventing_writes do
 end
 
 # 6. Sharded database example
-class ShardedOrder < Granite::Base
-  include Granite::ConnectionManagementV2
+class ShardedOrder < Grant::Base
+  include Grant::ConnectionManagementV2
   
   connects_to(
     shards: {
@@ -200,7 +200,7 @@ ShardedOrder.connected_to(shard: :us_east) do
 end
 
 puts "\n=== Connection Statistics ==="
-Granite::ConnectionRegistry.adapter_names.each do |name|
+Grant::ConnectionRegistry.adapter_names.each do |name|
   puts "Adapter: #{name}"
 end
 
@@ -208,19 +208,19 @@ end
 puts "\n=== Health Monitoring ==="
 
 # Check system health
-if Granite::ConnectionRegistry.system_healthy?
+if Grant::ConnectionRegistry.system_healthy?
   puts "All connections are healthy"
 else
   puts "Some connections are unhealthy"
 end
 
 # Get detailed health status
-Granite::ConnectionRegistry.health_status.each do |status|
+Grant::ConnectionRegistry.health_status.each do |status|
   puts "#{status[:key]} - Healthy: #{status[:healthy]} (Database: #{status[:database]}, Role: #{status[:role]})"
 end
 
 # Check load balancer status for primary database
-if lb = Granite::ConnectionRegistry.get_load_balancer("primary")
+if lb = Grant::ConnectionRegistry.get_load_balancer("primary")
   puts "\nPrimary database load balancer:"
   puts "Total replicas: #{lb.size}"
   puts "Healthy replicas: #{lb.healthy_count}"
@@ -246,7 +246,7 @@ puts "Found user on primary due to sticky session"
 puts "\n=== Manual Health Check ==="
 
 # Trigger immediate health check for all connections
-Granite::HealthMonitorRegistry.status.each do |monitor_status|
+Grant::HealthMonitorRegistry.status.each do |monitor_status|
   puts "Connection #{monitor_status[:key]} - Healthy: #{monitor_status[:healthy]}, Last check: #{monitor_status[:last_check]}"
 end
 

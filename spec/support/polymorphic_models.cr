@@ -2,7 +2,7 @@
 {% begin %}
   {% adapter_literal = env("CURRENT_ADAPTER").id %}
   
-  class Comment < Granite::Base
+  class Comment < Grant::Base
     connection {{ adapter_literal }}
     table comments
 
@@ -13,7 +13,7 @@
     belongs_to :commentable, polymorphic: true, optional: true
   end
 
-  class Image < Granite::Base
+  class Image < Grant::Base
     connection {{ adapter_literal }}
     table images
 
@@ -24,7 +24,7 @@
     belongs_to :imageable, polymorphic: true, optional: true
   end
 
-  class Post < Granite::Base
+  class Post < Grant::Base
     connection {{ adapter_literal }}
     table posts
 
@@ -36,7 +36,7 @@
     has_one :image, as: :imageable, class_name: "Image"
   end
 
-  class PolyBook < Granite::Base
+  class PolyBook < Grant::Base
     connection {{ adapter_literal }}
     table poly_books
 

@@ -1,6 +1,6 @@
-# Granite Instrumentation
+# Grant Instrumentation
 
-Granite provides built-in instrumentation for debugging, monitoring, and performance analysis using Crystal's native `Log` module. This lightweight approach avoids the overhead of pub-sub systems while providing rich insights into your application's database interactions.
+Grant provides built-in instrumentation for debugging, monitoring, and performance analysis using Crystal's native `Log` module. This lightweight approach avoids the overhead of pub-sub systems while providing rich insights into your application's database interactions.
 
 ## Overview
 
@@ -24,13 +24,13 @@ Log.setup do |c|
   backend = Log::IOBackend.new(formatter: Log::ShortFormat)
   
   # Log SQL queries at debug level
-  c.bind "granite.sql", :debug, backend
+  c.bind "grant.sql", :debug, backend
   
   # Log model operations at info level
-  c.bind "granite.model", :info, backend
+  c.bind "grant.model", :info, backend
   
   # Warn about slow queries
-  c.bind "granite.sql", :warn, backend
+  c.bind "grant.sql", :warn, backend
 end
 ```
 
@@ -40,13 +40,13 @@ For beautiful colored output during development:
 
 ```crystal
 # config/environments/development.cr
-require "granite/logging"
+require "grant/logging"
 
 # Enable all development formatters
-Granite::Development.setup_logging
+Grant::Development.setup_logging
 ```
 
-This gives you colored, formatted output for all Granite operations:
+This gives you colored, formatted output for all Grant operations:
 
 ```
 ▸ User (5.2ms) → 10 rows
@@ -66,7 +66,7 @@ All SQL queries are automatically logged with timing information:
 
 ```crystal
 # Logged at debug level for all queries
-Granite::Logs::SQL.debug &.emit("Query executed",
+Grant::Logs::SQL.debug &.emit("Query executed",
   sql: sql,
   model: "User",
   duration_ms: 5.2,
@@ -74,7 +74,7 @@ Granite::Logs::SQL.debug &.emit("Query executed",
 )
 
 # Slow queries (>100ms) are logged as warnings
-Granite::Logs::SQL.warn &.emit("Slow query detected",
+Grant::Logs::SQL.warn &.emit("Slow query detected",
   sql: sql,
   model: "User", 
   duration_ms: 250.5
@@ -122,7 +122,7 @@ Detect and prevent N+1 query problems:
 
 ```crystal
 # Wrap code blocks to detect N+1 queries
-analysis = Granite::QueryAnalysis::N1Detector.detect do
+analysis = Grant::QueryAnalysis::N1Detector.detect do
   # This code triggers N+1 queries
   User.all.each do |user|
     puts user.posts.count  # Each user triggers a new query
@@ -145,7 +145,7 @@ Collect performance statistics:
 
 ```crystal
 # Enable statistics collection
-stats = Granite::QueryAnalysis::QueryStats.instance
+stats = Grant::QueryAnalysis::QueryStats.instance
 stats.enable!
 
 # Run your application code...
@@ -169,19 +169,19 @@ Log.setup do |c|
   backend = Log::IOBackend.new
   
   # Detailed SQL logging (including all queries)
-  c.bind "granite.sql", :debug, backend
+  c.bind "grant.sql", :debug, backend
   
   # Model operations (creates, updates, deletes)
-  c.bind "granite.model", :info, backend
+  c.bind "grant.model", :info, backend
   
   # Association loading (can be verbose)
-  c.bind "granite.association", :warn, backend
+  c.bind "grant.association", :warn, backend
   
   # Transaction operations
-  c.bind "granite.transaction", :info, backend
+  c.bind "grant.transaction", :info, backend
   
   # Query builder operations
-  c.bind "granite.query", :debug, backend
+  c.bind "grant.query", :debug, backend
 end
 ```
 
@@ -210,7 +210,7 @@ end
 # Use custom formatter
 Log.setup do |c|
   backend = Log::IOBackend.new(formatter: MyCustomFormatter.new)
-  c.bind "granite.*", :debug, backend
+  c.bind "grant.*", :debug, backend
 end
 ```
 
@@ -234,12 +234,12 @@ Log.setup do |c|
   backend = Log::IOBackend.new(formatter: Log::ShortFormat)
   
   # Only slow queries and errors
-  c.bind "granite.sql", :warn, backend
-  c.bind "granite.model", :error, backend
+  c.bind "grant.sql", :warn, backend
+  c.bind "grant.model", :error, backend
   
   # Disable association and query builder logs
-  c.bind "granite.association", :none, backend
-  c.bind "granite.query", :none, backend
+  c.bind "grant.association", :none, backend
+  c.bind "grant.query", :none, backend
 end
 ```
 
@@ -252,7 +252,7 @@ The structured logging format makes it easy to integrate with monitoring tools:
 class MonitoringBackend < Log::Backend
   def write(entry : Log::Entry)
     # Send to DataDog, New Relic, etc.
-    if entry.source.starts_with?("granite.sql") && entry.severity.warn?
+    if entry.source.starts_with?("grant.sql") && entry.severity.warn?
       Monitoring.track_slow_query(
         model: entry.data[:model],
         duration: entry.data[:duration_ms],
@@ -271,7 +271,7 @@ end
 # Enable SQL logging with timing
 Log.setup do |c|
   backend = Log::IOBackend.new
-  c.bind "granite.sql", :debug, backend
+  c.bind "grant.sql", :debug, backend
 end
 
 # All queries will be logged with timing
@@ -291,7 +291,7 @@ complex_report = User.complex_aggregation
 # Enable association logging
 Log.setup do |c|
   backend = Log::IOBackend.new
-  c.bind "granite.association", :debug, backend
+  c.bind "grant.association", :debug, backend
 end
 
 # Track association access
@@ -309,7 +309,7 @@ end
 
 ```crystal
 # Profile a specific operation
-Granite::QueryAnalysis::N1Detector.detect do
+Grant::QueryAnalysis::N1Detector.detect do
   # Your application code
   render_user_dashboard(user)
 end
@@ -332,7 +332,7 @@ Check your log level configuration:
 
 ```crystal
 # Ensure the source and level match
-Log.builder.bind "granite.sql", :debug, backend
+Log.builder.bind "grant.sql", :debug, backend
 ```
 
 ### Too Many Logs
@@ -341,8 +341,8 @@ Filter by source or increase log level:
 
 ```crystal
 # Only log specific components
-c.bind "granite.sql", :warn, backend  # Only slow queries
-c.bind "granite.association", :none, backend  # Disable association logs
+c.bind "grant.sql", :warn, backend  # Only slow queries
+c.bind "grant.association", :none, backend  # Disable association logs
 ```
 
 ### Performance Impact

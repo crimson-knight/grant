@@ -1,15 +1,15 @@
 require "./base"
 require "sqlite3"
-require "../granite/sqlite_version_check"
+require "../grant/sqlite_version_check"
 
 # Sqlite implementation of the Adapter
-class Granite::Adapter::Sqlite < Granite::Adapter::Base
+class Grant::Adapter::Sqlite < Grant::Adapter::Base
   QUOTING_CHAR = '"'
   
   def initialize(@name : String, @url : String)
     super
     # Check SQLite version on first connection
-    Granite::SQLiteVersionCheck.ensure_supported!
+    Grant::SQLiteVersionCheck.ensure_supported!
   end
 
   module Schema
@@ -61,7 +61,7 @@ class Granite::Adapter::Sqlite < Granite::Adapter::Base
   end
 
   def import(table_name : String, primary_name : String, auto : Bool, fields, model_array, **options)
-    params = [] of Granite::Columns::Type
+    params = [] of Grant::Columns::Type
 
     statement = String.build do |stmt|
       if options["update_on_duplicate"]?
@@ -130,11 +130,11 @@ class Granite::Adapter::Sqlite < Granite::Adapter::Base
     log statement, elapsed_time, value
   end
   
-  def supports_lock_mode?(mode : Granite::Locking::LockMode) : Bool
+  def supports_lock_mode?(mode : Grant::Locking::LockMode) : Bool
     false
   end
   
-  def supports_isolation_level?(level : Granite::Transaction::IsolationLevel) : Bool
+  def supports_isolation_level?(level : Grant::Transaction::IsolationLevel) : Bool
     false
   end
   

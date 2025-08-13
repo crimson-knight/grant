@@ -1,6 +1,6 @@
-# Granite ORM - Current Features Documentation
+# Grant ORM - Current Features Documentation
 
-This document provides a comprehensive overview of all current features and methods available in Granite ORM as of the current codebase review.
+This document provides a comprehensive overview of all current features and methods available in Grant ORM as of the current codebase review.
 
 ## Table of Contents
 1. [Core Components](#core-components)
@@ -18,19 +18,19 @@ This document provides a comprehensive overview of all current features and meth
 ## Core Components
 
 ### Base Class
-- `Granite::Base` - Abstract base class for all models
+- `Grant::Base` - Abstract base class for all models
 - Includes modules: Associations, Callbacks, Columns, Tables, Transactions, Validators, ValidationHelpers, Migrator, Select, Querying, ConnectionManagement
 
 ### Supported Adapters
-- MySQL (`Granite::Adapter::Mysql`)
-- PostgreSQL (`Granite::Adapter::Pg`)
-- SQLite (`Granite::Adapter::Sqlite`)
+- MySQL (`Grant::Adapter::Mysql`)
+- PostgreSQL (`Grant::Adapter::Pg`)
+- SQLite (`Grant::Adapter::Sqlite`)
 
 ## Model Definition
 
 ### Basic Model Structure
 ```crystal
-class Post < Granite::Base
+class Post < Grant::Base
   connection mysql
   table posts
   
@@ -51,8 +51,8 @@ end
 
 ### Multiple Connections Support
 ```crystal
-Granite::Connections << Granite::Adapter::Mysql.new(name: "mysql", url: "DATABASE_URL")
-Granite::Connections << Granite::Adapter::Pg.new(name: "pg", url: "POSTGRES_URL")
+Grant::Connections << Grant::Adapter::Mysql.new(name: "mysql", url: "DATABASE_URL")
+Grant::Connections << Grant::Adapter::Pg.new(name: "pg", url: "POSTGRES_URL")
 ```
 
 ### Connection Switching
@@ -90,9 +90,9 @@ timestamps # Adds created_at and updated_at
 ```
 
 ### Converters
-- `Granite::Converters::Enum(EnumType, DBType)` - Enum converter
-- `Granite::Converters::Json(ObjectType, DBType)` - JSON converter
-- `Granite::Converters::PgNumeric` - PostgreSQL numeric to Float64
+- `Grant::Converters::Enum(EnumType, DBType)` - Enum converter
+- `Grant::Converters::Json(ObjectType, DBType)` - JSON converter
+- `Grant::Converters::PgNumeric` - PostgreSQL numeric to Float64
 
 ## Query Interface
 
@@ -299,25 +299,25 @@ Model.migrator(table_options: "ENGINE=InnoDB").create
 - `primary_key_value` - Get primary key value
 
 ### Type System
-- `Granite::Columns::Type` - Union type for all column types
-- `Granite::Type` - Type conversion utilities
+- `Grant::Columns::Type` - Union type for all column types
+- `Grant::Type` - Type conversion utilities
 - Strong typing with compile-time checks
 
 ### Error Handling
-- `Granite::Error` - Base error class
-- `Granite::ConversionError` - Type conversion errors
-- `Granite::RecordNotSaved` - Save failures
-- `Granite::RecordNotDestroyed` - Destroy failures
-- `Granite::RecordInvalid` - Validation failures
-- `Granite::Querying::NotFound` - Record not found
+- `Grant::Error` - Base error class
+- `Grant::ConversionError` - Type conversion errors
+- `Grant::RecordNotSaved` - Save failures
+- `Grant::RecordNotDestroyed` - Destroy failures
+- `Grant::RecordInvalid` - Validation failures
+- `Grant::Querying::NotFound` - Record not found
 
 ### Integrators
 - `find_or_create_by(**attributes)` - Find or create record
 - `find_or_initialize_by(**attributes)` - Find or initialize record
 
 ### Collections
-- `Granite::Collection` - Lazy-loaded collection wrapper
-- `Granite::AssociationCollection` - Association collection handling
+- `Grant::Collection` - Lazy-loaded collection wrapper
+- `Grant::AssociationCollection` - Association collection handling
 
 ### Query Executors
 - List executor for collections
@@ -332,14 +332,14 @@ Model.migrator(table_options: "ENGINE=InnoDB").create
 - Read/write splitting capabilities
 
 ### Settings
-- `Granite.settings.default_timezone` - Default timezone for timestamps
+- `Grant.settings.default_timezone` - Default timezone for timestamps
 
 ### Annotations Support
 - `@[JSON::Field]` annotations on columns
 - `@[YAML::Field]` annotations on columns
 - Custom annotations support
 
-This comprehensive list represents the current state of Granite ORM's features. When comparing to ActiveRecord v8, we can identify gaps and plan implementations to achieve feature parity.
+This comprehensive list represents the current state of Grant ORM's features. When comparing to ActiveRecord v8, we can identify gaps and plan implementations to achieve feature parity.
 ## Dirty Tracking API (Phase 1 - COMPLETE)
 
 Grant now includes a comprehensive dirty tracking API that provides full compatibility with Rails ActiveRecord's dirty tracking functionality.
@@ -363,7 +363,7 @@ Grant now includes a comprehensive dirty tracking API that provides full compati
 For each column, the following methods are automatically generated:
 
 ```crystal
-class User < Granite::Base
+class User < Grant::Base
   column name : String
   column email : String
 end
@@ -433,15 +433,15 @@ Grant now supports polymorphic associations, allowing a model to belong to more 
 ### Usage
 
 ```crystal
-class Comment < Granite::Base
+class Comment < Grant::Base
   belongs_to :commentable, polymorphic: true
 end
 
-class Post < Granite::Base
+class Post < Grant::Base
   has_many :comments, as: :commentable
 end
 
-class Photo < Granite::Base
+class Photo < Grant::Base
   has_many :comments, as: :commentable
 end
 ```
@@ -469,11 +469,11 @@ Grant now includes comprehensive association options for fine-grained control:
 
 ### Example
 ```crystal
-class Author < Granite::Base
+class Author < Grant::Base
   has_many :posts, dependent: :destroy, counter_cache: true
 end
 
-class Post < Granite::Base
+class Post < Grant::Base
   belongs_to :author, optional: true, touch: true
 end
 ```
@@ -487,7 +487,7 @@ Grant now provides Rails-style enum attributes with full helper method support.
 ### Usage
 
 ```crystal
-class Article < Granite::Base
+class Article < Grant::Base
   enum Status
     Draft
     Published
@@ -620,7 +620,7 @@ Grant now provides a flexible Attribute API for defining custom attributes with 
 
 #### Virtual Attributes
 ```crystal
-class Product < Granite::Base
+class Product < Grant::Base
   # Virtual attribute not stored in database
   attribute price_in_cents : Int32, virtual: true
   
@@ -632,12 +632,12 @@ end
 
 #### Default Values
 ```crystal
-class Article < Granite::Base
+class Article < Grant::Base
   # Static default
   attribute status : String?, default: "draft"
   
   # Dynamic default with proc
-  attribute code : String?, default: ->(article : Granite::Base) { 
+  attribute code : String?, default: ->(article : Grant::Base) { 
     "ART-#{article.as(Article).id || "NEW"}" 
   }
 end
@@ -645,7 +645,7 @@ end
 
 #### Custom Types with Converters
 ```crystal
-class Product < Granite::Base
+class Product < Grant::Base
   attribute metadata : ProductMetadata?, 
     converter: ProductMetadataConverter,
     column_type: "TEXT"

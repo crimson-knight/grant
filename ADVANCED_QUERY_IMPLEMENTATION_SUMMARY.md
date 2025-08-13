@@ -79,11 +79,11 @@ Added support for new operators in the query assembler:
 - Proper type annotations throughout
 
 ## Files Modified
-1. `/src/granite/query/builder.cr` - Core query builder enhancements
-2. `/src/granite/query/where_chain.cr` - New WhereChain class
-3. `/src/granite/query/builder_methods.cr` - Added delegates
-4. `/src/granite/query/assembler/base.cr` - Added operator support
-5. `/spec/granite/query/advanced_query_spec.cr` - Comprehensive tests
+1. `/src/grant/query/builder.cr` - Core query builder enhancements
+2. `/src/grant/query/where_chain.cr` - New WhereChain class
+3. `/src/grant/query/builder_methods.cr` - Added delegates
+4. `/src/grant/query/assembler/base.cr` - Added operator support
+5. `/spec/grant/query/advanced_query_spec.cr` - Comprehensive tests
 6. `/examples/advanced_query_examples.cr` - Usage examples
 
 ## Test Coverage
@@ -94,7 +94,7 @@ Added support for new operators in the query assembler:
 ## Notes
 - Common Table Expressions (CTEs) were not implemented as they require more complex SQL generation
 - The implementation maintains backward compatibility
-- All features work with existing Grant/Granite infrastructure
+- All features work with existing Grant/Grant infrastructure
 
 ## Next Steps
 1. Consider implementing CTEs if needed

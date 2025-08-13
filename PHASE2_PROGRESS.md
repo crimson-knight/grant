@@ -8,18 +8,18 @@ Phase 2 implementation is now complete with comprehensive features, documentatio
 ### 1. Polymorphic Associations ✅
 - Full implementation of polymorphic `belongs_to`
 - Support for `has_many` and `has_one` with `:as` option
-- Automatic type registration for all Granite::Base subclasses
+- Automatic type registration for all Grant::Base subclasses
 - Custom column name support (foreign_key, type_column options)
 - Integration with all advanced association options
 - Complete documentation with examples
 
 **Files Added/Modified:**
-- `src/granite/polymorphic.cr` - Core polymorphic implementation
-- `src/granite/associations.cr` - Integration with existing associations
-- `src/granite/base.cr` - Auto-registration in inherited macro
+- `src/grant/polymorphic.cr` - Core polymorphic implementation
+- `src/grant/associations.cr` - Integration with existing associations
+- `src/grant/base.cr` - Auto-registration in inherited macro
 - `docs/polymorphic_associations.md` - Comprehensive documentation
-- `spec/granite/associations/polymorphic_simple_spec.cr` - Basic compilation tests
-- `spec/granite/associations/polymorphic_spec.cr` - Full feature tests
+- `spec/grant/associations/polymorphic_simple_spec.cr` - Basic compilation tests
+- `spec/grant/associations/polymorphic_spec.cr` - Full feature tests
 - `spec/support/polymorphic_models.cr` - Test models
 
 ### 2. Advanced Association Options ✅
@@ -37,13 +37,13 @@ Phase 2 implementation is now complete with comprehensive features, documentatio
 - `autosave: true` - Automatic associated record saving for all association types
 
 **Files Added/Modified:**
-- `src/granite/association_options.cr` - Core options implementation
-- `src/granite/associations.cr` - Integration into association macros
-- `src/granite/query_extensions.cr` - Added update_all and exists? methods
+- `src/grant/association_options.cr` - Core options implementation
+- `src/grant/associations.cr` - Integration into association macros
+- `src/grant/query_extensions.cr` - Added update_all and exists? methods
 - `docs/advanced_associations.md` - Detailed documentation
-- `spec/granite/associations/association_options_spec.cr` - Basic test coverage
-- `spec/granite/associations/additional_options_spec.cr` - Comprehensive tests
-- `spec/granite/associations/integration_spec.cr` - Integration tests
+- `spec/grant/associations/association_options_spec.cr` - Basic test coverage
+- `spec/grant/associations/additional_options_spec.cr` - Comprehensive tests
+- `spec/grant/associations/integration_spec.cr` - Integration tests
 
 ## Test Coverage Summary
 

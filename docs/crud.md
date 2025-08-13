@@ -5,14 +5,14 @@
 Combination of object creation and insertion into database.
 
 ```crystal
-Post.create(name: "Granite Rocks!", body: "Check this out.") # Set attributes and call save
-Post.create!(name: "Granite Rocks!", body: "Check this out.") # Set attributes and call save!. Will throw an exception when the save failed
+Post.create(name: "Grant Rocks!", body: "Check this out.") # Set attributes and call save
+Post.create!(name: "Grant Rocks!", body: "Check this out.") # Set attributes and call save!. Will throw an exception when the save failed
 ```
 
 To create a record without setting the `created_at` & `updated_at` fields, you can pass in `skip_timestamps`.
 
 ```crystal
-Post.create({name: "Granite Rocks!", body: "Check this out."}, skip_timestamps: true)
+Post.create({name: "Grant Rocks!", body: "Check this out."}, skip_timestamps: true)
 ```
 
 ## Insert
@@ -21,12 +21,12 @@ Inserts an already created object into the database.
 
 ```crystal
 post = Post.new
-post.name = "Granite Rocks!"
+post.name = "Grant Rocks!"
 post.body = "Check this out."
 post.save
 
 post = Post.new
-post.name = "Granite Rocks!"
+post.name = "Grant Rocks!"
 post.body = "Check this out."
 post.save! # raises when save failed
 ```
@@ -94,7 +94,7 @@ Returns the record with the attributes reloaded from the database.
 **Note:** this method is only defined when the `Spec` module is present.
 
 ```
-post = Post.create(name: "Granite Rocks!", body: "Check this out.")
+post = Post.create(name: "Grant Rocks!", body: "Check this out.")
 # record gets updated by another process
 post.reload # performs another find to fetch the record again
 ```
@@ -124,22 +124,22 @@ Updates a given record already saved in the database.
 
 ```crystal
 post = Post.find 1
-post.name = "Granite Really Rocks!"
+post.name = "Grant Really Rocks!"
 post.save
 
 post = Post.find 1
-post.update(name: "Granite Really Rocks!") # Assigns attributes and calls save
+post.update(name: "Grant Really Rocks!") # Assigns attributes and calls save
 
 post = Post.find 1
-post.update!(name: "Granite Really Rocks!") # Assigns attributes and calls save!. Will throw an exception when the save failed
+post.update!(name: "Grant Really Rocks!") # Assigns attributes and calls save!. Will throw an exception when the save failed
 ```
 
 To update a record without changing the `updated_at` field, you can pass in `skip_timestamps`:
 
 ```crystal
 post = Post.find 1
-post.update({name: "Granite Really Rocks!"}, skip_timestamps: true)
-post.update!({name: "Granite Really Rocks!"}, skip_timestamps: true)
+post.update({name: "Grant Really Rocks!"}, skip_timestamps: true)
+post.update!({name: "Grant Really Rocks!"}, skip_timestamps: true)
 ```
 
 ## Delete

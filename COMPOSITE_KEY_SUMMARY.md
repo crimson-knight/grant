@@ -7,7 +7,7 @@ We have successfully implemented Phase 1.1 and partial Phase 1.2 of the sharding
 ## What was implemented:
 
 ### 1. Core Module Structure
-- Created `Granite::CompositePrimaryKey` module that can be included in models
+- Created `Grant::CompositePrimaryKey` module that can be included in models
 - Created `CompositeKey` struct to manage composite key configuration
 - Added DSL macro `composite_primary_key` for declaring composite keys
 
@@ -20,7 +20,7 @@ We have successfully implemented Phase 1.1 and partial Phase 1.2 of the sharding
 ### 3. Validation Support
 - Added automatic validation for composite key presence
 - Added automatic validation for composite key uniqueness
-- Validations are integrated with Granite's validation system
+- Validations are integrated with Grant's validation system
 
 ### 4. Helper Methods
 - `composite_primary_key?` - checks if model uses composite keys
@@ -36,8 +36,8 @@ We have successfully implemented Phase 1.1 and partial Phase 1.2 of the sharding
 ## Usage Example:
 
 ```crystal
-class OrderItem < Granite::Base
-  include Granite::CompositePrimaryKey
+class OrderItem < Grant::Base
+  include Grant::CompositePrimaryKey
   
   connection sqlite
   table order_items
@@ -66,7 +66,7 @@ item.save # Would need transaction support to work fully
 
 ## Limitations:
 
-1. **Transaction Support**: The save, update, and destroy operations require deeper integration with Granite's transaction system. The infrastructure is in place but needs the base transaction methods to check for composite keys.
+1. **Transaction Support**: The save, update, and destroy operations require deeper integration with Grant's transaction system. The infrastructure is in place but needs the base transaction methods to check for composite keys.
 
 2. **Associations**: Composite foreign keys for associations are not yet implemented.
 

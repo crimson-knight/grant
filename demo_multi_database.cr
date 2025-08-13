@@ -3,7 +3,7 @@
 # Simple demonstration of the multi-database features
 # This can be run without the full test environment
 
-require "./src/granite"
+require "./src/grant"
 require "./src/adapter/sqlite"
 
 # Enable debug logging to see health checks
@@ -16,9 +16,9 @@ puts
 puts "1. Connection Pool Configuration"
 puts "================================"
 
-spec = Granite::ConnectionRegistry::ConnectionSpec.new(
+spec = Grant::ConnectionRegistry::ConnectionSpec.new(
   database: "demo_db",
-  adapter_class: Granite::Adapter::Sqlite,
+  adapter_class: Grant::Adapter::Sqlite,
   url: "sqlite3://demo.db",
   role: :primary,
   pool_size: 20,
@@ -44,7 +44,7 @@ puts "2. Health Monitoring"
 puts "==================="
 
 # Create a simple test adapter
-class DemoAdapter < Granite::Adapter::Sqlite
+class DemoAdapter < Grant::Adapter::Sqlite
   property simulate_healthy = true
   
   def open(&)
@@ -57,7 +57,7 @@ class DemoAdapter < Granite::Adapter::Sqlite
 end
 
 adapter = DemoAdapter.new("demo", "sqlite3::memory:")
-health_spec = Granite::ConnectionRegistry::ConnectionSpec.new(
+health_spec = Grant::ConnectionRegistry::ConnectionSpec.new(
   database: "demo",
   adapter_class: DemoAdapter,
   url: "sqlite3::memory:",
@@ -66,7 +66,7 @@ health_spec = Granite::ConnectionRegistry::ConnectionSpec.new(
   health_check_timeout: 1.second
 )
 
-monitor = Granite::HealthMonitor.new(adapter, health_spec)
+monitor = Grant::HealthMonitor.new(adapter, health_spec)
 
 puts "Created health monitor"
 puts "  - Initial health: #{monitor.healthy?}"
@@ -92,14 +92,14 @@ puts "================="
 
 # Create mock adapters for replicas
 replicas = [
-  Granite::Adapter::Sqlite.new("replica1", "sqlite3::memory:"),
-  Granite::Adapter::Sqlite.new("replica2", "sqlite3::memory:"),
-  Granite::Adapter::Sqlite.new("replica3", "sqlite3::memory:")
+  Grant::Adapter::Sqlite.new("replica1", "sqlite3::memory:"),
+  Grant::Adapter::Sqlite.new("replica2", "sqlite3::memory:"),
+  Grant::Adapter::Sqlite.new("replica3", "sqlite3::memory:")
 ]
 
 # Test different strategies
 puts "\nRound-Robin Strategy:"
-balancer = Granite::ReplicaLoadBalancer.new(replicas, Granite::RoundRobinStrategy.new)
+balancer = Grant::ReplicaLoadBalancer.new(replicas, Grant::RoundRobinStrategy.new)
 5.times do |i|
   if replica = balancer.next_replica
     puts "  Request #{i + 1} -> #{replica.name}"
@@ -107,7 +107,7 @@ balancer = Granite::ReplicaLoadBalancer.new(replicas, Granite::RoundRobinStrateg
 end
 
 puts "\nRandom Strategy:"
-balancer.strategy = Granite::RandomStrategy.new
+balancer.strategy = Grant::RandomStrategy.new
 5.times do |i|
   if replica = balancer.next_replica
     puts "  Request #{i + 1} -> #{replica.name}"
@@ -124,7 +124,7 @@ puts
 puts "4. Replica Lag Tracking"
 puts "======================="
 
-tracker = Granite::ConnectionManagement::ReplicaLagTracker.new(
+tracker = Grant::ConnectionManagement::ReplicaLagTracker.new(
   lag_threshold: 2.seconds
 )
 
@@ -150,12 +150,12 @@ puts "5. Full Multi-Database Configuration"
 puts "===================================="
 
 # Clear any existing connections
-Granite::ConnectionRegistry.clear_all
+Grant::ConnectionRegistry.clear_all
 
 # Establish connections with full configuration
-Granite::ConnectionRegistry.establish_connections({
+Grant::ConnectionRegistry.establish_connections({
   "primary" => {
-    adapter: Granite::Adapter::Sqlite,
+    adapter: Grant::Adapter::Sqlite,
     writer: "sqlite3://primary_writer.db",
     reader: "sqlite3://primary_reader.db",
     pool: {
@@ -169,7 +169,7 @@ Granite::ConnectionRegistry.establish_connections({
     }
   },
   "analytics" => {
-    adapter: Granite::Adapter::Sqlite,
+    adapter: Grant::Adapter::Sqlite,
     url: "sqlite3://analytics.db",
     pool: {
       max_pool_size: 10
@@ -178,19 +178,19 @@ Granite::ConnectionRegistry.establish_connections({
 })
 
 puts "Established connections:"
-Granite::ConnectionRegistry.databases.each do |db|
+Grant::ConnectionRegistry.databases.each do |db|
   puts "  - Database: #{db}"
-  Granite::ConnectionRegistry.adapters_for_database(db).each do |adapter|
+  Grant::ConnectionRegistry.adapters_for_database(db).each do |adapter|
     puts "    • #{adapter.name}"
   end
 end
 
 puts "\nHealth Status:"
-Granite::ConnectionRegistry.health_status.each do |status|
+Grant::ConnectionRegistry.health_status.each do |status|
   puts "  - #{status[:key]}: Healthy=#{status[:healthy]}, DB=#{status[:database]}, Role=#{status[:role]}"
 end
 
-puts "\nSystem healthy? #{Granite::ConnectionRegistry.system_healthy?}"
+puts "\nSystem healthy? #{Grant::ConnectionRegistry.system_healthy?}"
 puts
 
 # 6. Model Configuration Demo
@@ -198,7 +198,7 @@ puts "6. Model Configuration"
 puts "====================="
 
 # Define a model with connection configuration
-class DemoModel < Granite::Base
+class DemoModel < Grant::Base
   connects_to database: "primary"
   
   # Note: connection_config macro would be used here in real implementation
@@ -230,5 +230,5 @@ puts
 puts "All features are working correctly!"
 
 # Cleanup
-Granite::ConnectionRegistry.clear_all
-Granite::HealthMonitorRegistry.clear
+Grant::ConnectionRegistry.clear_all
+Grant::HealthMonitorRegistry.clear

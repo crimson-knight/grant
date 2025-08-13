@@ -84,7 +84,7 @@ end # Lock released, transaction committed
 Custom exception types provide clear error messages:
 
 ```crystal
-rescue ex : Granite::Locking::Optimistic::StaleObjectError
+rescue ex : Grant::Locking::Optimistic::StaleObjectError
   puts "Failed to update #{ex.record_class} (id: #{ex.record_id})"
   # Handle retry logic
 end
@@ -93,22 +93,22 @@ end
 ## Files Created/Modified
 
 ### New Files
-- `src/granite/transaction.cr` - Core transaction implementation
-- `src/granite/locking.cr` - Locking types and enums
-- `src/granite/locking/pessimistic.cr` - Pessimistic locking implementation
-- `src/granite/locking/optimistic.cr` - Optimistic locking implementation
-- `spec/granite/transaction_spec.cr` - Transaction tests
-- `spec/granite/locking/pessimistic_spec.cr` - Pessimistic locking tests
-- `spec/granite/locking/optimistic_spec.cr` - Optimistic locking tests
+- `src/grant/transaction.cr` - Core transaction implementation
+- `src/grant/locking.cr` - Locking types and enums
+- `src/grant/locking/pessimistic.cr` - Pessimistic locking implementation
+- `src/grant/locking/optimistic.cr` - Optimistic locking implementation
+- `spec/grant/transaction_spec.cr` - Transaction tests
+- `spec/grant/locking/pessimistic_spec.cr` - Pessimistic locking tests
+- `spec/grant/locking/optimistic_spec.cr` - Optimistic locking tests
 - `examples/locking_and_transactions.cr` - Comprehensive examples
 - `docs/LOCKING_AND_TRANSACTIONS.md` - User documentation
 - `LOCKING_AND_TRANSACTIONS_DESIGN.md` - Design documentation
 
 ### Modified Files
-- `src/granite/base.cr` - Added includes and extends for new modules
-- `src/granite/query/builder.cr` - Added lock_mode property and lock method
-- `src/granite/query/builder_methods.cr` - Added lock to delegates
-- `src/granite/query/assemblers/base.cr` - Added lock SQL generation
+- `src/grant/base.cr` - Added includes and extends for new modules
+- `src/grant/query/builder.cr` - Added lock_mode property and lock method
+- `src/grant/query/builder_methods.cr` - Added lock to delegates
+- `src/grant/query/assemblers/base.cr` - Added lock SQL generation
 - `src/adapter/base.cr` - Added capability checking methods
 - `src/adapter/pg.cr` - Implemented PostgreSQL-specific support
 - `src/adapter/mysql.cr` - Implemented MySQL-specific support

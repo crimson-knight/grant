@@ -2,7 +2,7 @@ require "./base"
 require "pg"
 
 # PostgreSQL implementation of the Adapter
-class Granite::Adapter::Pg < Granite::Adapter::Base
+class Grant::Adapter::Pg < Grant::Adapter::Base
   QUOTING_CHAR = '"'
 
   module Schema
@@ -67,7 +67,7 @@ class Granite::Adapter::Pg < Granite::Adapter::Base
   end
 
   def import(table_name : String, primary_name : String, auto : Bool, fields, model_array, **options)
-    params = [] of Granite::Columns::Type
+    params = [] of Grant::Columns::Type
     # PG fails when inserting null into AUTO INCREMENT PK field.
     # If AUTO INCREMENT is TRUE AND all model's pk are nil, remove PK from fields list for AUTO INCREMENT to work properly
     fields.reject! { |field| field == primary_name } if model_array.all? { |m| m.to_h[primary_name].nil? } && auto
@@ -165,11 +165,11 @@ class Granite::Adapter::Pg < Granite::Adapter::Base
     end
   end
   
-  def supports_lock_mode?(mode : Granite::Locking::LockMode) : Bool
+  def supports_lock_mode?(mode : Grant::Locking::LockMode) : Bool
     true
   end
   
-  def supports_isolation_level?(level : Granite::Transaction::IsolationLevel) : Bool
+  def supports_isolation_level?(level : Grant::Transaction::IsolationLevel) : Bool
     true
   end
   

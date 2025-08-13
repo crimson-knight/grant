@@ -123,7 +123,7 @@ end
 
 ### 3. Multiple Database Switching
 ```crystal
-class User < Granite::Base
+class User < Grant::Base
   connects_to database: {
     writing: :primary,
     reading: :primary_replica
@@ -138,7 +138,7 @@ end
 
 ### 4. Sharding Support
 ```crystal
-class Order < Granite::Base
+class Order < Grant::Base
   connects_to shards: {
     shard_one: { writing: :shard1, reading: :shard1_replica },
     shard_two: { writing: :shard2, reading: :shard2_replica }

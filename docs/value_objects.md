@@ -50,7 +50,7 @@ end
 Use the `aggregation` macro to map value objects to database columns:
 
 ```crystal
-class Customer < Granite::Base
+class Customer < Grant::Base
   connection pg
   table customers
   
@@ -110,7 +110,7 @@ struct Temperature
   end
 end
 
-class Weather < Granite::Base
+class Weather < Grant::Base
   aggregation :temperature, Temperature,
     mapping: {
       temp_fahrenheit: :fahrenheit
@@ -130,7 +130,7 @@ end
 By default, aggregations return `nil` if any mapped column is `nil`. Use `allow_nil: true` to return `nil` only when all columns are `nil`:
 
 ```crystal
-class Order < Granite::Base
+class Order < Grant::Base
   # Returns nil only if both amount and currency are nil
   aggregation :total, Money,
     mapping: {
@@ -146,7 +146,7 @@ end
 Models can have multiple aggregations:
 
 ```crystal
-class Person < Granite::Base
+class Person < Grant::Base
   aggregation :home_address, Address,
     mapping: {
       home_street: :street,
@@ -175,15 +175,15 @@ struct Email
   end
   
   def validate
-    errors = [] of Granite::Error
+    errors = [] of Grant::Error
     unless value.matches?(/\A[\w+\-.]+@[a-z\d\-]+(\.[a-z\d\-]+)*\.[a-z]+\z/i)
-      errors << Granite::Error.new(:value, "is not a valid email")
+      errors << Grant::Error.new(:value, "is not a valid email")
     end
     errors
   end
 end
 
-class User < Granite::Base
+class User < Grant::Base
   aggregation :email, Email,
     mapping: {
       email_address: :value
@@ -269,7 +269,7 @@ Value objects are instantiated on-demand when accessed. If you don't access an a
 ## Migration Example
 
 ```crystal
-class CreateCustomers < Granite::Migration
+class CreateCustomers < Grant::Migration
   def up
     create_table :customers do |t|
       t.string :name, null: false
