@@ -25,24 +25,24 @@ This document tracks the progress of reorganizing Grant's documentation for opti
   - [ ] Document association options → `/docs/api-reference/association-options.md`
   - [ ] Consolidate validators → `/docs/api-reference/validation-helpers.md`
 
-### Phase 2: Advanced Features Organization ⏳
-- [ ] Performance documentation
-  - [ ] Consolidate eager loading docs → `/docs/advanced/performance/eager-loading.md`
-  - [ ] Create query optimization guide → `/docs/advanced/performance/query-optimization.md`
-- [ ] Data management documentation
-  - [ ] Move dirty tracking → `/docs/advanced/data-management/dirty-tracking.md`
-  - [ ] Update migrations → `/docs/advanced/data-management/migrations.md`
-  - [ ] Enhance imports/exports → `/docs/advanced/data-management/imports-exports.md`
-  - [ ] Move normalization → `/docs/advanced/data-management/normalization.md`
-- [ ] Security documentation
-  - [ ] Merge 3 encryption docs → `/docs/advanced/security/encrypted-attributes.md`
-  - [ ] Update secure tokens → `/docs/advanced/security/secure-tokens.md`
-  - [ ] Consolidate signed IDs → `/docs/advanced/security/signed-ids.md`
-- [ ] Specialized features
-  - [ ] Move enum attributes → `/docs/advanced/specialized/enum-attributes.md`
-  - [ ] Update polymorphic associations → `/docs/advanced/specialized/polymorphic-associations.md`
-  - [ ] Move value objects → `/docs/advanced/specialized/value-objects.md`
-  - [ ] Update serialized columns → `/docs/advanced/specialized/serialized-columns.md`
+### Phase 2: Advanced Features Organization ✅
+- [x] Performance documentation
+  - [x] Consolidate eager loading docs → `/docs/advanced/performance/eager-loading.md`
+  - [x] Create query optimization guide → `/docs/advanced/performance/query-optimization.md`
+- [x] Data management documentation
+  - [x] Move dirty tracking → `/docs/advanced/data-management/dirty-tracking.md`
+  - [x] Update migrations → `/docs/advanced/data-management/migrations.md`
+  - [x] Enhance imports/exports → `/docs/advanced/data-management/imports-exports.md`
+  - [x] Move normalization → `/docs/advanced/data-management/normalization.md`
+- [x] Security documentation
+  - [x] Merge 3 encryption docs → `/docs/advanced/security/encrypted-attributes.md`
+  - [x] Update secure tokens → `/docs/advanced/security/secure-tokens.md`
+  - [x] Consolidate signed IDs → `/docs/advanced/security/signed-ids.md`
+- [x] Specialized features
+  - [x] Move enum attributes → `/docs/advanced/specialized/enum-attributes.md`
+  - [x] Update polymorphic associations → `/docs/advanced/specialized/polymorphic-associations.md`
+  - [x] Move value objects → `/docs/advanced/specialized/value-objects.md`
+  - [x] Update serialized columns → `/docs/advanced/specialized/serialized-columns.md`
 
 ### Phase 3: Infrastructure Documentation ⏳
 - [ ] Multiple databases
@@ -127,10 +127,10 @@ database_support: ["postgresql", "mysql", "sqlite"]
 ## Progress Metrics
 - Total files to process: ~80
 - Target file count: ~35
-- Files processed: 20
-- Files merged: 12 (README+readme→installation, models→models-and-columns, 4 query docs→querying-and-scopes, 3 relationship docs→relationships, 2 validation docs→validations)
+- Files processed: 31
+- Files merged: 12 (README+readme→installation, models→models-and-columns, 4 query docs→querying-and-scopes, 3 relationship docs→relationships, 2 validation docs→validations, 3 encryption docs→encrypted-attributes)
 - Files deleted: 0
-- Files with metadata: 11 (all new docs have metadata)
+- Files with metadata: 22 (all new docs have metadata)
 
 ## Notes
 - Prioritize user-facing documentation first
