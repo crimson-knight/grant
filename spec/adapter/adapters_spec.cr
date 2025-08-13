@@ -1,20 +1,20 @@
 require "../spec_helper"
 
-class Foo < Granite::Base
+class Foo < Grant::Base
   connection {{env("CURRENT_ADAPTER").id}}
   column id : Int64, primary: true
 end
 
-class Bar < Granite::Base
+class Bar < Grant::Base
   column id : Int64, primary: true
 end
 
-describe Granite::Connections do
+describe Grant::Connections do
   describe "registration" do
     it "should allow connections to be be saved and looked up" do
-      Granite::Connections.registered_connections.size.should eq 2
+      Grant::Connections.registered_connections.size.should eq 2
 
-      if connection = Granite::Connections[CURRENT_ADAPTER]
+      if connection = Grant::Connections[CURRENT_ADAPTER]
         connection[:writer].url.should eq ADAPTER_URL
       else
         connection.should_not be_falsey
@@ -22,7 +22,7 @@ describe Granite::Connections do
 
       case ENV["CURRENT_ADAPTER"]?
       when "sqlite"
-        if connection = Granite::Connections["sqlite_with_replica"]
+        if connection = Grant::Connections["sqlite_with_replica"]
           connection[:writer].url.should eq ENV["SQLITE_DATABASE_URL"]?
           connection[:reader].url.should eq ADAPTER_REPLICA_URL
         else
@@ -32,9 +32,9 @@ describe Granite::Connections do
     end
 
     it "should disallow multiple connections with the same name" do
-      Granite::Connections << Granite::Adapter::Pg.new(name: "mysql2", url: "mysql://localhost:3306/test")
+      Grant::Connections << Grant::Adapter::Pg.new(name: "mysql2", url: "mysql://localhost:3306/test")
       expect_raises(Exception, "Adapter with name 'mysql2' has already been registered.") do
-        Granite::Connections << Granite::Adapter::Pg.new(name: "mysql2", url: "mysql://localhost:3306/test")
+        Grant::Connections << Grant::Adapter::Pg.new(name: "mysql2", url: "mysql://localhost:3306/test")
       end
     end
 

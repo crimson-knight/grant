@@ -64,8 +64,8 @@ end
 ### Usage Example
 
 ```crystal
-class Order < Granite::Base
-  include Granite::Sharding::Model
+class Order < Grant::Base
+  include Grant::Sharding::Model
   
   # Shard by order_id ranges
   shards_by :id, strategy: :range, ranges: [
@@ -130,8 +130,8 @@ end
 ### Usage Example
 
 ```crystal
-class User < Granite::Base
-  include Granite::Sharding::Model
+class User < Grant::Base
+  include Grant::Sharding::Model
   
   # Shard by user location
   shards_by [:country, :state], strategy: :geo, regions: [

@@ -1,7 +1,7 @@
-require "../../src/granite"
-require "../../src/granite/sharding"
+require "../../src/grant"
+require "../../src/grant/sharding"
 
-module Granite::Testing
+module Grant::Testing
   # Mock database that stores data in memory
   class MockDatabase
     alias Row = Hash(String, DB::Any)
@@ -9,10 +9,10 @@ module Granite::Testing
     
     def initialize
       @tables = {} of String => Table
-      @query_log = [] of NamedTuple(query: String, params: Array(Granite::Columns::Type))
+      @query_log = [] of NamedTuple(query: String, params: Array(Grant::Columns::Type))
     end
     
-    def execute_query(query : String, params : Array(Granite::Columns::Type) = [] of Granite::Columns::Type) : Array(Row)
+    def execute_query(query : String, params : Array(Grant::Columns::Type) = [] of Grant::Columns::Type) : Array(Row)
       @query_log << {query: query, params: params}
       
       # Simple query parsing - this is just for testing
@@ -92,16 +92,16 @@ module Granite::Testing
   end
   
   # Virtual adapter that routes queries to mock databases per shard
-  class VirtualShardAdapter < Granite::Adapter::Base
+  class VirtualShardAdapter < Grant::Adapter::Base
     QUOTING_CHAR = '"'
     
     @@shards = {} of Symbol => MockDatabase
     @@query_tracking = {} of Symbol => Array(String)
     
     getter shard : Symbol
-    getter base_adapter : Granite::Adapter::Base
+    getter base_adapter : Grant::Adapter::Base
     
-    def initialize(@shard : Symbol, @base_adapter : Granite::Adapter::Base)
+    def initialize(@shard : Symbol, @base_adapter : Grant::Adapter::Base)
       super("virtual_#{@shard}", "virtual://#{@shard}")
       @@shards[@shard] ||= MockDatabase.new
     end
@@ -115,15 +115,15 @@ module Granite::Testing
       @@query_tracking.clear
     end
     
-    def self.query_log(shard : Symbol) : Array(NamedTuple(query: String, params: Array(Granite::Columns::Type)))
-      @@shards[shard]?.try(&.query_log) || [] of NamedTuple(query: String, params: Array(Granite::Columns::Type))
+    def self.query_log(shard : Symbol) : Array(NamedTuple(query: String, params: Array(Grant::Columns::Type)))
+      @@shards[shard]?.try(&.query_log) || [] of NamedTuple(query: String, params: Array(Grant::Columns::Type))
     end
     
     def clear(table_name : String)
       mock_db.execute_query("DELETE FROM #{table_name}")
     end
     
-    def select(query : Granite::Select::Container, clause = "", params = [] of Granite::Columns::Type, &)
+    def select(query : Grant::Select::Container, clause = "", params = [] of Grant::Columns::Type, &)
       statement = String.build do |stmt|
         stmt << "SELECT "
         stmt << query.fields.join(", ")
@@ -133,7 +133,7 @@ module Granite::Testing
       track_query(@shard, statement)
       
       # Execute on mock database
-      rows = mock_db.execute_query(statement, params.map(&.as(Granite::Columns::Type)))
+      rows = mock_db.execute_query(statement, params.map(&.as(Grant::Columns::Type)))
       
       # Convert to result set format
       # This is a simplified mock - real implementation would use DB::ResultSet
@@ -142,11 +142,16 @@ module Granite::Testing
       end
     end
     
-    def exists?(table_name : String, criteria : String, params = [] of Granite::Columns::Type) : Bool
+    def query_one?(statement : String, args = [] of Grant::Columns::Type, as type = Bool) : Bool?
+      track_query(@shard, statement)
+      false # Always return false for testing
+    end
+    
+    def exists?(table_name : String, criteria : String, params = [] of Grant::Columns::Type) : Bool
       statement = "SELECT EXISTS(SELECT 1 FROM #{table_name} WHERE #{criteria})"
       track_query(@shard, statement)
       
-      rows = mock_db.execute_query("SELECT * FROM #{table_name} WHERE #{criteria}", params.map(&.as(Granite::Columns::Type)))
+      rows = mock_db.execute_query("SELECT * FROM #{table_name} WHERE #{criteria}", params.map(&.as(Grant::Columns::Type)))
       !rows.empty?
     end
     
@@ -182,14 +187,14 @@ module Granite::Testing
       track_query(@shard, statement)
       
       # Mock update
-      mock_db.execute_query(statement, params.map(&.as(Granite::Columns::Type)))
+      mock_db.execute_query(statement, params.map(&.as(Grant::Columns::Type)))
     end
     
     def delete(table_name : String, primary_name : String, value)
       statement = "DELETE FROM #{table_name} WHERE #{primary_name} = ?"
       track_query(@shard, statement)
       
-      mock_db.execute_query(statement, [value.as(Granite::Columns::Type)])
+      mock_db.execute_query(statement, [value.as(Grant::Columns::Type)])
     end
     
     private def mock_db : MockDatabase
@@ -207,13 +212,13 @@ module Granite::Testing
     end
     
     # Implement abstract method for lock mode support
-    def supports_lock_mode?(mode : Granite::Locking::LockMode) : Bool
+    def supports_lock_mode?(mode : Grant::Locking::LockMode) : Bool
       # Virtual adapter doesn't support locks
       false
     end
     
     # Implement abstract method for isolation level support
-    def supports_isolation_level?(level : Granite::Transaction::IsolationLevel) : Bool
+    def supports_isolation_level?(level : Grant::Transaction::IsolationLevel) : Bool
       # Virtual adapter doesn't support isolation levels
       false
     end
@@ -262,8 +267,8 @@ module Granite::Testing
       VirtualShardAdapter.clear_all
       
       # Set up test mode
-      original_test_mode = Granite::HealthMonitor.test_mode
-      Granite::HealthMonitor.test_mode = true
+      original_test_mode = Grant::HealthMonitor.test_mode
+      Grant::HealthMonitor.test_mode = true
       
       begin
         # Create virtual shards
@@ -271,11 +276,11 @@ module Granite::Testing
           shard_name = :"shard_#{i}"
           
           # Create a base adapter (we'll use the virtual one)
-          base_adapter = Granite::Adapter::Sqlite.new("test", ":memory:")
+          base_adapter = Grant::Adapter::Sqlite.new("test", ":memory:")
           adapter = VirtualShardAdapter.new(shard_name, base_adapter)
           
           # Register with ConnectionRegistry
-          Granite::ConnectionRegistry.establish_connection(
+          Grant::ConnectionRegistry.establish_connection(
             database: "test",
             adapter: VirtualShardAdapter,
             url: "virtual://#{shard_name}",
@@ -287,15 +292,15 @@ module Granite::Testing
         yield
       ensure
         # Cleanup
-        Granite::ConnectionRegistry.clear_all
-        Granite::ShardManager.clear
+        Grant::ConnectionRegistry.clear_all
+        Grant::ShardManager.clear
         VirtualShardAdapter.clear_all
-        Granite::HealthMonitor.test_mode = original_test_mode
+        Grant::HealthMonitor.test_mode = original_test_mode
       end
     end
     
     def track_shard_queries(&block)
-      initial_logs = {} of Symbol => Array(NamedTuple(query: String, params: Array(Granite::Columns::Type)))
+      initial_logs = {} of Symbol => Array(NamedTuple(query: String, params: Array(Grant::Columns::Type)))
       
       VirtualShardAdapter.shards.each do |shard, _|
         initial_logs[shard] = VirtualShardAdapter.query_log(shard).dup
@@ -329,7 +334,7 @@ module Granite::Testing
     
     # Helper to create test data across shards
     def create_distributed_records(model_class, count : Int32, **attributes)
-      records = [] of Granite::Base
+      records = [] of Grant::Base
       
       count.times do |i|
         attrs = attributes.merge({id: i + 1})
@@ -337,9 +342,9 @@ module Granite::Testing
         
         # Determine shard and save
         shard = record.determine_shard
-        Granite::ShardManager.with_shard(shard) do
+        Grant::ShardManager.with_shard(shard) do
           # Manually insert into virtual shard
-          adapter = Granite::ConnectionRegistry.get_adapter("test", :primary, shard)
+          adapter = Grant::ConnectionRegistry.get_adapter("test", :primary, shard)
           if adapter.is_a?(VirtualShardAdapter)
             row = {} of String => DB::Any
             attrs.each do |k, v|

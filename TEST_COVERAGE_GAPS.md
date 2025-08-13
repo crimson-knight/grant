@@ -19,7 +19,7 @@ end
 ### 2. Error Handling Tests
 ```crystal
 it "raises clear error for nil shard keys" do
-  expect_raises(Granite::Sharding::MissingShardKeyError) do
+  expect_raises(Grant::Sharding::MissingShardKeyError) do
     model = ModelWithNullableKey.new(shard_key: nil)
     model.save
   end
@@ -37,15 +37,15 @@ it "maintains shard isolation across fibers" do
   channel = Channel(Symbol).new
   
   spawn do
-    Granite::ShardManager.with_shard(:shard_1) do
+    Grant::ShardManager.with_shard(:shard_1) do
       Fiber.yield
-      channel.send(Granite::ShardManager.current_shard)
+      channel.send(Grant::ShardManager.current_shard)
     end
   end
   
   spawn do
-    Granite::ShardManager.with_shard(:shard_2) do
-      channel.send(Granite::ShardManager.current_shard)
+    Grant::ShardManager.with_shard(:shard_2) do
+      channel.send(Grant::ShardManager.current_shard)
     end
   end
   
@@ -87,7 +87,7 @@ it "handles shard key updates" do
   original_shard = user.current_shard
   
   user.region = "EU"  # Would change shard!
-  expect_raises(Granite::Sharding::ShardKeyMutationError) do
+  expect_raises(Grant::Sharding::ShardKeyMutationError) do
     user.save
   end
 end

@@ -1,8 +1,8 @@
-require "../src/granite"
+require "../src/grant"
 
 # Advanced Query Interface Examples
 
-class User < Granite::Base
+class User < Grant::Base
   connection "primary"
   table users
   
@@ -20,7 +20,7 @@ class User < Granite::Base
   has_many comments : Comment
 end
 
-class Post < Granite::Base
+class Post < Grant::Base
   connection "primary"  
   table posts
   
@@ -36,7 +36,7 @@ class Post < Granite::Base
   has_many comments : Comment
 end
 
-class Comment < Granite::Base
+class Comment < Grant::Base
   connection "primary"
   table comments
   

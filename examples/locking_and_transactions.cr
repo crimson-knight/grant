@@ -1,16 +1,16 @@
-require "../src/granite"
+require "../src/grant"
 require "../src/adapter/sqlite"
 
-# Configure Granite to use SQLite
-Granite::Connections << Granite::Adapter::Sqlite.new(name: "sqlite", url: "sqlite3://./example.db")
+# Configure Grant to use SQLite
+Grant::Connections << Grant::Adapter::Sqlite.new(name: "sqlite", url: "sqlite3://./example.db")
 
 # Example model with optimistic locking
-class Product < Granite::Base
+class Product < Grant::Base
   connection sqlite
   table products
   
   # Include optimistic locking - adds lock_version column
-  include Granite::Locking::Optimistic
+  include Grant::Locking::Optimistic
   
   column id : Int64, primary: true, auto: true
   column name : String
@@ -49,7 +49,7 @@ Product.transaction do
   # This nested transaction will be rolled back
   Product.transaction do
     Product.create!(name: "Temporary Product", price: 1.99, stock: 1)
-    raise Granite::Transaction::Rollback.new
+    raise Grant::Transaction::Rollback.new
   end
   
   puts "Products after nested rollback: #{Product.count}"
@@ -93,7 +93,7 @@ puts "User 1 updated stock to: #{user1_product.stock} (version: #{user1_product.
 begin
   user2_product.stock -= 2
   user2_product.save!
-rescue ex : Granite::Locking::Optimistic::StaleObjectError
+rescue ex : Grant::Locking::Optimistic::StaleObjectError
   puts "User 2 failed: #{ex.message}"
   puts "Conflict detected! Need to reload and retry."
 end
@@ -132,12 +132,12 @@ puts "\n=== Example 8: Transaction Isolation Levels ==="
 puts "\n=== Example 9: Different Lock Modes ==="
 Product.transaction do
   # Exclusive lock (FOR UPDATE)
-  Product.where(name: "Laptop").lock(Granite::Locking::LockMode::Update).first
+  Product.where(name: "Laptop").lock(Grant::Locking::LockMode::Update).first
   puts "Acquired exclusive lock"
   
   # Shared lock (FOR SHARE) - only in PostgreSQL/MySQL
-  if Product.adapter.supports_lock_mode?(Granite::Locking::LockMode::Share)
-    Product.where(name: "Mouse").lock(Granite::Locking::LockMode::Share).first
+  if Product.adapter.supports_lock_mode?(Grant::Locking::LockMode::Share)
+    Product.where(name: "Mouse").lock(Grant::Locking::LockMode::Share).first
     puts "Acquired shared lock"
   end
 end

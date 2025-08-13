@@ -5,8 +5,8 @@
 This is the most straightforward approach using Crystal's standard library:
 
 ```crystal
-class Order < Granite::Base
-  include Granite::Sharding::Model
+class Order < Grant::Base
+  include Grant::Sharding::Model
   
   # Composite key: "2024_01_15_1234567890_abc123"
   # Format: YYYY_MM_DD_TIMESTAMP_RANDOM
@@ -51,8 +51,8 @@ end
 Using Int64 with microsecond precision for natural time ordering:
 
 ```crystal
-class Event < Granite::Base
-  include Granite::Sharding::Model
+class Event < Grant::Base
+  include Grant::Sharding::Model
   
   # ID is microseconds since epoch
   column id : Int64, primary: true
@@ -123,7 +123,7 @@ create_table :shard_sequences do
 end
 
 # Sequence manager
-class ShardSequence < Granite::Base
+class ShardSequence < Grant::Base
   connection "primary"
   table shard_sequences
   
@@ -154,7 +154,7 @@ class ShardSequence < Granite::Base
     year_month = Time.utc.to_s("%Y_%m")
     
     # Atomic increment
-    result = Granite::Base.exec(<<-SQL, shard.to_s, year_month)
+    result = Grant::Base.exec(<<-SQL, shard.to_s, year_month)
       UPDATE shard_sequences 
       SET next_value = next_value + 1
       WHERE shard_name = ? AND year_month = ?
@@ -165,8 +165,8 @@ class ShardSequence < Granite::Base
   end
 end
 
-class Order < Granite::Base
-  include Granite::Sharding::Model
+class Order < Grant::Base
+  include Grant::Sharding::Model
   
   # IDs are pre-allocated per shard
   shards_by :id, strategy: :range, ranges: [
@@ -192,8 +192,8 @@ end
 The simplest approach - just use formatted timestamps:
 
 ```crystal
-class LogEntry < Granite::Base
-  include Granite::Sharding::Model
+class LogEntry < Grant::Base
+  include Grant::Sharding::Model
   
   # ID format: "20240115_143052_123456_a3f7"
   # YearMonthDay_HourMinSec_Microsec_Random
@@ -236,7 +236,7 @@ end
 
 ## Recommended Implementation
 
-For Grant/Granite, I recommend **Option 1 (Composite String Keys)** because:
+For Grant/Grant, I recommend **Option 1 (Composite String Keys)** because:
 
 1. **No external dependencies** - Uses only Crystal stdlib
 2. **Human-readable** - Easy debugging and operations
@@ -246,7 +246,7 @@ For Grant/Granite, I recommend **Option 1 (Composite String Keys)** because:
 Here's a complete implementation:
 
 ```crystal
-module Granite::Sharding
+module Grant::Sharding
   module CompositeId
     def generate_sharded_id(prefix : String? = nil) : String
       now = Time.utc
@@ -266,9 +266,9 @@ module Granite::Sharding
 end
 
 # Usage
-class Order < Granite::Base
-  include Granite::Sharding::Model
-  extend Granite::Sharding::CompositeId
+class Order < Grant::Base
+  include Grant::Sharding::Model
+  extend Grant::Sharding::CompositeId
   
   column id : String, primary: true
   

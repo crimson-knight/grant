@@ -11,7 +11,7 @@ Unlike ID-based sharding where the shard key is generated, region-based sharding
 The most straightforward approach - store region as part of user data:
 
 ```crystal
-class User < Granite::Base
+class User < Grant::Base
   column id : Int64, primary: true
   column email : String
   column country : String      # Explicit region data
@@ -41,8 +41,8 @@ class User < Granite::Base
 end
 
 # Orders inherit region from user
-class Order < Granite::Base
-  include Granite::Sharding::Model
+class Order < Grant::Base
+  include Grant::Sharding::Model
   
   belongs_to user : User
   
@@ -84,7 +84,7 @@ class GeoLocationMiddleware
     region_info = GeoIP.lookup(client_ip)
     
     # Store in fiber-local context
-    Granite::ShardManager.set_context(
+    Grant::ShardManager.set_context(
       country: region_info.country_code,
       state: region_info.state_code,
       city: region_info.city
@@ -95,8 +95,8 @@ class GeoLocationMiddleware
 end
 
 # Models can access region context
-class Event < Granite::Base
-  include Granite::Sharding::Model
+class Event < Grant::Base
+  include Grant::Sharding::Model
   
   shards_by [:country, :state], strategy: :geo
   
@@ -108,7 +108,7 @@ class Event < Granite::Base
   before_create :set_region_from_context
   
   private def set_region_from_context
-    if context = Granite::ShardManager.current_context
+    if context = Grant::ShardManager.current_context
       self.country = context[:country]
       self.state = context[:state]?
     else
@@ -145,8 +145,8 @@ class APIController
   end
 end
 
-class Order < Granite::Base
-  include Granite::Sharding::Model
+class Order < Grant::Base
+  include Grant::Sharding::Model
   
   # Simple region field
   shards_by :region, strategy: :lookup, mapping: {
@@ -165,8 +165,8 @@ end
 Region based on business rules:
 
 ```crystal
-class Transaction < Granite::Base
-  include Granite::Sharding::Model
+class Transaction < Grant::Base
+  include Grant::Sharding::Model
   
   # Shard by merchant's region
   shards_by [:merchant_country], strategy: :geo
@@ -195,8 +195,8 @@ end
 Some records need to exist in multiple regions:
 
 ```crystal
-class GlobalProduct < Granite::Base
-  include Granite::Sharding::Model
+class GlobalProduct < Grant::Base
+  include Grant::Sharding::Model
   
   # Products replicated to all regions for fast reads
   shards_by :primary_region, strategy: :geo, 
@@ -208,13 +208,13 @@ class GlobalProduct < Granite::Base
   
   # Reads can happen from any region
   def self.find_in_nearest_region(id : Int64)
-    nearest_shard = Granite::ShardManager.nearest_shard
+    nearest_shard = Grant::ShardManager.nearest_shard
     on_shard(nearest_shard).find(id)
   end
   
   # Writes go to primary region
   def save
-    self.primary_region ||= Granite::ShardManager.current_region
+    self.primary_region ||= Grant::ShardManager.current_region
     super
   end
 end
@@ -223,7 +223,7 @@ end
 ## Practical Implementation for Grant
 
 ```crystal
-module Granite::Sharding
+module Grant::Sharding
   # Region determination helpers
   module RegionDetermination
     # Strategy 1: Explicit field
@@ -266,7 +266,7 @@ module Granite::Sharding
         before_create :set_region_from_context
         
         private def set_region_from_context
-          if context = Granite::ShardManager.current_context
+          if context = Grant::ShardManager.current_context
             self.country = context[:country]? || raise "No country in context"
             self.state = context[:state]?
           else
@@ -281,17 +281,17 @@ end
 # Usage Examples:
 
 # 1. Explicit region (e.g., user chooses at signup)
-class User < Granite::Base
-  include Granite::Sharding::Model
-  include Granite::Sharding::RegionDetermination::ExplicitRegion
+class User < Grant::Base
+  include Grant::Sharding::Model
+  include Grant::Sharding::RegionDetermination::ExplicitRegion
   
   shards_by [:country, :state], strategy: :geo
 end
 
 # 2. Derived region (e.g., order uses customer's region)
-class Order < Granite::Base
-  include Granite::Sharding::Model
-  include Granite::Sharding::RegionDetermination::DerivedRegion
+class Order < Grant::Base
+  include Grant::Sharding::Model
+  include Grant::Sharding::RegionDetermination::DerivedRegion
   
   belongs_to customer : Customer
   
@@ -300,9 +300,9 @@ class Order < Granite::Base
 end
 
 # 3. Context region (e.g., events use request location)
-class PageView < Granite::Base
-  include Granite::Sharding::Model
-  include Granite::Sharding::RegionDetermination::ContextRegion
+class PageView < Grant::Base
+  include Grant::Sharding::Model
+  include Grant::Sharding::RegionDetermination::ContextRegion
   
   shards_by [:country], strategy: :geo
 end

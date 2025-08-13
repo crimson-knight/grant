@@ -7,7 +7,7 @@ Phase 1 of the Grant ORM enhancement project has been successfully completed. Th
 ## Key Accomplishments
 
 ### 1. Composite Primary Key Support ✅
-- Created `Granite::CompositePrimaryKey` module as an opt-in feature
+- Created `Grant::CompositePrimaryKey` module as an opt-in feature
 - Implemented DSL macro `composite_primary_key` for easy declaration
 - Added query methods: `find`, `find!`, `exists?` with composite key support
 - Implemented automatic validation for presence and uniqueness
@@ -38,7 +38,7 @@ Phase 1 of the Grant ORM enhancement project has been successfully completed. Th
 
 ### Composite Key Module Structure
 ```crystal
-module Granite::CompositePrimaryKey
+module Grant::CompositePrimaryKey
   ├── CompositeKey struct         # Manages key configuration
   ├── Transactions module         # Transaction support (foundation)
   ├── Validation module          # Automatic validations
@@ -47,8 +47,8 @@ module Granite::CompositePrimaryKey
 
 ### Usage Example
 ```crystal
-class OrderItem < Granite::Base
-  include Granite::CompositePrimaryKey
+class OrderItem < Grant::Base
+  include Grant::CompositePrimaryKey
   
   column order_id : Int64, primary: true
   column product_id : Int64, primary: true
@@ -62,7 +62,7 @@ item = OrderItem.find(order_id: 123, product_id: 456)
 
 ## Current Limitations
 
-1. **Transaction Support**: Save/update/destroy operations need deeper integration with Granite's transaction system
+1. **Transaction Support**: Save/update/destroy operations need deeper integration with Grant's transaction system
 2. **Associations**: Composite foreign keys not yet implemented
 3. **Migrations**: Table creation with composite keys needs migration support
 
@@ -100,8 +100,8 @@ PR #5: [feat: Phase 1 - Critical Infrastructure for Multiple Database Support an
 - 33 deletions(-)
 
 ### Key Files
-- `src/granite/composite_primary_key.cr` - Main module
-- `spec/granite/composite_primary_key_spec.cr` - Test suite
+- `src/grant/composite_primary_key.cr` - Main module
+- `spec/grant/composite_primary_key_spec.cr` - Test suite
 - `.github/workflows/spec.yml` - Updated CI configuration
 - Various documentation files
 

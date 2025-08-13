@@ -52,8 +52,8 @@ Complete documentation has been provided:
 
 ### Dirty Tracking Integration
 Instead of a separate module, dirty tracking was integrated directly into:
-- `Granite::Base` - Core dirty tracking methods and storage
-- `Granite::Columns` - Per-attribute method generation in column macro
+- `Grant::Base` - Core dirty tracking methods and storage
+- `Grant::Columns` - Per-attribute method generation in column macro
 
 This approach ensures:
 - Better performance with minimal overhead

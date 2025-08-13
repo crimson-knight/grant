@@ -1,6 +1,6 @@
 # Nested Attributes for Grant
 
-This feature provides Rails-style nested attributes functionality for Grant (Granite ORM), allowing you to save associated records through the parent record.
+This feature provides Rails-style nested attributes functionality for Grant (Grant ORM), allowing you to save associated records through the parent record.
 
 ## Features
 
@@ -15,7 +15,7 @@ This feature provides Rails-style nested attributes functionality for Grant (Gra
 ### Basic Setup
 
 ```crystal
-class Author < Granite::Base
+class Author < Grant::Base
   connection sqlite
   table authors
   
@@ -38,7 +38,7 @@ class Author < Granite::Base
   enable_nested_saves
 end
 
-class Post < Granite::Base
+class Post < Grant::Base
   connection sqlite
   table posts
   
@@ -50,7 +50,7 @@ class Post < Granite::Base
   belongs_to :author
 end
 
-class Profile < Granite::Base
+class Profile < Grant::Base
   connection sqlite
   table profiles
   
@@ -151,7 +151,7 @@ accepts_nested_attributes_for :posts
 After declaring all nested attributes, call `enable_nested_saves` to set up the after_save callback:
 
 ```crystal
-class Author < Granite::Base
+class Author < Grant::Base
   # ... associations ...
   
   accepts_nested_attributes_for posts : Post
@@ -167,7 +167,7 @@ end
 If you need more control over when nested attributes are saved, you can manually call the save methods:
 
 ```crystal
-class Author < Granite::Base
+class Author < Grant::Base
   # ... setup ...
   
   def save(**args)

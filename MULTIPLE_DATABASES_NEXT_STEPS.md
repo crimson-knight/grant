@@ -115,9 +115,9 @@ After thorough research of Rails' multiple database implementation and analysis 
 ### Current Code
 ```crystal
 # Current Grant code
-Granite::Connections << Granite::Adapter::Pg.new(name: "primary", url: ENV["DATABASE_URL"])
+Grant::Connections << Grant::Adapter::Pg.new(name: "primary", url: ENV["DATABASE_URL"])
 
-class User < Granite::Base
+class User < Grant::Base
   connection "primary"
 end
 ```
@@ -125,15 +125,15 @@ end
 ### Migration Step 1: Add New Configuration
 ```crystal
 # New configuration (backward compatible)
-Granite::ConnectionHandler.establish_connection(
+Grant::ConnectionHandler.establish_connection(
   database: "primary",
-  adapter: Granite::Adapter::Pg,
+  adapter: Grant::Adapter::Pg,
   url: ENV["DATABASE_URL"],
   role: :writing
 )
 
 # Models continue to work unchanged
-class User < Granite::Base
+class User < Grant::Base
   connection "primary"  # Still works
 end
 ```
@@ -141,7 +141,7 @@ end
 ### Migration Step 2: Adopt New Features
 ```crystal
 # Enhanced model with read replica
-class User < Granite::Base
+class User < Grant::Base
   connects_to database: {
     writing: "primary",
     reading: "primary_replica"
@@ -149,8 +149,8 @@ class User < Granite::Base
 end
 
 # Sharded model
-class Order < Granite::Base
-  include Granite::Sharding::ShardedModel
+class Order < Grant::Base
+  include Grant::Sharding::ShardedModel
   
   connects_to shards: {
     shard1: { writing: "orders_1", reading: "orders_1_replica" },

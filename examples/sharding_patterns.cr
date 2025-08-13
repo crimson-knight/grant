@@ -1,27 +1,27 @@
-require "../src/granite"
-require "../src/granite/sharding"
+require "../src/grant"
+require "../src/grant/sharding"
 
 # GOOD PATTERNS - These work well with sharding
 
 # Pattern 1: Keep related data on same shard
-class User < Granite::Base
-  include Granite::Sharding::Model
+class User < Grant::Base
+  include Grant::Sharding::Model
   shards_by :id, strategy: :hash, count: 4
   
   has_many orders : Order
   has_many addresses : Address
 end
 
-class Order < Granite::Base
-  include Granite::Sharding::Model
+class Order < Grant::Base
+  include Grant::Sharding::Model
   shards_by :user_id, strategy: :hash, count: 4  # Same as User!
   
   belongs_to user : User
   has_many order_items : OrderItem
 end
 
-class OrderItem < Granite::Base
-  include Granite::Sharding::Model
+class OrderItem < Grant::Base
+  include Grant::Sharding::Model
   shards_by :user_id, strategy: :hash, count: 4  # Denormalized from Order
   
   belongs_to order : Order
@@ -77,8 +77,8 @@ class OrderService
 end
 
 # Pattern 4: Denormalization for read performance
-class DenormalizedOrder < Granite::Base
-  include Granite::Sharding::Model
+class DenormalizedOrder < Grant::Base
+  include Grant::Sharding::Model
   shards_by :user_id, strategy: :hash, count: 4
   
   # Order data
@@ -122,7 +122,7 @@ end
 # No atomicity guarantee!
 
 # Anti-pattern 3: Global unique constraints
-# class Email < Granite::Base
+# class Email < Grant::Base
 #   validates :address, uniqueness: true  # Can't enforce across shards!
 # end
 

@@ -50,7 +50,7 @@ result = channel.receive
 **Why partially not needed**: Crystal can use typed JSON columns.
 ```crystal
 # Crystal way with typed JSON
-class User < Granite::Base
+class User < Grant::Base
   column preferences : JSON::Any
   
   # Or with a specific type

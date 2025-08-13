@@ -53,7 +53,7 @@ User.transaction do
   # Nested transaction with savepoint
   User.transaction do
     audit_log.save!
-    raise Granite::Transaction::Rollback.new  # Only rolls back the nested transaction
+    raise Grant::Transaction::Rollback.new  # Only rolls back the nested transaction
   end
   
   # user.save! is still committed
@@ -118,13 +118,13 @@ Grant provides type-safe lock modes instead of raw SQL strings:
 user = User.where(id: 1).lock.first!
 
 # Shared lock (FOR SHARE)
-user = User.where(id: 1).lock(Granite::Locking::LockMode::Share).first!
+user = User.where(id: 1).lock(Grant::Locking::LockMode::Share).first!
 
 # Non-waiting lock (fails immediately if locked)
-user = User.where(id: 1).lock(Granite::Locking::LockMode::UpdateNoWait).first!
+user = User.where(id: 1).lock(Grant::Locking::LockMode::UpdateNoWait).first!
 
 # Skip locked rows
-users = User.where(active: true).lock(Granite::Locking::LockMode::UpdateSkipLocked).to_a
+users = User.where(active: true).lock(Grant::Locking::LockMode::UpdateSkipLocked).to_a
 ```
 
 Available lock modes:
@@ -164,11 +164,11 @@ Optimistic locking uses a version column to detect concurrent modifications.
 
 ### Setup
 
-Include the `Granite::Locking::Optimistic` module in your model:
+Include the `Grant::Locking::Optimistic` module in your model:
 
 ```crystal
-class Product < Granite::Base
-  include Granite::Locking::Optimistic
+class Product < Grant::Base
+  include Grant::Locking::Optimistic
   
   column id : Int64, primary: true
   column name : String
@@ -196,7 +196,7 @@ user1_product.save!
 user2_product.price = 89.99
 begin
   user2_product.save!
-rescue ex : Granite::Locking::Optimistic::StaleObjectError
+rescue ex : Grant::Locking::Optimistic::StaleObjectError
   # Handle the conflict
   puts "Another user modified this record. Please reload and try again."
   user2_product.reload
@@ -246,11 +246,11 @@ end
 Check adapter capabilities:
 
 ```crystal
-if User.adapter.supports_lock_mode?(Granite::Locking::LockMode::UpdateSkipLocked)
+if User.adapter.supports_lock_mode?(Grant::Locking::LockMode::UpdateSkipLocked)
   # Use skip locked feature
 end
 
-if User.adapter.supports_isolation_level?(Granite::Transaction::IsolationLevel::Serializable)
+if User.adapter.supports_isolation_level?(Grant::Transaction::IsolationLevel::Serializable)
   # Use serializable isolation
 end
 
@@ -282,7 +282,7 @@ end
 Add optimistic locking to existing tables:
 
 ```crystal
-class AddOptimisticLocking < Granite::Migration
+class AddOptimisticLocking < Grant::Migration
   def up
     add_column :products, :lock_version, :integer, default: 0, null: false
     add_index :products, :lock_version

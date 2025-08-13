@@ -11,7 +11,7 @@ Polymorphic associations use a pair of columns to store both the associated reco
 ### Setting up a Polymorphic belongs_to
 
 ```crystal
-class Comment < Granite::Base
+class Comment < Grant::Base
   connection sqlite
   table comments
   
@@ -26,7 +26,7 @@ end
 ### Setting up the Parent Models
 
 ```crystal
-class Post < Granite::Base
+class Post < Grant::Base
   connection sqlite
   table posts
   
@@ -38,7 +38,7 @@ class Post < Granite::Base
   has_many :comments, as: :commentable
 end
 
-class Photo < Granite::Base
+class Photo < Grant::Base
   connection sqlite
   table photos
   
@@ -133,7 +133,7 @@ recent_post_comments = Comment
 You can customize the column names used for the polymorphic association:
 
 ```crystal
-class Comment < Granite::Base
+class Comment < Grant::Base
   belongs_to :owner, polymorphic: true, 
     foreign_key: :owner_id,
     type_column: :owner_class
@@ -145,18 +145,18 @@ end
 Polymorphic associations also work with `has_one`:
 
 ```crystal
-class Image < Granite::Base
+class Image < Grant::Base
   column id : Int64, primary: true
   column url : String
   
   belongs_to :imageable, polymorphic: true
 end
 
-class Post < Granite::Base
+class Post < Grant::Base
   has_one :image, as: :imageable
 end
 
-class User < Granite::Base
+class User < Grant::Base
   has_one :avatar, class_name: Image, as: :imageable
 end
 ```
@@ -168,12 +168,12 @@ Polymorphic associations work seamlessly with other association options:
 ### With Dependent Options
 
 ```crystal
-class Author < Granite::Base
+class Author < Grant::Base
   # Destroy all notes when author is destroyed
   has_many :notes, as: :notable, dependent: :destroy
 end
 
-class Product < Granite::Base
+class Product < Grant::Base
   # Nullify attachments when product is destroyed
   has_many :attachments, as: :attachable, dependent: :nullify
 end
@@ -182,11 +182,11 @@ end
 ### With Counter Cache
 
 ```crystal
-class Reaction < Granite::Base
+class Reaction < Grant::Base
   belongs_to :reactable, polymorphic: true, counter_cache: :reactions_count
 end
 
-class Post < Granite::Base
+class Post < Grant::Base
   column reactions_count : Int32
   has_many :reactions, as: :reactable
 end
@@ -195,12 +195,12 @@ end
 ### With Touch
 
 ```crystal
-class Activity < Granite::Base
+class Activity < Grant::Base
   # Updates trackable's updated_at when activity is saved
   belongs_to :trackable, polymorphic: true, touch: true
 end
 
-class Task < Granite::Base
+class Task < Grant::Base
   # Updates last_activity_at specifically
   belongs_to :trackable, polymorphic: true, touch: :last_activity_at
 end
@@ -209,7 +209,7 @@ end
 ### With Optional
 
 ```crystal
-class Tagging < Granite::Base
+class Tagging < Grant::Base
   # Tag is required, but taggable is optional
   belongs_to :tag
   belongs_to :taggable, polymorphic: true, optional: true
@@ -218,12 +218,12 @@ end
 
 ## Type Registration
 
-Grant automatically registers all models that inherit from `Granite::Base` for polymorphic type resolution. This happens through the `inherited` macro, so no manual registration is required.
+Grant automatically registers all models that inherit from `Grant::Base` for polymorphic type resolution. This happens through the `inherited` macro, so no manual registration is required.
 
 If you need to manually register a type for any reason:
 
 ```crystal
-Granite::Polymorphic.register_type("MyModel", MyModel)
+Grant::Polymorphic.register_type("MyModel", MyModel)
 ```
 
 ## Limitations and Considerations
@@ -279,21 +279,21 @@ CREATE TABLE comments (
 Here's a complete example of a polymorphic tagging system:
 
 ```crystal
-class Tag < Granite::Base
+class Tag < Grant::Base
   column id : Int64, primary: true
   column name : String
   
   has_many :taggings
 end
 
-class Tagging < Granite::Base
+class Tagging < Grant::Base
   column id : Int64, primary: true
   
   belongs_to :tag
   belongs_to :taggable, polymorphic: true
 end
 
-class Article < Granite::Base
+class Article < Grant::Base
   column id : Int64, primary: true
   column title : String
   
@@ -304,7 +304,7 @@ class Article < Granite::Base
   end
 end
 
-class Product < Granite::Base
+class Product < Grant::Base
   column id : Int64, primary: true
   column name : String
   

@@ -23,13 +23,13 @@ Phase 1 has been implemented but requires fixes for full functionality. See sect
 
 2. **Dirty Tracking Macro Timing**
    - Issue: Macro tries to access instance vars before initialization
-   - Location: `src/granite/dirty.cr:148`
+   - Location: `src/grant/dirty.cr:148`
    - Current Fix: `setup_dirty_tracking` call commented out in `base.cr:103`
    - Solution: Restructure macro to use `macro finished` or alternative approach
 
 3. **Association Metadata Retrieval**
    - Issue: Runtime access to compile-time generated metadata
-   - Location: `src/granite/association_loader.cr:133`
+   - Location: `src/grant/association_loader.cr:133`
    - Current Fix: Returns nil (eager loading non-functional)
    - Solution: Implement proper metadata registry system
 
@@ -51,7 +51,7 @@ lib/pg/src/pg/result_set.cr:18
 
 #### Fix 2: Dirty Tracking Macro
 ```crystal
-# In src/granite/dirty.cr, restructure the macro:
+# In src/grant/dirty.cr, restructure the macro:
 macro setup_dirty_tracking
   # Use event-based approach instead of macro timing
   def after_initialize
@@ -67,8 +67,8 @@ end
 
 #### Fix 3: Association Metadata Registry
 ```crystal
-# Create src/granite/association_registry.cr
-module Granite::AssociationRegistry
+# Create src/grant/association_registry.cr
+module Grant::AssociationRegistry
   @@registry = {} of String => Hash(String, NamedTuple(...))
   
   # Populate at compile time using macro hooks
@@ -93,11 +93,11 @@ end
 
 **Implementation Steps**:
 
-1. **Create new module**: `src/granite/eager_loading.cr`
+1. **Create new module**: `src/grant/eager_loading.cr`
    ```crystal
-   module Granite::EagerLoading
+   module Grant::EagerLoading
      # Track loaded associations per instance
-     @loaded_associations = {} of String => Array(Granite::Base)
+     @loaded_associations = {} of String => Array(Grant::Base)
      
      module ClassMethods
        def includes(*associations)
@@ -115,17 +115,17 @@ end
    end
    ```
 
-2. **Modify**: `src/granite/query/builder.cr`
+2. **Modify**: `src/grant/query/builder.cr`
    - Add `@eager_load_associations : Array(Symbol)`
    - Add `@preload_associations : Array(Symbol)`
    - Modify `#exec` to handle eager loading
 
-3. **Modify**: `src/granite/associations.cr`
+3. **Modify**: `src/grant/associations.cr`
    - Add association caching mechanism
    - Modify association getters to check cache first
    - Add `loaded?` method to check if association is loaded
 
-4. **Create**: `src/granite/association_loader.cr`
+4. **Create**: `src/grant/association_loader.cr`
    - Implement batch loading logic
    - Handle different association types (belongs_to, has_many, has_one)
    - Optimize queries to load all associations in minimal queries
@@ -137,9 +137,9 @@ end
 - No breaking changes to existing association methods
 
 **Test Files to Create**:
-- `spec/granite/eager_loading/includes_spec.cr`
-- `spec/granite/eager_loading/preload_spec.cr`
-- `spec/granite/eager_loading/eager_load_spec.cr`
+- `spec/grant/eager_loading/includes_spec.cr`
+- `spec/grant/eager_loading/preload_spec.cr`
+- `spec/grant/eager_loading/eager_load_spec.cr`
 
 ---
 
@@ -154,11 +154,11 @@ end
 
 **Implementation Steps**:
 
-1. **Create module**: `src/granite/dirty.cr`
+1. **Create module**: `src/grant/dirty.cr`
    ```crystal
-   module Granite::Dirty
-     @original_attributes = {} of String => Granite::Columns::Type
-     @changed_attributes = {} of String => Granite::Columns::Type
+   module Grant::Dirty
+     @original_attributes = {} of String => Grant::Columns::Type
+     @changed_attributes = {} of String => Grant::Columns::Type
      
      def attribute_changed?(name : String | Symbol)
      def attribute_was(name : String | Symbol)
@@ -171,12 +171,12 @@ end
    end
    ```
 
-2. **Modify**: `src/granite/columns.cr`
+2. **Modify**: `src/grant/columns.cr`
    - Intercept all setter methods to track changes
    - Store original values on load from database
    - Clear dirty state after save
 
-3. **Modify**: `src/granite/transactions.cr`
+3. **Modify**: `src/grant/transactions.cr`
    - Update `save` to store `previous_changes`
    - Clear dirty tracking after successful save
    - Restore state on failed save
@@ -189,8 +189,8 @@ end
 - Works with all column types including arrays and JSON
 
 **Test Files**:
-- `spec/granite/dirty/dirty_tracking_spec.cr`
-- `spec/granite/dirty/saved_changes_spec.cr`
+- `spec/grant/dirty/dirty_tracking_spec.cr`
+- `spec/grant/dirty/saved_changes_spec.cr`
 
 ---
 
@@ -205,7 +205,7 @@ end
 
 **Implementation Steps**:
 
-1. **Modify**: `src/granite/callbacks.cr`
+1. **Modify**: `src/grant/callbacks.cr`
    ```crystal
    CALLBACK_NAMES = %w(
      after_initialize after_find
@@ -246,9 +246,9 @@ end
 - Maintain callback execution order
 
 **Test Files**:
-- `spec/granite/callbacks/lifecycle_callbacks_spec.cr`
-- `spec/granite/callbacks/conditional_callbacks_spec.cr`
-- `spec/granite/callbacks/commit_callbacks_spec.cr`
+- `spec/grant/callbacks/lifecycle_callbacks_spec.cr`
+- `spec/grant/callbacks/conditional_callbacks_spec.cr`
+- `spec/grant/callbacks/commit_callbacks_spec.cr`
 
 ---
 
@@ -263,9 +263,9 @@ end
 
 **Implementation Steps**:
 
-1. **Create module**: `src/granite/scoping.cr`
+1. **Create module**: `src/grant/scoping.cr`
    ```crystal
-   module Granite::Scoping
+   module Grant::Scoping
      macro scope(name, body)
        def self.{{name.id}}
          {{body.id}}.call
@@ -301,9 +301,9 @@ end
 - `merge` combines conditions properly
 
 **Test Files**:
-- `spec/granite/scoping/named_scopes_spec.cr`
-- `spec/granite/scoping/default_scope_spec.cr`
-- `spec/granite/scoping/scope_merging_spec.cr`
+- `spec/grant/scoping/named_scopes_spec.cr`
+- `spec/grant/scoping/default_scope_spec.cr`
+- `spec/grant/scoping/scope_merging_spec.cr`
 
 ---
 
@@ -315,7 +315,7 @@ end
 
 **Implementation Steps**:
 
-1. **Modify**: `src/granite/associations.cr`
+1. **Modify**: `src/grant/associations.cr`
    ```crystal
    macro belongs_to(name, polymorphic = false, **options)
      {% if polymorphic %}
@@ -383,9 +383,9 @@ end
 
 **Implementation Steps**:
 
-1. **Create**: `src/granite/attributes.cr`
+1. **Create**: `src/grant/attributes.cr`
    ```crystal
-   module Granite::Attributes
+   module Grant::Attributes
      macro attribute(name, type, default = nil)
        # Define getter/setter with type casting
        # Store in attributes hash
@@ -418,7 +418,7 @@ end
 
 **Implementation Steps**:
 
-1. **Create macro**: `src/granite/enum.cr`
+1. **Create macro**: `src/grant/enum.cr`
    ```crystal
    macro enum(name, values)
      # Create constants
@@ -452,7 +452,7 @@ end
 
 **Implementation Steps**:
 
-1. **Create**: `src/granite/query_cache.cr`
+1. **Create**: `src/grant/query_cache.cr`
    - Thread-local cache storage
    - Cache key generation from SQL + params
    - Automatic cache invalidation on writes
@@ -477,7 +477,7 @@ end
 
 **Implementation Steps**:
 
-1. **STI module**: `src/granite/sti.cr`
+1. **STI module**: `src/grant/sti.cr`
    - Auto-set type column on save
    - Instantiate correct class on load
    - Query scoping by type
@@ -596,21 +596,21 @@ Before considering a feature complete:
 ## Phase 1 Files Modified/Created
 
 ### New Files:
-- `src/granite/eager_loading.cr`
-- `src/granite/association_loader.cr`
-- `src/granite/loaded_association_collection.cr`
-- `src/granite/association_registry.cr`
-- `src/granite/dirty.cr`
-- `src/granite/commit_callbacks.cr`
-- `src/granite/scoping.cr`
-- `src/granite/eager_loading_simple.cr` (temporary)
+- `src/grant/eager_loading.cr`
+- `src/grant/association_loader.cr`
+- `src/grant/loaded_association_collection.cr`
+- `src/grant/association_registry.cr`
+- `src/grant/dirty.cr`
+- `src/grant/commit_callbacks.cr`
+- `src/grant/scoping.cr`
+- `src/grant/eager_loading_simple.cr` (temporary)
 - All corresponding spec files
 
 ### Modified Files:
-- `src/granite/base.cr`
-- `src/granite/associations.cr`
-- `src/granite/callbacks.cr`
-- `src/granite/querying.cr`
-- `src/granite/query/builder.cr`
-- `src/granite/transactions.cr`
-- `src/granite/validators.cr`
+- `src/grant/base.cr`
+- `src/grant/associations.cr`
+- `src/grant/callbacks.cr`
+- `src/grant/querying.cr`
+- `src/grant/query/builder.cr`
+- `src/grant/transactions.cr`
+- `src/grant/validators.cr`

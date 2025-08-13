@@ -10,7 +10,7 @@ This document outlines a comprehensive plan to implement Rails-like multiple dat
 
 Grant currently has basic multiple database support with these features:
 
-1. **Connection Registry**: `Granite::Connections` stores database connections
+1. **Connection Registry**: `Grant::Connections` stores database connections
 2. **Read/Write Splitting**: Basic support for reader/writer separation
 3. **Connection Switching**: Time-based switching after writes (default 2000ms)
 4. **Per-Model Connection**: Models specify connection via `connection` macro

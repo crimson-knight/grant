@@ -1,4 +1,4 @@
-# Horizontal Sharding in Grant (Granite)
+# Horizontal Sharding in Grant (Grant)
 
 > **⚠️ EXPERIMENTAL FEATURE**
 > 
@@ -38,8 +38,8 @@ Grant provides horizontal sharding capabilities to distribute data across multip
 ### 1. Hash-Based Sharding
 
 ```crystal
-class User < Granite::Base
-  include Granite::Sharding::Model
+class User < Grant::Base
+  include Grant::Sharding::Model
   
   # Distribute users across 4 shards using ID hash
   shards_by :id, strategy: :hash, count: 4
@@ -52,9 +52,9 @@ end
 ### 2. Range-Based Sharding
 
 ```crystal
-class Order < Granite::Base
-  include Granite::Sharding::Model
-  extend Granite::Sharding::CompositeId
+class Order < Grant::Base
+  include Grant::Sharding::Model
+  extend Grant::Sharding::CompositeId
   
   # Shard by time ranges
   shards_by :id, strategy: :range, ranges: [
@@ -76,8 +76,8 @@ end
 ### 3. Geographic Sharding
 
 ```crystal
-class Customer < Granite::Base
-  include Granite::Sharding::Model
+class Customer < Grant::Base
+  include Grant::Sharding::Model
   
   # Shard by location
   shards_by [:country, :state], strategy: :geo,
@@ -161,17 +161,17 @@ Each shard needs to be registered:
 
 ```crystal
 # config/database.cr
-Granite::ConnectionRegistry.establish_connection(
+Grant::ConnectionRegistry.establish_connection(
   database: "myapp",
-  adapter: Granite::Adapter::Pg,
+  adapter: Grant::Adapter::Pg,
   url: ENV["SHARD_1_URL"],
   role: :primary,
   shard: :shard_1
 )
 
-Granite::ConnectionRegistry.establish_connection(
+Grant::ConnectionRegistry.establish_connection(
   database: "myapp",
-  adapter: Granite::Adapter::Pg,
+  adapter: Grant::Adapter::Pg,
   url: ENV["SHARD_2_URL"],
   role: :primary,
   shard: :shard_2
@@ -186,7 +186,7 @@ Use virtual sharding for tests:
 require "spec/support/simple_virtual_sharding"
 
 describe "MyShardedModel" do
-  include Granite::Testing::ShardingHelpers
+  include Grant::Testing::ShardingHelpers
   
   it "distributes data correctly" do
     with_virtual_shards(4) do
@@ -230,6 +230,6 @@ Please report issues and share your use cases!
 
 - [Examples directory](../examples/) - Complete working examples
 - [Design documents](../) - Architecture decisions
-- [Test suite](../spec/granite/) - Current test coverage
+- [Test suite](../spec/grant/) - Current test coverage
 
 Remember: **This is experimental software**. Test thoroughly before using in production!

@@ -8,7 +8,7 @@ I've attempted to implement the persistence layer for nested attributes, encount
 
 ### Technical Challenges:
 
-1. **Callback Integration**: Crystal's macro system and Granite's callback implementation make it difficult to hook into the save lifecycle cleanly. The `CALLBACKS` constant is not available when modules are included.
+1. **Callback Integration**: Crystal's macro system and Grant's callback implementation make it difficult to hook into the save lifecycle cleanly. The `CALLBACKS` constant is not available when modules are included.
 
 2. **Method Override Timing**: Unlike Ruby, Crystal requires methods to exist before they can be overridden with `previous_def`. The `save` method doesn't exist when the NestedAttributes module is included.
 
@@ -31,7 +31,7 @@ The implementation does NOT yet:
 
 ### Workaround:
 
-I've added a `save_with_nested_attributes` method that can be called instead of `save` to handle nested attributes. This is a temporary solution until we can properly integrate with Granite's save lifecycle.
+I've added a `save_with_nested_attributes` method that can be called instead of `save` to handle nested attributes. This is a temporary solution until we can properly integrate with Grant's save lifecycle.
 
 ### Next Steps:
 

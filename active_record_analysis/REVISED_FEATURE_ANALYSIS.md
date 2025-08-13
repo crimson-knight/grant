@@ -14,7 +14,7 @@ User.raw_query("SELECT * FROM users WHERE name = '#{params[:name]}'")
 User.raw_query("SELECT * FROM users WHERE name = ?", [params[:name]])
 
 # Grant should provide
-module Granite::Sanitization
+module Grant::Sanitization
   def self.quote(value : String) : String
     # Escape single quotes and other SQL special characters
     "'#{value.gsub("'", "''")}'"
@@ -35,7 +35,7 @@ module Granite::Sanitization
 end
 
 # For raw queries
-class Granite::RawQuery(T)
+class Grant::RawQuery(T)
   def initialize(@sql : String, @params : Array(DB::Any) = [] of DB::Any)
   end
   
@@ -53,7 +53,7 @@ end
 Convenience wrappers for concurrent operations:
 
 ```crystal
-module Granite::AsyncMethods
+module Grant::AsyncMethods
   # Async calculation methods
   def self.async_count(model : T.class, conditions = {} of String => DB::Any) : Channel(Int64) forall T
     channel = Channel(Int64).new
@@ -111,7 +111,7 @@ total_users = count_channel.receive
 published_posts = posts_channel.receive
 
 # Multi-database queries
-results = Granite::AsyncMethods.async_multi_db do |wg, results, mutex|
+results = Grant::AsyncMethods.async_multi_db do |wg, results, mutex|
   wg.add
   spawn do
     User.connected_to(database: "primary") do
@@ -138,7 +138,7 @@ Integrating the previous analysis into the main plan:
 
 ```crystal
 # Enhanced connection management from previous analysis
-module Granite
+module Grant
   class ConnectionHandler
     @@pools = {} of String => DB::Database
     
@@ -156,7 +156,7 @@ module Granite
 end
 
 # Model configuration
-abstract class ApplicationRecord < Granite::Base
+abstract class ApplicationRecord < Grant::Base
   connects_to database: {
     writing: :primary,
     reading: :primary_replica
@@ -165,7 +165,7 @@ end
 
 # Sharded model
 class Order < ApplicationRecord
-  include Granite::Sharding::ShardedModel
+  include Grant::Sharding::ShardedModel
   
   connects_to shards: {
     shard_one: { writing: :shard1_primary, reading: :shard1_replica },
@@ -176,15 +176,15 @@ class Order < ApplicationRecord
 end
 
 # Automatic role switching
-module Granite::Middleware
+module Grant::Middleware
   class DatabaseSelector
     def call(context : HTTP::Server::Context)
       if read_request?(context)
-        Granite::Base.connected_to(role: :reading) do
+        Grant::Base.connected_to(role: :reading) do
           call_next(context)
         end
       else
-        Granite::Base.connected_to(role: :writing) do
+        Grant::Base.connected_to(role: :writing) do
           call_next(context)
         end
       end
@@ -282,7 +282,7 @@ Per your request, removing these metaprogramming-heavy features:
 ## Implementation Example: Raw Query with Sanitization
 
 ```crystal
-module Granite
+module Grant
   class RawQuery
     def self.execute(sql : String, *args) : DB::ResultSet
       sanitized_sql = Sanitization.sanitize_sql_array([sql] + args.to_a)
@@ -303,14 +303,14 @@ module Granite
 end
 
 # Safe usage
-users = Granite::RawQuery.execute(
+users = Grant::RawQuery.execute(
   "SELECT * FROM users WHERE age > ? AND role = ?",
   21,
   "admin"
 )
 
 # With model
-class User < Granite::Base
+class User < Grant::Base
   def self.adults_in_region(region : String)
     RawQuery.execute(
       "SELECT * FROM users WHERE age >= 18 AND region = ?",
@@ -325,7 +325,7 @@ end
 Leveraging crystal-db's features:
 
 ```crystal
-module Granite
+module Grant
   class ConnectionPool
     @pool : DB::Database
     

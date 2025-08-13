@@ -1,9 +1,9 @@
-require "../src/granite"
+require "../src/grant"
 
 # Example sharding implementations for Grant ORM
 
 # 1. Simple Hash Sharding by User ID
-class User < Granite::Base
+class User < Grant::Base
   table users
   column id : Int64, primary: true
   column email : String
@@ -34,7 +34,7 @@ class User < Granite::Base
 end
 
 # 2. Multi-tenant Sharding with Composite Keys
-class TenantData < Granite::Base
+class TenantData < Grant::Base
   table tenant_data
   
   # Composite key sharding - ensures all data for a tenant stays together
@@ -50,7 +50,7 @@ class TenantData < Granite::Base
 end
 
 # 3. Time-based Sharding for High-Volume Event Data
-class Event < Granite::Base
+class Event < Grant::Base
   table events
   column id : Int64, primary: true
   column user_id : Int64
@@ -70,7 +70,7 @@ class Event < Granite::Base
 end
 
 # 4. Geographic Sharding for Compliance
-class PersonalData < Granite::Base
+class PersonalData < Grant::Base
   table personal_data
   column id : Int64, primary: true
   column user_id : Int64
@@ -104,7 +104,7 @@ class PersonalData < Granite::Base
 end
 
 # 5. Advanced: Consistent Hashing for Dynamic Scaling
-class Session < Granite::Base
+class Session < Grant::Base
   table sessions
   column id : String, primary: true
   column user_id : Int64
@@ -129,7 +129,7 @@ class Session < Granite::Base
 end
 
 # 6. Custom Sharding Logic
-class GameScore < Granite::Base
+class GameScore < Grant::Base
   table game_scores
   column id : Int64, primary: true
   column player_id : Int64

@@ -18,7 +18,7 @@ The Attribute API extends Grant's column functionality with:
 Virtual attributes are attributes that exist on your model but aren't backed by database columns:
 
 ```crystal
-class Product < Granite::Base
+class Product < Grant::Base
   column id : Int64, primary: true
   column name : String
   
@@ -46,7 +46,7 @@ product.price          # => 19.99
 Attributes can have default values that are applied when the attribute is nil:
 
 ```crystal
-class Article < Granite::Base
+class Article < Grant::Base
   column id : Int64, primary: true
   column title : String
   
@@ -54,7 +54,7 @@ class Article < Granite::Base
   attribute status : String?, default: "draft"
   
   # Dynamic default with proc
-  attribute code : String?, default: ->(article : Granite::Base) { 
+  attribute code : String?, default: ->(article : Grant::Base) { 
     "ART-#{article.as(Article).id || "NEW"}" 
   }
 end
@@ -89,7 +89,7 @@ end
 module ProductMetadataConverter
   extend self
   
-  def to_db(value : ProductMetadata?) : Granite::Columns::Type
+  def to_db(value : ProductMetadata?) : Grant::Columns::Type
     value.try(&.to_json)
   end
   
@@ -101,7 +101,7 @@ module ProductMetadataConverter
 end
 
 # Use in your model
-class Product < Granite::Base
+class Product < Grant::Base
   column id : Int64, primary: true
   column name : String
   
@@ -137,7 +137,7 @@ product.price_in_cents_change   # => {nil, 2500}
 You can define multiple attributes at once:
 
 ```crystal
-class User < Granite::Base
+class User < Grant::Base
   column id : Int64, primary: true
   column email : String
   
@@ -177,22 +177,22 @@ The Attribute API includes helper methods for common type conversions:
 
 ```crystal
 # String casting
-Granite::AttributeApi::TypeCasters.to_string(123)      # => "123"
-Granite::AttributeApi::TypeCasters.to_string(nil)      # => nil
+Grant::AttributeApi::TypeCasters.to_string(123)      # => "123"
+Grant::AttributeApi::TypeCasters.to_string(nil)      # => nil
 
 # Integer casting
-Granite::AttributeApi::TypeCasters.to_int32("123")     # => 123
-Granite::AttributeApi::TypeCasters.to_int32("invalid") # => nil
+Grant::AttributeApi::TypeCasters.to_int32("123")     # => 123
+Grant::AttributeApi::TypeCasters.to_int32("invalid") # => nil
 
 # Float casting
-Granite::AttributeApi::TypeCasters.to_float64("123.45") # => 123.45
-Granite::AttributeApi::TypeCasters.to_float64(42)       # => 42.0
+Grant::AttributeApi::TypeCasters.to_float64("123.45") # => 123.45
+Grant::AttributeApi::TypeCasters.to_float64(42)       # => 42.0
 
 # Boolean casting
-Granite::AttributeApi::TypeCasters.to_bool("true")  # => true
-Granite::AttributeApi::TypeCasters.to_bool("1")     # => true
-Granite::AttributeApi::TypeCasters.to_bool("false") # => false
-Granite::AttributeApi::TypeCasters.to_bool(0)       # => false
+Grant::AttributeApi::TypeCasters.to_bool("true")  # => true
+Grant::AttributeApi::TypeCasters.to_bool("1")     # => true
+Grant::AttributeApi::TypeCasters.to_bool("false") # => false
+Grant::AttributeApi::TypeCasters.to_bool(0)       # => false
 ```
 
 ## Best Practices
@@ -214,7 +214,7 @@ attribute status : String, default: "active"
 Use virtual attributes for values that can be computed from other attributes:
 
 ```crystal
-class Order < Granite::Base
+class Order < Grant::Base
   column subtotal : Float64
   column tax_rate : Float64
   
@@ -234,7 +234,7 @@ For complex types, prefer using Grant's existing converter pattern over creating
 ```crystal
 # Good - using converter
 attribute preferences : UserPreferences?, 
-  converter: Granite::Converters::Json(UserPreferences, String),
+  converter: Grant::Converters::Json(UserPreferences, String),
   column_type: "TEXT"
 
 # Less ideal - manual casting
@@ -264,10 +264,10 @@ end
 
 ### Grant
 ```crystal
-class Product < Granite::Base
+class Product < Grant::Base
   attribute price_in_cents : Int32?, default: 0, virtual: true
   attribute metadata : Hash(String, JSON::Any)?, 
-    converter: Granite::Converters::Json(Hash(String, JSON::Any), String),
+    converter: Grant::Converters::Json(Hash(String, JSON::Any), String),
     column_type: "TEXT",
     default: {} of String => JSON::Any
 end

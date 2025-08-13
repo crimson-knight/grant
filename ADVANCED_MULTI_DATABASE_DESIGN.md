@@ -25,7 +25,7 @@ This document outlines the design for enhancing Grant's multi-database support w
 ### 1. Enhanced Connection Specification
 
 ```crystal
-module Granite
+module Grant
   struct ConnectionSpec
     property database : String
     property adapter_class : Adapter::Base.class
@@ -57,7 +57,7 @@ end
 ### 2. Connection Pool Management
 
 ```crystal
-module Granite
+module Grant
   class PooledAdapter < Adapter::Base
     @pool : DB::Database
     @health_monitor : HealthMonitor
@@ -102,7 +102,7 @@ end
 ### 3. Health Monitoring
 
 ```crystal
-module Granite
+module Grant
   class HealthMonitor
     @adapter : Adapter::Base
     @config : ConnectionSpec
@@ -162,7 +162,7 @@ end
 ### 4. Load Balancer for Replicas
 
 ```crystal
-module Granite
+module Grant
   class ReplicaLoadBalancer
     @replicas : Array(Adapter::Base)
     @current_index : Atomic(Int32) = Atomic(Int32).new(0)
@@ -207,7 +207,7 @@ end
 ### 5. Enhanced Connection Registry
 
 ```crystal
-module Granite
+module Grant
   class ConnectionRegistry
     # Add replica tracking
     @@replica_groups = {} of String => ReplicaLoadBalancer
@@ -301,7 +301,7 @@ end
 ### 6. Replica Lag Handling
 
 ```crystal
-module Granite::ConnectionManagement
+module Grant::ConnectionManagement
   # Enhanced lag tracking per connection
   class_property write_timestamps = {} of String => Time::Span
   
@@ -351,7 +351,7 @@ end
 
 ```crystal
 # Allow models to configure connection behavior
-class User < Granite::Base
+class User < Grant::Base
   connects_to database: {
     writing: :primary,
     reading: :primary_replica

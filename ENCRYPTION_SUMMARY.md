@@ -39,7 +39,7 @@ I've successfully implemented a comprehensive encrypted attributes feature for G
 ## Usage Example
 
 ```crystal
-class User < Granite::Base
+class User < Grant::Base
   # Non-deterministic encryption (default)
   encrypts :ssn
   encrypts :medical_notes
@@ -61,13 +61,13 @@ found = User.find_by_email("john@example.com")
 ## Technical Implementation
 
 ### File Structure
-- `src/granite/encryption.cr` - Main module and model integration
-- `src/granite/encryption/key_provider.cr` - Key management and derivation
-- `src/granite/encryption/cipher.cr` - AES-256-GCM implementation
-- `src/granite/encryption/encrypted_attribute.cr` - Attribute handling
-- `src/granite/encryption/config.cr` - Configuration management
-- `src/granite/encryption/query_extensions.cr` - Query support
-- `src/granite/encryption/migration_helpers.cr` - Migration utilities
+- `src/grant/encryption.cr` - Main module and model integration
+- `src/grant/encryption/key_provider.cr` - Key management and derivation
+- `src/grant/encryption/cipher.cr` - AES-256-GCM implementation
+- `src/grant/encryption/encrypted_attribute.cr` - Attribute handling
+- `src/grant/encryption/config.cr` - Configuration management
+- `src/grant/encryption/query_extensions.cr` - Query support
+- `src/grant/encryption/migration_helpers.cr` - Migration utilities
 
 ### Design Decisions
 1. **Used Slice(UInt8) for encrypted columns** - Crystal's standard binary type

@@ -21,7 +21,7 @@
 
 **Example:**
 ```crystal
-class User < Granite::Base
+class User < Grant::Base
   # Users distributed evenly across 8 shards
   shards_by :id, strategy: :hash, count: 8
 end
@@ -44,7 +44,7 @@ end
 
 **Example:**
 ```crystal
-class LogEntry < Granite::Base
+class LogEntry < Grant::Base
   # Shard by month for easy archival
   shards_by :created_at, strategy: :range do
     range 1.month.ago..Time.utc => :current_month
@@ -72,7 +72,7 @@ end
 
 **Example:**
 ```crystal
-class CustomerData < Granite::Base
+class CustomerData < Grant::Base
   shards_by :country, strategy: :geographic do
     region :eu => ["DE", "FR", "IT", "ES"]
     region :us => ["US", "CA"]
@@ -98,7 +98,7 @@ end
 
 **Example:**
 ```crystal
-class TenantResource < Granite::Base
+class TenantResource < Grant::Base
   # All data for a tenant stays on same shard
   shards_by :tenant_id, :resource_type, strategy: :hash, count: 16
 end
@@ -122,7 +122,7 @@ end
 
 **Example:**
 ```crystal
-class CachedData < Granite::Base
+class CachedData < Grant::Base
   shards_by :key, strategy: :consistent_hash do
     virtual_nodes 200
     initial_shards [:cache_1, :cache_2, :cache_3]
@@ -158,7 +158,7 @@ end
 ### When to use Composite Keys:
 ```crystal
 # Multi-tenant application
-class TenantData < Granite::Base
+class TenantData < Grant::Base
   # Composite key ensures tenant isolation
   shards_by :tenant_id, :year, strategy: :hash
   
@@ -170,7 +170,7 @@ end
 ### When to use Single Keys:
 ```crystal
 # Simple user table
-class User < Granite::Base
+class User < Grant::Base
   # Single key is simpler and sufficient
   shards_by :id, strategy: :hash, count: 8
 end
@@ -180,7 +180,7 @@ end
 
 ### Basic Hash Resolution:
 ```crystal
-module Granite::Sharding
+module Grant::Sharding
   class HashResolver < ShardResolver
     def resolve_shard(key_values : Array)
       # Combine multiple values for composite keys
@@ -201,7 +201,7 @@ end
 
 ### Range Resolution with Binary Search:
 ```crystal
-module Granite::Sharding
+module Grant::Sharding
   class RangeResolver < ShardResolver
     def initialize(@ranges : Array({Range, Symbol}))
       # Sort ranges for binary search

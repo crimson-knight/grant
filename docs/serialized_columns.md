@@ -17,7 +17,7 @@ The `serialized_column` macro allows you to:
 # Define a settings class
 class UserSettings
   include JSON::Serializable
-  include Granite::SerializedObject  # For dirty tracking
+  include Grant::SerializedObject  # For dirty tracking
   
   property theme : String = "light"
   property notifications_enabled : Bool = true
@@ -25,7 +25,7 @@ class UserSettings
 end
 
 # Use in your model
-class User < Granite::Base
+class User < Grant::Base
   column id : Int64, primary: true
   column name : String
   
@@ -93,7 +93,7 @@ user.settings.changed? # => false
 # Complex nested structure
 class NotificationSettings
   include JSON::Serializable
-  include Granite::SerializedObject
+  include Grant::SerializedObject
   
   property email : Bool = true
   property push : Bool = true
@@ -103,7 +103,7 @@ end
 
 class UserPreferences
   include JSON::Serializable
-  include Granite::SerializedObject
+  include Grant::SerializedObject
   
   property language : String = "en"
   property timezone : String = "UTC"
@@ -111,7 +111,7 @@ class UserPreferences
   property beta_features : Array(String) = [] of String
 end
 
-class User < Granite::Base
+class User < Grant::Base
   serialized_column :preferences, UserPreferences, format: :jsonb
 end
 
@@ -163,7 +163,7 @@ Your serializable classes must:
    - `JSON::Serializable` for JSON/JSONB columns
    - `YAML::Serializable` for YAML columns
 
-2. Include `Granite::SerializedObject` for dirty tracking support
+2. Include `Grant::SerializedObject` for dirty tracking support
 
 3. Have a default constructor or provide default values for all properties
 
@@ -196,7 +196,7 @@ Your serializable classes must:
 ```crystal
 class UserSettingsV2
   include JSON::Serializable
-  include Granite::SerializedObject
+  include Grant::SerializedObject
   
   property version : Int32 = 2
   property theme : String = "light"

@@ -5,16 +5,16 @@
 It is possible to register multiple connections, for example:
 
 ```crystal
-Granite::Connections << Granite::Adapter::Mysql.new(name: "legacy_db", url: "LEGACY_DB_URL")
-Granite::Connections << Granite::Adapter::Pg.new(name: "new_db", url: "NEW_DB_URL")
+Grant::Connections << Grant::Adapter::Mysql.new(name: "legacy_db", url: "LEGACY_DB_URL")
+Grant::Connections << Grant::Adapter::Pg.new(name: "new_db", url: "NEW_DB_URL")
 
-class Foo < Granite::Base
+class Foo < Grant::Base
   connection legacy_db
 
   # model fields
 end
 
-class Bar < Granite::Base
+class Bar < Grant::Base
   connection new_db
 
   # model fields
@@ -23,14 +23,14 @@ end
 
 In this example, we defined two connections. One to a MySQL database named "legacy_db", and another to a PG database named "new_db". The connection name given in the model maps to the name of a registered connection.
 
-> **NOTE:** How you store/supply each connection's URL is up to you; Granite only cares that it gets registered via `Granite::Connections << adapter_object`.
+> **NOTE:** How you store/supply each connection's URL is up to you; Grant only cares that it gets registered via `Grant::Connections << adapter_object`.
 
 ## timestamps
 
 The `timestamps` macro defines `created_at` and `updated_at` field for you.
 
 ```crystal
-class Bar < Granite::Base
+class Bar < Grant::Base
   connection mysql
 
   # Other fields
@@ -41,7 +41,7 @@ end
 Would be equivalent to:
 
 ```crystal
-class Bar < Granite::Base
+class Bar < Grant::Base
   connection mysql
 
   column created_at : Time?
@@ -56,7 +56,7 @@ Each model is required to have a primary key defined. Use the `column` macro wit
 > **NOTE:** Composite primary keys are not yet supported.
 
 ```crystal
-class Site < Granite::Base
+class Site < Grant::Base
   connection mysql
 
   column id : Int64, primary: true
@@ -67,7 +67,7 @@ end
 `belongs_to` associations can also be used as a primary key in much the same way.
 
 ```crystal
-class ChatSettings < Granite::Base
+class ChatSettings < Grant::Base
   connection mysql
 
   # chat_id would be the primary key
@@ -80,7 +80,7 @@ end
 The name and type of the primary key can also be changed from the recommended `id : Int64`.
 
 ```crystal
-class Site < Granite::Base
+class Site < Grant::Base
   connection mysql
 
   column custom_id : Int32, primary: true
@@ -93,7 +93,7 @@ end
 Primary keys are defined as auto incrementing by default. For natural keys, you can set `auto: false` option.
 
 ```crystal
-class Site < Granite::Base
+class Site < Grant::Base
   connection mysql
 
   column custom_id : Int32, primary: true, auto: false
@@ -106,7 +106,7 @@ end
 For databases that utilize UUIDs as the primary key, the type of the primary key can be set to `UUID`. This will generate a secure UUID when the model is saved.
 
 ```crystal
-class Book < Granite::Base
+class Book < Grant::Base
   connection mysql
 
   column isbn : UUID, primary: true
@@ -125,7 +125,7 @@ book.isbn # => RFC4122 V4 UUID string
 A default value can be defined that will be used if another value is not specified/supplied.
 
 ```crystal
-class Book < Granite::Base
+class Book < Grant::Base
   connection mysql
 
   column id : Int64, primary: true
@@ -138,7 +138,7 @@ book.name # => "DefaultBook"
 
 ## Generating Documentation
 
-By default, running `crystal docs` will **not** include Granite methods, constants, and properties. To include these, use the `granite_docs` flag when generating the documentation. E.x. `crystal docs -D granite_docs`.
+By default, running `crystal docs` will **not** include Grant methods, constants, and properties. To include these, use the `grant_docs` flag when generating the documentation. E.x. `crystal docs -D grant_docs`.
 
 Doc block comments can be applied above the `column` macro.
 
@@ -149,10 +149,10 @@ column published : Bool
 
 ## Annotations
 
-Annotations can be a powerful method of adding property specific features with minimal amounts of code. Since Granite utilizes the `property` keyword for its columns, annotations are able to be applied easily. These can either be `JSON::Field`, `YAML::Field`, or third party annotations.
+Annotations can be a powerful method of adding property specific features with minimal amounts of code. Since Grant utilizes the `property` keyword for its columns, annotations are able to be applied easily. These can either be `JSON::Field`, `YAML::Field`, or third party annotations.
 
 ```crystal
-class Foo < Granite::Base
+class Foo < Grant::Base
   connection mysql
   table foos
 
@@ -169,11 +169,11 @@ end
 
 ## Converters
 
-Granite supports custom/special types via converters. Converters will convert the type into something the database can store when saving the model, and will convert the returned database value into that type on read.
+Grant supports custom/special types via converters. Converters will convert the type into something the database can store when saving the model, and will convert the returned database value into that type on read.
 
 Each converter has a `T` generic argument that tells the converter what type should be read from the `DB::ResultSet`. For example, if you wanted to use the `JSON` converter and your underlying database column is `BLOB`, you would use `Bytes`, if it was `TEXT`, you would use `String`.
 
-Currently Granite supports various converters, each with their own supported database column types:
+Currently Grant supports various converters, each with their own supported database column types:
 
 - `Enum(E, T)` - Converts an Enum of type `E` to/from a database column of type `T`. Supported types for `T` are: `Number`, `String`, and `Bytes`.
 - `Json(M, T)` - Converters an `Object` of type `M` to/from a database column of type `T.` Supported types for `T` are: `String`, `JSON::Any`, and `Bytes`.
@@ -189,15 +189,15 @@ enum OrderStatus
   Completed
 end
 
-class Order < Granite::Base
+class Order < Grant::Base
   connection mysql
   table foos
 
   # Other fields
-  column status : OrderStatus, converter: Granite::Converters::Enum(OrderStatus, String)
+  column status : OrderStatus, converter: Grant::Converters::Enum(OrderStatus, String)
 end
 ```
 
 ## Serialization
 
-Granite implements [JSON::Serializable](https://crystal-lang.org/api/JSON/Serializable.html) and [YAML::Serializable](https://crystal-lang.org/api/YAML/Serializable.html) by default. As such, models can be serialized to/from JSON/YAML via the `#to_json`/`#to_yaml` and `.from_json`/`.from_yaml` methods.
+Grant implements [JSON::Serializable](https://crystal-lang.org/api/JSON/Serializable.html) and [YAML::Serializable](https://crystal-lang.org/api/YAML/Serializable.html) by default. As such, models can be serialized to/from JSON/YAML via the `#to_json`/`#to_yaml` and `.from_json`/`.from_yaml` methods.

@@ -19,8 +19,8 @@ Shard keys can be:
 Abstract interface for determining which shard to use:
 
 ```crystal
-abstract class Granite::ShardResolver
-  abstract def resolve(model : Granite::Base) : Symbol
+abstract class Grant::ShardResolver
+  abstract def resolve(model : Grant::Base) : Symbol
   abstract def resolve_for_key(**keys) : Symbol
 end
 ```
@@ -30,7 +30,7 @@ end
 ### Basic Hash Sharding
 
 ```crystal
-class User < Granite::Base
+class User < Grant::Base
   # Simple hash sharding on single key
   shards_by :id, strategy: :hash, count: 4
   
@@ -60,7 +60,7 @@ end
 ### Composite Key Sharding
 
 ```crystal
-class Order < Granite::Base
+class Order < Grant::Base
   # Composite key sharding
   shards_by :tenant_id, :user_id, strategy: :hash, count: 8
   
@@ -77,7 +77,7 @@ end
 ### Range-Based Sharding
 
 ```crystal
-class Event < Granite::Base
+class Event < Grant::Base
   shards_by :created_at, strategy: :range do
     # Define ranges
     range Time.utc(2023, 1, 1)..Time.utc(2023, 12, 31), shard: :shard_2023
@@ -90,7 +90,7 @@ end
 ### Geographic Sharding
 
 ```crystal
-class Customer < Granite::Base
+class Customer < Grant::Base
   shards_by :country_code, strategy: :lookup do
     # Regional sharding
     map "US", "CA", "MX" => :north_america
@@ -104,7 +104,7 @@ end
 ### Advanced: Multi-Level Sharding
 
 ```crystal
-class Document < Granite::Base
+class Document < Grant::Base
   # First level: by organization
   shards_by :org_id, strategy: :hash, count: 4, prefix: :org
   
@@ -120,14 +120,14 @@ end
 ### 1. Shard Key Definition
 
 ```crystal
-module Granite::Sharding
+module Grant::Sharding
   # Represents a shard key configuration
   struct ShardKey
     property attributes : Array(Symbol)
     property strategy : ShardStrategy
     property resolver : ShardResolver
     
-    def resolve(model : Granite::Base) : Symbol
+    def resolve(model : Grant::Base) : Symbol
       resolver.resolve(model)
     end
   end
@@ -137,12 +137,12 @@ end
 ### 2. Built-in Strategies
 
 ```crystal
-module Granite::Sharding::Strategies
+module Grant::Sharding::Strategies
   class HashStrategy < ShardResolver
     def initialize(@count : Int32, @prefix : String = "shard")
     end
     
-    def resolve(model : Granite::Base) : Symbol
+    def resolve(model : Grant::Base) : Symbol
       values = @attributes.map { |attr| model.read_attribute(attr) }
       key = values.join(":")
       shard_num = key.hash % @count
@@ -154,7 +154,7 @@ module Granite::Sharding::Strategies
     def initialize(@ranges : Array(Tuple(Range, Symbol)))
     end
     
-    def resolve(model : Granite::Base) : Symbol
+    def resolve(model : Grant::Base) : Symbol
       value = model.read_attribute(@attributes.first)
       @ranges.each do |(range, shard)|
         return shard if range.includes?(value)
@@ -167,7 +167,7 @@ module Granite::Sharding::Strategies
     def initialize(@mappings : Hash(Array(String), Symbol), @default : Symbol?)
     end
     
-    def resolve(model : Granite::Base) : Symbol
+    def resolve(model : Grant::Base) : Symbol
       value = model.read_attribute(@attributes.first).to_s
       @mappings.each do |keys, shard|
         return shard if keys.includes?(value)
@@ -181,7 +181,7 @@ module Granite::Sharding::Strategies
       @ring = ConsistentHashRing.new(@nodes)
     end
     
-    def resolve(model : Granite::Base) : Symbol
+    def resolve(model : Grant::Base) : Symbol
       values = @attributes.map { |attr| model.read_attribute(attr) }
       key = values.join(":")
       @ring.get_node(key)
@@ -217,7 +217,7 @@ end
 Since Grant doesn't currently support composite primary keys, we need to add:
 
 ```crystal
-class Order < Granite::Base
+class Order < Grant::Base
   # Composite primary key
   primary_key :tenant_id, :order_id
   
@@ -241,7 +241,7 @@ end
 ## Migration Considerations
 
 ```crystal
-class User < Granite::Base
+class User < Grant::Base
   # Support for resharding
   shards_by :id, strategy: :consistent_hash, nodes: [
     :shard_0, :shard_1, :shard_2, :shard_3
@@ -259,7 +259,7 @@ end
 
 ```crystal
 # Distributed transaction support (2PC)
-Granite.distributed_transaction do
+Grant.distributed_transaction do
   user = User.find(123) # On shard_0
   order = Order.create(user_id: user.id, amount: 100) # On shard_2
   

@@ -7,7 +7,7 @@ Phase 2 focuses on stabilizing the test suite and documenting issues that need t
 ## Current State
 
 ### Working Components
-- Core Granite functionality (base model, columns, tables)
+- Core Grant functionality (base model, columns, tables)
 - Basic CRUD operations (create, read, update, delete)
 - Query building (with fixes applied)
 - Transactions
@@ -85,7 +85,7 @@ Phase 2 will be considered complete when:
 
 ## Notes
 
-This stabilization phase revealed that while the core Granite ORM functionality is solid, several advanced features need additional work to be production-ready. The issues discovered are primarily related to:
+This stabilization phase revealed that while the core Grant ORM functionality is solid, several advanced features need additional work to be production-ready. The issues discovered are primarily related to:
 
 1. Crystal language evolution and type system constraints
 2. Incomplete feature implementations
@@ -99,7 +99,7 @@ The fixes applied ensure the codebase compiles and runs with Crystal 1.16.3, pro
 
 **Issue**: Crystal type system prevents direct access to concrete type properties on polymorphic associations.
 
-**Resolution**: The polymorphic implementation is actually correct. Crystal's type system requires explicit casting when accessing properties on polymorphic associations because the compile-time type is `Granite::Base+`. 
+**Resolution**: The polymorphic implementation is actually correct. Crystal's type system requires explicit casting when accessing properties on polymorphic associations because the compile-time type is `Grant::Base+`. 
 
 **Key Findings**:
 1. The polymorphic association implementation with type registry works correctly
@@ -149,7 +149,7 @@ The implementation was already complete and all tests pass.
 - This is a fundamental limitation of Crystal's type system
 
 **Technical Explanation**: 
-Crystal's compile-time type system prevents us from dynamically adding methods to generic class instances. While Jennifer.cr achieves this through a different architecture (custom query builder classes from the start), retrofitting this into Granite would require a major architectural change.
+Crystal's compile-time type system prevents us from dynamically adding methods to generic class instances. While Jennifer.cr achieves this through a different architecture (custom query builder classes from the start), retrofitting this into Grant would require a major architectural change.
 
 **Workaround**: Use standard query methods for combining conditions:
 ```crystal
@@ -195,5 +195,5 @@ Crystal's compile-time type system prevents us from dynamically adding methods t
 **Resolution**:
 1. Added type aliases for complex union types (WhereField, AssociationQuery)
 2. Added explicit type annotations to instance variables
-3. Added missing require for Granite::Columns module
+3. Added missing require for Grant::Columns module
 4. Builder now compiles and works correctly

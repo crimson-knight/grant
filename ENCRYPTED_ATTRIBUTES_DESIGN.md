@@ -21,16 +21,16 @@ This document outlines the design and implementation plan for encrypted attribut
 ┌─────────────────────────────────────────────────────────────┐
 │                        Application                           │
 ├─────────────────────────────────────────────────────────────┤
-│                    Granite::Base Model                       │
+│                    Grant::Base Model                       │
 │                  (encrypts :attribute)                       │
 ├─────────────────────────────────────────────────────────────┤
-│              Granite::Encryption::EncryptedAttribute         │
+│              Grant::Encryption::EncryptedAttribute         │
 │                 (Handles encrypt/decrypt)                    │
 ├─────────────────────────────────────────────────────────────┤
-│               Granite::Encryption::Cipher                    │
+│               Grant::Encryption::Cipher                    │
 │              (AES-256-GCM implementation)                    │
 ├─────────────────────────────────────────────────────────────┤
-│             Granite::Encryption::KeyProvider                 │
+│             Grant::Encryption::KeyProvider                 │
 │           (Master key and derived key management)            │
 ├─────────────────────────────────────────────────────────────┤
 │                       Database                               │
@@ -40,19 +40,19 @@ This document outlines the design and implementation plan for encrypted attribut
 
 ### Core Classes
 
-#### 1. Granite::Encryption Module
+#### 1. Grant::Encryption Module
 Main module that provides the `encrypts` macro and configuration.
 
-#### 2. Granite::Encryption::EncryptedAttribute
+#### 2. Grant::Encryption::EncryptedAttribute
 Handles the encryption/decryption lifecycle for individual attributes.
 
-#### 3. Granite::Encryption::Cipher
+#### 3. Grant::Encryption::Cipher
 Low-level encryption/decryption using AES-256-GCM.
 
-#### 4. Granite::Encryption::KeyProvider
+#### 4. Grant::Encryption::KeyProvider
 Manages master keys and derives attribute-specific keys.
 
-#### 5. Granite::Encryption::Config
+#### 5. Grant::Encryption::Config
 Global configuration for encryption settings.
 
 ## API Design
@@ -60,7 +60,7 @@ Global configuration for encryption settings.
 ### Basic Usage
 
 ```crystal
-class User < Granite::Base
+class User < Grant::Base
   encrypts :ssn
   encrypts :email, deterministic: true
   encrypts :credit_card_number, key_provider: CustomKeyProvider
@@ -78,8 +78,8 @@ puts loaded_user.ssn  # Automatically decrypted
 ### Configuration
 
 ```crystal
-# config/initializers/granite_encryption.cr
-Granite::Encryption.configure do |config|
+# config/initializers/grant_encryption.cr
+Grant::Encryption.configure do |config|
   config.primary_key = ENV["GRANITE_MASTER_KEY"]
   config.deterministic_key = ENV["GRANITE_DETERMINISTIC_KEY"]
   config.key_derivation_salt = ENV["GRANITE_KEY_DERIVATION_SALT"]
@@ -180,7 +180,7 @@ Does NOT protect against:
 ### Encrypting Existing Data
 
 ```crystal
-class EncryptUserEmails < Granite::Migration
+class EncryptUserEmails < Grant::Migration
   def up
     User.find_in_batches do |batch|
       batch.each do |user|
@@ -204,7 +204,7 @@ end
 ### Progressive Encryption
 
 ```crystal
-class User < Granite::Base
+class User < Grant::Base
   encrypts :email, support_unencrypted: true
   
   # Automatically encrypts on next save

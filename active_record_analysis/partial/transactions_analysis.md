@@ -22,7 +22,7 @@ end
 
 **Needed in Grant**:
 ```crystal
-Granite::Base.transaction do
+Grant::Base.transaction do
   user.save!
   account.withdraw!(100)
   other_account.deposit!(100)
@@ -52,7 +52,7 @@ User.transaction do
   
   User.transaction(requires_new: true) do
     User.create!(name: "Jane")
-    raise Granite::Rollback # Only rolls back Jane
+    raise Grant::Rollback # Only rolls back Jane
   end
   
   User.create!(name: "Jack") # This still saves
@@ -132,7 +132,7 @@ end
 ## Proposed Implementation
 
 ```crystal
-module Granite
+module Grant
   module Transactions
     class Transaction
       property connection : Adapter::Base

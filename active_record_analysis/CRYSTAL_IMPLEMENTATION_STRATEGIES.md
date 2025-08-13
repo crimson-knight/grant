@@ -39,7 +39,7 @@ end
 **Crystal Approach**: Channels and fibers
 
 ```crystal
-module Granite::Async
+module Grant::Async
   # Instead of User.async_count returning a promise
   def self.async_count(model : T.class) forall T
     channel = Channel(Int64).new
@@ -53,7 +53,7 @@ module Granite::Async
   end
   
   # Usage
-  count_channel = Granite::Async.async_count(User)
+  count_channel = Grant::Async.async_count(User)
   # Do other work...
   user_count = count_channel.receive
 end
@@ -61,9 +61,9 @@ end
 # Or with multiple operations
 def gather_stats
   channels = {
-    users: Granite::Async.async_count(User),
-    posts: Granite::Async.async_count(Post),
-    comments: Granite::Async.async_count(Comment)
+    users: Grant::Async.async_count(User),
+    posts: Grant::Async.async_count(Post),
+    comments: Grant::Async.async_count(Comment)
   }
   
   {
@@ -79,7 +79,7 @@ end
 **Leverage Crystal's type system for encrypted attributes**:
 
 ```crystal
-module Granite::Encryption
+module Grant::Encryption
   # Type-safe encrypted attribute
   macro encrypted_column(name, type, **options)
     @[JSON::Field(ignore: true)]
@@ -100,8 +100,8 @@ module Granite::Encryption
   end
 end
 
-class User < Granite::Base
-  include Granite::Encryption
+class User < Grant::Base
+  include Grant::Encryption
   
   encrypted_column ssn : String
   encrypted_column salary : Float64
@@ -114,10 +114,10 @@ end
 **Use macros for zero-runtime-cost validations**:
 
 ```crystal
-module Granite::CompileTimeValidations
+module Grant::CompileTimeValidations
   macro validate_types
     {% for ivar in @type.instance_vars %}
-      {% ann = ivar.annotation(Granite::Column) %}
+      {% ann = ivar.annotation(Grant::Column) %}
       {% if ann && !ann[:nilable] && ivar.type.nilable? %}
         {% raise "Column #{ivar.name} is marked as not nilable but type is #{ivar.type}" %}
       {% end %}
@@ -126,7 +126,7 @@ module Granite::CompileTimeValidations
   
   macro validate_associations
     {% for method in @type.methods %}
-      {% if ann = method.annotation(Granite::Relationship) %}
+      {% if ann = method.annotation(Grant::Relationship) %}
         {% target = ann[:target] %}
         {% unless target.resolve? %}
           {% raise "Association #{method.name} references undefined class #{target}" %}
@@ -285,7 +285,7 @@ end
 
 ```crystal
 # Use Log for query logs instead of custom logger
-Log.for("granite.sql").info &.emit("Query executed", 
+Log.for("grant.sql").info &.emit("Query executed", 
   sql: sql,
   duration: duration
 )

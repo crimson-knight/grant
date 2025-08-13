@@ -30,7 +30,7 @@ product.save! # Raises ActiveRecord::StaleObjectError
 
 **Proposed Grant Implementation**:
 ```crystal
-module Granite::Locking::Optimistic
+module Grant::Locking::Optimistic
   macro included
     column lock_version : Int32 = 0
     
@@ -41,7 +41,7 @@ module Granite::Locking::Optimistic
       if lock_version_changed?
         current = self.class.find(id).lock_version
         if current != lock_version_was
-          raise Granite::StaleObjectError.new(
+          raise Grant::StaleObjectError.new(
             "Attempted to update stale #{self.class.name} object"
           )
         end
@@ -54,8 +54,8 @@ module Granite::Locking::Optimistic
   end
 end
 
-class Product < Granite::Base
-  include Granite::Locking::Optimistic
+class Product < Grant::Base
+  include Grant::Locking::Optimistic
 end
 ```
 
@@ -87,7 +87,7 @@ User.lock("FOR UPDATE NOWAIT").find(1)
 
 **Proposed Grant Implementation**:
 ```crystal
-module Granite::Locking::Pessimistic
+module Grant::Locking::Pessimistic
   module ClassMethods
     def lock(lock_type : String = "FOR UPDATE")
       where("1=1").lock(lock_type)
@@ -129,7 +129,7 @@ end
 Need to add lock support to query builder:
 
 ```crystal
-module Granite::Query::Builder
+module Grant::Query::Builder
   property lock_type : String?
   
   def lock(type : String = "FOR UPDATE")
@@ -206,7 +206,7 @@ BEGIN EXCLUSIVE; -- Exclusive lock
 ## Error Handling
 
 ```crystal
-module Granite
+module Grant
   class StaleObjectError < Exception
     getter object_class : String
     getter object_id : Int64?
@@ -246,7 +246,7 @@ describe "Optimistic Locking" do
     
     product1.update(name: "New Name")
     
-    expect_raises(Granite::StaleObjectError) do
+    expect_raises(Grant::StaleObjectError) do
       product2.update(name: "Another Name")
     end
   end

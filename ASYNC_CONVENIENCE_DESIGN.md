@@ -120,7 +120,7 @@ end
 ### Async Aggregations
 
 ```crystal
-class User < Granite::Base
+class User < Grant::Base
   # Async count
   def self.async_count : AsyncResult(Int64)
     AsyncResult.new { count }
@@ -137,11 +137,11 @@ class User < Granite::Base
   end
   
   # Async min/max
-  def self.async_min(column : Symbol | String) : AsyncResult(Granite::Columns::Type)
+  def self.async_min(column : Symbol | String) : AsyncResult(Grant::Columns::Type)
     AsyncResult.new { min(column) }
   end
   
-  def self.async_max(column : Symbol | String) : AsyncResult(Granite::Columns::Type)
+  def self.async_max(column : Symbol | String) : AsyncResult(Grant::Columns::Type)
     AsyncResult.new { max(column) }
   end
 end
@@ -151,12 +151,12 @@ end
 
 ```crystal
 # Async pluck
-def self.async_pluck(column : Symbol | String) : AsyncResult(Array(Granite::Columns::Type))
+def self.async_pluck(column : Symbol | String) : AsyncResult(Array(Grant::Columns::Type))
   AsyncResult.new { pluck(column) }
 end
 
 # Async pick (first value)
-def self.async_pick(column : Symbol | String) : AsyncResult(Granite::Columns::Type?)
+def self.async_pick(column : Symbol | String) : AsyncResult(Grant::Columns::Type?)
   AsyncResult.new { pick(column) }
 end
 

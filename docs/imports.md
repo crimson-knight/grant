@@ -90,7 +90,7 @@ Since the `import` method runs on the class level, callbacks are not triggered a
 ```Crystal
 require "uuid"
 
-class Item < Granite::Base
+class Item < Grant::Base
   connection mysql
   table items
 

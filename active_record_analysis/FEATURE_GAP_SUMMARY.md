@@ -15,7 +15,7 @@ After thorough analysis of Active Record's features compared to Grant's current 
 **Impact**: Cannot ensure ACID properties across multiple operations
 ```crystal
 # Needed
-Granite::Base.transaction do
+Grant::Base.transaction do
   transfer.debit!
   transfer.credit!
 end
@@ -42,7 +42,7 @@ end
 ### 1. 🔐 Encryption
 **Why**: GDPR/Privacy requirements
 ```crystal
-class User < Granite::Base
+class User < Grant::Base
   encrypts :ssn, :credit_card
 end
 ```
@@ -50,7 +50,7 @@ end
 ### 2. 🎯 Nested Attributes
 **Why**: Common form pattern
 ```crystal
-class Order < Granite::Base
+class Order < Grant::Base
   accepts_nested_attributes_for :line_items
 end
 ```
@@ -58,7 +58,7 @@ end
 ### 3. 🎫 Secure Tokens & Signed IDs
 **Why**: Authentication, password resets
 ```crystal
-class User < Granite::Base
+class User < Grant::Base
   has_secure_token :auth_token
 end
 ```

@@ -6,7 +6,7 @@
 
 ```crystal
 # Model definition
-class Post < Granite::Base
+class Post < Grant::Base
   table posts
   
   column id : Int64, primary: true
@@ -15,22 +15,22 @@ class Post < Granite::Base
   column featured : Bool
   column created_at : Time
   
-  scope :published, ->(query : Granite::Query::Builder(Post)) do
+  scope :published, ->(query : Grant::Query::Builder(Post)) do
     query.where(published: true)
   end
   
-  scope :featured, ->(query : Granite::Query::Builder(Post)) do
+  scope :featured, ->(query : Grant::Query::Builder(Post)) do
     query.where(featured: true)
   end
   
-  scope :recent, ->(query : Granite::Query::Builder(Post)) do
+  scope :recent, ->(query : Grant::Query::Builder(Post)) do
     query.order(created_at: :desc)
   end
 end
 
 # Usage - CANNOT chain scopes
-Post.published         # ✓ Works: Returns Granite::Query::Builder(Post)
-Post.published.recent  # ✗ Error: undefined method 'recent' for Granite::Query::Builder(Post)
+Post.published         # ✓ Works: Returns Grant::Query::Builder(Post)
+Post.published.recent  # ✗ Error: undefined method 'recent' for Grant::Query::Builder(Post)
 
 # Workaround required
 Post.where(published: true).where(featured: true).order(created_at: :desc)
@@ -40,7 +40,7 @@ Post.where(published: true).where(featured: true).order(created_at: :desc)
 
 ```crystal
 # Model definition with new architecture
-class Post < Granite::Base
+class Post < Grant::Base
   table posts
   
   column id : Int64, primary: true
@@ -59,7 +59,7 @@ end
 # Generated code (automatically created by macros)
 class Post
   # Custom QueryBuilder is auto-generated
-  class QueryBuilder < Granite::Query::Builder(Post)
+  class QueryBuilder < Grant::Query::Builder(Post)
     # Scope methods are added to QueryBuilder
     def published
       where(published: true)
@@ -107,11 +107,11 @@ Post.recent.published.by_title("Hello")  # ✓ Works: All chainable
 ### 1. Modified Scoping Module
 
 ```crystal
-module Granite::Scoping
+module Grant::Scoping
   macro included
     macro inherited
       # Generate custom QueryBuilder class
-      class QueryBuilder < ::Granite::Query::Builder({{@type}})
+      class QueryBuilder < ::Grant::Query::Builder({{@type}})
         # Ensure all methods return self for chaining
         {% for method in %w[where order limit offset group_by having select] %}
           def {{method.id}}(*args, **kwargs) : self
@@ -144,23 +144,23 @@ end
 ### 2. Modified Base Class
 
 ```crystal
-abstract class Granite::Base
+abstract class Grant::Base
   macro inherited
     # Ensure QueryBuilder is available
     {% unless @type.has_constant?("QueryBuilder") %}
-      class QueryBuilder < ::Granite::Query::Builder({{@type}})
+      class QueryBuilder < ::Grant::Query::Builder({{@type}})
       end
     {% end %}
     
     # Use custom QueryBuilder
     def self.__builder
       db_type = case adapter.class.to_s
-                when "Granite::Adapter::Pg"
-                  Granite::Query::Builder::DbType::Pg
-                when "Granite::Adapter::Mysql"
-                  Granite::Query::Builder::DbType::Mysql
+                when "Grant::Adapter::Pg"
+                  Grant::Query::Builder::DbType::Pg
+                when "Grant::Adapter::Mysql"
+                  Grant::Query::Builder::DbType::Mysql
                 else
-                  Granite::Query::Builder::DbType::Sqlite
+                  Grant::Query::Builder::DbType::Sqlite
                 end
       
       QueryBuilder.new(db_type)
@@ -172,13 +172,13 @@ end
 ### 3. Association Integration
 
 ```crystal
-class User < Granite::Base
+class User < Grant::Base
   has_many :posts
   
   scope :active, ->(q) { q.where(active: true) }
 end
 
-class Post < Granite::Base
+class Post < Grant::Base
   belongs_to :user
   
   scope :published, ->(q) { q.where(published: true) }
@@ -220,8 +220,8 @@ post_query : Post::QueryBuilder = Post.published
 
 ```crystal
 # Before: Generic Query::Builder - single class for all models
-typeof(User.where(active: true))  # Granite::Query::Builder(User)
-typeof(Post.where(published: true))  # Granite::Query::Builder(Post)
+typeof(User.where(active: true))  # Grant::Query::Builder(User)
+typeof(Post.where(published: true))  # Grant::Query::Builder(Post)
 
 # After: Model-specific QueryBuilders - one class per model
 typeof(User.where(active: true))  # User::QueryBuilder
@@ -238,10 +238,10 @@ typeof(Post.where(published: true))  # Post::QueryBuilder
 
 ```crystal
 # Step 1: Add feature flag
-Granite.config.use_chainable_scopes = true
+Grant.config.use_chainable_scopes = true
 
 # Step 2: Models opt-in to new behavior
-class Post < Granite::Base
+class Post < Grant::Base
   use_chainable_scopes!  # Generates custom QueryBuilder
   
   scope :published, ->(q) { q.where(published: true) }
@@ -249,7 +249,7 @@ end
 
 # Step 3: Gradual migration
 # Old code continues to work
-Post.where(published: true)  # Still returns Granite::Query::Builder(Post)
+Post.where(published: true)  # Still returns Grant::Query::Builder(Post)
 
 # New code can use chainable scopes
 Post.published.recent  # Returns Post::QueryBuilder

@@ -4,13 +4,13 @@ Grant provides built-in support for secure token generation, signed IDs, and tem
 
 ## Secure Tokens
 
-The `Granite::SecureToken` module provides automatic generation of cryptographically secure random tokens.
+The `Grant::SecureToken` module provides automatic generation of cryptographically secure random tokens.
 
 ### Basic Usage
 
 ```crystal
-class User < Granite::Base
-  include Granite::SecureToken
+class User < Grant::Base
+  include Grant::SecureToken
   
   has_secure_token :auth_token
   has_secure_token :password_reset_token, length: 36
@@ -36,13 +36,13 @@ user.save
 
 ## Signed IDs
 
-The `Granite::SignedId` module provides tamper-proof, optionally expiring IDs for secure URL generation.
+The `Grant::SignedId` module provides tamper-proof, optionally expiring IDs for secure URL generation.
 
 ### Basic Usage
 
 ```crystal
-class User < Granite::Base
-  include Granite::SignedId
+class User < Grant::Base
+  include Grant::SignedId
 end
 
 # Generate signed ID with purpose
@@ -71,13 +71,13 @@ permanent_id = user.signed_id(purpose: :login_token)
 
 ## Token For (Temporary Tokens)
 
-The `Granite::TokenFor` module generates tokens that become invalid when specific data changes.
+The `Grant::TokenFor` module generates tokens that become invalid when specific data changes.
 
 ### Basic Usage
 
 ```crystal
-class User < Granite::Base
-  include Granite::TokenFor
+class User < Grant::Base
+  include Grant::TokenFor
   
   generates_token_for :password_reset, expires_in: 15.minutes do
     # Token becomes invalid if password_salt changes
@@ -107,13 +107,13 @@ user = User.find_by_token_for(:password_reset, token)
 ## Complete Example
 
 ```crystal
-class User < Granite::Base
+class User < Grant::Base
   connection sqlite
   table users
   
-  include Granite::SecureToken
-  include Granite::SignedId
-  include Granite::TokenFor
+  include Grant::SecureToken
+  include Grant::SignedId
+  include Grant::TokenFor
   
   # Columns
   column id : Int64, primary: true

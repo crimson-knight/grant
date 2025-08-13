@@ -8,7 +8,7 @@ This document summarizes the implementation of advanced multi-database support f
 
 ### 1. Enhanced Connection Pooling Configuration
 
-**File: `src/granite/connection_registry.cr`**
+**File: `src/grant/connection_registry.cr`**
 
 - Enhanced `ConnectionSpec` struct with pool configuration:
   - `pool_size`: Maximum number of connections (default: 25)
@@ -21,7 +21,7 @@ This document summarizes the implementation of advanced multi-database support f
 
 ### 2. Health Monitoring System
 
-**File: `src/granite/health_monitor.cr`**
+**File: `src/grant/health_monitor.cr`**
 
 - `HealthMonitor` class that continuously monitors connection health
 - Configurable health check intervals and timeouts
@@ -37,7 +37,7 @@ Key features:
 
 ### 3. Replica Load Balancing
 
-**File: `src/granite/replica_load_balancer.cr`**
+**File: `src/grant/replica_load_balancer.cr`**
 
 - `ReplicaLoadBalancer` class for distributing read queries
 - Multiple load balancing strategies:
@@ -54,7 +54,7 @@ Features:
 
 ### 4. Enhanced Connection Registry
 
-**Updates to: `src/granite/connection_registry.cr`**
+**Updates to: `src/grant/connection_registry.cr`**
 
 - Integration with health monitoring and load balancing
 - Automatic registration of replicas with load balancers
@@ -64,7 +64,7 @@ Features:
 
 ### 5. Advanced Replica Lag Handling
 
-**Updates to: `src/granite/connection_management.cr`**
+**Updates to: `src/grant/connection_management.cr`**
 
 - `ReplicaLagTracker` struct for per-database/shard tracking
 - Sticky session support via `stick_to_primary` method
@@ -76,7 +76,7 @@ Features:
 
 ### 6. Connection Configuration DSL
 
-**Updates to: `src/granite/connection_management.cr`**
+**Updates to: `src/grant/connection_management.cr`**
 
 - `connection_config` macro for model-specific configuration:
   ```crystal
@@ -93,9 +93,9 @@ Features:
 
 ```crystal
 # Configure multiple databases with advanced features
-Granite::ConnectionRegistry.establish_connections({
+Grant::ConnectionRegistry.establish_connections({
   "primary" => {
-    adapter: Granite::Adapter::Pg,
+    adapter: Grant::Adapter::Pg,
     writer: ENV["PRIMARY_DATABASE_URL"],
     reader: ENV["PRIMARY_REPLICA_URL"],
     pool: {
@@ -116,7 +116,7 @@ Granite::ConnectionRegistry.establish_connections({
 ### Model Configuration
 
 ```crystal
-class User < Granite::Base
+class User < Grant::Base
   connects_to database: "primary"
   
   connection_config(
@@ -134,12 +134,12 @@ User.stick_to_primary(10.seconds)
 user = User.create(email: "critical@example.com")
 
 # Check system health
-if Granite::ConnectionRegistry.system_healthy?
+if Grant::ConnectionRegistry.system_healthy?
   puts "All connections healthy"
 end
 
 # Get load balancer status
-if lb = Granite::ConnectionRegistry.get_load_balancer("primary")
+if lb = Grant::ConnectionRegistry.get_load_balancer("primary")
   puts "Healthy replicas: #{lb.healthy_count}/#{lb.size}"
 end
 ```
@@ -173,12 +173,12 @@ end
 
 ## Files Modified/Created
 
-- Created: `src/granite/health_monitor.cr`
-- Created: `src/granite/replica_load_balancer.cr`
+- Created: `src/grant/health_monitor.cr`
+- Created: `src/grant/replica_load_balancer.cr`
 - Created: `ADVANCED_MULTI_DATABASE_DESIGN.md`
-- Created: `spec/granite/advanced_multi_database_spec.cr`
-- Modified: `src/granite/connection_registry.cr`
-- Modified: `src/granite/connection_management.cr`
+- Created: `spec/grant/advanced_multi_database_spec.cr`
+- Modified: `src/grant/connection_registry.cr`
+- Modified: `src/grant/connection_management.cr`
 - Modified: `examples/multiple_databases.cr`
 
 ## Conclusion

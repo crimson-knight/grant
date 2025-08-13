@@ -2,13 +2,13 @@
 
 ## Summary
 
-I've successfully implemented the foundation for nested attributes support in Grant (formerly Granite). The implementation provides:
+I've successfully implemented the foundation for nested attributes support in Grant (formerly Grant). The implementation provides:
 
 ### Completed Features:
 
 1. **Module Structure** ✅
-   - Created `Granite::NestedAttributes` module
-   - Proper integration with `Granite::Base`
+   - Created `Grant::NestedAttributes` module
+   - Proper integration with `Grant::Base`
 
 2. **accepts_nested_attributes_for Macro** ✅
    - Generates `<association>_attributes=` setter methods
@@ -37,7 +37,7 @@ The implementation stores and processes nested attributes but does not yet perfo
 ### Example Usage:
 
 ```crystal
-class Author < Granite::Base
+class Author < Grant::Base
   has_many :posts
   has_one :profile
   
@@ -62,7 +62,7 @@ author.save # Currently saves author but not nested records
 ### Next Steps for Full Implementation:
 
 1. **Database Operations**: 
-   - Integrate with Granite's save lifecycle
+   - Integrate with Grant's save lifecycle
    - Implement actual create/update/destroy operations
    - Handle foreign key assignment
 
@@ -80,7 +80,7 @@ author.save # Currently saves author but not nested records
 
 ### Technical Challenges Encountered:
 
-1. **Callback System**: Crystal's macro system and Granite's callback implementation made it challenging to hook into the save lifecycle cleanly.
+1. **Callback System**: Crystal's macro system and Grant's callback implementation made it challenging to hook into the save lifecycle cleanly.
 
 2. **Dynamic Class Resolution**: Crystal's compile-time type system makes it difficult to dynamically resolve association classes at runtime.
 
@@ -88,9 +88,9 @@ author.save # Currently saves author but not nested records
 
 ### Files Created/Modified:
 
-- `/src/granite/nested_attributes_simple_v2.cr` - Current working implementation
-- `/spec/granite/nested_attributes_spec.cr` - Comprehensive test suite
-- `/spec/granite/nested_attributes_simple_spec.cr` - Tests for current implementation
-- `/src/granite/base.cr` - Added require for nested attributes module
+- `/src/grant/nested_attributes_simple_v2.cr` - Current working implementation
+- `/spec/grant/nested_attributes_spec.cr` - Comprehensive test suite
+- `/spec/grant/nested_attributes_simple_spec.cr` - Tests for current implementation
+- `/src/grant/base.cr` - Added require for nested attributes module
 
-The foundation is solid and provides a Rails-like API for nested attributes. The remaining work involves integrating with Granite's persistence layer to perform actual database operations.
+The foundation is solid and provides a Rails-like API for nested attributes. The remaining work involves integrating with Grant's persistence layer to perform actual database operations.

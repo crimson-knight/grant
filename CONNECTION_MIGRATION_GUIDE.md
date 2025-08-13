@@ -4,7 +4,7 @@ This guide helps you migrate to the new simplified connection management system 
 
 ## Overview
 
-The new connection system is now built directly into Granite::Base and provides:
+The new connection system is now built directly into Grant::Base and provides:
 - Multiple database support with role-based connections (reading/writing)
 - Horizontal sharding capabilities
 - Automatic read/write splitting based on time delays
@@ -17,45 +17,45 @@ The new connection system is now built directly into Granite::Base and provides:
 
 #### Old Way:
 ```crystal
-Granite::Connections << Granite::Adapter::Pg.new(name: "my_app", url: DATABASE_URL)
+Grant::Connections << Grant::Adapter::Pg.new(name: "my_app", url: DATABASE_URL)
 
 # Or with reader/writer split:
-Granite::Connections << {
+Grant::Connections << {
   name: "my_app",
   reader: READ_DATABASE_URL,
   writer: WRITE_DATABASE_URL,
-  adapter_type: Granite::Adapter::Pg
+  adapter_type: Grant::Adapter::Pg
 }
 ```
 
 #### New Way:
 ```crystal
 # Simple connection
-Granite::ConnectionRegistry.establish_connection(
+Grant::ConnectionRegistry.establish_connection(
   database: "my_app",
-  adapter: Granite::Adapter::Pg,
+  adapter: Grant::Adapter::Pg,
   url: DATABASE_URL
 )
 
 # With reader/writer split
-Granite::ConnectionRegistry.establish_connection(
+Grant::ConnectionRegistry.establish_connection(
   database: "my_app",
-  adapter: Granite::Adapter::Pg,
+  adapter: Grant::Adapter::Pg,
   url: WRITE_DATABASE_URL,
   role: :writing
 )
 
-Granite::ConnectionRegistry.establish_connection(
+Grant::ConnectionRegistry.establish_connection(
   database: "my_app",
-  adapter: Granite::Adapter::Pg,
+  adapter: Grant::Adapter::Pg,
   url: READ_DATABASE_URL,
   role: :reading
 )
 
 # Or use establish_connections for multiple at once
-Granite::ConnectionRegistry.establish_connections({
+Grant::ConnectionRegistry.establish_connections({
   "my_app" => {
-    adapter: Granite::Adapter::Pg,
+    adapter: Grant::Adapter::Pg,
     writer: WRITE_DATABASE_URL,
     reader: READ_DATABASE_URL,
     pool: {
@@ -70,7 +70,7 @@ Granite::ConnectionRegistry.establish_connections({
 
 #### Old Way:
 ```crystal
-class User < Granite::Base
+class User < Grant::Base
   connection my_app
   table users
   
@@ -81,7 +81,7 @@ end
 
 #### New Way:
 ```crystal
-class User < Granite::Base
+class User < Grant::Base
   # Connection management is now built-in - no module needed!
   
   # Configure connections with the DSL
@@ -138,7 +138,7 @@ end
 
 #### New Feature - Sharding:
 ```crystal
-class ShardedUser < Granite::Base
+class ShardedUser < Grant::Base
   # No module needed - sharding is built-in!
   
   connects_to(
@@ -177,7 +177,7 @@ url = "postgres://user:pass@localhost/db?max_pool_size=25"
 #### New Way:
 ```crystal
 # Rich configuration options
-config = Granite::ConnectionPool::Config.new(
+config = Grant::ConnectionPool::Config.new(
   max_pool_size: 50,
   initial_pool_size: 5,
   max_idle_pool_size: 10,
@@ -186,9 +186,9 @@ config = Granite::ConnectionPool::Config.new(
   retry_delay: 0.5.seconds
 )
 
-Granite::ConnectionRegistry.establish_connection(
+Grant::ConnectionRegistry.establish_connection(
   database: "my_app",
-  adapter: Granite::Adapter::Pg,
+  adapter: Grant::Adapter::Pg,
   url: DATABASE_URL,
   pool_config: config
 )
@@ -199,28 +199,28 @@ Granite::ConnectionRegistry.establish_connection(
 #### New Features:
 ```crystal
 # Get connection statistics
-stats = Granite::ConnectionRegistry.stats
+stats = Grant::ConnectionRegistry.stats
 stats.each do |pool_name, pool_stats|
   puts "#{pool_name}: #{pool_stats.in_use_connections}/#{pool_stats.total_connections}"
   puts "Average checkout time: #{pool_stats.average_checkout_time}"
 end
 
 # Health check all pools
-health = Granite::ConnectionRegistry.health_check
+health = Grant::ConnectionRegistry.health_check
 health.each do |pool_name, is_healthy|
   puts "#{pool_name}: #{is_healthy ? "✓" : "✗"}"
 end
 
 # Get all databases
-databases = Granite::ConnectionRegistry.databases
+databases = Grant::ConnectionRegistry.databases
 
 # Get shards for a database
-shards = Granite::ConnectionRegistry.shards_for_database("my_app")
+shards = Grant::ConnectionRegistry.shards_for_database("my_app")
 ```
 
 ## Breaking Changes
 
-1. Connection management is now built into Granite::Base - no separate module needed
+1. Connection management is now built into Grant::Base - no separate module needed
 2. The `connection` macro is simplified and just sets the database name
 3. Direct adapter manipulation should be replaced with connection contexts
 4. Connection registration must happen before model usage
@@ -246,7 +246,7 @@ The new system provides:
 ### Connection Not Found
 ```crystal
 # Make sure to establish connections before using models
-Granite::ConnectionRegistry.establish_connection(...)
+Grant::ConnectionRegistry.establish_connection(...)
 
 # Then use your models
 User.all
@@ -255,7 +255,7 @@ User.all
 ### Pool Timeout
 ```crystal
 # Increase pool size or timeout
-config = Granite::ConnectionPool::Config.new(
+config = Grant::ConnectionPool::Config.new(
   max_pool_size: 100,
   checkout_timeout: 30.seconds
 )
@@ -266,7 +266,7 @@ config = Granite::ConnectionPool::Config.new(
 # Log connection stats periodically
 spawn do
   loop do
-    stats = Granite::ConnectionRegistry.stats
+    stats = Grant::ConnectionRegistry.stats
     Log.info { "Connection stats: #{stats}" }
     sleep 60.seconds
   end

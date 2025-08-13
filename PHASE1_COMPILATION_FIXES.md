@@ -6,37 +6,37 @@ During the implementation of Phase 1 features, I encountered and fixed several c
 ## Compilation Errors Fixed
 
 ### 1. Query Builder Case Statement
-**File**: `src/granite/query/builder.cr`
+**File**: `src/grant/query/builder.cr`
 **Issue**: Case statement without else clause returns Nil
 **Fix**: Added else clause with raise statement
 
 ### 2. Association Loader Query Syntax
-**File**: `src/granite/association_loader.cr`
+**File**: `src/grant/association_loader.cr`
 **Issue**: Hash syntax not supported in where clause
 **Fix**: Changed from `where(key => values)` to `where(key, :in, values)`
 
 ### 3. Metadata Retrieval
-**File**: `src/granite/association_loader.cr`
+**File**: `src/grant/association_loader.cr`
 **Issue**: Runtime metadata access attempted with compile-time macros
 **Fix**: Simplified to return nil (TODO: implement proper metadata system)
 
 ### 4. Dirty Tracking Macro Timing
-**File**: `src/granite/dirty.cr`, `src/granite/base.cr`
+**File**: `src/grant/dirty.cr`, `src/grant/base.cr`
 **Issue**: Macro trying to access instance vars before initialization
 **Fix**: Commented out `setup_dirty_tracking` call (TODO: fix macro timing)
 
 ### 5. Scoping Annotations
-**File**: `src/granite/scoping.cr`
+**File**: `src/grant/scoping.cr`
 **Issue**: Class variables cannot have JSON/YAML field annotations
 **Fix**: Removed annotations from class property
 
 ### 6. Database Type Access
-**File**: `src/granite/scoping.cr`
+**File**: `src/grant/scoping.cr`
 **Issue**: `adapter.database_type` method doesn't exist
 **Fix**: Used same pattern as in `builder_methods.cr` to determine DB type from adapter class name
 
 ### 7. Duplicate Methods
-**File**: `src/granite/query/builder.cr`
+**File**: `src/grant/query/builder.cr`
 **Issue**: Duplicate `all` and `first` methods added
 **Fix**: Removed duplicate methods
 

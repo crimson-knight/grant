@@ -22,26 +22,26 @@ Examples:
 ### 1.1 Connection Management (Month 1)
 
 #### Week 1-2: Connection Pool Wrapper ✅
-- [x] Create `Granite::ConnectionPool` wrapper around crystal-db
+- [x] Create `Grant::ConnectionPool` wrapper around crystal-db
 - [x] Implement pool statistics and monitoring
 - [x] Add connection health checks
 - [x] Write tests for pool behavior
 
 **Status**: Completed
 **Files**:
-- `src/granite/connection_pool.cr`
-- `spec/granite/connection_pool_spec.cr`
+- `src/grant/connection_pool.cr`
+- `spec/grant/connection_pool_spec.cr`
 
 #### Week 3-4: Connection Registry ✅
-- [x] Create `Granite::ConnectionRegistry` for managing multiple pools
+- [x] Create `Grant::ConnectionRegistry` for managing multiple pools
 - [x] Implement connection establishment methods
 - [x] Add connection lookup and retrieval
 - [x] Write comprehensive tests
 
 **Status**: Completed
 **Files**:
-- `src/granite/connection_registry.cr`
-- `spec/granite/connection_registry_spec.cr`
+- `src/grant/connection_registry.cr`
+- `spec/grant/connection_registry_spec.cr`
 
 ### 1.2 Multiple Database Support (Month 1-2)
 
@@ -53,8 +53,8 @@ Examples:
 
 **Status**: In Progress - Integration needed
 **Files**:
-- `src/granite/connection_handling.cr`
-- `spec/granite/connection_handling_spec.cr`
+- `src/grant/connection_handling.cr`
+- `spec/grant/connection_handling_spec.cr`
 
 #### Week 7-8: Connection Switching ✅
 - [x] Implement `connected_to` method for block-based switching
@@ -64,8 +64,8 @@ Examples:
 
 **Status**: Completed
 **Files**:
-- Updates to `src/granite/base.cr`
-- `spec/granite/connection_switching_spec.cr`
+- Updates to `src/grant/base.cr`
+- `spec/grant/connection_switching_spec.cr`
 
 ### 1.3 Sharding Infrastructure (Month 2)
 
@@ -78,21 +78,21 @@ Examples:
 
 **Status**: Not Started
 **Files**:
-- `src/granite/sharding/shard_resolver.cr`
-- `src/granite/sharding/modulo_resolver.cr`
-- `src/granite/sharding/range_resolver.cr`
-- `spec/granite/sharding/shard_resolver_spec.cr`
+- `src/grant/sharding/shard_resolver.cr`
+- `src/grant/sharding/modulo_resolver.cr`
+- `src/grant/sharding/range_resolver.cr`
+- `spec/grant/sharding/shard_resolver_spec.cr`
 
 #### Week 11-12: Sharded Model Support ⏳
-- [ ] Create `Granite::Sharding::ShardedModel` module
+- [ ] Create `Grant::Sharding::ShardedModel` module
 - [ ] Override query methods for shard routing
 - [ ] Implement cross-shard query support
 - [ ] Write integration tests
 
 **Status**: Not Started
 **Files**:
-- `src/granite/sharding/sharded_model.cr`
-- `spec/granite/sharding/sharded_model_spec.cr`
+- `src/grant/sharding/sharded_model.cr`
+- `spec/grant/sharding/sharded_model_spec.cr`
 
 ### 1.4 Transactions (Month 2-3)
 
@@ -105,8 +105,8 @@ Examples:
 
 **Status**: Not Started
 **Files**:
-- `src/granite/transactions/transaction_manager.cr`
-- `spec/granite/transactions/transaction_spec.cr`
+- `src/grant/transactions/transaction_manager.cr`
+- `spec/grant/transactions/transaction_spec.cr`
 
 #### Week 15-16: Distributed Transactions ⏳
 - [ ] Implement two-phase commit for sharding
@@ -116,8 +116,8 @@ Examples:
 
 **Status**: Not Started
 **Files**:
-- `src/granite/transactions/distributed_transaction.cr`
-- `spec/granite/transactions/distributed_transaction_spec.cr`
+- `src/grant/transactions/distributed_transaction.cr`
+- `spec/grant/transactions/distributed_transaction_spec.cr`
 
 ### 1.5 SQL Sanitization (Month 3)
 
@@ -130,8 +130,8 @@ Examples:
 
 **Status**: Not Started
 **Files**:
-- `src/granite/sanitization.cr`
-- `spec/granite/sanitization_spec.cr`
+- `src/grant/sanitization.cr`
+- `spec/grant/sanitization_spec.cr`
 
 ### 1.6 Locking (Month 3)
 
@@ -144,10 +144,10 @@ Examples:
 
 **Status**: Not Started
 **Files**:
-- `src/granite/locking/optimistic.cr`
-- `src/granite/locking/pessimistic.cr`
-- `spec/granite/locking/optimistic_spec.cr`
-- `spec/granite/locking/pessimistic_spec.cr`
+- `src/grant/locking/optimistic.cr`
+- `src/grant/locking/pessimistic.cr`
+- `spec/grant/locking/optimistic_spec.cr`
+- `spec/grant/locking/pessimistic_spec.cr`
 
 ## Testing Strategy
 
@@ -177,7 +177,7 @@ Examples:
 - ConnectionPoolAdapter to bridge with existing adapters
 
 ### In Progress 🚧
-- Integration of new connection system with Granite::Base
+- Integration of new connection system with Grant::Base
 - Migration from old connection management to new system
 - Testing with real database connections
 
@@ -192,7 +192,7 @@ Examples:
 - ✅ Created connection registry
 - ✅ Implemented connects_to DSL
 - ✅ Created comprehensive test suites
-- 🚧 Working on integration with Granite::Base
+- 🚧 Working on integration with Grant::Base
 
 ## Risks and Mitigations
 

@@ -21,8 +21,8 @@ ULIDs are perfect for range-based sharding because they're:
 # Timestamp   Random
 # (48 bits)   (80 bits)
 
-class Order < Granite::Base
-  include Granite::Sharding::Model
+class Order < Grant::Base
+  include Grant::Sharding::Model
   
   # Shard by ULID ranges (time-based)
   shards_by :id, strategy: :range, ranges: [
@@ -138,7 +138,7 @@ end
 Embed the shard directly in the ID:
 
 ```crystal
-class ShardedOrder < Granite::Base
+class ShardedOrder < Grant::Base
   # ID format: "shard_2024_1234567890"
   column id : String, primary: true
   
@@ -166,7 +166,7 @@ end
 
 ```crystal
 # Add ULID support to Grant
-module Granite::ULID
+module Grant::ULID
   ENCODING = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
   
   def self.generate : String
@@ -213,12 +213,12 @@ class TimeRangeResolver < RangeResolver
   private def ulid_for_time(time : Time) : String
     # Generate ULID prefix for given time
     # Only need first 10 chars for time comparison
-    Granite::ULID.generate[0...10] + "0" * 16
+    Grant::ULID.generate[0...10] + "0" * 16
   end
 end
 
 # Usage - Clean time-based configuration
-class Order < Granite::Base
+class Order < Grant::Base
   shards_by :id, strategy: :time_range, ranges: [
     {from: Time.parse("2023-01-01", "%F", Time::Location::UTC), 
      to: Time.parse("2024-01-01", "%F", Time::Location::UTC), 

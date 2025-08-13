@@ -4,11 +4,11 @@ Grant provides automatic data normalization that runs before validation. This en
 
 ## Basic Usage
 
-Include the `Granite::Normalization` module and use the `normalizes` macro to define normalization rules:
+Include the `Grant::Normalization` module and use the `normalizes` macro to define normalization rules:
 
 ```crystal
-class User < Granite::Base
-  include Granite::Normalization
+class User < Grant::Base
+  include Grant::Normalization
   
   connection sqlite
   table users
@@ -144,8 +144,8 @@ user.username # => "john_doe"
 You can specify conditions for when normalizations should run:
 
 ```crystal
-class User < Granite::Base
-  include Granite::Normalization
+class User < Grant::Base
+  include Grant::Normalization
   
   column website : String?
   

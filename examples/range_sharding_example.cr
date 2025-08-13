@@ -1,13 +1,13 @@
-require "../src/granite"
-require "../src/granite/sharding"
+require "../src/grant"
+require "../src/grant/sharding"
 
 # Example 1: Time-based range sharding with composite IDs
-class Order < Granite::Base
+class Order < Grant::Base
   connection "primary"
   table orders
   
-  include Granite::Sharding::Model
-  extend Granite::Sharding::CompositeId
+  include Grant::Sharding::Model
+  extend Grant::Sharding::CompositeId
   
   # Shard by composite string ID with date prefix
   shards_by :id, strategy: :range, ranges: [
@@ -31,12 +31,12 @@ class Order < Granite::Base
 end
 
 # Example 2: Numeric range sharding with Int64 timestamps
-class Event < Granite::Base
+class Event < Grant::Base
   connection "primary"
   table events
   
-  include Granite::Sharding::Model
-  extend Granite::Sharding::CompositeId
+  include Grant::Sharding::Model
+  extend Grant::Sharding::CompositeId
   
   # Shard by timestamp ID (microseconds since epoch)
   shards_by :id, strategy: :range, ranges: [
@@ -64,11 +64,11 @@ class Event < Granite::Base
 end
 
 # Example 3: Time range sharding with helper
-class AuditLog < Granite::Base
+class AuditLog < Grant::Base
   connection "primary"
   table audit_logs
   
-  include Granite::Sharding::Model
+  include Grant::Sharding::Model
   
   # Use time_range strategy for cleaner configuration
   shards_by :id, strategy: :time_range, ranges: [

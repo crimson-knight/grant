@@ -125,7 +125,7 @@ last_user = User.last
 last_active = User.where(active: true).last
 
 # Raises if not found
-last_user = User.last!  # Raises Granite::Querying::NotFound if table is empty
+last_user = User.last!  # Raises Grant::Querying::NotFound if table is empty
 ```
 
 ## Query Builder Integration
@@ -157,10 +157,10 @@ Aggregation methods return appropriate types:
 - `count` → `Int64`
 - `sum` → `Float64`
 - `avg` → `Float64?` (nil if no records)
-- `min` → `Granite::Columns::Type` (polymorphic)
-- `max` → `Granite::Columns::Type` (polymorphic)
-- `pluck` → `Array(Granite::Columns::Type)`
-- `pick` → `Granite::Columns::Type?`
+- `min` → `Grant::Columns::Type` (polymorphic)
+- `max` → `Grant::Columns::Type` (polymorphic)
+- `pluck` → `Array(Grant::Columns::Type)`
+- `pick` → `Grant::Columns::Type?`
 - `last` → `Model?`
 - `last!` → `Model` (raises if not found)
 
@@ -198,7 +198,7 @@ CREATE INDEX idx_orders_status_created ON orders(status, created_at);
 For frequently accessed aggregations, consider caching:
 
 ```crystal
-class Product < Granite::Base
+class Product < Grant::Base
   # Cache average rating
   column average_rating : Float64?
   
@@ -339,7 +339,7 @@ total_revenue = sum_result.await
 average_price = avg_result.await
 
 # Concurrent aggregations
-coordinator = Granite::Async::Coordinator.new
+coordinator = Grant::Async::Coordinator.new
 coordinator.add(User.async_count)
 coordinator.add(Order.async_sum(:total))
 coordinator.add(Product.async_avg(:price))

@@ -17,10 +17,10 @@ The test suite does not pass entirely due to several issues that were discovered
 - Query building (with fixes applied)
 
 ### Specific Passing Examples:
-- `spec/granite/associations/polymorphic_simple_spec.cr` - ✅ 3 examples passing
-- `spec/granite/transactions/create_spec.cr` - ✅ 9 examples passing
-- `spec/granite/columns/primary_key_spec.cr` - ✅ 4 examples passing
-- `spec/granite/columns/uuid_spec.cr` - ✅ 1 example passing
+- `spec/grant/associations/polymorphic_simple_spec.cr` - ✅ 3 examples passing
+- `spec/grant/transactions/create_spec.cr` - ✅ 9 examples passing
+- `spec/grant/columns/primary_key_spec.cr` - ✅ 4 examples passing
+- `spec/grant/columns/uuid_spec.cr` - ✅ 1 example passing
 
 ## Disabled Specs (7 files)
 
@@ -35,8 +35,8 @@ The test suite does not pass entirely due to several issues that were discovered
 ## Previously Blocking Issues (Now Fixed)
 
 ### UUID Type Support ✅
-- **Error**: `Granite::Type.from_rs` didn't support UUID type
-- **Solution**: Added UUID support to Granite::Type module
+- **Error**: `Grant::Type.from_rs` didn't support UUID type
+- **Solution**: Added UUID support to Grant::Type module
 - **Impact**: Polymorphic spec and other UUID-dependent specs now work
 
 ### Polymorphic Associations ✅ 
@@ -62,7 +62,7 @@ The test suite does not pass entirely due to several issues that were discovered
 
 ## Required Actions for Full Test Suite
 
-1. ~~**Add UUID support to Granite::Type**~~ - ✅ COMPLETED
+1. ~~**Add UUID support to Grant::Type**~~ - ✅ COMPLETED
 2. **Fix scoping macro visibility** - Would enable scoping spec
 3. **Implement missing connection management features** - Would enable connection spec
 4. **Fix eager loading API** - Would enable eager loading spec
@@ -74,6 +74,6 @@ The test suite does not pass entirely due to several issues that were discovered
 While the test suite does not pass entirely, the core ORM functionality is working correctly. The issues are primarily with:
 - Advanced features (eager loading, scoping, connection management)
 - Test design issues (callbacks, instrumentation)
-- Missing type support (UUID in Granite::Type)
+- Missing type support (UUID in Grant::Type)
 
 The polymorphic associations refactor was successful, and basic tests for it are passing. The full polymorphic spec fails due to an unrelated UUID issue.

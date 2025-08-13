@@ -30,7 +30,7 @@ user = result.await
 Execute multiple queries concurrently using the `Coordinator`:
 
 ```crystal
-coordinator = Granite::Async::Coordinator.new
+coordinator = Grant::Async::Coordinator.new
 
 # Add multiple async operations
 coordinator.add(User.async_count)
@@ -50,7 +50,7 @@ comment_count = results[2]
 For operations returning different types, use `ResultCoordinator`:
 
 ```crystal
-coordinator = Granite::Async::ResultCoordinator(User).new
+coordinator = Grant::Async::ResultCoordinator(User).new
 
 # Add operations returning User instances
 coordinator.add(User.async_find(1))
@@ -135,7 +135,7 @@ result = User.shard("shard_1").async_find(user_id)
 user = result.await
 
 # Concurrent operations across shards
-coordinator = Granite::Async::Coordinator.new
+coordinator = Grant::Async::Coordinator.new
 
 ["shard_1", "shard_2", "shard_3"].each do |shard|
   coordinator.add(User.shard(shard).async_count)
@@ -152,7 +152,7 @@ Async operations capture and propagate errors:
 ```crystal
 begin
   user = User.async_find!(999999).await
-rescue Granite::Querying::NotFound
+rescue Grant::Querying::NotFound
   puts "User not found"
 end
 
@@ -170,7 +170,7 @@ end
 The Coordinator provides access to all errors:
 
 ```crystal
-coordinator = Granite::Async::Coordinator.new
+coordinator = Grant::Async::Coordinator.new
 
 coordinator.add(User.async_find!(1))
 coordinator.add(User.async_find!(999999))  # Will fail
@@ -220,7 +220,7 @@ end
 
 # Efficient: Concurrent execution
 def load_dashboard_data_async
-  coordinator = Granite::Async::Coordinator.new
+  coordinator = Grant::Async::Coordinator.new
   
   coordinator.add(User.async_count)
   coordinator.add(Post.async_count)
