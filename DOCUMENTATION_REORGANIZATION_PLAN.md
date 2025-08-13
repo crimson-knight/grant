@@ -44,21 +44,12 @@ This document tracks the progress of reorganizing Grant's documentation for opti
   - [x] Move value objects → `/docs/advanced/specialized/value-objects.md`
   - [x] Update serialized columns → `/docs/advanced/specialized/serialized-columns.md`
 
-### Phase 3: Infrastructure Documentation ⏳
-- [ ] Multiple databases
-  - [ ] Create setup/configuration guide → `/docs/infrastructure/multiple-databases/setup-configuration.md`
-  - [ ] Consolidate connection management → `/docs/infrastructure/multiple-databases/connection-management.md`
-  - [ ] Merge 7+ sharding files → `/docs/infrastructure/multiple-databases/sharding-guide.md`
-- [ ] Async operations
-  - [ ] Update async queries → `/docs/infrastructure/async-operations/async-queries.md`
-  - [ ] Document concurrency → `/docs/infrastructure/async-operations/concurrency.md`
-- [ ] Instrumentation
-  - [ ] Merge logging/monitoring → `/docs/infrastructure/instrumentation/logging-monitoring.md`
-  - [ ] Consolidate query analysis → `/docs/infrastructure/instrumentation/query-analysis.md`
-  - [ ] Extract performance metrics → `/docs/infrastructure/instrumentation/performance-metrics.md`
-- [ ] Transactions and locking
-  - [ ] Consolidate locking docs → `/docs/infrastructure/transactions-locking/locking-strategies.md`
-  - [ ] Update transaction management → `/docs/infrastructure/transactions-locking/transaction-management.md`
+### Phase 3: Infrastructure Documentation ✅
+- [x] Consolidated to 4 comprehensive files:
+  - [x] Database scaling and sharding → `/docs/infrastructure/database-scaling.md`
+  - [x] Async operations and concurrency → `/docs/infrastructure/async-concurrency.md`
+  - [x] Monitoring and performance analysis → `/docs/infrastructure/monitoring-and-performance.md`
+  - [x] Transactions and locking strategies → `/docs/infrastructure/transactions-and-locking.md`
 
 ### Phase 4: Development Documentation ⏳
 - [ ] Consolidate design documents
@@ -127,10 +118,10 @@ database_support: ["postgresql", "mysql", "sqlite"]
 ## Progress Metrics
 - Total files to process: ~80
 - Target file count: ~35
-- Files processed: 31
+- Files processed: 35
 - Files merged: 12 (README+readme→installation, models→models-and-columns, 4 query docs→querying-and-scopes, 3 relationship docs→relationships, 2 validation docs→validations, 3 encryption docs→encrypted-attributes)
 - Files deleted: 0
-- Files with metadata: 22 (all new docs have metadata)
+- Files with metadata: 26 (all new docs have metadata)
 
 ## Notes
 - Prioritize user-facing documentation first
