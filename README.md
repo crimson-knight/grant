@@ -1,13 +1,13 @@
 # Grant
 
+The `Grant` ORM is an Active Record pattern ORM that aims to achieve feature parity with Rails 8+.
+
+---insert-comparison-table---
+
 [Amber](https://github.com/amberframework/amber) is a web framework written in
 the [Crystal](https://github.com/crystal-lang/crystal) language.
 
-This project is to provide an ORM in Crystal.
-
-# Looking for maintainers
-
-Grant is looking for volunteers to take over maintainership of the repository, reviewing and merging pull requests, stewarding updates to follow along with Crystal language updates, etc. [More information here](https://github.com/amberframework/grant/issues/462)
+This project is to provide an ORM in Crystal using the Active Record pattern.
 
 ## Documentation
 
