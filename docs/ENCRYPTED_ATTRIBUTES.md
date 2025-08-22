@@ -41,9 +41,9 @@ Grant provides transparent encryption for sensitive data in your models using in
 # config/initializers/encryption.cr
 Grant::Encryption.configure do |config|
   # Required: Set your encryption keys (use secure random values in production!)
-  config.primary_key = ENV["GRANITE_ENCRYPTION_PRIMARY_KEY"]
-  config.deterministic_key = ENV["GRANITE_ENCRYPTION_DETERMINISTIC_KEY"]
-  config.key_derivation_salt = ENV["GRANITE_ENCRYPTION_SALT"]
+  config.primary_key = ENV["GRANT_ENCRYPTION_PRIMARY_KEY"]
+  config.deterministic_key = ENV["GRANT_ENCRYPTION_DETERMINISTIC_KEY"]
+  config.key_derivation_salt = ENV["GRANT_ENCRYPTION_SALT"]
   
   # Optional: Support reading unencrypted data during migration
   config.support_unencrypted_data = true
@@ -103,9 +103,9 @@ primary_key = Grant::Encryption::Config.generate_key
 deterministic_key = Grant::Encryption::Config.generate_key
 salt = Grant::Encryption::Config.generate_key
 
-puts "GRANITE_ENCRYPTION_PRIMARY_KEY=#{primary_key}"
-puts "GRANITE_ENCRYPTION_DETERMINISTIC_KEY=#{deterministic_key}"
-puts "GRANITE_ENCRYPTION_SALT=#{salt}"
+puts "GRANT_ENCRYPTION_PRIMARY_KEY=#{primary_key}"
+puts "GRANT_ENCRYPTION_DETERMINISTIC_KEY=#{deterministic_key}"
+puts "GRANT_ENCRYPTION_SALT=#{salt}"
 ```
 
 ### Configuration Options
@@ -305,7 +305,7 @@ Grant::Encryption::MigrationHelpers.decrypt_column(
    config.primary_key = "hardcoded-key-value"
    
    # Good - use environment variables
-   config.primary_key = ENV["GRANITE_ENCRYPTION_PRIMARY_KEY"]
+   config.primary_key = ENV["GRANT_ENCRYPTION_PRIMARY_KEY"]
    ```
 
 2. **Use a key management service in production**

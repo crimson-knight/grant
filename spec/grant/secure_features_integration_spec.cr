@@ -35,11 +35,11 @@ require "../spec_helper"
 
 describe "Secure Features Integration" do
   before_each do
-    ENV["GRANITE_SIGNING_SECRET"] = "test_secret_key"
+    ENV["GRANT_SIGNING_SECRET"] = "test_secret_key"
   end
   
   after_each do
-    ENV.delete("GRANITE_SIGNING_SECRET")
+    ENV.delete("GRANT_SIGNING_SECRET")
   end
   
   it "works with all security features together" do

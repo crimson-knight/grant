@@ -67,7 +67,7 @@ permanent_id = user.signed_id(purpose: :login_token)
 
 - Signed IDs use HMAC-SHA256 with your application secret
 - Purpose scoping prevents token reuse across different contexts
-- Set `GRANITE_SIGNING_SECRET` environment variable for the signing key
+- Set `GRANT_SIGNING_SECRET` environment variable for the signing key
 
 ## Token For (Temporary Tokens)
 
@@ -162,7 +162,7 @@ api_user = User.find_by(api_key: request.headers["X-API-Key"])
 
 ## Security Best Practices
 
-1. **Always set GRANITE_SIGNING_SECRET** in production
+1. **Always set GRANT_SIGNING_SECRET** in production
 2. **Use appropriate expiration times** - shorter for sensitive operations
 3. **Use purpose scoping** to prevent token reuse
 4. **Regenerate tokens** after they're used for sensitive operations
@@ -172,7 +172,7 @@ api_user = User.find_by(api_key: request.headers["X-API-Key"])
 
 ```bash
 # Required for signed IDs and token_for
-export GRANITE_SIGNING_SECRET="your-secret-key-here"
+export GRANT_SIGNING_SECRET="your-secret-key-here"
 ```
 
 Generate a secure secret:

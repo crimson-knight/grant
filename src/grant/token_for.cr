@@ -131,7 +131,7 @@ module Grant::TokenFor
     
     private def token_signing_secret : String
       # In a real app, this should come from environment or config
-      ENV["GRANITE_SIGNING_SECRET"]? || raise "GRANITE_SIGNING_SECRET not set"
+      ENV["GRANT_SIGNING_SECRET"]? || raise "GRANT_SIGNING_SECRET not set"
     end
     
     private def secure_token_compare(a : String, b : String) : Bool

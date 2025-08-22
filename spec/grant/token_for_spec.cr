@@ -27,11 +27,11 @@ require "../spec_helper"
 
 describe Grant::TokenFor do
   before_each do
-    ENV["GRANITE_SIGNING_SECRET"] = "test_secret"
+    ENV["GRANT_SIGNING_SECRET"] = "test_secret"
   end
   
   after_each do
-    ENV.delete("GRANITE_SIGNING_SECRET")
+    ENV.delete("GRANT_SIGNING_SECRET")
   end
   
   describe "generates_token_for" do
