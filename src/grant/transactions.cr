@@ -256,21 +256,28 @@ module Grant::Transactions
     end
 
     begin
-      __before_save
-      if @{{primary_key.name.id}} && !new_record?
-        __before_update
-        __update(skip_timestamps: skip_timestamps)
-        __after_update
-        queue_commit_callback(:after_update_commit) if responds_to?(:queue_commit_callback)
-      else
-        __before_create
-        __create(skip_timestamps: skip_timestamps)
-        __after_create
-        queue_commit_callback(:after_create_commit) if responds_to?(:queue_commit_callback)
+      __run_around_save do
+        __before_save
+        if @{{primary_key.name.id}} && !new_record?
+          __run_around_update do
+            __before_update
+            __update(skip_timestamps: skip_timestamps)
+            __after_update
+            queue_commit_callback(:after_update_commit) if responds_to?(:queue_commit_callback)
+          end
+        else
+          __run_around_create do
+            __before_create
+            __create(skip_timestamps: skip_timestamps)
+            __after_create
+            queue_commit_callback(:after_create_commit) if responds_to?(:queue_commit_callback)
+          end
+        end
+        __after_save unless around_halted?
+        queue_commit_callback(:after_commit) if responds_to?(:queue_commit_callback) && !around_halted?
+        run_commit_callbacks if responds_to?(:run_commit_callbacks) && !around_halted?
       end
-      __after_save
-      queue_commit_callback(:after_commit) if responds_to?(:queue_commit_callback)
-      run_commit_callbacks if responds_to?(:run_commit_callbacks)
+      return false if around_halted?
     rescue ex : DB::Error | Grant::Callbacks::Abort
       if message = ex.message
         Log.error { "Save Exception: #{message}" }
@@ -327,17 +334,20 @@ module Grant::Transactions
   # otherwise.
   def destroy
     begin
-      __before_destroy
-      __destroy
-      __after_destroy
-      queue_commit_callback(:after_destroy_commit) if responds_to?(:queue_commit_callback)
-      queue_commit_callback(:after_commit) if responds_to?(:queue_commit_callback)
-      run_commit_callbacks if responds_to?(:run_commit_callbacks)
+      __run_around_destroy do
+        __before_destroy
+        __destroy
+        __after_destroy
+        queue_commit_callback(:after_destroy_commit) if responds_to?(:queue_commit_callback)
+        queue_commit_callback(:after_commit) if responds_to?(:queue_commit_callback)
+        run_commit_callbacks if responds_to?(:run_commit_callbacks)
+      end
+      return false if around_halted?
     rescue ex : DB::Error | Grant::Callbacks::Abort
       if message = ex.message
         Log.error { "Destroy Exception: #{message}" }
         errors << Grant::Error.new(:base, message)
-        
+
         {% begin %}
         {% primary_key = @type.instance_vars.find { |ivar| (ann = ivar.annotation(Grant::Column)) && ann[:primary] } %}
         Grant::Logs::Model.error { "Failed to destroy record - #{self.class.name} [id: #{@{{primary_key.name.id}}}] - #{message}" }
