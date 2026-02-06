@@ -61,9 +61,12 @@ abstract class Grant::Base
     {% begin %}
       case name
       {% for ivar in @type.instance_vars.select(&.annotation(Grant::Column)) %}
-        {% ann = ivar.annotation(Grant::Column) %}
         when {{ivar.name.stringify}}
-          @{{ivar.id}} = value.as({{ann[:nilable] ? ivar.type : ivar.type.union_types.reject { |t| t == Nil }.first}})
+          if value.is_a?({{ivar.type}})
+            @{{ivar.id}} = value
+          else
+            raise "Type mismatch for {{ivar.name}}: expected {{ivar.type}} but got #{value.class}"
+          end
       {% end %}
       else
         raise "Unknown attribute: #{name}"

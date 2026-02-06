@@ -21,7 +21,8 @@ require "./where_chain"
 # - Model.where(field: value).or { whehre(field3: value3) }
 class Grant::Query::Builder(Model)
   include Grant::Async::QueryMethods(Model)
-  
+  include Enumerable(Model)
+
   enum DbType
     Mysql
     Sqlite
@@ -325,8 +326,16 @@ class Grant::Query::Builder(Model)
     assembler.touch_all(fields, time: time)
   end
 
-  def count
-    assembler.count
+  def count : Int64
+    result = assembler.count.run
+    case result
+    when Int64
+      result
+    when Array(Int64)
+      result.sum
+    else
+      0_i64
+    end
   end
 
   def exists? : Bool
@@ -337,22 +346,8 @@ class Grant::Query::Builder(Model)
     count
   end
 
-  def reject(&)
-    assembler.select.run.reject do |record|
-      yield record
-    end
-  end
-
-  def each(&)
-    assembler.select.tap do |record_set|
-      record_set.each do |record|
-        yield record
-      end
-    end
-  end
-
-  def map(&)
-    assembler.select.run.map do |record|
+  def each(& : Model ->) : Nil
+    self.select.each do |record|
       yield record
     end
   end

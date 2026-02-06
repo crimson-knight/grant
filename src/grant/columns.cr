@@ -405,7 +405,11 @@ module Grant::Columns
       case attribute_name.to_s
       {% for column in @type.instance_vars.select(&.annotation(Grant::Column)) %}
         when {{column.name.stringify}}
-          self.{{column.name.id}} = value.as({{column.type}})
+          if value.is_a?({{column.type}})
+            self.{{column.name.id}} = value
+          else
+            raise "Cannot write attribute #{attribute_name}: expected {{column.type}} but got #{value.class}"
+          end
       {% end %}
       else
         raise "Cannot write attribute #{attribute_name}, invalid attribute"
