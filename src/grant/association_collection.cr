@@ -44,6 +44,70 @@ class Grant::AssociationCollection(Owner, Target)
     Target.find!(value)
   end
 
+  # Builds a new Target instance with the foreign key pre-set to the
+  # owner's primary key. The record is NOT saved to the database.
+  #
+  # ```
+  # post = author.posts.build(title: "New Post")
+  # post.author_id # => author.id
+  # post.new_record? # => true
+  # ```
+  def build(**attrs) : Target
+    record = Target.new
+    record.set_attributes(attrs.to_h.transform_keys(&.to_s))
+    # Set foreign key to owner's primary key
+    record.set_attributes({@foreign_key.to_s => owner.primary_key_value})
+    record
+  end
+
+  # Builds and saves a new Target instance with the foreign key pre-set.
+  # Returns the record (which may have errors if save failed).
+  #
+  # ```
+  # post = author.posts.create(title: "New Post")
+  # post.persisted? # => true (if valid)
+  # ```
+  def create(**attrs) : Target
+    record = build(**attrs)
+    record.save
+    record
+  end
+
+  # Builds and saves a new Target instance. Raises
+  # `Grant::RecordNotSaved` if the save fails.
+  #
+  # ```
+  # post = author.posts.create!(title: "New Post") # raises if invalid
+  # ```
+  def create!(**attrs) : Target
+    record = build(**attrs)
+    record.save!
+    record
+  end
+
+  # Destroys all associated records by loading each and calling destroy.
+  # This triggers callbacks on each record.
+  #
+  # Returns the number of records destroyed.
+  def destroy_all : Int32
+    records = all
+    count = 0
+    records.each do |record|
+      if record.destroy
+        count += 1
+      end
+    end
+    count
+  end
+
+  # Deletes all associated records using a single SQL DELETE.
+  # Does NOT instantiate records or run callbacks.
+  #
+  # Returns the number of rows deleted.
+  def delete_all : Int64
+    Target.where("#{Target.table_name}.#{@foreign_key} = ?", owner.primary_key_value).delete_all
+  end
+
   private getter owner
   private getter foreign_key
   private getter through
