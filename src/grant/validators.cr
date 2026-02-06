@@ -1,4 +1,5 @@
 require "./error"
+require "./errors"
 
 # Analyze validation blocks and procs
 #
@@ -32,7 +33,17 @@ module Grant::Validators
   @[YAML::Field(ignore: true)]
 
   # Returns all errors on the model.
-  getter errors = [] of Error
+  #
+  # The errors collection provides a rich API for working with
+  # validation errors. See `Grant::Errors` for the full API.
+  #
+  # ```
+  # record.errors.any?          # => true/false
+  # record.errors[:name]        # => ["can't be blank"]
+  # record.errors.full_messages # => ["Name can't be blank"]
+  # record.errors.add(:base, "Something went wrong")
+  # ```
+  getter errors = Errors.new
 
   @[JSON::Field(ignore: true)]
   @[YAML::Field(ignore: true)]
