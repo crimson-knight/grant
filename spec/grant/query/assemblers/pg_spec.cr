@@ -77,14 +77,26 @@ require "../spec_helper"
         assembler.numbered_parameters.should eq [] of Grant::Columns::Type
       end
 
-      it "handles raw SQL" do
+      it "handles raw SQL with ? placeholders" do
         sql = "select #{query_fields} from table where name = 'bob' and age = $1 and color = $2 order by id desc"
-        query = builder.where("name = 'bob'").where("age = $", 23).where("color = $", "red")
+        query = builder.where("name = 'bob'").where("age = ?", 23).where("color = ?", "red")
         query.raw_sql.should match ignore_whitespace sql
 
         assembler = query.assembler
         assembler.where
         assembler.numbered_parameters.should eq [23, "red"]
+      end
+
+      it "converts ? to $N in raw SQL for PG compatibility" do
+        # This is the core fix: querying.cr passes "id = ?" through
+        # query.where(), and the PG assembler must convert ? to $1
+        sql = "select #{query_fields} from table where id = $1 order by id desc"
+        query = builder.where("id = ?", 42)
+        query.raw_sql.should match ignore_whitespace sql
+
+        assembler = query.assembler
+        assembler.where
+        assembler.numbered_parameters.should eq [42]
       end
     end
 

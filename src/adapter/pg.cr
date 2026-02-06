@@ -142,7 +142,7 @@ class Grant::Adapter::Pg < Grant::Adapter::Base
     log statement, elapsed_time, value
   end
 
-  protected def ensure_clause_template(clause : String) : String
+  def ensure_clause_template(clause : String) : String
     if clause.includes?("?")
       num_subs = clause.count("?")
 

@@ -211,7 +211,7 @@ module Grant::Querying
         result
       else
         clause, params = build_find_by_clause(criteria)
-        sql = "DELETE FROM #{quoted_table_name} WHERE #{clause}"
+        sql = adapter.ensure_clause_template("DELETE FROM #{quoted_table_name} WHERE #{clause}")
         result = adapter.open do |db|
           db.exec(sql, args: params).rows_affected
         end
@@ -232,13 +232,13 @@ module Grant::Querying
         values << time
       end
       
-      sql = "UPDATE #{quoted_table_name} SET #{set_clause.join(", ")}"
-      
+      sql = adapter.ensure_clause_template("UPDATE #{quoted_table_name} SET #{set_clause.join(", ")}")
+
       mark_write_operation
       rows_affected = adapter.open do |db|
         db.exec(sql, args: values).rows_affected
       end
-      
+
       rows_affected
     end
 
@@ -265,14 +265,14 @@ module Grant::Querying
         values << Time.local(Grant.settings.default_timezone).at_beginning_of_second
       {% end %}
       
-      sql = "UPDATE #{quoted_table_name} SET #{set_clause.join(", ")} WHERE #{quote(primary_name)} = ?"
+      sql = adapter.ensure_clause_template("UPDATE #{quoted_table_name} SET #{set_clause.join(", ")} WHERE #{quote(primary_name)} = ?")
       values << id
-      
+
       mark_write_operation
       rows_affected = adapter.open do |db|
         db.exec(sql, args: values).rows_affected
       end
-      
+
       rows_affected
     end
 
@@ -325,6 +325,7 @@ module Grant::Querying
 
     def query(clause = "", params = [] of Grant::Columns::Type, &)
       mark_write_operation
+      clause = adapter.ensure_clause_template(clause)
       adapter.open { |db| yield db.query(clause, args: params) }
     end
 

@@ -86,7 +86,11 @@ abstract class Grant::Adapter::Base
     exists
   end
 
-  protected def ensure_clause_template(clause : String) : String
+  # Converts placeholder characters in a SQL clause to the adapter's
+  # native parameter syntax. The base implementation is a no-op since
+  # SQLite and MySQL use `?` natively. The PG adapter overrides this
+  # to convert `?` to `$1`, `$2`, etc.
+  def ensure_clause_template(clause : String) : String
     clause
   end
 
@@ -106,13 +110,14 @@ abstract class Grant::Adapter::Base
       stmt << fields.map { |field| "#{quote(field)} = ?" }.join(", ")
       stmt << " WHERE #{where_clause}"
     end
-    
+    statement = ensure_clause_template(statement)
+
     elapsed_time = Time.measure do
       open do |db|
         db.exec statement, args: params
       end
     end
-    
+
     log statement, elapsed_time, params
   end
 
@@ -121,14 +126,14 @@ abstract class Grant::Adapter::Base
   
   # Delete with custom WHERE clause for composite keys
   def delete_with_where(table_name : String, where_clause : String, params : Array(DB::Any))
-    statement = "DELETE FROM #{quote(table_name)} WHERE #{where_clause}"
-    
+    statement = "DELETE FROM #{quote(table_name)} WHERE #{ensure_clause_template(where_clause)}"
+
     elapsed_time = Time.measure do
       open do |db|
         db.exec statement, args: params
       end
     end
-    
+
     log statement, elapsed_time, params
   end
 
