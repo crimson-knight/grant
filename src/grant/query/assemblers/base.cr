@@ -9,6 +9,8 @@ module Grant::Query::Assembler
     @limit : String?
     @offset : String?
     @group_by : String?
+    @having : String?
+    @joins : String?
     @lock : String?
 
     def initialize(@query : Builder(Model))
@@ -31,7 +33,68 @@ module Grant::Query::Assembler
     end
 
     def field_list
-      [Model.fields].flatten.join ", "
+      fields = [Model.fields].flatten.join ", "
+      fields
+    end
+
+    # Generates the SELECT keyword with optional DISTINCT modifier.
+    #
+    # ```
+    # select_keyword # => "SELECT" or "SELECT DISTINCT"
+    # ```
+    def select_keyword : String
+      @query.distinct? ? "SELECT DISTINCT" : "SELECT"
+    end
+
+    # Generates JOIN clauses from the query builder's join_clauses array.
+    #
+    # Supports INNER JOIN and LEFT JOIN types.
+    #
+    # ```
+    # joins # => "INNER JOIN posts ON posts.user_id = users.id"
+    # ```
+    def joins : String?
+      return @joins if @joins
+
+      join_clauses = @query.join_clauses
+      return nil if join_clauses.empty?
+
+      parts = join_clauses.map do |jc|
+        join_type = case jc[:type]
+                    when :inner then "INNER JOIN"
+                    when :left  then "LEFT JOIN"
+                    else             "JOIN"
+                    end
+        "#{join_type} #{jc[:table]} ON #{jc[:on]}"
+      end
+
+      @joins = parts.join(" ")
+    end
+
+    # Generates the HAVING clause for aggregate filtering.
+    #
+    # HAVING clauses are applied after GROUP BY and filter grouped
+    # results based on aggregate conditions.
+    #
+    # ```
+    # having # => "HAVING COUNT(*) > 5 AND SUM(amount) > 100"
+    # ```
+    def having : String?
+      return @having if @having
+
+      having_clauses = @query.having_clauses
+      return nil if having_clauses.empty?
+
+      parts = having_clauses.map do |hc|
+        if !hc[:value].nil?
+          param_token = add_parameter(hc[:value])
+          hc[:stmt].gsub(@placeholder, param_token)
+        else
+          hc[:stmt]
+        end
+      end
+
+      @having = "HAVING #{parts.join(" AND ")}"
     end
 
     def build_sql(&)
@@ -157,11 +220,14 @@ module Grant::Query::Assembler
     end
 
     def count : (Executor::MultiValue(Model, Int64) | Executor::Value(Model, Int64))
+      count_expr = @query.distinct? ? "COUNT(DISTINCT #{field_list})" : "COUNT(*)"
       sql = build_sql do |s|
-        s << "SELECT COUNT(*)"
+        s << "SELECT #{count_expr}"
         s << "FROM #{table_name}"
+        s << joins
         s << where
         s << group_by
+        s << having
         s << order(use_default_order: false)
         s << limit
         s << offset
@@ -176,10 +242,12 @@ module Grant::Query::Assembler
 
     def first(n : Int32 = 1) : Executor::List(Model)
       sql = build_sql do |s|
-        s << "SELECT #{field_list}"
+        s << "#{select_keyword} #{field_list}"
         s << "FROM #{table_name}"
+        s << joins
         s << where
         s << group_by
+        s << having
         s << order
         s << "LIMIT #{n}"
         s << offset
@@ -192,6 +260,7 @@ module Grant::Query::Assembler
     def delete
       sql = build_sql do |s|
         s << "DELETE FROM #{table_name}"
+        s << joins
         s << where
       end
 
@@ -226,10 +295,12 @@ module Grant::Query::Assembler
 
     def select
       sql = build_sql do |s|
-        s << "SELECT #{field_list}"
+        s << "#{select_keyword} #{field_list}"
         s << "FROM #{table_name}"
+        s << joins
         s << where
         s << group_by
+        s << having
         s << order
         s << limit
         s << offset
@@ -243,6 +314,7 @@ module Grant::Query::Assembler
       sql = build_sql do |s|
         s << "SELECT EXISTS(SELECT 1 "
         s << "FROM #{table_name} "
+        s << joins
         s << where
         s << ")"
       end

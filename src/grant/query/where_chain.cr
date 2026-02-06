@@ -102,18 +102,36 @@ module Grant::Query
       @query.and(stmt: "NOT EXISTS (#{sql})", value: nil)
     end
     
-    # Check if associated records exist
-    def has(association : Symbol)
-      # This would need the association metadata to work properly
-      # For now, we'll raise an informative error
-      raise "WhereChain#has is not yet implemented. Use joins and where conditions instead."
+    # Checks if associated records exist using an INNER JOIN.
+    #
+    # Requires that the associated table and foreign key are provided
+    # explicitly, as runtime association metadata lookup is not available
+    # outside of macros in Crystal.
+    #
+    # ```
+    # # Find users who have at least one post
+    # User.where.has(:posts, table: "posts", foreign_key: "user_id")
+    # # SQL: SELECT ... FROM users INNER JOIN posts ON posts.user_id = users.id
+    # #      WHERE posts.user_id IS NOT NULL
+    # ```
+    def has(association : Symbol, *, table : String, foreign_key : String, primary_key : String = "id")
+      @query.joins(table, on: "#{table}.#{foreign_key} = #{Model.table_name}.#{primary_key}")
+      @query.and(stmt: "#{table}.#{foreign_key} IS NOT NULL", value: nil)
     end
-    
-    # Check if associated records don't exist
-    def missing(association : Symbol)
-      # This would need the association metadata to work properly
-      # For now, we'll raise an informative error
-      raise "WhereChain#missing is not yet implemented. Use left joins and where IS NULL instead."
+
+    # Checks if associated records do NOT exist using a LEFT JOIN.
+    #
+    # Finds records that have no matching associated records.
+    #
+    # ```
+    # # Find users who have no posts
+    # User.where.missing(:posts, table: "posts", foreign_key: "user_id")
+    # # SQL: SELECT ... FROM users LEFT JOIN posts ON posts.user_id = users.id
+    # #      WHERE posts.user_id IS NULL
+    # ```
+    def missing(association : Symbol, *, table : String, foreign_key : String, primary_key : String = "id")
+      @query.left_joins(table, on: "#{table}.#{foreign_key} = #{Model.table_name}.#{primary_key}")
+      @query.and(stmt: "#{table}.#{foreign_key} IS NULL", value: nil)
     end
     
     # Allow chaining back to the query builder

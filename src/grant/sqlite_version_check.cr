@@ -1,23 +1,29 @@
+# Add missing libversion bindings to LibSQLite3
+lib LibSQLite3
+  fun libversion = sqlite3_libversion : UInt8*
+  fun libversion_number = sqlite3_libversion_number : Int32
+end
+
 module Grant
   module SQLiteVersionCheck
     # SQLite version 3.24.0 = 3024000
     MINIMUM_VERSION = 3024000
-    
+
     # Get SQLite version as a string
     def self.version_string : String
       String.new(LibSQLite3.libversion)
     end
-    
+
     # Get SQLite version as an integer (e.g., 3024000 for 3.24.0)
     def self.version_number : Int32
       LibSQLite3.libversion_number
     end
-    
+
     # Check if SQLite version meets minimum requirements
     def self.supported? : Bool
       version_number >= MINIMUM_VERSION
     end
-    
+
     # Raise an error if SQLite version is too old
     def self.ensure_supported!
       unless supported?

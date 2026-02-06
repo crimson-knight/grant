@@ -1,5 +1,6 @@
 require "spec"
 require "db"
+require "../../../src/grant/locking"
 require "../../../src/grant/query/builder"
 
 class Model

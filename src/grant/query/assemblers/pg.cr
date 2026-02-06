@@ -12,12 +12,14 @@ module Grant::Query::Assembler
     # Generate SQL for pluck operation
     def pluck_sql(fields : Array(String)) : String
       select_fields = fields.map { |f| add_aggregate_field(f); f }.join(", ")
-      
+
       build_sql do |s|
-        s << "SELECT #{select_fields}"
+        s << "#{select_keyword} #{select_fields}"
         s << "FROM #{table_name}"
+        s << joins
         s << where
         s << group_by
+        s << having
         s << order
         s << limit
         s << offset
