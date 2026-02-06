@@ -9,6 +9,8 @@ The Grant ORM provides a powerful and expressive query interface that allows you
 - [OR and NOT Conditions](#or-and-not-conditions)
 - [Query Duplication](#query-duplication)
 - [Complete Examples](#complete-examples)
+- [Enumerable Collection Methods](#enumerable-collection-methods)
+- [Performance Considerations](#performance-considerations)
 
 ## Query Merging
 
@@ -366,12 +368,101 @@ active_admins = UserScopes.active.merge(UserScopes.admins)
 verified_active_users = UserScopes.active.merge(UserScopes.verified)
 ```
 
+## Enumerable Collection Methods
+
+`Query::Builder` includes `Enumerable(Model)`, so you can use Crystal's standard collection methods directly on query chains without calling `.all` first.
+
+### Practical Examples
+
+#### Transforming Query Results
+
+```crystal
+# Get a list of names from active users
+names = User.where(active: true)
+            .order(name: :asc)
+            .map { |u| u.name }
+
+# Build a lookup hash from query results
+user_emails = User.where(active: true)
+                  .each_with_object({} of Int64 => String) do |user, hash|
+  hash[user.id] = user.email
+end
+```
+
+#### Filtering Beyond SQL
+
+Some filtering logic is easier to express in Crystal than in SQL:
+
+```crystal
+# Filter by a computed property
+premium_users = User.where(active: true)
+                    .select { |u| u.subscription_months > 6 && u.total_spent > 100.0 }
+
+# Partition users by a complex condition
+admins, regular = User.where(active: true)
+                      .order(name: :asc)
+                      .partition { |u| u.role == "admin" }
+```
+
+#### Aggregating with Blocks
+
+```crystal
+# Sum a computed value
+total_revenue = Order.where(status: "completed")
+                     .where.gteq(:created_at, 30.days.ago)
+                     .sum { |o| o.total_amount - o.discount_amount }
+
+# Find extremes
+newest_admin = User.where(role: "admin")
+                   .max_by { |u| u.created_at }
+
+oldest_post = Post.where(published: true)
+                  .min_by { |p| p.created_at }
+```
+
+#### Combining Query Chain with Collection Methods
+
+```crystal
+# Full pipeline: query → filter → transform
+result = Post.where(published: true)
+             .order(created_at: :desc)
+             .limit(100)
+             .reject { |p| p.title.empty? }
+             .map { |p| {title: p.title, date: p.created_at} }
+
+# Count with an in-memory condition
+featured_count = Post.where(published: true)
+                     .count { |p| p.featured }
+
+# Check conditions across results
+all_verified = User.where(role: "admin")
+                   .all? { |u| u.email_verified }
+
+has_unread = Notification.where(user_id: current_user.id)
+                         .any? { |n| !n.read }
+```
+
+#### Tally and Grouping
+
+```crystal
+# Count users by role
+role_distribution = User.where(active: true)
+                        .tally_by { |u| u.role }
+# => {"admin" => 3, "member" => 42, "guest" => 15}
+
+# Extract unique values with compact_map
+unique_domains = User.where(active: true)
+                     .compact_map { |u| u.email.split("@").last? }
+                     .uniq
+```
+
 ## Performance Considerations
 
 1. **Subqueries**: Use `select(:id)` to fetch only IDs for IN subqueries
 2. **Complex OR/NOT**: These create SQL with parentheses, which may affect query planner optimization
 3. **Chaining**: Each where method adds an AND condition; be mindful of query complexity
 4. **Indexes**: Ensure your database has appropriate indexes for fields used in WHERE conditions
+5. **Enumerable with blocks**: Methods like `map { }`, `select { }`, `reject { }`, `sum { }`, and other block-based Enumerable methods fetch **all matching records into memory** before iterating. For large result sets, prefer SQL-level filtering with `where` clauses and use `limit` to cap the number of records loaded. Methods without blocks (`count`, `size`, `any?`) use optimized SQL queries and do not load records into memory.
 
 ## Migration from Basic Queries
 

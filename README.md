@@ -18,6 +18,7 @@ The `Grant` ORM is an Active Record pattern ORM that aims to achieve feature par
 | Query chaining | ✅ | ✅ |
 | OR queries | ✅ | ✅ |
 | NOT queries | ✅ | ✅ |
+| Enumerable collection methods on queries | ✅ | ✅ |
 | **Associations** | | |
 | belongs_to, has_one, has_many | ✅ | ✅ |
 | has_many :through | ✅ | ✅ |
@@ -81,6 +82,7 @@ The `Grant` ORM is an Active Record pattern ORM that aims to achieve feature par
 
 **Grant's Unique Features:**
 - **Horizontal Sharding**: Built-in support for distributing data across multiple databases
+- **Enumerable Query Builder**: `Query::Builder` includes `Enumerable(Model)` — use `map`, `select`, `reduce`, and all standard collection methods directly on query chains without `.all`
 - **Crystal Type Safety**: Compile-time type checking eliminates many runtime errors
 - **Fiber-based Concurrency**: Native async support without callback complexity
 - **Zero-cost Abstractions**: Performance comparable to hand-written SQL

@@ -169,3 +169,145 @@ The `exists?` method can also be used with the query builder.
 Post.where(published: true, author_id: User.first!.id).exists?
 Post.where(:created_at, :gt, Time.local - 7.days).exists?
 ```
+
+## Collection Methods (Enumerable)
+
+`Query::Builder` includes `Enumerable(Model)`, which means you can use all of Crystal's standard collection methods directly on query chains — no need to call `.all` first.
+
+### Before & After
+
+```crystal
+# Before — required .all to access collection methods
+Post.where(published: true).all.map { |p| p.title }
+Post.where(published: true).all.select { |p| p.featured }
+
+# After — Enumerable methods work directly on the query builder
+Post.where(published: true).map { |p| p.title }
+Post.where(published: true).select { |p| p.featured }
+```
+
+### Iterating
+
+```crystal
+# each — iterate over matching records
+Post.where(published: true).each do |post|
+  puts post.title
+end
+```
+
+### Transforming
+
+```crystal
+# map — transform records into a new array
+titles = Post.where(published: true).map { |p| p.title }
+
+# compact_map — map and remove nil values
+emails = User.where(active: true).compact_map { |u| u.email }
+
+# flat_map — map and flatten nested arrays
+all_tags = Post.where(published: true).flat_map { |p| p.tags }
+```
+
+### Filtering
+
+```crystal
+# select with block — filter records in memory
+featured = Post.where(published: true).select { |p| p.featured }
+
+# reject — inverse filter
+non_featured = Post.where(published: true).reject { |p| p.featured }
+
+# Note: select WITHOUT a block still executes the SQL query as before
+posts = Post.where(published: true).select  # => Array(Post)
+```
+
+### Counting & Checking
+
+```crystal
+# count without block — executes SQL COUNT, returns Int64
+Post.where(published: true).count  # => 42_i64
+
+# count with block — counts matching records in memory
+Post.where(published: true).count { |p| p.featured }  # => 5
+
+# size — alias for count, returns Int64
+Post.where(published: true).size  # => 42_i64
+
+# any? without block — checks if any records exist (SQL)
+Post.where(published: true).any?  # => true
+
+# any? with block — checks with in-memory condition
+Post.where(published: true).any? { |p| p.title.includes?("Crystal") }
+
+# none? — true if no records match the block condition
+Post.where(published: true).none? { |p| p.title.empty? }
+
+# all? — true if every record matches the block condition
+Post.where(published: true).all? { |p| p.author_id > 0 }
+```
+
+### Aggregating
+
+```crystal
+# min_by / max_by — find records by criteria
+oldest = User.where(active: true).min_by { |u| u.created_at }
+newest = User.where(active: true).max_by { |u| u.created_at }
+
+# sum with block — sum computed values
+total_revenue = Order.where(status: "completed").sum { |o| o.total_amount }
+
+# reduce — accumulate a result
+combined = Post.where(published: true).reduce("") { |acc, p| acc + p.title + ", " }
+
+# tally_by — count occurrences by a key
+role_counts = User.where(active: true).tally_by { |u| u.role }
+# => {"admin" => 3, "member" => 15, "guest" => 7}
+```
+
+### Grouping & Partitioning
+
+```crystal
+# partition — split into two arrays based on a condition
+admins, others = User.where(active: true).partition { |u| u.role == "admin" }
+
+# each_with_object — iterate while building up an object
+name_map = User.where(active: true).each_with_object({} of Int64 => String) do |user, hash|
+  hash[user.id] = user.name
+end
+```
+
+### Converting
+
+```crystal
+# to_a — materialize the query results into an Array
+posts_array = Post.where(published: true).to_a  # => Array(Post)
+```
+
+### Chaining with Query Methods
+
+Enumerable methods work at the end of any query chain:
+
+```crystal
+# Combine where, order, limit with Enumerable
+Post.where(published: true)
+    .order(created_at: :desc)
+    .limit(10)
+    .map { |p| p.title }
+
+# Use with offset for pagination
+Post.where(published: true)
+    .offset(20)
+    .limit(10)
+    .each { |p| puts p.title }
+```
+
+### SQL-Optimized vs In-Memory Methods
+
+| Method | Without Block | With Block |
+|--------|--------------|------------|
+| `count` / `size` | SQL `COUNT` → `Int64` | In-memory iteration |
+| `any?` | SQL `LIMIT 1` check | In-memory iteration |
+| `select` | Executes SQL query | In-memory filter |
+| `map`, `reject`, `reduce`, etc. | — | In-memory iteration |
+
+Methods **without a block** (like `count`, `size`, `any?`) use optimized SQL queries. Methods **with a block** fetch all matching records first, then iterate in memory. For large result sets, prefer SQL-level filtering with `where` clauses before using block-based methods.

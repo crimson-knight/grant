@@ -29,6 +29,43 @@ Access via `.where` (without arguments):
 | `or { }` | OR group | `query.or { \|q\| q.where(...) }` |
 | `not { }` | NOT group | `query.not { \|q\| q.where(...) }` |
 
+## Collection & Enumerable Methods
+
+`Query::Builder` includes `Enumerable(Model)`, so standard collection methods work directly on query chains.
+
+### SQL-Optimized (No Block)
+
+| Method | Returns | Description | Example |
+|--------|---------|-------------|---------|
+| `count` / `size` | `Int64` | SQL COUNT | `User.where(active: true).count` |
+| `any?` | `Bool` | Checks via LIMIT 1 | `User.where(role: "admin").any?` |
+| `select` | `Array(Model)` | Executes SQL query | `User.where(active: true).select` |
+| `to_a` | `Array(Model)` | Materializes results | `User.where(active: true).to_a` |
+
+### In-Memory (With Block)
+
+| Method | Returns | Description | Example |
+|--------|---------|-------------|---------|
+| `each { }` | `Nil` | Iterate records | `User.where(active: true).each { \|u\| puts u.name }` |
+| `map { }` | `Array(T)` | Transform records | `User.where(active: true).map { \|u\| u.name }` |
+| `select { }` | `Array(Model)` | Filter in memory | `User.where(active: true).select { \|u\| u.admin? }` |
+| `reject { }` | `Array(Model)` | Inverse filter | `User.where(active: true).reject { \|u\| u.banned? }` |
+| `count { }` | `Int32` | Count with condition | `User.where(active: true).count { \|u\| u.admin? }` |
+| `any? { }` | `Bool` | Any match block? | `User.where(active: true).any? { \|u\| u.admin? }` |
+| `none? { }` | `Bool` | None match block? | `User.where(active: true).none? { \|u\| u.banned? }` |
+| `all? { }` | `Bool` | All match block? | `User.where(active: true).all? { \|u\| u.age > 0 }` |
+| `min_by { }` | `Model?` | Minimum by criteria | `User.where(active: true).min_by { \|u\| u.created_at }` |
+| `max_by { }` | `Model?` | Maximum by criteria | `User.where(active: true).max_by { \|u\| u.created_at }` |
+| `sum { }` | `T` | Sum computed values | `Order.where(status: "paid").sum { \|o\| o.total }` |
+| `partition { }` | `Tuple(Array, Array)` | Split into two | `users.partition { \|u\| u.admin? }` |
+| `reduce { }` | `T` | Accumulate result | `orders.reduce(0.0) { \|sum, o\| sum + o.total }` |
+| `compact_map { }` | `Array(T)` | Map, remove nils | `users.compact_map { \|u\| u.email }` |
+| `flat_map { }` | `Array(T)` | Map and flatten | `posts.flat_map { \|p\| p.tags }` |
+| `tally_by { }` | `Hash(T, Int32)` | Count by key | `users.tally_by { \|u\| u.role }` |
+| `each_with_object { }` | `T` | Iterate with object | `users.each_with_object({} of Int64 => String) { \|u, h\| h[u.id] = u.name }` |
+
+> **Tip:** No `.all` needed before these methods — they work directly on `Query::Builder`.
+
 ## Common Patterns
 
 ### Search with Multiple Fields
