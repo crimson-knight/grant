@@ -125,7 +125,7 @@ module Grant::Testing
     end
     
     def insert(table_name : String, fields, params, lastval) : Int64
-      field_names = fields.map { |f| f[:name] }.join(", ")
+      field_names = fields.join(", ")
       statement = "INSERT INTO #{table_name} (#{field_names}) VALUES (...)"
       track_query(statement)
       1_i64 # Return dummy ID
