@@ -31,6 +31,8 @@ module Grant::Associations
     {% end %}
     {% primary_key = options[:primary_key] || "id" %}
 
+    {% inverse_of_bt = options[:inverse_of] %}
+
     @[Grant::Relationship(target: {{class_name.id}}, type: :belongs_to,
       primary_key: {{primary_key.id}}, foreign_key: {{foreign_key.id}})]
     def {{method_name.id}} : {{class_name.id}}?
@@ -38,6 +40,9 @@ module Grant::Associations
         get_loaded_association({{method_name.stringify}}).as({{class_name.id}}?)
       elsif parent = {{class_name.id}}.find_by({{primary_key.id}}: {{foreign_key.id}})
         Grant::Logs::Association.debug { "Loaded belongs_to association - #{self.class.name}.#{{{method_name.stringify}}} [#{{{class_name.id.stringify}}}] [fk: #{{{foreign_key.id.stringify}}} = #{{{foreign_key.id}}}]" }
+        {% if inverse_of_bt %}
+          parent.set_loaded_association({{inverse_of_bt.id.stringify}}, self)
+        {% end %}
         parent
       else
         {{class_name.id}}.new
@@ -45,7 +50,11 @@ module Grant::Associations
     end
 
     def {{method_name.id}}! : {{class_name.id}}
-      {{class_name.id}}.find_by!({{primary_key.id}}: {{foreign_key.id}})
+      result = {{class_name.id}}.find_by!({{primary_key.id}}: {{foreign_key.id}})
+      {% if inverse_of_bt %}
+        result.set_loaded_association({{inverse_of_bt.id.stringify}}, self)
+      {% end %}
+      result
     end
 
     def {{method_name.id}}=(parent : {{class_name.id}})
@@ -176,6 +185,8 @@ module Grant::Associations
     @[Grant::Relationship(target: {{class_name.id}}, type: :has_one,
       primary_key: {{primary_key.id}}, foreign_key: {{foreign_key.id}})]
 
+    {% inverse_of = options[:inverse_of] %}
+
     def {{method_name}} : {{class_name}}?
       if association_loaded?({{method_name.stringify}})
         get_loaded_association({{method_name.stringify}}).as({{class_name.id}}?)
@@ -183,13 +194,20 @@ module Grant::Associations
         result = {{class_name.id}}.find_by({{foreign_key.id}}: self.{{primary_key.id}})
         if result
           Grant::Logs::Association.debug { "Loaded has_one association - #{self.class.name}.#{{{method_name.stringify}}} [#{{{class_name.id.stringify}}}] [fk: #{{{foreign_key.id.stringify}}} = #{self.{{primary_key.id}}}]" }
+          {% if inverse_of %}
+            result.set_loaded_association({{inverse_of.id.stringify}}, self)
+          {% end %}
         end
         result
       end
     end
 
     def {{method_name}}! : {{class_name}}
-      {{class_name.id}}.find_by!({{foreign_key.id}}: self.{{primary_key.id}})
+      result = {{class_name.id}}.find_by!({{foreign_key.id}}: self.{{primary_key.id}})
+      {% if inverse_of %}
+        result.set_loaded_association({{inverse_of.id.stringify}}, self)
+      {% end %}
+      result
     end
 
     def {{method_name}}=(child)
@@ -248,6 +266,7 @@ module Grant::Associations
     {% foreign_key = options[:foreign_key] || @type.stringify.split("::").last.underscore + "_id" %}
     {% primary_key = options[:primary_key] || "id" %}
     {% through = options[:through] %}
+    {% inverse_of = options[:inverse_of] %}
     @[Grant::Relationship(target: {{class_name.id}}, through: {{through.id}}, type: :has_many,
       primary_key: {{through}}, foreign_key: {{foreign_key.id}})]
     def {{method_name.id}}
@@ -257,11 +276,11 @@ module Grant::Associations
           # Return a wrapper that behaves like AssociationCollection but uses loaded data
           Grant::LoadedAssociationCollection(self, {{class_name.id}}).new(loaded_data.map(&.as({{class_name.id}})))
         else
-          Grant::AssociationCollection(self, {{class_name.id}}).new(self, {{foreign_key}}, {{through}}, {{primary_key}})
+          Grant::AssociationCollection(self, {{class_name.id}}).new(self, {{foreign_key}}, {{through}}, {{primary_key}}, {{inverse_of}})
         end
       else
         Grant::Logs::Association.debug { "Created has_many association collection - #{self.class.name}.#{{{method_name.stringify}}} [#{{{class_name.id.stringify}}}] [fk: #{{{foreign_key.id.stringify}}}]#{{{through ? " [through: " + through.id.stringify + "]" : ""}}}" }
-        Grant::AssociationCollection(self, {{class_name.id}}).new(self, {{foreign_key}}, {{through}}, {{primary_key}})
+        Grant::AssociationCollection(self, {{class_name.id}}).new(self, {{foreign_key}}, {{through}}, {{primary_key}}, {{inverse_of}})
       end
     end
     

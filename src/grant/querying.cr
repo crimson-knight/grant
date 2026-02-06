@@ -39,9 +39,10 @@ module Grant::Querying
       # If we have scoping support, use current_scope
       if responds_to?(:current_scope)
         clean_clause = clause.strip
-        # For complex clauses containing JOINs (e.g. from :through associations),
-        # fall back to raw_all since query.where() can't handle JOIN syntax
-        if clean_clause.includes?("JOIN ")
+        # Fall back to raw_all for clauses that the query builder can't handle:
+        # - JOIN clauses (e.g. from :through associations)
+        # - Multiple parameters (query.where only accepts a single value)
+        if clean_clause.includes?("JOIN ") || params.size > 1
           Collection(self).new(->{ raw_all(clause, params) })
         else
           query = current_scope
@@ -64,9 +65,10 @@ module Grant::Querying
       # If we have scoping support, use current_scope with limit
       if responds_to?(:current_scope)
         clean_clause = clause.strip
-        # For complex clauses containing JOINs (e.g. from :through associations),
-        # fall back to raw_all since query.where() can't handle JOIN syntax
-        if clean_clause.includes?("JOIN ")
+        # Fall back to raw_all for clauses that the query builder can't handle:
+        # - JOIN clauses (e.g. from :through associations)
+        # - Multiple parameters (query.where only accepts a single value)
+        if clean_clause.includes?("JOIN ") || params.size > 1
           all([clean_clause, "LIMIT 1"].join(" "), params, false).first?
         else
           query = current_scope
@@ -125,8 +127,8 @@ module Grant::Querying
       # If we have scoping support, use current_scope
       if responds_to?(:current_scope)
         clean_clause = clause.strip
-        # For complex clauses containing JOINs, fall back to raw_all
-        if clean_clause.includes?("JOIN ")
+        # Fall back to raw_all for clauses that the query builder can't handle
+        if clean_clause.includes?("JOIN ") || params.size > 1
           results = all(clause, params, false).to_a
         else
           query = current_scope
