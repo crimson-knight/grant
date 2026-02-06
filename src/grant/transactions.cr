@@ -250,7 +250,10 @@ module Grant::Transactions
     {% primary_key = @type.instance_vars.find { |ivar| (ann = ivar.annotation(Grant::Column)) && ann[:primary] } %}
     {% raise raise "A primary key must be defined for #{@type.name}." unless primary_key %}
     {% ann = primary_key.annotation(Grant::Column) %}
-    return false if validate && !valid?
+    if validate
+      validation_context = (@{{primary_key.name.id}} && !new_record?) ? :update : :create
+      return false unless valid?(context: validation_context)
+    end
 
     begin
       __before_save
