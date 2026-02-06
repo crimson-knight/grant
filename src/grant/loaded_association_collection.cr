@@ -78,6 +78,32 @@ class Grant::LoadedAssociationCollection(Owner, Target)
   def to_a
     @records
   end
+
+  # Build a new record — not supported on pre-loaded collections.
+  # Call the association method without eager loading to use build.
+  def build(**attrs) : Target
+    raise "Cannot build on a pre-loaded association collection. Use the association method without eager loading."
+  end
+
+  # Create a new record — not supported on pre-loaded collections.
+  def create(**attrs) : Target
+    raise "Cannot create on a pre-loaded association collection. Use the association method without eager loading."
+  end
+
+  # Create a new record or raise — not supported on pre-loaded collections.
+  def create!(**attrs) : Target
+    raise "Cannot create! on a pre-loaded association collection. Use the association method without eager loading."
+  end
+
+  # Delete all records via SQL — not supported on pre-loaded collections.
+  def delete_all : Int64
+    raise "Cannot delete_all on a pre-loaded association collection. Use the association method without eager loading."
+  end
+
+  # Destroy all records with callbacks — not supported on pre-loaded collections.
+  def destroy_all : Int32
+    raise "Cannot destroy_all on a pre-loaded association collection. Use the association method without eager loading."
+  end
   
   def includes(*associations)
     # Already loaded, just return self

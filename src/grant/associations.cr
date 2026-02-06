@@ -150,6 +150,8 @@ module Grant::Associations
     {% if options[:dependent] %}
       {% if options[:dependent] == :destroy %}
         setup_dependent_destroy({{method_name.id}}, :has_one, {{class_name.id}}, {{foreign_key.id}})
+      {% elsif options[:dependent] == :delete %}
+        setup_dependent_delete_all({{method_name.id}}, :has_one, {{class_name.id}}, {{foreign_key.id}})
       {% elsif options[:dependent] == :nullify %}
         setup_dependent_nullify({{method_name.id}}, :has_one, {{class_name.id}}, {{foreign_key.id}})
       {% elsif options[:dependent] == :restrict %}
@@ -217,6 +219,8 @@ module Grant::Associations
     {% if options[:dependent] %}
       {% if options[:dependent] == :destroy %}
         setup_dependent_destroy({{method_name.id}}, :has_many, {{class_name.id}}, {{foreign_key.id}})
+      {% elsif options[:dependent] == :delete_all %}
+        setup_dependent_delete_all({{method_name.id}}, :has_many, {{class_name.id}}, {{foreign_key.id}})
       {% elsif options[:dependent] == :nullify %}
         setup_dependent_nullify({{method_name.id}}, :has_many, {{class_name.id}}, {{foreign_key.id}})
       {% elsif options[:dependent] == :restrict %}

@@ -37,6 +37,24 @@ module Grant::AssociationOptions
       end
     end
     
+    # Deletes all dependent records using a single SQL DELETE statement.
+    #
+    # Unlike `dependent: :destroy`, this does NOT instantiate records or
+    # run their callbacks. It performs a direct SQL DELETE for performance.
+    #
+    # ```
+    # has_many :comments, dependent: :delete_all
+    # ```
+    macro setup_dependent_delete_all(association_name, association_type, target_class, foreign_key)
+      after_destroy do
+        {% if association_type == :has_many %}
+          {{target_class.id}}.where({{foreign_key}}: self.primary_key_value).delete_all
+        {% elsif association_type == :has_one %}
+          {{target_class.id}}.where({{foreign_key}}: self.primary_key_value).delete_all
+        {% end %}
+      end
+    end
+
     macro setup_dependent_restrict(association_name, association_type, target_class, foreign_key)
       before_destroy do
         {% if association_type == :has_many %}
