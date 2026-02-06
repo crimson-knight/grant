@@ -97,6 +97,65 @@ module Grant::Associations
   macro has_one(model, **options)
     {% if options[:as] %}
       has_one_polymorphic({{model}}, {{options[:as]}}, {{options.double_splat}})
+    {% elsif options[:through] %}
+      # has_one :through — traverses an intermediate association to find a single target record
+      {% if model.is_a? TypeDeclaration %}
+        {% method_name = model.var %}
+        {% class_name = model.type %}
+      {% else %}
+        {% method_name = model.id %}
+        {% class_name = options[:class_name] || model.id.camelcase %}
+      {% end %}
+      {% through = options[:through] %}
+      {% foreign_key = options[:foreign_key] || @type.stringify.split("::").last.underscore + "_id" %}
+      {% primary_key = options[:primary_key] || "id" %}
+      {% source = options[:source] || method_name %}
+
+      @[Grant::Relationship(target: {{class_name.id}}, type: :has_one,
+        primary_key: {{primary_key.id}}, foreign_key: {{foreign_key.id}})]
+
+      # Returns the associated record through an intermediate table.
+      #
+      # Uses a JOIN query through the `{{through.id}}` table to find
+      # the single `{{class_name.id}}` record.
+      #
+      # ```
+      # record = owner.{{method_name.id}}
+      # ```
+      def {{method_name}} : {{class_name}}?
+        if association_loaded?({{method_name.stringify}})
+          get_loaded_association({{method_name.stringify}}).as({{class_name.id}}?)
+        else
+          # Build JOIN query through the intermediate table
+          # e.g. SELECT avatars.* FROM avatars
+          #      JOIN profiles ON profiles.avatar_id = avatars.id
+          #      WHERE profiles.user_id = ? LIMIT 1
+          key = {{primary_key.id.stringify}} == "id" ? "#{{{class_name.id}}.to_s.underscore}_id" : {{primary_key.id.stringify}}
+          sql = String.build do |s|
+            s << "JOIN #{{{through.id.stringify}}} ON #{{{through.id.stringify}}}.#{key} = #{{{class_name.id}}.table_name}.#{{{class_name.id}}.primary_name} "
+            s << "WHERE #{{{through.id.stringify}}}.#{{{foreign_key.id.stringify}}} = ?"
+          end
+          result = {{class_name.id}}.first(sql, [self.{{primary_key.id}}])
+          if result
+            Grant::Logs::Association.debug { "Loaded has_one :through association - #{self.class.name}.#{{{method_name.stringify}}} [#{{{class_name.id.stringify}}}] [through: #{{{through.id.stringify}}}]" }
+          end
+          result
+        end
+      end
+
+      # Returns the associated record through an intermediate table, raising if not found.
+      def {{method_name}}! : {{class_name}}
+        {{method_name}} || raise Grant::Querying::NotFound.new("No #{{{class_name.id.stringify}}} found through #{{{through.id.stringify}}} for #{self.class.name}")
+      end
+
+      # Store association metadata
+      class_getter _{{method_name.id}}_association_meta = {
+        type: :has_one,
+        target_class_name: {{class_name.id.stringify}},
+        foreign_key: {{foreign_key.id.stringify}},
+        primary_key: {{primary_key.id.stringify}},
+        through: {{through.id.stringify}}
+      }
     {% else %}
     {% if model.is_a? TypeDeclaration %}
       {% method_name = model.var %}
@@ -136,7 +195,7 @@ module Grant::Associations
     def {{method_name}}=(child)
       child.{{foreign_key.id}} = self.{{primary_key.id}}
     end
-    
+
     # Store association metadata
     class_getter _{{method_name.id}}_association_meta = {
       type: :has_one,
@@ -145,7 +204,7 @@ module Grant::Associations
       primary_key: {{primary_key.id.stringify}},
       through: nil
     }
-    
+
     # Handle dependent option
     {% if options[:dependent] %}
       {% if options[:dependent] == :destroy %}
@@ -158,14 +217,14 @@ module Grant::Associations
         setup_dependent_restrict({{method_name.id}}, :has_one, {{class_name.id}}, {{foreign_key.id}})
       {% end %}
     {% end %}
-    
+
     # Handle autosave
     {% if options[:autosave] %}
       setup_autosave({{method_name.id}}, :has_one)
-      
+
       # Define instance variable for tracking autosave
       @_{{method_name.id}}_for_autosave : {{class_name.id}}? = nil
-      
+
       # Override setter to track autosave
       def {{method_name}}=(child)
         child.{{foreign_key.id}} = self.{{primary_key.id}}

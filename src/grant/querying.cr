@@ -35,19 +35,25 @@ module Grant::Querying
     # Lazy load prevent running unnecessary queries from unused variables.
     def all(clause = "", params = [] of Grant::Columns::Type, use_primary_adapter = true)
       mark_write_operation if use_primary_adapter == true
-      
+
       # If we have scoping support, use current_scope
       if responds_to?(:current_scope)
-        query = current_scope
-        if !clause.empty?
-          # Handle WHERE clause - strip the WHERE prefix if present
-          clean_clause = clause.strip
-          if clean_clause.starts_with?("WHERE ")
-            clean_clause = clean_clause[6..-1]  # Remove "WHERE " prefix
+        clean_clause = clause.strip
+        # For complex clauses containing JOINs (e.g. from :through associations),
+        # fall back to raw_all since query.where() can't handle JOIN syntax
+        if clean_clause.includes?("JOIN ")
+          Collection(self).new(->{ raw_all(clause, params) })
+        else
+          query = current_scope
+          if !clean_clause.empty?
+            # Handle WHERE clause - strip the WHERE prefix if present
+            if clean_clause.starts_with?("WHERE ")
+              clean_clause = clean_clause[6..-1]  # Remove "WHERE " prefix
+            end
+            query.where(clean_clause, params.first? || nil)
           end
-          query.where(clean_clause, params.first? || nil)
+          query.select
         end
-        query.select
       else
         Collection(self).new(->{ raw_all(clause, params) })
       end
@@ -57,16 +63,22 @@ module Grant::Querying
     def first(clause = "", params = [] of Grant::Columns::Type)
       # If we have scoping support, use current_scope with limit
       if responds_to?(:current_scope)
-        query = current_scope
-        if !clause.empty?
-          # Handle WHERE clause - strip the WHERE prefix if present
-          clean_clause = clause.strip
-          if clean_clause.starts_with?("WHERE ")
-            clean_clause = clean_clause[6..-1]  # Remove "WHERE " prefix
+        clean_clause = clause.strip
+        # For complex clauses containing JOINs (e.g. from :through associations),
+        # fall back to raw_all since query.where() can't handle JOIN syntax
+        if clean_clause.includes?("JOIN ")
+          all([clean_clause, "LIMIT 1"].join(" "), params, false).first?
+        else
+          query = current_scope
+          if !clean_clause.empty?
+            # Handle WHERE clause - strip the WHERE prefix if present
+            if clean_clause.starts_with?("WHERE ")
+              clean_clause = clean_clause[6..-1]  # Remove "WHERE " prefix
+            end
+            query.where(clean_clause, params.first? || nil)
           end
-          query.where(clean_clause, params.first? || nil)
+          query.limit(1).select.first?
         end
-        query.limit(1).select.first?
       else
         all([clause.strip, "LIMIT 1"].join(" "), params, false).first?
       end
@@ -112,16 +124,21 @@ module Grant::Querying
     def sole(clause = "", params = [] of Grant::Columns::Type)
       # If we have scoping support, use current_scope
       if responds_to?(:current_scope)
-        query = current_scope
-        if !clause.empty?
-          # Handle WHERE clause - strip the WHERE prefix if present
-          clean_clause = clause.strip
-          if clean_clause.starts_with?("WHERE ")
-            clean_clause = clean_clause[6..-1]  # Remove "WHERE " prefix
+        clean_clause = clause.strip
+        # For complex clauses containing JOINs, fall back to raw_all
+        if clean_clause.includes?("JOIN ")
+          results = all(clause, params, false).to_a
+        else
+          query = current_scope
+          if !clean_clause.empty?
+            # Handle WHERE clause - strip the WHERE prefix if present
+            if clean_clause.starts_with?("WHERE ")
+              clean_clause = clean_clause[6..-1]  # Remove "WHERE " prefix
+            end
+            query.where(clean_clause, params.first? || nil)
           end
-          query.where(clean_clause, params.first? || nil)
+          results = query.select.to_a
         end
-        results = query.select.to_a
       else
         results = all(clause, params, false).to_a
       end

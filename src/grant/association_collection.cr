@@ -116,7 +116,14 @@ class Grant::AssociationCollection(Owner, Target)
     if through.nil?
       "WHERE #{Target.table_name}.#{@foreign_key} = ?"
     else
-      key = @primary_key || "#{Target.to_s.underscore}_id"
+      # For :through associations, the join key is the foreign key on the join table
+      # that references the Target's primary key. If a custom primary_key was provided
+      # (and it's not the default "id"), use it; otherwise derive from Target class name.
+      key = if @primary_key && @primary_key != "id"
+              @primary_key
+            else
+              "#{Target.to_s.underscore}_id"
+            end
       "JOIN #{through} ON #{through}.#{key} = #{Target.table_name}.#{Target.primary_name} " \
       "WHERE #{through}.#{@foreign_key} = ?"
     end
