@@ -28,3 +28,8 @@ development_dependencies:
   ameba:
     github: crystal-ameba/ameba
     version: ~> 1.6.4
+
+ai_docs:
+  exclude:
+    - .claude/settings.json
+    - .claude/settings.local.json

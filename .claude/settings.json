@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(crystal spec *)",
+      "Bash(crystal tool format *)",
+      "Bash(crystal build *)",
+      "Bash(shards install)",
+      "Bash(shards update *)"
+    ]
+  }
+}
