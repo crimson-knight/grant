@@ -58,6 +58,16 @@ module Grant::Transaction
   # per-including-class, not per-module) does not create per-model isolated stacks.
   @@transaction_stacks = {} of Fiber => Array(TransactionState)
 
+  # Fiber-keyed pending after_commit/after_rollback callbacks.
+  #
+  # Each entry is a NamedTuple with two Proc(Nil) closures:
+  #   - on_commit:   called when the outermost transaction commits
+  #   - on_rollback: called when the outermost transaction rolls back
+  #
+  # Entries are appended in enqueue order so callbacks fire in the same order
+  # the saves/destroys occurred.
+  @@pending_callbacks = {} of Fiber => Array(NamedTuple(on_commit: Proc(Nil), on_rollback: Proc(Nil)))
+
   # Returns the transaction stack for the current fiber, lazily creating it.
   def self.fiber_stack : Array(TransactionState)
     stack = @@transaction_stacks[Fiber.current]?
@@ -71,6 +81,49 @@ module Grant::Transaction
   # Removes the current fiber's stack entry (called after the outermost transaction exits).
   def self.clear_fiber_stack
     @@transaction_stacks.delete(Fiber.current)
+  end
+
+  # Returns true when the current fiber has at least one explicit transaction open.
+  # Used by CommitCallbacks to decide whether to defer or fire immediately.
+  def self.in_explicit_transaction? : Bool
+    stack = @@transaction_stacks[Fiber.current]?
+    !stack.nil? && !stack.empty?
+  end
+
+  # Enqueues a commit/rollback callback pair to be fired at the outermost
+  # transaction boundary for the current fiber.
+  def self.enqueue_pending_callback(on_commit : Proc(Nil), on_rollback : Proc(Nil)) : Nil
+    fiber = Fiber.current
+    list = @@pending_callbacks[fiber]?
+    unless list
+      list = [] of NamedTuple(on_commit: Proc(Nil), on_rollback: Proc(Nil))
+      @@pending_callbacks[fiber] = list
+    end
+    list << {on_commit: on_commit, on_rollback: on_rollback}
+  end
+
+  # Fires all pending after_commit callbacks for the current fiber in enqueue order,
+  # then clears the list.  Called by execute_transaction on COMMIT.
+  def self.fire_pending_commit_callbacks : Nil
+    fiber = Fiber.current
+    list = @@pending_callbacks.delete(fiber)
+    return unless list
+    list.each(&.[:on_commit].call)
+  end
+
+  # Fires all pending after_rollback callbacks for the current fiber in enqueue order,
+  # then clears the list.  Called by execute_transaction on ROLLBACK.
+  def self.fire_pending_rollback_callbacks : Nil
+    fiber = Fiber.current
+    list = @@pending_callbacks.delete(fiber)
+    return unless list
+    list.each(&.[:on_rollback].call)
+  end
+
+  # Discards all pending callbacks for the current fiber without firing them.
+  # Used as a safety net in ensure-style cleanup (e.g. requires_new inner tx).
+  def self.clear_pending_callbacks : Nil
+    @@pending_callbacks.delete(Fiber.current)
   end
 
   # Returns the DB::Connection that is currently enlisted in an open transaction
@@ -145,14 +198,20 @@ module Grant::Transaction
           conn.exec("COMMIT")
           transaction_stack.pop
           clear_transaction_stack if transaction_stack.empty?
+          # Fire deferred after_commit callbacks now that the outermost tx has
+          # committed.  (For requires_new inner transactions the stack is already
+          # empty at this point, so we fire for that logical transaction too.)
+          Grant::Transaction.fire_pending_commit_callbacks
         rescue ex : Rollback
           conn.exec("ROLLBACK")
           transaction_stack.pop
           clear_transaction_stack if transaction_stack.empty?
+          Grant::Transaction.fire_pending_rollback_callbacks
         rescue ex
           conn.exec("ROLLBACK")
           transaction_stack.pop
           clear_transaction_stack if transaction_stack.empty?
+          Grant::Transaction.fire_pending_rollback_callbacks
           raise ex
         end
       end
