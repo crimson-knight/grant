@@ -14,26 +14,26 @@
 #
 # ## Usage
 #
-# ```crystal
+# ```
 # # Pluck multiple columns
 # User.where(active: true).pluck(:id, :name)
 # # => [[1, "John"], [2, "Jane"]]
-# 
+#
 # # Pick from first record
 # User.pick(:id, :name)
 # # => [1, "John"]
-# 
+#
 # # Process in batches
 # User.in_batches(of: 100) do |batch|
 #   batch.update_all(processed: true)
 # end
-# 
+#
 # # Bulk upsert
 # User.upsert_all([
 #   {name: "John", email: "john@example.com"},
-#   {name: "Jane", email: "jane@example.com"}
+#   {name: "Jane", email: "jane@example.com"},
 # ])
-# 
+#
 # # Annotate queries
 # User.where(active: true).annotate("Called from dashboard").select
 # ```
@@ -42,7 +42,7 @@ module Grant::ConvenienceMethods(Model)
   # Extract values for specific columns
   def pluck(*fields : Symbol) : Array(Array(Grant::Columns::Type))
     field_names = fields.to_a.map(&.to_s)
-    
+
     # Create assembler instance once to preserve parameters
     @_cached_assembler ||= begin
       case @db_type
@@ -56,63 +56,63 @@ module Grant::ConvenienceMethods(Model)
         raise "Unknown database type: #{@db_type}"
       end
     end
-    
+
     sql = @_cached_assembler.not_nil!.pluck_sql(field_names)
     Grant::Query::Executor::Pluck(Model).new(sql, @_cached_assembler.not_nil!.numbered_parameters, field_names).run
   end
-  
+
   # Extract values from the first record
   def pick(*fields : Symbol) : Array(Grant::Columns::Type)?
     limit(1).pluck(*fields).first?
   end
-  
+
   # Process records in batches
   def in_batches(of batch_size : Int32 = 1000, start : Int64? = nil, finish : Int64? = nil, load : Bool = false, error_on_ignore : Bool = false, order : Symbol = :asc, &block : Array(Model) -> _)
     relation = self
     batch_order = order == :desc ? Grant::Query::Builder::Sort::Descending : Grant::Query::Builder::Sort::Ascending
-    
+
     # Ensure we have a primary key order
     primary_key = Model.primary_name
     relation = relation.order({primary_key => batch_order == Grant::Query::Builder::Sort::Ascending ? :asc : :desc})
-    
+
     # Apply start/finish constraints
     if start
       op = batch_order == Grant::Query::Builder::Sort::Ascending ? :gteq : :lteq
       relation = relation.where(primary_key, op, start.as(Grant::Columns::Type))
     end
-    
+
     if finish
       op = batch_order == Grant::Query::Builder::Sort::Ascending ? :lteq : :gteq
       relation = relation.where(primary_key, op, finish.as(Grant::Columns::Type))
     end
-    
+
     loop do
       batch_relation = relation.limit(batch_size)
       records = batch_relation.select
-      
+
       break if records.empty?
-      
+
       yield records
-      
+
       break if records.size < batch_size
-      
+
       # Get the last primary key value for the next batch
       last_record = records.last
       last_id = last_record.read_attribute(primary_key).as(Int64)
-      
+
       # Update relation for next batch
       op = batch_order == Grant::Query::Builder::Sort::Ascending ? :gt : :lt
       # Update the where condition on the same relation
       relation = relation.where(primary_key, op, last_id)
     end
   end
-  
+
   # Add annotation to queries
   def annotate(comment : String)
     @query_annotation = comment
     self
   end
-  
+
   # Update query builder to include annotation
   def raw_sql
     sql = assembler.select.raw_sql
@@ -127,18 +127,18 @@ end
 # Class methods for bulk operations
 module Grant::BulkOperations
   # Bulk insert records
-  def insert_all(attributes : Array(Hash(String | Symbol, Grant::Columns::Type)), 
+  def insert_all(attributes : Array(Hash(String | Symbol, Grant::Columns::Type)),
                  returning : Array(Symbol)? = nil,
                  unique_by : Array(Symbol)? = nil,
                  record_timestamps : Bool = true) : Array(self)
-    
+    guard_writes!
     return [] of self if attributes.empty?
-    
+
     # Transform all keys to strings and ensure proper types
     string_attributes = attributes.map do |attrs|
       attrs.transform_keys(&.to_s).transform_values { |v| v.as(Grant::Columns::Type) }
     end
-    
+
     # Add timestamps if needed
     if record_timestamps
       now = Time.utc.as(Grant::Columns::Type)
@@ -149,7 +149,7 @@ module Grant::BulkOperations
         new_attrs
       end
     end
-    
+
     # Create a query builder to get assembler
     builder = __builder
     assembler = builder.assembler
@@ -158,9 +158,9 @@ module Grant::BulkOperations
       returning: returning,
       unique_by: unique_by
     )
-    
+
     records = [] of self
-    
+
     mark_write_operation
     adapter.open do |db|
       db.query(sql, args: assembler.numbered_parameters) do |rs|
@@ -177,24 +177,24 @@ module Grant::BulkOperations
         end
       end
     end
-    
+
     records
   end
-  
+
   # Bulk upsert records
   def upsert_all(attributes : Array(Hash(String | Symbol, Grant::Columns::Type)),
                  returning : Array(Symbol)? = nil,
                  unique_by : Array(Symbol)? = nil,
                  update_only : Array(Symbol)? = nil,
                  record_timestamps : Bool = true) : Array(self)
-    
+    guard_writes!
     return [] of self if attributes.empty?
-    
+
     # Transform all keys to strings and ensure proper types
     string_attributes = attributes.map do |attrs|
       attrs.transform_keys(&.to_s).transform_values { |v| v.as(Grant::Columns::Type) }
     end
-    
+
     # Add timestamps if needed
     if record_timestamps
       now = Time.utc.as(Grant::Columns::Type)
@@ -205,7 +205,7 @@ module Grant::BulkOperations
         new_attrs
       end
     end
-    
+
     # Create a query builder to get assembler
     builder = __builder
     assembler = builder.assembler
@@ -215,9 +215,9 @@ module Grant::BulkOperations
       unique_by: unique_by,
       update_only: update_only
     )
-    
+
     records = [] of self
-    
+
     mark_write_operation
     adapter.open do |db|
       db.query(sql, args: assembler.numbered_parameters) do |rs|
@@ -234,14 +234,14 @@ module Grant::BulkOperations
         end
       end
     end
-    
+
     records
   end
-  
+
   private def read_column_value(rs, column_name : String)
     column = column_for_attribute(column_name)
     return nil unless column
-    
+
     case column.column_type.name
     when "String"
       rs.read(String?)
@@ -266,7 +266,7 @@ end
 # Include in query builder
 class Grant::Query::Builder(Model)
   include Grant::ConvenienceMethods(Model)
-  
+
   @query_annotation : String?
   @_cached_assembler : Grant::Query::Assembler::Base(Model)?
 end

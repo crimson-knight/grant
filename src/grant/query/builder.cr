@@ -489,6 +489,7 @@ class Grant::Query::Builder(Model)
 
   # Finds and destroys all records matching the query
   def destroy_all : Int32
+    Model.guard_writes!
     records = self.select
     count = 0
     records.each do |record|
@@ -500,12 +501,14 @@ class Grant::Query::Builder(Model)
   end
 
   def delete
+    Model.guard_writes!
     Model.mark_write_operation
     assembler.delete
   end
 
   # Updates updated_at timestamp for all matching records
   def touch_all(*fields, time : Time = Time.local(Grant.settings.default_timezone)) : Int64
+    Model.guard_writes!
     Model.mark_write_operation
     assembler.touch_all(fields, time: time)
   end
@@ -720,6 +723,7 @@ class Grant::Query::Builder(Model)
 
   # Delete all records matching the query
   def delete_all : Int64
+    Model.guard_writes!
     result = assembler.delete
     result.rows_affected
   end

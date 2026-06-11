@@ -133,6 +133,18 @@ module Grant::ConnectionManagement
   end
 
   module ClassMethods
+    # Raises Grant::Transaction::ReadOnlyError when the current fiber's
+    # connection context has prevent_writes set to true.  Call this at the
+    # start of every mutation path so that while_preventing_writes /
+    # connected_to(prevent_writes: true) are actually enforced.
+    def guard_writes!
+      if preventing_writes?
+        raise Grant::Transaction::ReadOnlyError.new(
+          "Write query attempted while in readonly mode: #{name}"
+        )
+      end
+    end
+
     # Delegate connection_switch_wait_period to Grant::Connections for backward compatibility
     def connection_switch_wait_period
       Grant::Connections.connection_switch_wait_period
