@@ -19,14 +19,14 @@ module Grant::Query::Assembler
     abstract def count : Grant::Query::Executor::Value(Model, Int64) | Grant::Query::Executor::MultiValue(Model, Int64)
     abstract def exists? : Grant::Query::Executor::Value(Model, Bool)
     abstract def first(n : Int32) : Grant::Query::Executor::List(Model)
-    
+
     # Convenience methods support
     abstract def pluck_sql(fields : Array(String)) : String
-    abstract def insert_all_sql(attributes : Array(Hash(String, Grant::Columns::Type)), 
-                                returning : Array(Symbol)?, 
+    abstract def insert_all_sql(attributes : Array(Hash(String, Grant::Columns::Type)),
+                                returning : Array(Symbol)?,
                                 unique_by : Array(Symbol)?) : String
-    abstract def upsert_all_sql(attributes : Array(Hash(String, Grant::Columns::Type)), 
-                                returning : Array(Symbol)?, 
+    abstract def upsert_all_sql(attributes : Array(Hash(String, Grant::Columns::Type)),
+                                returning : Array(Symbol)?,
                                 unique_by : Array(Symbol)?,
                                 update_only : Array(Symbol)?) : String
     abstract def touch_all(fields : Tuple, time : Time) : Int64
@@ -37,6 +37,10 @@ module Grant::Query::Assembler
         case clause
         when NamedTuple(join: Symbol, stmt: String, value: Grant::Columns::Type)
           add_parameter(clause[:value])
+          clause[:stmt]
+        when NamedTuple(join: Symbol, stmt: String, values: Array(Grant::Columns::Type))
+          # Grouped or/not block conditions carry their bind values in order.
+          clause[:values].each { |v| add_parameter(v) }
           clause[:stmt]
         when NamedTuple(join: Symbol, field: String, operator: Symbol, value: Grant::Columns::Type)
           field = clause[:field]

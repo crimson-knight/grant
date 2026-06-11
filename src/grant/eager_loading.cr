@@ -35,6 +35,12 @@ module Grant::EagerLoading
     # The method body iterates @type.methods at compile time per concrete class,
     # giving full type knowledge for each association target.
     #
+    # KNOWN LIMITATION: @type.methods only yields methods defined directly on
+    # the concrete class.  Associations declared on an intermediate abstract
+    # base class are not seen here and silently fall back to lazy loading.
+    # If shared-base-class associations become a pattern, iterate the
+    # ancestors' methods as well.
+    #
     # Returns true when the association was recognised, false otherwise.
     def _eager_batch_load(records : Array(Grant::Base), assoc_name : Symbol) : Bool
       \{% for method in @type.methods %}
@@ -121,16 +127,15 @@ module Grant::EagerLoading
       \{% end %}
       false
     end
-
   end
-  
+
   module ClassMethods
     def includes(*associations)
       query = get_query_builder
       query.includes(*associations)
       query
     end
-    
+
     def includes(**nested_associations)
       query = get_query_builder
       nested_associations.each do |name, nested|
@@ -138,13 +143,13 @@ module Grant::EagerLoading
       end
       query
     end
-    
+
     def preload(*associations)
       query = get_query_builder
       query.preload(*associations)
       query
     end
-    
+
     def preload(**nested_associations)
       query = get_query_builder
       nested_associations.each do |name, nested|
@@ -152,13 +157,13 @@ module Grant::EagerLoading
       end
       query
     end
-    
+
     def eager_load(*associations)
       query = get_query_builder
       query.eager_load(*associations)
       query
     end
-    
+
     def eager_load(**nested_associations)
       query = get_query_builder
       nested_associations.each do |name, nested|
@@ -166,7 +171,7 @@ module Grant::EagerLoading
       end
       query
     end
-    
+
     private def get_query_builder
       # Try to use current_scope if available (from Scoping module)
       if self.responds_to?(:current_scope)

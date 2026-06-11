@@ -1,55 +1,56 @@
 module Grant::Transaction
   class Rollback < Exception; end
-  
+
   class SerializationError < Exception
     def initialize(message = "Transaction serialization failure")
       super(message)
     end
   end
-  
+
   class ReadOnlyError < Exception
     def initialize(message = "Cannot modify data in read-only transaction")
       super(message)
     end
   end
-  
+
   enum IsolationLevel
     ReadUncommitted
     ReadCommitted
     RepeatableRead
     Serializable
-    
+
     def to_sql : String
       case self
       when ReadUncommitted then "READ UNCOMMITTED"
-      when ReadCommitted then "READ COMMITTED"
-      when RepeatableRead then "REPEATABLE READ"
-      when Serializable then "SERIALIZABLE"
+      when ReadCommitted   then "READ COMMITTED"
+      when RepeatableRead  then "REPEATABLE READ"
+      when Serializable    then "SERIALIZABLE"
       else
         raise "Unknown isolation level: #{self}"
       end
     end
   end
-  
+
   record Options,
     isolation : IsolationLevel? = nil,
     readonly : Bool = false,
     requires_new : Bool = false
-  
+
   class TransactionState
     getter connection : DB::Connection
     getter options : Options
+    getter adapter : Grant::Adapter::Base
     getter savepoint_counter : Int32 = 0
-    
-    def initialize(@connection : DB::Connection, @options : Options)
+
+    def initialize(@connection : DB::Connection, @options : Options, @adapter : Grant::Adapter::Base)
     end
-    
+
     def next_savepoint_name : String
       @savepoint_counter += 1
       "sp_#{@savepoint_counter}_#{Random::Secure.hex(4)}"
     end
   end
-  
+
   # Module-level fiber-keyed transaction stacks.  All model classes share this
   # single hash so that cross-model transactions (e.g. User.transaction { post.save! })
   # work correctly.  ClassMethods delegates to these module-level helpers so that
@@ -76,8 +77,16 @@ module Grant::Transaction
   # on this fiber, or nil when no transaction is active.  Used by the adapter
   # to route all DML through the transaction connection instead of checking out
   # a fresh pool connection (which would make the DML non-atomic).
-  def self.current_connection? : DB::Connection?
-    @@transaction_stacks[Fiber.current]?.try(&.last?.try(&.connection))
+  #
+  # The calling adapter must be the same instance that opened the transaction:
+  # in a multi-database setup (e.g. a SQLite-backed model and a PG-backed model
+  # in one process), DML on a model whose adapter did not start the transaction
+  # must NOT be routed onto the transaction connection — it belongs to a
+  # different database entirely and gets its own pool connection instead.
+  def self.current_connection?(adapter : Grant::Adapter::Base) : DB::Connection?
+    state = @@transaction_stacks[Fiber.current]?.try(&.last?)
+    return nil unless state
+    state.adapter.same?(adapter) ? state.connection : nil
   end
 
   module ClassMethods
@@ -88,21 +97,21 @@ module Grant::Transaction
     private def clear_transaction_stack
       Grant::Transaction.clear_fiber_stack
     end
-    
+
     def transaction(&block) : Nil
       transaction(Transaction::Options.new) { yield }
     end
-    
+
     def transaction(options : Transaction::Options, &block) : Nil
       stack = transaction_stack
-      
+
       if options.requires_new || stack.empty?
         execute_transaction(options, &block)
       else
         execute_savepoint(&block)
       end
     end
-    
+
     def transaction(isolation : IsolationLevel? = nil, readonly : Bool = false, requires_new : Bool = false, &block) : Nil
       options = Transaction::Options.new(
         isolation: isolation,
@@ -111,15 +120,15 @@ module Grant::Transaction
       )
       transaction(options, &block)
     end
-    
+
     def transaction_open? : Bool
       !transaction_stack.empty?
     end
-    
+
     def current_transaction : TransactionState?
       transaction_stack.last?
     end
-    
+
     private def execute_transaction(options : Transaction::Options, &block)
       # Use open_pool_connection (not open) so that:
       #   1. We always get a dedicated connection for this transaction's BEGIN/COMMIT.
@@ -128,11 +137,11 @@ module Grant::Transaction
       adapter.open_pool_connection do |conn|
         begin
           start_transaction(conn, options)
-          state = TransactionState.new(conn, options)
+          state = TransactionState.new(conn, options, adapter)
           transaction_stack.push(state)
-          
+
           yield
-          
+
           conn.exec("COMMIT")
           transaction_stack.pop
           clear_transaction_stack if transaction_stack.empty?
@@ -150,11 +159,11 @@ module Grant::Transaction
     rescue ex : DB::Error
       handle_transaction_error(ex)
     end
-    
+
     private def execute_savepoint(&block)
       current = transaction_stack.last
       savepoint_name = current.next_savepoint_name
-      
+
       begin
         current.connection.exec("SAVEPOINT #{savepoint_name}")
         yield
@@ -168,7 +177,7 @@ module Grant::Transaction
     rescue ex : DB::Error
       handle_transaction_error(ex)
     end
-    
+
     private def start_transaction(conn : DB::Connection, options : Transaction::Options)
       # MySQL: SET TRANSACTION ISOLATION LEVEL must be issued BEFORE START TRANSACTION.
       # (Issuing it after START TRANSACTION silently applies to the *next* transaction.)
@@ -177,35 +186,35 @@ module Grant::Transaction
       end
 
       sql = case adapter.class
-      when Grant::Adapter::Pg.class
-        build_pg_transaction_sql(options)
-      when Grant::Adapter::Mysql.class
-        build_mysql_transaction_sql(options)
-      when Grant::Adapter::Sqlite.class
-        build_sqlite_transaction_sql(options)
-      else
-        "BEGIN"
-      end
+            when Grant::Adapter::Pg.class
+              build_pg_transaction_sql(options)
+            when Grant::Adapter::Mysql.class
+              build_mysql_transaction_sql(options)
+            when Grant::Adapter::Sqlite.class
+              build_sqlite_transaction_sql(options)
+            else
+              "BEGIN"
+            end
 
       conn.exec(sql)
     end
-    
+
     private def build_pg_transaction_sql(options : Transaction::Options) : String
       parts = ["BEGIN"]
-      
+
       if isolation = options.isolation
         parts << "ISOLATION LEVEL #{isolation.to_sql}"
       end
-      
+
       if options.readonly
         parts << "READ ONLY"
       else
         parts << "READ WRITE"
       end
-      
+
       parts.join(" ")
     end
-    
+
     private def build_mysql_transaction_sql(options : Transaction::Options) : String
       if options.readonly
         "START TRANSACTION READ ONLY"
@@ -213,7 +222,7 @@ module Grant::Transaction
         "START TRANSACTION"
       end
     end
-    
+
     private def build_sqlite_transaction_sql(options : Transaction::Options) : String
       isolation = options.isolation
       case isolation
@@ -227,10 +236,10 @@ module Grant::Transaction
         "BEGIN IMMEDIATE"
       end
     end
-    
+
     private def handle_transaction_error(ex : DB::Error)
       message = ex.message || ""
-      
+
       case message
       when /deadlock/i
         raise Grant::Locking::DeadlockError.new(message)
@@ -243,11 +252,11 @@ module Grant::Transaction
       end
     end
   end
-  
+
   def transaction(&block)
     self.class.transaction { yield }
   end
-  
+
   def transaction(options : Transaction::Options, &block)
     self.class.transaction(options) { yield }
   end

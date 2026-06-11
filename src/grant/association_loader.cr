@@ -2,7 +2,7 @@ module Grant
   class AssociationLoader
     def self.load_associations(records : Array(Grant::Base), associations : Array(Symbol | Hash(Symbol, Array(Symbol))))
       return if records.empty? || associations.empty?
-      
+
       associations.each do |association|
         case association
         when Symbol
@@ -17,7 +17,7 @@ module Grant
         end
       end
     end
-    
+
     private def self.load_single_association(records : Array(Grant::Base), association_name : Symbol)
       return if records.empty?
 
@@ -29,113 +29,7 @@ module Grant
       # single batch query per association.
       records.first._eager_batch_load(records, association_name)
     end
-    
-    private def self.load_belongs_to(records : Array(Grant::Base), association_name : Symbol, meta : NamedTuple)
-      # Collect all foreign key values
-      foreign_key = meta[:foreign_key]
-      foreign_key_values = records.map { |r| r.read_attribute(foreign_key) }.compact.uniq
-      
-      return if foreign_key_values.empty?
-      
-      # Load all associated records in one query
-      target_class = meta[:target_class]
-      primary_key = meta[:primary_key]
-      
-      associated_records = target_class.where(primary_key, :in, foreign_key_values).all
-      
-      # Create lookup hash
-      lookup = {} of Grant::Columns::Type => Grant::Base
-      associated_records.each do |record|
-        lookup[record.read_attribute(primary_key)] = record
-      end
-      
-      # Assign to each record
-      records.each do |record|
-        fk_value = record.read_attribute(foreign_key)
-        associated = lookup[fk_value]?
-        record.set_loaded_association(association_name, associated)
-      end
-    end
-    
-    private def self.load_has_one(records : Array(Grant::Base), association_name : Symbol, meta : NamedTuple)
-      # Similar to has_many but expecting single result per record
-      primary_key = meta[:primary_key]
-      primary_key_values = records.map { |r| r.read_attribute(primary_key) }.compact.uniq
-      
-      return if primary_key_values.empty?
-      
-      target_class = meta[:target_class]
-      foreign_key = meta[:foreign_key]
-      
-      associated_records = target_class.where(foreign_key, :in, primary_key_values).all
-      
-      # Group by foreign key
-      grouped = {} of Grant::Columns::Type => Grant::Base
-      associated_records.each do |record|
-        fk_value = record.read_attribute(foreign_key)
-        grouped[fk_value] = record # Only keep last one for has_one
-      end
-      
-      # Assign to each record
-      records.each do |record|
-        pk_value = record.read_attribute(primary_key)
-        associated = grouped[pk_value]?
-        record.set_loaded_association(association_name, associated)
-      end
-    end
-    
-    private def self.load_has_many(records : Array(Grant::Base), association_name : Symbol, meta : NamedTuple)
-      primary_key = meta[:primary_key]
-      primary_key_values = records.map { |r| r.read_attribute(primary_key) }.compact.uniq
-      
-      return if primary_key_values.empty?
-      
-      target_class = meta[:target_class]
-      foreign_key = meta[:foreign_key]
-      through = meta[:through]?
-      
-      if through
-        # Handle has_many through
-        load_has_many_through(records, association_name, meta)
-      else
-        # Direct has_many
-        associated_records = target_class.where(foreign_key, :in, primary_key_values).all
-        
-        # Group by foreign key
-        grouped = {} of Grant::Columns::Type => Array(Grant::Base)
-        associated_records.each do |record|
-          fk_value = record.read_attribute(foreign_key)
-          grouped[fk_value] ||= [] of Grant::Base
-          grouped[fk_value] << record
-        end
-        
-        # Assign to each record
-        records.each do |record|
-          pk_value = record.read_attribute(primary_key)
-          associated = grouped[pk_value]? || [] of Grant::Base
-          record.set_loaded_association(association_name, associated.as(Array(Grant::Base)))
-        end
-      end
-    end
-    
-    private def self.load_has_many_through(records : Array(Grant::Base), association_name : Symbol, meta : NamedTuple)
-      # TODO: Implement has_many through eager loading
-      # This is more complex and requires joining through the intermediate table
-    end
-    
-    # Metadata retrieval is now handled directly by _eager_batch_load on each
-    # concrete model class.  This stub is retained for any code that may still
-    # reference it but the load path no longer passes through here.
-    private def self.get_association_metadata(record : Grant::Base, association_name : Symbol)
-      nil
-    end
-    
-    private def self.get_class_from_name(class_name : String)
-      # This is a simplified version - in reality we'd need a proper class lookup
-      # For now, this would need to be implemented based on your application's structure
-      raise "Class lookup not implemented for #{class_name}"
-    end
-    
+
     private def self.extract_association_records(record : Grant::Base, association_name : Symbol)
       data = record.get_loaded_association(association_name)
       case data

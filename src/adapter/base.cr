@@ -25,10 +25,12 @@ abstract class Grant::Adapter::Base
   end
 
   def open(&)
-    # If the current fiber has an open transaction, reuse that connection so
-    # that all DML issued inside a transaction block runs on the same connection
-    # as BEGIN/COMMIT — making the transaction truly atomic.
-    if tx_conn = Grant::Transaction.current_connection?
+    # If the current fiber has an open transaction THAT THIS ADAPTER started,
+    # reuse that connection so all DML issued inside the transaction block runs
+    # on the same connection as BEGIN/COMMIT — making the transaction truly
+    # atomic.  DML through a different adapter (multi-database setups) is not
+    # part of this transaction and checks out from its own pool.
+    if tx_conn = Grant::Transaction.current_connection?(self)
       return yield tx_conn
     end
 
@@ -117,7 +119,7 @@ abstract class Grant::Adapter::Base
 
   # This will update a row in the database.
   abstract def update(table_name : String, primary_name : String, fields, params)
-  
+
   # Update with custom WHERE clause for composite keys
   def update_with_where(table_name : String, fields : Array(String), params : Array(DB::Any), where_clause : String)
     statement = String.build do |stmt|
@@ -138,7 +140,7 @@ abstract class Grant::Adapter::Base
 
   # This will delete a row from the database.
   abstract def delete(table_name : String, primary_name : String, value)
-  
+
   # Delete with custom WHERE clause for composite keys
   def delete_with_where(table_name : String, where_clause : String, params : Array(DB::Any))
     statement = "DELETE FROM #{quote(table_name)} WHERE #{ensure_clause_template(where_clause)}"
@@ -210,7 +212,7 @@ abstract class Grant::Adapter::Base
       "<1ns".colorize.green
     end
   end
-  
+
   # Methods for checking database capabilities
   abstract def supports_lock_mode?(mode : Grant::Locking::LockMode) : Bool
   abstract def supports_isolation_level?(level : Grant::Transaction::IsolationLevel) : Bool

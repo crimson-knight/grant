@@ -64,4 +64,22 @@ describe "Grant::Transaction atomicity" do
       Teacher.count.should eq(0)
     end
   end
+
+  describe "multi-adapter routing" do
+    it "only routes DML to the transaction connection for the adapter that opened it" do
+      Parent.transaction do
+        # The adapter that started the transaction sees its connection...
+        Grant::Transaction.current_connection?(Parent.adapter).should_not be_nil
+
+        # ...but a different adapter instance (a different database in a
+        # multi-DB setup) must NOT be routed onto this transaction's connection.
+        other = Grant::Adapter::Sqlite.new(name: "other_db", url: "sqlite3://./other_tx_guard.db")
+        Grant::Transaction.current_connection?(other).should be_nil
+      end
+    end
+
+    it "returns nil for any adapter when no transaction is open" do
+      Grant::Transaction.current_connection?(Parent.adapter).should be_nil
+    end
+  end
 end

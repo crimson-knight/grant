@@ -7,6 +7,10 @@ require "../grant/sqlite_version_check"
 # sqlite3_step returns SQLITE_LOCKED (or similar) unless sqlite3_reset is
 # explicitly called.  Without this, a subsequent COMMIT on the same connection
 # fails with "cannot commit transaction - SQL statements in progress".
+#
+# NOTE: this duplicates the upstream method body from sqlite3 ~> 0.21.0
+# (src/sqlite3/statement.cr) and adds only the ensure-reset.  When bumping the
+# sqlite3 shard, diff upstream perform_exec against this patch and re-apply.
 class SQLite3::Statement
   protected def perform_exec(args : Enumerable) : DB::ExecResult
     LibSQLite3.reset(self.to_unsafe)
@@ -35,7 +39,7 @@ end
 # Sqlite implementation of the Adapter
 class Grant::Adapter::Sqlite < Grant::Adapter::Base
   QUOTING_CHAR = '"'
-  
+
   def initialize(@name : String, @url : String)
     super
     # Check SQLite version on first connection
@@ -159,15 +163,15 @@ class Grant::Adapter::Sqlite < Grant::Adapter::Base
 
     log statement, elapsed_time, value
   end
-  
+
   def supports_lock_mode?(mode : Grant::Locking::LockMode) : Bool
     false
   end
-  
+
   def supports_isolation_level?(level : Grant::Transaction::IsolationLevel) : Bool
     false
   end
-  
+
   def supports_savepoints? : Bool
     true
   end
