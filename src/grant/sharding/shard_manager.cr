@@ -16,13 +16,19 @@ module Grant
     def self.with_shard(shard : Symbol, &block)
       previous = @@current_shard[Fiber.current]?
       @@current_shard[Fiber.current] = shard
-      
+
       # Set connection context using Fiber-local storage
       # This replaces the Thread.current usage
       begin
         yield
       ensure
-        @@current_shard[Fiber.current] = previous
+        # Delete the entry when restoring to nil to avoid a memory leak
+        # where long-lived fibers accumulate dead entries in the hash.
+        if prev = previous
+          @@current_shard[Fiber.current] = prev
+        else
+          @@current_shard.delete(Fiber.current)
+        end
       end
     end
     

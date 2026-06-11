@@ -25,6 +25,21 @@ abstract class Grant::Adapter::Base
   end
 
   def open(&)
+    # If the current fiber has an open transaction, reuse that connection so
+    # that all DML issued inside a transaction block runs on the same connection
+    # as BEGIN/COMMIT — making the transaction truly atomic.
+    if tx_conn = Grant::Transaction.current_connection?
+      return yield tx_conn
+    end
+
+    open_pool_connection { |conn| yield conn }
+  end
+
+  # Always checks out a fresh connection from the pool, bypassing the
+  # transaction-routing logic in #open.  Used by execute_transaction so that
+  # requires_new: true transactions get their own independent connection rather
+  # than inheriting an enclosing transaction's connection.
+  def open_pool_connection(&)
     database.retry do
       database.using_connection do |conn|
         yield conn

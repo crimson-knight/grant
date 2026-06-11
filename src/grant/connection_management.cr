@@ -51,13 +51,28 @@ module Grant::ConnectionManagement
     class_property database_name : String = "primary"
     class_property connection_config = {} of Symbol => String
     class_property shard_config = {} of Symbol => Hash(Symbol, String)
-    
-    # Thread-local connection context
-    class_property connection_context : ConnectionContext?
-    
+
+    # Fiber-keyed connection context — one slot per fiber so concurrent fibers
+    # that each call connected_to cannot corrupt each other's role/database/shard.
+    @@connection_contexts = {} of Fiber => ConnectionContext
+
+    def self.connection_context : ConnectionContext?
+      @@connection_contexts[Fiber.current]?
+    end
+
+    def self.connection_context=(ctx : ConnectionContext?)
+      if ctx.nil?
+        # Delete the entry rather than storing nil — avoids a memory leak
+        # where long-lived fibers accumulate dead entries.
+        @@connection_contexts.delete(Fiber.current)
+      else
+        @@connection_contexts[Fiber.current] = ctx
+      end
+    end
+
     # Enhanced replica lag tracking per database/shard
     class_property replica_lag_trackers = {} of String => ReplicaLagTracker
-    
+
     # Connection behavior configuration
     class_property replica_lag_threshold : Time::Span = 2.seconds
     class_property failover_retry_attempts : Int32 = 3

@@ -50,20 +50,43 @@ module Grant::Transaction
     end
   end
   
+  # Module-level fiber-keyed transaction stacks.  All model classes share this
+  # single hash so that cross-model transactions (e.g. User.transaction { post.save! })
+  # work correctly.  ClassMethods delegates to these module-level helpers so that
+  # the Crystal class-variable scoping rule (@@var in an extended module is
+  # per-including-class, not per-module) does not create per-model isolated stacks.
   @@transaction_stacks = {} of Fiber => Array(TransactionState)
-  
+
+  # Returns the transaction stack for the current fiber, lazily creating it.
+  def self.fiber_stack : Array(TransactionState)
+    stack = @@transaction_stacks[Fiber.current]?
+    unless stack
+      stack = [] of TransactionState
+      @@transaction_stacks[Fiber.current] = stack
+    end
+    stack
+  end
+
+  # Removes the current fiber's stack entry (called after the outermost transaction exits).
+  def self.clear_fiber_stack
+    @@transaction_stacks.delete(Fiber.current)
+  end
+
+  # Returns the DB::Connection that is currently enlisted in an open transaction
+  # on this fiber, or nil when no transaction is active.  Used by the adapter
+  # to route all DML through the transaction connection instead of checking out
+  # a fresh pool connection (which would make the DML non-atomic).
+  def self.current_connection? : DB::Connection?
+    @@transaction_stacks[Fiber.current]?.try(&.last?.try(&.connection))
+  end
+
   module ClassMethods
     private def transaction_stack : Array(TransactionState)
-      stack = @@transaction_stacks[Fiber.current]?
-      unless stack
-        stack = [] of TransactionState
-        @@transaction_stacks[Fiber.current] = stack
-      end
-      stack
+      Grant::Transaction.fiber_stack
     end
-    
+
     private def clear_transaction_stack
-      @@transaction_stacks.delete(Fiber.current)
+      Grant::Transaction.clear_fiber_stack
     end
     
     def transaction(&block) : Nil
@@ -98,7 +121,11 @@ module Grant::Transaction
     end
     
     private def execute_transaction(options : Transaction::Options, &block)
-      adapter.open do |conn|
+      # Use open_pool_connection (not open) so that:
+      #   1. We always get a dedicated connection for this transaction's BEGIN/COMMIT.
+      #   2. requires_new: true transactions get a fresh connection independent of any
+      #      enclosing transaction, rather than inheriting the outer tx connection.
+      adapter.open_pool_connection do |conn|
         begin
           start_transaction(conn, options)
           state = TransactionState.new(conn, options)
@@ -143,6 +170,12 @@ module Grant::Transaction
     end
     
     private def start_transaction(conn : DB::Connection, options : Transaction::Options)
+      # MySQL: SET TRANSACTION ISOLATION LEVEL must be issued BEFORE START TRANSACTION.
+      # (Issuing it after START TRANSACTION silently applies to the *next* transaction.)
+      if options.isolation && adapter.class == Grant::Adapter::Mysql.class
+        conn.exec("SET TRANSACTION ISOLATION LEVEL #{options.isolation.not_nil!.to_sql}")
+      end
+
       sql = case adapter.class
       when Grant::Adapter::Pg.class
         build_pg_transaction_sql(options)
@@ -153,12 +186,8 @@ module Grant::Transaction
       else
         "BEGIN"
       end
-      
+
       conn.exec(sql)
-      
-      if options.isolation && adapter.class.is_a?(Grant::Adapter::Mysql.class)
-        conn.exec("SET TRANSACTION ISOLATION LEVEL #{options.isolation.not_nil!.to_sql}")
-      end
     end
     
     private def build_pg_transaction_sql(options : Transaction::Options) : String

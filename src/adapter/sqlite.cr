@@ -2,6 +2,36 @@ require "./base"
 require "sqlite3"
 require "../grant/sqlite_version_check"
 
+# Patch SQLite3::Statement so that perform_exec always calls sqlite3_reset in
+# its ensure clause.  SQLite does NOT decrement db->nVdbeActive when
+# sqlite3_step returns SQLITE_LOCKED (or similar) unless sqlite3_reset is
+# explicitly called.  Without this, a subsequent COMMIT on the same connection
+# fails with "cannot commit transaction - SQL statements in progress".
+class SQLite3::Statement
+  protected def perform_exec(args : Enumerable) : DB::ExecResult
+    LibSQLite3.reset(self.to_unsafe)
+    args.each_with_index(1) do |arg, index|
+      bind_arg(index, arg)
+    end
+
+    step = uninitialized LibSQLite3::Code
+    loop do
+      step = LibSQLite3::Code.new LibSQLite3.step(self)
+      break unless step == LibSQLite3::Code::ROW
+    end
+    raise Exception.new(sqlite3_connection) unless step == LibSQLite3::Code::DONE
+
+    rows_affected = LibSQLite3.changes(sqlite3_connection).to_i64
+    last_id = LibSQLite3.last_insert_rowid(sqlite3_connection)
+    DB::ExecResult.new rows_affected, last_id
+  ensure
+    # Always reset the statement so SQLite decrements nVdbeActive even when
+    # the step returned an error code.  This prevents "SQL statements in
+    # progress" on a subsequent COMMIT/ROLLBACK on the same connection.
+    LibSQLite3.reset(self.to_unsafe)
+  end
+end
+
 # Sqlite implementation of the Adapter
 class Grant::Adapter::Sqlite < Grant::Adapter::Base
   QUOTING_CHAR = '"'
