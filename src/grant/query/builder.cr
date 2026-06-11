@@ -38,7 +38,7 @@ class Grant::Query::Builder(Model)
                      NamedTuple(join: Symbol, stmt: String, value: Grant::Columns::Type) |
                      NamedTuple(join: Symbol, stmt: String, values: Array(Grant::Columns::Type))
   alias AssociationQuery = Symbol | Hash(Symbol, Array(Symbol))
-  
+
   getter db_type : DbType
   getter where_fields : Array(WhereField) = [] of WhereField
   getter order_fields = [] of NamedTuple(field: String, direction: Sort)
@@ -117,8 +117,8 @@ class Grant::Query::Builder(Model)
   # Example:
   # ```
   # User.where.like(:email, "%@gmail.com")
-  #     .where.gt(:age, 18)
-  #     .where.not_in(:status, ["banned", "suspended"])
+  #   .where.gt(:age, 18)
+  #   .where.not_in(:status, ["banned", "suspended"])
   # ```
   def where : WhereChain(Model)
     WhereChain(Model).new(self)
@@ -259,7 +259,7 @@ class Grant::Query::Builder(Model)
   #
   # ```
   # User.joins("posts", on: "posts.user_id = users.id")
-  #     .where(active: true)
+  #   .where(active: true)
   # # => SELECT ... FROM users INNER JOIN posts ON posts.user_id = users.id WHERE active = true
   # ```
   def joins(table : String, *, on : String) : self
@@ -274,7 +274,7 @@ class Grant::Query::Builder(Model)
   #
   # ```
   # User.left_joins("posts", on: "posts.user_id = users.id")
-  #     .where("posts.id IS NULL")
+  #   .where("posts.id IS NULL")
   # # => SELECT ... FROM users LEFT JOIN posts ON posts.user_id = users.id WHERE posts.id IS NULL
   # ```
   def left_joins(table : String, *, on : String) : self
@@ -303,7 +303,7 @@ class Grant::Query::Builder(Model)
   #
   # ```
   # User.group_by(:department)
-  #     .having("COUNT(*) > ?", 5)
+  #   .having("COUNT(*) > ?", 5)
   # # => SELECT ... FROM users GROUP BY department HAVING COUNT(*) > 5
   # ```
   def having(stmt : String, value : Grant::Columns::Type = nil) : self
@@ -487,6 +487,7 @@ class Grant::Query::Builder(Model)
 
   # Finds and destroys all records matching the query
   def destroy_all : Int32
+    Model.guard_writes!
     records = self.select
     count = 0
     records.each do |record|
@@ -498,12 +499,14 @@ class Grant::Query::Builder(Model)
   end
 
   def delete
+    Model.guard_writes!
     Model.mark_write_operation
     assembler.delete
   end
 
   # Updates updated_at timestamp for all matching records
   def touch_all(*fields, time : Time = Time.local(Grant.settings.default_timezone)) : Int64
+    Model.guard_writes!
     Model.mark_write_operation
     assembler.touch_all(fields, time: time)
   end
@@ -584,8 +587,8 @@ class Grant::Query::Builder(Model)
   # Example:
   # ```
   # User.where(active: true)
-  #     .or { |q| q.where(role: "admin") }
-  #     .or { |q| q.where.gt(:level, 10) }
+  #   .or { |q| q.where(role: "admin") }
+  #   .or { |q| q.where.gt(:level, 10) }
   # # SQL: WHERE active = true OR (role = 'admin') OR (level > 10)
   # ```
   def or(&)
@@ -604,15 +607,15 @@ class Grant::Query::Builder(Model)
                when NamedTuple(join: Symbol, field: String, operator: Symbol, value: Grant::Columns::Type)
                  # Simple operator to SQL mapping for OR clauses
                  case field[:operator]
-                 when :eq then "#{field[:field]} = ?"
-                 when :neq then "#{field[:field]} != ?"
-                 when :gt then "#{field[:field]} > ?"
-                 when :lt then "#{field[:field]} < ?"
-                 when :gteq then "#{field[:field]} >= ?"
-                 when :lteq then "#{field[:field]} <= ?"
-                 when :in then "#{field[:field]} IN (?)"
-                 when :nin then "#{field[:field]} NOT IN (?)"
-                 when :like then "#{field[:field]} LIKE ?"
+                 when :eq    then "#{field[:field]} = ?"
+                 when :neq   then "#{field[:field]} != ?"
+                 when :gt    then "#{field[:field]} > ?"
+                 when :lt    then "#{field[:field]} < ?"
+                 when :gteq  then "#{field[:field]} >= ?"
+                 when :lteq  then "#{field[:field]} <= ?"
+                 when :in    then "#{field[:field]} IN (?)"
+                 when :nin   then "#{field[:field]} NOT IN (?)"
+                 when :like  then "#{field[:field]} LIKE ?"
                  when :nlike then "#{field[:field]} NOT LIKE ?"
                  else
                    raise "Unsupported operator in OR clause: #{field[:operator]}"
@@ -661,15 +664,15 @@ class Grant::Query::Builder(Model)
                when NamedTuple(join: Symbol, field: String, operator: Symbol, value: Grant::Columns::Type)
                  # Simple operator to SQL mapping for NOT clauses
                  case field[:operator]
-                 when :eq then "#{field[:field]} = ?"
-                 when :neq then "#{field[:field]} != ?"
-                 when :gt then "#{field[:field]} > ?"
-                 when :lt then "#{field[:field]} < ?"
-                 when :gteq then "#{field[:field]} >= ?"
-                 when :lteq then "#{field[:field]} <= ?"
-                 when :in then "#{field[:field]} IN (?)"
-                 when :nin then "#{field[:field]} NOT IN (?)"
-                 when :like then "#{field[:field]} LIKE ?"
+                 when :eq    then "#{field[:field]} = ?"
+                 when :neq   then "#{field[:field]} != ?"
+                 when :gt    then "#{field[:field]} > ?"
+                 when :lt    then "#{field[:field]} < ?"
+                 when :gteq  then "#{field[:field]} >= ?"
+                 when :lteq  then "#{field[:field]} <= ?"
+                 when :in    then "#{field[:field]} IN (?)"
+                 when :nin   then "#{field[:field]} NOT IN (?)"
+                 when :like  then "#{field[:field]} LIKE ?"
                  when :nlike then "#{field[:field]} NOT LIKE ?"
                  else
                    raise "Unsupported operator in NOT clause: #{field[:operator]}"
@@ -715,9 +718,10 @@ class Grant::Query::Builder(Model)
     end
     result
   end
-  
+
   # Delete all records matching the query
   def delete_all : Int64
+    Model.guard_writes!
     result = assembler.delete
     result.rows_affected
   end

@@ -1,9 +1,16 @@
 require "./exceptions"
 
 module Grant::Transactions
+  # Instance-level write guard: raises Grant::Transaction::ReadOnlyError
+  # when the model class has prevent_writes active for the current fiber.
+  private def guard_writes!
+    self.class.guard_writes!
+  end
+
   module ClassMethods
     # Removes all records from a table.
     def clear
+      guard_writes!
       adapter.clear table_name
     end
 
@@ -20,6 +27,7 @@ module Grant::Transactions
     # Creates a new record, and attempts to save it to the database. Allows saving
     # the record without timestamps. Returns the newly created record.
     def create(args, skip_timestamps : Bool = false)
+      guard_writes!
       instance = new
       instance.set_attributes(args.to_h.transform_keys(&.to_s))
       instance.save(skip_timestamps: skip_timestamps)
@@ -50,6 +58,7 @@ module Grant::Transactions
     # the array must contain only one model class
     # invalid model records will be skipped
     def import(model_array : Array(self) | Grant::Collection(self), batch_size : Int32 = model_array.size)
+      guard_writes!
       {% begin %}
         {% primary_key = @type.instance_vars.find { |ivar| (ann = ivar.annotation(Grant::Column)) && ann[:primary] } %}
         {% raise raise "A primary key must be defined for #{@type.name}." unless primary_key %}
@@ -67,6 +76,8 @@ module Grant::Transactions
           end
         end
       {% end %}
+    rescue ex : Grant::Transaction::ReadOnlyError
+      raise ex
     rescue err
       raise DB::Error.new(err.message, cause: err)
     end
@@ -74,6 +85,7 @@ module Grant::Transactions
     # Runs an INSERT statement for all records in *model_array*, with options to
     # update any duplicate records, and provide column names.
     def import(model_array : Array(self) | Grant::Collection(self), update_on_duplicate : Bool, columns : Array(String), batch_size : Int32 = model_array.size)
+      guard_writes!
       {% begin %}
         {% primary_key = @type.instance_vars.find { |ivar| (ann = ivar.annotation(Grant::Column)) && ann[:primary] } %}
         {% raise raise "A primary key must be defined for #{@type.name}." unless primary_key %}
@@ -91,11 +103,14 @@ module Grant::Transactions
           end
         end
       {% end %}
+    rescue ex : Grant::Transaction::ReadOnlyError
+      raise ex
     rescue err
       raise DB::Error.new(err.message, cause: err)
     end
 
     def import(model_array : Array(self) | Grant::Collection(self), ignore_on_duplicate : Bool, batch_size : Int32 = model_array.size)
+      guard_writes!
       {% begin %}
         {% primary_key = @type.instance_vars.find { |ivar| (ann = ivar.annotation(Grant::Column)) && ann[:primary] } %}
         {% raise raise "A primary key must be defined for #{@type.name}." unless primary_key %}
@@ -113,6 +128,8 @@ module Grant::Transactions
           end
         end
       {% end %}
+    rescue ex : Grant::Transaction::ReadOnlyError
+      raise ex
     rescue err
       raise DB::Error.new(err.message, cause: err)
     end
@@ -187,7 +204,7 @@ module Grant::Transactions
     raise DB::Error.new(err.message, cause: err)
   else
     self.new_record = false
-    
+
     {% begin %}
       {% primary_key = @type.instance_vars.find { |ivar| (ann = ivar.annotation(Grant::Column)) && ann[:primary] } %}
       Grant::Logs::Model.info { "Record created - #{self.class.name} [id: #{@{{primary_key.name.id}}}]" }
@@ -246,6 +263,7 @@ module Grant::Transactions
   # In the case of new records, it creates the record in the database, otherwise,
   # it updates the record in the database.
   def save(*, validate : Bool = true, skip_timestamps : Bool = false)
+    guard_writes!
     {% begin %}
     {% primary_key = @type.instance_vars.find { |ivar| (ann = ivar.annotation(Grant::Column)) && ann[:primary] } %}
     {% raise raise "A primary key must be defined for #{@type.name}." unless primary_key %}
@@ -333,6 +351,7 @@ module Grant::Transactions
   # Removes the record from the database. Returns `true` if successful, `false`
   # otherwise.
   def destroy
+    guard_writes!
     begin
       __run_around_destroy do
         __before_destroy
@@ -368,6 +387,7 @@ module Grant::Transactions
   #
   # Raises error if record hasn't been saved to the database yet.
   def touch(*fields) : Bool
+    guard_writes!
     raise "Cannot touch on a new record object" unless persisted?
     {% begin %}
       fields.each do |field|

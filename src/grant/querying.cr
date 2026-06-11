@@ -178,6 +178,7 @@ module Grant::Querying
 
     # :ditto:
     def destroy_by(criteria : Grant::ModelArgs) : Int32
+      guard_writes!
       records = all
       if !criteria.empty?
         clause, params = build_find_by_clause(criteria)
@@ -200,6 +201,7 @@ module Grant::Querying
 
     # :ditto:
     def delete_by(criteria : Grant::ModelArgs) : Int64
+      guard_writes!
       mark_write_operation
 
       if criteria.empty?
@@ -221,6 +223,7 @@ module Grant::Querying
 
     # Updates updated_at timestamp for all records matching the given criteria
     def touch_all(*fields, time : Time = Time.local(Grant.settings.default_timezone)) : Int64
+      guard_writes!
       time = time.at_beginning_of_second
 
       set_clause = ["#{quote("updated_at")} = ?"]
@@ -244,6 +247,7 @@ module Grant::Querying
 
     # Updates counter columns for all records
     def update_counters(id : Number | String, counters : Hash(Symbol, Int32)) : Int64
+      guard_writes!
       set_clause = [] of String
       values = [] of Grant::Columns::Type
 
@@ -319,11 +323,13 @@ module Grant::Querying
     end
 
     def exec(clause = "")
+      guard_writes!
       mark_write_operation
       adapter.open(&.exec(clause))
     end
 
     def query(clause = "", params = [] of Grant::Columns::Type, &)
+      guard_writes!
       mark_write_operation
       clause = adapter.ensure_clause_template(clause)
       adapter.open { |db| db.query(clause, args: params) { |rs| yield rs } }
