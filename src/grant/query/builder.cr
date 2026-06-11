@@ -845,6 +845,10 @@ class Grant::Query::Builder(Model)
   # Hydration reads columns by name, so unselected columns remain nil
   # on the returned model instances (their Crystal default for nilable types).
   #
+  # WARNING: Do not call `save` on a projected record. Unselected columns are
+  # nil in memory and will be written back to the database as nil, destroying
+  # their stored values. Treat projected records as read-only.
+  #
   # Example:
   # ```
   # # Model-loading: only id and name are fetched; other columns are nil
