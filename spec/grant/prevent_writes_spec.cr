@@ -165,6 +165,103 @@ describe "prevent_writes enforcement" do
     end
   end
 
+  describe "remaining guarded write paths" do
+    it "raises ReadOnlyError for Model.clear" do
+      expect_raises(Grant::Transaction::ReadOnlyError) do
+        Todo.while_preventing_writes do
+          Todo.clear
+        end
+      end
+    end
+
+    it "raises ReadOnlyError for Model.destroy_by" do
+      expect_raises(Grant::Transaction::ReadOnlyError) do
+        Todo.while_preventing_writes do
+          Todo.destroy_by(name: "nope")
+        end
+      end
+    end
+
+    it "raises ReadOnlyError for Model.delete_by" do
+      expect_raises(Grant::Transaction::ReadOnlyError) do
+        Todo.while_preventing_writes do
+          Todo.delete_by(name: "nope")
+        end
+      end
+    end
+
+    it "raises ReadOnlyError for Model.touch_all" do
+      expect_raises(Grant::Transaction::ReadOnlyError) do
+        Todo.while_preventing_writes do
+          Todo.touch_all
+        end
+      end
+    end
+
+    it "raises ReadOnlyError for Model.update_counters" do
+      expect_raises(Grant::Transaction::ReadOnlyError) do
+        Todo.while_preventing_writes do
+          Todo.update_counters(1, {:priority => 1})
+        end
+      end
+    end
+
+    it "raises ReadOnlyError for Model.exec" do
+      expect_raises(Grant::Transaction::ReadOnlyError) do
+        Todo.while_preventing_writes do
+          Todo.exec("UPDATE todos SET name = 'x'")
+        end
+      end
+    end
+
+    it "raises ReadOnlyError for Model.query" do
+      expect_raises(Grant::Transaction::ReadOnlyError) do
+        Todo.while_preventing_writes do
+          Todo.query("SELECT * FROM todos") { |_rs| }
+        end
+      end
+    end
+
+    it "raises ReadOnlyError for Model.insert_all" do
+      attrs = [{"name" => "bulk".as(Grant::Columns::Type)} of String | Symbol => Grant::Columns::Type]
+      expect_raises(Grant::Transaction::ReadOnlyError) do
+        Todo.while_preventing_writes do
+          Todo.insert_all(attrs)
+        end
+      end
+    end
+
+    it "raises ReadOnlyError for Model.upsert_all" do
+      attrs = [{"name" => "bulk".as(Grant::Columns::Type)} of String | Symbol => Grant::Columns::Type]
+      expect_raises(Grant::Transaction::ReadOnlyError) do
+        Todo.while_preventing_writes do
+          Todo.upsert_all(attrs)
+        end
+      end
+    end
+
+    it "raises ReadOnlyError for builder update_all" do
+      expect_raises(Grant::Transaction::ReadOnlyError) do
+        Todo.while_preventing_writes do
+          Todo.where(name: "x").update_all("name = 'y'")
+        end
+      end
+    end
+  end
+
+  describe "exception path" do
+    it "restores writability when an exception escapes while_preventing_writes" do
+      expect_raises(Exception, "boom") do
+        Todo.while_preventing_writes do
+          raise "boom"
+        end
+      end
+      Todo.preventing_writes?.should be_false
+      todo = Todo.create!(name: "after exception")
+      todo.persisted?.should be_true
+    end
+  end
+
   describe "nested connected_to restores outer prevent_writes state" do
     it "outer prevent_writes: true is still active after inner connected_to exits" do
       Todo.connected_to(prevent_writes: true) do
