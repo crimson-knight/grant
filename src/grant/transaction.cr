@@ -42,6 +42,14 @@ module Grant::Transaction
     getter adapter : Grant::Adapter::Base
     getter savepoint_counter : Int32 = 0
 
+    # after_commit/after_rollback closure pairs enqueued by saves/destroys
+    # that ran inside THIS transaction (including inside its savepoints).
+    # They fire when this transaction's real COMMIT or ROLLBACK executes.
+    # Scoping the list per-state (rather than per-fiber) keeps a
+    # requires_new inner transaction from draining callbacks that belong to
+    # the transaction enclosing it.
+    getter pending_callbacks = [] of NamedTuple(on_commit: Proc(Nil), on_rollback: Proc(Nil))
+
     def initialize(@connection : DB::Connection, @options : Options, @adapter : Grant::Adapter::Base)
     end
 
@@ -57,16 +65,6 @@ module Grant::Transaction
   # the Crystal class-variable scoping rule (@@var in an extended module is
   # per-including-class, not per-module) does not create per-model isolated stacks.
   @@transaction_stacks = {} of Fiber => Array(TransactionState)
-
-  # Fiber-keyed pending after_commit/after_rollback callbacks.
-  #
-  # Each entry is a NamedTuple with two Proc(Nil) closures:
-  #   - on_commit:   called when the outermost transaction commits
-  #   - on_rollback: called when the outermost transaction rolls back
-  #
-  # Entries are appended in enqueue order so callbacks fire in the same order
-  # the saves/destroys occurred.
-  @@pending_callbacks = {} of Fiber => Array(NamedTuple(on_commit: Proc(Nil), on_rollback: Proc(Nil)))
 
   # Returns the transaction stack for the current fiber, lazily creating it.
   def self.fiber_stack : Array(TransactionState)
@@ -90,40 +88,22 @@ module Grant::Transaction
     !stack.nil? && !stack.empty?
   end
 
-  # Enqueues a commit/rollback callback pair to be fired at the outermost
-  # transaction boundary for the current fiber.
+  # Enqueues a commit/rollback callback pair on the innermost open transaction
+  # for the current fiber.  The pair fires when THAT transaction's real COMMIT
+  # or ROLLBACK executes.  Savepoints do not push a TransactionState, so saves
+  # inside a savepoint enqueue onto the enclosing real transaction; a
+  # requires_new transaction has its own state, so its callbacks fire at its
+  # own (independently durable) commit without touching the enclosing
+  # transaction's queue.
+  #
+  # If no transaction is open the on_commit closure fires immediately — callers
+  # normally check in_explicit_transaction? first, so this is a safety net.
   def self.enqueue_pending_callback(on_commit : Proc(Nil), on_rollback : Proc(Nil)) : Nil
-    fiber = Fiber.current
-    list = @@pending_callbacks[fiber]?
-    unless list
-      list = [] of NamedTuple(on_commit: Proc(Nil), on_rollback: Proc(Nil))
-      @@pending_callbacks[fiber] = list
+    if state = @@transaction_stacks[Fiber.current]?.try(&.last?)
+      state.pending_callbacks << {on_commit: on_commit, on_rollback: on_rollback}
+    else
+      on_commit.call
     end
-    list << {on_commit: on_commit, on_rollback: on_rollback}
-  end
-
-  # Fires all pending after_commit callbacks for the current fiber in enqueue order,
-  # then clears the list.  Called by execute_transaction on COMMIT.
-  def self.fire_pending_commit_callbacks : Nil
-    fiber = Fiber.current
-    list = @@pending_callbacks.delete(fiber)
-    return unless list
-    list.each(&.[:on_commit].call)
-  end
-
-  # Fires all pending after_rollback callbacks for the current fiber in enqueue order,
-  # then clears the list.  Called by execute_transaction on ROLLBACK.
-  def self.fire_pending_rollback_callbacks : Nil
-    fiber = Fiber.current
-    list = @@pending_callbacks.delete(fiber)
-    return unless list
-    list.each(&.[:on_rollback].call)
-  end
-
-  # Discards all pending callbacks for the current fiber without firing them.
-  # Used as a safety net in ensure-style cleanup (e.g. requires_new inner tx).
-  def self.clear_pending_callbacks : Nil
-    @@pending_callbacks.delete(Fiber.current)
   end
 
   # Returns the DB::Connection that is currently enlisted in an open transaction
@@ -188,30 +168,32 @@ module Grant::Transaction
       #   2. requires_new: true transactions get a fresh connection independent of any
       #      enclosing transaction, rather than inheriting the outer tx connection.
       adapter.open_pool_connection do |conn|
-        begin
-          start_transaction(conn, options)
-          state = TransactionState.new(conn, options, adapter)
-          transaction_stack.push(state)
+        start_transaction(conn, options)
+        state = TransactionState.new(conn, options, adapter)
+        transaction_stack.push(state)
 
+        begin
           yield
 
           conn.exec("COMMIT")
           transaction_stack.pop
           clear_transaction_stack if transaction_stack.empty?
-          # Fire deferred after_commit callbacks now that the outermost tx has
-          # committed.  (For requires_new inner transactions the stack is already
-          # empty at this point, so we fire for that logical transaction too.)
-          Grant::Transaction.fire_pending_commit_callbacks
+          # This transaction committed durably on its own connection — true
+          # even for a requires_new transaction nested inside another one —
+          # so its deferred after_commit callbacks fire now.  Callbacks
+          # enqueued by an enclosing transaction live on that transaction's
+          # own state and wait for its commit.
+          state.pending_callbacks.each(&.[:on_commit].call)
         rescue ex : Rollback
           conn.exec("ROLLBACK")
           transaction_stack.pop
           clear_transaction_stack if transaction_stack.empty?
-          Grant::Transaction.fire_pending_rollback_callbacks
+          state.pending_callbacks.each(&.[:on_rollback].call)
         rescue ex
           conn.exec("ROLLBACK")
           transaction_stack.pop
           clear_transaction_stack if transaction_stack.empty?
-          Grant::Transaction.fire_pending_rollback_callbacks
+          state.pending_callbacks.each(&.[:on_rollback].call)
           raise ex
         end
       end
@@ -222,6 +204,12 @@ module Grant::Transaction
     private def execute_savepoint(&block)
       current = transaction_stack.last
       savepoint_name = current.next_savepoint_name
+      # Releasing a savepoint is NOT a commit: callbacks enqueued inside it
+      # stay pending on the enclosing transaction's state.  But a savepoint
+      # ROLLBACK undoes that work permanently, so callbacks enqueued after
+      # this mark are pruned and get after_rollback instead of waiting around
+      # to incorrectly receive after_commit at the outer commit.
+      mark = current.pending_callbacks.size
 
       begin
         current.connection.exec("SAVEPOINT #{savepoint_name}")
@@ -229,12 +217,19 @@ module Grant::Transaction
         current.connection.exec("RELEASE SAVEPOINT #{savepoint_name}")
       rescue ex : Rollback
         current.connection.exec("ROLLBACK TO SAVEPOINT #{savepoint_name}")
+        fire_savepoint_rollback_callbacks(current, mark)
       rescue ex
         current.connection.exec("ROLLBACK TO SAVEPOINT #{savepoint_name}")
+        fire_savepoint_rollback_callbacks(current, mark)
         raise ex
       end
     rescue ex : DB::Error
       handle_transaction_error(ex)
+    end
+
+    private def fire_savepoint_rollback_callbacks(state : TransactionState, mark : Int32)
+      pruned = state.pending_callbacks.pop(state.pending_callbacks.size - mark)
+      pruned.each(&.[:on_rollback].call)
     end
 
     private def start_transaction(conn : DB::Connection, options : Transaction::Options)

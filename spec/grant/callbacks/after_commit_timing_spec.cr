@@ -249,5 +249,78 @@ describe "after_commit / after_rollback timing (AR semantics)" do
 
       CommitTimingModel.event_log.should contain("after_commit:inner")
     end
+
+    it "fires after_rollback (never after_commit) for saves undone by a savepoint rollback" do
+      CommitTimingModel.transaction do
+        CommitTimingModel.new(name: "kept").save
+
+        CommitTimingModel.transaction do
+          CommitTimingModel.new(name: "undone").save
+          raise Grant::Transaction::Rollback.new
+        end
+      end
+
+      CommitTimingModel.event_log.should contain("after_rollback:undone")
+      CommitTimingModel.event_log.should_not contain("after_commit:undone")
+      # The outer save is untouched by the savepoint rollback
+      CommitTimingModel.event_log.should contain("after_commit:kept")
+      CommitTimingModel.event_log.should_not contain("after_rollback:kept")
+    end
+  end
+
+  # -------------------------------------------------------------------------
+  # 8. requires_new: true — independent inner transaction on its own connection
+  #
+  # NOTE: SQLite is single-writer, so an inner requires_new transaction cannot
+  # WRITE to the same database while the outer transaction holds its write
+  # lock (the inner INSERT gets SQLITE_BUSY and save returns false).  These
+  # specs therefore exercise the callback-scoping semantics with a write-free
+  # inner transaction — which is exactly the shape of the original bug: the
+  # inner COMMIT used to drain and fire the OUTER transaction's pending
+  # callbacks prematurely.  Inner-write durability semantics are only
+  # observable on PG/MySQL.
+  # -------------------------------------------------------------------------
+  describe "requires_new inner transactions" do
+    it "does NOT fire the outer transaction's callbacks when the inner one commits" do
+      outer_fired_after_inner_commit = false
+
+      CommitTimingModel.transaction do
+        CommitTimingModel.new(name: "outer-rec").save
+
+        CommitTimingModel.transaction(requires_new: true) do
+          # no-op inner body: its COMMIT must not touch the outer's queue
+        end
+
+        outer_fired_after_inner_commit =
+          CommitTimingModel.event_log.includes?("after_commit:outer-rec")
+      end
+
+      outer_fired_after_inner_commit.should be_false
+      CommitTimingModel.event_log.should contain("after_commit:outer-rec")
+    end
+
+    it "still fires the outer save's after_rollback when the outer rolls back after an inner commit" do
+      expect_raises(Exception, "outer dies") do
+        CommitTimingModel.transaction do
+          CommitTimingModel.new(name: "outer-doomed").save
+
+          CommitTimingModel.transaction(requires_new: true) do
+            # inner commits independently; outer's callbacks must survive it
+          end
+
+          raise "outer dies"
+        end
+      end
+
+      # Outer tx rolled back — its save gets after_rollback, never after_commit.
+      # (Under the old fiber-global queue the inner COMMIT had already drained
+      # and FIRED after_commit:outer-doomed against data that was never
+      # durably committed.)
+      CommitTimingModel.event_log.should contain("after_rollback:outer-doomed")
+      CommitTimingModel.event_log.should_not contain("after_commit:outer-doomed")
+    end
+
+    pending "fires the inner transaction's own callbacks at its own durable commit (needs a multi-writer adapter — PG/MySQL — since SQLite blocks inner writes)" do
+    end
   end
 end

@@ -14,8 +14,10 @@ module Grant::CommitCallbacks
   #
   # If the current fiber is inside an explicit Grant::Transaction block the
   # callbacks are deferred: a closure pair (on_commit / on_rollback) is
-  # registered on the module-level pending list and will be fired when the
-  # outermost transaction commits or rolls back.
+  # registered on the innermost open transaction's state and fires when that
+  # transaction's real COMMIT or ROLLBACK executes.  Savepoints share the
+  # enclosing transaction's state; requires_new transactions fire their own
+  # callbacks at their own commit (which is independently durable).
   #
   # If there is NO explicit transaction open (implicit single-operation
   # transaction) the callbacks are fired immediately, preserving the
