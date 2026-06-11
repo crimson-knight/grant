@@ -74,13 +74,12 @@ abstract class Grant::Base
   include Encryption::Model
   include Locking::Pessimistic
   include Transaction
-  
+
   # Make secure token macros available
   macro has_secure_token(name, length = 24, alphabet = :base58)
     Grant::SecureToken.has_secure_token({{ name }}, {{ length }}, {{ alphabet }})
   end
-  
-  
+
   # Auto-register class for polymorphic associations will be handled in the main inherited macro
 
   extend Columns::ClassMethods
@@ -98,7 +97,7 @@ abstract class Grant::Base
   extend Grant::Async::ClassMethods
   extend Grant::Aggregations::ClassMethods
   extend ValueObjects::ClassMethods
-  
+
   # Make normalization macro available
   macro normalizes(attribute, **options, &block)
     Grant::Normalization.normalizes({{attribute}}, {{**options}}) {{block}}
@@ -110,13 +109,6 @@ abstract class Grant::Base
     # Auto-register for polymorphic associations
     Grant::Polymorphic.register_polymorphic_type({{@type.name.stringify}}, {{@type}})
     
-    # Make generates_token_for available
-    macro generates_token_for(purpose, expires_in = nil, &block)
-      Grant::TokenFor.generates_token_for(\{{ purpose }}, \{{ expires_in }}) do
-        \{{ block.body }}
-      end
-    end
-
     # Returns true if this object hasn't been saved yet.
     @[JSON::Field(ignore: true)]
     @[YAML::Field(ignore: true)]

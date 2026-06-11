@@ -232,6 +232,13 @@ module Grant::ConnectionManagement
       end
     end
 
+    # Returns the monotonic timestamp of the most recent write operation.
+    def last_write_time : Time::Span
+      key = replica_tracker_key
+      tracker = replica_lag_trackers[key] ||= ReplicaLagTracker.new(lag_threshold: replica_lag_threshold)
+      tracker.last_write_time
+    end
+
     # Mark write operation with enhanced tracking
     def mark_write_operation
       key = replica_tracker_key

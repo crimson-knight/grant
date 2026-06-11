@@ -4,23 +4,23 @@ require "../spec_helper"
 class Author < Grant::Base
   connection {{ CURRENT_ADAPTER }}
   table authors
-  
+
   column id : Int64, primary: true
   column name : String
   timestamps
-  
-  has_many :posts
+
+  has_many :posts, class_name: Post
   has_one :profile
-  
+
   # Enable nested attributes with explicit types
-  accepts_nested_attributes_for posts : Post, 
+  accepts_nested_attributes_for posts : Post,
     allow_destroy: true,
     reject_if: :all_blank,
     limit: 5
-    
+
   accepts_nested_attributes_for profile : Profile,
     update_only: true
-    
+
   # Enable automatic nested saves via callbacks
   enable_nested_saves
 end
@@ -28,44 +28,44 @@ end
 class Post < Grant::Base
   connection {{ CURRENT_ADAPTER }}
   table posts
-  
+
   column id : Int64, primary: true
   column title : String
   column content : String?
   column author_id : Int64?
   timestamps
-  
+
   belongs_to :author
-  has_many :comments
-  
+  has_many :comments, class_name: Comment
+
   accepts_nested_attributes_for comments : Comment,
     allow_destroy: true
-    
+
   enable_nested_saves
 end
 
 class Comment < Grant::Base
   connection {{ CURRENT_ADAPTER }}
   table comments
-  
+
   column id : Int64, primary: true
   column body : String
   column post_id : Int64?
   timestamps
-  
+
   belongs_to :post
 end
 
 class Profile < Grant::Base
   connection {{ CURRENT_ADAPTER }}
   table profiles
-  
+
   column id : Int64, primary: true
   column bio : String?
   column website : String?
   column author_id : Int64?
   timestamps
-  
+
   belongs_to :author
 end
 
@@ -81,7 +81,7 @@ def setup_nested_attributes_tables
         updated_at TEXT
       )
     SQL
-    
+
     Post.exec(<<-SQL)
       CREATE TABLE IF NOT EXISTS posts (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -93,7 +93,7 @@ def setup_nested_attributes_tables
         FOREIGN KEY(author_id) REFERENCES authors(id)
       )
     SQL
-    
+
     Comment.exec(<<-SQL)
       CREATE TABLE IF NOT EXISTS comments (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -104,7 +104,7 @@ def setup_nested_attributes_tables
         FOREIGN KEY(post_id) REFERENCES comments(id)
       )
     SQL
-    
+
     Profile.exec(<<-SQL)
       CREATE TABLE IF NOT EXISTS profiles (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -125,7 +125,7 @@ def setup_nested_attributes_tables
         updated_at TIMESTAMP
       )
     SQL
-    
+
     Post.exec(<<-SQL)
       CREATE TABLE IF NOT EXISTS posts (
         id BIGSERIAL PRIMARY KEY,
@@ -136,7 +136,7 @@ def setup_nested_attributes_tables
         updated_at TIMESTAMP
       )
     SQL
-    
+
     Comment.exec(<<-SQL)
       CREATE TABLE IF NOT EXISTS comments (
         id BIGSERIAL PRIMARY KEY,
@@ -146,7 +146,7 @@ def setup_nested_attributes_tables
         updated_at TIMESTAMP
       )
     SQL
-    
+
     Profile.exec(<<-SQL)
       CREATE TABLE IF NOT EXISTS profiles (
         id BIGSERIAL PRIMARY KEY,
@@ -166,7 +166,7 @@ def setup_nested_attributes_tables
         updated_at TIMESTAMP
       )
     SQL
-    
+
     Post.exec(<<-SQL)
       CREATE TABLE IF NOT EXISTS posts (
         id BIGINT PRIMARY KEY AUTO_INCREMENT,
@@ -178,7 +178,7 @@ def setup_nested_attributes_tables
         FOREIGN KEY(author_id) REFERENCES authors(id)
       )
     SQL
-    
+
     Comment.exec(<<-SQL)
       CREATE TABLE IF NOT EXISTS comments (
         id BIGINT PRIMARY KEY AUTO_INCREMENT,
@@ -189,7 +189,7 @@ def setup_nested_attributes_tables
         FOREIGN KEY(post_id) REFERENCES posts(id)
       )
     SQL
-    
+
     Profile.exec(<<-SQL)
       CREATE TABLE IF NOT EXISTS profiles (
         id BIGINT PRIMARY KEY AUTO_INCREMENT,
@@ -216,11 +216,11 @@ describe Grant::NestedAttributes do
     cleanup_nested_attributes_tables
     setup_nested_attributes_tables
   end
-  
+
   after_each do
     cleanup_nested_attributes_tables
   end
-  
+
   describe "accepts_nested_attributes_for macro" do
     it "generates attribute setter methods" do
       author = Author.new(name: "John Doe")
@@ -228,35 +228,35 @@ describe Grant::NestedAttributes do
       author.responds_to?(:profile_attributes=).should be_true
     end
   end
-  
+
   describe "creating nested records" do
     it "creates child records with has_many association" do
       author = Author.new(name: "John Doe")
       author.posts_attributes = [
-        { title: "First Post", content: "Content 1" },
-        { title: "Second Post", content: "Content 2" }
+        {title: "First Post", content: "Content 1"},
+        {title: "Second Post", content: "Content 2"},
       ]
-      
+
       author.save.should be_true
       author.id.should_not be_nil
-      
+
       # Verify posts were created
       posts = Post.where(author_id: author.id).select
       posts.size.should eq(2)
-      
+
       titles = posts.map(&.title).sort
       titles.should eq(["First Post", "Second Post"])
     end
-    
+
     it "creates child record with has_one association" do
       author = Author.new(name: "Jane Doe")
       author.profile_attributes = {
-        bio: "Software developer",
-        website: "https://example.com"
+        bio:     "Software developer",
+        website: "https://example.com",
       }
-      
+
       author.save.should be_true
-      
+
       # Verify profile was created
       profile = Profile.find_by(author_id: author.id)
       profile.should_not be_nil
@@ -264,161 +264,161 @@ describe Grant::NestedAttributes do
       profile.not_nil!.website.should eq("https://example.com")
     end
   end
-  
+
   describe "updating nested records" do
     it "updates existing child records" do
       author = Author.create(name: "John Doe")
       post = Post.create(title: "Original Title", author_id: author.id)
-      
+
       author.posts_attributes = [
-        { id: post.id, title: "Updated Title" }
+        {id: post.id, title: "Updated Title"},
       ]
-      
+
       author.save.should be_true
-      
+
       # Verify post was updated
       updated_post = Post.find!(post.id)
       updated_post.title.should eq("Updated Title")
     end
   end
-  
+
   describe "destroying nested records" do
     it "destroys child records when _destroy is true" do
       author = Author.create(name: "John Doe")
       post1 = Post.create(title: "Post 1", author_id: author.id)
       post2 = Post.create(title: "Post 2", author_id: author.id)
-      
+
       author.posts_attributes = [
-        { id: post1.id, _destroy: true },
-        { id: post2.id, title: "Post 2 Updated" }
+        {id: post1.id, _destroy: true},
+        {id: post2.id, title: "Post 2 Updated"},
       ]
-      
+
       author.save.should be_true
-      
+
       # Verify post1 was destroyed and post2 was updated
       Post.find(post1.id).should be_nil
       Post.find!(post2.id).title.should eq("Post 2 Updated")
     end
-    
+
     it "ignores _destroy when allow_destroy is false" do
       # Profile doesn't have allow_destroy
       author = Author.create(name: "Jane Doe")
       profile = Profile.create(bio: "Original bio", author_id: author.id)
-      
+
       author.profile_attributes = {
-        id: profile.id,
+        id:       profile.id,
         _destroy: true,
-        bio: "This should update"
+        bio:      "This should update",
       }
-      
+
       author.save.should be_true
-      
+
       # Profile should still exist and be updated
       updated_profile = Profile.find!(profile.id)
       updated_profile.bio.should eq("This should update")
     end
   end
-  
+
   describe "reject_if option" do
     it "rejects all blank attributes" do
       author = Author.new(name: "John Doe")
       author.posts_attributes = [
-        { title: "Valid Post", content: "Content" },
-        { title: "", content: "" }, # Should be rejected
-        { title: nil, content: nil } # Should be rejected
+        {title: "Valid Post", content: "Content"},
+        {title: "", content: ""},   # Should be rejected
+        {title: nil, content: nil}, # Should be rejected
       ]
-      
+
       author.save.should be_true
-      
+
       # Only one post should be created
       posts = Post.where(author_id: author.id).select
       posts.size.should eq(1)
       posts[0].title.should eq("Valid Post")
     end
   end
-  
+
   describe "limit option" do
     it "raises error when exceeding limit" do
-      posts_attrs = (1..6).map { |i| { title: "Post #{i}" } }
-      
+      posts_attrs = (1..6).map { |i| {title: "Post #{i}"} }
+
       expect_raises(ArgumentError, /Maximum 5 records/) do
         author = Author.new(name: "John Doe")
         author.posts_attributes = posts_attrs
       end
     end
   end
-  
+
   describe "update_only option" do
     it "does not create new records when update_only is true" do
       author = Author.create(name: "Jane Doe")
-      
+
       # Try to create a profile (should be ignored)
       author.profile_attributes = {
-        bio: "New bio",
-        website: "https://example.com"
+        bio:     "New bio",
+        website: "https://example.com",
       }
-      
+
       author.save.should be_true
-      
+
       # No profile should be created
       Profile.find_by(author_id: author.id).should be_nil
     end
-    
+
     it "updates existing records when update_only is true" do
       author = Author.create(name: "Jane Doe")
       profile = Profile.create(bio: "Original bio", author_id: author.id)
-      
+
       author.profile_attributes = {
-        id: profile.id,
-        bio: "Updated bio"
+        id:  profile.id,
+        bio: "Updated bio",
       }
-      
+
       author.save.should be_true
-      
+
       # Profile should be updated
       updated_profile = Profile.find!(profile.id)
       updated_profile.bio.should eq("Updated bio")
     end
   end
-  
+
   describe "validation propagation" do
     it "propagates validation errors from nested records" do
       author = Author.new(name: "John Doe")
       author.posts_attributes = [
-        { title: "", content: "Content" } # Invalid - title required
+        {title: "", content: "Content"}, # Invalid - title required
       ]
-      
+
       author.valid?.should be_false
       author.errors.size.should be > 0
       # Should have error related to nested post
       author.errors.any? { |e| e.field.to_s.includes?("post") || e.field.to_s.includes?("nested") }.should be_true
     end
   end
-  
+
   describe "complex nested scenarios" do
     it "handles mixed create, update, and destroy operations" do
       author = Author.create(name: "John Doe")
       post1 = Post.create(title: "Post 1", author_id: author.id)
       post2 = Post.create(title: "Post 2", author_id: author.id)
-      
+
       author.posts_attributes = [
-        { id: post1.id, title: "Post 1 Updated" },      # Update
-        { id: post2.id, _destroy: true },                # Destroy
-        { title: "Post 3", content: "New content" }      # Create
+        {id: post1.id, title: "Post 1 Updated"},   # Update
+        {id: post2.id, _destroy: true},            # Destroy
+        {title: "Post 3", content: "New content"}, # Create
       ]
-      
+
       author.save.should be_true
-      
+
       # Verify results
       posts = Post.where(author_id: author.id).select
       posts.size.should eq(2)
-      
+
       # post1 should be updated
       Post.find!(post1.id).title.should eq("Post 1 Updated")
-      
+
       # post2 should be destroyed
       Post.find(post2.id).should be_nil
-      
+
       # New post should exist
       posts.any? { |p| p.title == "Post 3" }.should be_true
     end

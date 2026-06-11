@@ -15,6 +15,15 @@ class Model
   def self.primary_name
     "id"
   end
+
+  # Stub for assembler compile compatibility (lock mode needs adapter type)
+  def self.adapter : Grant::Adapter::Base
+    raise NotImplementedError.new("Model.adapter not available in query builder specs")
+  end
+
+  def self.quote(name : String) : String
+    %("#{name}")
+  end
 end
 
 def query_fields

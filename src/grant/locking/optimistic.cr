@@ -4,47 +4,56 @@ module Grant::Locking::Optimistic
   class StaleObjectError < Exception
     getter record_class : String
     getter record_id : String?
-    
+
     def initialize(record : Grant::Base)
       @record_class = record.class.name
-      {% begin %}
-        {% primary_key = record.class.instance_vars.find { |ivar| (ann = ivar.annotation(Grant::Column)) && ann[:primary] } %}
-        @record_id = record.{{primary_key.name.id}}.to_s if record.responds_to?(:{{primary_key.name.id}})
-      {% end %}
-      
+      @record_id = record.primary_key_value.to_s rescue nil
+
       message = if id = @record_id
-        "Attempted to update a stale #{@record_class} (id: #{id})"
-      else
-        "Attempted to update a stale #{@record_class}"
-      end
-      
+                  "Attempted to update a stale #{@record_class} (id: #{id})"
+                else
+                  "Attempted to update a stale #{@record_class}"
+                end
+
       super(message)
     end
   end
-  
+
   macro included
     column lock_version : Int32 = 0
-    
+
     before_update :__check_lock_version
     after_update :__increment_lock_version
-    
+
+    @[JSON::Field(ignore: true)]
+    @[YAML::Field(ignore: true)]
     @lock_version_was : Int32 = 0
+
+    @[JSON::Field(ignore: true)]
+    @[YAML::Field(ignore: true)]
     @lock_conflict_retry_count : Int32 = 0
-    
+
     class_property lock_conflict_max_retries : Int32 = 0
+
+    # Capture lock_version before saving an existing record so __check_lock_version
+    # can compare against it in the before_update callback.
+    def save(*, validate : Bool = true, skip_timestamps : Bool = false)
+      @lock_version_was = lock_version unless new_record?
+      super
+    end
   end
-  
+
   def lock_version_was : Int32
     @lock_version_was
   end
-  
+
   def lock_version_changed? : Bool
     lock_version != @lock_version_was
   end
-  
+
   def with_optimistic_retry(max_retries : Int32 = self.class.lock_conflict_max_retries, &block)
     retry_count = 0
-    
+
     loop do
       begin
         yield
@@ -54,21 +63,21 @@ module Grant::Locking::Optimistic
         if retry_count > max_retries
           raise ex
         end
-        
+
         reload
         @lock_conflict_retry_count = retry_count
       end
     end
-    
+
     @lock_conflict_retry_count = 0
   end
-  
+
   private def __check_lock_version
     return true unless persisted?
     return true if @lock_version_was == 0 && lock_version == 0
-    
-    @lock_version_was = lock_version_was.presence || attribute_before_last_save("lock_version").as(Int32)
-    
+
+    @lock_version_was = lock_version_was
+
     {% begin %}
       {% primary_key = @type.instance_vars.find { |ivar| (ann = ivar.annotation(Grant::Column)) && ann[:primary] } %}
       {% raise "A primary key must be defined for #{@type.name}." unless primary_key %}
@@ -113,12 +122,12 @@ module Grant::Locking::Optimistic
   rescue ex
     raise ex
   end
-  
+
   private def __increment_lock_version
     @lock_version = lock_version + 1
     @lock_version_was = lock_version
   end
-  
+
   private def attribute_before_last_save(name : String)
     case name
     when "lock_version"
@@ -127,22 +136,10 @@ module Grant::Locking::Optimistic
       nil
     end
   end
-  
+
   def reload
     super
     @lock_version_was = lock_version
     self
-  end
-  
-  macro finished
-    def save(*, validate : Bool = true, skip_timestamps : Bool = false)
-      if new_record?
-        super
-      else
-        @lock_version_was = lock_version
-        
-        previous_def
-      end
-    end
   end
 end

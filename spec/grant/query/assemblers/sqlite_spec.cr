@@ -5,17 +5,17 @@ require "../spec_helper"
     context "count" do
       it "counts for where/count queries" do
         sql = "select count(*) from table where name = ?"
-        builder.where(name: "bob").count.raw_sql.should match ignore_whitespace sql
+        builder.where(name: "bob").assembler.count.raw_sql.should match ignore_whitespace sql
       end
 
       it "simple counts" do
         sql = "select count(*) from table"
-        builder.count.raw_sql.should match ignore_whitespace sql
+        builder.assembler.count.raw_sql.should match ignore_whitespace sql
       end
 
       it "adds group_by fields for where/count queries" do
         sql = "select count(*) from table where name = ? group by name"
-        builder.where(name: "bob").group_by(:name).count.raw_sql.should match ignore_whitespace sql
+        builder.where(name: "bob").group_by(:name).assembler.count.raw_sql.should match ignore_whitespace sql
       end
     end
 

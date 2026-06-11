@@ -43,20 +43,20 @@ module Grant::Querying
         # - JOIN clauses (e.g. from :through associations)
         # - Multiple parameters (query.where only accepts a single value)
         if clean_clause.includes?("JOIN ") || params.size > 1
-          Collection(self).new(->{ raw_all(clause, params) })
+          Collection(self).new(-> { raw_all(clause, params) })
         else
           query = current_scope
           if !clean_clause.empty?
             # Handle WHERE clause - strip the WHERE prefix if present
             if clean_clause.starts_with?("WHERE ")
-              clean_clause = clean_clause[6..-1]  # Remove "WHERE " prefix
+              clean_clause = clean_clause[6..-1] # Remove "WHERE " prefix
             end
             query.where(clean_clause, params.first? || nil)
           end
           query.select
         end
       else
-        Collection(self).new(->{ raw_all(clause, params) })
+        Collection(self).new(-> { raw_all(clause, params) })
       end
     end
 
@@ -75,7 +75,7 @@ module Grant::Querying
           if !clean_clause.empty?
             # Handle WHERE clause - strip the WHERE prefix if present
             if clean_clause.starts_with?("WHERE ")
-              clean_clause = clean_clause[6..-1]  # Remove "WHERE " prefix
+              clean_clause = clean_clause[6..-1] # Remove "WHERE " prefix
             end
             query.where(clean_clause, params.first? || nil)
           end
@@ -135,7 +135,7 @@ module Grant::Querying
           if !clean_clause.empty?
             # Handle WHERE clause - strip the WHERE prefix if present
             if clean_clause.starts_with?("WHERE ")
-              clean_clause = clean_clause[6..-1]  # Remove "WHERE " prefix
+              clean_clause = clean_clause[6..-1] # Remove "WHERE " prefix
             end
             query.where(clean_clause, params.first? || nil)
           end
@@ -144,7 +144,7 @@ module Grant::Querying
       else
         results = all(clause, params, false).to_a
       end
-      
+
       case results.size
       when 0
         raise NotFound.new("No #{{{@type.name.stringify}}} found")
@@ -183,7 +183,7 @@ module Grant::Querying
         clause, params = build_find_by_clause(criteria)
         records = all("WHERE #{clause}", params, false)
       end
-      
+
       count = 0
       records.each do |record|
         if record.destroy
@@ -201,7 +201,7 @@ module Grant::Querying
     # :ditto:
     def delete_by(criteria : Grant::ModelArgs) : Int64
       mark_write_operation
-      
+
       if criteria.empty?
         # Delete all records
         sql = "DELETE FROM #{quoted_table_name}"
@@ -222,16 +222,16 @@ module Grant::Querying
     # Updates updated_at timestamp for all records matching the given criteria
     def touch_all(*fields, time : Time = Time.local(Grant.settings.default_timezone)) : Int64
       time = time.at_beginning_of_second
-      
+
       set_clause = ["#{quote("updated_at")} = ?"]
       values = [time] of Grant::Columns::Type
-      
+
       # Add any additional fields to touch
       fields.each do |field|
         set_clause << "#{quote(field.to_s)} = ?"
         values << time
       end
-      
+
       sql = adapter.ensure_clause_template("UPDATE #{quoted_table_name} SET #{set_clause.join(", ")}")
 
       mark_write_operation
@@ -246,7 +246,7 @@ module Grant::Querying
     def update_counters(id : Number | String, counters : Hash(Symbol, Int32)) : Int64
       set_clause = [] of String
       values = [] of Grant::Columns::Type
-      
+
       counters.each do |column, value|
         column_name = quote(column.to_s)
         if value > 0
@@ -256,15 +256,15 @@ module Grant::Querying
         end
         values << value.abs
       end
-      
+
       return 0_i64 if set_clause.empty?
-      
+
       # Also update the updated_at timestamp
       {% if @type.instance_vars.select { |ivar| ivar.annotation(Grant::Column) && ivar.name == "updated_at" }.size > 0 %}
         set_clause << "#{quote("updated_at")} = ?"
         values << Time.local(Grant.settings.default_timezone).at_beginning_of_second
       {% end %}
-      
+
       sql = adapter.ensure_clause_template("UPDATE #{quoted_table_name} SET #{set_clause.join(", ")} WHERE #{quote(primary_name)} = ?")
       values << id
 
@@ -326,7 +326,7 @@ module Grant::Querying
     def query(clause = "", params = [] of Grant::Columns::Type, &)
       mark_write_operation
       clause = adapter.ensure_clause_template(clause)
-      adapter.open { |db| yield db.query(clause, args: params) }
+      adapter.open { |db| db.query(clause, args: params) { |rs| yield rs } }
     end
 
     def scalar(clause = "", &)

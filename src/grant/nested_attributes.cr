@@ -1,13 +1,17 @@
-# Improved nested attributes implementation with explicit types  
+# Improved nested attributes implementation with explicit types
 module Grant::NestedAttributes
   macro included
     # Storage for nested attributes data
+    @[JSON::Field(ignore: true)]
+    @[YAML::Field(ignore: true)]
     @_nested_attributes_data = {} of String => Array(Hash(String, Grant::Columns::Type))
-    
+
     # Track if we have nested attributes to avoid unnecessary overhead
+    @[JSON::Field(ignore: true)]
+    @[YAML::Field(ignore: true)]
     @_has_nested_attributes = false
   end
-  
+
   # Macro to enable automatic nested saves via callbacks
   # Call this after all accepts_nested_attributes_for declarations
   macro enable_nested_saves
@@ -33,10 +37,10 @@ module Grant::NestedAttributes
       success
     end
   end
-  
+
   # Improved macro that validates association exists and requires explicit types
   macro accepts_nested_attributes_for(association, **options)
-    {% 
+    {%
       # Extract association name and class from the declaration
       if association.is_a?(TypeDeclaration)
         assoc_name = association.var
@@ -178,50 +182,49 @@ module Grant::NestedAttributes
       success
     end
   end
-  
-  
+
   # Process single set of attributes with config
   private def process_single_nested_attributes(attrs, config : NamedTuple) : Hash(String, Grant::Columns::Type)?
     hash_attrs = case attrs
-    when Hash
-      result = {} of String => Grant::Columns::Type
-      attrs.each { |k, v| result[k.to_s] = v }
-      result
-    when NamedTuple
-      result = {} of String => Grant::Columns::Type
-      attrs.each { |k, v| result[k.to_s] = v }
-      result
-    else
-      return nil
-    end
-    
+                 when Hash
+                   result = {} of String => Grant::Columns::Type
+                   attrs.each { |k, v| result[k.to_s] = v }
+                   result
+                 when NamedTuple
+                   result = {} of String => Grant::Columns::Type
+                   attrs.each { |k, v| result[k.to_s] = v }
+                   result
+                 else
+                   return nil
+                 end
+
     # Check reject_if
     if config[:reject_if] == :all_blank
       return nil if hash_attrs.all? { |k, v| k == "_destroy" || blank_value?(v) }
     end
-    
+
     # Skip create if update_only and no id
     if config[:update_only] && !hash_attrs["id"]?
       return nil
     end
-    
+
     hash_attrs
   end
-  
+
   private def blank_value?(value)
     value.nil? || (value.responds_to?(:empty?) && value.empty?)
   end
-  
+
   private def should_destroy?(attrs : Hash(String, Grant::Columns::Type))
     return false unless val = attrs["_destroy"]?
     case val
-    when Bool then val
-    when String then val == "true" || val == "1"
+    when Bool         then val
+    when String       then val == "true" || val == "1"
     when Int32, Int64 then val == 1
-    else false
+    else                   false
     end
   end
-  
+
   # Get all nested attributes data
   def nested_attributes_data
     @_nested_attributes_data

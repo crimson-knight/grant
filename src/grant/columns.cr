@@ -1,5 +1,6 @@
 require "json"
 require "uuid"
+require "uuid/json"
 
 module Grant::Columns
   alias SupportedArrayTypes = Array(String) | Array(Int16) | Array(Int32) | Array(Int64) | Array(Float32) | Array(Float64) | Array(Bool) | Array(UUID)
@@ -57,7 +58,7 @@ module Grant::Columns
         end
       end
     {% end %}
-    
+
     # Capture original attributes for dirty tracking if not a new record
     if !new_record?
       ensure_dirty_tracking_initialized
@@ -291,10 +292,10 @@ module Grant::Columns
         if @changed_attributes.not_nil!.has_key?({{decl.var.stringify}})
           @changed_attributes.not_nil![{{decl.var.stringify}}][0].as({{type.id}})
         else
-          @{{decl.var.id}}
+          @{{decl.var.id}}.not_nil!
         end
       end
-      
+
       # Returns a tuple of the original and new values if {{decl.var.id}} has changed.
       #
       # Returns nil if the attribute hasn't changed.
@@ -325,7 +326,7 @@ module Grant::Columns
         if @previous_changes.not_nil!.has_key?({{decl.var.stringify}})
           @previous_changes.not_nil![{{decl.var.stringify}}][0].as({{type.id}})
         else
-          @{{decl.var.id}}
+          @{{decl.var.id}}.not_nil!
         end
       end
     {% end %}
@@ -424,7 +425,7 @@ module Grant::Columns
       {{primary_key.id}}
     {% end %}
   end
-  
+
   # Get all primary key columns for composite key support
   def self.primary_key_columns : Array(String)
     {% begin %}
@@ -432,7 +433,7 @@ module Grant::Columns
       {{primary_keys.empty? ? "[] of String".id : primary_keys}}
     {% end %}
   end
-  
+
   # Get primary key values as a hash for composite key support
   def primary_key_values : Hash(String, Grant::Columns::Type)
     values = {} of String => Grant::Columns::Type
@@ -441,12 +442,12 @@ module Grant::Columns
     {% end %}
     values
   end
-  
+
   # Check if model has composite primary key
   def self.composite_primary_key? : Bool
     primary_key_columns.size > 1
   end
-  
+
   # Capture current values as original attributes after save
   protected def capture_original_attributes
     ensure_dirty_tracking_initialized
