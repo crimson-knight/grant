@@ -117,5 +117,32 @@ require "../spec_helper"
         builder.limit(5).raw_sql.should match ignore_whitespace sql
       end
     end
+
+    context "select projection" do
+      it "uses projected columns in SELECT when select(*cols) is called" do
+        sql = "select name from table order by id desc"
+        builder.select(:name).raw_sql.should match ignore_whitespace sql
+      end
+
+      it "uses multiple projected columns in SELECT" do
+        sql = "select name, age from table order by id desc"
+        builder.select(:name, :age).raw_sql.should match ignore_whitespace sql
+      end
+
+      it "reselect replaces earlier projection in SELECT" do
+        sql = "select age from table order by id desc"
+        builder.select(:name).reselect(:age).raw_sql.should match ignore_whitespace sql
+      end
+
+      it "uses all model fields when no projection is set" do
+        sql = "select #{query_fields} from table order by id desc"
+        builder.raw_sql.should match ignore_whitespace sql
+      end
+
+      it "projection is preserved through first assembler" do
+        sql = "select name from table order by id desc limit 1"
+        builder.select(:name).assembler.first.raw_sql.should match ignore_whitespace sql
+      end
+    end
   end
 {% end %}

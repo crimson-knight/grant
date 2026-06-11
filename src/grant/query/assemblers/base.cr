@@ -33,8 +33,11 @@ module Grant::Query::Assembler
     end
 
     def field_list
-      fields = [Model.fields].flatten.join ", "
-      fields
+      if select_cols = @query.select_columns
+        select_cols.join(", ")
+      else
+        [Model.fields].flatten.join(", ")
+      end
     end
 
     # Generates the SELECT keyword with optional DISTINCT modifier.
@@ -180,7 +183,7 @@ module Grant::Query::Assembler
       order_clauses = order_fields.map do |expression|
         field = expression[:field]
         next unless field
-        
+
         add_aggregate_field field
 
         if expression[:direction] == Builder::Sort::Ascending
@@ -275,13 +278,13 @@ module Grant::Query::Assembler
       end
 
       log sql, numbered_parameters
-      
+
       start_time = Time.monotonic
       begin
         result = Model.adapter.open do |db|
           db.exec sql, args: numbered_parameters
         end
-        
+
         duration = Time.monotonic - start_time
         Grant::Logs::SQL.info &.emit("Delete executed",
           sql: sql,
@@ -289,7 +292,7 @@ module Grant::Query::Assembler
           duration_ms: duration.total_milliseconds,
           rows_affected: result.rows_affected
         )
-        
+
         result
       rescue e
         duration = Time.monotonic - start_time
@@ -334,28 +337,28 @@ module Grant::Query::Assembler
 
     def touch_all(fields : Tuple, time : Time) : Int64
       time = time.at_beginning_of_second
-      
+
       set_parts = ["#{Model.quote("updated_at")} = #{add_parameter(time)}"]
-      
+
       # Add any additional fields to touch
       fields.each do |field|
         set_parts << "#{Model.quote(field.to_s)} = #{add_parameter(time)}"
       end
-      
+
       sql = build_sql do |s|
         s << "UPDATE #{table_name}"
         s << "SET #{set_parts.join(", ")}"
         s << where
       end
-      
+
       log sql, numbered_parameters
-      
+
       start_time = Time.monotonic
       begin
         rows_affected = Model.adapter.open do |db|
           db.exec(sql, args: numbered_parameters).rows_affected
         end
-        
+
         duration = Time.monotonic - start_time
         Grant::Logs::SQL.info &.emit("Touch all executed",
           sql: sql,
@@ -364,7 +367,7 @@ module Grant::Query::Assembler
           rows_affected: rows_affected,
           fields: fields.to_a.map { |f| f.to_s.as(String) }
         )
-        
+
         rows_affected
       rescue e
         duration = Time.monotonic - start_time
