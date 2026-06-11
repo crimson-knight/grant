@@ -112,14 +112,24 @@ module Grant::Query::Assembler
         clauses << expression[:join].to_s.upcase unless clauses.size == 1
 
         if expression[:field]?.nil? # custom SQL
-          expression = expression.as(NamedTuple(join: Symbol, stmt: String, value: Grant::Columns::Type))
-
-          if !expression[:value].nil?
-            param_token = add_parameter expression[:value]
-            clause = expression[:stmt].gsub(@placeholder, param_token)
-          else
-            clause = expression[:stmt]
-          end
+          clause = case expression
+                   when NamedTuple(join: Symbol, stmt: String, values: Array(Grant::Columns::Type))
+                     # Grouped or/not block: multiple ordered bind values — replace each ? in order
+                     sql = expression[:stmt]
+                     expression[:values].each do |val|
+                       token = add_parameter(val)
+                       sql = sql.sub(@placeholder, token)
+                     end
+                     sql
+                   else
+                     expr = expression.as(NamedTuple(join: Symbol, stmt: String, value: Grant::Columns::Type))
+                     if !expr[:value].nil?
+                       param_token = add_parameter expr[:value]
+                       expr[:stmt].gsub(@placeholder, param_token)
+                     else
+                       expr[:stmt]
+                     end
+                   end
 
           clauses << clause
         else # standard where query

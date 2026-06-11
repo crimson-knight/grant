@@ -35,7 +35,8 @@ class Grant::Query::Builder(Model)
   end
 
   alias WhereField = NamedTuple(join: Symbol, field: String, operator: Symbol, value: Grant::Columns::Type) |
-                     NamedTuple(join: Symbol, stmt: String, value: Grant::Columns::Type)
+                     NamedTuple(join: Symbol, stmt: String, value: Grant::Columns::Type) |
+                     NamedTuple(join: Symbol, stmt: String, values: Array(Grant::Columns::Type))
   alias AssociationQuery = Symbol | Hash(Symbol, Array(Symbol))
   
   getter db_type : DbType
@@ -598,6 +599,8 @@ class Grant::Query::Builder(Model)
         stmt = case field
                when NamedTuple(join: Symbol, stmt: String, value: Grant::Columns::Type)
                  field[:stmt]
+               when NamedTuple(join: Symbol, stmt: String, values: Array(Grant::Columns::Type))
+                 field[:stmt]
                when NamedTuple(join: Symbol, field: String, operator: Symbol, value: Grant::Columns::Type)
                  # Simple operator to SQL mapping for OR clauses
                  case field[:operator]
@@ -617,18 +620,18 @@ class Grant::Query::Builder(Model)
                else
                  raise "Unknown where field type"
                end
-        
+
         if idx == 0
           stmt
         else
-          "OR #{stmt}"
+          "#{field[:join].to_s.upcase} #{stmt}"
         end
       end.join(" ")
-      
+
       @where_fields << {
-        join:  :and,
-        stmt:  "(#{or_clauses})",
-        value: nil,
+        join:   :or,
+        stmt:   "(#{or_clauses})",
+        values: collect_group_values(or_builder.where_fields),
       }
     end
 
@@ -653,6 +656,8 @@ class Grant::Query::Builder(Model)
         stmt = case field
                when NamedTuple(join: Symbol, stmt: String, value: Grant::Columns::Type)
                  field[:stmt]
+               when NamedTuple(join: Symbol, stmt: String, values: Array(Grant::Columns::Type))
+                 field[:stmt]
                when NamedTuple(join: Symbol, field: String, operator: Symbol, value: Grant::Columns::Type)
                  # Simple operator to SQL mapping for NOT clauses
                  case field[:operator]
@@ -672,22 +677,43 @@ class Grant::Query::Builder(Model)
                else
                  raise "Unknown where field type"
                end
-        
+
         if idx == 0
           stmt
         else
-          "AND #{stmt}"
+          "#{field[:join].to_s.upcase} #{stmt}"
         end
       end.join(" ")
-      
+
       @where_fields << {
-        join:  :and,
-        stmt:  "NOT (#{not_clauses})",
-        value: nil,
+        join:   :and,
+        stmt:   "NOT (#{not_clauses})",
+        values: collect_group_values(not_builder.where_fields),
       }
     end
 
     self
+  end
+
+  # Collects all parameter values from a sub-builder's where_fields in order.
+  # Used by grouped or { } and not { } block methods to preserve bind values.
+  private def collect_group_values(fields : Array(WhereField)) : Array(Grant::Columns::Type)
+    result = [] of Grant::Columns::Type
+    fields.each do |field|
+      case field
+      when NamedTuple(join: Symbol, stmt: String, value: Grant::Columns::Type)
+        result << field[:value] unless field[:value].nil?
+      when NamedTuple(join: Symbol, stmt: String, values: Array(Grant::Columns::Type))
+        result.concat(field[:values])
+      when NamedTuple(join: Symbol, field: String, operator: Symbol, value: Grant::Columns::Type)
+        next if field[:value].nil?
+        val = field[:value]
+        # For IN/NOT IN the value is a typed array — store it as-is (the assembler
+        # will expand it into individual bind parameters).
+        result << val
+      end
+    end
+    result
   end
   
   # Delete all records matching the query
