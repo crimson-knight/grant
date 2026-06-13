@@ -98,6 +98,67 @@ jobs:
           MYSQL_DATABASE_URL: mysql://grant:password@localhost:3306/grant_db
           MYSQL_REPLICA_URL: mysql://grant:password@localhost:3307/grant_replica_db
 
+  # Dedicated job exercising the DEFAULT caching_sha2_password auth plugin on
+  # both MySQL 8.x and MySQL 9.x (Thread 3b). No mysql_native_password override
+  # anywhere — this validates Grant's caching_sha2_password handshake against a
+  # default-configured server. Mirrors docker-compose.test.yml (mysql8/mysql9).
+  mysql-caching-sha2-spec:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        crystal: [1.16.3, latest]
+        mysql: ["8.0", "9.0"]
+    services:
+      mysql:
+        image: mysql:${{ matrix.mysql }}
+        # NOTE: no --default-authentication-plugin override. MySQL 8.0+ and
+        # 9.x default to caching_sha2_password.
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -u root -ppassword"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+          --health-start-period 30s
+        env:
+          MYSQL_ROOT_PASSWORD: password
+          MYSQL_DATABASE: grant_db
+          MYSQL_USER: grant
+          MYSQL_PASSWORD: password
+        ports:
+          - 3306:3306
+    steps:
+      - name: Download source
+        uses: actions/checkout@v4
+      - name: Install Crystal
+        uses: crystal-lang/install-crystal@v1
+        with:
+          crystal: ${{ matrix.crystal }}
+      - name: Install shards
+        run: shards update --ignore-crystal-version --skip-postinstall --skip-executables
+      - name: Ensure grant user uses caching_sha2_password
+        # The entrypoint already creates MYSQL_USER with the server default
+        # plugin, but we pin it explicitly so the test intent is unambiguous,
+        # and we confirm the plugin assignment in the job log.
+        run: |
+          mysql -h 127.0.0.1 -P 3306 -u root -ppassword <<'SQL'
+          ALTER USER 'grant'@'%' IDENTIFIED WITH caching_sha2_password BY 'password';
+          GRANT ALL PRIVILEGES ON grant_db.* TO 'grant'@'%';
+          FLUSH PRIVILEGES;
+          SELECT user, host, plugin FROM mysql.user WHERE user = 'grant';
+          SELECT VERSION();
+          SQL
+      - name: Verify caching_sha2_password auth for grant user
+        run: |
+          mysqladmin ping -h 127.0.0.1 -P 3306 -u grant -ppassword | grep "mysqld is alive"
+      - name: Run tests
+        timeout-minutes: 5
+        run: crystal spec
+        env:
+          CURRENT_ADAPTER: mysql
+          MYSQL_DATABASE_URL: mysql://grant:password@127.0.0.1:3306/grant_db
+          MYSQL_REPLICA_URL: mysql://grant:password@127.0.0.1:3306/grant_db
+
   psql-spec:
     runs-on: ubuntu-latest
     strategy:
