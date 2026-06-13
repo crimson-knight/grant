@@ -130,6 +130,28 @@ describe "Grant::ConvenienceMethods" do
       # Should process from highest ID to lowest
       batch_first_names.first.should eq("User4")
     end
+
+    it "does not mutate the source relation or accumulate cursor predicates across batches" do
+      8.times do |i|
+        ConvenienceUser.create!(name: "User#{i}", email: "user#{i}@example.com", age: 20 + i)
+      end
+
+      # A pre-filtered relation. in_batches must not stack a fresh `WHERE id > ?`
+      # onto it each iteration (the cursor-accumulation bug) nor otherwise mutate
+      # the caller's query — it derives each batch from a duped base instead.
+      relation = ConvenienceUser.where(:age, :gteq, 20)
+      where_count_before = relation.where_fields.size
+
+      seen = [] of Int64
+      relation.in_batches(of: 1) do |batch|
+        batch.each { |user| seen << user.id! }
+      end
+
+      seen.size.should eq(8)      # every matching record visited...
+      seen.uniq.size.should eq(8) # ...exactly once
+      # Source relation untouched: no order/cursor predicates leaked onto it.
+      relation.where_fields.size.should eq(where_count_before)
+    end
   end
   
   describe "#annotate" do
