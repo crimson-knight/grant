@@ -150,3 +150,38 @@ single_table_inheritance.md`), reimplemented clean on current `main`.
 3. **Integrate → build → full SQLite spec (no new failures) → push → close issues.**
 
 Status is tracked here and rolled into `GRANT_RELEASE_READINESS.md`.
+
+## Progress (2026-06-13)
+
+**Implemented + integrated on `main`** (verified: clean `crystal build`; all new specs pass in
+isolation; full SQLite suite at the pre-existing baseline of 15 failures / 14 errors — zero new):
+
+- ✅ **Single Table Inheritance** — `src/grant/sti.cr`, `docs/single_table_inheritance.md`,
+  `spec/grant/sti/`. Compile-time root/subclass detection, type auto-set, table-name inheritance,
+  descendant-aware query scoping, base-class polymorphic instantiation, `becomes`/`becomes!`,
+  immutable-type guard via an explicit flag (no backtrace inspection), multi-level (3-deep)
+  JSON/YAML verified. Reconciled with the abstract-base serialization (#41) and the validation
+  machinery (multi-level `@@validators` typing).
+- ✅ **Validations & callbacks** — `validate :symbol`, `validates_with`/`EachValidator`,
+  `validates_comparison_of`, `validates_absence_of`, `invalid?`, `errors.details`, Proc/lambda
+  `if:`/`unless:`, `around_validation` (also fixed a latent dead-condition bug:
+  `is_a? NamedTuple` → `NamedTupleLiteral`).
+- ✅ **Associations** — `<singular>_ids` reader/writer, `dependent: :restrict_with_exception`,
+  lambda association scopes, `source:` for `has_one :through`, `AssociationRegistry` population.
+- ✅ **Query interface** — `ids`, `unscope`, `joins(:assoc)`/`left_joins(:assoc)`, adapter-aware
+  `explain`, `annotate` into executed SQL, chainable `find_each`/`find_in_batches`, parameterized
+  `update_all(Hash)` (also fixed a latent bug: the string-form `update_all` never bound its WHERE
+  params, matching 0 rows).
+- ✅ **Persistence helpers** — `update_attribute(s)`, `update_columns`,
+  `increment!`/`decrement!`/`toggle!`, `attr_readonly` + `readonly?`/`readonly!` +
+  `Grant::ReadOnlyRecordError`.
+
+**Scoped follow-ups (IMPLEMENT tier, not yet landed):**
+- `strict_loading`/`strict_loading!` (needs eager-loading state threading through accessors).
+- `insert_all!`/`upsert_all!` bang variants (wire conflict-raise through the insert/upsert assemblers).
+- `store_accessor`; customizable optimistic-locking column (`self.locking_column=`).
+- Richer `errors.details` codes for multi-constraint validators (currently fall back to a generic code).
+- DX issues #37 (column non-nil defaults) and #38 (`.where` Array-like / `.all`).
+
+The DEFER tier (migration DSL, prepared-statement caching, sharding hardening, DatabaseSelector
+middleware, fixtures, AES-GCM, QueryLogs tags) is unchanged.
