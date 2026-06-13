@@ -1,24 +1,56 @@
 module Grant::Transaction
+  # Raise this inside a `transaction` block to roll the transaction back without
+  # propagating an error past the block. The block returns normally and any
+  # `after_rollback` callbacks fire.
+  #
+  # ```
+  # User.transaction do
+  #   user.save!
+  #   raise Grant::Transaction::Rollback.new # undoes the save, no error escapes
+  # end
+  # ```
   class Rollback < Exception; end
 
+  # Raised when the database aborts a transaction due to a serialization /
+  # concurrency conflict (e.g. a `Serializable` isolation failure or a
+  # `could not serialize` error). Retrying the transaction is the usual remedy.
   class SerializationError < Exception
     def initialize(message = "Transaction serialization failure")
       super(message)
     end
   end
 
+  # Raised when a write is attempted inside a `readonly: true` transaction (or
+  # when the database reports a "read-only transaction" error).
   class ReadOnlyError < Exception
     def initialize(message = "Cannot modify data in read-only transaction")
       super(message)
     end
   end
 
+  # SQL transaction isolation levels, ordered weakest to strongest. Pass one to
+  # `transaction(isolation: ...)` to control how concurrent transactions see one
+  # another's changes. Not every adapter honours every level (SQLite maps these
+  # onto `BEGIN` / `BEGIN IMMEDIATE` / `BEGIN EXCLUSIVE`).
+  #
+  # ```
+  # User.transaction(isolation: Grant::Transaction::IsolationLevel::Serializable) do
+  #   # strongest isolation; may raise SerializationError on conflict
+  # end
+  # ```
   enum IsolationLevel
     ReadUncommitted
     ReadCommitted
     RepeatableRead
     Serializable
 
+    # Returns the SQL keyword phrase for this level, e.g. `"READ COMMITTED"`.
+    # Used when building the adapter-specific `BEGIN` /
+    # `SET TRANSACTION ISOLATION LEVEL` statement.
+    #
+    # ```
+    # Grant::Transaction::IsolationLevel::RepeatableRead.to_sql # => "REPEATABLE READ"
+    # ```
     def to_sql : String
       case self
       when ReadUncommitted then "READ UNCOMMITTED"
@@ -31,11 +63,30 @@ module Grant::Transaction
     end
   end
 
+  # Bundle of options for a `transaction`. Construct one directly to reuse the
+  # same settings across several `transaction(options)` calls, or pass the
+  # individual keyword arguments to `transaction(isolation:, readonly:,
+  # requires_new:)` and let it build the `Options` for you.
+  #
+  # - *isolation* — an `IsolationLevel`, or `nil` for the database default.
+  # - *readonly* — open a read-only transaction (writes raise `ReadOnlyError`).
+  # - *requires_new* — force a real nested transaction (its own connection)
+  #   instead of a savepoint when already inside a transaction.
+  #
+  # ```
+  # opts = Grant::Transaction::Options.new(readonly: true)
+  # User.transaction(opts) { User.find!(1) }
+  # ```
   record Options,
     isolation : IsolationLevel? = nil,
     readonly : Bool = false,
     requires_new : Bool = false
 
+  # Internal per-transaction bookkeeping: the dedicated `DB::Connection`, the
+  # `Options` it was opened with, the owning adapter, the savepoint counter, and
+  # the queue of deferred commit/rollback callbacks. Pushed onto a fiber-local
+  # stack while a transaction is open; you normally access it via
+  # `current_transaction` rather than constructing it yourself.
   class TransactionState
     getter connection : DB::Connection
     getter options : Options
@@ -53,6 +104,9 @@ module Grant::Transaction
     def initialize(@connection : DB::Connection, @options : Options, @adapter : Grant::Adapter::Base)
     end
 
+    # Returns a fresh, unique savepoint name for the next nested transaction,
+    # bumping the internal counter. Names are randomized so re-entrant
+    # transactions on the same connection never collide.
     def next_savepoint_name : String
       @savepoint_counter += 1
       "sp_#{@savepoint_counter}_#{Random::Secure.hex(4)}"
@@ -131,10 +185,39 @@ module Grant::Transaction
       Grant::Transaction.clear_fiber_stack
     end
 
+    # Runs *block* inside a database transaction with default options. Every
+    # `save`/`update`/`destroy` performed in the block is committed atomically
+    # when the block returns; any uncaught exception (or
+    # `Grant::Transaction::Rollback`) rolls the whole thing back. Returns `nil`.
+    #
+    # When called while already inside a transaction, this nests as a
+    # **savepoint** (a partial rollback point) rather than a second real
+    # transaction — see the `requires_new` overload to force a new one.
+    #
+    # ```
+    # class User < Grant::Base
+    #   column id : Int64, primary: true
+    #   column email : String
+    # end
+    #
+    # User.transaction do
+    #   User.create!(email: "a@example.com")
+    #   User.create!(email: "b@example.com")
+    # end # both committed together; if either raised, neither is saved
+    # ```
     def transaction(&block) : Nil
       transaction(Transaction::Options.new) { yield }
     end
 
+    # Runs *block* inside a transaction configured by *options* (a
+    # `Transaction::Options`). Returns `nil`. If `options.requires_new` is set,
+    # or no transaction is currently open, a real transaction is started;
+    # otherwise the block runs in a savepoint nested in the open transaction.
+    #
+    # ```
+    # opts = Grant::Transaction::Options.new(readonly: true)
+    # User.transaction(opts) { User.find!(1) }
+    # ```
     def transaction(options : Transaction::Options, &block) : Nil
       stack = transaction_stack
 
@@ -145,6 +228,26 @@ module Grant::Transaction
       end
     end
 
+    # Runs *block* inside a transaction, building the options from the given
+    # keyword arguments. Returns `nil`. This is the most convenient overload for
+    # one-off options.
+    #
+    # - *isolation* — an `IsolationLevel` (default: database default).
+    # - *readonly* — open a read-only transaction; writes raise `ReadOnlyError`.
+    # - *requires_new* — force a real nested transaction (own connection) rather
+    #   than a savepoint when already inside a transaction.
+    #
+    # ```
+    # User.transaction(isolation: Grant::Transaction::IsolationLevel::Serializable) do
+    #   account.update!(balance: account.balance - 100)
+    # end
+    #
+    # # Nested, independently-committing inner transaction:
+    # User.transaction do
+    #   outer.save!
+    #   User.transaction(requires_new: true) { inner.save! }
+    # end
+    # ```
     def transaction(isolation : IsolationLevel? = nil, readonly : Bool = false, requires_new : Bool = false, &block) : Nil
       options = Transaction::Options.new(
         isolation: isolation,
@@ -154,10 +257,25 @@ module Grant::Transaction
       transaction(options, &block)
     end
 
+    # Returns `true` when the current fiber has at least one explicit
+    # transaction open, `false` otherwise.
+    #
+    # ```
+    # User.transaction_open?                      # => false
+    # User.transaction { User.transaction_open? } # => true (inside the block)
+    # ```
     def transaction_open? : Bool
       !transaction_stack.empty?
     end
 
+    # Returns the innermost open `TransactionState` for the current fiber, or
+    # `nil` when no transaction is open. Mostly useful for introspection (e.g.
+    # checking `current_transaction.try(&.options.readonly)`).
+    #
+    # ```
+    # User.transaction { User.current_transaction } # => a TransactionState
+    # User.current_transaction                      # => nil (outside a block)
+    # ```
     def current_transaction : TransactionState?
       transaction_stack.last?
     end
@@ -307,11 +425,30 @@ module Grant::Transaction
     end
   end
 
-  def transaction(&block)
+  # Instance-level convenience that delegates to the class-level `transaction`
+  # with default options, so you can write `user.transaction { ... }`. Returns
+  # `nil`. The transaction is still scoped to the model class's connection, not
+  # to this single record.
+  #
+  # ```
+  # user.transaction do
+  #   user.save!
+  #   user.posts.first.destroy!
+  # end
+  # ```
+  def transaction(&block) : Nil
     self.class.transaction { yield }
   end
 
-  def transaction(options : Transaction::Options, &block)
+  # Instance-level convenience that delegates to the class-level
+  # `transaction(options)`. Returns `nil`.
+  #
+  # ```
+  # user.transaction(Grant::Transaction::Options.new(requires_new: true)) do
+  #   user.save!
+  # end
+  # ```
+  def transaction(options : Transaction::Options, &block) : Nil
     self.class.transaction(options) { yield }
   end
 end

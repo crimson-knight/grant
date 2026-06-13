@@ -8,24 +8,64 @@ module Grant::Transactions
   end
 
   module ClassMethods
-    # Removes all records from a table.
+    # Deletes **every** row from the model's table with a single `DELETE FROM`.
+    #
+    # This bypasses callbacks and validations entirely — it issues one SQL
+    # statement and does not load or instantiate any records. Use it for fast
+    # test teardown or truncation, not for normal record removal (use
+    # `#destroy` for callback-aware deletion).
+    #
+    # Returns `nil`.
+    #
+    # ```
+    # class User < Grant::Base
+    #   column id : Int64, primary: true
+    #   column email : String
+    # end
+    #
+    # User.clear # => deletes all users, runs no callbacks
+    # User.count # => 0
+    # ```
     def clear
       guard_writes!
       adapter.clear table_name
     end
 
-    # Creates a new record, and attempts to save it to the database. Returns the
-    # newly created record.
+    # Builds a new record from the given keyword attributes and attempts to save
+    # it to the database. Returns the new record instance (an instance of the
+    # model class).
     #
-    # **NOTE**: This method still outputs the new object even when it failed to save
-    # to the database. The only way to determine a failure is to check any errors on
-    # the object, or to use `#create!`.
+    # **NOTE**: The returned object is yielded back even when the save failed
+    # (e.g. validation errors). The save status is **not** signalled by the
+    # return value — inspect `record.errors` / `record.persisted?`, or use
+    # `#create!` to raise on failure.
+    #
+    # ```
+    # class User < Grant::Base
+    #   column id : Int64, primary: true
+    #   column email : String
+    #   column age : Int32?
+    # end
+    #
+    # user = User.create(email: "ada@example.com", age: 36)
+    # user.persisted? # => true (when the save succeeded)
+    # user.id         # => 1
+    # ```
     def create(**args)
       create(args.to_h)
     end
 
-    # Creates a new record, and attempts to save it to the database. Allows saving
-    # the record without timestamps. Returns the newly created record.
+    # Builds a new record from the *args* hash and attempts to save it to the
+    # database. Returns the new record instance.
+    #
+    # Pass `skip_timestamps: true` to leave `created_at`/`updated_at` untouched
+    # (useful when importing historical data). As with the keyword overload, the
+    # record is returned regardless of save success — check `record.errors`.
+    #
+    # ```
+    # User.create({"email" => "ada@example.com"})
+    # User.create({"email" => "seed@example.com"}, skip_timestamps: true)
+    # ```
     def create(args, skip_timestamps : Bool = false)
       guard_writes!
       instance = new
@@ -34,16 +74,35 @@ module Grant::Transactions
       instance
     end
 
-    # Creates a new record, and attempts to save it to the database. Returns the
-    # newly created record. Raises `Grant::RecordNotSaved` if the save is
-    # unsuccessful.
+    # Builds a new record from the given keyword attributes and saves it,
+    # **raising** `Grant::RecordNotSaved` if the save fails (e.g. a validation
+    # error). On success, returns the persisted record instance.
+    #
+    # Use this (over `#create`) when a failed save should halt control flow
+    # rather than return an invalid record.
+    #
+    # ```
+    # class User < Grant::Base
+    #   column id : Int64, primary: true
+    #   column email : String
+    #   validate :email, "is required", &.email.presence
+    # end
+    #
+    # user = User.create!(email: "ada@example.com") # => persisted User
+    # User.create!(email: "")                       # raises Grant::RecordNotSaved
+    # ```
     def create!(**args)
       create!(args.to_h)
     end
 
-    # Creates a new record, and attempts to save it to the database. Allows saving
-    # the record without timestamps. Returns the newly created record. Raises
-    # `Grant::RecordNotSaved` if the save is unsuccessful.
+    # Builds a new record from the *args* hash and saves it, raising
+    # `Grant::RecordNotSaved` if the save fails. Returns the persisted record.
+    #
+    # Pass `skip_timestamps: true` to leave `created_at`/`updated_at` untouched.
+    #
+    # ```
+    # User.create!({"email" => "ada@example.com"})
+    # ```
     def create!(args, skip_timestamps : Bool = false)
       instance = create(args, skip_timestamps)
 
@@ -54,9 +113,30 @@ module Grant::Transactions
       instance
     end
 
-    # Runs an INSERT statement for all records in *model_array*.
-    # the array must contain only one model class
-    # invalid model records will be skipped
+    # Bulk-inserts every record in *model_array* using batched `INSERT`
+    # statements — far faster than calling `#save` per record.
+    #
+    # All elements must be instances of this model class. `before_save` /
+    # `before_create` and `after_create` / `after_save` callbacks run per record,
+    # but **validations are not run** and invalid records are not skipped at the
+    # ORM level (database constraint violations still raise). Each
+    # `batch_size`-sized slice is sent as one multi-row `INSERT`; the default
+    # batch size is the whole array (one statement).
+    #
+    # Raises `DB::Error` on a failed insert (and re-raises
+    # `Grant::Transaction::ReadOnlyError` if writes are blocked). The return
+    # value is the iterated *model_array* and should not be relied upon.
+    #
+    # ```
+    # class User < Grant::Base
+    #   column id : Int64, primary: true
+    #   column email : String
+    # end
+    #
+    # users = (1..1000).map { |i| User.new(email: "user#{i}@example.com") }
+    # User.import(users)                  # one INSERT for all 1000 rows
+    # User.import(users, batch_size: 100) # ten INSERTs of 100 rows each
+    # ```
     def import(model_array : Array(self) | Grant::Collection(self), batch_size : Int32 = model_array.size)
       guard_writes!
       {% begin %}
@@ -82,8 +162,25 @@ module Grant::Transactions
       raise DB::Error.new(err.message, cause: err)
     end
 
-    # Runs an INSERT statement for all records in *model_array*, with options to
-    # update any duplicate records, and provide column names.
+    # Bulk-inserts *model_array* as an upsert: when a row collides with an
+    # existing primary/unique key, the columns named in *columns* are updated
+    # instead of the insert failing (an `ON DUPLICATE KEY UPDATE` / `ON CONFLICT
+    # DO UPDATE`-style operation, depending on adapter).
+    #
+    # Pass `update_on_duplicate: true` and the list of *columns* to overwrite on
+    # conflict. Callbacks run as in the basic `#import`; validations do not.
+    #
+    # ```
+    # class User < Grant::Base
+    #   column id : Int64, primary: true
+    #   column email : String
+    #   column age : Int32?
+    # end
+    #
+    # users = [User.new(id: 1_i64, email: "ada@example.com", age: 37)]
+    # # If a user with id 1 already exists, overwrite only its age column:
+    # User.import(users, update_on_duplicate: true, columns: ["age"])
+    # ```
     def import(model_array : Array(self) | Grant::Collection(self), update_on_duplicate : Bool, columns : Array(String), batch_size : Int32 = model_array.size)
       guard_writes!
       {% begin %}
@@ -109,6 +206,23 @@ module Grant::Transactions
       raise DB::Error.new(err.message, cause: err)
     end
 
+    # Bulk-inserts *model_array*, silently skipping rows that would violate a
+    # primary/unique key (an `INSERT IGNORE` / `ON CONFLICT DO NOTHING`-style
+    # operation, depending on adapter).
+    #
+    # Pass `ignore_on_duplicate: true` to drop colliding rows instead of raising.
+    # Callbacks run as in the basic `#import`; validations do not.
+    #
+    # ```
+    # class User < Grant::Base
+    #   column id : Int64, primary: true
+    #   column email : String
+    # end
+    #
+    # users = [User.new(id: 1_i64, email: "ada@example.com")]
+    # # If id 1 already exists, this row is skipped rather than raising:
+    # User.import(users, ignore_on_duplicate: true)
+    # ```
     def import(model_array : Array(self) | Grant::Collection(self), ignore_on_duplicate : Bool, batch_size : Int32 = model_array.size)
       guard_writes!
       {% begin %}
@@ -135,7 +249,19 @@ module Grant::Transactions
     end
   end
 
-  # Sets the record's timestamps(created_at & updated_at) to the current time.
+  # Sets the record's `created_at` and/or `updated_at` columns to *time*
+  # (default: now in the configured default timezone).
+  #
+  # This is a low-level helper invoked automatically by `#save`; you rarely call
+  # it directly. With `mode: :create` both timestamps are set; with
+  # `mode: :update` only `updated_at` is touched. Columns that the model doesn't
+  # declare are skipped. Times are truncated to the beginning of the second.
+  #
+  # ```
+  # user.set_timestamps                           # create mode: sets both
+  # user.set_timestamps(mode: :update)            # only updated_at
+  # user.set_timestamps(to: Time.utc(2020, 1, 1)) # pin a specific time
+  # ```
   def set_timestamps(*, to time = Time.local(Grant.settings.default_timezone), mode = :create)
     {% if @type.instance_vars.select { |ivar| ivar.annotation(Grant::Column) && ivar.type == Time? }.map(&.name.stringify).includes? "created_at" %}
       if mode == :create
@@ -268,14 +394,31 @@ module Grant::Transactions
   {% end %}
   end
 
-  # Attempts to save the record to the database, returning `true` if successful,
-  # and `false` if not. If the save is unsuccessful, `#errors` will be populated
-  # with the errors which caused the save to fail.
+  # Persists the record to the database, returning `true` on success and `false`
+  # on failure. On failure, `#errors` is populated with the reasons.
   #
-  # **NOTE**: This method can be used both on new records, and existing records.
-  # In the case of new records, it creates the record in the database, otherwise,
-  # it updates the record in the database.
-  def save(*, validate : Bool = true, skip_timestamps : Bool = false)
+  # Works for both new and existing records: a new record (`new_record?`) is
+  # `INSERT`ed, an existing one is `UPDATE`d. Lifecycle callbacks
+  # (`before_save`/`after_create`/`after_update`/`after_save`, plus commit
+  # callbacks inside a transaction) run around the write.
+  #
+  # - `validate: false` skips validations (the record is written even if
+  #   invalid). Callbacks still run.
+  # - `skip_timestamps: true` leaves `created_at`/`updated_at` untouched.
+  #
+  # ```
+  # class User < Grant::Base
+  #   column id : Int64, primary: true
+  #   column email : String
+  # end
+  #
+  # user = User.new(email: "ada@example.com")
+  # user.save # => true; INSERTs a new row
+  # user.email = "ada2@example.com"
+  # user.save                  # => true; UPDATEs the existing row
+  # user.save(validate: false) # write regardless of validation state
+  # ```
+  def save(*, validate : Bool = true, skip_timestamps : Bool = false) : Bool
     guard_writes!
     {% begin %}
     {% primary_key = @type.instance_vars.find { |ivar| (ann = ivar.annotation(Grant::Column)) && ann[:primary] } %}
@@ -326,36 +469,74 @@ module Grant::Transactions
   {% end %}
   end
 
-  # Same as `#save`, but raises `Grant::RecordNotSaved` if the save is unsuccessful.
-  def save!(*, validate : Bool = true, skip_timestamps : Bool = false)
+  # Persists the record like `#save`, but **raises** `Grant::RecordNotSaved`
+  # instead of returning `false` when the save fails. Returns `true` on success.
+  #
+  # Use this when a failed save should abort the current flow (e.g. inside a
+  # `transaction` so the failure triggers a rollback).
+  #
+  # ```
+  # user = User.new(email: "ada@example.com")
+  # user.save! # => true, or raises Grant::RecordNotSaved
+  # ```
+  def save!(*, validate : Bool = true, skip_timestamps : Bool = false) : Bool
     save(validate: validate, skip_timestamps: skip_timestamps) || raise Grant::RecordNotSaved.new(self.class.name, self)
   end
 
-  # Updates the record with the new data specified by *args*. Returns `true` if the
-  # update is successful, `false` if it isn't.
-  def update(**args)
+  # Assigns the given keyword attributes to the record and saves it, returning
+  # `true` if the save succeeded and `false` otherwise. Runs validations and
+  # callbacks (it is `#save` under the hood). On failure, see `#errors`.
+  #
+  # ```
+  # class User < Grant::Base
+  #   column id : Int64, primary: true
+  #   column email : String
+  #   column age : Int32?
+  # end
+  #
+  # user = User.find!(1)
+  # user.update(email: "new@example.com", age: 40) # => true
+  # ```
+  def update(**args) : Bool
     update(args.to_h)
   end
 
-  # Updates the record with the new data specified by *args*, with the option to
-  # not update timestamps. Returns `true` if the update is successful, `false` if
-  # it isn't.
-  def update(args, skip_timestamps : Bool = false)
+  # Assigns the attributes in the *args* hash to the record and saves it.
+  # Returns `true` on success, `false` on failure.
+  #
+  # Pass `skip_timestamps: true` to leave `updated_at` untouched.
+  #
+  # ```
+  # user.update({"email" => "new@example.com"})
+  # user.update({"email" => "seed@example.com"}, skip_timestamps: true)
+  # ```
+  def update(args, skip_timestamps : Bool = false) : Bool
     set_attributes(args.to_h.transform_keys(&.to_s))
 
     save(skip_timestamps: skip_timestamps)
   end
 
-  # Updates the record with the new data specified by *args*. Raises
-  # `Grant::RecordNotSaved` if the save is unsuccessful.
-  def update!(**args)
+  # Assigns the given keyword attributes and saves the record, **raising**
+  # `Grant::RecordNotSaved` if the save fails. Returns `true` on success. Runs
+  # validations and callbacks.
+  #
+  # ```
+  # user = User.find!(1)
+  # user.update!(email: "new@example.com") # => true, or raises Grant::RecordNotSaved
+  # ```
+  def update!(**args) : Bool
     update!(args.to_h)
   end
 
-  # Updates the record with the new data specified by *args*, with the option to
-  # not update timestamps. Raises `Grant::RecordNotSaved` if the save is
-  # unsuccessful.
-  def update!(args, skip_timestamps : Bool = false)
+  # Assigns the attributes in the *args* hash and saves the record, raising
+  # `Grant::RecordNotSaved` if the save fails. Returns `true` on success.
+  #
+  # Pass `skip_timestamps: true` to leave `updated_at` untouched.
+  #
+  # ```
+  # user.update!({"email" => "new@example.com"})
+  # ```
+  def update!(args, skip_timestamps : Bool = false) : Bool
     set_attributes(args.to_h.transform_keys(&.to_s))
 
     save!(skip_timestamps: skip_timestamps)
@@ -364,18 +545,31 @@ module Grant::Transactions
   # Updates a single attribute and persists the record, **skipping validations**
   # but still running callbacks (mirrors ActiveRecord's `update_attribute`).
   #
-  # Returns `true` if the save succeeded, `false` otherwise.
+  # Returns `true` if the save succeeded, `false` otherwise. Because validations
+  # are skipped, this writes even values a validator would reject — use it
+  # deliberately.
   #
   # ```
-  # user.update_attribute(:name, "New Name") # => true (even if validations would fail)
+  # class User < Grant::Base
+  #   column id : Int64, primary: true
+  #   column email : String
+  # end
+  #
+  # user = User.find!(1)
+  # user.update_attribute(:email, "new@example.com") # => true (even if validations would fail)
   # ```
   def update_attribute(name : Symbol | String, value) : Bool
     write_attribute(name.to_s, value.as(Grant::Columns::Type))
     save(validate: false)
   end
 
-  # Same as `#update_attribute`, but raises `Grant::RecordNotSaved` if the save
-  # is unsuccessful.
+  # Updates a single attribute and persists the record (skipping validations,
+  # running callbacks), **raising** `Grant::RecordNotSaved` if the save fails.
+  # Returns `true` on success.
+  #
+  # ```
+  # user.update_attribute!(:email, "new@example.com") # => true, or raises
+  # ```
   def update_attribute!(name : Symbol | String, value) : Bool
     update_attribute(name, value) || raise Grant::RecordNotSaved.new(self.class.name, self)
   end
@@ -383,18 +577,31 @@ module Grant::Transactions
   # Updates the given columns directly in the database, **skipping validations,
   # callbacks, and timestamp updates**. The in-memory record is updated to match.
   #
-  # Uses a parameterized `UPDATE` (no string interpolation of values). Raises if
-  # the record is a new (unsaved) record or has been marked read-only. Mirrors
-  # ActiveRecord's `update_columns`.
+  # Uses a parameterized `UPDATE` (no string interpolation of values). Returns
+  # `true` on success. Raises if the record is a new (unsaved) record, has been
+  # marked read-only, or no columns are given. Mirrors ActiveRecord's
+  # `update_columns`.
   #
   # ```
-  # user.update_columns(name: "Direct", email: "direct@example.com")
+  # class User < Grant::Base
+  #   column id : Int64, primary: true
+  #   column email : String
+  # end
+  #
+  # user = User.find!(1)
+  # user.update_columns(email: "direct@example.com") # => true, no callbacks fire
   # ```
   def update_columns(**args) : Bool
     update_columns(args.to_h)
   end
 
-  # :ditto:
+  # Updates the given columns directly in the database (hash form). See the
+  # keyword-argument overload above; *args* is a `Grant::ModelArgs`
+  # (`Hash(String | Symbol, Grant::Columns::Type)`).
+  #
+  # ```
+  # user.update_columns({"email" => "direct@example.com"})
+  # ```
   def update_columns(args : Grant::ModelArgs) : Bool
     guard_writes!
     raise Grant::ReadOnlyRecordError.new("#{self.class.name} is marked as read only") if readonly?
@@ -431,7 +638,19 @@ module Grant::Transactions
   end
 
   # Increments the in-memory value of a numeric *field* by *by* (default `1`)
-  # without persisting. Returns `self` for chaining.
+  # **without persisting**. Returns `self` so calls can be chained. A `nil`
+  # current value is treated as `0`. Raises if the field is non-numeric.
+  #
+  # ```
+  # class User < Grant::Base
+  #   column id : Int64, primary: true
+  #   column login_count : Int32
+  # end
+  #
+  # user.increment(:login_count)        # +1 in memory only
+  # user.increment(:login_count, by: 5) # +5 in memory only
+  # user.save                           # persist the change
+  # ```
   def increment(field : Symbol | String, by = 1) : self
     current = read_attribute(field.to_s)
     raise "Cannot increment non-numeric attribute #{field}" unless current.is_a?(Number) || current.nil?
@@ -440,8 +659,20 @@ module Grant::Transactions
     self
   end
 
-  # Increments a numeric *field* by *by* (default `1`) and persists the record,
-  # skipping validations. Mirrors ActiveRecord's `increment!`.
+  # Increments a numeric *field* by *by* (default `1`) **and persists** the
+  # record (via `save(validate: false)` — validations are skipped, callbacks
+  # run). Returns `self`. Mirrors ActiveRecord's `increment!`.
+  #
+  # ```
+  # class User < Grant::Base
+  #   column id : Int64, primary: true
+  #   column login_count : Int32
+  # end
+  #
+  # user = User.find!(1)
+  # user.increment!(:login_count)        # +1 and UPDATE
+  # user.increment!(:login_count, by: 3) # +3 and UPDATE
+  # ```
   def increment!(field : Symbol | String, by = 1) : self
     increment(field, by)
     save(validate: false)
@@ -449,19 +680,42 @@ module Grant::Transactions
   end
 
   # Decrements the in-memory value of a numeric *field* by *by* (default `1`)
-  # without persisting. Returns `self` for chaining.
+  # **without persisting**. Returns `self` for chaining. Equivalent to
+  # `increment(field, -by)`.
+  #
+  # ```
+  # user.decrement(:login_count)        # -1 in memory only
+  # user.decrement(:login_count, by: 2) # -2 in memory only
+  # ```
   def decrement(field : Symbol | String, by = 1) : self
     increment(field, -by)
   end
 
-  # Decrements a numeric *field* by *by* (default `1`) and persists the record,
-  # skipping validations. Mirrors ActiveRecord's `decrement!`.
+  # Decrements a numeric *field* by *by* (default `1`) **and persists** the
+  # record (skipping validations, running callbacks). Returns `self`. Mirrors
+  # ActiveRecord's `decrement!`.
+  #
+  # ```
+  # user = User.find!(1)
+  # user.decrement!(:login_count) # -1 and UPDATE
+  # ```
   def decrement!(field : Symbol | String, by = 1) : self
     increment!(field, -by)
   end
 
-  # Flips the in-memory boolean value of *field* without persisting. Returns
+  # Flips the in-memory boolean value of *field* **without persisting**. Returns
   # `self` for chaining. A `nil` value is treated as `false` (flips to `true`).
+  # Raises if the field is non-boolean.
+  #
+  # ```
+  # class User < Grant::Base
+  #   column id : Int64, primary: true
+  #   column active : Bool
+  # end
+  #
+  # user.toggle(:active) # active becomes !active, in memory only
+  # user.save            # persist the change
+  # ```
   def toggle(field : Symbol | String) : self
     current = read_attribute(field.to_s)
     raise "Cannot toggle non-boolean attribute #{field}" unless current.is_a?(Bool) || current.nil?
@@ -469,17 +723,39 @@ module Grant::Transactions
     self
   end
 
-  # Flips the boolean value of *field* and persists the record, skipping
-  # validations. Mirrors ActiveRecord's `toggle!`.
+  # Flips the boolean value of *field* **and persists** the record (via
+  # `save(validate: false)` — validations skipped, callbacks run). Returns
+  # `self`. Mirrors ActiveRecord's `toggle!`.
+  #
+  # ```
+  # user = User.find!(1)
+  # user.toggle!(:active) # active flipped and UPDATEd
+  # ```
   def toggle!(field : Symbol | String) : self
     toggle(field)
     save(validate: false)
     self
   end
 
-  # Removes the record from the database. Returns `true` if successful, `false`
-  # otherwise.
-  def destroy
+  # Deletes the record's row from the database, returning `true` on success and
+  # `false` otherwise. Runs `before_destroy`/`after_destroy` (and
+  # `after_destroy_commit`/`after_commit`) callbacks, and marks the in-memory
+  # record `destroyed?`.
+  #
+  # Raises `Grant::ReadOnlyRecordError` if the record is marked read-only. Unlike
+  # `.clear`, this is callback-aware and operates on a single loaded record.
+  #
+  # ```
+  # class User < Grant::Base
+  #   column id : Int64, primary: true
+  #   column email : String
+  # end
+  #
+  # user = User.find!(1)
+  # user.destroy    # => true
+  # user.destroyed? # => true
+  # ```
+  def destroy : Bool
     guard_writes!
     # Record-level read-only guard. Mirrors ActiveRecord's ReadOnlyRecord.
     raise Grant::ReadOnlyRecordError.new("#{self.class.name} is marked as read only") if readonly?
@@ -509,14 +785,36 @@ module Grant::Transactions
     true
   end
 
-  # Same as `#destroy`, but raises `Grant::RecordNotDestroyed` if unsuccessful.
-  def destroy!
+  # Deletes the record like `#destroy`, but **raises**
+  # `Grant::RecordNotDestroyed` instead of returning `false` when the delete
+  # fails (e.g. a `before_destroy` callback aborts). Returns `true` on success.
+  #
+  # ```
+  # user = User.find!(1)
+  # user.destroy! # => true, or raises Grant::RecordNotDestroyed
+  # ```
+  def destroy! : Bool
     destroy || raise Grant::RecordNotDestroyed.new(self.class.name, self)
   end
 
-  # Updates the *updated_at* field to the current time, without saving other fields.
+  # Sets `updated_at` (and any extra `Time` *fields* named) to the current time
+  # and saves the record. Other column changes are still persisted by the
+  # underlying `#save`. Runs the `after_touch` callback when defined.
   #
-  # Raises error if record hasn't been saved to the database yet.
+  # Each name in *fields* must be a `Time` column on the model; a non-`Time` or
+  # unknown field raises. Raises if the record is not yet persisted.
+  #
+  # ```
+  # class User < Grant::Base
+  #   column id : Int64, primary: true
+  #   column last_seen_at : Time?
+  #   timestamps
+  # end
+  #
+  # user = User.find!(1)
+  # user.touch                # bumps updated_at only
+  # user.touch(:last_seen_at) # bumps updated_at and last_seen_at
+  # ```
   def touch(*fields) : Bool
     guard_writes!
     raise "Cannot touch on a new record object" unless persisted?

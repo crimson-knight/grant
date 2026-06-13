@@ -174,21 +174,48 @@ abstract class Grant::Base
         !(new_record? || destroyed?)
       end
 
-      # Returns true if this record has been marked read-only (via `#readonly!`
-      # or by being loaded through a read-only relation). Read-only records
-      # raise `Grant::ReadOnlyRecordError` on update or destroy.
+      # Returns `true` if this record has been marked read-only (via `#readonly!`
+      # or by being loaded through a read-only relation), `false` otherwise.
+      # Read-only records raise `Grant::ReadOnlyRecordError` on update or
+      # destroy.
+      #
+      # ```
+      # class User < Grant::Base
+      #   column id : Int64, primary: true
+      #   column email : String
+      # end
+      #
+      # user = User.find!(1)
+      # user.readonly? # => false
+      # user.readonly!
+      # user.readonly? # => true
+      # ```
       def readonly? : Bool
         @readonly
       end
 
-      # Marks this record as read-only. Subsequent attempts to update or destroy
-      # it raise `Grant::ReadOnlyRecordError`. Mirrors ActiveRecord's `readonly!`.
+      # Marks this record as read-only and returns `nil`. After this, attempts to
+      # update or destroy it raise `Grant::ReadOnlyRecordError` — useful for
+      # passing a record around with a guarantee it won't be mutated in the DB.
+      # Mirrors ActiveRecord's `readonly!`.
+      #
+      # ```
+      # user = User.find!(1)
+      # user.readonly!
+      # user.update(email: "x@example.com") # raises Grant::ReadOnlyRecordError
+      # ```
       def readonly! : Nil
         @readonly = true
       end
 
-      # Sets the read-only state of this record. Intended for query/relation
-      # loaders that hydrate records as part of a read-only relation.
+      # Sets the read-only state of this record to *value* (default `true`) and
+      # returns `nil`. Intended for query/relation loaders that hydrate records
+      # as part of a read-only relation; pass `false` to clear the flag.
+      #
+      # ```
+      # user.mark_readonly        # equivalent to user.readonly!
+      # user.mark_readonly(false) # clear the read-only flag
+      # ```
       def mark_readonly(value : Bool = true) : Nil
         @readonly = value
       end
