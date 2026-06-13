@@ -3,12 +3,77 @@ require "./serializers/base"
 require "./serializers/json"
 require "./serializers/yaml"
 
+# Store a rich Crystal object in a single database column, serialized as JSON or
+# YAML.
+#
+# `serialized_column :settings, UserSettings` maps a `UserSettings` object to one
+# string column (`_serialized_settings`). The object is deserialized lazily on
+# read (and cached), and serialized on write and before save. The value type only
+# needs `JSON::Serializable`/`YAML::Serializable`; if it also includes
+# `Grant::SerializedObject`, in-place mutations are tracked for dirty checking.
+#
+# This module is mixed into every `Grant::Base`, so the macro is available on any
+# model.
+#
+# ```
+# class UserSettings
+#   include JSON::Serializable
+#   include YAML::Serializable
+#   include Grant::SerializedObject # enables change tracking (optional)
+#   property theme : String = "light"
+#   property notifications : Bool = true
+#
+#   def initialize(@theme = "light", @notifications = true)
+#   end
+# end
+#
+# class User < Grant::Base
+#   column id : Int64, primary: true
+#   serialized_column :settings, UserSettings, format: :json
+# end
+#
+# u = User.new
+# u.settings = UserSettings.new(theme: "dark")
+# u.settings.try(&.theme) # => "dark"
+# u.settings_changed?     # => true
+# u.save                  # persists `{"theme":"dark",...}` in _serialized_settings
+# ```
 module Grant::SerializedColumn
-  # Base method that will be overridden by each serialized_column
+  # Internal hook overridden per serialized column so nested
+  # `Grant::SerializedObject`s can flag their parent column as dirty. Not called
+  # directly.
   def _mark_serialized_column_changed(attribute_name : String)
     # This will be overridden by each serialized_column macro
   end
 
+  # Declares *name* as a column holding a serialized *klass* instance.
+  #
+  # For `serialized_column :settings, UserSettings` this generates:
+  #
+  # * the backing column `_serialized_settings : String?` (the raw JSON/YAML);
+  # * `#settings : UserSettings?` — lazily deserializes and caches the object;
+  # * `#settings=(value : UserSettings?)` — caches and serializes the object;
+  # * `#settings=(value : String)` — assigns a raw serialized string directly;
+  # * `#settings_changed? : Bool` — true if the object was replaced or (for
+  #   `Grant::SerializedObject` values) mutated in place since the last save;
+  # * `before_save`/`after_save` hooks that re-serialize and reset change tracking.
+  #
+  # *format* selects the serializer: `:json` (default), `:jsonb` (stored as JSON;
+  # the distinction matters only to the PostgreSQL column type), or `:yaml`.
+  #
+  # ```
+  # class User < Grant::Base
+  #   column id : Int64, primary: true
+  #   serialized_column :settings, UserSettings           # JSON
+  #   serialized_column :config, AppConfig, format: :yaml # YAML
+  # end
+  #
+  # u = User.new
+  # u.settings = UserSettings.new(theme: "dark")
+  # u.settings_changed? # => true
+  # u.save
+  # u.settings_changed? # => false (reset after save)
+  # ```
   macro serialized_column(name, klass, format = :json)
     {% format_class = format.id.stringify.upcase %}
     

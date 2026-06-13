@@ -1,20 +1,109 @@
+# Aggregate several columns into a single immutable value object, in the style of
+# Rails' `composed_of`.
+#
+# `aggregation :address, Address, mapping: {...}` exposes a group of related
+# columns (street, city, zip) as one `Address` struct. Reading `#address` builds
+# the value object from the underlying columns (and caches it); assigning
+# `#address = Address.new(...)` writes the object's parts back out to those
+# columns. The columns themselves are declared for you as `String?` and converted
+# at the boundary.
+#
+# This module is mixed into every `Grant::Base`, so `aggregation` is available on
+# any model. The value object is typically an immutable `struct` with a matching
+# constructor (or supply a custom `constructor:` proc).
+#
+# ```
+# struct Address
+#   getter street : String
+#   getter city : String
+#   getter zip : String
+#
+#   def initialize(@street, @city, @zip); end
+# end
+#
+# class Customer < Grant::Base
+#   column id : Int64, primary: true
+#   aggregation :address, Address, mapping: {
+#     address_street: :street,
+#     address_city:   :city,
+#     address_zip:    :zip,
+#   }
+# end
+#
+# c = Customer.new
+# c.address = Address.new("1 Main St", "Springfield", "00001")
+# c.@address_street     # => "1 Main St" (written through to the column)
+# c.address.try(&.city) # => "Springfield" (rebuilt from columns)
+# c.address_changed?    # => true
+# ```
 module Grant::ValueObjects
-  # Stores metadata about value object aggregations
+  # Compile-/run-time metadata describing one `aggregation` declaration: its name,
+  # value-object class name, column⇒attribute mapping, and options. Returned by
+  # the generated `.aggregations` introspection method; not constructed directly.
   class AggregationMeta
     getter name : String
     getter class_name : String
     getter mapping : Hash(String, Symbol)
     getter allow_nil : Bool
     getter has_custom_constructor : Bool
-    
+
+    # Builds metadata for an aggregation. Populated by the `aggregation` macro;
+    # not intended to be constructed by hand.
     def initialize(@name : String, @class_name : String, @mapping : Hash(String, Symbol), @has_custom_constructor : Bool = false, @allow_nil : Bool = false)
     end
   end
-  
-  # Exception for value object errors
+
+  # Raised when a value object cannot be built or is invalid.
   class ValueObjectError < Exception
   end
-  
+
+  # Declares an aggregation named *name* that composes the mapped columns into a
+  # *class_name* value object.
+  #
+  # *mapping* is a `{column_name: :attribute_name, ...}` `NamedTuple` linking each
+  # backing column (declared for you as `String?`) to a constructor argument /
+  # accessor of the value object. *class_name* defaults to the camelized *name*.
+  #
+  # For `aggregation :address, Address, mapping: {...}` this generates:
+  #
+  # * the backing columns (e.g. `address_street`, `address_city`, ... as `String?`);
+  # * `#address : Address?` — builds (and caches) the value object from the
+  #   columns; returns `nil` if a required column is `nil`;
+  # * `#address=(value : Address?)` — writes the object's parts back to the columns
+  #   (or `nil`s them all when assigned `nil`);
+  # * `#address_changed? : Bool` and `#address_was : Address?` — dirty tracking;
+  # * a model validation that surfaces the value object's own `validate` errors
+  #   (when it defines one).
+  #
+  # Options: `allow_nil: true` lets the aggregation be entirely absent (all columns
+  # `nil` ⇒ `#address` returns `nil` instead of failing); `constructor:` supplies a
+  # `Proc` that receives the raw column strings and returns the value object (for
+  # custom parsing/conversion) in place of the default named-argument constructor.
+  #
+  # ```
+  # struct Money
+  #   getter amount : Float64
+  #   getter currency : String
+  #
+  #   def initialize(@amount, @currency = "USD"); end
+  #
+  #   def self.new(*, amount : String, currency : String) # string constructor
+  #     new(amount.to_f64, currency)
+  #   end
+  # end
+  #
+  # class Account < Grant::Base
+  #   column id : Int64, primary: true
+  #   aggregation :balance, Money,
+  #     mapping: {balance_amount: :amount, balance_currency: :currency},
+  #     allow_nil: true
+  # end
+  #
+  # a = Account.new
+  # a.balance = Money.new(10.0, "USD")
+  # a.balance.try(&.amount) # => 10.0
+  # a.balance_changed?      # => true
+  # ```
   macro aggregation(name, class_name = nil, mapping = nil, constructor = nil, allow_nil = false)
     {% if class_name.is_a?(NamedTupleLiteral) %}
       # Handle case where class_name is omitted and mapping is first arg
@@ -157,16 +246,18 @@ module Grant::ValueObjects
       end
     end
   end
-  
-  # Module to be included in models for value object support
+
+  # Class-level value-object support, extended onto every `Grant::Base`. The
+  # concrete aggregation methods are generated per model by the `aggregation`
+  # macro and the `finished` hook below.
   module ClassMethods
     # This will be populated by each model
   end
-  
+
   # Empty placeholder - aggregations method will be generated in the model's macro finished
-  
+
   # Empty placeholder - methods will be generated in the combined macro finished
-  
+
   # Macro to generate all value object methods
   macro finished
     # Dirty tracking for aggregations.
@@ -183,7 +274,13 @@ module Grant::ValueObjects
       @aggregation_changes ||= {} of String => Tuple(String?, String?)
     end
 
-    # Generate aggregations class method
+    # Returns a `Hash(Symbol, AggregationMeta)` describing every aggregation
+    # declared on this model, keyed by aggregation name. Useful for introspection
+    # and tooling.
+    #
+    # ```crystal
+    # Customer.aggregations.keys # => [:address]
+    # ```
     def self.aggregations
       aggregations = {} of Symbol => AggregationMeta
       {% for ivar in @type.class.instance_vars %}
@@ -204,7 +301,14 @@ module Grant::ValueObjects
       aggregation_changes[name] = {old_str, new_str}
     end
     
-    # Check if an aggregation has changed
+    # Returns `true` if any backing column of the aggregation named *name* has
+    # unsaved changes. Backs the generated per-aggregation `#<name>_changed?`
+    # predicate.
+    #
+    # ```crystal
+    # c.address_changed?               # generated wrapper
+    # c.aggregation_changed?("address") # equivalent
+    # ```
     def aggregation_changed?(name : String) : Bool
       # Check if any of the columns for this aggregation have changed
       case name
@@ -221,7 +325,8 @@ module Grant::ValueObjects
       end
     end
     
-    # Get the previous value of an aggregation
+    # Returns the previous (pre-change) value of the aggregation named *name*, or
+    # its current value if unchanged. Backs the generated `#<name>_was` accessor.
     def aggregation_was(name : String)
       if aggregation_changes.has_key?(name)
         aggregation_changes[name][0]
@@ -230,7 +335,9 @@ module Grant::ValueObjects
       end
     end
     
-    # Instance methods for value object handling
+    # Returns the value object for the aggregation named *name* (the same result
+    # as calling the generated `#<name>` getter), or `nil` for an unknown name.
+    # Dynamic counterpart to the named getters.
     def read_aggregation(name : String | Symbol)
       case name.to_s
       {% for ivar in @type.class.instance_vars %}
@@ -245,6 +352,9 @@ module Grant::ValueObjects
       end
     end
     
+    # Assigns *value* to the aggregation named *name* (the same as calling the
+    # generated `#<name>=` setter), writing through to the backing columns.
+    # Dynamic counterpart to the named setters.
     def write_aggregation(name : String | Symbol, value)
       case name.to_s
       {% for ivar in @type.class.instance_vars %}
@@ -263,7 +373,10 @@ module Grant::ValueObjects
     #   @aggregation_changes.clear if @aggregation_changes
     # end
     
-    # Override set_attributes to handle value objects
+    # Mass-assigns *args*, routing keys that name an aggregation through
+    # `write_aggregation` (so a value object can be set directly) and all other
+    # keys through the normal `write_attribute` path. Overrides the base
+    # `set_attributes` to make value objects mass-assignable.
     def set_attributes(args : Grant::ModelArgs)
       args.each do |k, v|
         if {% for ivar in @type.class.instance_vars %}
@@ -279,6 +392,6 @@ module Grant::ValueObjects
       end
     end
   end
-  
+
   # Empty placeholder - set_attributes will be generated in macro finished
 end
