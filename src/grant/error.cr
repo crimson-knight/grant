@@ -1,7 +1,12 @@
 class Grant::Error
   property field, message
 
-  def initialize(@field : (String | Symbol | JSON::Any), @message : String? = "")
+  # A machine-readable error code (e.g. `:blank`, `:too_short`, `:taken`)
+  # alongside the human-readable `message`. Mirrors the symbol keys used in
+  # ActiveRecord's `errors.details`. `nil` for errors added without a code.
+  property type : Symbol?
+
+  def initialize(@field : (String | Symbol | JSON::Any), @message : String? = "", @type : Symbol? = nil)
   end
 
   def to_json(builder : JSON::Builder)

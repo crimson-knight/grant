@@ -15,6 +15,7 @@ module Grant::Callbacks
   )
 
   AROUND_CALLBACK_NAMES = %w(
+    around_validation
     around_save
     around_create
     around_update
@@ -72,11 +73,14 @@ module Grant::Callbacks
     macro __{{name.id}}
       @_current_callback = {{name}}
       \{% for callback_data in CALLBACKS[{{name}}] %}
-        \{% if callback_data.is_a? NamedTuple %}
+        \{% if callback_data.is_a? NamedTupleLiteral %}
           \{% callback = callback_data[:callback] %}
           \{% condition = callback_data[:if] %}
           \{% unless_condition = callback_data[:unless] %}
-          if (\{% if condition %}\{{condition.id}}\{% else %}true\{% end %}) && !(\{% if unless_condition %}\{{unless_condition.id}}\{% else %}false\{% end %})
+          # `if:`/`unless:` accept either a Symbol (instance method name) or a
+          # Proc/lambda that receives the record. Symbols resolve to a bare
+          # method call in instance context; Procs/Calls are invoked with `self`.
+          if (\{% if condition %}\{% if condition.is_a?(SymbolLiteral) %}\{{condition.id}}\{% else %}(\{{condition}}).call(self)\{% end %}\{% else %}true\{% end %}) && !(\{% if unless_condition %}\{% if unless_condition.is_a?(SymbolLiteral) %}\{{unless_condition.id}}\{% else %}(\{{unless_condition}}).call(self)\{% end %}\{% else %}false\{% end %})
             \{% if callback.is_a? Block %}
               begin
                 \{{callback.body}}
@@ -178,12 +182,13 @@ module Grant::Callbacks
             prev_index = idx
           %}
 
-          \{% if callback_data.is_a? NamedTuple %}
+          \{% if callback_data.is_a? NamedTupleLiteral %}
             \{% callback = callback_data[:callback] %}
             \{% condition = callback_data[:if] %}
             \{% unless_condition = callback_data[:unless] %}
 
-            if (\{% if condition %}\{{condition.id}}\{% else %}true\{% end %}) && !(\{% if unless_condition %}\{{unless_condition.id}}\{% else %}false\{% end %})
+            # See `__{{name.id}}` above: Symbol => method call, Proc/lambda => .call(self).
+            if (\{% if condition %}\{% if condition.is_a?(SymbolLiteral) %}\{{condition.id}}\{% else %}(\{{condition}}).call(self)\{% end %}\{% else %}true\{% end %}) && !(\{% if unless_condition %}\{% if unless_condition.is_a?(SymbolLiteral) %}\{{unless_condition.id}}\{% else %}(\{{unless_condition}}).call(self)\{% end %}\{% else %}false\{% end %})
               \{% if callback.is_a? Block %}
                 %chain << Proc(Nil).new do
                   %called = false

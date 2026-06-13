@@ -29,8 +29,8 @@ class Grant::Errors
   # errors.add(:base, "Record is invalid")
   # errors.add("email", "is already taken")
   # ```
-  def add(field : (String | Symbol | JSON::Any), message : String? = "")
-    @errors << Error.new(field, message)
+  def add(field : (String | Symbol | JSON::Any), message : String? = "", type : Symbol? = nil)
+    @errors << Error.new(field, message, type)
   end
 
   # Appends an Error object to the collection.
@@ -247,6 +247,28 @@ class Grant::Errors
       key = error.field.to_s
       result[key] ||= [] of String
       result[key] << (error.message || "")
+    end
+    result
+  end
+
+  # Returns machine-readable error details grouped by field name.
+  #
+  # Each field maps to an array of detail hashes. Every detail hash carries an
+  # `:error` key holding the error's type code (e.g. `:blank`, `:too_short`,
+  # `:taken`). Errors added without an explicit type fall back to `:invalid`.
+  # This mirrors ActiveRecord's `errors.details` and lets clients branch on a
+  # stable code rather than parsing the human-readable message.
+  #
+  # ```
+  # errors.add(:name, "can't be blank", type: :blank)
+  # errors.details # => {"name" => [{:error => :blank}]}
+  # ```
+  def details : Hash(String, Array(Hash(Symbol, Symbol)))
+    result = {} of String => Array(Hash(Symbol, Symbol))
+    @errors.each do |error|
+      key = error.field.to_s
+      result[key] ||= [] of Hash(Symbol, Symbol)
+      result[key] << {:error => (error.type || :invalid)}
     end
     result
   end
