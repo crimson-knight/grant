@@ -1,13 +1,23 @@
 module Grant::CommitCallbacks
   macro included
+    # Per-instance queue of pending commit callbacks.
+    # Declared nilable (with lazy initialization in `_pending_commit_callbacks`
+    # below) rather than carrying a default value so that `YAML::Serializable` /
+    # `JSON::Serializable`'s auto-generated deserialization initializer — included
+    # on the abstract `Grant::Base` — does not report it as uninitialized for
+    # `Grant::Base+`. See issues #39/#41.
     @[JSON::Field(ignore: true)]
     @[YAML::Field(ignore: true)]
-    @_pending_commit_callbacks = [] of Symbol
+    @_pending_commit_callbacks : Array(Symbol)?
+
+    protected def _pending_commit_callbacks : Array(Symbol)
+      @_pending_commit_callbacks ||= [] of Symbol
+    end
   end
 
   # Queue a callback symbol for this instance (used internally after save/destroy).
   private def queue_commit_callback(callback_name : Symbol)
-    @_pending_commit_callbacks << callback_name
+    _pending_commit_callbacks << callback_name
   end
 
   # Called immediately after a successful save/destroy.
@@ -23,10 +33,10 @@ module Grant::CommitCallbacks
   # transaction) the callbacks are fired immediately, preserving the
   # pre-existing behaviour.
   private def run_commit_callbacks
-    return if @_pending_commit_callbacks.empty?
+    return if _pending_commit_callbacks.empty?
 
-    callbacks = @_pending_commit_callbacks.dup
-    @_pending_commit_callbacks.clear
+    callbacks = _pending_commit_callbacks.dup
+    _pending_commit_callbacks.clear
 
     if Grant::Transaction.in_explicit_transaction?
       # Capture the callback list by value in the closures.
@@ -70,7 +80,7 @@ module Grant::CommitCallbacks
   # Clears pending instance-level queued callbacks (used when an operation
   # fails before run_commit_callbacks is reached).
   private def clear_commit_callbacks
-    @_pending_commit_callbacks.clear
+    _pending_commit_callbacks.clear
   end
 
   # Called when an operation fails (DB::Error / Callbacks::Abort) so that the

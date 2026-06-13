@@ -27,7 +27,7 @@ module Grant::Callbacks
 
   @[JSON::Field(ignore: true)]
   @[YAML::Field(ignore: true)]
-  @_around_halted : Bool = false
+  @_around_halted : Bool?
 
   macro included
     macro inherited
@@ -249,7 +249,7 @@ module Grant::Callbacks
 
   # Returns true if the last around callback halted the operation.
   def around_halted? : Bool
-    @_around_halted
+    !!@_around_halted
   end
 
   def abort!(message = "Aborted at #{@_current_callback}.")

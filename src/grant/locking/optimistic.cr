@@ -25,13 +25,18 @@ module Grant::Locking::Optimistic
     before_update :__check_lock_version
     after_update :__increment_lock_version
 
+    # Declared nilable (coalesced to 0 on read) rather than carrying a default
+    # value so that `YAML::Serializable` / `JSON::Serializable`'s auto-generated
+    # deserialization initializer does not report it as uninitialized when a
+    # model that mixes in optimistic locking is widened to `Grant::Base+`.
+    # See issues #39/#41.
     @[JSON::Field(ignore: true)]
     @[YAML::Field(ignore: true)]
-    @lock_version_was : Int32 = 0
+    @lock_version_was : Int32?
 
     @[JSON::Field(ignore: true)]
     @[YAML::Field(ignore: true)]
-    @lock_conflict_retry_count : Int32 = 0
+    @lock_conflict_retry_count : Int32?
 
     class_property lock_conflict_max_retries : Int32 = 0
 
@@ -44,11 +49,11 @@ module Grant::Locking::Optimistic
   end
 
   def lock_version_was : Int32
-    @lock_version_was
+    @lock_version_was ||= 0
   end
 
   def lock_version_changed? : Bool
-    lock_version != @lock_version_was
+    lock_version != lock_version_was
   end
 
   def with_optimistic_retry(max_retries : Int32 = self.class.lock_conflict_max_retries, &block)
@@ -74,7 +79,7 @@ module Grant::Locking::Optimistic
 
   private def __check_lock_version
     return true unless persisted?
-    return true if @lock_version_was == 0 && lock_version == 0
+    return true if lock_version_was == 0 && lock_version == 0
 
     @lock_version_was = lock_version_was
 
@@ -95,7 +100,7 @@ module Grant::Locking::Optimistic
         where_clause = "#{self.class.adapter.quote({{primary_key.name.stringify}})} = ? AND #{self.class.adapter.quote("lock_version")} = ?"
         
         statement = "UPDATE #{self.class.adapter.quote(self.class.table_name)} SET #{fields_clause} WHERE #{where_clause}"
-        params = values + [@{{primary_key.name.id}}, @lock_version_was]
+        params = values + [@{{primary_key.name.id}}, lock_version_was]
         
         result = db.exec(statement, args: params)
         
@@ -131,7 +136,7 @@ module Grant::Locking::Optimistic
   private def attribute_before_last_save(name : String)
     case name
     when "lock_version"
-      @lock_version_was
+      lock_version_was
     else
       nil
     end

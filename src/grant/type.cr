@@ -1,4 +1,5 @@
 require "uuid"
+require "uuid/yaml"
 
 module Grant::Type
   extend self
