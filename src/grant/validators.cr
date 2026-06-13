@@ -61,37 +61,61 @@ module Grant::Validators
 
   macro included
     macro inherited
-      @@validators = Array({field: String, message: String, block: Proc(self, Bool), context: Symbol}).new
+      # `@@validators` is declared on EVERY level of the hierarchy so each
+      # concrete class (including multi-level STI subclasses) can read it in
+      # `valid?` and Crystal can infer its type. Crystal class variables are
+      # per-class (not inherited for reads), and re-declaring with a different
+      # element type than an ancestor is a compile error, so the Proc's argument
+      # is typed to the *first-level* ancestor (the class directly below
+      # `Grant::Base`) rather than to `self`. The `self.validate` overloads are
+      # defined only at the first level and inherited.
+      #
+      # NOTE (STI limitation): because class variables are per-class, a base
+      # class's `validate` registrations populate only the base class's store —
+      # they do not automatically run on STI subclass instances. Declare shared
+      # validations on each concrete class, or use `before_validation`.
+      #
+      # IMPORTANT: this `macro inherited` is nested inside `macro included`, so
+      # macro control flow MUST be escaped (leading backslash) to evaluate at
+      # each subclass's expansion rather than once at `included` time (where
+      # `@type` would be `Grant::Base`). Plain Crystal tokens (`self`,
+      # `@@validators`) are per-class at runtime and need no escaping.
+      \{% candidates = [@type] + @type.ancestors %}
+      \{% first_level = candidates.find { |a| a.class? && a.superclass && a.superclass.id == "Grant::Base" } %}
+      \{% first_level = @type if first_level == nil %}
+      @@validators = Array({field: String, message: String, block: Proc(\{{ first_level }}, Bool), context: Symbol}).new
 
-      # Block-based validate (no context)
-      disable_grant_docs? def self.validate(message : String, &block : self -> Bool)
-        self.validate(:base, message, block)
-      end
+      \{% if @type.superclass.id == "Grant::Base" %}
+        # Block-based validate (no context)
+        disable_grant_docs? def self.validate(message : String, &block : self -> Bool)
+          self.validate(:base, message, block)
+        end
 
-      # Block-based validate with field (no context)
-      disable_grant_docs? def self.validate(field : (Symbol | String), message : String, &block : self -> Bool)
-        self.validate(field, message, block)
-      end
+        # Block-based validate with field (no context)
+        disable_grant_docs? def self.validate(field : (Symbol | String), message : String, &block : self -> Bool)
+          self.validate(field, message, block)
+        end
 
-      # Proc-based validate (no context)
-      disable_grant_docs? def self.validate(message : String, block : self -> Bool)
-        self.validate(:base, message, block)
-      end
+        # Proc-based validate (no context)
+        disable_grant_docs? def self.validate(message : String, block : self -> Bool)
+          self.validate(:base, message, block)
+        end
 
-      # Proc-based validate with field (no context)
-      disable_grant_docs? def self.validate(field : (Symbol | String), message : String, block : self -> Bool)
-        @@validators << {field: field.to_s, message: message, block: block, context: :save}
-      end
+        # Proc-based validate with field (no context)
+        disable_grant_docs? def self.validate(field : (Symbol | String), message : String, block : self -> Bool)
+          @@validators << {field: field.to_s, message: message, block: block, context: :save}
+        end
 
-      # Proc-based validate with context
-      disable_grant_docs? def self.validate(field : (Symbol | String), message : String, block : self -> Bool, context : Symbol)
-        @@validators << {field: field.to_s, message: message, block: block, context: context}
-      end
+        # Proc-based validate with context
+        disable_grant_docs? def self.validate(field : (Symbol | String), message : String, block : self -> Bool, context : Symbol)
+          @@validators << {field: field.to_s, message: message, block: block, context: context}
+        end
 
-      # Block-based validate with context keyword
-      disable_grant_docs? def self.validate(field : (Symbol | String), message : String, *, context : Symbol = :save, &block : self -> Bool)
-        @@validators << {field: field.to_s, message: message, block: block, context: context}
-      end
+        # Block-based validate with context keyword
+        disable_grant_docs? def self.validate(field : (Symbol | String), message : String, *, context : Symbol = :save, &block : self -> Bool)
+          @@validators << {field: field.to_s, message: message, block: block, context: context}
+        end
+      \{% end %}
 
       # ======================================================================
       # Built-in Validators
