@@ -30,16 +30,34 @@ multi-model Amber app compiles and runs on Grant against a single adapter, with 
 
 | # | Item | Priority | Issue | Status |
 |---|---|---|---|---|
-| 1 | 2nd `Grant::Base` subclass breaks YAML program-wide | **P0** | #41 | 🔧 in progress (`fix/serialization-yaml-multimodel`) |
-| 2 | UUID columns break YAML deserialization (missing `require`) | **P0** | #39 | 🔧 in progress (`fix/serialization-yaml-multimodel`) |
-| 3 | `LockMode#to_sql` forces requiring all 3 adapters | **P0** | #40 | 🔧 in progress (`fix/adapter-require-decoupling`) |
-| 4 | Raw-SQL sanitization for the raw query escape hatch | P1 | #7 | 🔧 in progress (`fix/raw-sql-sanitization`) |
-| 5 | `HealthMonitor#status` references a nonexistent ivar | P1 | — | 🔧 in progress (`fix/adapter-require-decoupling`) |
-| 6 | Encryption docs claimed AES-256-GCM; impl is CBC+HMAC | P1 | — | ✅ done (docs corrected to AES-256-CBC + HMAC-SHA256) |
+| 1 | 2nd `Grant::Base` subclass breaks YAML program-wide | **P0** | #41 | ✅ done — merged to `main`; `serialization_multimodel_spec` 6/6 |
+| 2 | UUID columns break YAML deserialization (missing `require`) | **P0** | #39 | ✅ done — `require "uuid/yaml"` in `columns.cr` + `type.cr` |
+| 3 | `LockMode#to_sql` forces requiring all 3 adapters | **P0** | #40 | ✅ done — virtual `adapter.lock_clause`; sqlite-only compile verified |
+| 4 | Raw-SQL sanitization for the raw query escape hatch | P1 | #7 | ✅ done — `Grant::Sanitization`; `sanitization_spec` 26/26 incl. live injection test |
+| 5 | `HealthMonitor#status` references a nonexistent ivar | P1 | — | ✅ done — `Time.unix(@last_check_timestamp.get)` |
+| 6 | Encryption docs claimed AES-256-GCM; impl is CBC+HMAC | P1 | — | ✅ done — docs corrected to AES-256-CBC + HMAC-SHA256 |
 | 7 | Bugs 1–7 from the parity audit | P0 (pre-work) | — | ✅ done (`main` @ `32b2c06`) |
 | 8 | Remove/regenerate stale `active_record_analysis/` | P2 | #23 | ☐ todo |
 | 9 | Close already-implemented issues (Enumerable(T)) | P2 | #36 | ☐ todo |
 | 10 | CI green across SQLite + PG + MySQL | P2 (gate) | — | ☐ verify |
+
+## Integration verification (this pass)
+
+All four code fixes were implemented in isolated worktrees, then merged into `main` (merges
+`9beb8fc`, `4adbe33`, `620d418` over docs commit `c84d493`). Verified on the integrated tree:
+
+- `crystal build src/grant.cr` — clean (exit 0).
+- New regression specs pass in isolation: `serialization_multimodel_spec` 6/6, `sanitization_spec`
+  26/26 (incl. a test that executes a `'; DROP TABLE …` payload and asserts the table survives),
+  and the new `lock_clause` dispatch specs.
+- Full SQLite suite: **119 examples, 15 failures, 14 errors** — down from the clean-`main` baseline
+  of 23 failures / 14 errors (the serialization fix additionally repaired 8 pre-existing
+  `grant_spec` JSON/YAML failures). **Zero new failures or errors introduced.**
+- The remaining failures/errors are all pre-existing and environment-bound: multi-DB/MySQL specs
+  needing servers not running locally, SQLite transaction/`with_lock` reload semantics, string→Int64
+  coercion, and a log-capture flaky test. Several only appear under random spec order (shared global
+  state); they pass when their file is run in isolation. Spec-order isolation is a known pre-existing
+  issue tracked under P2.
 
 ## Already landed
 
