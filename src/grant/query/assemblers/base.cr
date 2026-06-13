@@ -103,7 +103,14 @@ module Grant::Query::Assembler
     def build_sql(&)
       clauses = [] of String?
       yield clauses
-      clauses.compact!.join " "
+      sql = clauses.compact!.join " "
+      # Prepend the query annotation (sanitized SQL comment) to the executed
+      # statement so it appears in the wire SQL, not just `.raw_sql` inspection.
+      if comment = @query.annotation_comment
+        "#{comment} #{sql}"
+      else
+        sql
+      end
     end
 
     def where
@@ -323,6 +330,59 @@ module Grant::Query::Assembler
       Executor::List(Model).new sql, numbered_parameters
     end
 
+    # The adapter-specific keyword(s) that prefix a SELECT to obtain its query
+    # plan. Overridden per adapter (SQLite uses `EXPLAIN QUERY PLAN`).
+    def explain_keyword(analyze : Bool = false) : String
+      "EXPLAIN"
+    end
+
+    # Builds the SELECT SQL for this query (without executing it), used as the
+    # statement that `explain` wraps.
+    def explain_select_sql : String
+      build_sql do |s|
+        s << "#{select_keyword} #{field_list}"
+        s << "FROM #{table_name}"
+        s << joins
+        s << where
+        s << group_by
+        s << having
+        s << order
+        s << limit
+        s << offset
+      end
+    end
+
+    # Runs the query through the adapter's EXPLAIN (optionally EXPLAIN ANALYZE)
+    # and returns the plan as text.
+    #
+    # The result-set shape of EXPLAIN differs across databases, so every column
+    # of every row is read generically (as `DB::Any`), stringified, and joined.
+    # Degrades gracefully: if the adapter raises (e.g. ANALYZE unsupported), the
+    # error message is returned as the plan text rather than propagating.
+    def explain(analyze : Bool = false) : String
+      sql = "#{explain_keyword(analyze)} #{explain_select_sql}"
+      params = numbered_parameters
+
+      begin
+        rows = [] of String
+        Model.adapter.open do |db|
+          db.query(sql, args: params) do |rs|
+            rs.each do
+              cells = [] of String
+              rs.column_count.times do
+                value = rs.read
+                cells << (value.nil? ? "" : value.to_s)
+              end
+              rows << cells.join(" | ")
+            end
+          end
+        end
+        rows.join("\n")
+      rescue e
+        "EXPLAIN failed: #{e.message}"
+      end
+    end
+
     def exists? : Executor::Value(Model, Bool)
       sql = build_sql do |s|
         s << "SELECT EXISTS(SELECT 1 "
@@ -378,6 +438,30 @@ module Grant::Query::Assembler
           error: e.message
         )
         raise e
+      end
+    end
+
+    # Builds a parameterized UPDATE ... SET ... [WHERE ...] statement from an
+    # ordered list of `{column, value}` assignments.
+    #
+    # Every value is routed through `add_parameter` so it is bound by the driver
+    # (never interpolated), making this safe against SQL injection. SET
+    # parameters are added before the WHERE clause is rendered so positional
+    # placeholder numbering (PG `$1`, `$2`, ...) stays correct.
+    #
+    # Returns the SQL string; bound values are available via `numbered_parameters`.
+    def update_all_sql(assignments : Array(Tuple(String, Grant::Columns::Type))) : String
+      set_parts = assignments.map do |(column, value)|
+        "#{Model.quote(column)} = #{add_parameter(value)}"
+      end
+
+      # Render WHERE after SET so its parameters follow the SET parameters.
+      where_clause = where
+
+      build_sql do |s|
+        s << "UPDATE #{table_name}"
+        s << "SET #{set_parts.join(", ")}"
+        s << where_clause
       end
     end
 

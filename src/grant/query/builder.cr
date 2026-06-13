@@ -267,6 +267,32 @@ class Grant::Query::Builder(Model)
     self
   end
 
+  # Adds an INNER JOIN clause resolved from an association *name*.
+  #
+  # The target table and join condition are derived automatically from the
+  # association metadata registered by the `belongs_to`/`has_many`/`has_one`
+  # macros (via `Grant::AssociationRegistry`). No explicit `on:` SQL is needed.
+  #
+  # ```
+  # # Parent has_many :students  (students.parent_id -> parents.id)
+  # Parent.joins(:students).where(name: "test")
+  # # => SELECT ... FROM parents INNER JOIN students ON students.parent_id = parents.id ...
+  #
+  # # Klass belongs_to :teacher  (klasses.teacher_id -> teachers.id)
+  # Klass.joins(:teacher)
+  # # => SELECT ... FROM klasses INNER JOIN teachers ON teachers.id = klasses.teacher_id
+  # ```
+  def joins(association : Symbol) : self
+    @join_clauses << resolve_association_join(association, :inner)
+    self
+  end
+
+  # Adds INNER JOINs for multiple association names at once.
+  def joins(*associations : Symbol) : self
+    associations.each { |assoc| joins(assoc) }
+    self
+  end
+
   # Adds a LEFT OUTER JOIN clause to the query.
   #
   # Left joins include all rows from the left table, even when there
@@ -280,6 +306,58 @@ class Grant::Query::Builder(Model)
   def left_joins(table : String, *, on : String) : self
     @join_clauses << {type: :left, table: table, on: on}
     self
+  end
+
+  # Adds a LEFT OUTER JOIN clause resolved from an association *name*.
+  #
+  # Like `joins(Symbol)` but emits a LEFT JOIN. See `joins(Symbol)` for how the
+  # table and ON condition are derived from association metadata.
+  #
+  # ```
+  # Parent.left_joins(:students)
+  # # => SELECT ... FROM parents LEFT JOIN students ON students.parent_id = parents.id
+  # ```
+  def left_joins(association : Symbol) : self
+    @join_clauses << resolve_association_join(association, :left)
+    self
+  end
+
+  # Adds LEFT JOINs for multiple association names at once.
+  def left_joins(*associations : Symbol) : self
+    associations.each { |assoc| left_joins(assoc) }
+    self
+  end
+
+  # Resolves an association *name* into a join clause `{type:, table:, on:}`.
+  #
+  # Uses `Grant::AssociationRegistry` metadata (populated by the association
+  # macros). The ON condition depends on where the foreign key lives:
+  #
+  # - `belongs_to`: FK is on *this* model's table, pointing at the target's PK,
+  #   so `target.primary_key = current.foreign_key`.
+  # - `has_many` / `has_one`: FK is on the *target* table, pointing back at this
+  #   model's PK, so `target.foreign_key = current.primary_key`.
+  #
+  # Raises `ArgumentError` if the association is unknown.
+  private def resolve_association_join(association : Symbol, type : Symbol)
+    meta = Grant::AssociationRegistry.get(Model.name, association.to_s)
+    raise ArgumentError.new("Unknown association #{association.inspect} for #{Model.name}") unless meta
+
+    target_table = meta[:target_class].table_name
+    current_table = Model.table_name
+    foreign_key = meta[:foreign_key]
+    primary_key = meta[:primary_key]
+
+    on = case meta[:type]
+         when :belongs_to
+           # FK lives on the current model's table.
+           "#{target_table}.#{primary_key} = #{current_table}.#{foreign_key}"
+         else
+           # has_many / has_one: FK lives on the target table.
+           "#{target_table}.#{foreign_key} = #{current_table}.#{primary_key}"
+         end
+
+    {type: type, table: target_table, on: on}
   end
 
   # Sets the query to return only distinct (unique) rows.
@@ -420,6 +498,52 @@ class Grant::Query::Builder(Model)
     self
   end
 
+  # Returns a relation with the named clause components stripped.
+  #
+  # Mirrors ActiveRecord's `unscope`. Useful for removing parts of an inherited
+  # scope while keeping the rest of the chain intact. Recognized components:
+  # `:where`, `:order`, `:limit`, `:offset`, `:group` (alias `:group_by`),
+  # `:having`, `:joins`, `:select`, `:distinct`, `:lock`.
+  #
+  # ```
+  # User.where(active: true).order(name: :asc).unscope(:order)
+  # # => SELECT ... FROM users WHERE active = ?   (no ORDER BY)
+  #
+  # User.where(active: true).limit(10).offset(5).unscope(:limit, :offset)
+  # # => SELECT ... FROM users WHERE active = ?   (no LIMIT/OFFSET)
+  # ```
+  #
+  # Raises `ArgumentError` for an unrecognized component.
+  def unscope(*components : Symbol) : self
+    components.each do |component|
+      case component
+      when :where
+        @where_fields.clear
+      when :order
+        @order_fields.clear
+      when :limit
+        @limit = nil
+      when :offset
+        @offset = nil
+      when :group, :group_by
+        @group_fields.clear
+      when :having
+        @having_clauses.clear
+      when :joins
+        @join_clauses.clear
+      when :select
+        @select_columns = nil
+      when :distinct
+        @distinct = false
+      when :lock
+        @lock_mode = nil
+      else
+        raise ArgumentError.new("unscope: unknown component #{component.inspect}")
+      end
+    end
+    self
+  end
+
   def offset(num)
     @offset = num.nil? ? nil : num.to_i64
 
@@ -454,6 +578,21 @@ class Grant::Query::Builder(Model)
 
   def raw_sql
     assembler.select.raw_sql
+  end
+
+  # Runs the query through the adapter's `EXPLAIN` and returns the plan text.
+  #
+  # Adapter-aware: PostgreSQL/MySQL use `EXPLAIN` (and `EXPLAIN ANALYZE` when
+  # *analyze* is true), SQLite uses `EXPLAIN QUERY PLAN`. Degrades gracefully —
+  # if the adapter rejects the statement (e.g. ANALYZE on an old MySQL), the
+  # error message is returned as the plan text instead of raising.
+  #
+  # ```
+  # puts User.where(active: true).explain
+  # puts User.where(active: true).explain(analyze: true) # PG/MySQL real plan
+  # ```
+  def explain(analyze : Bool = false) : String
+    assembler.explain(analyze)
   end
 
   def first : Model?
@@ -538,6 +677,61 @@ class Grant::Query::Builder(Model)
   def each(& : Model ->) : Nil
     self.select.each do |record|
       yield record
+    end
+  end
+
+  # Plucks the primary key values for the relation.
+  #
+  # Mirrors ActiveRecord's `ids`. Reuses the `pluck` machinery, projecting only
+  # the model's primary key column, and returns the values as a typed array.
+  #
+  # ```
+  # User.where(active: true).ids # => [1, 2, 3]
+  # User.ids                     # => [1, 2, 3, 4, ...]
+  # ```
+  def ids : Array(Grant::Columns::Type)
+    return [] of Grant::Columns::Type if is_none?
+    # Reuse the pluck machinery, projecting just the primary key column. The
+    # primary key name is a runtime String, so drive pluck_sql/Pluck directly
+    # (the public `pluck` takes Symbol splat fields, unavailable from a String).
+    field_names = [Model.primary_name]
+    pk_assembler = assembler
+    sql = pk_assembler.pluck_sql(field_names)
+    Grant::Query::Executor::Pluck(Model).new(sql, pk_assembler.numbered_parameters, field_names).run.map(&.first)
+  end
+
+  # Iterates over the relation in batches, yielding each record individually.
+  #
+  # Chainable version of the class-level `find_each` — runs against the
+  # relation's current WHERE/ORDER/etc. Built on top of `in_batches`, so it uses
+  # primary-key cursor pagination and is memory-friendly for large result sets.
+  #
+  # ```
+  # User.where(active: true).find_each(batch_size: 500) do |user|
+  #   process(user)
+  # end
+  # ```
+  def find_each(batch_size : Int32 = 1000, start : Int64? = nil, finish : Int64? = nil, order : Symbol = :asc, &block : Model ->) : Nil
+    return if is_none?
+    in_batches(of: batch_size, start: start, finish: finish, order: order) do |batch|
+      batch.each { |record| yield record }
+    end
+  end
+
+  # Iterates over the relation in batches, yielding each batch as an Array.
+  #
+  # Chainable version of the class-level `find_in_batches`. Thin alias over
+  # `in_batches` for ActiveRecord naming parity.
+  #
+  # ```
+  # User.where(active: true).find_in_batches(batch_size: 500) do |batch|
+  #   bulk_process(batch)
+  # end
+  # ```
+  def find_in_batches(batch_size : Int32 = 1000, start : Int64? = nil, finish : Int64? = nil, order : Symbol = :asc, &block : Array(Model) ->) : Nil
+    return if is_none?
+    in_batches(of: batch_size, start: start, finish: finish, order: order) do |batch|
+      yield batch
     end
   end
 

@@ -113,13 +113,15 @@ module Grant::ConvenienceMethods(Model)
     self
   end
 
-  # Update query builder to include annotation
-  def raw_sql
-    sql = assembler.select.raw_sql
+  # Returns the SQL comment fragment for this query's annotation, sanitized.
+  #
+  # The comment is wrapped in `/* ... */`. Any `*/` sequence in the supplied
+  # comment is stripped so it cannot terminate the comment early and inject
+  # trailing SQL. Returns `nil` when no annotation is set.
+  def annotation_comment : String?
     if ann = @query_annotation
-      "/* #{ann} */ #{sql}"
-    else
-      sql
+      safe = ann.gsub("*/", "")
+      "/* #{safe} */"
     end
   end
 end
