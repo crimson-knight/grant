@@ -18,5 +18,6 @@ end
 require "./adapter/base"
 require "./grant/sanitization"
 require "./grant/connection_registry"
+require "./grant/target"
 require "./grant/base"
 require "./grant/sti"

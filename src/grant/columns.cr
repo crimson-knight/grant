@@ -139,6 +139,46 @@ module Grant::Columns
 
     {% nilable = (type.is_a?(Path) ? type.resolve.nilable? : (type.is_a?(Union) ? type.types.any?(&.resolve.nilable?) : (type.is_a?(Generic) ? type.resolve.nilable? : type.nilable?))) %}
 
+    # ── Per-target column gating ───────────────────────────────────────────────
+    # `targets:` restricts a column to one or more build targets. When the active
+    # `grant_target_*` flag is NOT among them, the column is compiled out entirely
+    # (no ivar, accessors, (de)serialization, or field-list entry) — it does not
+    # exist on that target, at zero runtime cost. No `targets:` ⇒ present on every
+    # target (the shared sync columns).
+    {% targets = (options[:targets] && !options[:targets].nil?) ? options[:targets] : nil %}
+
+    {% if targets != nil %}
+      # A column's identity (and especially the primary / sync key) must be the
+      # same on every target so rows can be synchronised. Gating the primary key
+      # would make it absent on some targets — forbidden.
+      {% if primary %}
+        {% raise "The primary key column #{@type.name}##{decl.var} cannot be gated with `targets:`. " \
+                 "Primary and sync-key columns must be present on every build target." %}
+      {% end %}
+
+      {% unless targets.is_a?(ArrayLiteral) %}
+        {% raise "The column #{@type.name}##{decl.var} `targets:` option must be an array of symbols, e.g. targets: [:web, :mobile]." %}
+      {% end %}
+
+      # Resolve "is the active build target among `targets`?" at compile time by
+      # matching each requested target symbol against its grant_target_* flag.
+      {% emit = false %}
+      {% for t in targets %}
+        {% if t == :mobile && flag?(:grant_target_mobile) %} {% emit = true %} {% end %}
+        {% if t == :desktop && flag?(:grant_target_desktop) %} {% emit = true %} {% end %}
+        {% if t == :web && flag?(:grant_target_web) %} {% emit = true %} {% end %}
+        {% if t != :mobile && t != :desktop && t != :web %}
+          {% raise "The column #{@type.name}##{decl.var} has an unknown target #{t}. " \
+                   "Valid targets are :mobile, :desktop, :web." %}
+        {% end %}
+      {% end %}
+    {% else %}
+      # Ungated columns are present on every target (including the default build
+      # where no grant_target_* flag is set).
+      {% emit = true %}
+    {% end %}
+
+    {% if emit %}
     @[Grant::Column(column_type: {{column_type}}, converter: {{converter}}, auto: {{auto}}, primary: {{primary}}, nilable: {{nilable}})]
     @{{decl.var}} : {{decl.type}}? {% unless decl.value.is_a? Nop %} = {{decl.value}} {% end %}
 
@@ -370,6 +410,7 @@ module Grant::Columns
           @{{decl.var.id}}.not_nil!
         end
       end
+    {% end %}
     {% end %}
   end
 
