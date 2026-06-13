@@ -3,100 +3,128 @@ module Grant::Sharding
   abstract class ShardResolver
     # Resolve shard for a model instance
     abstract def resolve(model : Grant::Base) : Symbol
-    
+
     # Resolve shard for given key values (for queries)
     abstract def resolve_for_keys(**keys) : Symbol
-    
+
+    # Resolve shard from positional key values, in declared shard-key order.
+    #
+    # This is the routing entry point used by `QueryRouter`: the router has
+    # only column-name strings (no symbols), so it collects shard-key values
+    # positionally and resolves through this method. Every resolver must
+    # implement it. Raise if the values cannot be resolved (the router treats
+    # a raise as "fall back to scatter-gather").
+    abstract def resolve_for_values(values : Array) : Symbol
+
     # Get all shards managed by this resolver
     abstract def all_shards : Array(Symbol)
   end
-  
+
   # Configuration for sharding on a model
   class ShardConfig
     property key_columns : Array(Symbol)
     property resolver : ShardResolver
-    
+
+    # String forms of the declared shard-key columns, in declaration order.
+    #
+    # The query builder stores `where` fields as *strings* (Crystal has no
+    # `String#to_sym`), so the router resolves routing by matching `where`
+    # field strings against these names — no hard-coded symbol guessing. This
+    # is what makes any declared shard key (e.g. `account_id`) route correctly.
+    getter key_column_names : Array(String)
+
     def initialize(@key_columns : Array(Symbol), @resolver : ShardResolver)
+      @key_column_names = @key_columns.map(&.to_s)
+    end
+
+    # Whether `column_name` (a `where`-field string) is a declared shard key.
+    def shard_key?(column_name : String) : Bool
+      @key_column_names.includes?(column_name)
     end
   end
-  
+
   # Built-in hash sharding resolver
   class HashResolver < ShardResolver
     getter shard_count : Int32
     getter shard_prefix : String
-    
+
     @shards : Array(Symbol)
-    
+
     def initialize(@key_columns : Array(Symbol), @shard_count : Int32, @shard_prefix : String = "shard")
       # Crystal doesn't support dynamic symbol creation, so we need to handle known shard counts
       @shards = case @shard_count
-      when 1
-        [:shard_0]
-      when 2
-        [:shard_0, :shard_1]
-      when 3
-        [:shard_0, :shard_1, :shard_2]
-      when 4
-        [:shard_0, :shard_1, :shard_2, :shard_3]
-      when 8
-        [:shard_0, :shard_1, :shard_2, :shard_3, :shard_4, :shard_5, :shard_6, :shard_7]
-      when 16
-        [:shard_0, :shard_1, :shard_2, :shard_3, :shard_4, :shard_5, :shard_6, :shard_7,
-         :shard_8, :shard_9, :shard_10, :shard_11, :shard_12, :shard_13, :shard_14, :shard_15]
-      else
-        raise "Unsupported shard count: #{@shard_count}. Supported counts are: 1, 2, 3, 4, 8, 16"
-      end
+                when 1
+                  [:shard_0]
+                when 2
+                  [:shard_0, :shard_1]
+                when 3
+                  [:shard_0, :shard_1, :shard_2]
+                when 4
+                  [:shard_0, :shard_1, :shard_2, :shard_3]
+                when 8
+                  [:shard_0, :shard_1, :shard_2, :shard_3, :shard_4, :shard_5, :shard_6, :shard_7]
+                when 16
+                  [:shard_0, :shard_1, :shard_2, :shard_3, :shard_4, :shard_5, :shard_6, :shard_7,
+                   :shard_8, :shard_9, :shard_10, :shard_11, :shard_12, :shard_13, :shard_14, :shard_15]
+                else
+                  raise "Unsupported shard count: #{@shard_count}. Supported counts are: 1, 2, 3, 4, 8, 16"
+                end
     end
-    
+
     def resolve(model : Grant::Base) : Symbol
       values = @key_columns.map { |col| model.read_attribute(col.to_s) }
       resolve_for_values(values)
     end
-    
+
     def resolve_for_keys(**keys) : Symbol
       values = @key_columns.map { |col| keys[col]? || raise "Missing shard key: #{col}" }
       resolve_for_values(values)
     end
-    
+
     def all_shards : Array(Symbol)
       @shards
     end
-    
+
     def resolve_for_values(values : Array) : Symbol
       # Create composite key string
       key = values.map(&.to_s).join(":")
-      
+
       # Use hash function for even distribution
       hash_value = key.hash
-      
+
       # Determine shard number
       shard_num = hash_value.abs % @shard_count
-      
+
       # Return the shard symbol from our pre-defined array
       @shards[shard_num]
     end
   end
-  
+
   # Range-based sharding resolver - TODO: implement with proper type handling
-  
+
   # Lookup-based sharding resolver (for geographic, etc)
   class LookupResolver < ShardResolver
     getter lookup_table : Hash(String, Symbol)
     getter default_shard : Symbol?
-    
+
     def initialize(@key_column : Symbol, @lookup_table : Hash(String, Symbol), @default_shard : Symbol? = nil)
     end
-    
+
     def resolve(model : Grant::Base) : Symbol
       value = model.read_attribute(@key_column.to_s).to_s
       @lookup_table[value]? || @default_shard || raise "No shard found for value: #{value}"
     end
-    
+
     def resolve_for_keys(**keys) : Symbol
       value = keys[@key_column]?.try(&.to_s) || raise "Missing shard key: #{@key_column}"
       @lookup_table[value]? || @default_shard || raise "No shard found for value: #{value}"
     end
-    
+
+    def resolve_for_values(values : Array) : Symbol
+      value = values.first?.try(&.to_s) || raise "Missing shard key: #{@key_column}"
+      @lookup_table[value]? || @default_shard || raise "No shard found for value: #{value}"
+    end
+
     def all_shards : Array(Symbol)
       shards = @lookup_table.values.uniq
       if default = @default_shard
@@ -105,7 +133,7 @@ module Grant::Sharding
       shards
     end
   end
-  
+
   # Module to include in models for sharding support
   module Model
     macro included
@@ -131,6 +159,20 @@ module Grant::Sharding
         end
       end
       
+      # Bare class-level count for sharded models.
+      #
+      # The default Grant::Querying#count hits `adapter` directly, which raises
+      # for a sharded model with no shard context. Route it through the sharded
+      # query builder instead so `Model.count` scatter-gathers across all shards
+      # (and still single-shards if a shard context is active).
+      def self.count : Int32
+        if sharding_config
+          __builder.count.to_i32
+        else
+          super
+        end
+      end
+
       # Query on specific shard
       def self.on_shard(shard : Symbol)
         Grant::Sharding::ShardedQuery({{@type}}).new(self, shard)
@@ -188,7 +230,7 @@ module Grant::Sharding
         end
       end
     end
-    
+
     # DSL for configuring sharding
     macro shards_by(*columns, strategy = :hash, **options)
       {% if strategy == :hash %}
@@ -254,13 +296,13 @@ module Grant::Sharding
         Grant::Sharding::ShardedQueryBuilder({{@type}}).new(db_type, :and, self.sharding_config)
       end
     end
-    
+
     # Determine shard for a model instance
     def determine_shard : Symbol
       if shard = @current_shard
         return shard
       end
-      
+
       if config = self.class.sharding_config
         @current_shard = config.resolver.resolve(self)
         @current_shard.not_nil!
@@ -268,7 +310,7 @@ module Grant::Sharding
         raise "Model #{self.class.name} is not configured for sharding"
       end
     end
-    
+
     # Ensure we're on the correct shard before operations
     macro before_save
       if self.class.sharding_config
@@ -276,57 +318,57 @@ module Grant::Sharding
         Grant::ShardManager.set_current_shard(@current_shard)
       end
     end
-    
+
     macro after_save
       if self.class.sharding_config
         Grant::ShardManager.set_current_shard(nil)
       end
     end
   end
-  
+
   # Query builder for sharded queries - use ShardedScope instead
   # Keeping for backward compatibility but delegating to new implementation
   class ShardedQuery(Model)
     @scope : ShardedScope(Model)
-    
+
     def initialize(@model : Model.class, @shard : Symbol)
       @scope = ShardedScope(Model).new(@model, @shard)
     end
-    
+
     def where(**conditions)
       @scope.where(**conditions)
     end
-    
+
     def all
       @scope.all
     end
-    
+
     def count
       @scope.count
     end
-    
+
     def find(id)
       @scope.find(id)
     end
   end
-  
+
   # Query builder for multi-shard queries - use MultiShardScope instead
   # Keeping for backward compatibility but delegating to new implementation
   class MultiShardQuery(Model)
     @scope : MultiShardScope(Model)
-    
+
     def initialize(@model : Model.class)
       @scope = MultiShardScope(Model).new(@model)
     end
-    
+
     def count : Int64
       @scope.count
     end
-    
+
     def where(**conditions)
       @scope.where(**conditions)
     end
-    
+
     def all
       @scope.all
     end

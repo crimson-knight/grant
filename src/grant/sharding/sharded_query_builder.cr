@@ -6,26 +6,26 @@ module Grant::Sharding
   class ShardedQueryBuilder(Model) < Query::Builder(Model)
     @router : QueryRouter(Model)
     @force_shard : Symbol?
-    
+
     def initialize(db_type : DbType, boolean_operator = :and, shard_config : ShardConfig? = nil)
       super(db_type, boolean_operator)
       config = shard_config || raise "ShardedQueryBuilder requires a shard config"
       @router = QueryRouter(Model).new(Model, config)
       @force_shard = nil
     end
-    
+
     # Force query to run on specific shard
     def on_shard(shard : Symbol) : self
       @force_shard = shard
       self
     end
-    
+
     # Execute query on all shards
     def on_all_shards : self
       @force_shard = :all
       self
     end
-    
+
     # Override select to use routing
     def select : Array(Model)
       if force_shard = @force_shard
@@ -43,35 +43,51 @@ module Grant::Sharding
         execution.execute
       end
     end
-    
+
     # Internal method to select without routing (avoids infinite recursion)
     def select_without_routing : Array(Model)
       records = assembler.select.run
-      
+
       # Apply eager loading if any associations are specified
       all_associations = @includes_associations + @preload_associations + @eager_load_associations
       unless all_associations.empty?
         Grant::AssociationLoader.load_associations(records, all_associations)
       end
-      
+
       records
     end
-    
-    # Internal method to count without routing
+
+    # Internal method to count without routing.
+    #
+    # Executes directly against the current shard's adapter via the assembler
+    # — no routing, hence no recursion. Normalizes the assembler's
+    # Int64 | Array(Int64) (the latter arises with GROUP BY) into a single
+    # Int64, matching Query::Builder#count.
     def count_without_routing : Int64
-      assembler.count(query: true)
+      result = assembler.count.run
+      case result
+      when Int64
+        result
+      when Array(Int64)
+        result.sum
+      else
+        0_i64
+      end
     end
-    
-    # Internal method to exists? without routing
+
+    # Internal method to exists? without routing (see count_without_routing).
     def exists_without_routing : Bool
-      assembler.exists?(query: true)
+      assembler.exists?.run
     end
-    
-    # Internal method to pluck without routing
-    def pluck_without_routing(column : String | Symbol) : Array(DB::Any)
+
+    # Internal method to pluck without routing.
+    #
+    # Runs the assembler's pluck directly against the current shard's adapter
+    # — no routing, hence no recursion.
+    def pluck_without_routing(column : String | Symbol) : Array(Grant::Columns::Type)
       assembler.pluck(column)
     end
-    
+
     # Override count to use routing
     def count : Int64
       if force_shard = @force_shard
@@ -86,7 +102,7 @@ module Grant::Sharding
         execution.count
       end
     end
-    
+
     # Override exists? to use routing
     def exists? : Bool
       if force_shard = @force_shard
@@ -101,9 +117,9 @@ module Grant::Sharding
         execution.exists?
       end
     end
-    
+
     # Override pluck to use routing
-    def pluck(column : String | Symbol) : Array(DB::Any)
+    def pluck(column : String | Symbol) : Array(Grant::Columns::Type)
       if force_shard = @force_shard
         if force_shard == :all
           all_shards = Grant::ShardManager.shards_for_model(Model.name)
@@ -116,13 +132,13 @@ module Grant::Sharding
         execution.pluck(column)
       end
     end
-    
+
     # Override first to use routing
     def first : Model?
       limit(1).select.first?
     end
-    
-    # Override last to use routing  
+
+    # Override last to use routing
     def last : Model?
       # For sharded queries, we need to get last from each shard
       # and then determine the actual last record
@@ -144,7 +160,7 @@ module Grant::Sharding
         results.last?
       end
     end
-    
+
     # Override find to use routing with shard key optimization
     def find(id)
       # If we can determine shard from ID, route directly
@@ -155,69 +171,69 @@ module Grant::Sharding
         where(id: id).first
       end
     end
-    
+
     # Override find! to use routing
     def find!(id)
       find(id) || raise Grant::RecordNotFound.new("Couldn't find #{Model.name} with id=#{id}")
     end
-    
+
     private def reverse_order
       # Create a new builder with reversed order
       new_builder = self.class.new(@db_type, @boolean_operator)
-      
+
       # Copy all fields
       new_builder.where_fields.concat(@where_fields)
       new_builder.group_fields.concat(@group_fields)
       new_builder.offset = @offset
       new_builder.limit = @limit
-      
+
       # Reverse order fields
       @order_fields.each do |order|
         direction = order[:direction] == Sort::Ascending ? Sort::Descending : Sort::Ascending
         new_builder.order_fields << {field: order[:field], direction: direction}
       end
-      
+
       # Preserve shard settings
       new_builder.force_shard = @force_shard
-      
+
       new_builder
     end
-    
+
     # Allow access to force_shard for reverse_order
     protected def force_shard=(shard : Symbol?)
       @force_shard = shard
     end
   end
-  
+
   # Convenience scopes for models
   class ShardedScope(Model)
     def initialize(@model : Model.class, @shard : Symbol)
     end
-    
+
     def all
       query_builder.on_shard(@shard)
     end
-    
+
     def where(**conditions)
       query_builder.on_shard(@shard).where(**conditions)
     end
-    
+
     def select
       query_builder.on_shard(@shard).select
     end
-    
+
     def find(id)
       query_builder.on_shard(@shard).find(id)
     end
-    
+
     def find!(id)
       query_builder.on_shard(@shard).find!(id)
     end
-    
+
     def count
       query_builder.on_shard(@shard).count
     end
-    
+
     def exists?(**conditions)
       if conditions.empty?
         query_builder.on_shard(@shard).exists?
@@ -225,32 +241,32 @@ module Grant::Sharding
         query_builder.on_shard(@shard).where(**conditions).exists?
       end
     end
-    
+
     def pluck(column)
       query_builder.on_shard(@shard).pluck(column)
     end
-    
+
     private def query_builder
       @model.__builder.as(ShardedQueryBuilder(Model))
     end
   end
-  
+
   class MultiShardScope(Model)
     def initialize(@model : Model.class)
     end
-    
+
     def all
       query_builder.on_all_shards
     end
-    
+
     def where(**conditions)
       query_builder.on_all_shards.where(**conditions)
     end
-    
+
     def count
       query_builder.on_all_shards.count
     end
-    
+
     def exists?(**conditions)
       if conditions.empty?
         query_builder.on_all_shards.exists?
@@ -258,11 +274,11 @@ module Grant::Sharding
         query_builder.on_all_shards.where(**conditions).exists?
       end
     end
-    
+
     def pluck(column)
       query_builder.on_all_shards.pluck(column)
     end
-    
+
     private def query_builder
       @model.__builder.as(ShardedQueryBuilder(Model))
     end

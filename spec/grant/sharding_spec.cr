@@ -9,12 +9,12 @@ class ShardedUser < Grant::Base
   # Set up test connection
   connection "test"
   table sharded_users
-  
+
   include Grant::Sharding::Model
-  
+
   # Configure hash sharding on ID
   shards_by :id, strategy: :hash, count: 4, prefix: "shard"
-  
+
   column id : Int64, primary: true
   column name : String
   column email : String
@@ -23,131 +23,160 @@ class ShardedUser < Grant::Base
   column created_at : Time = Time.utc
 end
 
+# Model sharded on a *custom* (non-id) column. Exists to prove the router
+# resolves routing by the declared shard-key name, not a hard-coded list.
+class AccountScopedRecord < Grant::Base
+  connection "test"
+  table account_scoped_records
+
+  include Grant::Sharding::Model
+
+  shards_by :account_id, strategy: :hash, count: 4
+
+  column id : Int64, primary: true
+  column account_id : Int64
+  column name : String
+end
+
 include Grant::Testing::ShardingHelpers
 
 describe "Grant::Sharding" do
-  
   describe "ShardManager" do
     it "registers shard configuration" do
       config = Grant::ShardManager.shard_config("ShardedUser")
       config.should_not be_nil
       config.not_nil!.key_columns.should eq([:id])
     end
-    
+
     it "resolves shard for given keys" do
       shard = Grant::ShardManager.resolve_shard("ShardedUser", id: 123_i64)
       shard.to_s.should match(/^shard_\d$/)
     end
-    
+
     it "returns all shards for a model" do
       shards = Grant::ShardManager.shards_for_model("ShardedUser")
       shards.size.should eq(4)
       shards.should eq([:shard_0, :shard_1, :shard_2, :shard_3])
     end
-    
+
     it "tracks current shard per fiber" do
       Grant::ShardManager.current_shard.should be_nil
-      
+
       Grant::ShardManager.with_shard(:test_shard) do
         Grant::ShardManager.current_shard.should eq(:test_shard)
       end
-      
+
       Grant::ShardManager.current_shard.should be_nil
     end
   end
-  
+
   describe "Hash Sharding" do
     it "distributes records across shards based on ID" do
       with_virtual_shards(4) do
         # Test that different IDs go to different shards
         shards_used = Set(Symbol).new
-        
+
         10.times do |i|
           id = (i + 1).to_i64
           shard = Grant::ShardManager.resolve_shard("ShardedUser", id: id)
           shards_used << shard
         end
-        
+
         # Should use multiple shards (very likely all 4 with 10 IDs)
         shards_used.size.should be >= 2
       end
     end
-    
+
     it "consistently routes to the same shard for the same ID" do
       with_virtual_shards(4) do
         id = 12345_i64
         shard1 = Grant::ShardManager.resolve_shard("ShardedUser", id: id)
         shard2 = Grant::ShardManager.resolve_shard("ShardedUser", id: id)
-        
+
         shard1.should eq(shard2)
       end
     end
   end
-  
+
   describe "Query Routing" do
     it "routes queries with shard key to single shard" do
       with_virtual_shards(4) do
         # Determine which shard ID 123 should go to
         user_id = 123_i64
         expected_shard = Grant::ShardManager.resolve_shard("ShardedUser", id: user_id)
-        
+
         # Query should only hit the expected shard
         query_log = track_shard_queries do
           ShardedUser.where(id: user_id).select
         end
-        
+
         query_log.shards_accessed.should eq([expected_shard])
       end
     end
-    
-    pending "performs scatter-gather for queries without shard key" do
+
+    it "routes a custom (non-id) shard-key column to a single shard" do
+      with_virtual_shards(4) do
+        account_id = 555_i64
+        expected_shard = Grant::ShardManager.resolve_shard("AccountScopedRecord", account_id: account_id)
+
+        # Before the routing fix, `account_id` mapped to :unknown_field and
+        # silently scatter-gathered. It must now resolve to exactly one shard.
+        query_log = track_shard_queries do
+          AccountScopedRecord.where(account_id: account_id).select
+        end
+
+        query_log.shards_accessed.should eq([expected_shard])
+      end
+    end
+
+    it "performs scatter-gather for queries without shard key" do
       with_virtual_shards(4) do
         # Query without shard key should hit all shards
         query_log = track_shard_queries do
           ShardedUser.where(active: true).select
         end
-        
+
         query_log.shards_accessed.sort.should eq([:shard_0, :shard_1, :shard_2, :shard_3])
       end
     end
-    
-    pending "routes count queries correctly" do
+
+    it "routes count queries correctly" do
       with_virtual_shards(4) do
         # Count should aggregate across all shards
         # For now, just verify it attempts to query all shards
         query_log = track_shard_queries do
           ShardedUser.count
         end
-        
+
         query_log.shards_accessed.sort.should eq([:shard_0, :shard_1, :shard_2, :shard_3])
       end
     end
   end
-  
+
   describe "on_shard scope" do
     it "forces queries to specific shard" do
       with_virtual_shards(4) do
         query_log = track_shard_queries do
           ShardedUser.on_shard(:shard_2).where(active: true).select
         end
-        
+
         query_log.shards_accessed.should eq([:shard_2])
       end
     end
   end
-  
+
   describe "on_all_shards scope" do
-    pending "executes queries on all shards" do
+    it "executes queries on all shards" do
       with_virtual_shards(4) do
         query_log = track_shard_queries do
           ShardedUser.on_all_shards.count
         end
-        
+
         query_log.shards_accessed.sort.should eq([:shard_0, :shard_1, :shard_2, :shard_3])
       end
     end
   end
-  
+
   describe "Model integration" do
     it "determines shard before save" do
       with_virtual_shards(4) do
@@ -158,7 +187,7 @@ describe "Grant::Sharding" do
           active: true,
           created_at: Time.utc
         )
-        
+
         user.current_shard.should be_nil
         shard = user.determine_shard
         shard.should_not be_nil
