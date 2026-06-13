@@ -21,7 +21,7 @@ module Grant::Query::Assembler
 
       build_sql do |s|
         s << "#{select_keyword} #{select_fields}"
-        s << "FROM #{table_name}"
+        s << from_clause
         s << joins
         s << where
         s << group_by

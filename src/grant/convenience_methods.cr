@@ -40,25 +40,35 @@
 
 module Grant::ConvenienceMethods(Model)
   # Extract values for specific columns
+  #
+  # Routes through IN-list chunking when a `where(col: array)` exceeds the chunk
+  # limit; the single-query path is `pluck_single`.
   def pluck(*fields : Symbol) : Array(Array(Grant::Columns::Type))
     field_names = fields.to_a.map(&.to_s)
 
-    # Create assembler instance once to preserve parameters
-    @_cached_assembler ||= begin
-      case @db_type
-      when Grant::Query::Builder::DbType::Pg
-        Grant::Query::Assembler::Pg(Model).new(self)
-      when Grant::Query::Builder::DbType::Mysql
-        Grant::Query::Assembler::Mysql(Model).new(self)
-      when Grant::Query::Builder::DbType::Sqlite
-        Grant::Query::Assembler::Sqlite(Model).new(self)
-      else
-        raise "Unknown database type: #{@db_type}"
-      end
+    if should_chunk_in?
+      return chunked_pluck(field_names)
     end
 
-    sql = @_cached_assembler.not_nil!.pluck_sql(field_names)
-    Grant::Query::Executor::Pluck(Model).new(sql, @_cached_assembler.not_nil!.numbered_parameters, field_names).run
+    pluck_single(field_names)
+  end
+
+  # Executes a single pluck query from already-stringified field names. Builds a
+  # fresh assembler each call so per-chunk parameters do not accumulate.
+  protected def pluck_single(field_names : Array(String)) : Array(Array(Grant::Columns::Type))
+    assembler = case @db_type
+                when Grant::Query::Builder::DbType::Pg
+                  Grant::Query::Assembler::Pg(Model).new(self)
+                when Grant::Query::Builder::DbType::Mysql
+                  Grant::Query::Assembler::Mysql(Model).new(self)
+                when Grant::Query::Builder::DbType::Sqlite
+                  Grant::Query::Assembler::Sqlite(Model).new(self)
+                else
+                  raise "Unknown database type: #{@db_type}"
+                end
+
+    sql = assembler.pluck_sql(field_names)
+    Grant::Query::Executor::Pluck(Model).new(sql, assembler.numbered_parameters, field_names).run
   end
 
   # Extract values from the first record

@@ -557,10 +557,26 @@ class Grant::Query::Builder(Model)
   end
 
   # Override select to handle eager loading and none.
+  #
+  # Routes through IN-list chunking (when a `where(col: array)` exceeds the
+  # chunk limit) and index-hint safe fallback. The actual single-query path is
+  # `select_single`.
   def select
     # Short-circuit for null relation
     return [] of Model if is_none?
 
+    if should_chunk_in?
+      return chunked_select
+    end
+
+    with_index_hint_fallback do |q|
+      q.select_single
+    end
+  end
+
+  # Executes a single SELECT (no IN-chunking), applying eager loading. Used by
+  # the chunked/fallback paths and directly when no chunking is needed.
+  protected def select_single : Array(Model)
     records = assembler.select.run
 
     # Apply eager loading if any associations are specified
@@ -654,6 +670,18 @@ class Grant::Query::Builder(Model)
 
   def count : Int64
     return 0_i64 if is_none?
+
+    if should_chunk_in?
+      return chunked_count
+    end
+
+    with_index_hint_fallback do |q|
+      q.count_single
+    end
+  end
+
+  # Executes a single COUNT (no IN-chunking). Used by the chunked/fallback paths.
+  protected def count_single : Int64
     result = assembler.count.run
     case result
     when Int64
@@ -691,6 +719,18 @@ class Grant::Query::Builder(Model)
   # ```
   def ids : Array(Grant::Columns::Type)
     return [] of Grant::Columns::Type if is_none?
+
+    if should_chunk_in?
+      return chunked_ids
+    end
+
+    with_index_hint_fallback do |q|
+      q.ids_single
+    end
+  end
+
+  # Executes a single ids query (no IN-chunking). Used by chunked/fallback paths.
+  protected def ids_single : Array(Grant::Columns::Type)
     # Reuse the pluck machinery, projecting just the primary key column. The
     # primary key name is a runtime String, so drive pluck_sql/Pluck directly
     # (the public `pluck` takes Symbol splat fields, unavailable from a String).
@@ -915,9 +955,23 @@ class Grant::Query::Builder(Model)
     result
   end
 
-  # Delete all records matching the query
+  # Delete all records matching the query.
+  #
+  # When a `where(col: array)` exceeds the IN-list chunk limit, the conditions
+  # are chunked and each DELETE runs in a single transaction (see
+  # `chunked_delete_all`); the summed rows_affected is returned.
   def delete_all : Int64
     Model.guard_writes!
+
+    if should_chunk_in?
+      return chunked_delete_all
+    end
+
+    delete_all_single
+  end
+
+  # Executes a single DELETE (no IN-chunking). Used by the chunked path.
+  protected def delete_all_single : Int64
     result = assembler.delete
     result.rows_affected
   end
@@ -1026,6 +1080,10 @@ class Grant::Query::Builder(Model)
     if sc = @select_columns
       new_query.select_columns = sc.dup
     end
+
+    # Copy large-table toolkit state: index hints, IN-chunk override, annotation.
+    @index_hints.each { |h| new_query.index_hints << h }
+    new_query.copy_scale_state_from(self)
 
     new_query
   end

@@ -243,7 +243,7 @@ module Grant::Query::Assembler
       count_expr = @query.distinct? ? "COUNT(DISTINCT #{field_list})" : "COUNT(*)"
       sql = build_sql do |s|
         s << "SELECT #{count_expr}"
-        s << "FROM #{table_name}"
+        s << from_clause
         s << joins
         s << where
         s << group_by
@@ -263,7 +263,7 @@ module Grant::Query::Assembler
     def first(n : Int32 = 1) : Executor::List(Model)
       sql = build_sql do |s|
         s << "#{select_keyword} #{field_list}"
-        s << "FROM #{table_name}"
+        s << from_clause
         s << joins
         s << where
         s << group_by
@@ -316,7 +316,7 @@ module Grant::Query::Assembler
     def select
       sql = build_sql do |s|
         s << "#{select_keyword} #{field_list}"
-        s << "FROM #{table_name}"
+        s << from_clause
         s << joins
         s << where
         s << group_by
@@ -341,7 +341,7 @@ module Grant::Query::Assembler
     def explain_select_sql : String
       build_sql do |s|
         s << "#{select_keyword} #{field_list}"
-        s << "FROM #{table_name}"
+        s << from_clause
         s << joins
         s << where
         s << group_by
