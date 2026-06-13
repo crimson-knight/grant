@@ -1,12 +1,21 @@
 module Grant::Scale::Streaming
-  # Class-level `each_streamed` that respects the model's current scope
-  # (including the `multitenant` default scope). Mirrors how `self.all` routes
-  # through `current_scope`.
-  #
-  # ```
-  # User.each_streamed { |u| process(u) } # all rows, streamed
-  # ```
+  # Class-level streaming entrypoint, included into every model so you can write
+  # `Model.each_streamed { ... }` without first building a query.
   module ClassMethods
+    # Streams every row of the model, yielding one hydrated record at a time
+    # directly off the adapter result set, and returns `Nil`.
+    #
+    # Respects the model's current scope — including the `multitenant` default
+    # scope — exactly as `Model.all` does, by routing through `current_scope`.
+    # Delegates to the `Query::Builder#each_streamed` terminal, so the same
+    # memory characteristics and caveats apply (no eager-loaded associations;
+    # use `find_each` if you need those).
+    #
+    # ```
+    # User.each_streamed do |user|
+    #   process(user) # all rows, one hydrated record at a time
+    # end
+    # ```
     def each_streamed(& : self ->) : Nil
       scope = responds_to?(:current_scope) ? current_scope : __builder
       scope.each_streamed { |record| yield record }
@@ -40,9 +49,20 @@ class Grant::Query::Builder(Model)
     end
   end
 
-  # Runs the SELECT and yields one hydrated Model per row off the live result
-  # set. A single assembler instance is used so the SQL and its bound parameters
-  # stay in sync. The connection is held only for the duration of iteration.
+  # Runs the SELECT and yields one hydrated `Model` per row off the live result
+  # set, returning `Nil`.
+  #
+  # A single assembler instance builds both the SQL and its bound parameters so
+  # they stay in sync. The connection is held open only for the duration of the
+  # iteration. `protected` — the public entrypoint is `#each_streamed` (which
+  # wraps this with index-hint safe fallback); call that instead.
+  #
+  # ```
+  # # internal use within Query::Builder#each_streamed:
+  # with_index_hint_fallback do |q|
+  #   q.stream_rows { |record| yield record }
+  # end
+  # ```
   protected def stream_rows(& : Model ->) : Nil
     a = assembler
     built = a.select # populates a.numbered_parameters via the WHERE build

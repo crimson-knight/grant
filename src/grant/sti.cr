@@ -239,24 +239,48 @@ module Grant::STI
   end
 
   module ClassMethods
-    # The discriminator column name. Override (or set via the `sti` macro) to
-    # use a custom column such as `"persona_type"`.
+    # Returns the name of the discriminator (type) column as a `String`,
+    # defaulting to `"type"`.
+    #
+    # Override this method (or set it via the `sti` macro) to use a custom
+    # column such as `"persona_type"`. Whatever it returns is the column Grant
+    # reads to decide which subclass to instantiate, and writes when persisting a
+    # new record.
+    #
+    # ```
+    # Persona.inheritance_column      # => "type"
+    # AdminPersona.inheritance_column # => "type" (inherited)
+    # ```
     def inheritance_column : String
       "type"
     end
 
-    # The value stored in the inheritance column for this class. Defaults to
-    # the class name.
+    # Returns the value stored in the inheritance column for this class as a
+    # `String`, defaulting to the class name.
+    #
+    # This is the literal string written to the `inheritance_column` for records
+    # of this class, and the value a query filters on for this subclass.
+    #
+    # ```
+    # AdminPersona.sti_name # => "AdminPersona"
+    # ```
     def sti_name : String
       name
     end
 
-    # Returns the STI root for this class.
+    # Returns the STI root class for this class — the ancestor that did
+    # `include Grant::STI`.
     #
     # The root's direct superclass is `Grant::Base` (that is where STI was
-    # enabled), so it returns `self`; every deeper subclass delegates to its
-    # superclass, recursing up to the root. This is real, compile-time
-    # superclass walking — not a stub.
+    # enabled), so the root returns `self`; every deeper subclass delegates to
+    # its superclass, recursing up to the root. This is real, compile-time
+    # superclass walking — not a stub. (Return type is the root model class, not
+    # annotated because each call site resolves to a different concrete class.)
+    #
+    # ```
+    # AdminPersona.sti_root # => Persona
+    # Persona.sti_root      # => Persona
+    # ```
     def sti_root
       {% if @type.superclass.id == "Grant::Base" %}
         self
@@ -265,19 +289,39 @@ module Grant::STI
       {% end %}
     end
 
-    # True when this class is an STI subclass (i.e. not the root).
+    # Returns `true` when this class is an STI subclass (i.e. not the root),
+    # `false` for the root itself.
+    #
+    # ```
+    # Persona.sti_subclass?      # => false (the root)
+    # AdminPersona.sti_subclass? # => true
+    # ```
     def sti_subclass? : Bool
       self != sti_root
     end
 
-    # The base class of the STI hierarchy (alias for `sti_root`), provided for
-    # ActiveRecord familiarity.
+    # Returns the base (root) class of the STI hierarchy — an alias for
+    # `#sti_root`, provided for ActiveRecord familiarity.
+    #
+    # ```
+    # MemberPersona.base_class # => Persona
+    # ```
     def base_class
       sti_root
     end
 
-    # Resolves a `type` column value to its registered class. Raises
-    # `SubclassNotFound` when unknown.
+    # Resolves a `type` column value (*type_name*) to its registered subclass and
+    # returns that class. Raises `Grant::STI::SubclassNotFound` when no class is
+    # registered for the value (e.g. the class is not yet required).
+    #
+    # Used internally by the polymorphic loaders, but also handy when you have a
+    # raw type string and want the matching class. (Return type is a
+    # `Grant::Base.class`; not annotated because the concrete subclass varies.)
+    #
+    # ```
+    # Persona.find_sti_class("AdminPersona") # => AdminPersona
+    # Persona.find_sti_class("Nope")         # raises Grant::STI::SubclassNotFound
+    # ```
     def find_sti_class(type_name : String)
       klass = Grant::STI.find_sti_class_by_name(type_name)
       if klass.nil?
@@ -289,18 +333,28 @@ module Grant::STI
       klass
     end
 
-    # The set of `sti_name`s this class should match in queries: itself plus
-    # all registered descendants (AR semantics). Computed at compile time from
-    # the full STI registry via the resolver generated in `macro finished`.
+    # Returns the `Array(String)` of `sti_name`s a query for this class should
+    # match: this class itself plus all of its registered descendants (matching
+    # ActiveRecord semantics). Computed at compile time from the full STI
+    # registry via the resolver generated in `macro finished`.
+    #
+    # This is why `Persona.all` returns admins and members too, while
+    # `AdminPersona.all` is restricted to admins (and any admin subclasses).
+    #
+    # ```
+    # Persona.sti_names_for_query      # => ["Persona", "AdminPersona", "MemberPersona"]
+    # AdminPersona.sti_names_for_query # => ["AdminPersona"]
+    # ```
     def sti_names_for_query : Array(String)
       Grant::STI.descendant_names(self.name)
     end
 
-    # Builds an unfiltered query builder for this class, applying any default
-    # scope but NOT the STI type filter. Mirrors
+    # Builds an unfiltered `Grant::Query::Builder` for this class, applying any
+    # default scope but NOT the STI type filter. Mirrors
     # `Grant::Scoping::ClassMethods#current_scope` so STI can compose without
     # relying on the `super` chain (which the root re-points for column
-    # expansion).
+    # expansion). Internal building block for `current_scope`; not part of the
+    # public query API.
     def __sti_unfiltered_scope
       db_type = case adapter.class.to_s
                 when "Grant::Adapter::Pg"
