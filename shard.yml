@@ -13,51 +13,18 @@ license: MIT
 dependencies:
   db:
     github: crystal-lang/crystal-db
-    # Bumped 0.13 -> 0.14 to satisfy the bridged mysql 0.17.0 (PR #123). The
-    # current sqlite3 (0.23.0) and pg (0.30.0) also support db 0.14, so the
-    # whole dependency set resolves cleanly. Revert to ~> 0.13 only if the
-    # mysql bridge is rolled back.
-    version: ~> 0.14.0
+    version: ~> 0.13.1
 
 development_dependencies:
-  # BRIDGE (Thread C): point mysql at crystal-lang/crystal-mysql PR #123, which
-  # adds caching_sha2_password / sha256_password / auth-switch support
-  # (src/mysql/auth.cr, SHA-1 OAEP full-auth — validated live against MySQL
-  # 8.0.46 / 8.4.9 / 9.7.0 / Percona 8.0; see docs/mysql_compatibility.md).
-  #
-  # PR #123 is not yet on a tagged release and `pull/123/head` is not a branch
-  # on the upstream remote, so we cannot use a plain `github:` + `version:`
-  # constraint yet. Use ONE of the two forms below until #123 ships a release:
-  #
-  #   (a) PREFERRED once the PR author pushes a named branch, or for CI that can
-  #       fetch the PR ref into a fork branch:
-  #         mysql:
-  #           github: crystal-lang/crystal-mysql
-  #           branch: pr-123            # the multi-auth-plugin branch
-  #
-  #   (b) Local development bridge (what we validated): clone the PR into a local
-  #       fork branch `pr-123` and point at it via a file:// git URL:
-  #         mysql:
-  #           git: "file:///absolute/path/to/crystal-mysql"
-  #           branch: pr-123
-  #
-  # When #123 merges and crystal-mysql cuts a release (>= 0.17.0), switch to:
-  #         mysql:
-  #           github: crystal-lang/crystal-mysql
-  #           version: ">= 0.17.0"
-  #
-  # NOTE: connect with `?ssl-mode=disabled` in the URL to exercise the
-  # caching_sha2 RSA full-auth path over plaintext; the default (preferred TLS)
-  # sends the password as cleartext inside the TLS tunnel and skips RSA.
   mysql:
     github: crystal-lang/crystal-mysql
-    branch: pr-123
+    version: ~> 0.16.0
   sqlite3:
     github: crystal-lang/crystal-sqlite3
-    version: ">= 0.21.0"
+    version: ~> 0.21.0
   pg:
     github: will/crystal-pg
-    version: ">= 0.29.0"
+    version: ~> 0.29.0
   ameba:
     github: crystal-ameba/ameba
     version: ~> 1.6.4
