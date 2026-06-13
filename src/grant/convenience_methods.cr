@@ -39,10 +39,32 @@
 # ```
 
 module Grant::ConvenienceMethods(Model)
-  # Extract values for specific columns
+  # Returns the values of the given *fields* for the matching rows, skipping
+  # model instantiation.
   #
-  # Routes through IN-list chunking when a `where(col: array)` exceeds the chunk
-  # limit; the single-query path is `pluck_single`.
+  # Each result row is an `Array` of the requested column values, in the order
+  # the *fields* were given. Because no model objects are built, `pluck` is much
+  # cheaper than mapping over `select` when you only need a few columns.
+  #
+  # *fields* are column names as symbols. Respects the relation's WHERE/ORDER/
+  # LIMIT. Routes through IN-list chunking when a `where(col: array)` exceeds the
+  # chunk limit; the single-query path is `pluck_single`.
+  #
+  # Returns `Array(Array(Grant::Columns::Type))` — one inner array per row.
+  #
+  # ```
+  # class User < Grant::Base
+  #   column id : Int64, primary: true
+  #   column email : String
+  #   column active : Bool
+  # end
+  #
+  # User.where(active: true).pluck(:id, :email)
+  # # => [[1, "a@example.com"], [2, "b@example.com"]]
+  #
+  # # Single column still yields nested arrays:
+  # User.all.pluck(:id) # => [[1], [2], [3]]
+  # ```
   def pluck(*fields : Symbol) : Array(Array(Grant::Columns::Type))
     field_names = fields.to_a.map(&.to_s)
 
@@ -71,12 +93,48 @@ module Grant::ConvenienceMethods(Model)
     Grant::Query::Executor::Pluck(Model).new(sql, assembler.numbered_parameters, field_names).run
   end
 
-  # Extract values from the first record
+  # Returns the given *fields* from the first matching row, or `nil` if none.
+  #
+  # Like a single-row `pluck`: it applies `LIMIT 1`, then returns that row's
+  # values as a flat `Array` (not nested), or `nil` when the relation is empty.
+  #
+  # *fields* are column names as symbols.
+  #
+  # Returns `Array(Grant::Columns::Type)?` — the first row's values, or `nil`.
+  #
+  # ```
+  # User.where(active: true).pick(:id, :email)
+  # # => [1, "a@example.com"]
+  #
+  # User.where(active: false).pick(:id) # => nil  (when no rows match)
+  # ```
   def pick(*fields : Symbol) : Array(Grant::Columns::Type)?
     limit(1).pluck(*fields).first?
   end
 
-  # Process records in batches
+  # Processes matching records in batches, yielding each batch as an Array.
+  #
+  # Uses primary-key cursor pagination (not OFFSET), so it stays efficient and
+  # stable on large tables even as rows are inserted/deleted during iteration.
+  # The caller's relation is never mutated.
+  #
+  # - *of*: maximum records per batch (default `1000`).
+  # - *start* / *finish*: inclusive lower/upper primary-key bounds to scan.
+  # - *order*: `:asc` (default) or `:desc` primary-key direction.
+  # - *load*, *error_on_ignore*: accepted for ActiveRecord signature parity.
+  #
+  # Yields each batch as an `Array(Model)`.
+  #
+  # ```
+  # User.where(active: true).in_batches(of: 500) do |batch|
+  #   puts "processing #{batch.size} users"
+  # end
+  #
+  # # Only ids 1_000..2_000, newest first:
+  # User.all.in_batches(of: 100, start: 1_000, finish: 2_000, order: :desc) do |batch|
+  #   batch.each { |u| process(u) }
+  # end
+  # ```
   def in_batches(of batch_size : Int32 = 1000, start : Int64? = nil, finish : Int64? = nil, load : Bool = false, error_on_ignore : Bool = false, order : Symbol = :asc, &block : Array(Model) -> _)
     ascending = order != :desc
     primary_key = Model.primary_name
@@ -120,8 +178,18 @@ module Grant::ConvenienceMethods(Model)
     end
   end
 
-  # Add annotation to queries
-  def annotate(comment : String)
+  # Attaches a SQL comment to this query and returns the relation for chaining.
+  #
+  # The *comment* is emitted as an inline `/* ... */` comment in the generated
+  # SQL (see `annotation_comment`), which is handy for tracing a query back to
+  # the code that issued it in database logs or APM tools. Any `*/` in *comment*
+  # is stripped so it cannot terminate the comment early.
+  #
+  # ```
+  # User.where(active: true).annotate("dashboard#index").select
+  # # => SELECT ... FROM users WHERE active = ? /* dashboard#index */
+  # ```
+  def annotate(comment : String) : self
     @query_annotation = comment
     self
   end

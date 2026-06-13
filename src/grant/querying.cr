@@ -6,7 +6,28 @@ module Grant::Querying
   end
 
   module ClassMethods
-    # Entrypoint for creating a new object from a result set.
+    # Builds a single model instance from the current row of a result set.
+    #
+    # Marks the record as persisted (not a new record) and fires the
+    # `after_find` callback if the model defines one. This is the low-level
+    # entry point used by every read path; you rarely call it directly.
+    #
+    # *result* is a positioned `DB::ResultSet` (its cursor must already point at
+    # a row). Returns the hydrated model instance.
+    #
+    # ```
+    # class User < Grant::Base
+    #   column id : Int64, primary: true
+    #   column email : String
+    #   column active : Bool
+    # end
+    #
+    # User.adapter.open do |db|
+    #   db.query("SELECT * FROM users LIMIT 1") do |rs|
+    #     rs.each { user = User.from_rs(rs) }
+    #   end
+    # end
+    # ```
     def from_rs(result : DB::ResultSet) : self
       model = new
       model.new_record = false
@@ -15,7 +36,23 @@ module Grant::Querying
       model
     end
 
-    def raw_all(clause = "", params = [] of Grant::Columns::Type)
+    # Runs a raw SQL fragment against the model's table and hydrates the rows.
+    #
+    # Unlike `all`, this always bypasses the scope/query-builder layer and runs
+    # *clause* verbatim after the generated `SELECT ... FROM table`. Use it for
+    # JOINs or multi-parameter clauses the chainable builder can't express.
+    #
+    # - *clause*: SQL appended after the SELECT list (e.g. `"WHERE email = ?"`,
+    #   or a full `"JOIN ... WHERE ..."`). Defaults to `""` (all rows).
+    # - *params*: positional bind values substituted for `?` placeholders.
+    #
+    # Returns an `Array(self)` of hydrated records (eagerly loaded).
+    #
+    # ```
+    # User.raw_all("WHERE active = ?", [true])
+    # User.raw_all("WHERE email LIKE ? ORDER BY id DESC", ["%@example.com"])
+    # ```
+    def raw_all(clause = "", params = [] of Grant::Columns::Type) : Array(self)
       rows = [] of self
       adapter.select(select_container, clause, params) do |results|
         results.each do
@@ -25,14 +62,30 @@ module Grant::Querying
       rows
     end
 
-    # All will return all rows in the database. The clause allows you to specify
-    # a WHERE, JOIN, GROUP BY, ORDER BY and any other SQL92 compatible query to
-    # your table. The result will be a Collection(Model) object which lazy loads
-    # an array of instantiated instances of your Model class.
-    # This allows you to take full advantage of the database
-    # that you are using so you are not restricted or dummied down to support a
-    # DSL.
-    # Lazy load prevent running unnecessary queries from unused variables.
+    # Returns all rows of the model's table, optionally filtered by a raw SQL *clause*.
+    #
+    # The *clause* accepts any SQL92-compatible fragment (WHERE, JOIN, GROUP BY,
+    # ORDER BY, etc.) appended after the generated SELECT, so you are never
+    # restricted to a DSL. Results are lazy: no query runs until you iterate or
+    # call a terminal method on the returned collection.
+    #
+    # For most filtering prefer the chainable builder (`Model.where(...)`); reach
+    # for `all` with a raw clause when you need SQL the builder can't express.
+    #
+    # - *clause*: SQL appended after `SELECT ... FROM table` (default `""` = every row).
+    # - *params*: positional bind values for `?` placeholders in *clause*.
+    # - *use_primary_adapter*: when `true` (default) the read is routed to the
+    #   primary connection (so it sees prior writes); set `false` to allow a
+    #   read replica.
+    #
+    # Returns a lazily-evaluated collection that yields `self` instances.
+    #
+    # ```
+    # User.all                             # every user (lazy)
+    # User.all.to_a                        # force-load into an Array(User)
+    # User.all("WHERE active = ?", [true]) # raw filtered query
+    # User.all.each { |user| puts user.email }
+    # ```
     def all(clause = "", params = [] of Grant::Columns::Type, use_primary_adapter = true)
       mark_write_operation if use_primary_adapter == true
 
@@ -60,7 +113,21 @@ module Grant::Querying
       end
     end
 
-    # First adds a `LIMIT 1` clause to the query and returns the first result
+    # Returns the first matching record, or `nil` if none match.
+    #
+    # Adds a `LIMIT 1` to the query. Without a *clause* it returns the first row
+    # by the table's natural/scoped order; add an `ORDER BY` clause for a
+    # deterministic "first".
+    #
+    # - *clause*: optional raw SQL fragment (e.g. `"WHERE active = ?"`,
+    #   `"ORDER BY id DESC"`).
+    # - *params*: positional bind values for `?` placeholders in *clause*.
+    #
+    # ```
+    # User.first                             # => #<User ...> or nil
+    # User.first("WHERE active = ?", [true]) # first active user
+    # User.first("ORDER BY id DESC")         # highest id
+    # ```
     def first(clause = "", params = [] of Grant::Columns::Type)
       # If we have scoping support, use current_scope with limit
       if responds_to?(:current_scope)
@@ -86,37 +153,75 @@ module Grant::Querying
       end
     end
 
+    # Like `first` but raises `NotFound` instead of returning `nil`.
+    #
+    # ```
+    # User.first!                             # => #<User ...> (raises if table empty)
+    # User.first!("WHERE active = ?", [true]) # => first active user or raises
+    # ```
     def first!(clause = "", params = [] of Grant::Columns::Type)
       first(clause, params) || raise NotFound.new("No #{{{@type.name.stringify}}} found with first(#{clause})")
     end
 
-    # find returns the row with the primary key specified. Otherwise nil.
+    # Returns the record whose primary key equals *value*, or `nil` if none.
+    #
+    # *value* is the primary-key value to look up (e.g. an `Int64` id).
+    #
+    # ```
+    # User.find(1)   # => #<User id: 1, ...> or nil
+    # User.find(999) # => nil
+    # ```
     def find(value)
       first("WHERE #{primary_name} = ?", [value])
     end
 
-    # find returns the row with the primary key specified. Otherwise raises an exception.
+    # Like `find` but raises `NotFound` when no record has primary key *value*.
+    #
+    # ```
+    # User.find!(1)   # => #<User id: 1, ...>
+    # User.find!(999) # raises Grant::Querying::NotFound
+    # ```
     def find!(value)
       find(value) || raise Grant::Querying::NotFound.new("No #{{{@type.name.stringify}}} found where #{primary_name} = #{value}")
     end
 
-    # Returns the first row found that matches *criteria*. Otherwise `nil`.
+    # Returns the first record matching every column in *criteria*, or `nil`.
+    #
+    # Pass column/value pairs as keyword arguments; they are combined with AND.
+    # A `nil` value matches `IS NULL`.
+    #
+    # ```
+    # User.find_by(email: "a@example.com") # => #<User ...> or nil
+    # User.find_by(active: true, email: "a@b.com")
+    # ```
     def find_by(**criteria : Grant::Columns::Type)
       find_by criteria.to_h
     end
 
     # :ditto:
+    #
+    # Hash form — accepts a pre-built criteria hash (`Grant::ModelArgs`).
+    #
+    # ```
+    # User.find_by({"email" => "a@example.com", "active" => true})
+    # ```
     def find_by(criteria : Grant::ModelArgs)
       clause, params = build_find_by_clause(criteria)
       first "WHERE #{clause}", params
     end
 
-    # Returns the first row found that matches *criteria*. Otherwise raises a `NotFound` exception.
+    # Like `find_by` but raises `NotFound` when nothing matches *criteria*.
+    #
+    # ```
+    # User.find_by!(email: "a@example.com") # => #<User ...> or raises
+    # ```
     def find_by!(**criteria : Grant::Columns::Type)
       find_by!(criteria.to_h)
     end
 
     # :ditto:
+    #
+    # Hash form — accepts a pre-built criteria hash (`Grant::ModelArgs`).
     def find_by!(criteria : Grant::ModelArgs)
       find_by(criteria) || raise NotFound.new("No #{{{@type.name.stringify}}} found where #{criteria.map { |k, v| %(#{k} #{v.nil? ? "is NULL" : "= #{v}"}) }.join(" and ")}")
     end
@@ -280,6 +385,25 @@ module Grant::Querying
       rows_affected
     end
 
+    # Iterates over every matching record one at a time, loading them in batches.
+    #
+    # Memory-friendly for large tables: instead of loading the whole result set,
+    # it pages through it with LIMIT/OFFSET and yields each record individually.
+    # Built on `find_in_batches`.
+    #
+    # - *clause* / *params*: optional raw SQL filter (as in `all`).
+    # - *batch_size*: rows fetched per page (default `100`).
+    # - *offset*: starting row offset (default `0`).
+    #
+    # ```
+    # User.find_each(batch_size: 500) do |user|
+    #   puts user.email
+    # end
+    #
+    # User.find_each("WHERE active = ?", [true]) do |user|
+    #   process(user)
+    # end
+    # ```
     def find_each(clause = "", params = [] of Grant::Columns::Type, batch_size limit = 100, offset = 0, &)
       find_in_batches(clause, params, batch_size: limit, offset: offset) do |batch|
         batch.each do |record|
@@ -288,6 +412,23 @@ module Grant::Querying
       end
     end
 
+    # Iterates over matching records in batches, yielding each batch as an Array.
+    #
+    # Pages through the result set with LIMIT/OFFSET so a large table is never
+    # fully materialized at once. Use this (rather than `find_each`) when you can
+    # process records a batch at a time (e.g. bulk updates).
+    #
+    # - *clause* / *params*: optional raw SQL filter (as in `all`).
+    # - *batch_size*: rows per batch (default `100`). Must be `>= 1`.
+    # - *offset*: starting row offset (default `0`).
+    #
+    # Raises `ArgumentError` if *batch_size* is less than 1.
+    #
+    # ```
+    # User.find_in_batches(batch_size: 1000) do |batch|
+    #   puts "processing #{batch.size} users"
+    # end
+    # ```
     def find_in_batches(clause = "", params = [] of Grant::Columns::Type, batch_size limit = 100, offset = 0, &)
       if limit < 1
         raise ArgumentError.new("batch_size must be >= 1")
@@ -301,23 +442,48 @@ module Grant::Querying
       end
     end
 
-    # Returns `true` if a records exists with a PK of *id*, otherwise `false`.
+    # Returns `true` if a record exists with primary key *id*, otherwise `false`.
+    #
+    # A `nil` *id* always returns `false`. This runs an efficient existence
+    # check (no rows are hydrated).
+    #
+    # ```
+    # User.exists?(1)   # => true
+    # User.exists?(999) # => false
+    # User.exists?(nil) # => false
+    # ```
     def exists?(id : Number | String | Nil) : Bool
       return false if id.nil?
       exec_exists "#{primary_name} = ?", [id]
     end
 
-    # Returns `true` if a records exists that matches *criteria*, otherwise `false`.
+    # Returns `true` if any record matches *criteria*, otherwise `false`.
+    #
+    # Pass column/value pairs as keyword arguments; they are combined with AND.
+    #
+    # ```
+    # User.exists?(email: "a@example.com") # => true/false
+    # User.exists?(active: true, id: 1)
+    # ```
     def exists?(**criteria : Grant::Columns::Type) : Bool
       exists? criteria.to_h
     end
 
     # :ditto:
+    #
+    # Hash form — accepts a pre-built criteria hash (`Grant::ModelArgs`).
     def exists?(criteria : Grant::ModelArgs) : Bool
       exec_exists *build_find_by_clause(criteria)
     end
 
-    # count returns a count of all the records
+    # Returns the total number of rows in the model's table.
+    #
+    # Counts every row unconditionally (`SELECT COUNT(*)`). To count a filtered
+    # set, use the chainable builder instead: `User.where(active: true).count`.
+    #
+    # ```
+    # User.count # => 42
+    # ```
     def count : Int32
       scalar "SELECT COUNT(*) FROM #{quoted_table_name}", &.to_s.to_i
     end
