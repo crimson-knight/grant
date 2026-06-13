@@ -125,7 +125,7 @@ class Grant::Adapter::Mysql < Grant::Adapter::Base
 
     log statement, elapsed_time, value
   end
-  
+
   def supports_lock_mode?(mode : Grant::Locking::LockMode) : Bool
     case mode
     when .update?, .share?, .update_no_wait?, .update_skip_locked?
@@ -134,12 +134,31 @@ class Grant::Adapter::Mysql < Grant::Adapter::Base
       false
     end
   end
-  
+
   def supports_isolation_level?(level : Grant::Transaction::IsolationLevel) : Bool
     true
   end
-  
+
   def supports_savepoints? : Bool
     true
+  end
+
+  # MySQL uses `LOCK IN SHARE MODE` for shared locks and does not support
+  # the SHARE NOWAIT / SHARE SKIP LOCKED variants — those raise, matching
+  # the prior behavior of `LockMode#mysql_sql`.
+  def lock_clause(mode : Grant::Locking::LockMode) : String
+    case mode
+    when .update?             then "FOR UPDATE"
+    when .share?              then "LOCK IN SHARE MODE"
+    when .update_no_wait?     then "FOR UPDATE NOWAIT"
+    when .update_skip_locked? then "FOR UPDATE SKIP LOCKED"
+    else
+      raise Grant::Locking::LockNotAvailableError.new("Lock mode #{mode} not supported in MySQL")
+    end
+  end
+
+  # MySQL reports affected rows directly on the exec result.
+  def rows_affected_for_optimistic_lock(db, result : DB::ExecResult) : Int64
+    result.rows_affected
   end
 end

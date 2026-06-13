@@ -164,16 +164,35 @@ class Grant::Adapter::Pg < Grant::Adapter::Base
       end
     end
   end
-  
+
   def supports_lock_mode?(mode : Grant::Locking::LockMode) : Bool
     true
   end
-  
+
   def supports_isolation_level?(level : Grant::Transaction::IsolationLevel) : Bool
     true
   end
-  
+
   def supports_savepoints? : Bool
     true
+  end
+
+  # PostgreSQL supports the full set of row-level lock clauses.
+  def lock_clause(mode : Grant::Locking::LockMode) : String
+    case mode
+    when .update?             then "FOR UPDATE"
+    when .share?              then "FOR SHARE"
+    when .update_no_wait?     then "FOR UPDATE NOWAIT"
+    when .update_skip_locked? then "FOR UPDATE SKIP LOCKED"
+    when .share_no_wait?      then "FOR SHARE NOWAIT"
+    when .share_skip_locked?  then "FOR SHARE SKIP LOCKED"
+    else
+      mode.to_s
+    end
+  end
+
+  # PostgreSQL reports affected rows directly on the exec result.
+  def rows_affected_for_optimistic_lock(db, result : DB::ExecResult) : Int64
+    result.rows_affected
   end
 end

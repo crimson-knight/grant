@@ -175,4 +175,17 @@ class Grant::Adapter::Sqlite < Grant::Adapter::Base
   def supports_savepoints? : Bool
     true
   end
+
+  # SQLite has no row-level locking, so the lock clause is a no-op (empty
+  # string). This preserves the prior `LockMode#sqlite_sql` degradation:
+  # locking queries still run, just without an appended lock clause.
+  def lock_clause(mode : Grant::Locking::LockMode) : String
+    ""
+  end
+
+  # SQLite does not report affected rows through `DB::ExecResult` for our
+  # optimistic-lock UPDATE, so query `changes()` on the same connection.
+  def rows_affected_for_optimistic_lock(db, result : DB::ExecResult) : Int64
+    db.scalar("SELECT changes()").as(Int64)
+  end
 end
