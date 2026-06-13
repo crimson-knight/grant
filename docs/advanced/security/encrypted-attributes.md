@@ -15,16 +15,16 @@ database_support: ["postgresql", "mysql", "sqlite"]
 
 # Encrypted Attributes
 
-Comprehensive guide to Grant's transparent encryption system for protecting sensitive data using industry-standard AES-256-GCM encryption with support for both deterministic and non-deterministic encryption modes.
+Comprehensive guide to Grant's transparent encryption system for protecting sensitive data using AES-256-CBC encryption authenticated with HMAC-SHA256 (Encrypt-then-MAC), with support for both deterministic and non-deterministic encryption modes.
 
 ## Overview
 
-Grant provides transparent encryption/decryption of sensitive data attributes, allowing you to protect data at rest while maintaining a seamless development experience. The encryption system uses AES-256-GCM for authenticated encryption and supports both searchable (deterministic) and maximum-security (non-deterministic) encryption modes.
+Grant provides transparent encryption/decryption of sensitive data attributes, allowing you to protect data at rest while maintaining a seamless development experience. The encryption system uses AES-256-CBC with HMAC-SHA256 (Encrypt-then-MAC) for authenticated encryption and supports both searchable (deterministic) and maximum-security (non-deterministic) encryption modes.
 
 ### Key Features
 
 - **Transparent Operation**: Work with encrypted attributes as regular attributes
-- **AES-256-GCM**: Authenticated encryption providing confidentiality and integrity
+- **AES-256-CBC + HMAC-SHA256**: Authenticated encryption (Encrypt-then-MAC) providing confidentiality and integrity
 - **Dual Modes**: Non-deterministic (default) and deterministic encryption
 - **Query Support**: Search deterministic encrypted fields directly
 - **Key Management**: Secure key derivation with HKDF
@@ -46,7 +46,7 @@ Grant provides transparent encryption/decryption of sensitive data attributes, a
 │            (transparent encrypt/decrypt layer)               │
 ├─────────────────────────────────────────────────────────────┤
 │               Grant::Encryption::Cipher                      │
-│              (AES-256-GCM implementation)                    │
+│              (AES-256-CBC implementation)                    │
 ├─────────────────────────────────────────────────────────────┤
 │             Grant::Encryption::KeyProvider                   │
 │           (HKDF key derivation & management)                 │
@@ -564,7 +564,7 @@ class HsmKeyProvider < Grant::Encryption::KeyProvider
     hsm_client.derive_key(
       master_key_id: ENV["HSM_MASTER_KEY_ID"],
       context: "#{model_name}.#{attribute_name}",
-      algorithm: "AES-256-GCM"
+      algorithm: "AES-256-CBC"
     )
   end
 end
