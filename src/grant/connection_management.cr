@@ -229,17 +229,17 @@ module Grant::ConnectionManagement
 
       begin
         ConnectionRegistry.get_adapter(db_name, current_role, current_shard)
-      rescue
-        # Fallback to first registered connection for backward compatibility
-        # This handles cases where models haven't configured connections yet
-        if reg = Grant::Connections.registered_connections
-          if conn = reg.first?
-            conn[:writer]
-          else
-            raise "No database connection configured. Please use Grant::ConnectionRegistry.establish_connection"
-          end
+      rescue ex : Grant::AdapterNotAvailableError
+        # Fallback to first registered connection for backward compatibility.
+        # This handles legacy setups where a model references a connection name
+        # that was not explicitly registered but a single global connection
+        # exists (the common test/dev case). If there is genuinely nothing
+        # registered, re-raise the clear, target-aware guard-rail error from
+        # get_adapter rather than masking it with a generic string.
+        if (reg = Grant::Connections.registered_connections) && (conn = reg.first?)
+          conn[:writer]
         else
-          raise "No database connection configured. Please use Grant::ConnectionRegistry.establish_connection"
+          raise ex
         end
       end
     end
