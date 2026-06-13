@@ -39,43 +39,84 @@ class Grant::Query::Builder(Model)
 
   # Force the planner to use the named index (MySQL `FORCE INDEX`). On SQLite
   # `INDEXED BY` already forces a choice, so `force_index` maps to it. PG and
-  # unsupported adapters degrade per `index_hint_mode`.
+  # unsupported adapters degrade per `index_hint_mode`. Returns `self` so it
+  # chains like any other query method.
+  #
+  # ```
+  # User.where(tenant_id: t).force_index("idx_users_tenant").to_a
+  # ```
   def force_index(*names : String) : self
     @index_hints << Grant::Query::IndexHint.new(:force, names.to_a)
     self
   end
 
   # Tell the planner to avoid the named index (MySQL `IGNORE INDEX`). SQLite and
-  # PG have no equivalent and degrade per `index_hint_mode`.
+  # PG have no equivalent and degrade per `index_hint_mode`. Returns `self` so it
+  # chains like any other query method.
+  #
+  # ```
+  # User.where(status: "active").ignore_index("idx_users_status").to_a
+  # ```
   def ignore_index(*names : String) : self
     @index_hints << Grant::Query::IndexHint.new(:ignore, names.to_a)
     self
   end
 
-  # True when this query carries any index hints.
+  # Returns `true` when this query carries one or more index hints (added via
+  # `#use_index`, `#force_index`, or `#ignore_index`), `false` otherwise.
+  #
+  # Useful for introspection in specs or tooling; the query's results are never
+  # affected by whether a hint is present.
+  #
+  # ```
+  # User.where(tenant_id: t).index_hints?                    # => false
+  # User.where(tenant_id: t).use_index("idx_t").index_hints? # => true
+  # ```
   def index_hints? : Bool
     !@index_hints.empty?
   end
 
-  # Returns a dup of this query with all index hints stripped — used by the
-  # safe-fallback path to re-run a hinted query plainly.
+  # Returns a `dup` of this query with all index hints stripped.
+  #
+  # Internal to the safe-fallback path (`#with_index_hint_fallback`), which uses
+  # it to re-run a hinted query plainly after an adapter rejects an unknown
+  # index. The original query is left untouched. `protected` — not part of the
+  # public query API.
+  #
+  # ```
+  # # internal use within Grant::Query::Builder:
+  # plain = use_index("idx_t").without_index_hints
+  # plain.index_hints? # => false
+  # ```
   protected def without_index_hints : self
     copy = dup
     copy.index_hints.clear
     copy
   end
 
-  # Runs *block* (a terminal query execution) with index-hint safe fallback.
+  # Runs *block* (a terminal query execution) with index-hint safe fallback,
+  # yielding `self` for the first attempt.
   #
-  # If the block raises a "no such index" / unknown-key error from the adapter
-  # AND this query carries index hints, the behavior depends on
+  # If the block raises an adapter "no such index" / unknown-key error AND this
+  # query carries index hints, the behavior depends on
   # `Grant.settings.index_hint_mode`:
   #
-  # - `:warn`   — log and re-run via *retry_block* with hints stripped.
-  # - `:ignore` — silently re-run with hints stripped.
+  # - `:warn`   — log a warning and re-run the block with hints stripped.
+  # - `:ignore` — silently re-run the block with hints stripped.
   # - `:strict` — re-raise the original error.
   #
-  # *retry_block* receives a hint-stripped copy of this query.
+  # On a retry the block is yielded a hint-stripped copy of this query (from
+  # `#without_index_hints`). Any error that is not an index-missing error, and
+  # any error raised when no hints are present, propagates unchanged. Returns the
+  # value of the (last) block invocation. `protected` — used internally by
+  # streaming and other terminals.
+  #
+  # ```
+  # # internal use within Grant::Query::Builder:
+  # with_index_hint_fallback do |q|
+  #   q.stream_rows { |record| yield record }
+  # end
+  # ```
   protected def with_index_hint_fallback(&)
     yield self
   rescue ex

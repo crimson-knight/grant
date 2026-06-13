@@ -97,6 +97,8 @@ module Grant
         resolved_url
       end
 
+      # Returns the registry key (`String`) identifying this connection:
+      # `"<database>:<role>"`, or `"<database>:<role>:<shard>"` when sharded.
       def connection_key : String
         if shard
           "#{database}:#{role}:#{shard}"
@@ -105,7 +107,10 @@ module Grant
         end
       end
 
-      # Build URL with pool parameters for crystal-db
+      # Returns the connection URL (`String`) with the pool/retry settings
+      # appended as crystal-db query parameters (`max_pool_size`,
+      # `initial_pool_size`, `checkout_timeout`, `retry_attempts`,
+      # `retry_delay`). Resolves a lazy `url_provider` if needed.
       def build_pool_url : String
         uri = URI.parse(resolved_url)
         params = uri.query_params
@@ -128,7 +133,31 @@ module Grant
     @@mutex = Mutex.new
     @@default_database : String? = nil
 
-    # Establish a new connection with pool configuration (eager URL).
+    # Registers a database connection from an **eager** URL string and builds its
+    # adapter (and pool) immediately. This is the form most apps use.
+    #
+    # * *database* — the connection name models refer to (via `connection` /
+    #   `connects_to`). The first connection registered becomes the default.
+    # * *adapter* — the adapter class, e.g. `Grant::Adapter::Sqlite`,
+    #   `Grant::Adapter::Pg`, `Grant::Adapter::Mysql` (must be `require`d).
+    # * *url* — the connection URL.
+    # * *role* — `:primary` (default), `:writing`, or `:reading`. Register a
+    #   `:reading` connection alongside a writer to enable read/write splitting.
+    # * *shard* — name this connection's shard for horizontal sharding, or leave
+    #   `nil`.
+    # * the remaining `pool_*` / `checkout_timeout` / `retry_*` /
+    #   `health_check_*` arguments tune the connection pool and health checks.
+    #
+    # For a URL that is only known at runtime (a device's data directory, say),
+    # use the `url_provider:` overload instead.
+    #
+    # ```
+    # Grant::ConnectionRegistry.establish_connection(
+    #   database: "primary",
+    #   adapter: Grant::Adapter::Sqlite,
+    #   url: "sqlite3:./app.db"
+    # )
+    # ```
     def self.establish_connection(
       database : String,
       adapter : Grant::Adapter::Base.class,
@@ -260,7 +289,34 @@ module Grant
       nil
     end
 
-    # Register multiple connections at once
+    # Registers many connections at once from a config hash keyed by database
+    # name. Each value is a `NamedTuple` describing one database's connections.
+    #
+    # Per-database keys (all optional):
+    #
+    # * `adapter:` — the adapter class (**required** for that entry).
+    # * `writer:` / `reader:` — eager writer/reader URLs (`String`), registered as
+    #   the `:writing` / `:reading` roles for read/write splitting.
+    # * `url:` — a single eager URL registered as the `:primary` role (use instead
+    #   of `writer`/`reader` when there is no split).
+    # * `writer_provider:` / `reader_provider:` / `url_provider:` — lazy
+    #   `Proc(String)` equivalents, invoked once on first pool build.
+    # * `pool:` — a `NamedTuple` of pool options (`max_pool_size`,
+    #   `initial_pool_size`, `checkout_timeout`, `retry_attempts`, `retry_delay`).
+    # * `health_check:` — a `NamedTuple` with `interval` / `timeout`.
+    #
+    # Each present URL/provider is forwarded to `#establish_connection`.
+    #
+    # ```
+    # Grant::ConnectionRegistry.establish_connections({
+    #   "primary" => {
+    #     adapter: Grant::Adapter::Pg,
+    #     writer:  "postgres://localhost/app",
+    #     reader:  "postgres://replica/app",
+    #     pool:    {max_pool_size: 25},
+    #   },
+    # })
+    # ```
     def self.establish_connections(config : Hash(String, NamedTuple))
       config.each do |database, settings|
         # Extract settings with defaults
@@ -365,7 +421,21 @@ module Grant
       end
     end
 
-    # Get an adapter with load balancing and failover support
+    # Resolves and returns the `Grant::Adapter::Base` for *database* / *role* /
+    # *shard*, applying load balancing and failover.
+    #
+    # Lazily materialises a `url_provider:` connection on first use. For the
+    # `:reading` role it draws a healthy replica from the load balancer when one
+    # is configured; an unhealthy primary falls back via `#try_fallback_adapter`
+    # (a missing role falls back to `:primary`; a missing reader falls back to the
+    # writer). Raises `Grant::AdapterNotAvailableError` (the actionable guard-rail
+    # error) when nothing can be resolved. This is the method models call through
+    # `ConnectionManagement#adapter`.
+    #
+    # ```
+    # writer = Grant::ConnectionRegistry.get_adapter("primary", :writing)
+    # reader = Grant::ConnectionRegistry.get_adapter("primary", :reading)
+    # ```
     def self.get_adapter(database : String, role : Symbol = :primary, shard : Symbol? = nil) : Grant::Adapter::Base
       key = if shard
               "#{database}:#{role}:#{shard}"
@@ -473,27 +543,48 @@ module Grant
       nil
     end
 
-    # Execute with a specific adapter
+    # Resolves the adapter for *database* / *role* / *shard* (via `#get_adapter`)
+    # and yields it to the block, returning the block's value.
+    #
+    # ```
+    # rows = Grant::ConnectionRegistry.with_adapter("primary", :reading) do |db|
+    #   db.open { |conn| conn.query_all("SELECT id FROM users", as: Int64) }
+    # end
+    # ```
     def self.with_adapter(database : String, role : Symbol = :primary, shard : Symbol? = nil, &)
       adapter = get_adapter(database, role, shard)
       yield adapter
     end
 
-    # Get all adapters for a database
+    # Returns every materialised `Grant::Adapter::Base` belonging to *database*
+    # (all roles and shards), as an `Array`.
+    #
+    # ```
+    # Grant::ConnectionRegistry.adapters_for_database("primary") # => [adapter, ...]
+    # ```
     def self.adapters_for_database(database : String) : Array(Grant::Adapter::Base)
       @@mutex.synchronize do
         @@adapters.select { |key, _| key.starts_with?("#{database}:") }.values
       end
     end
 
-    # Get adapter names
+    # Returns the `Array(String)` of connection keys for every materialised
+    # adapter (e.g. `["primary:writing", "primary:reading"]`).
+    #
+    # ```
+    # Grant::ConnectionRegistry.adapter_names # => ["primary:primary"]
+    # ```
     def self.adapter_names : Array(String)
       @@mutex.synchronize do
         @@adapters.keys
       end
     end
 
-    # Clear all adapters
+    # Clears materialised adapters, specifications, and the default database.
+    #
+    # NOTE: a second, more thorough `clear_all` defined later in this class also
+    # stops health monitors and load balancers and is the one actually used;
+    # prefer it for full teardown (e.g. between specs).
     def self.clear_all
       @@mutex.synchronize do
         @@adapters.clear
@@ -504,33 +595,58 @@ module Grant
       # All adapters cleared
     end
 
-    # Get default database name
+    # Returns the default database name (`String`) — the first connection
+    # registered. Raises if no connection has been established.
+    #
+    # ```
+    # Grant::ConnectionRegistry.default_database # => "primary"
+    # ```
     def self.default_database : String
       @@default_database || raise "No default database configured"
     end
 
-    # Set default database
+    # Overrides the default database name with *name*.
+    #
+    # ```
+    # Grant::ConnectionRegistry.default_database = "analytics"
+    # ```
     def self.default_database=(name : String)
       @@default_database = name
     end
 
-    # Check if a connection exists. Returns true for lazily-registered
-    # connections too (an un-materialised spec still counts as established — its
-    # URL provider just hasn't run yet), so the guard rail does not false-fire
-    # on a device target that has registered but not yet queried.
+    # Returns `true` when a connection for *database* / *role* / *shard* has been
+    # established. Lazily-registered connections count as existing even before
+    # their `url_provider` has run (an un-materialised spec is still
+    # established), so the guard rail does not false-fire on a device target that
+    # has registered but not yet queried.
+    #
+    # ```
+    # Grant::ConnectionRegistry.connection_exists?("primary")           # => true
+    # Grant::ConnectionRegistry.connection_exists?("primary", :reading) # => false
+    # ```
     def self.connection_exists?(database : String, role : Symbol = :primary, shard : Symbol? = nil) : Bool
       key = shard ? "#{database}:#{role}:#{shard}" : "#{database}:#{role}"
       @@mutex.synchronize { @@adapters.has_key?(key) || @@specifications.has_key?(key) }
     end
 
-    # Get all registered databases
+    # Returns the `Array(String)` of distinct database names that have at least
+    # one registered connection spec.
+    #
+    # ```
+    # Grant::ConnectionRegistry.databases # => ["primary", "analytics"]
+    # ```
     def self.databases : Array(String)
       @@mutex.synchronize do
         @@specifications.values.map(&.database).uniq
       end
     end
 
-    # Get all shards for a database
+    # Returns the `Array(Symbol)` of distinct shard names registered for
+    # *database*, or an empty array when it is unsharded.
+    #
+    # ```
+    # Grant::ConnectionRegistry.shards_for_database("primary") # => [:shard_one, :shard_two]
+    # ```
     def self.shards_for_database(database : String) : Array(Symbol)
       @@mutex.synchronize do
         @@specifications.values
@@ -542,7 +658,14 @@ module Grant
 
     # Pool configuration is now handled by crystal-db URL parameters
 
-    # Get health status for all connections
+    # Returns one health record per registered connection — an `Array` of
+    # `NamedTuple(key, healthy, database, role)`. A connection with no health
+    # monitor is reported as healthy.
+    #
+    # ```
+    # Grant::ConnectionRegistry.health_status
+    # # => [{key: "primary:primary", healthy: true, database: "primary", role: :primary}]
+    # ```
     def self.health_status : Array(NamedTuple(key: String, healthy: Bool, database: String, role: Symbol))
       @@mutex.synchronize do
         @@specifications.map do |key, spec|
@@ -557,18 +680,34 @@ module Grant
       end
     end
 
-    # Get load balancer for a database/shard
+    # Returns the `ReplicaLoadBalancer` for *database* (and optional *shard*), or
+    # `nil` when no reading replicas are registered for it.
+    #
+    # ```
+    # lb = Grant::ConnectionRegistry.get_load_balancer("primary")
+    # ```
     def self.get_load_balancer(database : String, shard : Symbol? = nil) : ReplicaLoadBalancer?
       lb_key = shard ? "#{database}:#{shard}" : database
       @@mutex.synchronize { @@load_balancers[lb_key]? }
     end
 
-    # Check overall system health
+    # Returns `true` when every monitored connection is currently healthy.
+    #
+    # ```
+    # Grant::ConnectionRegistry.system_healthy? # => true
+    # ```
     def self.system_healthy? : Bool
       HealthMonitorRegistry.all_healthy?
     end
 
-    # Clear all resources
+    # Tears down all connection state: stops health monitors, clears load
+    # balancers, and drops every adapter, specification, and the default
+    # database. This is the full-teardown variant (used between specs); it
+    # overrides the earlier, lighter `clear_all` defined above.
+    #
+    # ```
+    # Grant::ConnectionRegistry.clear_all # reset the registry completely
+    # ```
     def self.clear_all
       @@mutex.synchronize do
         # Stop all health monitors

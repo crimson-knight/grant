@@ -4,9 +4,17 @@ class Grant::Query::Builder(Model)
   # this many values instead of the global default.
   @in_chunk_size : Int32? = nil
 
-  # Overrides the IN-list chunk size for this query.
+  # Overrides the IN-list chunk size for this query, returning `self` to chain.
+  #
+  # When a `where(col: array)` carries more values than *size*, Grant
+  # transparently splits it into multiple queries of at most *size* values each
+  # and stitches the results back together (avoiding adapter IN-list limits and
+  # huge single statements). Without this call the global
+  # `Grant.settings.in_clause_limit` is used. Raises `ArgumentError` if *size*
+  # is not positive.
   #
   # ```
+  # # split a 10_000-element IN list into queries of 500 values each
   # User.where(id: huge_array).in_chunks(of: 500).to_a
   # ```
   def in_chunks(of size : Int32) : self
@@ -52,9 +60,16 @@ class Grant::Query::Builder(Model)
     nil
   end
 
-  # True when this query should be executed as chunked IN queries (a
-  # `where(col: array)` exceeds the effective chunk limit). Public for
-  # introspection/testing.
+  # Returns `true` when this query will be executed as chunked IN queries —
+  # i.e. some `where(col: array)` carries more values than the effective chunk
+  # limit (`#in_chunks` override or `Grant.settings.in_clause_limit`). Public for
+  # introspection and testing; terminals consult it to decide whether to dispatch
+  # to the chunked path.
+  #
+  # ```
+  # User.where(id: [1, 2, 3]).should_chunk_in?                   # => false
+  # User.where(id: huge_array).in_chunks(of: 2).should_chunk_in? # => true
+  # ```
   def should_chunk_in? : Bool
     !oversized_in_index.nil?
   end
@@ -93,13 +108,22 @@ class Grant::Query::Builder(Model)
 
   # ---- Chunked read terminals ------------------------------------------------
 
-  # Chunked SELECT: runs one query per chunk, concatenates, de-duplicates full
-  # records by primary key, and honors ORDER + LIMIT across chunks.
+  # Runs the SELECT one chunk at a time and returns the combined
+  # `Array(Model)`, de-duplicated by primary key and honoring ORDER + LIMIT
+  # across chunk boundaries.
   #
-  # When ORDER is set, results are merged in-memory (stable sort) so the global
-  # ordering is correct across chunk boundaries — this costs O(total) memory for
-  # the merged set. When LIMIT is set, collection stops early once enough rows
-  # are gathered (after the merge, since order must be global).
+  # When ORDER is set, results are merged in-memory with a stable sort so the
+  # global ordering is correct across chunks — this costs O(total) memory for the
+  # merged set. When LIMIT is set, collection stops early once enough rows are
+  # gathered (after the merge, since the order must be global). `protected` —
+  # invoked automatically by terminals like `#to_a`/`#select` when
+  # `#should_chunk_in?` is true; you do not call it directly.
+  #
+  # ```
+  # # transparently dispatched by a normal terminal call:
+  # users = User.where(id: huge_array).in_chunks(of: 500).order(:name).to_a
+  # # => Array(User), globally ordered and de-duplicated
+  # ```
   protected def chunked_select : Array(Model)
     requested_limit = @limit
     has_order = !@order_fields.empty?
@@ -178,7 +202,19 @@ class Grant::Query::Builder(Model)
     result
   end
 
-  # Chunked pluck: concatenates per-chunk rows (no de-dup; pluck is row-level).
+  # Runs `pluck` one chunk at a time and concatenates the per-chunk rows into a
+  # single `Array(Array(Grant::Columns::Type))` (one inner array per row, one
+  # element per requested field).
+  #
+  # No de-duplication is performed — `pluck` is row-level, so identical rows are
+  # preserved. `protected` — dispatched automatically by `#pluck` when the query
+  # carries an oversized IN list; you do not call it directly.
+  #
+  # ```
+  # # transparently dispatched by Query::Builder#pluck:
+  # rows = User.where(id: huge_array).in_chunks(of: 500).pluck("id", "email")
+  # # => [[1, "a@x.com"], [2, "b@x.com"], ...]
+  # ```
   protected def chunked_pluck(field_names : Array(String)) : Array(Array(Grant::Columns::Type))
     result = [] of Array(Grant::Columns::Type)
     each_in_chunk do |chunk_query|
