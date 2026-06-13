@@ -139,46 +139,62 @@ abstract class Grant::Base
   end
 
   macro inherited
-    # Regenerate fully-working, per-subclass JSON/YAML serializers that see this
-    # concrete model's own column ivars. See issues #39/#41.
-    include JSON::Serializable
-    include YAML::Serializable
+    # The annotated ivars below — and the auto-generated JSON/YAML serializers —
+    # may only be declared ONCE per inheritance chain. Crystal raises
+    # "can't annotate @x ... because it was first defined in <Super>" if an
+    # annotated ivar is re-declared in a subclass. To support multi-level
+    # inheritance (Single Table Inheritance: `Car < Vehicle < Grant::Base`),
+    # these once-only declarations run only for *first-level* subclasses (whose
+    # direct superclass is `Grant::Base`); deeper subclasses inherit them.
+    # See issues #39/#41 and the STI work.
+    {% if @type.superclass.id == "Grant::Base" %}
+      # Regenerate fully-working, per-subclass JSON/YAML serializers that see this
+      # concrete model's own column ivars. See issues #39/#41.
+      include JSON::Serializable
+      include YAML::Serializable
+
+      # Returns true if this object hasn't been saved yet.
+      @[JSON::Field(ignore: true)]
+      @[YAML::Field(ignore: true)]
+      disable_grant_docs? property? new_record : Bool = true
+
+      # Returns true if this object has been destroyed.
+      @[JSON::Field(ignore: true)]
+      @[YAML::Field(ignore: true)]
+      disable_grant_docs? getter? destroyed : Bool = false
+
+      # Returns true if the record is persisted.
+      disable_grant_docs? def persisted?
+        !(new_record? || destroyed?)
+      end
+
+      # Dirty tracking storage - using a union of all possible types
+      # We use a broad union type to handle all column types including enums
+
+      @[JSON::Field(ignore: true)]
+      @[YAML::Field(ignore: true)]
+      @original_attributes : Hash(String, DirtyValue)?
+
+      @[JSON::Field(ignore: true)]
+      @[YAML::Field(ignore: true)]
+      @changed_attributes : Hash(String, Tuple(DirtyValue, DirtyValue))?
+
+      @[JSON::Field(ignore: true)]
+      @[YAML::Field(ignore: true)]
+      @previous_changes : Hash(String, Tuple(DirtyValue, DirtyValue))?
+    {% else %}
+      # Deeper subclass (STI): regenerate per-subclass JSON/YAML serializers so
+      # they see this concrete model's own (inherited + added) column ivars,
+      # without re-declaring the inherited annotated ivars above.
+      include JSON::Serializable
+      include YAML::Serializable
+    {% end %}
 
     protected class_getter select_container : Container = Container.new(table_name: table_name, fields: fields)
-    
+
     # Auto-register for polymorphic associations
     Grant::Polymorphic.register_polymorphic_type({{@type.name.stringify}}, {{@type}})
-    
-    # Returns true if this object hasn't been saved yet.
-    @[JSON::Field(ignore: true)]
-    @[YAML::Field(ignore: true)]
-    disable_grant_docs? property? new_record : Bool = true
 
-    # Returns true if this object has been destroyed.
-    @[JSON::Field(ignore: true)]
-    @[YAML::Field(ignore: true)]
-    disable_grant_docs? getter? destroyed : Bool = false
-
-    # Returns true if the record is persisted.
-    disable_grant_docs? def persisted?
-      !(new_record? || destroyed?)
-    end
-    
-    # Dirty tracking storage - using a union of all possible types
-    # We use a broad union type to handle all column types including enums
-    
-    @[JSON::Field(ignore: true)]
-    @[YAML::Field(ignore: true)]
-    @original_attributes : Hash(String, DirtyValue)?
-    
-    @[JSON::Field(ignore: true)]
-    @[YAML::Field(ignore: true)]
-    @changed_attributes : Hash(String, Tuple(DirtyValue, DirtyValue))?
-    
-    @[JSON::Field(ignore: true)]
-    @[YAML::Field(ignore: true)]
-    @previous_changes : Hash(String, Tuple(DirtyValue, DirtyValue))?
-    
     # Ensure dirty tracking hashes are initialized
     private def ensure_dirty_tracking_initialized
       @original_attributes ||= {} of String => DirtyValue

@@ -133,8 +133,28 @@ module Grant::Validators
 
   macro included
     macro inherited
-      @@validators = Array({field: String, message: String, block: Proc(self, Bool), context: Symbol, code: Symbol?}).new
+      # `@@validators` is declared on EVERY level so each concrete class
+      # (including multi-level STI subclasses) can read it in `valid?`. Crystal
+      # class variables are per-class, and re-declaring with a different element
+      # type than an ancestor is a compile error, so the Proc's argument is typed
+      # to the *first-level* ancestor (the class directly below `Grant::Base`)
+      # rather than to `self`. The `self.validate` overloads / `validate_method`
+      # / `validate` macros are defined only at the first level (where `self` ==
+      # that ancestor) and inherited — see the first-level guard below. Macro
+      # control flow nested in `macro included` is escaped with a leading
+      # backslash so it evaluates at each subclass's `inherited` expansion.
+      #
+      # NOTE (STI limitation): class vars are per-class, so a base class's
+      # `validate` registrations populate only the base class's store and don't
+      # auto-run on STI subclass instances; and subclass-specific
+      # `validate`/`validates_*` blocks see `record` typed as the first-level
+      # ancestor, so reference base columns or use `before_validation`.
+      \{% candidates = [@type] + @type.ancestors %}
+      \{% first_level = candidates.find { |a| a.class? && a.superclass && a.superclass.id == "Grant::Base" } %}
+      \{% first_level = @type if first_level == nil %}
+      @@validators = Array({field: String, message: String, block: Proc(\{{ first_level }}, Bool), context: Symbol, code: Symbol?}).new
 
+      \{% if @type.superclass.id == "Grant::Base" %}
       # Low-level registration helper used by both the `self.validate` method
       # overloads and the bare-Symbol `validate :method_name` macro form.
       disable_grant_docs? def self.__add_validator(field : (Symbol | String), message : String, block : self -> Bool, context : Symbol = :save, code : Symbol? = nil)
@@ -263,6 +283,7 @@ module Grant::Validators
           validate_method(\\{{name_or_method}}, \\{{**options}})
         \\{% end %}
       end
+      \{% end %}
 
       # ======================================================================
       # Built-in Validators
