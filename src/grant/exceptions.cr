@@ -26,4 +26,16 @@ module Grant
       super("Could not destroy #{class_name}: #{model.errors.first.message}")
     end
   end
+
+  # Raised when attempting to update or destroy a record (or column) that has
+  # been marked read-only — either because the record was flagged with
+  # `#readonly!` / loaded as part of a read-only relation, or because the column
+  # was declared with `attr_readonly`.
+  #
+  # Mirrors ActiveRecord's `ActiveRecord::ReadOnlyRecord`.
+  class ReadOnlyRecordError < ::Exception
+    def initialize(message : String = "Record is marked as read only")
+      super(message)
+    end
+  end
 end

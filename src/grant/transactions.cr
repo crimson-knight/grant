@@ -217,8 +217,12 @@ module Grant::Transactions
     {% raise raise "A primary key must be defined for #{@type.name}." unless primary_key %}
     {% ann = primary_key.annotation(Grant::Column) %}
     
+    # Record-level read-only guard: a record flagged via `#readonly!` (or loaded
+    # through a read-only relation) cannot be persisted. Mirrors AR.
+    raise Grant::ReadOnlyRecordError.new("#{self.class.name} is marked as read only") if readonly?
+
     Grant::Logs::Model.debug { "Updating record - #{self.class.name} [id: #{@{{primary_key.name.id}}}]" }
-    
+
     set_timestamps(mode: :update) unless skip_timestamps
     fields = self.class.content_fields.dup
     params = content_values + [@{{primary_key.name.id}}]
@@ -227,6 +231,15 @@ module Grant::Transactions
     if created_at_index = fields.index("created_at")
       fields.delete_at created_at_index
       params.delete_at created_at_index
+    end
+
+    # Exclude any columns declared with `attr_readonly` — they are writable on
+    # create, but ignored on update (mirrors ActiveRecord).
+    self.class.readonly_attributes.each do |readonly_field|
+      if readonly_index = fields.index(readonly_field)
+        fields.delete_at readonly_index
+        params.delete_at readonly_index
+      end
     end
 
     begin
@@ -348,10 +361,128 @@ module Grant::Transactions
     save!(skip_timestamps: skip_timestamps)
   end
 
+  # Updates a single attribute and persists the record, **skipping validations**
+  # but still running callbacks (mirrors ActiveRecord's `update_attribute`).
+  #
+  # Returns `true` if the save succeeded, `false` otherwise.
+  #
+  # ```
+  # user.update_attribute(:name, "New Name") # => true (even if validations would fail)
+  # ```
+  def update_attribute(name : Symbol | String, value) : Bool
+    write_attribute(name.to_s, value.as(Grant::Columns::Type))
+    save(validate: false)
+  end
+
+  # Same as `#update_attribute`, but raises `Grant::RecordNotSaved` if the save
+  # is unsuccessful.
+  def update_attribute!(name : Symbol | String, value) : Bool
+    update_attribute(name, value) || raise Grant::RecordNotSaved.new(self.class.name, self)
+  end
+
+  # Updates the given columns directly in the database, **skipping validations,
+  # callbacks, and timestamp updates**. The in-memory record is updated to match.
+  #
+  # Uses a parameterized `UPDATE` (no string interpolation of values). Raises if
+  # the record is a new (unsaved) record or has been marked read-only. Mirrors
+  # ActiveRecord's `update_columns`.
+  #
+  # ```
+  # user.update_columns(name: "Direct", email: "direct@example.com")
+  # ```
+  def update_columns(**args) : Bool
+    update_columns(args.to_h)
+  end
+
+  # :ditto:
+  def update_columns(args : Grant::ModelArgs) : Bool
+    guard_writes!
+    raise Grant::ReadOnlyRecordError.new("#{self.class.name} is marked as read only") if readonly?
+    raise "Cannot update columns on a new record object" unless persisted?
+    raise ArgumentError.new("No columns given to update_columns") if args.empty?
+
+    {% begin %}
+      {% primary_key = @type.instance_vars.find { |ivar| (ann = ivar.annotation(Grant::Column)) && ann[:primary] } %}
+      {% raise raise "A primary key must be defined for #{@type.name}." unless primary_key %}
+
+      # Apply values in-memory first (validates column names + types via
+      # write_attribute) then read them back through read_attribute so any
+      # configured converter is applied for the DB write.
+      string_args = args.to_h.transform_keys(&.to_s)
+      fields = [] of String
+      params = [] of Grant::Columns::Type
+      string_args.each do |column_name, value|
+        write_attribute(column_name, value.as(Grant::Columns::Type))
+        fields << column_name
+        params << read_attribute(column_name)
+      end
+      params << @{{primary_key.name.id}}
+
+      begin
+        self.class.adapter.update(self.class.table_name, self.class.primary_name, fields, params)
+        Grant::Logs::Model.info { "Columns updated - #{self.class.name} [id: #{@{{primary_key.name.id}}}]" }
+      rescue err
+        Grant::Logs::Model.error { "Failed to update_columns - #{self.class.name} [id: #{@{{primary_key.name.id}}}] - #{err.message}" }
+        raise DB::Error.new(err.message, cause: err)
+      end
+    {% end %}
+
+    true
+  end
+
+  # Increments the in-memory value of a numeric *field* by *by* (default `1`)
+  # without persisting. Returns `self` for chaining.
+  def increment(field : Symbol | String, by = 1) : self
+    current = read_attribute(field.to_s)
+    raise "Cannot increment non-numeric attribute #{field}" unless current.is_a?(Number) || current.nil?
+    new_value = (current.nil? ? 0 : current) + by
+    write_attribute(field.to_s, new_value.as(Grant::Columns::Type))
+    self
+  end
+
+  # Increments a numeric *field* by *by* (default `1`) and persists the record,
+  # skipping validations. Mirrors ActiveRecord's `increment!`.
+  def increment!(field : Symbol | String, by = 1) : self
+    increment(field, by)
+    save(validate: false)
+    self
+  end
+
+  # Decrements the in-memory value of a numeric *field* by *by* (default `1`)
+  # without persisting. Returns `self` for chaining.
+  def decrement(field : Symbol | String, by = 1) : self
+    increment(field, -by)
+  end
+
+  # Decrements a numeric *field* by *by* (default `1`) and persists the record,
+  # skipping validations. Mirrors ActiveRecord's `decrement!`.
+  def decrement!(field : Symbol | String, by = 1) : self
+    increment!(field, -by)
+  end
+
+  # Flips the in-memory boolean value of *field* without persisting. Returns
+  # `self` for chaining. A `nil` value is treated as `false` (flips to `true`).
+  def toggle(field : Symbol | String) : self
+    current = read_attribute(field.to_s)
+    raise "Cannot toggle non-boolean attribute #{field}" unless current.is_a?(Bool) || current.nil?
+    write_attribute(field.to_s, (!current).as(Grant::Columns::Type))
+    self
+  end
+
+  # Flips the boolean value of *field* and persists the record, skipping
+  # validations. Mirrors ActiveRecord's `toggle!`.
+  def toggle!(field : Symbol | String) : self
+    toggle(field)
+    save(validate: false)
+    self
+  end
+
   # Removes the record from the database. Returns `true` if successful, `false`
   # otherwise.
   def destroy
     guard_writes!
+    # Record-level read-only guard. Mirrors ActiveRecord's ReadOnlyRecord.
+    raise Grant::ReadOnlyRecordError.new("#{self.class.name} is marked as read only") if readonly?
     begin
       __run_around_destroy do
         __before_destroy

@@ -163,9 +163,34 @@ abstract class Grant::Base
       @[YAML::Field(ignore: true)]
       disable_grant_docs? getter? destroyed : Bool = false
 
+      # Backing flag for record-level read-only marking. When true, attempts to
+      # persist an update (or destroy) raise `Grant::ReadOnlyRecordError`.
+      @[JSON::Field(ignore: true)]
+      @[YAML::Field(ignore: true)]
+      @readonly : Bool = false
+
       # Returns true if the record is persisted.
       disable_grant_docs? def persisted?
         !(new_record? || destroyed?)
+      end
+
+      # Returns true if this record has been marked read-only (via `#readonly!`
+      # or by being loaded through a read-only relation). Read-only records
+      # raise `Grant::ReadOnlyRecordError` on update or destroy.
+      def readonly? : Bool
+        @readonly
+      end
+
+      # Marks this record as read-only. Subsequent attempts to update or destroy
+      # it raise `Grant::ReadOnlyRecordError`. Mirrors ActiveRecord's `readonly!`.
+      def readonly! : Nil
+        @readonly = true
+      end
+
+      # Sets the read-only state of this record. Intended for query/relation
+      # loaders that hydrate records as part of a read-only relation.
+      def mark_readonly(value : Bool = true) : Nil
+        @readonly = value
       end
 
       # Dirty tracking storage - using a union of all possible types

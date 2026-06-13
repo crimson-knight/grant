@@ -23,6 +23,46 @@ module Grant::Columns
         {{columns.empty? ? "[] of String".id : columns}}
       {% end %}
     end
+
+    # Returns the list of column names declared read-only via `attr_readonly`.
+    #
+    # Read-only columns may be set when a record is created, but are silently
+    # ignored on subsequent updates (mirroring ActiveRecord's `attr_readonly`).
+    def readonly_attributes : Array(String)
+      [] of String
+    end
+  end
+
+  # Marks one or more columns as read-only. Read-only columns are writable when
+  # a record is first created, but are excluded from any subsequent `UPDATE`
+  # (their in-memory value can still change, it just won't be persisted on
+  # update). Mirrors ActiveRecord's `attr_readonly`.
+  #
+  # ```
+  # class User < Grant::Base
+  #   column login : String
+  #   attr_readonly :login
+  # end
+  # ```
+  macro attr_readonly(*fields)
+    # Accumulate declared read-only columns in a per-class constant so multiple
+    # `attr_readonly` calls (and inheritance) compose correctly. Each call
+    # redefines `self.readonly_attributes` to return the full, deduplicated set.
+    {% if @type.has_constant?(:GRANT_READONLY_ATTRIBUTES) %}
+      {% for field in fields %}
+        {% GRANT_READONLY_ATTRIBUTES << field.id.stringify %}
+      {% end %}
+    {% else %}
+      GRANT_READONLY_ATTRIBUTES = [
+        {% for field in fields %}
+          {{ field.id.stringify }},
+        {% end %}
+      ] of String
+    {% end %}
+
+    def self.readonly_attributes : Array(String)
+      GRANT_READONLY_ATTRIBUTES.uniq
+    end
   end
 
   def content_values : Array(Grant::Columns::Type)
