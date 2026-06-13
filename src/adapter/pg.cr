@@ -142,6 +142,11 @@ class Grant::Adapter::Pg < Grant::Adapter::Base
     log statement, elapsed_time, value
   end
 
+  # PostgreSQL accepts SQL-standard boolean literals.
+  def quote_boolean(value : Bool) : String
+    value ? "TRUE" : "FALSE"
+  end
+
   def ensure_clause_template(clause : String) : String
     if clause.includes?("?")
       num_subs = clause.count("?")
