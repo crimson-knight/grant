@@ -38,4 +38,5 @@ module Grant::Query::BuilderMethods
   delegate reorder, reverse_order, rewhere, reselect, regroup, to: __builder
   delegate pluck, pick, in_batches, annotate, to: __builder
   delegate includes, preload, eager_load, to: __builder
+  delegate ids, explain, unscope, to: __builder
 end

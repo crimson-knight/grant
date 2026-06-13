@@ -8,7 +8,14 @@ module Grant::Query::Assembler
       @numbered_parameters << value
       "?"
     end
-    
+
+    # MySQL supports `EXPLAIN`; `EXPLAIN ANALYZE` is available on 8.0.18+. If the
+    # server is older, `explain(analyze: true)` degrades gracefully (the base
+    # `explain` rescues the error and returns its message).
+    def explain_keyword(analyze : Bool = false) : String
+      analyze ? "EXPLAIN ANALYZE" : "EXPLAIN"
+    end
+
     # Generate SQL for pluck operation
     def pluck_sql(fields : Array(String)) : String
       select_fields = fields.map { |f| add_aggregate_field(f); f }.join(", ")
@@ -25,17 +32,17 @@ module Grant::Query::Assembler
         s << offset
       end
     end
-    
+
     # Generate SQL for insert_all operation
-    def insert_all_sql(attributes : Array(Hash(String, Grant::Columns::Type)), 
-                       returning : Array(Symbol)?, 
+    def insert_all_sql(attributes : Array(Hash(String, Grant::Columns::Type)),
+                       returning : Array(Symbol)?,
                        unique_by : Array(Symbol)?) : String
       return "" if attributes.empty?
-      
+
       # Get column names from first hash
       columns = attributes.first.keys
       column_list = columns.join(", ")
-      
+
       # Build values list
       values_list = attributes.map do |attrs|
         values = columns.map do |col|
@@ -43,31 +50,31 @@ module Grant::Query::Assembler
         end
         "(#{values.join(", ")})"
       end.join(", ")
-      
+
       sql = "INSERT INTO #{table_name} (#{column_list}) VALUES #{values_list}"
-      
+
       # MySQL uses INSERT IGNORE for conflict handling
       if unique_by && !unique_by.empty?
         sql = "INSERT IGNORE INTO #{table_name} (#{column_list}) VALUES #{values_list}"
       end
-      
+
       # MySQL doesn't support RETURNING clause
       # Would need to use LAST_INSERT_ID() or similar
-      
+
       sql
     end
-    
+
     # Generate SQL for upsert_all operation
-    def upsert_all_sql(attributes : Array(Hash(String, Grant::Columns::Type)), 
-                       returning : Array(Symbol)?, 
+    def upsert_all_sql(attributes : Array(Hash(String, Grant::Columns::Type)),
+                       returning : Array(Symbol)?,
                        unique_by : Array(Symbol)?,
                        update_only : Array(Symbol)?) : String
       return "" if attributes.empty?
-      
+
       # Get column names from first hash
       columns = attributes.first.keys
       column_list = columns.join(", ")
-      
+
       # Build values list
       values_list = attributes.map do |attrs|
         values = columns.map do |col|
@@ -75,29 +82,29 @@ module Grant::Query::Assembler
         end
         "(#{values.join(", ")})"
       end.join(", ")
-      
+
       sql = "INSERT INTO #{table_name} (#{column_list}) VALUES #{values_list}"
-      
+
       # MySQL uses ON DUPLICATE KEY UPDATE
       sql += " ON DUPLICATE KEY UPDATE "
-      
+
       # Determine which columns to update
       update_columns = if update_only && !update_only.empty?
-        update_only.map(&.to_s)
-      else
-        # Update all columns except primary key
-        excluded = [Model.primary_name]
-        excluded += unique_by.map(&.to_s) if unique_by
-        columns.reject { |col| excluded.includes?(col) }
-      end
-      
+                         update_only.map(&.to_s)
+                       else
+                         # Update all columns except primary key
+                         excluded = [Model.primary_name]
+                         excluded += unique_by.map(&.to_s) if unique_by
+                         columns.reject { |col| excluded.includes?(col) }
+                       end
+
       # Build update assignments
       updates = update_columns.map do |col|
         "#{col} = VALUES(#{col})"
       end
-      
+
       sql += updates.join(", ")
-      
+
       sql
     end
   end
