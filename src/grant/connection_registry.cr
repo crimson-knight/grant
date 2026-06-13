@@ -5,12 +5,12 @@ module Grant
   # Raised when a model resolves an adapter for a connection that was never
   # established — for example because the active build target did not register
   # that connection, or because the matching adapter shard was not compiled in
-  # (no `require "grant/adapter/<name>"` / no `-Dgrant_<name>` presence flag).
+  # (no `require "grant/adapter/<name>"` for this build entrypoint).
   #
-  # The message names the connection, the active `grant_target_*` flag(s), and
-  # the adapters that *were* compiled in (`Grant.compiled_adapters`) so the fix
-  # is obvious: either establish the connection for this target, or compile the
-  # missing adapter in.
+  # The message names the connection, the active build target, and the adapters
+  # that *were* compiled in (`Grant.compiled_adapters`) so the fix is obvious:
+  # either establish the connection for this target, or `require` the missing
+  # adapter.
   class AdapterNotAvailableError < Exception
   end
 
@@ -414,14 +414,14 @@ module Grant
 
     # Builds the clear, actionable guard-rail error raised when a model resolves
     # an adapter for a connection that was never established. Names the
-    # connection, the active `grant_target_*` flag(s), and the adapters that were
-    # actually compiled in, so the fix is unambiguous.
+    # connection, the active build target, and the adapters that were actually
+    # compiled in, so the fix is unambiguous.
     private def self.raise_adapter_not_available(database : String, role : Symbol, shard : Symbol?, key : String) : NoReturn
       targets = Grant.active_targets
-      target_desc = targets.empty? ? "none (no grant_target_* flag set)" : targets.join(", ")
+      target_desc = targets.empty? ? "none (no grant/target/<name> required)" : targets.join(", ")
 
       compiled = Grant.compiled_adapters
-      compiled_desc = compiled.empty? ? "none (no adapter shard was required / no grant_{sqlite,pg,mysql} flag set)" : compiled.join(", ")
+      compiled_desc = compiled.empty? ? "none (no adapter shard was required — add require \"grant/adapter/<name>\")" : compiled.join(", ")
 
       registered = @@specifications.keys
       registered_desc = registered.empty? ? "none" : registered.join(", ")
@@ -435,10 +435,9 @@ module Grant
           msg << "  Active build target(s): #{target_desc}\n"
           msg << "  Adapters compiled in:   #{compiled_desc}\n"
           msg << "  Registered connections: #{registered_desc}\n"
-          msg << "Fix: ensure this target establishes the '#{database}' connection "
-          msg << "(e.g. via Grant.configure_target or ConnectionRegistry.establish_connection) "
-          msg << "and that the matching adapter is compiled in "
-          msg << "(require \"grant/adapter/<name>\" under the correct grant_target_* / grant_<name> flag)."
+          msg << "Fix: ensure this build entrypoint establishes the '#{database}' connection "
+          msg << "with Grant::ConnectionRegistry.establish_connection, "
+          msg << "and that the matching adapter is compiled in (require \"grant/adapter/<name>\")."
         end
       )
     end
