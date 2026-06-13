@@ -32,7 +32,33 @@ Ports 3308/3309 were chosen to avoid clashing with the pre-existing
 `mysql-primary` (3306) and `mysql-replica` (3307) services, so all four can run
 at once.
 
-Credentials (created by `docker/mysql-auth-init/01-caching-sha2-user.sql`):
+### Version matrix (Thread C)
+
+On top of `mysql8`/`mysql9`, the compose file defines a **version matrix** so
+the `caching_sha2_password` handshake can be validated across the breadth of the
+MySQL family, plus the MariaDB outlier and Percona. See
+[`mysql_compatibility.md`](mysql_compatibility.md) for what each row proves.
+
+| Service     | Image                        | Host port | Default plugin            | Notes |
+|-------------|------------------------------|-----------|---------------------------|-------|
+| `mysql8011` | `mysql:8.0.11`               | **3310**  | `caching_sha2_password`   | First GA. **amd64-only** image — `amd64-only` compose profile; crashes under qemu on Apple Silicon, run on amd64 CI. |
+| `mysql8046` | `mysql:8.0`                  | **3311**  | `caching_sha2_password`   | Current 8.0.x point release. |
+| `mysql84`   | `mysql:8.4`                  | **3312**  | `caching_sha2_password`   | 8.4 LTS — `mysql_native_password` is **disabled** by default (strictest). |
+| `mysql97`   | `mysql:9.7`                  | **3313**  | `caching_sha2_password`   | 9.x LTS — `--default-authentication-plugin` removed. |
+| `mariadb`   | `mariadb:11.8`               | **3314**  | `mysql_native_password`   | **The outlier.** caching_sha2 is N/A; uses its own init dir (`docker/mariadb-auth-init`). |
+| `percona80` | `percona/percona-server:8.0` | **3315**  | `caching_sha2_password`   | MySQL-identical full-auth path. |
+
+`mysql8011` is in the `amd64-only` profile, so a plain `up` skips it on arm64.
+On an amd64 host/CI run it with:
+
+```sh
+docker compose -f docker-compose.test.yml --profile amd64-only up -d mysql8011
+# or: make mysql-auth-8011-amd64
+```
+
+Credentials (MySQL/Percona created by
+`docker/mysql-auth-init/01-caching-sha2-user.sql`; MariaDB by
+`docker/mariadb-auth-init/01-native-user.sql`):
 
 | Field    | Value           |
 |----------|-----------------|
@@ -96,16 +122,23 @@ MYSQL_DATABASE_URL=mysql://grant:test_password@127.0.0.1:3309/grant_test \
 crystal spec
 ```
 
-Connection URLs:
+Connection URLs (append `?ssl-mode=disabled` to force the RSA full-auth path):
 
-- `mysql8`: `mysql://grant:test_password@127.0.0.1:3308/grant_test`
-- `mysql9`: `mysql://grant:test_password@127.0.0.1:3309/grant_test`
+- `mysql8`:    `mysql://grant:test_password@127.0.0.1:3308/grant_test?ssl-mode=disabled`
+- `mysql9`:    `mysql://grant:test_password@127.0.0.1:3309/grant_test?ssl-mode=disabled`
+- `mysql8046`: `mysql://grant:test_password@127.0.0.1:3311/grant_test?ssl-mode=disabled`
+- `mysql84`:   `mysql://grant:test_password@127.0.0.1:3312/grant_test?ssl-mode=disabled`
+- `mysql97`:   `mysql://grant:test_password@127.0.0.1:3313/grant_test?ssl-mode=disabled`
+- `mariadb`:   `mysql://grant:test_password@127.0.0.1:3314/grant_test` (native_password)
+- `percona80`: `mysql://grant:test_password@127.0.0.1:3315/grant_test?ssl-mode=disabled`
 
-> Until the MySQL adapter's `caching_sha2_password` handshake (Thread 3/3a) is
-> finished and wired into Grant's `shard.yml`, connecting with the stock
-> `crystal-mysql` driver against these images may raise
-> `caching_sha2_password ... not implemented`. That is expected — these images
-> exist precisely so the auth work can be developed and verified against them.
+> **`caching_sha2_password` is now implemented** via the bridged
+> `crystal-mysql` PR #123 (see `shard.yml` and
+> [`mysql_compatibility.md`](mysql_compatibility.md)). Connect with
+> `?ssl-mode=disabled` to exercise the **RSA full-auth (SHA-1 OAEP)** path; with
+> the driver default (`ssl-mode=preferred`) a TCP connection negotiates TLS and
+> full-auth uses the cleartext-over-TLS path instead, skipping RSA. Until #123
+> ships a release, Grant pins `mysql` to the `pr-123` branch.
 
 ## RSA public key (full-auth path) and TLS
 

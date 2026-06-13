@@ -134,3 +134,172 @@ services:
       timeout: 5s
       retries: 20
       start_period: 30s
+
+  # ==========================================================================
+  # caching_sha2_password VERSION MATRIX (Thread C — MySQL upstreaming)
+  #
+  # These services validate crystal-mysql PR #123's caching_sha2_password
+  # handshake across the breadth of supported MySQL server versions, plus the
+  # MariaDB outlier (mysql_native_password) and Percona (caching_sha2, same
+  # implementation as MySQL). All MySQL/Percona services DEFAULT to
+  # caching_sha2_password and reuse docker/mysql-auth-init. MariaDB uses its own
+  # init dir (docker/mariadb-auth-init) with the default mysql_native_password
+  # plugin — caching_sha2 is N/A for MariaDB (ed25519/PARSEC are its secure
+  # options; see docs/mysql_compatibility.md).
+  #
+  # Distinct host ports so the whole matrix can run at once:
+  #   3310 mysql8011 (8.0.11, first caching_sha2 GA)
+  #   3311 mysql8046 (8.0.x, current 8.0 point release)
+  #   3312 mysql84   (8.4 LTS — native_password OFF by default; strictest)
+  #   3313 mysql97   (9.x LTS — --default-authentication-plugin removed)
+  #   3314 mariadb   (MariaDB LTS — mysql_native_password, the outlier)
+  #   3315 percona80 (Percona Server 8.0 — caching_sha2, MySQL-compatible)
+  # ==========================================================================
+
+  # MySQL 8.0.11 — the FIRST GA release to ship caching_sha2_password as the
+  # default. 8.0.11 still allowed --default-authentication-plugin; we pin it to
+  # caching_sha2_password explicitly (it is already the default here).
+  mysql8011:
+    image: mysql:8.0.11
+    container_name: grant_mysql8011_caching_sha2
+    # 8.0.11 predates the arm64 image publishing era — ONLY linux/amd64 exists
+    # (no early 8.0.x point release has an arm64 manifest). On an amd64 CI host
+    # this runs natively and is the canonical "first caching_sha2 GA" test. On
+    # Apple Silicon / arm64 it must run under qemu emulation, where the 8.0.11
+    # entrypoint's ancient gosu (Go 1.5-era) panics with "newosproc / failed to
+    # create new OS thread (errno=22)" and the container exits — a qemu/old-Go
+    # limitation, NOT a Grant/driver issue. So on arm64 this service is expected
+    # to be SKIPPED; run it on amd64 CI for first-GA coverage. The mysql8046
+    # service (current 8.0.x) covers the 8.0 caching_sha2 behavior on arm64.
+    platform: linux/amd64
+    profiles: ["amd64-only"]
+    command: ["--default-authentication-plugin=caching_sha2_password"]
+    environment:
+      MYSQL_DATABASE: grant_test
+      MYSQL_USER: grant
+      MYSQL_PASSWORD: test_password
+      MYSQL_ROOT_PASSWORD: root_password
+    ports:
+      - "3310:3306"
+    volumes:
+      - ./docker/mysql-auth-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-u", "root", "-proot_password"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 40s
+
+  # MySQL 8.0 current point release (8.0.4x). Default caching_sha2_password.
+  mysql8046:
+    image: mysql:8.0
+    container_name: grant_mysql8046_caching_sha2
+    command: ["--default-authentication-plugin=caching_sha2_password"]
+    environment:
+      MYSQL_DATABASE: grant_test
+      MYSQL_USER: grant
+      MYSQL_PASSWORD: test_password
+      MYSQL_ROOT_PASSWORD: root_password
+    ports:
+      - "3311:3306"
+    volumes:
+      - ./docker/mysql-auth-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-u", "root", "-proot_password"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 40s
+
+  # MySQL 8.4 LTS. NOTE: in 8.4, mysql_native_password is INSTALLED-BUT-DISABLED
+  # by default (the server must be started with --mysql-native-password=ON to
+  # offer it) and --default-authentication-plugin is DEPRECATED. caching_sha2 is
+  # the only auth plugin available out of the box here, so 8.4 is the strictest
+  # test of the full-auth RSA path. We pass NO command override.
+  mysql84:
+    image: mysql:8.4
+    container_name: grant_mysql84_caching_sha2
+    environment:
+      MYSQL_DATABASE: grant_test
+      MYSQL_USER: grant
+      MYSQL_PASSWORD: test_password
+      MYSQL_ROOT_PASSWORD: root_password
+    ports:
+      - "3312:3306"
+    volumes:
+      - ./docker/mysql-auth-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-u", "root", "-proot_password"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 40s
+
+  # MySQL 9.x LTS. --default-authentication-plugin is REMOVED in 9.x; the
+  # default is caching_sha2_password. No command override.
+  mysql97:
+    image: mysql:9.7
+    container_name: grant_mysql97_caching_sha2
+    environment:
+      MYSQL_DATABASE: grant_test
+      MYSQL_USER: grant
+      MYSQL_PASSWORD: test_password
+      MYSQL_ROOT_PASSWORD: root_password
+    ports:
+      - "3313:3306"
+    volumes:
+      - ./docker/mysql-auth-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-u", "root", "-proot_password"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 40s
+
+  # MariaDB LTS — THE OUTLIER. MariaDB does not ship MySQL's
+  # caching_sha2_password as a secure default; the test user authenticates with
+  # mysql_native_password. This service exists to confirm the crystal-mysql
+  # driver's native_password handshake still works against a real MariaDB. Uses
+  # its own init dir. (Real MariaDB security would need ed25519/PARSEC — an
+  # unbuilt, documented future gap; see docs/mysql_compatibility.md.)
+  mariadb:
+    image: mariadb:11.8
+    container_name: grant_mariadb_native
+    environment:
+      MARIADB_DATABASE: grant_test
+      MARIADB_USER: grant
+      MARIADB_PASSWORD: test_password
+      MARIADB_ROOT_PASSWORD: root_password
+    ports:
+      - "3314:3306"
+    volumes:
+      - ./docker/mariadb-auth-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 40s
+
+  # Percona Server 8.0 — caching_sha2_password, byte-for-byte compatible with
+  # MySQL's implementation (same full-auth RSA path). Confirms the matrix covers
+  # Percona, a common production MySQL-compatible server.
+  percona80:
+    image: percona/percona-server:8.0
+    container_name: grant_percona80_caching_sha2
+    command: ["--default-authentication-plugin=caching_sha2_password"]
+    environment:
+      MYSQL_DATABASE: grant_test
+      MYSQL_USER: grant
+      MYSQL_PASSWORD: test_password
+      MYSQL_ROOT_PASSWORD: root_password
+    ports:
+      - "3315:3306"
+    volumes:
+      - ./docker/mysql-auth-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-u", "root", "-proot_password"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 40s

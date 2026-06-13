@@ -1,0 +1,22 @@
+GRANT BRIDGE — LIVE END-TO-END EVIDENCE (PR #123 / mysql 0.17.0)
+================================================================
+Isolated bridge test dir: /tmp/grant-bridge-test (grant src + spec, fresh lib)
+Bridge shard.yml: mysql -> git file:///.../crystal-mysql branch pr-123
+
+Resolved dependency set (shards install):
+  db      0.14.0
+  mysql   0.17.0 at c061324   (PR #123, has src/mysql/auth.cr, SHA-1 OAEP)
+  sqlite3 0.23.0
+  pg      0.30.0
+  => db 0.14 bump is required & feasible; newer sqlite3/pg support it.
+
+All Grant MySQL connections used ?ssl-mode=disabled to force the
+caching_sha2_password RSA-OAEP(SHA-1) full-auth path (not TLS-cleartext).
+
+Spec runs through the bridge:
+  spec/grant/querying/query_builder_spec.cr   vs MySQL 8.0.46 (3311): 11 examples, 0 failures
+  spec/grant/querying/query_builder_spec.cr   vs MySQL 9.7.0  (3313): 11 examples, 0 failures
+  spec/grant/persistence_helpers_spec.cr      vs MySQL 8.0.46 (3311): 20 examples, 0 failures
+
+Conclusion: Grant works end-to-end against live MySQL 8.x and 9.x through the
+PR #123 bridge, over the caching_sha2_password full-auth path.
