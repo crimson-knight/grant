@@ -1,4 +1,103 @@
+# Lifecycle callbacks for Grant models (ActiveRecord-compatible).
+#
+# Including this module (done automatically by `Grant::Base`) gives every model
+# a family of class-macro hooks that run around the persistence lifecycle. Each
+# macro registers a callback that fires at the matching point of `save`,
+# `create`, `update`, `destroy`, validation, or after a transaction settles.
+#
+# ## Available hooks
+#
+# Registered via the like-named macro (`after_save :method_name`,
+# `before_create { ... }`, etc.). Order below is roughly the order they fire:
+#
+# - `after_initialize` — after `Model.new`
+# - `after_find` — after a row is loaded from the database
+# - `before_validation` / `after_validation` — wrap `valid?`
+# - `before_save` / `after_save` — wrap any persistence (create *or* update)
+# - `before_create` / `after_create` — only when inserting a new row
+# - `before_update` / `after_update` — only when updating an existing row
+# - `before_destroy` / `after_destroy` — wrap `destroy`
+# - `after_touch` — after `touch`
+# - `after_commit` / `after_rollback` and the per-operation
+#   `after_create_commit` / `after_update_commit` / `after_destroy_commit` —
+#   fire once the surrounding transaction durably commits or rolls back (see
+#   `Grant::CommitCallbacks`)
+#
+# `around_validation`, `around_save`, `around_create`, `around_update`, and
+# `around_destroy` wrap the operation and **must** call their yielded
+# continuation to let it proceed (see the `around_*` macro docs below).
+#
+# ## Forms
+#
+# Each callback macro accepts a method name (a Symbol), a block, or several of
+# either. The block runs in instance context, so it can read and mutate `self`'s
+# columns directly.
+#
+# ```
+# class Article < Grant::Base
+#   column id : Int64, primary: true
+#   column title : String?
+#   column slug : String?
+#   column published : Bool = false
+#
+#   before_save :generate_slug               # method form
+#   before_create { self.published = false } # block form
+#
+#   private def generate_slug
+#     self.slug = title.to_s.downcase.gsub(/\s+/, "-")
+#   end
+# end
+# ```
+#
+# ## `:if` / `:unless` conditions
+#
+# Every callback macro takes `if:` and/or `unless:`, each either a Symbol naming
+# an instance method or a Proc/lambda that receives the record. The callback
+# runs only when `if:` is truthy and `unless:` is falsy.
+#
+# ```
+# class Order < Grant::Base
+#   column id : Int64, primary: true
+#   column total : Float64 = 0.0
+#   column notified : Bool = false
+#
+#   after_create :send_receipt, if: :paid?
+#   after_save :alert_finance, unless: ->(o : Order) { o.total < 1000 }
+#
+#   def paid? : Bool
+#     total > 0
+#   end
+#
+#   private def send_receipt
+#     self.notified = true
+#   end
+#
+#   private def alert_finance; end
+# end
+# ```
+#
+# ## Halting
+#
+# Call `abort!` inside a `before_*` callback to raise `Grant::Callbacks::Abort`
+# and stop the operation (the record is not persisted). An `around_*` callback
+# halts simply by **not** calling its continuation.
+#
+# ```
+# class Account < Grant::Base
+#   column id : Int64, primary: true
+#   column locked : Bool = false
+#
+#   before_destroy :guard_locked
+#
+#   private def guard_locked
+#     abort!("cannot destroy a locked account") if locked
+#   end
+# end
+# ```
 module Grant::Callbacks
+  # Raised by `abort!` to halt the current persistence operation from inside a
+  # `before_*` callback. Caught by the persistence machinery, which reports the
+  # failure instead of writing to the database.
   class Abort < Exception
   end
 
@@ -252,11 +351,38 @@ module Grant::Callbacks
     end
   {% end %}
 
-  # Returns true if the last around callback halted the operation.
+  # Returns `true` if the most recent `around_*` callback halted the operation
+  # by failing to call its continuation; `false` otherwise.
+  #
+  # The persistence machinery checks this after running `around_*` callbacks to
+  # decide whether the wrapped operation (save/create/update/destroy) actually
+  # ran. Rarely needed in application code.
+  #
+  # ```
+  # record.save
+  # record.around_halted? # => true if an around_save callback never yielded
+  # ```
   def around_halted? : Bool
     !!@_around_halted
   end
 
+  # Halts the current persistence operation by raising
+  # `Grant::Callbacks::Abort`. Intended for use inside a `before_*` callback:
+  # the surrounding save/create/update/destroy is aborted and the record is not
+  # written. *message* is attached to the raised exception.
+  #
+  # ```
+  # class Account < Grant::Base
+  #   column id : Int64, primary: true
+  #   column locked : Bool = false
+  #
+  #   before_destroy :guard
+  #
+  #   private def guard
+  #     abort!("locked accounts can't be destroyed") if locked
+  #   end
+  # end
+  # ```
   def abort!(message = "Aborted at #{@_current_callback}.")
     raise Abort.new(message)
   end
