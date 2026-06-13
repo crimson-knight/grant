@@ -193,4 +193,22 @@ class Grant::Adapter::Sqlite < Grant::Adapter::Base
   def rows_affected_for_optimistic_lock(db, result : DB::ExecResult) : Int64
     db.scalar("SELECT changes()").as(Int64)
   end
+
+  # SQLite supports `INDEXED BY <name>` (a forced single-index choice). It has
+  # no FORCE/IGNORE distinction, so only `:use` is honored — and only a single
+  # index. `:force` is treated like `:use` (INDEXED BY *is* a force); `:ignore`
+  # has no equivalent and degrades (returns nil).
+  def supports_index_hints? : Bool
+    true
+  end
+
+  def index_hint_clause(kind : Symbol, index_names : Array(String)) : String?
+    return nil if index_names.empty?
+    case kind
+    when :use, :force
+      "INDEXED BY #{quote(index_names.first)}"
+    else # :ignore — no SQLite equivalent
+      nil
+    end
+  end
 end

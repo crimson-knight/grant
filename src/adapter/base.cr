@@ -259,4 +259,46 @@ abstract class Grant::Adapter::Base
   def rows_affected_for_optimistic_lock(db, result : DB::ExecResult) : Int64
     1_i64
   end
+
+  # ---------------------------------------------------------------------------
+  # Large-table / high-scale: index hints (virtual dispatch)
+  # ---------------------------------------------------------------------------
+
+  # Whether this adapter can render *any* index hint into its SQL. Used by the
+  # safe-fallback machinery to decide whether to attempt a hint at all (vs.
+  # degrade per `Grant.settings.index_hint_mode`). PG core has no planner-hint
+  # syntax, so its adapter returns `false`.
+  #
+  # Defined here via virtual dispatch — like `#lock_clause` — so the hint
+  # rendering does not `case` over concrete adapter class literals (which would
+  # force every adapter to compile even when an app requires only one).
+  def supports_index_hints? : Bool
+    false
+  end
+
+  # Renders the SQL fragment that attaches an index hint to a table reference,
+  # placed immediately after the table name in the FROM clause.
+  #
+  # *kind* is `:use`, `:force`, or `:ignore`; *index_names* are the bare index
+  # identifiers. Returns `nil` when the adapter cannot honor this particular
+  # hint kind (the caller then degrades per `index_hint_mode`).
+  #
+  # The base implementation returns `nil` (no hint). MySQL/SQLite override.
+  def index_hint_clause(kind : Symbol, index_names : Array(String)) : String?
+    nil
+  end
+
+  # Returns `true` when *error* is the adapter's "no such index" / unknown-key
+  # error for an index hint, so the safe-fallback path can catch a bad hint and
+  # re-run without it. Matched on message text because crystal-db surfaces these
+  # as generic exceptions across drivers. Adapters may override for precision.
+  def index_missing_error?(error : Exception) : Bool
+    msg = error.message
+    return false unless msg
+    m = msg.downcase
+    m.includes?("no such index") ||                           # SQLite
+      m.includes?("can't find any index") ||                  # SQLite (older phrasing)
+      (m.includes?("key") && m.includes?("doesn't exist")) || # MySQL: Key 'x' doesn't exist in table
+      m.includes?("unknown key")
+  end
 end

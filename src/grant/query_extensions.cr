@@ -66,9 +66,24 @@ class Grant::Query::Builder(Model)
 
   # Core parameterized update: builds and executes a bound UPDATE statement.
   #
-  # Returns the number of rows affected.
+  # Returns the number of rows affected. When a `where(col: array)` exceeds the
+  # IN-list chunk limit, the conditions are chunked and each UPDATE runs in a
+  # single transaction (see `chunked_update_all`); the summed rows_affected is
+  # returned.
   def update_all(assignments : Array(Tuple(String, Grant::Columns::Type))) : Int64
     Model.guard_writes!
+    return 0_i64 if assignments.empty?
+
+    if should_chunk_in?
+      return chunked_update_all(assignments)
+    end
+
+    update_all_single(assignments)
+  end
+
+  # Executes a single UPDATE (no IN-chunking). Used by the chunked path and
+  # directly when no chunking is needed.
+  protected def update_all_single(assignments : Array(Tuple(String, Grant::Columns::Type))) : Int64
     return 0_i64 if assignments.empty?
     Model.mark_write_operation
 

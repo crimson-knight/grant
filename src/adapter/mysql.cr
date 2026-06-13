@@ -161,4 +161,22 @@ class Grant::Adapter::Mysql < Grant::Adapter::Base
   def rows_affected_for_optimistic_lock(db, result : DB::ExecResult) : Int64
     result.rows_affected
   end
+
+  # MySQL supports the full set of index hints.
+  def supports_index_hints? : Bool
+    true
+  end
+
+  # `USE INDEX (a, b)` / `FORCE INDEX (a)` / `IGNORE INDEX (a)`.
+  def index_hint_clause(kind : Symbol, index_names : Array(String)) : String?
+    return nil if index_names.empty?
+    keyword = case kind
+              when :use    then "USE INDEX"
+              when :force  then "FORCE INDEX"
+              when :ignore then "IGNORE INDEX"
+              else
+                return nil
+              end
+    "#{keyword} (#{index_names.map { |n| quote(n) }.join(", ")})"
+  end
 end

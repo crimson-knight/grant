@@ -20,3 +20,8 @@ require "./grant/sanitization"
 require "./grant/connection_registry"
 require "./grant/base"
 require "./grant/sti"
+
+# Large-table / high-scale query toolkit (index hints, IN chunking, streaming,
+# tenant scoping). Required after Grant::Base is fully defined so the toolkit
+# can reopen the builder and include the tenant-scoping macros into Base.
+require "./grant/scale"
