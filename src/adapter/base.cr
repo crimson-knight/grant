@@ -217,4 +217,31 @@ abstract class Grant::Adapter::Base
   abstract def supports_lock_mode?(mode : Grant::Locking::LockMode) : Bool
   abstract def supports_isolation_level?(level : Grant::Transaction::IsolationLevel) : Bool
   abstract def supports_savepoints? : Bool
+
+  # Renders the SQL clause for a row-level lock *mode* (e.g. "FOR UPDATE").
+  #
+  # Defined here via virtual dispatch so `Grant::Locking::LockMode#to_sql`
+  # does not need to `case` over concrete adapter class literals — that
+  # would force every adapter (pg, mysql, sqlite) to compile even when an
+  # app only requires one. Each adapter overrides this with its own SQL.
+  #
+  # The default raises, so an adapter that has not implemented locking
+  # signals clearly rather than silently emitting wrong SQL.
+  def lock_clause(mode : Grant::Locking::LockMode) : String
+    raise "Adapter #{self.class} does not implement row-level locking"
+  end
+
+  # Returns the number of rows affected by *result* for an optimistic-lock
+  # UPDATE, given the open connection *db*. Pg/MySQL report this directly
+  # via `result.rows_affected`; SQLite overrides to query `changes()`.
+  #
+  # Defined via dispatch for the same reason as `#lock_clause` — to avoid
+  # `case`ing over adapter class literals in `Grant::Locking::Optimistic`.
+  # This base implementation returns `1` to preserve the prior `else 1_i64`
+  # fallback for adapters (e.g. the test virtual-shard adapter) that don't
+  # report affected rows. *db* is intentionally untyped because some
+  # adapters yield themselves rather than a `DB::Connection` from `#open`.
+  def rows_affected_for_optimistic_lock(db, result : DB::ExecResult) : Int64
+    1_i64
+  end
 end

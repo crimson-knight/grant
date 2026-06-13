@@ -103,17 +103,13 @@ module Grant::Locking::Optimistic
         params = values + [@{{primary_key.name.id}}, lock_version_was]
         
         result = db.exec(statement, args: params)
-        
-        case self.class.adapter
-        when Grant::Adapter::Pg
-          result.rows_affected
-        when Grant::Adapter::Mysql
-          result.rows_affected
-        when Grant::Adapter::Sqlite
-          db.scalar("SELECT changes()").as(Int64)
-        else
-          1_i64
-        end
+
+        # Ask the adapter how many rows the UPDATE affected. Dispatching on
+        # the adapter (rather than `case`ing over Pg/Mysql/Sqlite class
+        # literals) keeps this path from forcing all three adapter shards to
+        # compile when only one is required (issue #40). SQLite overrides to
+        # query `changes()`; pg/mysql use `result.rows_affected`.
+        self.class.adapter.rows_affected_for_optimistic_lock(db, result)
       end
       
       if affected_rows == 0
