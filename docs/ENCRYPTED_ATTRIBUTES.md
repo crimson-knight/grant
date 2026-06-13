@@ -1,6 +1,6 @@
 # Encrypted Attributes for Grant
 
-Grant provides transparent encryption for sensitive data in your models using industry-standard AES-256-GCM encryption. This feature allows you to encrypt specific attributes while maintaining the ability to query deterministic fields.
+Grant provides transparent encryption for sensitive data in your models using AES-256-CBC encryption authenticated with HMAC-SHA256 (Encrypt-then-MAC). This feature allows you to encrypt specific attributes while maintaining the ability to query deterministic fields.
 
 ## Table of Contents
 
