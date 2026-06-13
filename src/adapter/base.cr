@@ -111,6 +111,16 @@ abstract class Grant::Adapter::Base
     clause
   end
 
+  # Quotes a boolean as a SQL literal for this adapter. PostgreSQL and SQLite
+  # accept `TRUE`/`FALSE`; the base implementation uses the portable `1`/`0`
+  # form (which MySQL prefers). Adapters override where they differ.
+  #
+  # Used by `Grant::Sanitization` for inline (non-parameterized) SQL only.
+  # Parameter binding remains the preferred path.
+  def quote_boolean(value : Bool) : String
+    value ? "1" : "0"
+  end
+
   # This will insert a row in the database and return the id generated.
   abstract def insert(table_name : String, fields, params, lastval) : Int64
 
@@ -169,10 +179,15 @@ abstract class Grant::Adapter::Base
   # Use macro in order to read a constant defined in each subclasses.
   macro inherited
     # quotes table and column names
+    #
+    # Embedded quoting characters are doubled so an identifier sourced from
+    # user input cannot break out of the quoted identifier (e.g. a column name
+    # containing `"`). This is the adapter-level building block used by
+    # `Grant::Sanitization.quote_identifier`.
     def quote(name : String) : String
       String.build do |str|
         str << QUOTING_CHAR
-        str << name
+        str << name.gsub(QUOTING_CHAR, "#{QUOTING_CHAR}#{QUOTING_CHAR}")
         str << QUOTING_CHAR
       end
     end

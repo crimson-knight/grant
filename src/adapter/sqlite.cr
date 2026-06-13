@@ -164,6 +164,11 @@ class Grant::Adapter::Sqlite < Grant::Adapter::Base
     log statement, elapsed_time, value
   end
 
+  # SQLite recognizes the TRUE/FALSE keywords (3.23+) as aliases for 1/0.
+  def quote_boolean(value : Bool) : String
+    value ? "TRUE" : "FALSE"
+  end
+
   def supports_lock_mode?(mode : Grant::Locking::LockMode) : Bool
     false
   end

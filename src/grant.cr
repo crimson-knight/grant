@@ -16,5 +16,6 @@ module Grant
 end
 
 require "./adapter/base"
+require "./grant/sanitization"
 require "./grant/connection_registry"
 require "./grant/base"
