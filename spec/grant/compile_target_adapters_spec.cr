@@ -1,17 +1,20 @@
 require "../spec_helper"
 
-# Specs for Thread 1 — Compile-Target Adapters.
+# Specs for the compile-target mechanism (idiomatic, no `-D` flags).
 #
 # Covered here (runtime behaviour, adapter-agnostic, run under SQLite):
 #   * lazy URL provider — not invoked at registration, invoked once on first use
 #   * the AdapterNotAvailableError guard rail and its message contents
-#   * Grant.compiled_adapters / Grant.active_targets diagnostics
+#   * Grant.compiled_adapters / Grant.active_targets / Grant.target? diagnostics
 #
-# Per-target column gating (present/absent by flag, primary-gating compile error,
-# STI + serialization round-trip) is exercised by compiling the sample models in
-# spec/support/target_models/ under each -Dgrant_target_* flag. See
+# Adapter selection is now just which adapter you `require`; the build target is
+# the top-level `GRANT_COMPILE_TARGET` constant set by `require
+# "grant/target/<name>"`. Per-target column gating (present/absent by target,
+# the primary-gating compile error, STI + serialization round-trip) cannot be
+# observed in a single in-process build, so it is exercised by running the
+# per-target entrypoints in spec/support/target_models/ — see
 # spec/grant/compile_target_columns_compile_spec.cr for the driver that shells
-# out to `crystal build/run`.
+# out to `crystal run`.
 
 # Minimal adapter that records when its URL was resolved, so we can prove the
 # lazy provider is not called at registration time.
@@ -43,7 +46,7 @@ class TargetSpecMockAdapter < Grant::Adapter::Base
   end
 end
 
-describe "Grant compile-target adapters" do
+describe "Grant compile-target mechanism" do
   # NOTE: this spec deliberately does NOT call ConnectionRegistry.clear_all and
   # does NOT touch the default "sqlite" connection. It registers only uniquely
   # named throwaway databases (lazy_db, eager_db, …) so it leaves global
@@ -129,7 +132,7 @@ describe "Grant compile-target adapters" do
       ex.message.not_nil!.should contain("never_registered_db")
     end
 
-    it "includes the active target(s) and compiled adapters in the message" do
+    it "includes the active target(s), compiled adapters, and an actionable fix" do
       ex = expect_raises(Grant::AdapterNotAvailableError) do
         Grant::ConnectionRegistry.get_adapter("missing_db", :primary)
       end
@@ -138,24 +141,31 @@ describe "Grant compile-target adapters" do
       msg.should contain("Active build target(s)")
       msg.should contain("Adapters compiled in")
       msg.should contain("Registered connections")
-      # Actionable fix guidance.
-      msg.should contain("configure_target")
+      # Actionable fix guidance — points at establish_connection and the
+      # adapter require (no `-D` flags, no configure_target).
+      msg.should contain("establish_connection")
+      msg.should contain("require \"grant/adapter/<name>\"")
     end
   end
 
   describe "diagnostics" do
-    it "Grant.compiled_adapters reflects the presence flags (empty in the default build)" do
-      # The spec suite is built without -Dgrant_{sqlite,pg,mysql}, so this is the
-      # default-build behaviour: no presence flags ⇒ empty list. The compile spec
-      # asserts the populated case under -Dgrant_sqlite.
-      Grant.compiled_adapters.should be_a(Array(String))
+    it "Grant.compiled_adapters reflects the adapter classes required" do
+      # The spec suite requires `src/adapter/**`, so every adapter class exists
+      # and is reported. (A real single-target build requires exactly one.)
+      Grant.compiled_adapters.should contain("sqlite")
+      Grant.compiled_adapters.should contain("pg")
+      Grant.compiled_adapters.should contain("mysql")
     end
 
-    it "Grant.active_targets is empty when no grant_target_* flag is set" do
+    it "Grant.compile_target is nil when no GRANT_COMPILE_TARGET is set" do
+      Grant.compile_target.should be_nil
+    end
+
+    it "Grant.active_targets is empty when no target is selected" do
       Grant.active_targets.should eq([] of String)
     end
 
-    it "Grant.target? returns false for every target in the default build" do
+    it "Grant.target? returns false for every target in the untargeted build" do
       Grant.target?(:mobile).should be_false
       Grant.target?(:desktop).should be_false
       Grant.target?(:web).should be_false

@@ -140,12 +140,22 @@ module Grant::Columns
     {% nilable = (type.is_a?(Path) ? type.resolve.nilable? : (type.is_a?(Union) ? type.types.any?(&.resolve.nilable?) : (type.is_a?(Generic) ? type.resolve.nilable? : type.nilable?))) %}
 
     # ── Per-target column gating ───────────────────────────────────────────────
-    # `targets:` restricts a column to one or more build targets. When the active
-    # `grant_target_*` flag is NOT among them, the column is compiled out entirely
-    # (no ivar, accessors, (de)serialization, or field-list entry) — it does not
-    # exist on that target, at zero runtime cost. No `targets:` ⇒ present on every
-    # target (the shared sync columns).
+    # `targets:` restricts a column to one or more build targets. The active
+    # target is the top-level `GRANT_COMPILE_TARGET` constant, set by
+    # `require "grant/target/<name>"` (or by the app directly) BEFORE models
+    # expand — there is no `-D` flag. When the active target is NOT among
+    # `targets:`, the column is compiled out entirely (no ivar, accessors,
+    # (de)serialization, or field-list entry) — it does not exist on that target,
+    # at zero runtime cost. No `targets:`, or no target set at all, ⇒ present on
+    # every target (the shared sync columns; the default/untargeted build keeps
+    # every column).
     {% targets = (options[:targets] && !options[:targets].nil?) ? options[:targets] : nil %}
+
+    # Read the active build target via the top-level namespace, nil-safe: an
+    # untargeted build (constant absent) yields `nil`, so every gated column is
+    # emitted. (`@top_level.has_constant?` / `.constant` — verified against the
+    # compiler; see docs/compile_target_adapters.md.)
+    {% active_target = @top_level.has_constant?("GRANT_COMPILE_TARGET") ? @top_level.constant("GRANT_COMPILE_TARGET") : nil %}
 
     {% if targets != nil %}
       # A column's identity (and especially the primary / sync key) must be the
@@ -160,21 +170,12 @@ module Grant::Columns
         {% raise "The column #{@type.name}##{decl.var} `targets:` option must be an array of symbols, e.g. targets: [:web, :mobile]." %}
       {% end %}
 
-      # Resolve "is the active build target among `targets`?" at compile time by
-      # matching each requested target symbol against its grant_target_* flag.
-      {% emit = false %}
-      {% for t in targets %}
-        {% if t == :mobile && flag?(:grant_target_mobile) %} {% emit = true %} {% end %}
-        {% if t == :desktop && flag?(:grant_target_desktop) %} {% emit = true %} {% end %}
-        {% if t == :web && flag?(:grant_target_web) %} {% emit = true %} {% end %}
-        {% if t != :mobile && t != :desktop && t != :web %}
-          {% raise "The column #{@type.name}##{decl.var} has an unknown target #{t}. " \
-                   "Valid targets are :mobile, :desktop, :web." %}
-        {% end %}
-      {% end %}
+      # Emit iff no target is set (untargeted build → keep everything) OR the
+      # active target is one of this column's `targets`.
+      {% emit = (active_target == nil) || targets.includes?(active_target) %}
     {% else %}
       # Ungated columns are present on every target (including the default build
-      # where no grant_target_* flag is set).
+      # where no target constant is set).
       {% emit = true %}
     {% end %}
 

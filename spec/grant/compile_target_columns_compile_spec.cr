@@ -1,26 +1,31 @@
 require "../spec_helper"
 
-# Compile-time driver for per-target column gating (Thread 1 §1.4).
+# Compile-time driver for per-target column gating.
 #
 # These specs shell out to the Crystal compiler so they can assert behaviour
-# that differs *by build flag* — something a single in-process run cannot do,
-# because the gated-out columns do not exist in this (default) build at all.
+# that differs *by build* — something a single in-process run cannot do, because
+# the gated-out columns do not exist in this (default, untargeted) build at all.
 #
-# For each `-Dgrant_target_*` flag we run spec/support/target_models/
-# gated_columns_program.cr and assert which columns are present/absent and that
-# JSON/YAML round-trips. We also assert that gating a `primary:` column fails to
-# compile.
+# The new mechanism uses **no `-D` flags**: a build selects its target by which
+# `grant/target/<name>` file it `require`s (which sets the top-level
+# `GRANT_COMPILE_TARGET` constant). So instead of recompiling one source under
+# different flags, we run three thin per-target entrypoints
+# (spec/support/target_models/entry_{mobile,desktop,web}.cr), each of which
+# requires its adapter + target file before the *shared* models in
+# gated_models.cr expand. We assert which columns are present/absent and that
+# JSON/YAML round-trips per target. We also assert that gating a `primary:`
+# column fails to compile.
 #
-# These specs shell out to the compiler four times (~tens of seconds) and are
+# These specs shell out to the compiler several times (~tens of seconds) and are
 # therefore opt-in: run them with `crystal spec -Dgrant_compile_specs`. They are
 # excluded from the default `crystal spec` run so they neither slow it down nor
 # perturb its (pre-existing, environment-dependent) ordering. Skipped also when
 # the `crystal` binary is not on PATH.
 
 {% if flag?(:grant_compile_specs) %}
-  private SPEC_DIR  = __DIR__
-  private REPO_ROOT = File.expand_path("../..", SPEC_DIR)
-  private PROGRAM   = File.join(REPO_ROOT, "spec", "support", "target_models", "gated_columns_program.cr")
+  private SPEC_DIR   = __DIR__
+  private REPO_ROOT  = File.expand_path("../..", SPEC_DIR)
+  private TARGET_DIR = File.join(REPO_ROOT, "spec", "support", "target_models")
 
   private def crystal_available? : Bool
     Process.run("crystal", ["--version"], output: Process::Redirect::Close, error: Process::Redirect::Close).success?
@@ -28,16 +33,16 @@ require "../spec_helper"
     false
   end
 
-  # Runs the gated-columns program under *flags*, returning its stdout parsed into
-  # a `KEY => value` Hash.
-  private def run_program(flags : Array(String)) : Hash(String, String)
-    args = ["run", "--no-color", PROGRAM] + flags
+  # Runs the per-target *entry* program (e.g. "entry_mobile"), returning its
+  # stdout parsed into a `KEY => value` Hash.
+  private def run_entry(entry : String) : Hash(String, String)
+    program = File.join(TARGET_DIR, "#{entry}.cr")
     stdout = IO::Memory.new
     stderr = IO::Memory.new
-    status = Process.run("crystal", args, output: stdout, error: stderr, chdir: REPO_ROOT)
+    status = Process.run("crystal", ["run", "--no-color", program], output: stdout, error: stderr, chdir: REPO_ROOT)
 
     unless status.success?
-      raise "crystal run #{flags.join(" ")} failed:\n#{stderr.to_s}\n#{stdout.to_s}"
+      raise "crystal run #{entry} failed:\n#{stderr.to_s}\n#{stdout.to_s}"
     end
 
     result = {} of String => String
@@ -52,9 +57,10 @@ require "../spec_helper"
   describe "per-target column gating (compile-time)" do
     if crystal_available?
       describe "mobile target" do
-        out = run_program(["-Dgrant_target_mobile", "-Dgrant_sqlite"])
+        out = run_entry("entry_mobile")
 
         it "reports the active target and compiled adapter" do
+          out["TARGET"].should eq("mobile")
           out["TARGETS"].should eq("grant_target_mobile")
           out["COMPILED"].should eq("sqlite")
         end
@@ -86,7 +92,12 @@ require "../spec_helper"
       end
 
       describe "desktop target" do
-        out = run_program(["-Dgrant_target_desktop", "-Dgrant_sqlite"])
+        out = run_entry("entry_desktop")
+
+        it "reports the active target" do
+          out["TARGET"].should eq("desktop")
+          out["TARGETS"].should eq("grant_target_desktop")
+        end
 
         it "includes only the desktop-eligible gated column" do
           out["user_has_avatar_cache"].should eq("true") # [:mobile, :desktop]
@@ -96,9 +107,10 @@ require "../spec_helper"
       end
 
       describe "web target" do
-        out = run_program(["-Dgrant_target_web", "-Dgrant_pg"])
+        out = run_entry("entry_web")
 
         it "reports pg compiled in (one adapter per target)" do
+          out["TARGET"].should eq("web")
           out["TARGETS"].should eq("grant_target_web")
           out["COMPILED"].should eq("pg")
         end
@@ -122,28 +134,67 @@ require "../spec_helper"
         end
       end
 
+      describe "untargeted build" do
+        # No `grant/target/<name>` required → GRANT_COMPILE_TARGET unset → every
+        # gated column is present (the default/spec build behaviour).
+        it "keeps every gated column when no target is selected" do
+          src = <<-CR
+          require "../../../src/grant"
+          require "../../../src/adapter/sqlite"
+
+          Grant::ConnectionRegistry.establish_connection(
+            database: "primary", adapter: Grant::Adapter::Sqlite, url: "sqlite3://%3Amemory%3A")
+
+          class UntargetedUser < Grant::Base
+            connection "primary"
+            table untargeted_users
+            column id : Int64, primary: true
+            column push_token : String?, targets: [:mobile]
+            column password_digest : String?, targets: [:web]
+          end
+
+          puts "target=\#{Grant.compile_target.inspect}"
+          puts "fields=\#{UntargetedUser.fields.join(",")}"
+          CR
+
+          path = File.join(TARGET_DIR, "untargeted_tmp.cr")
+          begin
+            File.write(path, src)
+            stdout = IO::Memory.new
+            status = Process.run("crystal", ["run", "--no-color", path], output: stdout, error: Process::Redirect::Close, chdir: REPO_ROOT)
+            status.success?.should be_true
+            output = stdout.to_s
+            output.should contain("target=nil")
+            output.should contain("push_token")
+            output.should contain("password_digest")
+          ensure
+            File.delete(path) if File.exists?(path)
+          end
+        end
+      end
+
       describe "primary-column gating" do
         it "fails to compile when a primary: true column is gated" do
           # Written inside the repo so the relative requires resolve exactly like
-          # the working gated-columns program (which lives in the same directory).
+          # the per-target entrypoints (which live in the same directory).
           src = <<-CR
-        require "../../../src/grant"
-        require "../../../src/adapter/sqlite"
+          require "../../../src/grant"
+          require "../../../src/adapter/sqlite"
+          require "../../../src/target/web"
 
-        class BadGatedPrimary < Grant::Base
-          connection "primary"
-          table bad_gated_primaries
-          column id : Int64, primary: true, targets: [:web]
-        end
-        CR
+          class BadGatedPrimary < Grant::Base
+            connection "primary"
+            table bad_gated_primaries
+            column id : Int64, primary: true, targets: [:web]
+          end
+          CR
 
-          dir = File.join(REPO_ROOT, "spec", "support", "target_models")
-          path = File.join(dir, "bad_gated_primary_tmp.cr")
+          path = File.join(TARGET_DIR, "bad_gated_primary_tmp.cr")
           begin
             File.write(path, src)
             stderr = IO::Memory.new
             status = Process.run(
-              "crystal", ["build", "--no-codegen", "--no-color", path, "-Dgrant_target_mobile"],
+              "crystal", ["build", "--no-codegen", "--no-color", path],
               output: Process::Redirect::Close, error: stderr, chdir: REPO_ROOT
             )
 
