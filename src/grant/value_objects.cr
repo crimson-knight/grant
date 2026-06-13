@@ -169,11 +169,20 @@ module Grant::ValueObjects
   
   # Macro to generate all value object methods
   macro finished
-    # Dirty tracking for aggregations  
+    # Dirty tracking for aggregations.
+    # Declared nilable (with lazy initialization in `aggregation_changes` below)
+    # rather than carrying a default value so that `YAML::Serializable` /
+    # `JSON::Serializable`'s auto-generated deserialization initializer — included
+    # on the abstract `Grant::Base` — does not report it as uninitialized for
+    # `Grant::Base+`. See issues #39/#41.
     @[JSON::Field(ignore: true)]
     @[YAML::Field(ignore: true)]
-    @aggregation_changes = {} of String => Tuple(String?, String?)
-    
+    @aggregation_changes : Hash(String, Tuple(String?, String?))?
+
+    protected def aggregation_changes : Hash(String, Tuple(String?, String?))
+      @aggregation_changes ||= {} of String => Tuple(String?, String?)
+    end
+
     # Generate aggregations class method
     def self.aggregations
       aggregations = {} of Symbol => AggregationMeta
@@ -192,7 +201,7 @@ module Grant::ValueObjects
       old_str = old_value.responds_to?(:to_s) ? old_value.to_s : nil
       new_str = new_value.responds_to?(:to_s) ? new_value.to_s : nil
       return if old_str == new_str
-      @aggregation_changes[name] = {old_str, new_str}
+      aggregation_changes[name] = {old_str, new_str}
     end
     
     # Check if an aggregation has changed
@@ -214,8 +223,8 @@ module Grant::ValueObjects
     
     # Get the previous value of an aggregation
     def aggregation_was(name : String)
-      if @aggregation_changes.has_key?(name)
-        @aggregation_changes[name][0]
+      if aggregation_changes.has_key?(name)
+        aggregation_changes[name][0]
       else
         read_aggregation(name)
       end

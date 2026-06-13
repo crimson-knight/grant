@@ -103,7 +103,47 @@ abstract class Grant::Base
     Grant::Normalization.normalizes({{attribute}}, {{**options}}) {{block}}
   end
 
+  # Serialization support is included on the abstract base itself (not only on
+  # concrete subclasses via `inherited`) so that the abstract `Grant::Base` type
+  # — to which Crystal widens a union of two-or-more subclasses (`Grant::Base+`)
+  # — satisfies `JSON::Serializable` / `YAML::Serializable`. Without this, any
+  # context expecting `YAML::Serializable?` (e.g. Amber's
+  # `Amber::Configuration::CustomRegistry#load_custom_from_yaml`) fails to
+  # compile the moment a program defines two models. See issues #39/#41.
+  include JSON::Serializable
+  include YAML::Serializable
+
+  # `Grant::Base` is abstract and is never (de)serialized directly: every real
+  # model is a concrete subclass that regenerates fully-working serializers via
+  # the `include`s in `macro inherited` below. The auto-generated serializers the
+  # two `include`s above install on the *abstract* base reference per-subclass
+  # column ivars (e.g. `@id`) that do not exist on `Grant::Base` itself, which
+  # would otherwise fail to type-infer when `Grant::Base+.from_yaml` is realized.
+  # We override them here with abstract-safe stubs so the abstract base satisfies
+  # the `JSON/YAML::Serializable` *type* without instantiating a broken concrete
+  # serializer. See issues #39/#41.
+  protected def self.new(ctx : ::YAML::ParseContext, node : ::YAML::Nodes::Node)
+    raise "Grant::Base is abstract and cannot be deserialized directly; deserialize a concrete subclass instead"
+  end
+
+  protected def self.new(pull : ::JSON::PullParser)
+    raise "Grant::Base is abstract and cannot be deserialized directly; deserialize a concrete subclass instead"
+  end
+
+  def initialize(*, __context_for_yaml_serializable ctx : ::YAML::ParseContext, __node_for_yaml_serializable node : ::YAML::Nodes::Node)
+    raise "Grant::Base is abstract and cannot be deserialized directly; deserialize a concrete subclass instead"
+  end
+
+  def initialize(*, __pull_for_json_serializable pull : ::JSON::PullParser)
+    raise "Grant::Base is abstract and cannot be deserialized directly; deserialize a concrete subclass instead"
+  end
+
   macro inherited
+    # Regenerate fully-working, per-subclass JSON/YAML serializers that see this
+    # concrete model's own column ivars. See issues #39/#41.
+    include JSON::Serializable
+    include YAML::Serializable
+
     protected class_getter select_container : Container = Container.new(table_name: table_name, fields: fields)
     
     # Auto-register for polymorphic associations
@@ -151,9 +191,6 @@ abstract class Grant::Base
       ensure_dirty_tracking_initialized
     end
 
-    include JSON::Serializable
-    include YAML::Serializable
-    
     macro finished
       disable_grant_docs? def initialize(**args : Grant::Columns::Type)
         ensure_dirty_tracking_initialized

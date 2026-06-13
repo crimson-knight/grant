@@ -55,12 +55,24 @@ module Grant::Encryption
       # Track encrypted attributes at the class level
       class_getter encrypted_attributes = {} of String => Grant::Encryption::EncryptedAttribute
       
-      # Instance cache for decrypted values
-      @encrypted_attribute_cache = {} of String => String?
-      
+      # Instance cache for decrypted values.
+      # Declared nilable (with lazy initialization in `encrypted_attribute_cache`
+      # below) rather than carrying a default value so that `YAML::Serializable` /
+      # `JSON::Serializable`'s auto-generated deserialization initializer — included
+      # on the abstract `Grant::Base` — does not report it as uninitialized for
+      # `Grant::Base+`. The ignore annotations also keep this transient cache out
+      # of (de)serialized output. See issues #39/#41.
+      @[JSON::Field(ignore: true)]
+      @[YAML::Field(ignore: true)]
+      @encrypted_attribute_cache : Hash(String, String?)?
+
+      protected def encrypted_attribute_cache : Hash(String, String?)
+        @encrypted_attribute_cache ||= {} of String => String?
+      end
+
       # Define the cache clearing method
       private def clear_encryption_cache
-        @encrypted_attribute_cache.clear
+        encrypted_attribute_cache.clear
       end
     end
     
@@ -93,8 +105,8 @@ module Grant::Encryption
       # Create virtual getter with caching
       def {{attribute.id}} : String?
         # Check cache first
-        if @encrypted_attribute_cache.has_key?({{attr_name}})
-          return @encrypted_attribute_cache[{{attr_name}}]
+        if encrypted_attribute_cache.has_key?({{attr_name}})
+          return encrypted_attribute_cache[{{attr_name}}]
         end
         
         encrypted = @{{attribute.id}}_encrypted
@@ -106,14 +118,14 @@ module Grant::Encryption
           self.class.name,
           {{attr_name}}
         )
-        @encrypted_attribute_cache[{{attr_name}}] = decrypted
+        encrypted_attribute_cache[{{attr_name}}] = decrypted
         decrypted
       end
       
       # Create virtual setter
       def {{attribute.id}}=(value : String?)
         # Update cache
-        @encrypted_attribute_cache[{{attr_name}}] = value
+        encrypted_attribute_cache[{{attr_name}}] = value
         
         if value.nil?
           @{{attribute.id}}_encrypted = nil

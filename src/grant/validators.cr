@@ -29,8 +29,16 @@ module Grant::Validators
   # ```
   VALID_CONTEXTS = [:create, :update, :save]
 
+  # Backing store for the errors collection. Declared nilable (with lazy
+  # initialization in the `errors` getter below) rather than carrying a
+  # default value so that `YAML::Serializable` / `JSON::Serializable`'s
+  # auto-generated deserialization initializer — included on the abstract
+  # `Grant::Base` — does not report it as uninitialized for `Grant::Base+`.
+  # The annotations keep the transient errors collection out of (de)serialized
+  # output. See issues #39/#41.
   @[JSON::Field(ignore: true)]
   @[YAML::Field(ignore: true)]
+  @errors : Errors?
 
   # Returns all errors on the model.
   #
@@ -43,11 +51,13 @@ module Grant::Validators
   # record.errors.full_messages # => ["Name can't be blank"]
   # record.errors.add(:base, "Something went wrong")
   # ```
-  getter errors = Errors.new
+  def errors : Errors
+    @errors ||= Errors.new
+  end
 
   @[JSON::Field(ignore: true)]
   @[YAML::Field(ignore: true)]
-  @_skip_normalization : Bool = false
+  @_skip_normalization : Bool?
 
   macro included
     macro inherited

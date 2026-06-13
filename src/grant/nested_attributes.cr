@@ -1,15 +1,25 @@
 # Improved nested attributes implementation with explicit types
 module Grant::NestedAttributes
   macro included
-    # Storage for nested attributes data
+    # Storage for nested attributes data.
+    # Declared nilable (with lazy initialization in `_nested_attributes_data`
+    # below) rather than carrying a default value so that `YAML::Serializable` /
+    # `JSON::Serializable`'s auto-generated deserialization initializer — included
+    # on the abstract `Grant::Base` — does not report it as uninitialized for
+    # `Grant::Base+`. See issues #39/#41.
     @[JSON::Field(ignore: true)]
     @[YAML::Field(ignore: true)]
-    @_nested_attributes_data = {} of String => Array(Hash(String, Grant::Columns::Type))
+    @_nested_attributes_data : Hash(String, Array(Hash(String, Grant::Columns::Type)))?
 
-    # Track if we have nested attributes to avoid unnecessary overhead
+    protected def _nested_attributes_data : Hash(String, Array(Hash(String, Grant::Columns::Type)))
+      @_nested_attributes_data ||= {} of String => Array(Hash(String, Grant::Columns::Type))
+    end
+
+    # Track if we have nested attributes to avoid unnecessary overhead.
+    # Nilable for the same reason as above; `nil` is treated as `false`.
     @[JSON::Field(ignore: true)]
     @[YAML::Field(ignore: true)]
-    @_has_nested_attributes = false
+    @_has_nested_attributes : Bool?
   end
 
   # Macro to enable automatic nested saves via callbacks
@@ -19,20 +29,20 @@ module Grant::NestedAttributes
     
     private def save_all_nested_attributes
       return true unless @_has_nested_attributes
-      return true if @_nested_attributes_data.empty?
-      
+      return true if _nested_attributes_data.empty?
+
       success = true
-      
+
       # Process each association's nested attributes
       {% for method in @type.methods.select { |m| m.name.starts_with?("save_nested_") } %}
         {% assoc_name = method.name.gsub(/^save_nested_/, "") %}
-        if attrs = @_nested_attributes_data[{{ assoc_name.stringify }}]?
+        if attrs = _nested_attributes_data[{{ assoc_name.stringify }}]?
           success = {{ method.name.id }} && success
         end
       {% end %}
-      
+
       # Clear nested data after processing
-      @_nested_attributes_data.clear if success
+      _nested_attributes_data.clear if success
       
       success
     end
@@ -84,17 +94,17 @@ module Grant::NestedAttributes
         raise ArgumentError.new("Nested attributes must be an Array, Hash, or NamedTuple")
       end
       
-      @_nested_attributes_data[{{ assoc_name.stringify }}] = processed_attrs
+      _nested_attributes_data[{{ assoc_name.stringify }}] = processed_attrs
     end
-    
+
     # Get nested attributes (for testing)
     def {{assoc_name.id}}_nested_attributes
-      @_nested_attributes_data[{{ assoc_name.stringify }}]?
+      _nested_attributes_data[{{ assoc_name.stringify }}]?
     end
-    
+
     # Generate save method for this specific association
     private def save_nested_{{assoc_name.id}} : Bool
-      attrs_array = @_nested_attributes_data[{{ assoc_name.stringify }}]
+      attrs_array = _nested_attributes_data[{{ assoc_name.stringify }}]
       return true unless attrs_array
       return true if attrs_array.empty?
       
@@ -227,6 +237,6 @@ module Grant::NestedAttributes
 
   # Get all nested attributes data
   def nested_attributes_data
-    @_nested_attributes_data
+    _nested_attributes_data
   end
 end

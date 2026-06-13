@@ -1,27 +1,37 @@
 module Grant::EagerLoading
   macro included
+    # Eager-loaded association cache.
+    # Declared nilable (with lazy initialization in `loaded_associations` below)
+    # rather than carrying a default value so that `YAML::Serializable` /
+    # `JSON::Serializable`'s auto-generated deserialization initializer — included
+    # on the abstract `Grant::Base` — does not report it as uninitialized for
+    # `Grant::Base+`. See issues #39/#41.
     @[JSON::Field(ignore: true)]
     @[YAML::Field(ignore: true)]
-    @loaded_associations = {} of String => Array(Grant::Base) | Grant::Base | Nil
+    @loaded_associations : Hash(String, Array(Grant::Base) | Grant::Base | Nil)?
+
+    protected def loaded_associations : Hash(String, Array(Grant::Base) | Grant::Base | Nil)
+      @loaded_associations ||= {} of String => Array(Grant::Base) | Grant::Base | Nil
+    end
 
     # Check if an association has been loaded
     def association_loaded?(name : String | Symbol)
-      @loaded_associations.has_key?(name.to_s)
+      loaded_associations.has_key?(name.to_s)
     end
 
     # Get loaded association data
     def get_loaded_association(name : String | Symbol)
-      @loaded_associations[name.to_s]?
+      loaded_associations[name.to_s]?
     end
 
     # Set loaded association data
     def set_loaded_association(name : String | Symbol, data)
-      @loaded_associations[name.to_s] = data
+      loaded_associations[name.to_s] = data
     end
 
     # Clear all loaded associations
     def clear_loaded_associations
-      @loaded_associations.clear
+      loaded_associations.clear
     end
 
     # Batch-loads a named association for an array of records of this model.
