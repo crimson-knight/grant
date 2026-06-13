@@ -1,14 +1,22 @@
 class Grant::AssociationCollection(Owner, Target)
   forward_missing_to all
 
-  def initialize(@owner : Owner, @foreign_key : (Symbol | String), @through : (Symbol | String | Nil) = nil, @primary_key : (Symbol | String | Nil) = nil, @inverse_of : (Symbol | String | Nil) = nil)
+  # `@scope` carries an optional association-scope lambda (the `-> { ... }` form
+  # of `has_many :posts, -> { where(published: true) }`). When present it is
+  # applied to a fresh `Target` query builder and the resulting WHERE fragment is
+  # merged into the association query so the collection is filtered by the scope.
+  def initialize(@owner : Owner, @foreign_key : (Symbol | String), @through : (Symbol | String | Nil) = nil, @primary_key : (Symbol | String | Nil) = nil, @inverse_of : (Symbol | String | Nil) = nil, @scope : (Grant::Query::Builder(Target) -> Grant::Query::Builder(Target))? = nil)
   end
 
   def all(clause = "", params = [] of DB::Any)
     start_time = Time.monotonic
+    scope_clause, scope_params = scope_fragment
+    all_params = [owner.primary_key_value.as(Grant::Columns::Type)]
+    scope_params.each { |p| all_params << p }
+    params.each { |p| all_params << p.as(Grant::Columns::Type) }
     results = Target.all(
-      [query, clause].join(" "),
-      [owner.primary_key_value] + params
+      [query, scope_clause, clause].reject(&.empty?).join(" "),
+      all_params
     )
     duration = Time.monotonic - start_time
 
@@ -60,7 +68,7 @@ class Grant::AssociationCollection(Owner, Target)
   #
   # ```
   # post = author.posts.build(title: "New Post")
-  # post.author_id # => author.id
+  # post.author_id   # => author.id
   # post.new_record? # => true
   # ```
   def build(**attrs) : Target
@@ -122,6 +130,49 @@ class Grant::AssociationCollection(Owner, Target)
   private getter owner
   private getter foreign_key
   private getter through
+
+  # Maps Query::Builder operator symbols to SQL operators for raw fragment
+  # generation. Mirrors `Grant::Query::Assembler::Base::OPERATORS`.
+  SCOPE_OPERATORS = {"eq" => "=", "gteq" => ">=", "lteq" => "<=", "neq" => "!=", "ltgt" => "<>", "gt" => ">", "lt" => "<", "ngt" => "!>", "nlt" => "!<", "like" => "LIKE", "nlike" => "NOT LIKE"}
+
+  # Evaluates the association scope lambda (if any) against a fresh `Target`
+  # query builder and translates its accumulated WHERE conditions into a raw
+  # SQL fragment (prefixed with `AND`) plus an ordered parameter array. The
+  # fragment uses `?` placeholders, which `Target.all` rewrites per-adapter.
+  #
+  # Only simple field/operator/value and raw-statement conditions are
+  # translated — this covers the common `-> { where(...) }` association-scope
+  # forms. The fragment is qualified with the target table name so it composes
+  # correctly with the JOIN used by `:through` associations.
+  private def scope_fragment : Tuple(String, Array(Grant::Columns::Type))
+    scope = @scope
+    return {"", [] of Grant::Columns::Type} unless scope
+
+    db_type = case Target.adapter.class.to_s
+              when "Grant::Adapter::Pg"    then Grant::Query::Builder::DbType::Pg
+              when "Grant::Adapter::Mysql" then Grant::Query::Builder::DbType::Mysql
+              else                              Grant::Query::Builder::DbType::Sqlite
+              end
+    builder = scope.call(Grant::Query::Builder(Target).new(db_type))
+    clauses = [] of String
+    params = [] of Grant::Columns::Type
+
+    builder.where_fields.each do |field|
+      if field.is_a?(NamedTuple(join: Symbol, field: String, operator: Symbol, value: Grant::Columns::Type))
+        op = SCOPE_OPERATORS[field[:operator].to_s]? || field[:operator].to_s
+        col = field[:field]
+        col = "#{Target.quote(Target.table_name)}.#{Target.quote(col)}" unless col.includes?(".")
+        clauses << "#{col} #{op} ?"
+        params << field[:value]
+      elsif field.is_a?(NamedTuple(join: Symbol, stmt: String, value: Grant::Columns::Type))
+        clauses << "(#{field[:stmt]})"
+        params << field[:value] unless field[:value].nil?
+      end
+    end
+
+    return {"", [] of Grant::Columns::Type} if clauses.empty?
+    {"AND #{clauses.join(" AND ")}", params}
+  end
 
   private def query
     if through.nil?

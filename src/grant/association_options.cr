@@ -1,5 +1,5 @@
 # Advanced association options for Grant ORM
-# 
+#
 # This module provides advanced association options like:
 # - dependent: :destroy/:nullify/:restrict
 # - counter_cache: true
@@ -22,7 +22,7 @@ module Grant::AssociationOptions
         {% end %}
       end
     end
-    
+
     macro setup_dependent_nullify(association_name, association_type, target_class, foreign_key)
       after_destroy do
         {% if association_type == :has_many %}
@@ -36,7 +36,7 @@ module Grant::AssociationOptions
         {% end %}
       end
     end
-    
+
     # Deletes all dependent records using a single SQL DELETE statement.
     #
     # Unlike `dependent: :destroy`, this does NOT instantiate records or
@@ -70,8 +70,26 @@ module Grant::AssociationOptions
         {% end %}
       end
     end
+
+    # `dependent: :restrict_with_exception` — raises `Grant::Associations::RestrictError`
+    # when dependent records exist, instead of merely adding a validation error.
+    #
+    # Mirrors ActiveRecord's `:restrict_with_exception`.
+    macro setup_dependent_restrict_with_exception(association_name, association_type, target_class, foreign_key)
+      before_destroy do
+        {% if association_type == :has_many %}
+          if {{target_class.id}}.where({{foreign_key}}: self.primary_key_value).exists?
+            raise Grant::Associations::RestrictError.new({{association_name.id.stringify}})
+          end
+        {% elsif association_type == :has_one %}
+          if {{target_class.id}}.find_by({{foreign_key}}: self.primary_key_value)
+            raise Grant::Associations::RestrictError.new({{association_name.id.stringify}})
+          end
+        {% end %}
+      end
+    end
   end
-  
+
   # Counter cache implementation
   module CounterCache
     macro setup_counter_cache(association_name, model_class, counter_column)
@@ -108,7 +126,7 @@ module Grant::AssociationOptions
       end
     end
   end
-  
+
   # Touch implementation
   module TouchCallbacks
     macro setup_touch(association_name, touch_column = nil)
@@ -133,7 +151,7 @@ module Grant::AssociationOptions
       end
     end
   end
-  
+
   # Autosave implementation
   module AutosaveCallbacks
     macro setup_autosave(association_name, association_type)
@@ -152,7 +170,7 @@ module Grant::AssociationOptions
       end
     end
   end
-  
+
   # Optional belongs_to validation
   module OptionalValidation
     macro setup_optional_validation(association_name, foreign_key, optional)
@@ -163,5 +181,4 @@ module Grant::AssociationOptions
       {% end %}
     end
   end
-  
 end

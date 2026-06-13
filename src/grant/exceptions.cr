@@ -7,6 +7,18 @@ module Grant
     end
   end
 
+  module Associations
+    # Raised when destroying a record that still has dependent records and the
+    # association was declared with `dependent: :restrict_with_exception`.
+    #
+    # Mirrors ActiveRecord's `ActiveRecord::DeleteRestrictionError`.
+    class RestrictError < ::Exception
+      def initialize(association_name : String)
+        super("Cannot delete record because of dependent #{association_name}")
+      end
+    end
+  end
+
   class RecordNotDestroyed < ::Exception
     getter model : Grant::Base
 
