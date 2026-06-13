@@ -124,6 +124,19 @@ module Grant
         end
       end
 
+      # Rails-familiar alias for `async_all` at the model-class level.
+      #
+      # ```
+      # result = User.load_async # whole-table read on a fiber
+      # users = result.wait
+      # ```
+      #
+      # For filtered reads, prefer the query-builder form
+      # (`User.where(...).load_async`).
+      def load_async : AsyncResult(Array(self))
+        async_all
+      end
+
       # Execute multiple async operations in parallel
       def parallel_execute(&block : Coordinator -> Nil) : Coordinator
         coordinator = Coordinator.new
@@ -140,6 +153,25 @@ module Grant
         AsyncResult(Array(Model)).new do
           self.select
         end
+      end
+
+      # Rails-familiar alias for `async_select`.
+      #
+      # Kicks off the query on a background fiber and returns an
+      # `Async::Result(Array(Model))` immediately. Call `.wait` to block for
+      # the rows, or chain `.then`/`.map`/`.on_error`:
+      #
+      # ```
+      # result = User.where(active: true).load_async
+      # # ... do other work / fire more queries ...
+      # users = result.wait
+      # ```
+      #
+      # Mirrors ActiveRecord's `Relation#load_async`. Unlike Rails (which
+      # depends on a thread pool and inherits the GVL), this runs on a cheap
+      # cooperative fiber.
+      def load_async : AsyncResult(Array(Model))
+        async_select
       end
 
       # Async count

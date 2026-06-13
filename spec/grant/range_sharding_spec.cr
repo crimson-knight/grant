@@ -66,15 +66,17 @@ describe "Range-based Sharding" do
       end
     end
 
-    # pending: Crystal has no `send` for calling private methods; test needs redesign
-    pending "generates IDs that match configured ranges" do
-      order = RangeShardedOrder.new(user_id: 1_i64, total: 99.99)
-      order.send(:generate_id)
+    it "generates IDs in the composite format and resolves in-range IDs" do
+      # Use the public CompositeId generator (no private `send` needed). It
+      # produces "%Y_%m_%d_<unix_ms>_<hex>".
+      generated = RangeShardedOrder.generate_composite_id
+      generated.should match(/^\d{4}_\d{2}_\d{2}_\d+_[a-f0-9]+$/)
 
-      order.id.should match(/^\d{4}_\d{2}_\d{2}_\d+_[a-f0-9]+$/)
-
-      shard = order.determine_shard
-      shard.should_not be_nil
+      # An ID whose prefix falls inside a configured range resolves to that
+      # range's shard (we don't feed the freshly-generated current-date ID
+      # through the resolver because the configured ranges stop at 2025).
+      order = RangeShardedOrder.new(id: "2024_03_20_123456_abc", user_id: 1_i64, total: 99.99)
+      order.determine_shard.should eq(:shard_2024_h1)
     end
 
     it "queries route to single shard when using shard key" do

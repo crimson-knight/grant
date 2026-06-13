@@ -13,8 +13,10 @@ module Grant::Testing
     getter name : String
 
     def initialize(@name : String, @url : String)
-      # Extract shard from URL
-      if match = @url.match(/virtual:\/\/(.+)/)
+      # Extract shard from URL. Stop at the first '?' so pool query params that
+      # ConnectionRegistry appends (e.g. "?max_pool_size=25&...") don't end up
+      # in the captured shard name and force every adapter to :default.
+      if match = @url.match(/virtual:\/\/([^?]+)/)
         shard_name = match[1]
         # Convert known shard names to symbols
         @shard = case shard_name
