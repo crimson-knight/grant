@@ -2,23 +2,37 @@ require "../columns"
 require "../async"
 require "./where_chain"
 
-# Data structure which will allow chaining of query components,
-# nesting of boolean logic, etc.
+# Lazy, chainable SQL query builder returned by `Model.where`, `Model.order`, etc.
 #
-# Should return self, or another instance of Builder wherever
-# chaining should be possible.
+# A `Builder` accumulates query components (WHERE/ORDER/GROUP BY/LIMIT/…) and
+# does **not** touch the database until a terminal method is called. Most
+# chaining methods mutate and return `self`, so calls compose left-to-right:
 #
-# Current query syntax:
-# - where(field: value) => "WHERE field = 'value'"
+# ```
+# class User < Grant::Base
+#   column id : Int64, primary: true
+#   column email : String
+#   column active : Bool
+# end
 #
-# Hopefully soon:
-# - Model.where(field: value).not( Model.where(field2: value2) )
-# or
-# - Model.where(field: value).not { where(field2: value2) }
+# # Lazy: nothing runs here…
+# query = User.where(active: true).order(id: :desc).limit(10)
 #
-# - Model.where(field: value).or( Model.where(field3: value3) )
-# or
-# - Model.where(field: value).or { whehre(field3: value3) }
+# # …a terminal method executes the SQL:
+# query.select     # => Array(User)
+# query.first      # => User? (LIMIT 1)
+# query.count      # => Int64
+# query.delete_all # => Int64 (rows affected)
+# ```
+#
+# Because `Builder` includes `Enumerable(Model)`, collection methods (`map`,
+# `select`, `reduce`, `each`, …) work directly on a chain without first calling
+# `.select`/`.all`.
+#
+# Boolean logic can be grouped with the block forms `or { |q| ... }` and
+# `not { |q| ... }`, or chained inline with `and`/`or`. Advanced operators
+# (`like`, `gt`, `not_in`, …) are available via the no-argument `where`, which
+# returns a `WhereChain`.
 class Grant::Query::Builder(Model)
   include Grant::Async::QueryMethods(Model)
   include Enumerable(Model)
@@ -79,11 +93,43 @@ class Grant::Query::Builder(Model)
     end
   end
 
-  def where(**matches)
+  # Adds equality (or set/range) conditions from keyword arguments, ANDed together.
+  #
+  # Each *matches* pair becomes a condition on that column. The operator is
+  # inferred from the value type:
+  # - scalar → `column = value`
+  # - `Array` → `column IN (...)` (nils dropped)
+  # - `Range` → `column BETWEEN begin AND end`
+  # - `Enum` → compared by its `to_s`
+  # - another `Builder` → `column IN (subquery)`
+  #
+  # Returns `self` for chaining.
+  #
+  # ```
+  # class User < Grant::Base
+  #   column id : Int64, primary: true
+  #   column email : String
+  #   column active : Bool
+  # end
+  #
+  # User.where(active: true)
+  # User.where(active: true, email: "a@example.com") # ANDed
+  # User.where(id: [1, 2, 3])                        # id IN (1, 2, 3)
+  # User.where(id: 1..10)                            # id BETWEEN 1 AND 10
+  # ```
+  def where(**matches) : self
     where(matches)
   end
 
-  def where(matches)
+  # :ditto:
+  #
+  # Hash/NamedTuple form of `where(**matches)` — accepts a pre-built collection
+  # of column/value pairs.
+  #
+  # ```
+  # User.where({active: true, email: "a@example.com"})
+  # ```
+  def where(matches) : self
     matches.each do |field, value|
       if value.is_a?(Array)
         and(field: field.to_s, operator: :in, value: value.compact)
@@ -104,11 +150,32 @@ class Grant::Query::Builder(Model)
     self
   end
 
-  def where(field : (Symbol | String), operator : Symbol, value : Grant::Columns::Type)
+  # Adds a single condition with an explicit *operator*, ANDed onto the query.
+  #
+  # - *field*: column name (Symbol or String).
+  # - *operator*: comparison operator symbol, e.g. `:eq`, `:neq`, `:gt`, `:lt`,
+  #   `:gteq`, `:lteq`, `:in`, `:nin`, `:like`, `:nlike`.
+  # - *value*: the value to compare against.
+  #
+  # Returns `self` for chaining.
+  #
+  # ```
+  # User.where(:id, :gt, 100)
+  # User.where(:email, :like, "%@example.com")
+  # ```
+  def where(field : (Symbol | String), operator : Symbol, value : Grant::Columns::Type) : self
     and(field: field.to_s, operator: operator, value: value)
   end
 
-  def where(stmt : String, value : Grant::Columns::Type = nil)
+  # Adds a raw SQL condition *stmt*, ANDed onto the query.
+  #
+  # Use a `?` placeholder and pass *value* to bind it safely.
+  #
+  # ```
+  # User.where("LENGTH(email) > ?", 20)
+  # User.where("active = true") # no bind value
+  # ```
+  def where(stmt : String, value : Grant::Columns::Type = nil) : self
     and(stmt: stmt, value: value)
   end
 
@@ -124,23 +191,43 @@ class Grant::Query::Builder(Model)
     WhereChain(Model).new(self)
   end
 
-  def and(field : (Symbol | String), operator : Symbol, value : Grant::Columns::Type)
+  # Adds an AND condition with an explicit *operator*. Synonym of `where(field, operator, value)`.
+  #
+  # See `where(field, operator, value)` for the operator list. Returns `self`.
+  #
+  # ```
+  # User.where(active: true).and(:id, :gt, 100)
+  # ```
+  def and(field : (Symbol | String), operator : Symbol, value : Grant::Columns::Type) : self
     @where_fields << {join: :and, field: field.to_s, operator: operator, value: value}
 
     self
   end
 
-  def and(stmt : String, value : Grant::Columns::Type = nil)
+  # Adds a raw SQL AND condition *stmt*, optionally binding *value* to a `?`. Returns `self`.
+  #
+  # ```
+  # User.where(active: true).and("LENGTH(email) > ?", 10)
+  # ```
+  def and(stmt : String, value : Grant::Columns::Type = nil) : self
     @where_fields << {join: :and, stmt: stmt, value: value}
 
     self
   end
 
-  def and(**matches)
+  # Adds AND equality/set/range conditions from keyword arguments. Synonym of `where(**matches)`. Returns `self`.
+  #
+  # ```
+  # User.where(active: true).and(email: "a@example.com")
+  # ```
+  def and(**matches) : self
     and(matches)
   end
 
-  def and(matches)
+  # :ditto:
+  #
+  # Hash/NamedTuple form of `and(**matches)`.
+  def and(matches) : self
     matches.each do |field, value|
       if value.is_a?(Array)
         and(field: field.to_s, operator: :in, value: value.compact)
@@ -157,11 +244,25 @@ class Grant::Query::Builder(Model)
     self
   end
 
-  def or(**matches)
+  # Adds OR equality/set/range conditions from keyword arguments.
+  #
+  # Each pair is joined to the existing conditions with OR (same value-type
+  # inference as `where`). Returns `self`.
+  #
+  # ```
+  # User.where(active: true).or(email: "admin@example.com")
+  # # => WHERE active = true OR email = 'admin@example.com'
+  # ```
+  #
+  # For a parenthesized OR group, use the block form `or { |q| ... }`.
+  def or(**matches) : self
     or(matches)
   end
 
-  def or(matches)
+  # :ditto:
+  #
+  # Hash/NamedTuple form of `or(**matches)`.
+  def or(matches) : self
     matches.each do |field, value|
       if value.is_a?(Array)
         or(field: field.to_s, operator: :in, value: value.compact)
@@ -178,25 +279,46 @@ class Grant::Query::Builder(Model)
     self
   end
 
-  def or(field : (Symbol | String), operator : Symbol, value : Grant::Columns::Type)
+  # Adds an OR condition with an explicit *operator*. See `where(field, operator, value)`. Returns `self`.
+  #
+  # ```
+  # User.where(active: true).or(:id, :lt, 10)
+  # # => WHERE active = true OR id < 10
+  # ```
+  def or(field : (Symbol | String), operator : Symbol, value : Grant::Columns::Type) : self
     @where_fields << {join: :or, field: field.to_s, operator: operator, value: value}
 
     self
   end
 
-  def or(stmt : String, value : Grant::Columns::Type = nil)
+  # Adds a raw SQL OR condition *stmt*, optionally binding *value* to a `?`. Returns `self`.
+  #
+  # ```
+  # User.where(active: true).or("LENGTH(email) > ?", 30)
+  # ```
+  def or(stmt : String, value : Grant::Columns::Type = nil) : self
     @where_fields << {join: :or, stmt: stmt, value: value}
 
     self
   end
 
-  def order(field : Symbol)
+  # Appends an ascending ORDER BY on a single *field*. Returns `self`.
+  #
+  # ```
+  # User.order(:email) # => ORDER BY email ASC
+  # ```
+  def order(field : Symbol) : self
     @order_fields << {field: field.to_s, direction: Sort::Ascending}
 
     self
   end
 
-  def order(fields : Array(Symbol))
+  # Appends ascending ORDER BY clauses for several *fields* in order. Returns `self`.
+  #
+  # ```
+  # User.order([:active, :email]) # => ORDER BY active ASC, email ASC
+  # ```
+  def order(fields : Array(Symbol)) : self
     fields.each do |field|
       order field
     end
@@ -204,11 +326,23 @@ class Grant::Query::Builder(Model)
     self
   end
 
-  def order(**dsl)
+  # Appends ORDER BY clauses with explicit directions from keyword arguments. Returns `self`.
+  #
+  # Direction values may be `:asc`/`:desc` (or the strings). Clauses are appended
+  # in the order given, so later `order` calls add lower-priority sorts.
+  #
+  # ```
+  # User.where(active: true).order(id: :desc)
+  # User.order(active: :asc, email: :desc) # => ORDER BY active ASC, email DESC
+  # ```
+  def order(**dsl) : self
     order(dsl)
   end
 
-  def order(dsl)
+  # :ditto:
+  #
+  # Hash/NamedTuple form of `order(**dsl)`.
+  def order(dsl) : self
     dsl.each do |field, dsl_direction|
       direction = Sort::Ascending
 
@@ -222,13 +356,25 @@ class Grant::Query::Builder(Model)
     self
   end
 
-  def group_by(field : Symbol)
+  # Appends a GROUP BY on a single *field*. Returns `self`.
+  #
+  # Typically paired with an aggregate `select` and/or `having`.
+  #
+  # ```
+  # User.group_by(:active) # => GROUP BY active
+  # ```
+  def group_by(field : Symbol) : self
     @group_fields << {field: field.to_s}
 
     self
   end
 
-  def group_by(fields : Array(Symbol))
+  # Appends GROUP BY clauses for several *fields*. Returns `self`.
+  #
+  # ```
+  # User.group_by([:active, :email]) # => GROUP BY active, email
+  # ```
+  def group_by(fields : Array(Symbol)) : self
     fields.each do |field|
       group_by field
     end
@@ -236,11 +382,19 @@ class Grant::Query::Builder(Model)
     self
   end
 
-  def group_by(**dsl)
+  # Appends GROUP BY clauses from keyword-argument keys (values are ignored). Returns `self`.
+  #
+  # ```
+  # User.group_by(active: true) # => GROUP BY active
+  # ```
+  def group_by(**dsl) : self
     group_by(dsl)
   end
 
-  def group_by(dsl)
+  # :ditto:
+  #
+  # Hash/NamedTuple form of `group_by(**dsl)`.
+  def group_by(dsl) : self
     dsl.each do |field, _|
       @group_fields << {field: field.to_s}
     end
@@ -248,7 +402,19 @@ class Grant::Query::Builder(Model)
     self
   end
 
-  def lock(mode : Grant::Locking::LockMode = Grant::Locking::LockMode::Update)
+  # Acquires a row-level database lock on the selected rows. Returns `self`.
+  #
+  # *mode* defaults to `LockMode::Update` (`FOR UPDATE`). Must run inside a
+  # transaction to be meaningful. SQLite has no row-level locking, so the lock
+  # is a no-op there.
+  #
+  # ```
+  # User.transaction do
+  #   user = User.where(id: 1).lock.first!
+  #   # row is FOR UPDATE-locked until the transaction commits
+  # end
+  # ```
+  def lock(mode : Grant::Locking::LockMode = Grant::Locking::LockMode::Update) : self
     @lock_mode = mode
     self
   end
@@ -544,24 +710,52 @@ class Grant::Query::Builder(Model)
     self
   end
 
-  def offset(num)
+  # Sets the OFFSET — the number of leading rows to skip. Returns `self`.
+  #
+  # *num* is coerced to `Int64`; pass `nil` to clear a previously set offset.
+  # Usually combined with `limit` and `order` for pagination.
+  #
+  # ```
+  # User.order(id: :asc).limit(10).offset(20) # rows 21..30
+  # ```
+  def offset(num) : self
     @offset = num.nil? ? nil : num.to_i64
 
     self
   end
 
-  def limit(num)
+  # Sets the LIMIT — the maximum number of rows to return. Returns `self`.
+  #
+  # *num* is coerced to `Int64`; pass `nil` to clear a previously set limit.
+  #
+  # ```
+  # User.where(active: true).order(id: :desc).limit(10)
+  # ```
+  def limit(num) : self
     @limit = num.nil? ? nil : num.to_i64
 
     self
   end
 
-  # Override select to handle eager loading and none.
+  # Executes the query and returns the matching records as an `Array(Model)`.
+  #
+  # This is the terminal method that actually runs the SQL the chain has built
+  # up. Applies any `includes`/`preload`/`eager_load` association loading. A
+  # `none` relation short-circuits to `[]` without touching the database.
   #
   # Routes through IN-list chunking (when a `where(col: array)` exceeds the
-  # chunk limit) and index-hint safe fallback. The actual single-query path is
+  # chunk limit) and an index-hint safe fallback. The single-query path is
   # `select_single`.
-  def select
+  #
+  # NOTE: the column-projecting `select(*columns : Symbol)` overload is a
+  # *chainable* setter that returns `self`; this no-argument form is the
+  # *terminal* executor that returns the rows.
+  #
+  # ```
+  # users = User.where(active: true).order(id: :desc).limit(10).select
+  # # => [#<User ...>, ...]
+  # ```
+  def select : Array(Model)
     # Short-circuit for null relation
     return [] of Model if is_none?
 
@@ -588,11 +782,24 @@ class Grant::Query::Builder(Model)
     records
   end
 
-  def all
+  # Executes the query and returns all matching records. Alias for `select`.
+  #
+  # ```
+  # User.where(active: true).all # => [#<User ...>, ...]
+  # ```
+  def all : Array(Model)
     self.select
   end
 
-  def raw_sql
+  # Returns the SQL string this query would execute, without running it.
+  #
+  # Handy for debugging or logging the generated query.
+  #
+  # ```
+  # User.where(active: true).order(id: :desc).raw_sql
+  # # => "SELECT ... FROM users WHERE active = ? ORDER BY id DESC"
+  # ```
+  def raw_sql : String
     assembler.select.raw_sql
   end
 
@@ -611,25 +818,56 @@ class Grant::Query::Builder(Model)
     assembler.explain(analyze)
   end
 
+  # Executes the query with `LIMIT 1` and returns the first record, or `nil`.
+  #
+  # Add an `order` for a deterministic result.
+  #
+  # ```
+  # User.where(active: true).order(id: :asc).first # => #<User ...> or nil
+  # ```
   def first : Model?
     limit(1).select.first?
   end
 
+  # Like `first` but raises `Grant::Querying::NotFound` when nothing matches.
+  #
+  # ```
+  # User.where(active: true).first! # => #<User ...> or raises
+  # ```
   def first! : Model
     first || raise Grant::Querying::NotFound.new("No record found")
   end
 
+  # Executes the query with `LIMIT n` and returns up to *n* records as an Array.
+  #
+  # ```
+  # User.where(active: true).order(id: :desc).first(3) # => up to 3 users
+  # ```
   def first(n : Int32) : Array(Model)
     limit(n).select
   end
 
+  # Returns `true` if the query matches at least one record, otherwise `false`.
+  #
+  # A `none` relation is always `false`. Equivalent to `exists?`.
+  #
+  # ```
+  # User.where(active: true).any? # => true/false
+  # ```
   def any? : Bool
     return false if is_none?
     !first.nil?
   end
 
-  # Returns the single record. Raises `NotFound` if no record found.
-  # Raises `NotUnique` if more than one record found.
+  # Returns the one record matching the query, asserting uniqueness.
+  #
+  # Raises `Grant::Querying::NotFound` if there are zero matches, and
+  # `Grant::Querying::NotUnique` if there is more than one. Use it when business
+  # logic guarantees exactly one row should match.
+  #
+  # ```
+  # User.where(email: "a@example.com").sole # => #<User ...> or raises
+  # ```
   def sole : Model
     results = self.select
 
@@ -642,7 +880,15 @@ class Grant::Query::Builder(Model)
     end
   end
 
-  # Finds and destroys all records matching the query
+  # Loads every matching record and calls `destroy` on each, firing callbacks.
+  #
+  # Unlike `delete_all`/`delete`, this instantiates the records and runs their
+  # destroy callbacks (and dependent-association handling). Returns the number
+  # of records successfully destroyed (`Int32`).
+  #
+  # ```
+  # User.where(active: false).destroy_all # => 3
+  # ```
   def destroy_all : Int32
     Model.guard_writes!
     records = self.select
@@ -655,19 +901,47 @@ class Grant::Query::Builder(Model)
     count
   end
 
+  # Issues a single `DELETE` for the current conditions, skipping callbacks.
+  #
+  # Low-level delete: it runs one DELETE statement and does NOT load records or
+  # fire destroy callbacks. For chunked, rows-affected-returning deletes use
+  # `delete_all`; to run destroy callbacks use `destroy_all`.
+  #
+  # ```
+  # User.where(active: false).delete
+  # ```
   def delete
     Model.guard_writes!
     Model.mark_write_operation
     assembler.delete
   end
 
-  # Updates updated_at timestamp for all matching records
+  # Sets `updated_at` (and any extra *fields*) to *time* for all matching rows.
+  #
+  # Runs a single UPDATE in the database without loading records or firing
+  # callbacks. *fields* lists additional timestamp columns to bump alongside
+  # `updated_at`; *time* defaults to now in the configured default timezone.
+  #
+  # Returns the number of rows affected (`Int64`).
+  #
+  # ```
+  # User.where(active: true).touch_all                # bump updated_at
+  # User.where(active: true).touch_all(:last_seen_at) # also bump last_seen_at
+  # ```
   def touch_all(*fields, time : Time = Time.local(Grant.settings.default_timezone)) : Int64
     Model.guard_writes!
     Model.mark_write_operation
     assembler.touch_all(fields, time: time)
   end
 
+  # Executes a `COUNT(*)` for the current conditions and returns the row count.
+  #
+  # Counts in the database (no rows are hydrated). A `none` relation returns `0`.
+  # Routes through IN-list chunking and the index-hint fallback like `select`.
+  #
+  # ```
+  # User.where(active: true).count # => 42
+  # ```
   def count : Int64
     return 0_i64 if is_none?
 
@@ -693,15 +967,38 @@ class Grant::Query::Builder(Model)
     end
   end
 
+  # Returns `true` if the current conditions match any row, otherwise `false`.
+  #
+  # Runs an efficient existence check (no rows hydrated). A `none` relation is
+  # always `false`.
+  #
+  # ```
+  # User.where(email: "a@example.com").exists? # => true/false
+  # ```
   def exists? : Bool
     return false if is_none?
     assembler.exists?.run
   end
 
+  # Returns the number of matching records. Alias for `count`.
+  #
+  # ```
+  # User.where(active: true).size # => 42
+  # ```
   def size
     count
   end
 
+  # Executes the query and yields each matching record (Enumerable support).
+  #
+  # Because `Builder` includes `Enumerable(Model)`, defining `each` gives the
+  # whole chain `map`, `select`, `reduce`, etc. directly — no `.select`/`.all`
+  # needed first.
+  #
+  # ```
+  # User.where(active: true).each { |user| puts user.email }
+  # User.where(active: true).map(&.email) # Enumerable, via each
+  # ```
   def each(& : Model ->) : Nil
     self.select.each do |record|
       yield record
@@ -775,43 +1072,96 @@ class Grant::Query::Builder(Model)
     end
   end
 
-  # Eager loading methods
-  def includes(*associations)
+  # Marks *associations* to be loaded with the query, avoiding N+1 queries. Returns `self`.
+  #
+  # `includes` lets Grant choose the loading strategy (typically a separate
+  # query per association, like `preload`). Use `eager_load` to force a JOIN.
+  # Records are loaded when the query executes (`select`/`first`/iteration).
+  #
+  # ```
+  # # assuming `User has_many :posts`
+  # User.where(active: true).includes(:posts).each do |user|
+  #   user.posts # already loaded, no extra query per user
+  # end
+  # ```
+  def includes(*associations) : self
     associations.each do |assoc|
       @includes_associations << assoc
     end
     self
   end
 
-  def includes(**nested_associations)
+  # :ditto:
+  #
+  # Nested form — keyword arguments name a parent association mapped to its
+  # nested association(s) to also load.
+  #
+  # ```
+  # # load each user's posts, and each post's comments
+  # User.all.includes(posts: :comments)
+  # User.all.includes(posts: [:comments, :tags])
+  # ```
+  def includes(**nested_associations) : self
     nested_associations.each do |name, nested|
       @includes_associations << {name => nested.is_a?(Array) ? nested : [nested]}
     end
     self
   end
 
-  def preload(*associations)
+  # Loads *associations* via separate queries (one per association). Returns `self`.
+  #
+  # Like `includes` but always uses the separate-query strategy (never a JOIN),
+  # which avoids row multiplication for has_many associations.
+  #
+  # ```
+  # User.where(active: true).preload(:posts)
+  # ```
+  def preload(*associations) : self
     associations.each do |assoc|
       @preload_associations << assoc
     end
     self
   end
 
-  def preload(**nested_associations)
+  # :ditto:
+  #
+  # Nested form — keyword arguments map a parent association to its nested
+  # association(s) to also preload.
+  #
+  # ```
+  # User.all.preload(posts: :comments)
+  # ```
+  def preload(**nested_associations) : self
     nested_associations.each do |name, nested|
       @preload_associations << {name => nested.is_a?(Array) ? nested : [nested]}
     end
     self
   end
 
-  def eager_load(*associations)
+  # Loads *associations* with a single JOIN against the main query. Returns `self`.
+  #
+  # Forces the JOIN strategy (in contrast to `preload`'s separate queries). Best
+  # when you also want to filter or order on the joined table in the same query.
+  #
+  # ```
+  # User.where(active: true).eager_load(:posts)
+  # ```
+  def eager_load(*associations) : self
     associations.each do |assoc|
       @eager_load_associations << assoc
     end
     self
   end
 
-  def eager_load(**nested_associations)
+  # :ditto:
+  #
+  # Nested form — keyword arguments map a parent association to its nested
+  # association(s) to also eager-load.
+  #
+  # ```
+  # User.all.eager_load(posts: :comments)
+  # ```
+  def eager_load(**nested_associations) : self
     nested_associations.each do |name, nested|
       @eager_load_associations << {name => nested.is_a?(Array) ? nested : [nested]}
     end
@@ -827,7 +1177,9 @@ class Grant::Query::Builder(Model)
   #   .or { |q| q.where.gt(:level, 10) }
   # # SQL: WHERE active = true OR (role = 'admin') OR (level > 10)
   # ```
-  def or(&)
+  #
+  # Returns `self`.
+  def or(&) : self
     or_builder = self.class.new(@db_type, :or)
     yield or_builder
 
@@ -884,7 +1236,9 @@ class Grant::Query::Builder(Model)
   # User.not { |q| q.where(status: "banned").where(active: false) }
   # # SQL: WHERE NOT (status = 'banned' AND active = false)
   # ```
-  def not(&)
+  #
+  # Returns `self`.
+  def not(&) : self
     not_builder = self.class.new(@db_type)
     yield not_builder
 
@@ -1114,7 +1468,7 @@ class Grant::Query::Builder(Model)
   # admin_ids = User.where(role: "admin").select(:id)
   # Post.where(user_id: admin_ids)
   # ```
-  def select(*columns : Symbol)
+  def select(*columns : Symbol) : self
     @select_columns = columns.map(&.to_s).to_a
     self
   end
