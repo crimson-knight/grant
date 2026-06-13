@@ -62,3 +62,75 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+
+  # --------------------------------------------------------------------------
+  # MySQL 8.x / 9.x with the DEFAULT caching_sha2_password auth plugin.
+  #
+  # These are the dedicated images for exercising Grant's caching_sha2_password
+  # handshake (Thread 3b). We deliberately DO NOT pass
+  # --default-authentication-plugin=mysql_native_password — the whole point is
+  # to run against a default-configured MySQL 8/9 where the auth plugin is
+  # caching_sha2_password.
+  #
+  # The test user `grant` is (re)created with caching_sha2_password by
+  # docker/mysql-auth-init/01-caching-sha2-user.sql (mounted into the
+  # entrypoint's init dir).
+  #
+  # RSA public key (full-auth path): MySQL auto-generates a server RSA keypair
+  # on first boot. The public key lives inside the container at
+  # /var/lib/mysql/public_key.pem and is also served to clients over the wire
+  # when the client requests it (caching_sha2 full-auth, packet 0x02). To
+  # fetch it from the host:
+  #   docker compose -f docker-compose.test.yml exec mysql8 \
+  #     cat /var/lib/mysql/public_key.pem
+  # TLS is NOT required: over a plaintext connection the client requests the
+  # public key and RSA-OAEP-encrypts the password, which is the path Grant's
+  # OpenSSL3 auth code implements. (TLS is auto-generated too and available if
+  # a client negotiates it, in which case the password is sent in the clear
+  # inside the TLS tunnel and no RSA step is needed.)
+  # --------------------------------------------------------------------------
+  mysql8:
+    image: mysql:8.0
+    container_name: grant_mysql8_caching_sha2
+    # No command override: keep the server default auth plugin
+    # (caching_sha2_password). caching_sha2_password is also the explicit
+    # default below for older 8.0 point releases that still defaulted to
+    # mysql_native_password.
+    command: ["--default-authentication-plugin=caching_sha2_password"]
+    environment:
+      MYSQL_DATABASE: grant_test
+      MYSQL_USER: grant
+      MYSQL_PASSWORD: test_password
+      MYSQL_ROOT_PASSWORD: root_password
+    ports:
+      - "3308:3306"
+    volumes:
+      - ./docker/mysql-auth-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-u", "root", "-proot_password"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+
+  mysql9:
+    image: mysql:9.0
+    container_name: grant_mysql9_caching_sha2
+    # MySQL 9.x defaults to caching_sha2_password and the
+    # --default-authentication-plugin option is REMOVED in 9.x, so we pass no
+    # command override here.
+    environment:
+      MYSQL_DATABASE: grant_test
+      MYSQL_USER: grant
+      MYSQL_PASSWORD: test_password
+      MYSQL_ROOT_PASSWORD: root_password
+    ports:
+      - "3309:3306"
+    volumes:
+      - ./docker/mysql-auth-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-u", "root", "-proot_password"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
