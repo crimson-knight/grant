@@ -527,3 +527,57 @@ nothing pushed until the lead confirms.
   flag before burning time rebuilding.
 - **`IN` chunking with `order`+`limit`** has subtle merge semantics across
   chunks — test explicitly.
+
+---
+
+## Progress (2026-06-13)
+
+All four threads implemented via six worktree-isolated agents and merged into
+`main` (local; **not pushed** — awaiting Seth's go). Merge was conflict-free: the
+only file touched by two agents was `src/grant.cr` (disjoint require lines,
+3-way auto-merged). Merge commits: large-table `16e9e1d`, compile-target
+`d0dd93b`, async/sharding `4529c51`, bench `a54e920`, docker `5bfac0a`; plus the
+`in_batches` fix `21eee4d`.
+
+**Verification (local SQLite, per-file — the full `crystal spec` run is a
+pre-existing partial-run that crashes mid-suite on the known multi-DB/env
+errors, so new specs are verified in isolation, exactly as the agents did):**
+- Large-table toolkit 28/0/0; sharding 13/0/0; sharding integration 14/0/0/1
+  (1 intentional pending — cross-shard migration needs real multi-DB);
+  compile-target adapters 9/0/0 (+11 opt-in compile-driver specs);
+  **STI regression 35/0/0** (the compile-target `column` macro composes cleanly
+  with STI + #41 serialization); convenience/in_batches 38/0/0.
+- Merged library type-checks clean (`crystal build --no-codegen src/grant.cr`).
+- The partial full-suite failures (15/14) are all pre-existing env/order issues;
+  **zero new** failures from this work. CI across pg/mysql/sqlite is the real gate.
+
+**`in_batches` bug (found by the bench harness, fixed):** `Builder#where` mutates
+and returns `self`, so the old `in_batches` stacked a fresh `WHERE pk > ?` every
+batch and mutated the caller's query. Now each batch derives from a duped base
+with one moving cursor. Regression spec added.
+
+**MySQL 8/9 auth — IMPLEMENTED AND VERIFIED LIVE, but push-gated:**
+- The `open_secure_sockets_layer_three` OpenSSL3 shard is **unrecoverable**
+  (never published; single-file local prototype, only the 2025-06-01 transcript
+  survives). Bindings were completed **in-fork** instead.
+- **Live verification caught a real bug the unit tests missed:** the full-auth
+  RSA-OAEP digest was SHA-256, but MySQL's client uses `RSA_public_encrypt`
+  (SHA-1 OAEP), so the server rejected the payload with "Access denied (using
+  password: YES)". The unit test passed only because it decrypted with SHA-256
+  too. Fixed to SHA-1. Now **verified end-to-end: full-auth + fast-auth
+  round-trips against real MySQL 8.0.46 and 9.0.1** (Docker images, default
+  `caching_sha2_password`). Fork branch `feat/caching-sha2-auth` (commits
+  `4e6211f`, `992aa9a`), **not pushed**. 11 fork unit specs pass (now validating
+  the real SHA-1 contract); `examples/live_caching_sha2_probe.cr` added.
+
+**Push-gated follow-ups (need Seth's explicit go):**
+1. Push `crimson-knight/grant` `main` (currently ahead of origin).
+2. Push the `crimson-knight/crystal-mysql` `feat/caching-sha2-auth` branch, then
+   repoint Grant's `shard.yml` `mysql` dep at it (`shards update mysql`) and drop
+   `examples/grant_integration_spec.cr.txt` into `spec/` as a runnable spec. Only
+   after this is MySQL 8/9 auth wired into Grant itself (the work is complete and
+   self-verified in the fork; Grant still builds on the upstream driver until the
+   repoint).
+
+**Not yet built (deliberately):** the device↔server sync engine; the 1 pending
+cross-shard-migration integration spec; Postgres planner hints beyond degrade.
