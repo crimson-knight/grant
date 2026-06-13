@@ -1,3 +1,22 @@
+# The lazy collection returned by a `has_many` association (e.g. `user.posts`).
+#
+# It is **not** loaded until you call a terminal method. Any method it doesn't
+# define is forwarded (via `forward_missing_to all`) to the loaded
+# `Array(Target)`, so standard `Enumerable`/`Array` methods (`map`, `select`,
+# `each`, `size`, `to_a`, ...) work directly. On top of that it provides
+# scoped finders (`find`, `find_by`, `find_by!`), builders (`build`, `create`,
+# `create!`) that pre-set the foreign key to the owner, and bulk removal
+# (`destroy_all`, `delete_all`).
+#
+# ```
+# user = User.find!(1)
+# user.posts.to_a # loads and returns Array(Post)
+# user.posts.size # forwarded to the loaded array
+# user.posts.where(published: true).to_a
+# user.posts.find_by(title: "Hello") # => Post? scoped to this user
+# user.posts.create(title: "New")    # builds + saves with user_id pre-set
+# user.posts.destroy_all             # destroy each child (runs callbacks)
+# ```
 class Grant::AssociationCollection(Owner, Target)
   forward_missing_to all
 
@@ -8,6 +27,14 @@ class Grant::AssociationCollection(Owner, Target)
   def initialize(@owner : Owner, @foreign_key : (Symbol | String), @through : (Symbol | String | Nil) = nil, @primary_key : (Symbol | String | Nil) = nil, @inverse_of : (Symbol | String | Nil) = nil, @scope : (Grant::Query::Builder(Target) -> Grant::Query::Builder(Target))? = nil)
   end
 
+  # Loads and returns the associated records as an `Array(Target)`, applying any
+  # association scope. An optional raw SQL *clause* (with `?` placeholders) and
+  # its *params* are AND-appended to the association's WHERE.
+  #
+  # ```
+  # user.posts.all                                # => Array(Post)
+  # user.posts.all("posts.published = ?", [true]) # extra raw filter
+  # ```
   def all(clause = "", params = [] of DB::Any)
     start_time = Time.monotonic
     scope_clause, scope_params = scope_fragment
@@ -32,6 +59,12 @@ class Grant::AssociationCollection(Owner, Target)
     results
   end
 
+  # Returns the first associated record matching *args* (column => value), or
+  # `nil`. The match is constrained to this owner's collection.
+  #
+  # ```
+  # user.posts.find_by(title: "Hello") # => Post? belonging to this user
+  # ```
   def find_by(**args)
     start_time = Time.monotonic
     result = Target.first(
@@ -51,14 +84,33 @@ class Grant::AssociationCollection(Owner, Target)
     result
   end
 
+  # Like `find_by`, but raises `Grant::Querying::NotFound` when no record in the
+  # collection matches *args*.
+  #
+  # ```
+  # user.posts.find_by!(title: "Hello") # => Post (raises if absent)
+  # ```
   def find_by!(**args)
     find_by(**args) || raise Grant::Querying::NotFound.new("No #{Target.name} found where #{args.map { |k, v| "#{k} = #{v}" }.join(" and ")}")
   end
 
+  # Finds a `Target` by primary key *value*, or `nil`. Note this delegates to
+  # `Target.find` and is **not** constrained to the collection.
+  #
+  # ```
+  # user.posts.find(1) # => Post? with id 1
+  # ```
   def find(value)
     Target.find(value)
   end
 
+  # Finds a `Target` by primary key *value*, raising
+  # `Grant::Querying::NotFound` when absent. Delegates to `Target.find!` and is
+  # **not** constrained to the collection.
+  #
+  # ```
+  # user.posts.find!(1) # => Post with id 1 (raises if absent)
+  # ```
   def find!(value)
     Target.find!(value)
   end

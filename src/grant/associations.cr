@@ -2,6 +2,61 @@ require "./association_registry"
 require "./polymorphic"
 require "./association_options"
 
+# Association macros for Grant models — `belongs_to`, `has_one`, `has_many`,
+# `has_many ... through:`, and their polymorphic variants.
+#
+# Each macro is a **class-level DSL** you call in a model body. It generates
+# instance methods at compile time, so the generated methods do **not** appear
+# in `crystal docs` on their own — this module's doc comments describe exactly
+# what each macro generates.
+#
+# ```
+# class User < Grant::Base
+#   connection sqlite
+#   column id : Int64, primary: true
+#   column name : String
+#   has_many :posts
+# end
+#
+# class Post < Grant::Base
+#   connection sqlite
+#   column id : Int64, primary: true
+#   column title : String
+#   belongs_to :user
+# end
+#
+# user = User.find!(1)
+# user.posts # => Grant::AssociationCollection of this user's posts
+# user.posts.create(title: "Hello")
+# post = Post.find!(1)
+# post.user        # => User? (the owner, or a blank User if absent)
+# post.user!       # => User (raises Grant::Querying::NotFound if absent)
+# post.user = user # sets post.user_id = user.id
+# user.post_ids    # => [1, 2, 3]
+# ```
+#
+# ## What each macro generates
+#
+# | Macro                               | Generated API                                                |
+# | ----------------------------------- | ------------------------------------------------------------ |
+# | `belongs_to :user`                  | `#user`, `#user!`, `#user=`, and a `user_id : Int64?` column |
+# | `has_one :profile`                  | `#profile`, `#profile!`, `#profile=`                         |
+# | `has_many :posts`                   | `#posts` (collection), `#post_ids`, `#post_ids=`             |
+# | `has_many :posts, through:`         | `#posts` (collection traversing the join table)              |
+# | `belongs_to ..., polymorphic: true` | `#name`, `#name!`, `#name=`, `#name_proxy`, plus `*_id`/`*_type` columns |
+#
+# Common options accepted across the macros:
+#
+# * `class_name:` — target class when it cannot be inferred from the name.
+# * `foreign_key:` — override the foreign-key column name.
+# * `primary_key:` — override the referenced key (defaults to `"id"`).
+# * `dependent:` — `:destroy` / `:delete` / `:delete_all` / `:nullify` /
+#   `:restrict` / `:restrict_with_exception` (see `Grant::AssociationOptions`).
+# * `optional: true` — skip the auto presence validation on a `belongs_to`.
+# * `counter_cache:` / `touch:` / `autosave:` / `inverse_of:` — see
+#   `Grant::AssociationOptions`.
+#
+# See `docs/associations.md` for the full guide.
 module Grant::Associations
   include Grant::Polymorphic
   include Grant::AssociationOptions::DependentCallbacks
@@ -10,6 +65,46 @@ module Grant::Associations
   include Grant::AssociationOptions::AutosaveCallbacks
   include Grant::AssociationOptions::OptionalValidation
 
+  # Declares that this model belongs to *model* — i.e. it holds the foreign key.
+  #
+  # Generates, for `belongs_to :user`:
+  #
+  # * `#user : User?` — loads the owner by foreign key, returns a blank `User`
+  #   instance when the FK does not resolve (caches eager-loaded values).
+  # * `#user! : User` — same, but raises `Grant::Querying::NotFound` when absent.
+  # * `#user=(parent : User)` — sets `user_id` to `parent.id` (in memory; call
+  #   `save` to persist).
+  # * a `user_id : Int64?` column to hold the foreign key.
+  #
+  # *model* may be a bare name (`:user`) or a typed declaration
+  # (`user : User`). Options:
+  #
+  # * `class_name:` — target class when it differs from the inferred name.
+  # * `foreign_key:` — override the FK column (name, or a typed declaration like
+  #   `foreign_key: author_id : Int64?` to set its column type).
+  # * `primary_key:` — the key on the target this FK references (default `"id"`).
+  # * `polymorphic: true` — make this a polymorphic `belongs_to` (see
+  #   `Grant::Polymorphic`).
+  # * `optional: true` — skip the auto presence validation on the FK.
+  # * `counter_cache:` / `touch:` / `autosave:` / `inverse_of:` — see
+  #   `Grant::AssociationOptions`.
+  #
+  # ```
+  # class Post < Grant::Base
+  #   connection sqlite
+  #   column id : Int64, primary: true
+  #   column title : String
+  #   belongs_to :user          # => #user, #user!, #user=, user_id
+  #   belongs_to author : User, # custom name + class + FK column
+  #     class_name: User, foreign_key: author_id : Int64?
+  # end
+  #
+  # post = Post.find!(1)
+  # post.user  # => User? (blank User when user_id is nil/unresolved)
+  # post.user! # => User  (raises Grant::Querying::NotFound if absent)
+  # post.user = some_user
+  # post.user_id # => some_user.id
+  # ```
   macro belongs_to(model, **options)
     {% if options[:polymorphic] %}
       belongs_to_polymorphic({{model}}, {{options.double_splat}})
@@ -106,6 +201,46 @@ module Grant::Associations
     {% end %}
   end
 
+  # Declares a one-to-one association where the **other** table holds the
+  # foreign key (the inverse of `belongs_to`).
+  #
+  # Generates, for `has_one :profile` on `User`:
+  #
+  # * `#profile : Profile?` — finds the `Profile` whose `user_id` equals this
+  #   user's primary key (or `nil`), caching eager-loaded values.
+  # * `#profile! : Profile` — same, but raises `Grant::Querying::NotFound`.
+  # * `#profile=(child)` — sets the child's `user_id` to this user's primary key
+  #   (in memory; `save` the child to persist).
+  #
+  # Options:
+  #
+  # * `class_name:` — target class when it differs from the inferred name.
+  # * `foreign_key:` — the FK column on the target (default
+  #   `"<this_model>_id"`).
+  # * `primary_key:` — the key on this model the FK references (default `"id"`;
+  #   a typed declaration also defines that column).
+  # * `through:` — traverse an intermediate association to reach a single record
+  #   (e.g. `has_one :avatar, through: :profile`); pair with `source:` to name
+  #   the association on the join model. The `through` form generates only the
+  #   getters (`#avatar` / `#avatar!`), not a setter.
+  # * `as:` — make this the `has_one` side of a polymorphic association (see
+  #   `Grant::Polymorphic`).
+  # * `dependent:` / `autosave:` / `inverse_of:` — see
+  #   `Grant::AssociationOptions`.
+  #
+  # ```
+  # class User < Grant::Base
+  #   connection sqlite
+  #   column id : Int64, primary: true
+  #   has_one :profile                   # Profile.user_id => this user
+  #   has_one :avatar, through: :profile # User -> Profile -> Avatar
+  # end
+  #
+  # user = User.find!(1)
+  # user.profile  # => Profile? (where profiles.user_id = user.id)
+  # user.profile! # => Profile  (raises Grant::Querying::NotFound if absent)
+  # user.avatar   # => Avatar? (joined through profiles)
+  # ```
   macro has_one(model, **options)
     {% if options[:as] %}
       has_one_polymorphic({{model}}, {{options[:as]}}, {{options.double_splat}})
@@ -272,6 +407,53 @@ module Grant::Associations
     {% end %}
   end
 
+  # Declares a one-to-many association where the **other** table holds the
+  # foreign key.
+  #
+  # Generates, for `has_many :posts` on `User`:
+  #
+  # * `#posts` — returns a `Grant::AssociationCollection(User, Post)` (or a
+  #   `Grant::LoadedAssociationCollection` when eager-loaded). The collection is
+  #   `Enumerable` and also exposes `build`/`create`/`create!`/`find`/`find_by`/
+  #   `where`/`destroy_all`/`delete_all` (see `Grant::AssociationCollection`).
+  # * `#post_ids : Array` — the primary keys of the associated records.
+  # * `#post_ids=(ids : Array)` — reassigns the collection by primary key:
+  #   records whose IDs are listed have their FK pointed at this owner; records
+  #   previously in the collection but absent from *ids* have their FK nullified.
+  #   (Not generated for `through:` associations.)
+  #
+  # The optional second positional argument *scope* is an association scope
+  # lambda that further filters the collection, e.g.
+  # `has_many :published_posts, ->(q : Grant::Query::Builder(Post)) { q.where(published: true) }`.
+  #
+  # Options:
+  #
+  # * `class_name:` — target class when it differs from the inferred name.
+  # * `foreign_key:` — the FK column on the target (default
+  #   `"<this_model>_id"`).
+  # * `primary_key:` — the key on this model the FK references (default `"id"`).
+  # * `through:` — a join model/table for many-to-many (e.g.
+  #   `has_many :tags, through: :taggings`); pair with `source:` to name the
+  #   association on the join model whose target is collected.
+  # * `as:` — make this the `has_many` side of a polymorphic association.
+  # * `dependent:` / `inverse_of:` / `autosave:` — see
+  #   `Grant::AssociationOptions`.
+  #
+  # ```
+  # class User < Grant::Base
+  #   connection sqlite
+  #   column id : Int64, primary: true
+  #   has_many :posts
+  #   has_many :tags, through: :taggings # many-to-many via taggings
+  # end
+  #
+  # user = User.find!(1)
+  # user.posts.create(title: "Hello") # builds + saves with user_id pre-set
+  # user.posts.where(published: true).to_a
+  # user.post_ids          # => [1, 2, 3]
+  # user.post_ids = [1, 2] # repoint FKs: keep 1,2 / nullify others
+  # user.tags.to_a         # joined through taggings
+  # ```
   macro has_many(model, scope = nil, **options)
     {% if options[:as] %}
       has_many_polymorphic({{model}}, {{options[:as]}}, {{options.double_splat}})
@@ -391,7 +573,17 @@ module Grant::Associations
     {% end %}
   end
 
-  # Helper method to get association metadata
+  # Returns the compile-time metadata `NamedTuple` recorded for the association
+  # named *name* (`type`, `target_class_name`, `foreign_key`, `primary_key`,
+  # `through`). Useful for reflection over a model's declared associations.
+  #
+  # ```
+  # class Post < Grant::Base
+  #   belongs_to :user
+  # end
+  #
+  # Post.new.association_metadata(:user)[:foreign_key] # => "user_id"
+  # ```
   macro association_metadata(name)
     self.class._{{name.id}}_association_meta
   end
