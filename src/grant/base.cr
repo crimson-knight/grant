@@ -138,6 +138,56 @@ abstract class Grant::Base
     raise "Grant::Base is abstract and cannot be deserialized directly; deserialize a concrete subclass instead"
   end
 
+  # Returns `true` if this record has **not** yet been saved to the database
+  # (i.e. it was built in memory and never `INSERT`ed), `false` once it has been
+  # persisted. The inverse of `#persisted?` for a non-destroyed record.
+  #
+  # The backing flag is flipped to `false` after a successful `save`/`create`.
+  #
+  # ```
+  # user = User.new(email: "a@example.com")
+  # user.new_record? # => true
+  # user.save
+  # user.new_record? # => false
+  # ```
+  #
+  # NOTE: the concrete implementation (and its `new_record=` setter) is generated
+  # per model by Grant. This declaration exists so the method is documented and
+  # type-visible on the abstract base.
+  abstract def new_record? : Bool
+
+  # Returns `true` if this record has been destroyed (its row deleted via
+  # `#destroy`), `false` otherwise. A destroyed in-memory instance is frozen
+  # against further persistence.
+  #
+  # ```
+  # user = User.find!(1)
+  # user.destroyed? # => false
+  # user.destroy
+  # user.destroyed? # => true
+  # ```
+  #
+  # NOTE: the concrete implementation is generated per model by Grant. This
+  # declaration exists so the method is documented and type-visible on the
+  # abstract base.
+  abstract def destroyed? : Bool
+
+  # Returns `true` if this record exists in the database — that is, it is neither
+  # a brand-new unsaved record nor a destroyed one. Equivalent to
+  # `!(new_record? || destroyed?)`. Mirrors ActiveRecord's `persisted?`.
+  #
+  # ```
+  # user = User.new(email: "a@example.com")
+  # user.persisted? # => false  (new, unsaved)
+  # user.save
+  # user.persisted? # => true   (now in the database)
+  # user.destroy
+  # user.persisted? # => false  (destroyed)
+  # ```
+  def persisted? : Bool
+    !(new_record? || destroyed?)
+  end
+
   macro inherited
     # The annotated ivars below — and the auto-generated JSON/YAML serializers —
     # may only be declared ONCE per inheritance chain. Crystal raises
@@ -153,15 +203,17 @@ abstract class Grant::Base
       include JSON::Serializable
       include YAML::Serializable
 
-      # Returns true if this object hasn't been saved yet.
+      # Concrete per-model backing for `#new_record?` / `#new_record=`.
+      # Documented on the abstract `Grant::Base` via `abstract def new_record?`.
       @[JSON::Field(ignore: true)]
       @[YAML::Field(ignore: true)]
-      disable_grant_docs? property? new_record : Bool = true
+      property? new_record : Bool = true
 
-      # Returns true if this object has been destroyed.
+      # Concrete per-model backing for `#destroyed?`. Documented on the abstract
+      # `Grant::Base` via `abstract def destroyed?`.
       @[JSON::Field(ignore: true)]
       @[YAML::Field(ignore: true)]
-      disable_grant_docs? getter? destroyed : Bool = false
+      getter? destroyed : Bool = false
 
       # Backing flag for record-level read-only marking. When true, attempts to
       # persist an update (or destroy) raise `Grant::ReadOnlyRecordError`.
@@ -169,10 +221,8 @@ abstract class Grant::Base
       @[YAML::Field(ignore: true)]
       @readonly : Bool = false
 
-      # Returns true if the record is persisted.
-      disable_grant_docs? def persisted?
-        !(new_record? || destroyed?)
-      end
+      # `#persisted?` is defined once on the abstract `Grant::Base` (it only
+      # depends on `#new_record?` / `#destroyed?`), so it is not regenerated here.
 
       # Returns `true` if this record has been marked read-only (via `#readonly!`
       # or by being loaded through a read-only relation), `false` otherwise.
@@ -260,19 +310,45 @@ abstract class Grant::Base
     end
 
     macro finished
-      disable_grant_docs? def initialize(**args : Grant::Columns::Type)
+      # Builds a new (unsaved) record from keyword arguments, one per column.
+      # The record is in memory only until you call `#save`/`#save!` (or use
+      # `.create`/`.create!`, which build and save in one step).
+      #
+      # ```
+      # user = User.new(email: "a@example.com", name: "Ada")
+      # user.new_record? # => true
+      # user.save        # INSERTs the row
+      # ```
+      def initialize(**args : Grant::Columns::Type)
         ensure_dirty_tracking_initialized
         set_attributes(args.to_h.transform_keys(&.to_s))
         __after_initialize
       end
 
-      disable_grant_docs? def initialize(args : Grant::ModelArgs)
+      # Builds a new (unsaved) record from a pre-built attributes hash
+      # (`Grant::ModelArgs` — a `Hash(String | Symbol, Grant::Columns::Type)`).
+      # Useful when the attributes are assembled dynamically (e.g. from params).
+      #
+      # ```
+      # attrs = {"email" => "a@example.com", "name" => "Ada"}
+      # user = User.new(attrs)
+      # user.save
+      # ```
+      def initialize(args : Grant::ModelArgs)
         ensure_dirty_tracking_initialized
         set_attributes(args.transform_keys(&.to_s))
         __after_initialize
       end
 
-      disable_grant_docs? def initialize
+      # Builds a new (unsaved) record with all columns at their defaults. Assign
+      # attributes afterward, then `#save`.
+      #
+      # ```
+      # user = User.new
+      # user.email = "a@example.com"
+      # user.save
+      # ```
+      def initialize
         ensure_dirty_tracking_initialized
         __after_initialize
       end
