@@ -8,6 +8,15 @@ Grant provides a comprehensive set of convenience methods that make working with
 
 Extract one or more column values from records without instantiating full model objects.
 
+> **Where `pluck`/`pick` live:** they are terminals on the **query builder**
+> (`User.where(...).pluck(:x)`) and on the **model class**
+> (`User.pluck(:x)`), **not** on the `Array` returned by `.all`.
+> `User.all.pluck(:name)` does **not** compile — `.all` returns a plain
+> `Array(User)`, which has no `#pluck`. Call `pluck`/`pick` directly on the class
+> (`User.pluck(:name)`) or on a relation before it is materialized
+> (`User.where(active: true).pluck(:name)`). The model-class form takes a single
+> column; the query-builder form takes one or more.
+
 ```crystal
 # Single column
 names = User.where(active: true).pluck(:name)

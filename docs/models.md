@@ -25,6 +25,27 @@ In this example, we defined two connections. One to a MySQL database named "lega
 
 > **NOTE:** How you store/supply each connection's URL is up to you; Grant only cares that it gets registered via `Grant::Connections << adapter_object`.
 
+### The `connection` macro — accepted forms
+
+The argument to `connection` is the **name of a registered connection** — the
+`name:` you passed when registering the adapter (`Grant::Connections << Grant::Adapter::Pg.new(name: "new_db", ...)`).
+It is **not** the adapter type; a name like `pg` or `mysql` in the examples is
+just a connection that happens to be named after its database.
+
+The name may be written either as a **bareword identifier** or as a **string
+literal** — both are accepted and are exactly equivalent (the macro stringifies
+the bareword, so `connection primary` and `connection "primary"` compile to the
+same thing):
+
+```crystal
+connection primary       # bareword identifier
+connection "primary"     # string literal — identical result
+```
+
+Use the bareword form for simple names; use the quoted form when the connection
+name is not a valid Crystal identifier (e.g. contains a dash). If no
+`connection` is declared, the model uses the default connection name `"primary"`.
+
 ## timestamps
 
 The `timestamps` macro defines `created_at` and `updated_at` field for you.

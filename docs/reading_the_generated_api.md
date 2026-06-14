@@ -136,10 +136,29 @@ book.author!         # => Author    (#author!, raises if absent)
 book.author_id       # => 1         (the generated FK column)
 
 author = Author.find!(1)
-author.books         # => collection (#books) — chainable, Enumerable
+author.books         # => collection (#books) — Array-like, Enumerable
 author.book_ids      # => [1, 2, 3] (#book_ids)
-author.books.where(title: "Dune").to_a   # collections are query-chainable
+author.books.size    # => 3   (forwarded to the loaded Array)
+author.books.map(&.title)                # Enumerable methods work directly
 ```
+
+The `has_many` collection is **Array-like (`Enumerable`)**, not a chainable
+query builder. It forwards any method it doesn't define to its loaded
+`Array(Target)` (via `forward_missing_to all`), so `.size`, `.each`, `.map`,
+`.select { }`, `.to_a`, etc. work — but it does **not** implement `where`, and
+the no-arg `count` resolves to `Array#count` (which needs a block/argument), so
+`author.books.where(...)` and `author.books.count` do **not** compile. For a
+filtered or aggregated *database* query, use the class-level query builder:
+
+```crystal
+Book.where(author_id: author.id).where(rating: 5).count  # filtered DB COUNT
+Book.where(author_id: author.id).order(title: :asc).to_a # filtered DB query
+```
+
+The collection does add a few scoped, owner-aware helpers on top of the
+`Enumerable` forwarding: `find_by` / `find_by!` (constrained to this owner),
+`build` / `create` / `create!` (pre-set the foreign key), and bulk
+`destroy_all` / `delete_all`.
 
 For the full association guide (options like `dependent:`, `counter_cache:`,
 `through:`, polymorphic, eager loading), see
