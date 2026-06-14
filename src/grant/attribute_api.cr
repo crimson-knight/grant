@@ -1,5 +1,5 @@
 # # Attribute API
-# 
+#
 # The Attribute API provides a flexible way to define custom attributes with
 # type casting, default values, and virtual attributes that aren't backed by
 # database columns.
@@ -14,17 +14,17 @@
 #
 # ## Usage
 #
-# ```crystal
+# ```
 # class Product < Grant::Base
 #   # Virtual attribute with custom type
 #   attribute :price_in_cents, Int32, virtual: true
-#   
+#
 #   # Attribute with default value
 #   attribute :status, String, default: "active"
-#   
+#
 #   # Attribute with proc default
 #   attribute :code, String, default: ->(product : Product) { "PROD-#{product.id}" }
-#   
+#
 #   # Custom type with converter
 #   attribute :metadata, ProductMetadata, converter: ProductMetadataConverter
 # end
@@ -38,10 +38,9 @@ module Grant::AttributeApi
       type: String,
       virtual: Bool,
       has_default: Bool,
-      has_converter: Bool
-    )
+      has_converter: Bool)
   end
-  
+
   # Define a custom attribute
   macro attribute(decl, **options)
       {% name = decl.var %}
@@ -150,7 +149,7 @@ module Grant::AttributeApi
         {% end %}
       {% end %}
     end
-    
+
   # Define multiple attributes at once
   macro attributes(**attrs)
     {% for name, options in attrs %}
@@ -161,19 +160,19 @@ module Grant::AttributeApi
       {% end %}
     {% end %}
   end
-  
+
   # Instance methods for attribute API
-  
+
   # Get all custom attribute names
   def custom_attribute_names : Array(String)
     self.class.attribute_definitions.keys
   end
-  
+
   # Get all virtual attribute names
   def virtual_attribute_names : Array(String)
     self.class.attribute_definitions.select { |_, definition| definition[:virtual] }.keys
   end
-  
+
   # Check if an attribute is virtual
   def virtual_attribute?(name : String) : Bool
     if attr_def = self.class.attribute_definitions[name]?
@@ -182,8 +181,7 @@ module Grant::AttributeApi
       false
     end
   end
-  
-  
+
   # Common type casters
   module TypeCasters
     # Cast to String
@@ -197,7 +195,7 @@ module Grant::AttributeApi
         value.to_s
       end
     end
-    
+
     # Cast to Int32
     def self.to_int32(value) : Int32?
       case value
@@ -213,7 +211,7 @@ module Grant::AttributeApi
         nil
       end
     end
-    
+
     # Cast to Float64
     def self.to_float64(value) : Float64?
       case value
@@ -229,7 +227,7 @@ module Grant::AttributeApi
         nil
       end
     end
-    
+
     # Cast to Bool
     def self.to_bool(value) : Bool?
       case value
@@ -252,7 +250,7 @@ module Grant::AttributeApi
         nil
       end
     end
-    
+
     # Cast to Time
     def self.to_time(value) : Time?
       case value

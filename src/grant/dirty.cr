@@ -15,22 +15,22 @@
 # ```
 # user = User.find!(1)
 # user.name # => "John"
-# 
+#
 # user.name = "Jane"
-# user.changed? # => true
+# user.changed?      # => true
 # user.name_changed? # => true
-# user.name_was # => "John"
-# user.name_change # => {"John", "Jane"}
-# 
+# user.name_was      # => "John"
+# user.name_change   # => {"John", "Jane"}
+#
 # user.save
-# user.changed? # => false
+# user.changed?         # => false
 # user.previous_changes # => {"name" => {"John", "Jane"}}
 # ```
 #
 # ## Implementation
 #
 # The dirty tracking implementation consists of:
-# 
+#
 # 1. **Storage** - Three hashes track attribute states:
 #    - `@original_attributes` - Values when record was loaded/saved
 #    - `@changed_attributes` - Current changes with {original, new} tuples
@@ -45,7 +45,7 @@
 #    - Capture current values as new originals
 #    - Store previous changes for post-save access
 #
-# See `Grant::Base` for the core dirty tracking methods and `Grant::Columns` 
+# See `Grant::Base` for the core dirty tracking methods and `Grant::Columns`
 # for the per-attribute method generation.
 module Grant::Dirty
   # This module is intentionally empty as dirty tracking is integrated

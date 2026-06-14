@@ -18,7 +18,7 @@ module Grant::Query::Executor
           result = Model.adapter.open do |db|
             db.query_one?(@sql, args: @args, as: Scalar) || @default
           end
-          
+
           duration = Time.monotonic - start_time
           log_query_with_timing(@sql, @args, duration, 1, Model.name)
           result

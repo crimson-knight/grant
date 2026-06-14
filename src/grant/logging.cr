@@ -6,7 +6,7 @@
 #
 # ## Usage
 #
-# ```crystal
+# ```
 # # Configure logging in your application
 # Log.setup do |c|
 #   backend = Log::IOBackend.new(formatter: Log::ShortFormat)
@@ -21,25 +21,25 @@
 
 module Grant
   # Main logger for Grant is defined in grant.cr
-  
+
   # Sub-loggers for different components
   module Logs
     # SQL query logging
     SQL = ::Log.for("grant.sql")
-    
+
     # Model lifecycle events (create, update, destroy)
     Model = ::Log.for("grant.model")
-    
+
     # Transaction operations
     Transaction = ::Log.for("grant.transaction")
-    
+
     # Association loading
     Association = ::Log.for("grant.association")
-    
+
     # Query builder operations
     Query = ::Log.for("grant.query")
   end
-  
+
   # Development helpers for pretty logging
   module Development
     # Set up all development logging with pretty formatters
@@ -50,7 +50,7 @@ module Grant
       setup_transaction_logging
       setup_query_logging
     end
-    
+
     # Set up pretty SQL logging for development
     def self.setup_sql_logging
       backend = ::Log::IOBackend.new(STDOUT)
@@ -58,7 +58,7 @@ module Grant
         c.bind "grant.sql", :debug, backend
       end
     end
-    
+
     # Set up model logging for development
     def self.setup_model_logging
       backend = ::Log::IOBackend.new(STDOUT)
@@ -66,7 +66,7 @@ module Grant
         c.bind "grant.model", :debug, backend
       end
     end
-    
+
     # Set up association logging for development
     def self.setup_association_logging
       backend = ::Log::IOBackend.new(STDOUT)
@@ -74,7 +74,7 @@ module Grant
         c.bind "grant.association", :debug, backend
       end
     end
-    
+
     # Set up transaction logging for development
     def self.setup_transaction_logging
       backend = ::Log::IOBackend.new(STDOUT)
@@ -82,7 +82,7 @@ module Grant
         c.bind "grant.transaction", :debug, backend
       end
     end
-    
+
     # Set up query builder logging for development
     def self.setup_query_logging
       backend = ::Log::IOBackend.new(STDOUT)
@@ -90,7 +90,7 @@ module Grant
         c.bind "grant.query", :debug, backend
       end
     end
-    
+
     # Note: Custom formatters removed due to Crystal Log API changes
     # Logging now uses standard formatters
   end
