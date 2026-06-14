@@ -426,9 +426,31 @@ module Grant::Associations
   # lambda that further filters the collection, e.g.
   # `has_many :published_posts, ->(q : Grant::Query::Builder(Post)) { q.where(published: true) }`.
   #
+  # ## Inferred target class name
+  #
+  # When `class_name:` is omitted, the target class is inferred from the
+  # (plural) association name by **singularizing** then camelizing it, matching
+  # the Rails idiom: `has_many :books` → `Book`, `has_many :categories` →
+  # `Category`, `has_many :boxes` → `Box`, `has_many :book_reviews` →
+  # `BookReview`.
+  #
+  # The built-in singularizer only handles **regular** English plurals:
+  #
+  # * `...ies` → `...y` (`categories` → `category`)
+  # * `...ses` / `...xes` / `...zes` / `...ches` / `...shes` → drop `es`
+  #   (`boxes` → `box`, `dishes` → `dish`)
+  # * `...s` (but not `...ss`) → drop `s` (`books` → `book`)
+  # * anything else is left unchanged.
+  #
+  # **Irregular plurals** (`people`, `children`, `mice`, `quizzes`, etc.) are
+  # NOT handled — pass `class_name:` explicitly for those:
+  # `has_many :people, class_name: Person`.
+  #
   # Options:
   #
-  # * `class_name:` — target class when it differs from the inferred name.
+  # * `class_name:` — target class when it differs from the inferred name
+  #   (always wins over the inferred singular name; required for irregular
+  #   plurals).
   # * `foreign_key:` — the FK column on the target (default
   #   `"<this_model>_id"`).
   # * `primary_key:` — the key on this model the FK references (default `"id"`).
@@ -463,7 +485,27 @@ module Grant::Associations
       {% class_name = model.type %}
     {% else %}
       {% method_name = model.id %}
-      {% class_name = options[:class_name] || model.id.camelcase %}
+      {% if options[:class_name] %}
+        # Explicit override always wins (required for irregular plurals).
+        {% class_name = options[:class_name] %}
+      {% else %}
+        # Infer the target class by singularizing the (plural) association
+        # name and camelizing it: `:books` -> `Book`, `:categories` ->
+        # `Category`, `:boxes` -> `Box`. Only REGULAR English plurals are
+        # handled; irregular plurals (people, children, ...) require an
+        # explicit `class_name:`.
+        {% _w = model.id.stringify %}
+        {% if _w.ends_with?("ies") %}
+          {% _singular = _w[0...(_w.size - 3)] + "y" %}
+        {% elsif _w.ends_with?("ses") || _w.ends_with?("xes") || _w.ends_with?("zes") || _w.ends_with?("ches") || _w.ends_with?("shes") %}
+          {% _singular = _w[0...(_w.size - 2)] %}
+        {% elsif _w.ends_with?("s") && !_w.ends_with?("ss") %}
+          {% _singular = _w[0...(_w.size - 1)] %}
+        {% else %}
+          {% _singular = _w %}
+        {% end %}
+        {% class_name = _singular.camelcase %}
+      {% end %}
     {% end %}
     {% foreign_key = options[:foreign_key] || @type.stringify.split("::").last.underscore + "_id" %}
     {% primary_key = options[:primary_key] || "id" %}
