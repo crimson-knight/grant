@@ -7,7 +7,7 @@ module Grant::Query::Executor
 
     def run : Array(Array(Grant::Columns::Type))
       log @sql, @args
-      
+
       start_time = Time.monotonic
       results = [] of Array(Grant::Columns::Type)
 
@@ -24,7 +24,7 @@ module Grant::Query::Executor
             end
           end
         end
-        
+
         duration = Time.monotonic - start_time
         log_query_with_timing(@sql, @args, duration, results.size, Model.name)
       rescue e

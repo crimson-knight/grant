@@ -19,7 +19,7 @@ module Grant::ColumnsHelpers
         end
       {% end %}
     end
-    
+
     # Get all column information
     def columns_info : Array(NamedTuple(name: String, column_type: Class, nilable: Bool))
       {% begin %}
@@ -41,7 +41,7 @@ end
 # Include in Base
 abstract class Grant::Base
   extend Grant::ColumnsHelpers::ClassMethods
-  
+
   # Instance method to read any attribute by name
   def read_attribute(name : String) : Grant::Columns::Type
     {% begin %}
@@ -55,7 +55,7 @@ abstract class Grant::Base
       end
     {% end %}
   end
-  
+
   # Instance method to write any attribute by name
   def write_attribute(name : String, value : Grant::Columns::Type) : Nil
     {% begin %}

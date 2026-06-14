@@ -9,7 +9,7 @@ module Grant
       @fiber : Fiber?
       @completed : Atomic(Bool)
       @started_at : Time::Span
-      
+
       def initialize(&block : -> T)
         @completed = Atomic(Bool).new(false)
         @promise = Promise(T).new
@@ -27,21 +27,21 @@ module Grant
           end
         end
       end
-      
+
       # Wait for the result
       def wait : T
         @promise.get
       end
-      
+
       # Wait with timeout
       def wait_with_timeout(timeout : Time::Span) : T
         deadline = @started_at + timeout
         remaining = deadline - Time.monotonic
-        
+
         if remaining <= Time::Span.zero
           raise AsyncTimeoutError.new("async operation", timeout)
         end
-        
+
         select
         when result = @promise.get_channel.receive
           case result
@@ -54,12 +54,12 @@ module Grant
           raise AsyncTimeoutError.new("async operation", timeout)
         end
       end
-      
+
       # Check if completed
       def completed? : Bool
         @completed.get
       end
-      
+
       # Error recovery
       def on_error(&block : Exception -> T) : T
         begin
@@ -68,7 +68,7 @@ module Grant
           block.call(e)
         end
       end
-      
+
       # Chain operations
       def then(&block : T -> U) : Result(U) forall U
         Result(U).new do
@@ -76,7 +76,7 @@ module Grant
           block.call(value)
         end
       end
-      
+
       # Map the result
       def map(&block : T -> U) : Result(U) forall U
         Result(U).new do
@@ -84,7 +84,7 @@ module Grant
           block.call(value)
         end
       end
-      
+
       # Flat map for chaining async operations
       def flat_map(&block : T -> Result(U)) : Result(U) forall U
         Result(U).new do

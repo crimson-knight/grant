@@ -83,7 +83,7 @@ module Grant::Type
   def from_rs(result : DB::ResultSet, t : UUID?.class) : UUID?
     value = result.read(String? | Bytes?)
     return nil if value.nil?
-    
+
     case value
     when String
       UUID.new(value)

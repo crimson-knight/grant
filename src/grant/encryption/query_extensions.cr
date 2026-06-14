@@ -7,10 +7,10 @@ module Grant::Encryption
         # Build WHERE clause
         clauses = [] of String
         params = [] of Grant::Columns::Type
-        
+
         attrs.each do |key, value|
           key_str = key.to_s
-          
+
           # Check if this is an encrypted attribute
           if encrypted_attr = @@encrypted_attributes[key_str]?
             # Only deterministic fields can be queried
@@ -31,11 +31,11 @@ module Grant::Encryption
             params << value
           end
         end
-        
+
         # Use the all method with WHERE clause
         all("WHERE #{clauses.join(" AND ")}", params)
       end
-      
+
       # Add find_by_encrypted helper
       def self.find_by_encrypted(**attrs)
         where_encrypted(**attrs).first
