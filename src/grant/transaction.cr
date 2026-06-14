@@ -353,16 +353,24 @@ module Grant::Transaction
     private def start_transaction(conn : DB::Connection, options : Transaction::Options)
       # MySQL: SET TRANSACTION ISOLATION LEVEL must be issued BEFORE START TRANSACTION.
       # (Issuing it after START TRANSACTION silently applies to the *next* transaction.)
-      if options.isolation && adapter.class == Grant::Adapter::Mysql.class
+      #
+      # Dispatch on the adapter's class NAME (a String), never on the adapter
+      # constant itself. Referencing `Grant::Adapter::Mysql`/`Pg`/`Sqlite` here
+      # would force all three adapters to be compiled into every binary (the
+      # constant must exist), breaking single-adapter / compile-target builds
+      # with `undefined constant Grant::Adapter::Mysql`. The string form is the
+      # same pattern used in scoping.cr / sti.cr / association_collection.cr.
+      adapter_name = adapter.class.name
+      if options.isolation && adapter_name == "Grant::Adapter::Mysql"
         conn.exec("SET TRANSACTION ISOLATION LEVEL #{options.isolation.not_nil!.to_sql}")
       end
 
-      sql = case adapter.class
-            when Grant::Adapter::Pg.class
+      sql = case adapter_name
+            when "Grant::Adapter::Pg"
               build_pg_transaction_sql(options)
-            when Grant::Adapter::Mysql.class
+            when "Grant::Adapter::Mysql"
               build_mysql_transaction_sql(options)
-            when Grant::Adapter::Sqlite.class
+            when "Grant::Adapter::Sqlite"
               build_sqlite_transaction_sql(options)
             else
               "BEGIN"
