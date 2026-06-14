@@ -20,6 +20,12 @@ DSL macro.** Single-target apps need *zero* target machinery.
 | Per-target *columns* (a column only on some builds)| `require "grant/target/<name>"` **before your models**, then `targets:` on the column. |
 | One repo, several build variants (mobile/desktop/web) | `shard.yml` `targets:`, one `main:` entrypoint per variant.            |
 
+> **Note on the require paths.** `require "grant/adapter/<name>"` and
+> `require "grant/target/<name>"` resolve to `lib/grant/src/adapter/<name>.cr`
+> and `lib/grant/src/target/<name>.cr` respectively (Crystal maps
+> `require "grant/X"` → `lib/grant/src/X.cr`) — they are public, consumer-facing
+> paths even though they don't repeat `grant/` in the on-disk layout.
+
 ## The design decision
 
 > **A Grant model is compiled for exactly one database adapter per build target.

@@ -69,6 +69,14 @@ Grant::Connections << Grant::Adapter::Sqlite.new(
 `require "grant/adapter/mysql"` + `Grant::Adapter::Mysql`. The model code below
 is identical regardless.)
 
+> **Two equivalent ways to register a connection.** `Grant::Connections << adapter`
+> (shown above) is the concise form for a single database. The registry form,
+> `Grant::ConnectionRegistry.establish_connection(database:, adapter:, url:)` —
+> used in [`monorepo_cross_device.md`](monorepo_cross_device.md) and the
+> multi-database / reader-writer docs — is equivalent and adds roles, shards, and
+> a lazy `url_provider:`. Prefer the registry form once you need more than one
+> database or a connection whose URL is computed at runtime.
+
 ---
 
 ## 1. Define a model — `column`, `timestamps`
@@ -296,6 +304,11 @@ class Signup < Grant::Base
   validates_presence_of :email          # email must be present
   validates_numericality_of :age, greater_than: 0, allow_nil: true
 end
+
+# `validates_presence_of`, `validates_uniqueness_of`, and `validates_absence_of`
+# accept MULTIPLE fields in one call — `validates_presence_of :email, :name` adds
+# a presence check for each. (Single-field-plus-options validators like
+# `validates_numericality_of`/`validates_format_of` take one field at a time.)
 
 s = Signup.new(email: nil, age: -1)
 s.valid?               # => false (email blank, age not > 0)

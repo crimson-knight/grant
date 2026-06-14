@@ -11,6 +11,12 @@ Built-in validators provide:
 - Custom error messages
 - Flexible options for common use cases
 
+> **Multiple fields in one call.** `validates_presence_of`,
+> `validates_uniqueness_of`, and `validates_absence_of` are variadic —
+> `validates_presence_of :email, :name, :role` adds a check for each field. The
+> single-field-plus-options validators below (numericality, format, length, …)
+> take one field at a time.
+
 ## Available Validators
 
 ### validates_numericality_of
