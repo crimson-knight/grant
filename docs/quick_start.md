@@ -8,6 +8,48 @@ If you are new to how Grant turns a `column`/`belongs_to` line into methods,
 read [`reading_the_generated_api.md`](reading_the_generated_api.md) alongside
 this.
 
+## Project setup — `shard.yml`
+
+Grant depends on `db` (crystal-db) at runtime but declares the actual database
+drivers (`sqlite3` / `pg` / `mysql`) only as its **development** dependencies.
+That means **a consumer must add the driver shard for each adapter they use** —
+Grant will not pull a driver in for you. `db` itself comes in transitively
+through `grant`, so you do not list it.
+
+Add `grant` plus the driver(s) you need to your `shard.yml`. For local SQLite
+dev:
+
+```yaml
+dependencies:
+  grant:
+    github: amberframework/grant
+
+  # The driver(s) you use — you MUST add these yourself:
+  sqlite3:
+    github: crystal-lang/crystal-sqlite3
+    version: ~> 0.21.0
+```
+
+If you target Postgres and/or MySQL, add the matching driver(s) instead of (or
+alongside) `sqlite3`:
+
+```yaml
+dependencies:
+  grant:
+    github: amberframework/grant
+
+  pg:                              # Postgres
+    github: will/crystal-pg
+    version: ~> 0.29.0
+
+  mysql:                           # MySQL
+    github: crystal-lang/crystal-mysql
+    version: ~> 0.16.0
+```
+
+Then `shards install`. (`db` is pulled in transitively by `grant`; you only add
+the drivers.)
+
 ## Setup (once)
 
 Require Grant and exactly one database adapter, then register a connection.
@@ -210,8 +252,21 @@ book = Book.create!(title: "Notes on the Engine", author_id: ada.id)
 # traverse:
 book.author          # => Author?  (the owner)
 book.author!.name    # => "Ada"    (bang form: raises if absent)
-ada.books.to_a       # => [Book]   (the collection — chainable)
-ada.books.where(title: "Notes on the Engine").count   # => 1
+ada.books.to_a       # => [Book]   (the collection)
+ada.books.size       # => 1        (Array-like, NOT a no-arg DB COUNT)
+ada.books.each { |b| puts b.title }
+```
+
+The `has_many` collection (`ada.books`) is **Array-like / `Enumerable`**, not a
+chainable query builder: it forwards unknown methods to its loaded `Array`, so
+`.size`, `.each`, `.map`, `.select { }`, `.to_a`, etc. work — but
+`ada.books.where(...)` and the no-arg `ada.books.count` do **not** compile. For
+a *filtered DB query*, go through the class-level builder instead:
+
+```crystal
+# filter/aggregate in the database via the class-level query builder:
+Book.where(author_id: ada.id).where(rating: 5).count   # => Int
+Book.where(author_id: ada.id).order(title: :asc).to_a  # => Array(Book)
 ```
 
 Set a `belongs_to` by assigning the parent (sets the FK in memory; `save` to
