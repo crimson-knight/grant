@@ -310,16 +310,21 @@ module Grant::Validators
       # - `allow_nil:` — skip validation if the value is nil
       # - `on:` — validation context (`:create`, `:update`, or `:save`)
       #
+      # Multiple fields may be passed; the same options apply to each
+      # (Rails-compatible):
+      #
       # ```
       # validates_presence_of :name
+      # validates_presence_of :name, :email # validates both fields
       # validates_presence_of :email, message: "is required"
       # validates_presence_of :terms_accepted, on: :create
       # validates_presence_of :reason, on: :update, if: :requires_reason?
       # ```
-      macro validates_presence_of(field, **options)
+      macro validates_presence_of(*fields, **options)
         \\{% message = options[:message] || "can't be blank" %}
         \\{% context = options[:on] || :save %}
 
+        \\{% for field in fields %}
         validate(\\{{field}}, \\{{message}}, context: \\{{context}}, code: :blank) do |record|
           \\{% if options[:if] %}
             \\{% if options[:if].is_a?(SymbolLiteral) %}
@@ -357,6 +362,7 @@ module Grant::Validators
             true
           end
         end
+        \\{% end %}
       end
 
       # Validates that a field value is unique in the database.
@@ -381,11 +387,16 @@ module Grant::Validators
       # validates_uniqueness_of :username, case_sensitive: false
       # validates_uniqueness_of :slug, scope: [:category_id]
       # validates_uniqueness_of :code, scope: [:region, :year], message: "is already used"
+      # validates_uniqueness_of :email, :username # validates both fields
       # ```
-      macro validates_uniqueness_of(field, **options)
+      #
+      # Multiple fields may be passed; the same options (including `scope:`)
+      # apply to each (Rails-compatible).
+      macro validates_uniqueness_of(*fields, **options)
         \\{% message = options[:message] || "has already been taken" %}
         \\{% context = options[:on] || :save %}
 
+        \\{% for field in fields %}
         validate(\\{{field}}, \\{{message}}, context: \\{{context}}, code: :taken) do |record|
           \\{% if options[:if] %}
             \\{% if options[:if].is_a?(SymbolLiteral) %}
@@ -442,6 +453,7 @@ module Grant::Validators
 
           !query.exists?
         end
+        \\{% end %}
       end
 
       # Validates that a numeric field meets specified criteria.
@@ -1016,11 +1028,16 @@ module Grant::Validators
       # ```
       # validates_absence_of :legacy_token
       # validates_absence_of :nickname, on: :create
+      # validates_absence_of :legacy_token, :deprecated_flag # validates both
       # ```
-      macro validates_absence_of(field, **options)
+      #
+      # Multiple fields may be passed; the same options apply to each
+      # (Rails-compatible).
+      macro validates_absence_of(*fields, **options)
         \\{% message = options[:message] || "must be blank" %}
         \\{% context = options[:on] || :save %}
 
+        \\{% for field in fields %}
         validate(\\{{field}}, \\{{message}}, context: \\{{context}}, code: :present) do |record|
           \\{% if options[:if] %}
             \\{% if options[:if].is_a?(SymbolLiteral) %}
@@ -1054,6 +1071,7 @@ module Grant::Validators
             false
           end
         end
+        \\{% end %}
       end
 
       # Validates a field by comparing it to another value (AR 7.1+).
