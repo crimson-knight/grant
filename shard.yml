@@ -13,18 +13,33 @@ license: MIT
 dependencies:
   db:
     github: crystal-lang/crystal-db
-    version: ~> 0.13.1
+    # Bumped 0.13 -> 0.14 to satisfy the bridged mysql 0.17.0 (crystal-mysql
+    # PR #123). The current sqlite3 (0.23) and pg (0.30) also support db 0.14,
+    # so the whole set resolves cleanly. Revert to ~> 0.13 if the bridge is
+    # rolled back.
+    version: ~> 0.14.0
 
 development_dependencies:
+  # MySQL 8/9 BRIDGE: crystal-lang/crystal-mysql does not yet have a RELEASE with
+  # caching_sha2_password support, but maintainer PR #123 ("multi-auth plugin
+  # support") adds it correctly (SHA-1 OAEP full-auth, validated live against
+  # MySQL 8.0.46 / 8.4.9 / 9.7.0 / Percona 8.0 / MariaDB 11.8 — see
+  # docs/mysql_compatibility.md). Until #123 merges and ships a release, we point
+  # at a faithful copy of that PR branch in our fork. When crystal-mysql cuts a
+  # release >= 0.17.0 with #123, switch to:
+  #     mysql: { github: crystal-lang/crystal-mysql, version: ">= 0.17.0" }
+  # NOTE: use `?ssl-mode=disabled` in the URL to exercise the caching_sha2 RSA
+  # full-auth path over plaintext (the default preferred-TLS path sends the
+  # password inside the TLS tunnel and skips RSA).
   mysql:
-    github: crystal-lang/crystal-mysql
-    version: ~> 0.16.0
+    github: crimson-knight/crystal-mysql
+    branch: pr-123
   sqlite3:
     github: crystal-lang/crystal-sqlite3
-    version: ~> 0.21.0
+    version: ">= 0.21.0"
   pg:
     github: will/crystal-pg
-    version: ~> 0.29.0
+    version: ">= 0.29.0"
   ameba:
     github: crystal-ameba/ameba
     version: ~> 1.6.4
