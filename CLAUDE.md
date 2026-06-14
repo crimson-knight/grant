@@ -20,7 +20,7 @@ Grant is an ActiveRecord-pattern ORM for the Crystal programming language, targe
 | `crystal tool format --check` | Check formatting |
 | `crystal tool format` | Auto-format code |
 | `crystal build src/grant.cr` | Compile library |
-| `crystal docs -D grant_docs` | Generate API docs (includes Grant methods) |
+| `crystal docs -D grant_docs src/grant.cr` | Generate API docs (includes Grant methods). Pass the `src/grant.cr` entrypoint explicitly: the bare `crystal docs` form globs all of `src/`, which pulls in the mutually-exclusive `src/target/{mobile,desktop,web}.cr` compile-target files together and fails with "already initialized constant GRANT_COMPILE_TARGET". |
 
 ## Key Directories
 
