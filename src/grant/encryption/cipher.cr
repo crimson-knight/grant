@@ -17,9 +17,13 @@ module Grant::Encryption
     # Header format version
     VERSION = 1_u8
     
-    # Header flags
+    # Header flags. NOTE: the header byte is `version (low 7 bits) + flags (high bit)`,
+    # and decrypt reads the version as `header & 0x7F`. The flag therefore MUST live in
+    # bit 7 (0x80) — using 0x01 collided with VERSION=1, so every NON-deterministic
+    # ciphertext was misread as deterministic on decrypt (it skipped the stored IV and
+    # derived a wrong one → a corrupted first plaintext block). See the round-trip spec.
     module Flags
-      DETERMINISTIC = 0x01_u8
+      DETERMINISTIC = 0x80_u8
     end
     
     class EncryptionError < Exception
@@ -102,21 +106,11 @@ module Grant::Encryption
       version = header & 0x7F_u8
       raise DecryptionError.new("Unsupported encryption version: #{version}") unless version == VERSION
       
-      # Check if deterministic
-      deterministic = (header & Flags::DETERMINISTIC) != 0
-      
-      # For deterministic encryption, derive IV from ciphertext
-      actual_iv = if deterministic
-        derive_deterministic_iv(ciphertext, enc_key)
-      else
-        iv
-      end
-      
-      # Initialize cipher
+      # The stored IV is the exact IV used to encrypt (deterministic or random).
       cipher = OpenSSL::Cipher.new(ALGORITHM)
       cipher.decrypt
       cipher.key = enc_key
-      cipher.iv = actual_iv
+      cipher.iv = iv
       
       # Decrypt
       plaintext = IO::Memory.new
@@ -156,26 +150,29 @@ module Grant::Encryption
       header = VERSION
       header |= Flags::DETERMINISTIC if deterministic
       
-      # Calculate total size (excluding HMAC)
-      total_size = 1 + (deterministic ? 0 : IV_SIZE) + ciphertext.size
-      
+      # Calculate total size (excluding HMAC). ALWAYS store the IV — even in
+      # deterministic mode — so decrypt reads the exact IV used. (Deterministic
+      # mode derives the IV from the plaintext, so the same plaintext still yields
+      # the same IV + ciphertext; it just gets stored too. The previous code stored
+      # no IV for deterministic and re-derived it from the *ciphertext* on decrypt,
+      # which never matched the encrypt-time IV → bad decrypt.)
+      total_size = 1 + IV_SIZE + ciphertext.size
+
       # Build payload
       payload = Bytes.new(total_size)
       offset = 0
-      
+
       # Write header
       payload[offset] = header
       offset += 1
-      
-      # Write IV (only for non-deterministic)
-      unless deterministic
-        iv.copy_to(payload + offset)
-        offset += IV_SIZE
-      end
-      
+
+      # Write IV
+      iv.copy_to(payload + offset)
+      offset += IV_SIZE
+
       # Write ciphertext
       ciphertext.copy_to(payload + offset)
-      
+
       payload
     end
     
@@ -187,20 +184,11 @@ module Grant::Encryption
       header = payload[offset]
       offset += 1
       
-      # Check if deterministic
-      deterministic = (header & Flags::DETERMINISTIC) != 0
-      
-      # Read IV
-      iv = if deterministic
-        # For deterministic, IV will be derived later
-        Bytes.empty
-      else
-        raise DecryptionError.new("Encrypted data too short for IV") if payload.size < offset + IV_SIZE
-        iv_bytes = Bytes.new(IV_SIZE)
-        payload[offset, IV_SIZE].copy_to(iv_bytes)
-        offset += IV_SIZE
-        iv_bytes
-      end
+      # Read IV (always stored — see build_payload_without_hmac)
+      raise DecryptionError.new("Encrypted data too short for IV") if payload.size < offset + IV_SIZE
+      iv = Bytes.new(IV_SIZE)
+      payload[offset, IV_SIZE].copy_to(iv)
+      offset += IV_SIZE
       
       # Read ciphertext
       ciphertext_size = payload.size - offset
