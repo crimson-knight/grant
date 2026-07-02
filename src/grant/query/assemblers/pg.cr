@@ -2,7 +2,16 @@
 # This will likely require adapter specific subclassing :[.
 module Grant::Query::Assembler
   class Pg(Model) < Base(Model)
-    @placeholder = "$"
+    # @placeholder is the SOURCE token found in raw SQL clauses (e.g. the `?` in
+    # `find_by`/`find`'s `"col" = ?`) that Base#where rewrites via
+    # `stmt.gsub(@placeholder, add_parameter(value))`. Raw clauses use `?` on
+    # every adapter (see Grant::Querying#find_by / #find and Mysql/Sqlite
+    # assemblers, which also use "?"), so the source token must be `?` here too.
+    # `add_parameter` still emits Postgres `$N` placeholders as the replacement.
+    # (Previously `"$"`, which never matched the `?` in raw clauses and left a
+    # literal `?` in the SQL — Postgres then raised `syntax error at or near`
+    # the following keyword, e.g. ORDER.)
+    @placeholder = "?"
 
     def add_parameter(value : Grant::Columns::Type) : String
       @numbered_parameters << value
