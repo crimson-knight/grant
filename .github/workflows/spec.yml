@@ -11,9 +11,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download source
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
       - name: Install Crystal
-        uses: crystal-lang/install-crystal@v1
+        uses: crystal-lang/install-crystal@d8ef131ecec0352ce0e39b81b0a6d95def58fe2f  # v1
         with:
           crystal: latest
       - name: Install shards
@@ -31,9 +31,9 @@ jobs:
         crystal: [1.14.0, 1.15.1, 1.16.3, latest]
     steps:
       - name: Download source
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
       - name: Install Crystal
-        uses: crystal-lang/install-crystal@v1
+        uses: crystal-lang/install-crystal@d8ef131ecec0352ce0e39b81b0a6d95def58fe2f  # v1
         with:
           crystal: ${{ matrix.crystal }}
       - name: Install shards
@@ -83,9 +83,9 @@ jobs:
           - 3307:3306
     steps:
       - name: Download source
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
       - name: Install Crystal
-        uses: crystal-lang/install-crystal@v1
+        uses: crystal-lang/install-crystal@d8ef131ecec0352ce0e39b81b0a6d95def58fe2f  # v1
         with:
           crystal: ${{ matrix.crystal }}
       - name: Install shards
@@ -133,9 +133,9 @@ jobs:
           - 5433:5432
     steps:
       - name: Download source
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
       - name: Install Crystal
-        uses: crystal-lang/install-crystal@v1
+        uses: crystal-lang/install-crystal@d8ef131ecec0352ce0e39b81b0a6d95def58fe2f  # v1
         with:
           crystal: ${{ matrix.crystal }}
       - name: Install shards
@@ -212,9 +212,9 @@ jobs:
           - 5443:5432
     steps:
       - name: Download source
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
       - name: Install Crystal
-        uses: crystal-lang/install-crystal@v1
+        uses: crystal-lang/install-crystal@d8ef131ecec0352ce0e39b81b0a6d95def58fe2f  # v1
         with:
           crystal: ${{ matrix.crystal }}
       - name: Install shards
