@@ -204,8 +204,8 @@ jobs:
         run: scripts/run_ci_specs.sh
         env:
           CURRENT_ADAPTER: pg
-          PG_DATABASE_URL: postgres://grant:password@localhost:5440/shard_0
-          PG_REPLICA_URL: postgres://grant:password@localhost:5441/shard_0
+          PG_DATABASE_URL: postgres://grant:password@localhost:5432/grant_db
+          PG_REPLICA_URL: postgres://grant:password@localhost:5433/grant_replica_db
 
   sharding-spec:
     runs-on: ubuntu-22.04
@@ -287,8 +287,8 @@ jobs:
         env:
           CURRENT_ADAPTER: pg
           # Primary connection
-          PG_DATABASE_URL: postgres://grant:password@localhost:5432/grant_db
-          PG_REPLICA_URL: postgres://grant:password@localhost:5433/grant_replica_db
+          PG_DATABASE_URL: postgres://grant:password@localhost:5440/shard_0
+          PG_REPLICA_URL: postgres://grant:password@localhost:5441/shard_0
           # Shard connections
           SHARD_0_PRIMARY: postgres://grant:password@localhost:5440/shard_0
           SHARD_0_REPLICA: postgres://grant:password@localhost:5441/shard_0
