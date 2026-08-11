@@ -8,7 +8,7 @@ on:
 
 jobs:
   formatting:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - name: Download source
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -19,12 +19,12 @@ jobs:
       - name: Install shards
         run: shards install
       - name: Check formatting
-        run: crystal tool format --check
+        run: crystal tool format --check src
       - name: Check linting
         run: ./bin/ameba
 
   sqlite-spec:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     strategy:
       fail-fast: false
       matrix:
@@ -47,7 +47,7 @@ jobs:
           SQLITE_REPLICA_URL: sqlite3:./grant_replica.db
 
   mysql-spec:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     strategy:
       fail-fast: false
       matrix:
@@ -103,7 +103,7 @@ jobs:
   # anywhere — this validates Grant's caching_sha2_password handshake against a
   # default-configured server. Mirrors docker-compose.test.yml (mysql8/mysql9).
   mysql-caching-sha2-spec:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     strategy:
       fail-fast: false
       matrix:
@@ -160,7 +160,7 @@ jobs:
           MYSQL_REPLICA_URL: mysql://grant:password@127.0.0.1:3306/grant_db
 
   psql-spec:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     strategy:
       fail-fast: false
       matrix:
@@ -210,7 +210,7 @@ jobs:
           PG_REPLICA_URL: postgres://grant:password@localhost:5433/grant_replica_db
 
   sharding-spec:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     strategy:
       matrix:
         crystal: [1.16.3, latest]

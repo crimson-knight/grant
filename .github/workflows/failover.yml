@@ -17,7 +17,7 @@ on:
 
 jobs:
   postgres-failover:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     services:
       # Primary that will be stopped during test
       postgres-primary:
@@ -107,7 +107,7 @@ jobs:
           PG_REPLICA_2_URL: postgres://grant:password@localhost:5434/grant_db
 
   mysql-failover:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     services:
       mysql-primary:
         image: mysql:8.0
