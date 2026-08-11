@@ -18,6 +18,8 @@ jobs:
           crystal: latest
       - name: Install shards
         run: shards install
+      - name: Build Ameba
+        run: shards build ameba
       - name: Check formatting
         run: crystal tool format --check src
       - name: Check linting
@@ -40,7 +42,7 @@ jobs:
         run: shards update --ignore-crystal-version --skip-postinstall --skip-executables
       - name: Run tests
         timeout-minutes: 5
-        run: crystal spec
+        run: crystal spec --no-debug
         env:
           CURRENT_ADAPTER: sqlite
           SQLITE_DATABASE_URL: sqlite3:./grant.db
@@ -92,7 +94,7 @@ jobs:
         run: shards update --ignore-crystal-version --skip-postinstall --skip-executables
       - name: Run tests
         timeout-minutes: 5
-        run: crystal spec
+        run: crystal spec --no-debug
         env:
           CURRENT_ADAPTER: mysql
           MYSQL_DATABASE_URL: mysql://grant:password@localhost:3306/grant_db
@@ -153,7 +155,7 @@ jobs:
           mysqladmin ping -h 127.0.0.1 -P 3306 -u grant -ppassword | grep "mysqld is alive"
       - name: Run tests
         timeout-minutes: 5
-        run: crystal spec
+        run: crystal spec --no-debug
         env:
           CURRENT_ADAPTER: mysql
           MYSQL_DATABASE_URL: mysql://grant:password@127.0.0.1:3306/grant_db
@@ -203,7 +205,7 @@ jobs:
         run: shards update --ignore-crystal-version --skip-postinstall --skip-executables
       - name: Run tests
         timeout-minutes: 5
-        run: crystal spec
+        run: crystal spec --no-debug
         env:
           CURRENT_ADAPTER: pg
           PG_DATABASE_URL: postgres://grant:password@localhost:5432/grant_db
@@ -284,7 +286,7 @@ jobs:
         timeout-minutes: 10
         run: |
           # Run composite key tests first
-          crystal spec spec/grant/composite_primary_key_spec.cr
+          crystal spec --no-debug spec/grant/composite_primary_key_spec.cr
           # TODO: Add more sharding tests as they are developed
         env:
           CURRENT_ADAPTER: pg
