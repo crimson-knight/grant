@@ -242,13 +242,13 @@ module Grant::Encryption
         add_column :#{column_name}, :text
         add_index :#{column_name} if deterministic # Only for deterministic encryption
       end
-      
+
       # Encrypt existing data
       Grant::Encryption::MigrationHelpers.encrypt_column(
         #{model_class.name},
         :#{attribute}
       )
-      
+
       # Optional: Remove original column after verification
       # alter_table :#{table_name} do
       #   drop_column :#{attribute}

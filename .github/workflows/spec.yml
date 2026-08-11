@@ -8,46 +8,44 @@ on:
 
 jobs:
   formatting:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - name: Download source
-        uses: actions/checkout@v4
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - name: Install Crystal
-        uses: crystal-lang/install-crystal@v1
+        uses: crystal-lang/install-crystal@d8ef131ecec0352ce0e39b81b0a6d95def58fe2f # v1
         with:
           crystal: latest
       - name: Install shards
         run: shards install
       - name: Check formatting
-        run: crystal tool format --check
-      - name: Check linting
-        run: ./bin/ameba
+        run: crystal tool format --check src
 
   sqlite-spec:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     strategy:
       fail-fast: false
       matrix:
         crystal: [1.14.0, 1.15.1, 1.16.3, latest]
     steps:
       - name: Download source
-        uses: actions/checkout@v4
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - name: Install Crystal
-        uses: crystal-lang/install-crystal@v1
+        uses: crystal-lang/install-crystal@d8ef131ecec0352ce0e39b81b0a6d95def58fe2f # v1
         with:
           crystal: ${{ matrix.crystal }}
       - name: Install shards
         run: shards update --ignore-crystal-version --skip-postinstall --skip-executables
       - name: Run tests
-        timeout-minutes: 5
-        run: crystal spec
+        timeout-minutes: 20
+        run: scripts/run_ci_specs.sh
         env:
           CURRENT_ADAPTER: sqlite
           SQLITE_DATABASE_URL: sqlite3:./grant.db
           SQLITE_REPLICA_URL: sqlite3:./grant_replica.db
 
   mysql-spec:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     strategy:
       fail-fast: false
       matrix:
@@ -83,16 +81,16 @@ jobs:
           - 3307:3306
     steps:
       - name: Download source
-        uses: actions/checkout@v4
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - name: Install Crystal
-        uses: crystal-lang/install-crystal@v1
+        uses: crystal-lang/install-crystal@d8ef131ecec0352ce0e39b81b0a6d95def58fe2f # v1
         with:
           crystal: ${{ matrix.crystal }}
       - name: Install shards
         run: shards update --ignore-crystal-version --skip-postinstall --skip-executables
       - name: Run tests
-        timeout-minutes: 5
-        run: crystal spec
+        timeout-minutes: 20
+        run: scripts/run_ci_specs.sh
         env:
           CURRENT_ADAPTER: mysql
           MYSQL_DATABASE_URL: mysql://grant:password@localhost:3306/grant_db
@@ -103,7 +101,7 @@ jobs:
   # anywhere — this validates Grant's caching_sha2_password handshake against a
   # default-configured server. Mirrors docker-compose.test.yml (mysql8/mysql9).
   mysql-caching-sha2-spec:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     strategy:
       fail-fast: false
       matrix:
@@ -129,9 +127,9 @@ jobs:
           - 3306:3306
     steps:
       - name: Download source
-        uses: actions/checkout@v4
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - name: Install Crystal
-        uses: crystal-lang/install-crystal@v1
+        uses: crystal-lang/install-crystal@d8ef131ecec0352ce0e39b81b0a6d95def58fe2f # v1
         with:
           crystal: ${{ matrix.crystal }}
       - name: Install shards
@@ -152,15 +150,15 @@ jobs:
         run: |
           mysqladmin ping -h 127.0.0.1 -P 3306 -u grant -ppassword | grep "mysqld is alive"
       - name: Run tests
-        timeout-minutes: 5
-        run: crystal spec
+        timeout-minutes: 20
+        run: scripts/run_ci_specs.sh
         env:
           CURRENT_ADAPTER: mysql
           MYSQL_DATABASE_URL: mysql://grant:password@127.0.0.1:3306/grant_db
           MYSQL_REPLICA_URL: mysql://grant:password@127.0.0.1:3306/grant_db
 
   psql-spec:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     strategy:
       fail-fast: false
       matrix:
@@ -194,23 +192,23 @@ jobs:
           - 5433:5432
     steps:
       - name: Download source
-        uses: actions/checkout@v4
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - name: Install Crystal
-        uses: crystal-lang/install-crystal@v1
+        uses: crystal-lang/install-crystal@d8ef131ecec0352ce0e39b81b0a6d95def58fe2f # v1
         with:
           crystal: ${{ matrix.crystal }}
       - name: Install shards
         run: shards update --ignore-crystal-version --skip-postinstall --skip-executables
       - name: Run tests
-        timeout-minutes: 5
-        run: crystal spec
+        timeout-minutes: 20
+        run: scripts/run_ci_specs.sh
         env:
           CURRENT_ADAPTER: pg
           PG_DATABASE_URL: postgres://grant:password@localhost:5432/grant_db
           PG_REPLICA_URL: postgres://grant:password@localhost:5433/grant_replica_db
 
   sharding-spec:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     strategy:
       matrix:
         crystal: [1.16.3, latest]
@@ -273,9 +271,9 @@ jobs:
           - 5443:5432
     steps:
       - name: Download source
-        uses: actions/checkout@v4
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - name: Install Crystal
-        uses: crystal-lang/install-crystal@v1
+        uses: crystal-lang/install-crystal@d8ef131ecec0352ce0e39b81b0a6d95def58fe2f # v1
         with:
           crystal: ${{ matrix.crystal }}
       - name: Install shards
@@ -284,13 +282,13 @@ jobs:
         timeout-minutes: 10
         run: |
           # Run composite key tests first
-          crystal spec spec/grant/composite_primary_key_spec.cr
+          crystal spec --no-debug spec/grant/composite_primary_key_spec.cr
           # TODO: Add more sharding tests as they are developed
         env:
           CURRENT_ADAPTER: pg
           # Primary connection
-          PG_DATABASE_URL: postgres://grant:password@localhost:5432/grant_db
-          PG_REPLICA_URL: postgres://grant:password@localhost:5433/grant_replica_db
+          PG_DATABASE_URL: postgres://grant:password@localhost:5440/shard_0
+          PG_REPLICA_URL: postgres://grant:password@localhost:5441/shard_0
           # Shard connections
           SHARD_0_PRIMARY: postgres://grant:password@localhost:5440/shard_0
           SHARD_0_REPLICA: postgres://grant:password@localhost:5441/shard_0

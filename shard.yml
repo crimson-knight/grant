@@ -33,7 +33,7 @@ development_dependencies:
   # password inside the TLS tunnel and skips RSA).
   mysql:
     github: crimson-knight/crystal-mysql
-    branch: pr-123
+    commit: c061324dcef89a200a7a3f86a59b2ebf03f83602
   sqlite3:
     github: crystal-lang/crystal-sqlite3
     version: ">= 0.21.0"
@@ -42,7 +42,8 @@ development_dependencies:
     version: ">= 0.29.0"
   ameba:
     github: crystal-ameba/ameba
-    version: ~> 1.6.4
+    # Crystal 1.21 compatibility pending Ameba 1.7.0.
+    commit: cdd58b34b0d8a9c785d67183a7a8f07541549e55
 
 ai_docs:
   exclude:

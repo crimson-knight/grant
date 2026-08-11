@@ -17,7 +17,7 @@ on:
 
 jobs:
   postgres-sharding:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     services:
       # Configuration database for shard mapping
       postgres-config:
@@ -152,10 +152,10 @@ jobs:
     
     steps:
       - name: Download source
-        uses: actions/checkout@v4
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       
       - name: Install Crystal
-        uses: crystal-lang/install-crystal@v1
+        uses: crystal-lang/install-crystal@d8ef131ecec0352ce0e39b81b0a6d95def58fe2f # v1
         with:
           crystal: latest
       
@@ -164,30 +164,11 @@ jobs:
       
       - name: Run sharding tests
         timeout-minutes: 15
-        run: |
-          # Create test script
-          cat > run_sharding_tests.sh << 'EOF'
-          #!/bin/bash
-          set -e
-          
-          echo "=== Running Composite Primary Key Tests ==="
-          crystal spec spec/grant/composite_primary_key_spec.cr
-          
-          # TODO: Add more tests as sharding features are implemented
-          # echo "=== Running Shard Resolver Tests ==="
-          # crystal spec spec/grant/sharding/resolvers_spec.cr
-          
-          # echo "=== Running Cross-Shard Query Tests ==="
-          # crystal spec spec/grant/sharding/cross_shard_spec.cr
-          
-          # echo "=== Running Failover Tests ==="
-          # crystal spec spec/grant/sharding/failover_spec.cr
-          EOF
-          
-          chmod +x run_sharding_tests.sh
-          ./run_sharding_tests.sh
+        run: crystal spec --no-debug spec/grant/composite_primary_key_spec.cr
         env:
           CURRENT_ADAPTER: pg
+          PG_DATABASE_URL: postgres://grant:password@localhost:5400/config_db
+          PG_REPLICA_URL: postgres://grant:password@localhost:5400/config_db
           # Configuration database
           CONFIG_DATABASE_URL: postgres://grant:password@localhost:5400/config_db
           # Shard 0
@@ -204,7 +185,7 @@ jobs:
           SHARD_3_REPLICA: postgres://grant:password@localhost:5441/shard_3
   
   mysql-sharding:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     services:
       # Configuration database
       mysql-config:
@@ -256,10 +237,10 @@ jobs:
     
     steps:
       - name: Download source
-        uses: actions/checkout@v4
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       
       - name: Install Crystal
-        uses: crystal-lang/install-crystal@v1
+        uses: crystal-lang/install-crystal@d8ef131ecec0352ce0e39b81b0a6d95def58fe2f # v1
         with:
           crystal: latest
       
@@ -269,9 +250,11 @@ jobs:
       - name: Run MySQL sharding tests
         timeout-minutes: 15
         run: |
-          crystal spec spec/grant/composite_primary_key_spec.cr
+          crystal spec --no-debug spec/grant/composite_primary_key_spec.cr
         env:
           CURRENT_ADAPTER: mysql
+          MYSQL_DATABASE_URL: mysql://grant:password@localhost:3300/config_db
+          MYSQL_REPLICA_URL: mysql://grant:password@localhost:3300/config_db
           # Configuration database
           CONFIG_DATABASE_URL: mysql://grant:password@localhost:3300/config_db
           # Shards
