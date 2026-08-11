@@ -33,7 +33,7 @@ development_dependencies:
   # password inside the TLS tunnel and skips RSA).
   mysql:
     github: crimson-knight/crystal-mysql
-    branch: pr-123
+    commit: c061324dcef89a200a7a3f86a59b2ebf03f83602
   sqlite3:
     github: crystal-lang/crystal-sqlite3
     version: ">= 0.21.0"
