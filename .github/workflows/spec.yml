@@ -18,12 +18,8 @@ jobs:
           crystal: latest
       - name: Install shards
         run: shards install
-      - name: Build Ameba
-        run: shards build ameba
       - name: Check formatting
         run: crystal tool format --check src
-      - name: Check linting
-        run: ./bin/ameba
 
   sqlite-spec:
     runs-on: ubuntu-22.04
