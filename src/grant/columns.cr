@@ -227,6 +227,13 @@ module Grant::Columns
         @{{decl.var}}
       end
 
+      # Returns the raw nullable value without asserting presence. This is
+      # useful while building a new record (for example, when prefilling a
+      # form) even when the persisted column is declared non-nilable.
+      def {{decl.var.id}}? : {{not_nilable_type}}?
+        @{{decl.var}}
+      end
+
       def {{decl.var.id}}! : {{not_nilable_type}}
         raise NilAssertionError.new {{@type.name.stringify}} + "#" + {{decl.var.stringify}} + " cannot be nil" if @{{decl.var}}.nil?
         @{{decl.var}}.not_nil!
@@ -342,6 +349,12 @@ module Grant::Columns
       def {{decl.var.id}} : {{type.id}}
         raise NilAssertionError.new {{@type.name.stringify}} + "#" + {{decl.var.stringify}} + " cannot be nil" if @{{decl.var}}.nil?
         @{{decl.var}}.not_nil!
+      end
+
+      # Returns the raw nullable value without asserting presence. A new model
+      # may not have received this required attribute yet.
+      def {{decl.var.id}}? : {{type.id}}?
+        @{{decl.var}}
       end
       
       # Dirty tracking methods
