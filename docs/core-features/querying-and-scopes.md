@@ -330,9 +330,9 @@ class Post < Grant::Base
   }
 end
 
-# Each named scope starts from the model's current scope and returns a builder.
-# Chain builder methods on that relation, or define a combined scope.
-Post.published.order(created_at: :desc).limit(10).select
+# Each named scope starts from the model's current scope and returns a
+# model-specific relation, so named scopes and builder methods can be chained.
+Post.published.recent.limit(10).select
 Post.by_author(current_user.id).where(featured: true).select
 Post.tagged_with("crystal")
   .where.gt(:views, 1000)
@@ -383,8 +383,9 @@ for tenant assignment, mismatch errors, and cross-tenant access.
 
 ### Scope Composition
 
-Named scopes return a query builder. Combine their conditions with builder
-methods, or define one named scope for a commonly reused combination.
+Named scopes return a model-specific relation with the model's other named
+scopes available on it. Combine them directly, then keep chaining builder
+methods when needed.
 
 ```crystal
 class User < Grant::Base
@@ -403,6 +404,9 @@ class User < Grant::Base
       .order(last_login: :desc)
   end
 end
+
+User.active.verified.admins.select
+User.active_admins.select
 ```
 
 Use `User.active_admins` for the combined relation, or chain ordinary relation
