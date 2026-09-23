@@ -61,17 +61,10 @@ describe "Grant::Scoping" do
     end
 
     it "can chain scopes" do
-      # Scopes can't be chained directly in Crystal like in Rails
-      # Each scope returns a Query::Builder, not the model class
-      query1 = ScopedModel.published
-      query1.should be_a(Grant::Query::Builder(ScopedModel))
+      relation = ScopedModel.published.active
 
-      query2 = ScopedModel.active
-      query2.should be_a(Grant::Query::Builder(ScopedModel))
-
-      # To combine scopes, use where conditions
-      combined = ScopedModel.where(published: true).where(status: "active")
-      combined.where_fields.size.should eq(2)
+      relation.should be_a(ScopedModel::BuildNamedScopeRelation)
+      relation.where_fields.size.should eq(2)
     end
 
     it "applies scope conditions" do
@@ -211,22 +204,19 @@ describe "Grant::Scoping" do
 
   describe "scope with other query methods" do
     it "works with order" do
-      b = ScopedModel.new(name: "B", published: true)
-      b.save!
+      ScopedModel.new(name: "B", published: true).save!
 
-      a = ScopedModel.new(name: "A", published: true)
-      a.save!
+      ScopedModel.new(name: "A", published: true).save!
 
-      c = ScopedModel.new(name: "C", published: false)
-      c.save!
+      ScopedModel.new(name: "C", published: false).save!
 
       results = ScopedModel.where(published: true).order(:name).all
       results.map(&.name).should eq(["A", "B"])
     end
 
     it "works with limit and offset" do
-      5.times do |i|
-        model = ScopedModel.new(name: "Model #{i}", published: true)
+      5.times do |record_index|
+        model = ScopedModel.new(name: "Model #{record_index}", published: true)
         model.save!
       end
 

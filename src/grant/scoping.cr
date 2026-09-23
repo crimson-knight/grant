@@ -86,26 +86,43 @@ module Grant::Scoping
   # included). The lambda may take the current `Grant::Query::Builder` as its
   # first argument, or use class-level query methods such as `where`, which also
   # start from `current_scope`. Any remaining lambda arguments are scope inputs.
-  # Returns a builder you can chain further or terminate with `all`/`first`/etc.
+  # Returns a model-specific relation with the model's named scopes available
+  # for further chaining, or terminate it with `all`/`first`/etc.
   #
   # ```
   # class Post < Grant::Base
   #   scope :published, ->(q : Grant::Query::Builder(Post)) { q.where(published: true) }
   # end
   #
-  # Post.published       # => Grant::Query::Builder(Post)
-  # Post.published.all   # => Array(Post) where published = true
-  # Post.published.count # chain any query-builder method
+  # Post.published            # => Post::BuildNamedScopeRelation
+  # Post.published.recent.all # => Array(Post), filtered and ordered
+  # Post.published.count      # chain any query-builder method
   # ```
   macro scope(name, body)
+    # Each model gets a relation subtype so calls like `Post.published.recent`
+    # can resolve all of that model's scope methods at compile time.
+    class BuildNamedScopeRelation < Grant::Query::Builder({{@type}})
+      def {{name.id}}(*args)
+        {% if body.args.size > 0 && body.args.first.restriction.stringify.includes?("Grant::Query::Builder") %}
+          ({{body}}).call(self, *args)
+        {% else %}
+          merge_builder(({{body}}).call(*args))
+        {% end %}
+        self
+      end
+    end
+
     # Define on the model class
     def self.{{name.id}}(*args)
-      query = current_scope
+      current_query = current_scope
+      query = BuildNamedScopeRelation.new(current_query.db_type, current_query.boolean_operator)
+      current_query.copy_state_to(query)
       {% if body.args.size > 0 && body.args.first.restriction.stringify.includes?("Grant::Query::Builder") %}
-        {{body}}.call(query, *args)
+        ({{body}}).call(query, *args)
       {% else %}
-        {{body}}.call(*args)
+        query.merge_builder(({{body}}).call(*args))
       {% end %}
+      query
     end
   end
 
