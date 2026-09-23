@@ -1,45 +1,45 @@
 require "../spec_helper"
 
-{% if env("CURRENT_ADAPTER").id == "sqlite" %}
+{% if env("CURRENT_ADAPTER").id == "pg" || env("CURRENT_ADAPTER").id == "sqlite" %}
   describe Grant::Query::Assembler::Sqlite(Model) do
     context "count" do
       it "counts for where/count queries" do
         sql = "select count(*) from table where \"name\" = ?"
-        builder.where(name: "bob").assembler.count.raw_sql.should match ignore_whitespace sql
+        sqlite_builder.where(name: "bob").assembler.count.raw_sql.should match ignore_whitespace sql
       end
 
       it "simple counts" do
         sql = "select count(*) from table"
-        builder.assembler.count.raw_sql.should match ignore_whitespace sql
+        sqlite_builder.assembler.count.raw_sql.should match ignore_whitespace sql
       end
 
       it "adds group_by fields for where/count queries" do
         sql = "select count(*) from table where \"name\" = ? group by name"
-        builder.where(name: "bob").group_by(:name).assembler.count.raw_sql.should match ignore_whitespace sql
+        sqlite_builder.where(name: "bob").group_by(:name).assembler.count.raw_sql.should match ignore_whitespace sql
       end
     end
 
     context "group_by" do
       it "adds group_by for select query" do
         sql = "select #{query_fields} from table group by name"
-        builder.group_by(:name).raw_sql.should match ignore_whitespace sql
+        sqlite_builder.group_by(:name).raw_sql.should match ignore_whitespace sql
       end
 
       it "adds multiple group_by for select query" do
         sql = "select #{query_fields} from table group by name, age"
-        builder.group_by([:name, :age]).raw_sql.should match ignore_whitespace sql
+        sqlite_builder.group_by([:name, :age]).raw_sql.should match ignore_whitespace sql
       end
 
       it "adds chain of group_by for select query" do
         sql = "select #{query_fields} from table group by id, name, age order by id desc"
-        builder.group_by(:id).group_by([:name, :age]).raw_sql.should match ignore_whitespace sql
+        sqlite_builder.group_by(:id).group_by([:name, :age]).raw_sql.should match ignore_whitespace sql
       end
     end
 
     context "where" do
       it "properly numbers fields" do
         sql = "select #{query_fields} from table where \"name\" = ? and \"age\" = ? order by id desc"
-        query = builder.where(name: "bob", age: "23")
+        query = sqlite_builder.where(name: "bob", age: "23")
         query.raw_sql.should match ignore_whitespace sql
 
         assembler = query.assembler
@@ -49,7 +49,7 @@ require "../spec_helper"
 
       it "property defines IN query" do
         sql = "SELECT #{query_fields} FROM table WHERE \"date_completed\" IS NULL AND \"status\" IN (?,?) ORDER BY id DESC"
-        query = builder.where(date_completed: nil, status: ["outstanding", "in_progress"])
+        query = sqlite_builder.where(date_completed: nil, status: ["outstanding", "in_progress"])
         query.raw_sql.should match ignore_whitespace sql
 
         assembler = query.assembler
@@ -59,7 +59,7 @@ require "../spec_helper"
 
       it "property defines IN query with numbers" do
         sql = "SELECT #{query_fields} FROM table WHERE \"date_completed\" IS NULL AND \"id\" IN (?,?) ORDER BY id DESC"
-        query = builder.where(date_completed: nil, id: [1, 2])
+        query = sqlite_builder.where(date_completed: nil, id: [1, 2])
         query.raw_sql.should match ignore_whitespace sql
 
         assembler = query.assembler
@@ -69,7 +69,7 @@ require "../spec_helper"
 
       it "property defines IN query with booleans" do
         sql = "SELECT #{query_fields} FROM table WHERE \"published\" IN (?,?) ORDER BY id DESC"
-        query = builder.where(published: [true, false])
+        query = sqlite_builder.where(published: [true, false])
         query.raw_sql.should match ignore_whitespace sql
 
         assembler = query.assembler
@@ -79,7 +79,7 @@ require "../spec_helper"
 
       it "handles raw SQL" do
         sql = "select #{query_fields} from table where name = 'bob' and age = ? and color = ? order by id desc"
-        query = builder.where("name = 'bob'").where("age = ?", 23).where("color = ?", "red")
+        query = sqlite_builder.where("name = 'bob'").where("age = ?", 23).where("color = ?", "red")
         query.raw_sql.should match ignore_whitespace sql
 
         assembler = query.assembler
@@ -90,58 +90,58 @@ require "../spec_helper"
 
     context "order" do
       it "uses default sort when no sort is provided" do
-        builder.raw_sql.should match ignore_whitespace "select #{query_fields} from table order by id desc"
+        sqlite_builder.raw_sql.should match ignore_whitespace "select #{query_fields} from table order by id desc"
       end
 
       it "uses specified sort when provided" do
         sql = "select #{query_fields} from table order by id asc"
-        builder.order(id: :asc).raw_sql.should match ignore_whitespace sql
+        sqlite_builder.order(id: :asc).raw_sql.should match ignore_whitespace sql
       end
     end
 
     context "offset" do
       it "adds offset for select query" do
         sql = "select #{query_fields} from table order by id desc offset 8"
-        builder.offset(8).raw_sql.should match ignore_whitespace sql
+        sqlite_builder.offset(8).raw_sql.should match ignore_whitespace sql
       end
 
       it "adds offset for first query" do
         sql = "select #{query_fields} from table order by id desc limit 1 offset 3"
-        builder.offset(3).assembler.first.raw_sql.should match ignore_whitespace sql
+        sqlite_builder.offset(3).assembler.first.raw_sql.should match ignore_whitespace sql
       end
     end
 
     context "limit" do
       it "adds limit for select query" do
         sql = "select #{query_fields} from table order by id desc limit 5"
-        builder.limit(5).raw_sql.should match ignore_whitespace sql
+        sqlite_builder.limit(5).raw_sql.should match ignore_whitespace sql
       end
     end
 
     context "select projection" do
       it "uses projected columns in SELECT when select(*cols) is called" do
         sql = "select name from table order by id desc"
-        builder.select(:name).raw_sql.should match ignore_whitespace sql
+        sqlite_builder.select(:name).raw_sql.should match ignore_whitespace sql
       end
 
       it "uses multiple projected columns in SELECT" do
         sql = "select name, age from table order by id desc"
-        builder.select(:name, :age).raw_sql.should match ignore_whitespace sql
+        sqlite_builder.select(:name, :age).raw_sql.should match ignore_whitespace sql
       end
 
       it "reselect replaces earlier projection in SELECT" do
         sql = "select age from table order by id desc"
-        builder.select(:name).reselect(:age).raw_sql.should match ignore_whitespace sql
+        sqlite_builder.select(:name).reselect(:age).raw_sql.should match ignore_whitespace sql
       end
 
       it "uses all model fields when no projection is set" do
         sql = "select #{query_fields} from table order by id desc"
-        builder.raw_sql.should match ignore_whitespace sql
+        sqlite_builder.raw_sql.should match ignore_whitespace sql
       end
 
       it "projection is preserved through first assembler" do
         sql = "select name from table order by id desc limit 1"
-        builder.select(:name).assembler.first.raw_sql.should match ignore_whitespace sql
+        sqlite_builder.select(:name).assembler.first.raw_sql.should match ignore_whitespace sql
       end
     end
   end

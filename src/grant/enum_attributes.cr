@@ -75,7 +75,7 @@ module Grant::EnumAttributes
       if decl.is_a?(TypeDeclaration)
         name = decl.var
         type = decl.type
-        default = decl.value
+        default = decl.value || options[:default]
       else
         raise "enum_attribute expects a type declaration like 'status : Status'"
       end
@@ -123,7 +123,13 @@ module Grant::EnumAttributes
     {% end %}
     
     # Class methods to access enum values
-    def self.{{name.id}}s
+    {% plural_name = name.id.stringify %}
+    {% if plural_name.ends_with?("s") %}
+      {% plural_name = plural_name + "es" %}
+    {% else %}
+      {% plural_name = plural_name + "s" %}
+    {% end %}
+    def self.{{plural_name.id}}
       {{enum_type}}.values
     end
     

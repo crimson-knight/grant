@@ -1,7 +1,9 @@
 require "spec"
 require "db"
-require "../../../src/grant/locking"
-require "../../../src/grant/query/builder"
+require "pg"
+require "sqlite3"
+require "../../../src/grant"
+require "../../../src/adapter/**"
 
 class Model
   def self.table_name
@@ -24,6 +26,10 @@ class Model
   def self.quote(name : String) : String
     %("#{name}")
   end
+
+  def self.custom_select_statement : String?
+    nil
+  end
 end
 
 def query_fields
@@ -38,6 +44,14 @@ def builder
   {% else %}
     Grant::Query::Builder(Model).new Grant::Query::Builder::DbType::Sqlite
   {% end %}
+end
+
+def pg_builder
+  Grant::Query::Builder(Model).new Grant::Query::Builder::DbType::Pg
+end
+
+def sqlite_builder
+  Grant::Query::Builder(Model).new Grant::Query::Builder::DbType::Sqlite
 end
 
 def ignore_whitespace(expected : String)

@@ -34,12 +34,15 @@ module Grant::Query::Assembler
 
     def field_list
       fields = @query.select_columns || [Model.fields].flatten
-      return fields.map { |field| quote_reserved_field(field) }.join(", ") if @query.join_clauses.empty?
+      fields.map { |field| select_field_sql(field) }.join(", ")
+    end
 
-      table_name = Model.quote(Model.table_name)
-      fields.map do |field|
-        qualify_join_field(field, table_name)
-      end.join(", ")
+    protected def select_field_sql(field : String) : String
+      if @query.join_clauses.empty?
+        quote_reserved_field(field)
+      else
+        qualify_join_field(field, Model.quote(Model.table_name))
+      end
     end
 
     # Qualifies a simple plucked model field when joins can introduce another
@@ -506,6 +509,10 @@ module Grant::Query::Assembler
     end
 
     def select
+      if custom_statement = Model.custom_select_statement
+        return custom_select(custom_statement)
+      end
+
       sql = build_sql do |s|
         s << "#{select_keyword} #{field_list}"
         s << from_clause
@@ -514,6 +521,34 @@ module Grant::Query::Assembler
         s << group_by
         s << having
         s << order
+        s << limit
+        s << offset
+        s << lock
+      end
+
+      Executor::List(Model).new sql, numbered_parameters
+    end
+
+    # Applies chainable query clauses to a model-declared SELECT by treating
+    # the custom statement as a derived table. The alias matches the model's
+    # table name so existing structured field qualification remains valid.
+    private def custom_select(statement : String) : Executor::List(Model)
+      statement = statement.rstrip
+      statement = statement[0...-1].rstrip if statement.ends_with?(';')
+      fields = if select_columns = @query.select_columns
+                 select_columns.map { |field| Model.quote(field) }.join(", ")
+               else
+                 "*"
+               end
+      source = "(#{statement}) AS #{Model.quote(Model.table_name)}"
+
+      sql = build_sql do |s|
+        s << "#{select_keyword} #{fields} FROM #{source}"
+        s << joins
+        s << where
+        s << group_by
+        s << having
+        s << order(use_default_order: false)
         s << limit
         s << offset
         s << lock
