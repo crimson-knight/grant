@@ -443,7 +443,8 @@ module Grant::Transactions
   # Works for both new and existing records: a new record (`new_record?`) is
   # `INSERT`ed, an existing one is `UPDATE`d. Lifecycle callbacks
   # (`before_save`/`after_create`/`after_update`/`after_save`, plus commit
-  # callbacks inside a transaction) run around the write.
+  # callbacks inside a transaction) run around the write. The operation is
+  # transactional, so an abort from any save callback rolls the write back.
   #
   # - `validate: false` skips validations (the record is written even if
   #   invalid). Callbacks still run.
@@ -463,53 +464,80 @@ module Grant::Transactions
   # ```
   def save(*, validate : Bool = true, skip_timestamps : Bool = false) : Bool
     guard_writes!
-    enlist_transaction_record
     {% begin %}
     {% primary_key = @type.instance_vars.find { |ivar| (ann = ivar.annotation(Grant::Column)) && ann[:primary] } %}
     {% raise raise "A primary key must be defined for #{@type.name}." unless primary_key %}
     {% ann = primary_key.annotation(Grant::Column) %}
-    if validate
-      validation_context = (@{{primary_key.name.id}} && !new_record?) ? :update : :create
-      return false unless valid?(context: validation_context)
-    end
 
-    begin
-      __run_around_save do
-        __before_save
-        if @{{primary_key.name.id}} && !new_record?
-          __run_around_update do
-            __before_update
-            __update(skip_timestamps: skip_timestamps)
-            __after_update
-            queue_commit_callback(:after_update_commit) if responds_to?(:queue_commit_callback)
-          end
-        else
-          __run_around_create do
-            __before_create
-            __create(skip_timestamps: skip_timestamps)
-            __after_create
-            queue_commit_callback(:after_create_commit) if responds_to?(:queue_commit_callback)
+    save_succeeded = true
+    save_failed = false
+    failure_message : String? = nil
+    save_transaction = Grant::Transaction::Options.new(
+      requires_new: Grant::Transaction.in_explicit_transaction? &&
+        Grant::Transaction.current_connection?(self.class.adapter).nil?
+    )
+
+    self.class.transaction(save_transaction) do
+      enlist_transaction_record
+
+      begin
+        if validate
+          validation_context = (@{{primary_key.name.id}} && !new_record?) ? :update : :create
+          unless valid?(context: validation_context)
+            save_succeeded = false
+            next
           end
         end
-        __after_save unless around_halted?
-        queue_commit_callback(:after_commit) if responds_to?(:queue_commit_callback) && !around_halted?
-        run_commit_callbacks if responds_to?(:run_commit_callbacks) && !around_halted?
+
+        __run_around_save do
+          __before_save
+          if @{{primary_key.name.id}} && !new_record?
+            __run_around_update do
+              __before_update
+              __update(skip_timestamps: skip_timestamps)
+              __after_update
+              queue_commit_callback(:after_update_commit) if responds_to?(:queue_commit_callback)
+            end
+          else
+            __run_around_create do
+              __before_create
+              __create(skip_timestamps: skip_timestamps)
+              __after_create
+              queue_commit_callback(:after_create_commit) if responds_to?(:queue_commit_callback)
+            end
+          end
+          __after_save unless around_halted?
+          queue_commit_callback(:after_commit) if responds_to?(:queue_commit_callback) && !around_halted?
+          run_commit_callbacks if responds_to?(:run_commit_callbacks) && !around_halted?
+        end
+        save_succeeded = !around_halted?
+      rescue ex : DB::Error | Grant::Callbacks::Abort
+        save_failed = true
+        failure_message = ex.message
+        errors << Grant::Error.new(:base, failure_message.not_nil!) if failure_message
+
+        clear_commit_callbacks if responds_to?(:clear_commit_callbacks)
+        Grant::Transaction.enqueue_pending_callback(
+          Proc(Nil).new { },
+          Proc(Nil).new { after_rollback if responds_to?(:after_rollback) }
+        )
+        raise Grant::Transaction::Rollback.new
       end
-      return false if around_halted?
-    rescue ex : DB::Error | Grant::Callbacks::Abort
-      if message = ex.message
+    end
+
+    if save_failed
+      if message = failure_message
         Log.error { "Save Exception: #{message}" }
-        errors << Grant::Error.new(:base, message)
-        
+
         {% begin %}
         {% primary_key = @type.instance_vars.find { |ivar| (ann = ivar.annotation(Grant::Column)) && ann[:primary] } %}
         Grant::Logs::Model.error { "Failed to save record - #{self.class.name} [id: #{@{{primary_key.name.id}}}] [new_record: #{new_record?}] - #{message}" }
         {% end %}
       end
-      run_rollback_callbacks if responds_to?(:run_rollback_callbacks)
       return false
     end
-    true
+
+    save_succeeded
   {% end %}
   end
 

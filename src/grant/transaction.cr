@@ -11,6 +11,16 @@ module Grant::Transaction
   # ```
   class Rollback < Exception; end
 
+  # Preserves an IOError escaping a transaction block so the adapter's pool
+  # wrapper does not mistake it for a broken connection during cleanup.
+  class PreservedIOError < Exception
+    getter original : IO::Error
+
+    def initialize(@original : IO::Error)
+      super(@original.message || "I/O error in transaction block")
+    end
+  end
+
   # Raised when the database aborts a transaction due to a serialization /
   # concurrency conflict (e.g. a `Serializable` isolation failure or a
   # `could not serialize` error). Retrying the transaction is the usual remedy.
@@ -311,6 +321,8 @@ module Grant::Transaction
         end
       rescue ex : DB::Error
         handle_transaction_error(ex)
+      rescue ex : PreservedIOError
+        raise ex.original
       end
 
       # Commit callbacks run after the transaction leaves the fiber stack. Run
@@ -324,7 +336,11 @@ module Grant::Transaction
       transaction_stack.push(state)
 
       begin
-        yield
+        begin
+          yield
+        rescue ex : IO::Error
+          raise PreservedIOError.new(ex)
+        end
         conn.exec("COMMIT")
       rescue ex : Rollback
         conn.exec("ROLLBACK")

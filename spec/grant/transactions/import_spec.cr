@@ -16,14 +16,14 @@ describe "#import" do
 
       it "should work with batch_size" do
         to_import = [
-          Book.new(name: "ImportBatchBook1"),
-          Book.new(name: "ImportBatchBook2"),
-          Book.new(name: "ImportBatchBook3"),
-          Book.new(name: "ImportBatchBook4"),
+          Parent.new(name: "ImportBatchParent1"),
+          Parent.new(name: "ImportBatchParent2"),
+          Parent.new(name: "ImportBatchParent3"),
+          Parent.new(name: "ImportBatchParent4"),
         ]
 
-        Book.import(to_import, batch_size: 2)
-        Book.all("WHERE name LIKE ?", ["ImportBatch%"]).size.should eq 4
+        Parent.import(to_import, batch_size: 2)
+        Parent.all("WHERE name LIKE ?", ["ImportBatchParent%"]).size.should eq 4
       end
 
       it "should be able to update existing records" do

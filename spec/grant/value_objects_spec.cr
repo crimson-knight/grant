@@ -145,53 +145,10 @@ end
 
 describe Grant::ValueObjects do
   before_each do
-    CustomerWithAddress.exec("DROP TABLE IF EXISTS customers_with_addresses")
-    CustomerWithAddress.exec(<<-SQL
-      CREATE TABLE customers_with_addresses (
-        id INTEGER PRIMARY KEY,
-        name VARCHAR(255),
-        address_street VARCHAR(255),
-        address_city VARCHAR(255),
-        address_zip VARCHAR(255)
-      )
-    SQL
-    )
-    
-    CustomerWithMoney.exec("DROP TABLE IF EXISTS customers_with_money")
-    CustomerWithMoney.exec(<<-SQL
-      CREATE TABLE customers_with_money (
-        id INTEGER PRIMARY KEY,
-        name VARCHAR(255),
-        balance_amount VARCHAR(255),
-        balance_currency VARCHAR(255)
-      )
-    SQL
-    )
-    
-    CustomerWithCustomConstructor.exec("DROP TABLE IF EXISTS customers_with_custom")
-    CustomerWithCustomConstructor.exec(<<-SQL
-      CREATE TABLE customers_with_custom (
-        id INTEGER PRIMARY KEY,
-        name VARCHAR(255),
-        temp_fahrenheit VARCHAR(255)
-      )
-    SQL
-    )
-    
-    CustomerWithMultiple.exec("DROP TABLE IF EXISTS customers_with_multiple")
-    CustomerWithMultiple.exec(<<-SQL
-      CREATE TABLE customers_with_multiple (
-        id INTEGER PRIMARY KEY,
-        name VARCHAR(255),
-        home_street VARCHAR(255),
-        home_city VARCHAR(255),
-        home_zip VARCHAR(255),
-        work_street VARCHAR(255),
-        work_city VARCHAR(255),
-        work_zip VARCHAR(255)
-      )
-    SQL
-    )
+    CustomerWithAddress.migrator.drop_and_create
+    CustomerWithMoney.migrator.drop_and_create
+    CustomerWithCustomConstructor.migrator.drop_and_create
+    CustomerWithMultiple.migrator.drop_and_create
   end
   
   describe "#aggregation" do
@@ -246,7 +203,7 @@ describe Grant::ValueObjects do
       customer.balance_currency = nil
       customer.balance.should be_nil
       
-      # Partial values should still build object
+      # Partial values cannot satisfy the value object's required fields.
       customer.balance_amount = "100.50"
       customer.balance_currency = nil
       customer.balance.should be_nil  # Because not all required fields are present
@@ -313,10 +270,10 @@ describe Grant::ValueObjects do
         name: "John Doe",
         address: original_address
       )
-      
+
       new_address = Address.new("456 Elm St", "Cambridge", "02139")
       customer.address = new_address
-      
+
       # Current value
       customer.address.should eq(new_address)
       
@@ -387,9 +344,7 @@ describe Grant::ValueObjects do
   end
   
   describe "metadata" do
-    # pending: ValueObjects.aggregations is defined in a module-level `macro finished` that
-    # does not propagate as a class method to including subclasses; needs src fix.
-    pending "provides aggregation metadata" do
+    it "provides aggregation metadata" do
       meta = CustomerWithAddress.aggregations
       meta.should_not be_nil
       meta.size.should eq(1)
@@ -405,8 +360,7 @@ describe Grant::ValueObjects do
       address_meta.allow_nil.should be_false
     end
 
-    # pending: same reason as above
-    pending "provides metadata for multiple aggregations" do
+    it "provides metadata for multiple aggregations" do
       meta = CustomerWithMultiple.aggregations
       meta.size.should eq(2)
       meta.has_key?(:home_address).should be_true

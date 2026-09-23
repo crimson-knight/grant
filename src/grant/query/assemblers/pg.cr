@@ -9,6 +9,17 @@ module Grant::Query::Assembler
       "$#{@numbered_parameters.size}"
     end
 
+    protected def select_field_sql(field : String) : String
+      sql_field = super
+      column_name = field.split('.').last
+
+      if column_name.starts_with?("_serialized_")
+        "#{sql_field}::TEXT AS #{Model.quote(column_name)}"
+      else
+        sql_field
+      end
+    end
+
     # PostgreSQL supports `EXPLAIN` and `EXPLAIN ANALYZE` (the latter executes
     # the query to produce real timing/row counts).
     def explain_keyword(analyze : Bool = false) : String

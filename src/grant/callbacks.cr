@@ -78,8 +78,10 @@
 #
 # ## Halting
 #
-# Call `abort!` inside a `before_*` callback to raise `Grant::Callbacks::Abort`
-# and stop the operation (the record is not persisted). An `around_*` callback
+# Call `abort!` inside a persistence callback to raise
+# `Grant::Callbacks::Abort` and stop the operation. An abort from any save
+# lifecycle callback through `after_save` rolls back the save transaction.
+# Commit callbacks run after the transaction commits. An `around_*` callback
 # halts simply by **not** calling its continuation.
 #
 # ```
@@ -96,8 +98,7 @@
 # ```
 module Grant::Callbacks
   # Raised by `abort!` to halt the current persistence operation from inside a
-  # `before_*` callback. Caught by the persistence machinery, which reports the
-  # failure instead of writing to the database.
+  # callback. Save operations roll back the write and report the failure.
   class Abort < Exception
   end
 
@@ -384,9 +385,10 @@ module Grant::Callbacks
   end
 
   # Halts the current persistence operation by raising
-  # `Grant::Callbacks::Abort`. Intended for use inside a `before_*` callback:
-  # the surrounding save/create/update/destroy is aborted and the record is not
-  # written. *message* is attached to the raised exception.
+  # `Grant::Callbacks::Abort`. For saves, it rolls back the surrounding
+  # save/create/update transaction, including when called from `after_create`,
+  # `after_update`, or `after_save`. *message* is attached to the raised
+  # exception.
   #
   # ```
   # class Account < Grant::Base

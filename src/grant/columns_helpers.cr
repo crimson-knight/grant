@@ -61,11 +61,17 @@ abstract class Grant::Base
     {% begin %}
       case name
       {% for ivar in @type.instance_vars.select(&.annotation(Grant::Column)) %}
+        {% ann = ivar.annotation(Grant::Column) %}
+        {% attribute_type = ann[:nilable] ? ivar.type : ivar.type.union_types.reject { |type| type == Nil }.first %}
         when {{ivar.name.stringify}}
-          if value.is_a?({{ivar.type}})
-            @{{ivar.id}} = value
+          if value.is_a?({{attribute_type}})
+            self.{{ivar.id}} = value.as({{attribute_type}})
+          elsif value.nil?
+            # Preserve the existing ability to clear a required column through
+            # the reflective writer; nil cannot pass its public setter type.
+            @{{ivar.id}} = nil
           else
-            raise "Type mismatch for {{ivar.name}}: expected {{ivar.type}} but got #{value.class}"
+            raise "Type mismatch for {{ivar.name}}: expected {{attribute_type}} but got #{value.class}"
           end
       {% end %}
       else

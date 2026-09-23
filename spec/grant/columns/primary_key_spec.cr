@@ -11,8 +11,8 @@ describe "#new" do
 end
 
 describe "#new(primary_key: value)" do
-  it "ignores the value in default" do
-    Parent.new(id: 1_i64).id.should eq(nil)
+  it "preserves an explicitly assigned auto primary key" do
+    Parent.new(id: 1_i64).id.should eq(1_i64)
   end
 
   it "sets the value when the primary is defined as `auto: false`" do
