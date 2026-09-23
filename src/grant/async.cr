@@ -16,7 +16,7 @@ module Grant
       def async_count : AsyncResult(Int64)
         query = current_scope
         AsyncResult(Int64).new do
-          query.count
+          query.size
         end
       end
 
@@ -196,7 +196,7 @@ module Grant
       # Async count
       def async_count : AsyncResult(Int64)
         AsyncResult(Int64).new do
-          count
+          size
         end
       end
 

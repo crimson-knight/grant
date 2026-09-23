@@ -4,7 +4,7 @@ require "../spec_helper"
   describe Grant::Query::Assembler::Sqlite(Model) do
     context "count" do
       it "counts for where/count queries" do
-        sql = "select count(*) from table where name = ?"
+        sql = "select count(*) from table where \"name\" = ?"
         builder.where(name: "bob").assembler.count.raw_sql.should match ignore_whitespace sql
       end
 
@@ -14,7 +14,7 @@ require "../spec_helper"
       end
 
       it "adds group_by fields for where/count queries" do
-        sql = "select count(*) from table where name = ? group by name"
+        sql = "select count(*) from table where \"name\" = ? group by name"
         builder.where(name: "bob").group_by(:name).assembler.count.raw_sql.should match ignore_whitespace sql
       end
     end
@@ -38,7 +38,7 @@ require "../spec_helper"
 
     context "where" do
       it "properly numbers fields" do
-        sql = "select #{query_fields} from table where name = ? and age = ? order by id desc"
+        sql = "select #{query_fields} from table where \"name\" = ? and \"age\" = ? order by id desc"
         query = builder.where(name: "bob", age: "23")
         query.raw_sql.should match ignore_whitespace sql
 
@@ -48,7 +48,7 @@ require "../spec_helper"
       end
 
       it "property defines IN query" do
-        sql = "SELECT #{query_fields} FROM table WHERE date_completed IS NULL AND status IN (?,?) ORDER BY id DESC"
+        sql = "SELECT #{query_fields} FROM table WHERE \"date_completed\" IS NULL AND \"status\" IN (?,?) ORDER BY id DESC"
         query = builder.where(date_completed: nil, status: ["outstanding", "in_progress"])
         query.raw_sql.should match ignore_whitespace sql
 
@@ -58,23 +58,23 @@ require "../spec_helper"
       end
 
       it "property defines IN query with numbers" do
-        sql = "SELECT #{query_fields} FROM table WHERE date_completed IS NULL AND id IN (1,2) ORDER BY id DESC"
+        sql = "SELECT #{query_fields} FROM table WHERE \"date_completed\" IS NULL AND \"id\" IN (?,?) ORDER BY id DESC"
         query = builder.where(date_completed: nil, id: [1, 2])
         query.raw_sql.should match ignore_whitespace sql
 
         assembler = query.assembler
         assembler.where
-        assembler.numbered_parameters.should eq [] of Grant::Columns::Type
+        assembler.numbered_parameters.should eq [1, 2]
       end
 
       it "property defines IN query with booleans" do
-        sql = "SELECT #{query_fields} FROM table WHERE published IN (true,false) ORDER BY id DESC"
+        sql = "SELECT #{query_fields} FROM table WHERE \"published\" IN (?,?) ORDER BY id DESC"
         query = builder.where(published: [true, false])
         query.raw_sql.should match ignore_whitespace sql
 
         assembler = query.assembler
         assembler.where
-        assembler.numbered_parameters.should eq [] of Grant::Columns::Type
+        assembler.numbered_parameters.should eq [true, false]
       end
 
       it "handles raw SQL" do

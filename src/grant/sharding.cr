@@ -167,7 +167,16 @@ module Grant::Sharding
       # (and still single-shards if a shard context is active).
       def self.count : Int32
         if sharding_config
-          __builder.count.to_i32
+          result = __builder.count
+          total = case result
+                  when Int64
+                    result
+                  when Hash(Grant::Columns::Type, Int64)
+                    result.values.sum
+                  else
+                    result.values.sum
+                  end
+          total.to_i32
         else
           super
         end
@@ -362,7 +371,15 @@ module Grant::Sharding
     end
 
     def count : Int64
-      @scope.count
+      result = @scope.count
+      case result
+      when Int64
+        result
+      when Hash(Grant::Columns::Type, Int64)
+        result.values.sum
+      else
+        result.values.sum
+      end
     end
 
     def where(**conditions)

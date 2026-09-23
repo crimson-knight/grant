@@ -134,18 +134,22 @@ describe "Advanced Query Interface" do
       
       field1 = query.where_fields[0]
       case field1
-      when NamedTuple(join: Symbol, stmt: String, value: Grant::Columns::Type)
-        field1[:stmt].should eq("deleted_at IS NULL")
+      when NamedTuple(join: Symbol, field: String, operator: Symbol, value: Grant::Columns::Type)
+        field1[:field].should eq("deleted_at")
+        field1[:operator].should eq(:eq)
+        field1[:value].should be_nil
       else
-        raise "Expected statement-based condition"
+        raise "Expected field-based condition"
       end
       
       field2 = query.where_fields[1]
       case field2  
-      when NamedTuple(join: Symbol, stmt: String, value: Grant::Columns::Type)
-        field2[:stmt].should eq("confirmed_at IS NOT NULL")
+      when NamedTuple(join: Symbol, field: String, operator: Symbol, value: Grant::Columns::Type)
+        field2[:field].should eq("confirmed_at")
+        field2[:operator].should eq(:neq)
+        field2[:value].should be_nil
       else
-        raise "Expected statement-based condition"
+        raise "Expected field-based condition"
       end
     end
     
@@ -191,8 +195,9 @@ describe "Advanced Query Interface" do
       # The subquery should be converted to SQL
       field = query.where_fields[0]
       case field
-      when NamedTuple(join: Symbol, stmt: String, value: Grant::Columns::Type)
-        field[:stmt].should match(/parent_id IN \(SELECT/)
+      when NamedTuple(join: Symbol, stmt: String, values: Array(Grant::Columns::Type))
+        field[:stmt].should match(/"?parent_id"? IN \(SELECT/)
+        field[:values].should eq(["admin"])
       else
         raise "Expected statement-based condition for subquery"
       end
@@ -205,8 +210,9 @@ describe "Advanced Query Interface" do
       query.where_fields.size.should eq(1)
       field = query.where_fields[0]
       case field
-      when NamedTuple(join: Symbol, stmt: String, value: Grant::Columns::Type)
+      when NamedTuple(join: Symbol, stmt: String, values: Array(Grant::Columns::Type))
         field[:stmt].should match(/EXISTS \(SELECT/)
+        field[:values].should eq(["test"])
       else
         raise "Expected statement-based condition for EXISTS"
       end
@@ -219,8 +225,9 @@ describe "Advanced Query Interface" do
       query.where_fields.size.should eq(1)
       field = query.where_fields[0]
       case field  
-      when NamedTuple(join: Symbol, stmt: String, value: Grant::Columns::Type)
+      when NamedTuple(join: Symbol, stmt: String, values: Array(Grant::Columns::Type))
         field[:stmt].should match(/NOT EXISTS \(SELECT/)
+        field[:values].should eq(["test"])
       else
         raise "Expected statement-based condition for NOT EXISTS"
       end

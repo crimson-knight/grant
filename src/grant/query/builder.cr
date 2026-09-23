@@ -55,6 +55,7 @@ class Grant::Query::Builder(Model)
   end
 
   alias WhereField = Grant::Query::WhereField
+  alias CountResult = Int64 | Hash(Grant::Columns::Type, Int64) | Hash(Array(Grant::Columns::Type), Int64)
   alias AssociationQuery = Symbol | Hash(Symbol, Array(Symbol))
 
   getter db_type : DbType
@@ -103,7 +104,7 @@ class Grant::Query::Builder(Model)
   # Each *matches* pair becomes a condition on that column. The operator is
   # inferred from the value type:
   # - scalar → `column = value`
-  # - `Array` → `column IN (...)` (nils dropped)
+  # - `Array` → `column IN (...)` (a nil member also matches NULL)
   # - `Range` → `column BETWEEN begin AND end`
   # - `Enum` → compared by its `to_s`
   # - another `Builder` → `column IN (subquery)`
@@ -137,13 +138,13 @@ class Grant::Query::Builder(Model)
   def where(matches) : self
     matches.each do |field, value|
       if value.is_a?(Array)
-        and(field: field.to_s, operator: :in, value: value.compact)
+        and_array(field.to_s, :in, value)
       elsif value.is_a?(Enum)
         and(field: field.to_s, operator: :eq, value: value.to_s)
       elsif value.is_a?(Range)
-        # Handle range as BETWEEN operation
+        # A range's upper comparison depends on whether its end is exclusive.
         and(field: field.to_s, operator: :gteq, value: value.begin)
-        and(field: field.to_s, operator: :lteq, value: value.end)
+        and(field: field.to_s, operator: value.exclusive? ? :lt : :lteq, value: value.end)
       elsif value.is_a?(Builder)
         # Handle subquery
         and_subquery(field: field.to_s, subquery: value)
@@ -180,8 +181,20 @@ class Grant::Query::Builder(Model)
   # User.where("LENGTH(email) > ?", 20)
   # User.where("active = true") # no bind value
   # ```
-  def where(stmt : String, value : Grant::Columns::Type = nil) : self
-    and(stmt: stmt, value: value)
+  def where(stmt : String) : self
+    and(stmt)
+  end
+
+  def where(stmt : String, value : Nil) : self
+    and(stmt, value)
+  end
+
+  def where(stmt : String, values : Array) : self
+    and(stmt, values)
+  end
+
+  def where(stmt : String, value : Grant::Columns::Type) : self
+    and(stmt, value)
   end
 
   # Returns a WhereChain for advanced where methods.
@@ -214,10 +227,77 @@ class Grant::Query::Builder(Model)
   # ```
   # User.where(active: true).and("LENGTH(email) > ?", 10)
   # ```
-  def and(stmt : String, value : Grant::Columns::Type = nil) : self
-    @where_fields << {join: :and, stmt: stmt, value: value}
+  def and(stmt : String) : self
+    @where_fields << {join: :and, stmt: stmt, value: nil.as(Grant::Columns::Type)}
+    self
+  end
+
+  def and(stmt : String, value : Nil) : self
+    @where_fields << {join: :and, stmt: stmt, values: [value.as(Grant::Columns::Type)]}
+    self
+  end
+
+  def and(stmt : String, value : Grant::Columns::Type) : self
+    if values = raw_bind_values(value)
+      @where_fields << {join: :and, stmt: stmt, values: values}
+    else
+      @where_fields << {join: :and, stmt: stmt, value: value}
+    end
 
     self
+  end
+
+  def and(stmt : String, values : Array) : self
+    bind_values = [] of Grant::Columns::Type
+    values.each { |item| bind_values << item.as(Grant::Columns::Type) }
+    @where_fields << {join: :and, stmt: stmt, values: bind_values}
+    self
+  end
+
+  # Adds a structured `IN` or `NOT IN` predicate from a possibly nilable list.
+  # This overload keeps nil inside the list semantics without passing an
+  # unsupported Array(Union(...)) value through the DB driver.
+  def and_in(field : Symbol | String, values : Array, negated : Bool = false) : self
+    and_array(field.to_s, negated ? :nin : :in, values)
+  end
+
+  private def and_array(field : String, operator : Symbol, values : Array) : self
+    has_nil = values.any?(&.nil?)
+    values_without_nil = values.compact
+
+    if values_without_nil.empty?
+      if has_nil
+        @where_fields << {join: :and, stmt: "#{structured_field_sql(field)} IS #{operator == :nin ? "NOT " : ""}NULL", value: nil.as(Grant::Columns::Type)}
+      else
+        @where_fields << {join: :and, stmt: operator == :nin ? "1=1" : "1=0", value: nil.as(Grant::Columns::Type)}
+      end
+      return self
+    end
+
+    unless has_nil
+      @where_fields << {join: :and, field: field, operator: operator, value: values_without_nil.as(Grant::Columns::Type)}
+      return self
+    end
+
+    safe_field = structured_field_sql(field)
+    bind_values = [] of Grant::Columns::Type
+    values_without_nil.each { |item| bind_values << item.as(Grant::Columns::Type) }
+    placeholders = Array.new(bind_values.size, "?").join(", ")
+    predicate = if operator == :nin
+                  "(#{safe_field} NOT IN (#{placeholders}) AND #{safe_field} IS NOT NULL)"
+                else
+                  "(#{safe_field} IN (#{placeholders}) OR #{safe_field} IS NULL)"
+                end
+    @where_fields << {join: :and, stmt: predicate, values: bind_values}
+    self
+  end
+
+  private def raw_bind_values(value : Grant::Columns::Type) : Array(Grant::Columns::Type)?
+    if value.is_a?(Array)
+      values = [] of Grant::Columns::Type
+      value.each { |item| values << item.as(Grant::Columns::Type) }
+      values
+    end
   end
 
   # Adds AND equality/set/range conditions from keyword arguments. Synonym of `where(**matches)`. Returns `self`.
@@ -235,13 +315,13 @@ class Grant::Query::Builder(Model)
   def and(matches) : self
     matches.each do |field, value|
       if value.is_a?(Array)
-        and(field: field.to_s, operator: :in, value: value.compact)
+        and_array(field.to_s, :in, value)
       elsif value.is_a?(Enum)
         and(field: field.to_s, operator: :eq, value: value.to_s)
       elsif value.is_a?(Range)
-        # Handle range as BETWEEN operation
+        # A range's upper comparison depends on whether its end is exclusive.
         and(field: field.to_s, operator: :gteq, value: value.begin)
-        and(field: field.to_s, operator: :lteq, value: value.end)
+        and(field: field.to_s, operator: value.exclusive? ? :lt : :lteq, value: value.end)
       else
         and(field: field.to_s, operator: :eq, value: value)
       end
@@ -270,13 +350,18 @@ class Grant::Query::Builder(Model)
   def or(matches) : self
     matches.each do |field, value|
       if value.is_a?(Array)
-        or(field: field.to_s, operator: :in, value: value.compact)
+        or_array(field.to_s, :in, value)
       elsif value.is_a?(Enum)
         or(field: field.to_s, operator: :eq, value: value.to_s)
       elsif value.is_a?(Range)
-        # Handle range as BETWEEN operation - for OR, we need to group these
-        or(field: field.to_s, operator: :gteq, value: value.begin)
-        or(field: field.to_s, operator: :lteq, value: value.end)
+        field_sql = structured_field_sql(field.to_s)
+        upper_operator = value.exclusive? ? "<" : "<="
+        bind_values = [value.begin.as(Grant::Columns::Type), value.end.as(Grant::Columns::Type)]
+        @where_fields << {
+          join:   :or,
+          stmt:   "(#{field_sql} >= ? AND #{field_sql} #{upper_operator} ?)",
+          values: bind_values,
+        }
       else
         or(field: field.to_s, operator: :eq, value: value)
       end
@@ -301,10 +386,93 @@ class Grant::Query::Builder(Model)
   # ```
   # User.where(active: true).or("LENGTH(email) > ?", 30)
   # ```
-  def or(stmt : String, value : Grant::Columns::Type = nil) : self
-    @where_fields << {join: :or, stmt: stmt, value: value}
+  def or(stmt : String) : self
+    @where_fields << {join: :or, stmt: stmt, value: nil.as(Grant::Columns::Type)}
+    self
+  end
+
+  def or(stmt : String, value : Nil) : self
+    @where_fields << {join: :or, stmt: stmt, values: [value.as(Grant::Columns::Type)]}
+    self
+  end
+
+  def or(stmt : String, values : Array) : self
+    bind_values = [] of Grant::Columns::Type
+    values.each { |item| bind_values << item.as(Grant::Columns::Type) }
+    @where_fields << {join: :or, stmt: stmt, values: bind_values}
+    self
+  end
+
+  def or(stmt : String, value : Grant::Columns::Type) : self
+    if values = raw_bind_values(value)
+      @where_fields << {join: :or, stmt: stmt, values: values}
+    else
+      @where_fields << {join: :or, stmt: stmt, value: value}
+    end
 
     self
+  end
+
+  # Adds an OR `IN`/`NOT IN` condition. A nullable array becomes one grouped
+  # predicate, so a following condition cannot split its NULL branch.
+  def or_in(field : Symbol | String, values : Array, negated : Bool = false) : self
+    or_array(field.to_s, negated ? :nin : :in, values)
+  end
+
+  private def or_array(field : String, operator : Symbol, values : Array) : self
+    has_nil = values.any?(&.nil?)
+    values_without_nil = values.compact
+
+    if values_without_nil.empty?
+      if has_nil
+        @where_fields << {join: :or, stmt: "#{structured_field_sql(field)} IS #{operator == :nin ? "NOT " : ""}NULL", value: nil.as(Grant::Columns::Type)}
+      else
+        @where_fields << {join: :or, stmt: operator == :nin ? "1=1" : "1=0", value: nil.as(Grant::Columns::Type)}
+      end
+      return self
+    end
+
+    unless has_nil
+      @where_fields << {join: :or, field: field, operator: operator, value: values_without_nil.as(Grant::Columns::Type)}
+      return self
+    end
+
+    safe_field = structured_field_sql(field)
+    bind_values = [] of Grant::Columns::Type
+    values_without_nil.each { |item| bind_values << item.as(Grant::Columns::Type) }
+    placeholders = Array.new(bind_values.size, "?").join(", ")
+    predicate = if operator == :nin
+                  "(#{safe_field} NOT IN (#{placeholders}) AND #{safe_field} IS NOT NULL)"
+                else
+                  "(#{safe_field} IN (#{placeholders}) OR #{safe_field} IS NULL)"
+                end
+    @where_fields << {join: :or, stmt: predicate, values: bind_values}
+    self
+  end
+
+  private def structured_field_sql(field : String) : String
+    parts = field.split('.')
+    unless parts.size.in?(1..2) && parts.all?(&.matches?(/\A[A-Za-z_][A-Za-z0-9_]*\z/))
+      raise ArgumentError.new("Invalid query field #{field.inspect}")
+    end
+
+    column = parts.last
+    unless Model.fields.includes?(column)
+      raise ArgumentError.new("Unknown query field #{column.inspect} for #{Model.name}")
+    end
+
+    if parts.size == 2
+      qualifier = parts.first
+      allowed_qualifiers = [Model.table_name] + @join_clauses.map(&.[:table])
+      unless allowed_qualifiers.includes?(qualifier)
+        raise ArgumentError.new("Unknown query table #{qualifier.inspect} for #{Model.name}")
+      end
+      "#{Model.quote(qualifier)}.#{Model.quote(column)}"
+    elsif !@join_clauses.empty?
+      "#{Model.quote(Model.table_name)}.#{Model.quote(column)}"
+    else
+      Model.quote(column)
+    end
   end
 
   # Appends an ascending ORDER BY on a single *field*. Returns `self`.
@@ -454,7 +622,7 @@ class Grant::Query::Builder(Model)
   # # => SELECT ... FROM klasses INNER JOIN teachers ON teachers.id = klasses.teacher_id
   # ```
   def joins(association : Symbol) : self
-    @join_clauses << resolve_association_join(association, :inner)
+    @join_clauses.concat(resolve_association_join(association, :inner))
     self
   end
 
@@ -489,7 +657,7 @@ class Grant::Query::Builder(Model)
   # # => SELECT ... FROM parents LEFT JOIN students ON students.parent_id = parents.id
   # ```
   def left_joins(association : Symbol) : self
-    @join_clauses << resolve_association_join(association, :left)
+    @join_clauses.concat(resolve_association_join(association, :left))
     self
   end
 
@@ -510,7 +678,7 @@ class Grant::Query::Builder(Model)
   #   model's PK, so `target.foreign_key = current.primary_key`.
   #
   # Raises `ArgumentError` if the association is unknown.
-  private def resolve_association_join(association : Symbol, type : Symbol)
+  private def resolve_association_join(association : Symbol, type : Symbol) : Array(NamedTuple(type: Symbol, table: String, on: String))
     meta = Grant::AssociationRegistry.get(Model.name, association.to_s)
     raise ArgumentError.new("Unknown association #{association.inspect} for #{Model.name}") unless meta
 
@@ -518,6 +686,39 @@ class Grant::Query::Builder(Model)
     current_table = Model.table_name
     foreign_key = meta[:foreign_key]
     primary_key = meta[:primary_key]
+
+    if through_name = meta[:through]
+      through_meta = Grant::AssociationRegistry.get(Model.name, through_name)
+      raise ArgumentError.new("Unknown through association #{through_name.inspect} for #{Model.name}") unless through_meta
+
+      through_class = through_meta[:target_class]
+      through_table = through_class.table_name
+      first_on = "#{through_table}.#{through_meta[:foreign_key]} = #{current_table}.#{through_meta[:primary_key]}"
+
+      source_name = meta[:target_class].name.split("::").last.underscore
+      source_meta = Grant::AssociationRegistry.get(through_class.name, source_name)
+      source_foreign_key = if source = source_meta
+                             source[:foreign_key]
+                           else
+                             "#{source_name}_id"
+                           end
+      source_primary_key = if source = source_meta
+                             source[:primary_key]
+                           else
+                             meta[:target_class].primary_name
+                           end
+
+      second_on = if source_meta && source_meta[:type] == :belongs_to
+                    "#{target_table}.#{source_primary_key} = #{through_table}.#{source_foreign_key}"
+                  else
+                    "#{target_table}.#{source_foreign_key} = #{through_table}.#{source_primary_key}"
+                  end
+
+      return [
+        {type: type, table: through_table, on: first_on},
+        {type: type, table: target_table, on: second_on},
+      ]
+    end
 
     on = case meta[:type]
          when :belongs_to
@@ -528,7 +729,7 @@ class Grant::Query::Builder(Model)
            "#{target_table}.#{foreign_key} = #{current_table}.#{primary_key}"
          end
 
-    {type: type, table: target_table, on: on}
+    [{type: type, table: target_table, on: on}]
   end
 
   # Sets the query to return only distinct (unique) rows.
@@ -944,6 +1145,8 @@ class Grant::Query::Builder(Model)
   # User.where(active: false).delete
   # ```
   def delete
+    return DB::ExecResult.new(0_i64, 0_i64) if is_none?
+
     Model.guard_writes!
     Model.mark_write_operation
     assembler.delete
@@ -962,6 +1165,8 @@ class Grant::Query::Builder(Model)
   # User.where(active: true).touch_all(:last_seen_at) # also bump last_seen_at
   # ```
   def touch_all(*fields, time : Time = Time.local(Grant.settings.default_timezone)) : Int64
+    return 0_i64 if is_none?
+
     Model.guard_writes!
     Model.mark_write_operation
     assembler.touch_all(fields, time: time)
@@ -975,7 +1180,22 @@ class Grant::Query::Builder(Model)
   # ```
   # User.where(active: true).count # => 42
   # ```
-  def count : Int64
+  def count : CountResult
+    count_without_routing
+  end
+
+  protected def count_without_routing : CountResult
+    if group_fields.any?
+      return empty_group_count if is_none?
+
+      grouped = if should_chunk_in?
+                  chunked_grouped_count
+                else
+                  with_index_hint_fallback { |q| q.grouped_count_single }
+                end
+      return shape_group_count(grouped)
+    end
+
     return 0_i64 if is_none?
 
     if should_chunk_in?
@@ -1000,6 +1220,42 @@ class Grant::Query::Builder(Model)
     end
   end
 
+  protected def grouped_count_single : Hash(Array(Grant::Columns::Type), Int64)
+    assembler.grouped_count.run
+  end
+
+  private def chunked_grouped_count : Hash(Array(Grant::Columns::Type), Int64)
+    if @limit || @offset || @having_clauses.any? || @distinct
+      raise ArgumentError.new("Grouped counts with chunked IN lists cannot preserve limit, offset, having, or distinct")
+    end
+
+    results = {} of Array(Grant::Columns::Type) => Int64
+    each_in_chunk do |chunk_query|
+      chunk_query.grouped_count_single.each do |key, count|
+        results[key] = results.fetch(key, 0_i64) + count
+      end
+    end
+    results
+  end
+
+  private def shape_group_count(results : Hash(Array(Grant::Columns::Type), Int64)) : CountResult
+    if group_fields.size == 1
+      counts = {} of Grant::Columns::Type => Int64
+      results.each { |key, count| counts[key.first] = count }
+      counts
+    else
+      results
+    end
+  end
+
+  private def empty_group_count : CountResult
+    if group_fields.size == 1
+      {} of Grant::Columns::Type => Int64
+    else
+      {} of Array(Grant::Columns::Type) => Int64
+    end
+  end
+
   # Returns `true` if the current conditions match any row, otherwise `false`.
   #
   # Runs an efficient existence check (no rows hydrated). A `none` relation is
@@ -1018,8 +1274,16 @@ class Grant::Query::Builder(Model)
   # ```
   # User.where(active: true).size # => 42
   # ```
-  def size
-    count
+  def size : Int64
+    result = count
+    case result
+    when Int64
+      result
+    when Hash(Grant::Columns::Type, Int64)
+      result.values.sum
+    else
+      result.values.sum
+    end
   end
 
   # Executes the query and yields each matching record (Enumerable support).
@@ -1348,7 +1612,13 @@ class Grant::Query::Builder(Model)
   # are chunked and each DELETE runs in a single transaction (see
   # `chunked_delete_all`); the summed rows_affected is returned.
   def delete_all : Int64
+    return 0_i64 if is_none?
+
     Model.guard_writes!
+
+    if should_chunk_in? && (@limit || @offset)
+      raise ArgumentError.new("Bulk writes with a chunked IN list cannot preserve limit or offset")
+    end
 
     if should_chunk_in?
       return chunked_delete_all
@@ -1478,8 +1748,15 @@ class Grant::Query::Builder(Model)
 
   # Add a subquery condition
   private def and_subquery(field : String, subquery : Builder)
-    sql = subquery.assembler.select.raw_sql
-    @where_fields << {join: :and, stmt: "#{field} IN (#{sql})", value: nil}
+    safe_field = structured_field_sql(field)
+    subquery_assembler = subquery.assembler
+    sql = subquery_assembler.select.raw_sql
+    values = subquery_assembler.numbered_parameters
+    if values.empty?
+      @where_fields << {join: :and, stmt: "#{safe_field} IN (#{sql})", value: nil.as(Grant::Columns::Type)}
+    else
+      @where_fields << {join: :and, stmt: "#{safe_field} IN (#{sql})", values: values}
+    end
     self
   end
 

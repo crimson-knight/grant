@@ -11,15 +11,19 @@ class Grant::Query::Builder(Model)
   # User.where(active: false).update_all("login_count = login_count + 1")
   # ```
   def update_all(assignments : String)
+    return DB::ExecResult.new(0_i64, 0_i64) if is_none?
+
     Model.guard_writes!
+
+    if should_chunk_in? && (@limit || @offset)
+      raise ArgumentError.new("Bulk writes with a chunked IN list cannot preserve limit or offset")
+    end
+
     # Capture a single assembler instance: building the WHERE clause populates
     # its numbered_parameters, which must be bound when the statement runs.
     string_assembler = assembler
-    sql = "UPDATE #{Model.table_name} SET #{assignments}"
-
-    if where_clause = string_assembler.where
-      sql += " #{where_clause}"
-    end
+    sql = string_assembler.update_all_fragment_sql(assignments)
+    Model.mark_write_operation
 
     Model.adapter.open do |db|
       db.exec(sql, args: string_assembler.numbered_parameters)
@@ -71,8 +75,14 @@ class Grant::Query::Builder(Model)
   # single transaction (see `chunked_update_all`); the summed rows_affected is
   # returned.
   def update_all(assignments : Array(Tuple(String, Grant::Columns::Type))) : Int64
-    Model.guard_writes!
+    return 0_i64 if is_none?
     return 0_i64 if assignments.empty?
+
+    Model.guard_writes!
+
+    if should_chunk_in? && (@limit || @offset)
+      raise ArgumentError.new("Bulk writes with a chunked IN list cannot preserve limit or offset")
+    end
 
     if should_chunk_in?
       return chunked_update_all(assignments)

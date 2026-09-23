@@ -9,7 +9,7 @@ class Model
   end
 
   def self.fields
-    ["name", "age"]
+    ["id", "name", "age", "date_completed", "status", "published"]
   end
 
   def self.primary_name
