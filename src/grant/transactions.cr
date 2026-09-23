@@ -343,6 +343,8 @@ module Grant::Transactions
   end
 
   private def __update(skip_timestamps : Bool = false)
+    return if __update_with_optimistic_lock(skip_timestamps)
+
     {% begin %}
     {% primary_key = @type.instance_vars.find { |ivar| (ann = ivar.annotation(Grant::Column)) && ann[:primary] } %}
     {% raise raise "A primary key must be defined for #{@type.name}." unless primary_key %}
@@ -397,6 +399,13 @@ module Grant::Transactions
       raise DB::Error.new(err.message, cause: err)
     end
   {% end %}
+  end
+
+  # Gives locking modules one place to replace the normal primary-key update
+  # with an atomic conditional write. Returns true when the module performed
+  # the update itself.
+  protected def __update_with_optimistic_lock(skip_timestamps : Bool = false) : Bool
+    false
   end
 
   private def __destroy
