@@ -345,3 +345,18 @@ total_users = count_result.await
 total_revenue = sum_result.await
 average_price = avg_result.await
 ```
+
+## Row-mode tenancy in consuming apps
+
+Opt in explicitly in the consuming app's `shard.yml`:
+
+```yaml
+grant:
+  tenancy: row
+```
+
+Declare `multitenant :tenant_id` on each shared-row model, then wrap jobs and other non-controller queries in `Grant::Tenant.with(tenant_id) { ... }`. A request-wide controller pipe should resolve the tenant and wrap `call_next(context)` in the same block.
+
+`Model.unscoped { ... }` disables default scopes for that model within the block. Reserve it for deliberate, bounded cross-tenant administrative work; do not use it in request controllers. Raw `exec`, `query`, and `scalar` calls bypass the tenant scope and require the same model's `unscoped { ... }` block for deliberate cross-tenant SQL.
+
+The installed Grant dependency ships `.claude/rules/tenancy.yml`. `amber-lsp` loads the pack and warns about unscoped queries, controller `unscoped` calls, raw SQL, missing `multitenant` declarations, and mixed tenancy modes. Keep the app's declared mode aligned with its models and query paths.
