@@ -173,29 +173,27 @@ describe "has_many" do
     end
 
     it "should respect the current primary key" do
+      service_id = Random.rand(1_i64..1_000_000_000_i64)
+      courier_id = (service_id % 1_000_000).to_i32
       courier1 = Courier.new
-      courier1.courier_id = 1
-      courier1.issuer_id = 1
-      courier1.service_id = 1
-      courier1.save
+      courier1.courier_id = courier_id
+      courier1.issuer_id = courier_id
 
       courier2 = Courier.new
-      courier2.courier_id = 2
-      courier2.issuer_id = 2
-      courier2.service_id = 1
-      courier2.save
+      courier2.courier_id = courier_id + 1
+      courier2.issuer_id = courier_id + 1
 
       courier3 = Courier.new
-      courier3.courier_id = 3
-      courier3.issuer_id = 3
-      courier3.service_id = 1
-      courier3.save
+      courier3.courier_id = courier_id + 2
+      courier3.issuer_id = courier_id + 2
 
-      service = CourierService.new
-      service.name = "My service"
-      service.owner_id = 1
+      service = CourierService.create!(name: "My service", owner_id: service_id)
+      [courier1, courier2, courier3].each do |courier|
+        courier.service = service
+        courier.save!
+      end
 
-      couriers = service.couriers.to_a
+      couriers = service.couriers.to_a.sort_by { |courier| courier.courier_id.not_nil! }
 
       couriers.size.should eq 3
       couriers[0].courier_id.should eq courier1.courier_id

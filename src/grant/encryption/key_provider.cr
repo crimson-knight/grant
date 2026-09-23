@@ -31,11 +31,30 @@ module Grant::Encryption
     # Load primary key from base64-encoded string
     def self.primary_key=(key : String)
       @@primary_key = decode_key(key)
+      clear_cache
+    end
+
+    # Keep key-rotation swaps through the decoded byte form cache-safe too.
+    def self.primary_key=(key : Bytes?)
+      @@primary_key = key
+      clear_cache
     end
 
     # Load deterministic key from base64-encoded string
     def self.deterministic_key=(key : String)
       @@deterministic_key = decode_key(key)
+      clear_cache
+    end
+
+    def self.deterministic_key=(key : Bytes?)
+      @@deterministic_key = key
+      clear_cache
+    end
+
+    # Changing the salt changes every derived key, so discard cached values.
+    def self.key_derivation_salt=(salt : String)
+      @@key_derivation_salt = salt
+      clear_cache
     end
 
     # Get the primary encryption key

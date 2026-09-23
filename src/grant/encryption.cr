@@ -175,6 +175,7 @@ module Grant::Encryption
       private def clear_encryption_cache
         encrypted_attribute_cache.clear
       end
+
     end
 
     # Declares *attribute* as a transparently encrypted string column.
@@ -237,7 +238,10 @@ module Grant::Encryption
         Grant::Encryption::EncryptedAttribute.new(
           self,
           {{attr_name}},
-          {{deterministic}}
+          {{deterministic}},
+          ->(record : Grant::Base, value : String?) do
+            record.as({{@type}}).{{attribute.id}} = value
+          end
         )
       
       # Store in registry
@@ -291,7 +295,7 @@ module Grant::Encryption
           @changed_attributes.not_nil!["{{attribute.id}}_encrypted"] = {old_val, @{{attribute.id}}_encrypted}
         end
       end
-      
+
       # Add query support for deterministic fields
       {% if deterministic %}
         # Class method for querying encrypted attributes

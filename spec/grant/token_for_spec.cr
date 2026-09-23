@@ -26,6 +26,10 @@ require "../spec_helper"
 {% end %}
 
 describe Grant::TokenFor do
+  before_all do
+    TokenForTestModel.migrator.drop_and_create
+  end
+
   before_each do
     ENV["GRANT_SIGNING_SECRET"] = "test_secret"
   end

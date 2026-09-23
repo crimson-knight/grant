@@ -2,25 +2,9 @@ require "../spec_helper"
 require "../../src/grant/encryption"
 require "../../src/grant/encryption/migration_helpers"
 
-# Ensure we have the test database
-Grant::Adapter::Sqlite.new(name: "sqlite", url: "sqlite3://./spec_test_rotation.db").open do |db|
-  db.exec "DROP TABLE IF EXISTS rotation_test_users"
-  db.exec <<-SQL
-    CREATE TABLE rotation_test_users (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT NOT NULL,
-      email_encrypted TEXT,
-      ssn_encrypted TEXT,
-      phone_encrypted TEXT,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    )
-  SQL
-end
-
 # Test model for key rotation
 class RotationTestUser < Grant::Base
-  connection sqlite
+  connection {{ CURRENT_ADAPTER }}
   table rotation_test_users
   
   column id : Int64, primary: true
@@ -36,22 +20,18 @@ class RotationTestUser < Grant::Base
   timestamps
 end
 
+RotationTestUser.migrator.drop_and_create
+
 describe "Grant::Encryption Key Rotation" do
   # Original keys
-  original_primary_key = Base64.strict_encode("original_primary_key_32_bytes!!".to_slice)
-  original_deterministic_key = Base64.strict_encode("original_determ_key_32_bytes!!!".to_slice)
+  original_primary_key = Base64.strict_encode(("o" * 32).to_slice)
+  original_deterministic_key = Base64.strict_encode(("d" * 32).to_slice)
   original_salt = Base64.strict_encode("original_salt_key_32_bytes!!!!!".to_slice)
   
   # New keys for rotation
-  new_primary_key = Base64.strict_encode("new_primary_key_32_bytes!!!!!!!".to_slice)
-  new_deterministic_key = Base64.strict_encode("new_determ_key_32_bytes!!!!!!!!".to_slice)
+  new_primary_key = Base64.strict_encode(("n" * 32).to_slice)
+  new_deterministic_key = Base64.strict_encode(("e" * 32).to_slice)
   new_salt = Base64.strict_encode("new_salt_key_32_bytes!!!!!!!!!!".to_slice)
-  
-  before_all do
-    # Set the adapter URL for this test  
-    ENV["SQLITE_DATABASE_URL"] = "sqlite3://./spec_test_rotation.db"
-    # Connection should already exist from spec_helper
-  end
   
   before_each do
     RotationTestUser.clear
@@ -104,6 +84,7 @@ describe "Grant::Encryption Key Rotation" do
             primary: original_primary_key,
             deterministic: original_deterministic_key
           },
+          old_salt: original_salt,
           batch_size: 5,
           progress: false
         )
@@ -163,6 +144,7 @@ describe "Grant::Encryption Key Rotation" do
             primary: original_primary_key,
             deterministic: original_deterministic_key
           },
+          old_salt: original_salt,
           progress: false
         )
       end
@@ -215,6 +197,7 @@ describe "Grant::Encryption Key Rotation" do
             primary: original_primary_key,
             deterministic: original_deterministic_key
           },
+          old_salt: original_salt,
           progress: false
         )
       end
@@ -230,9 +213,9 @@ describe "Grant::Encryption Key Rotation" do
       found.not_nil!.id.should eq(user2.id)
       
       # Verify batch queries work
-      results = RotationTestUser.where(email: "search2@example.com").select
+      results = RotationTestUser.where_email("search2@example.com")
       results.size.should eq(1)
-      results.first.id.should eq(user2.id)
+      results.first.not_nil!.id.should eq(user2.id)
     end
     
     it "handles errors gracefully and restores original keys" do
@@ -251,7 +234,7 @@ describe "Grant::Encryption Key Rotation" do
       end
       
       # Simulate an error during rotation by providing invalid old keys
-      invalid_key = Base64.strict_encode("invalid_key_32_bytes_!!!!!!!!!!!".to_slice)
+      invalid_key = Base64.strict_encode(("x" * 32).to_slice)
       
       expect_raises(Grant::Encryption::Cipher::DecryptionError) do
         Grant::Encryption::MigrationHelpers.rotate_encryption(
@@ -261,13 +244,14 @@ describe "Grant::Encryption Key Rotation" do
             primary: invalid_key,  # Wrong key will cause decryption to fail
             deterministic: invalid_key
           },
+          old_salt: original_salt,
           progress: false
         )
       end
       
       # Verify keys were restored to new keys (as configured)
-      Grant::Encryption::KeyProvider.primary_key.should eq(new_primary_key)
-      Grant::Encryption::KeyProvider.deterministic_key.should eq(new_deterministic_key)
+      Base64.strict_encode(Grant::Encryption::KeyProvider.primary_key.not_nil!).should eq(new_primary_key)
+      Base64.strict_encode(Grant::Encryption::KeyProvider.deterministic_key.not_nil!).should eq(new_deterministic_key)
     end
     
     it "handles batch processing correctly" do
@@ -295,6 +279,7 @@ describe "Grant::Encryption Key Rotation" do
           primary: original_primary_key,
           deterministic: original_deterministic_key
         },
+        old_salt: original_salt,
         batch_size: 7,  # Non-divisible batch size to test edge cases
         progress: false
       )
@@ -302,7 +287,7 @@ describe "Grant::Encryption Key Rotation" do
       count.should eq(50)
       
       # Verify all records were rotated
-      RotationTestUser.all.each_with_index do |user, i|
+      RotationTestUser.all("ORDER BY id").each_with_index do |user, i|
         user.email.should eq("batch#{i}@example.com")
       end
     end
@@ -321,7 +306,7 @@ describe "Grant::Encryption Key Rotation" do
       Grant::Encryption.configure do |config|
         config.primary_key = new_primary_key
         config.deterministic_key = original_deterministic_key  # Keep same
-        config.key_derivation_salt = new_salt
+        config.key_derivation_salt = original_salt
       end
       
       # Rotate only non-deterministic field (ssn)
@@ -332,6 +317,7 @@ describe "Grant::Encryption Key Rotation" do
           primary: original_primary_key,
           deterministic: nil  # Not needed for non-deterministic
         },
+        old_salt: original_salt,
         progress: false
       )
       
@@ -374,11 +360,13 @@ describe "Grant::Encryption Key Rotation" do
         # Decrypt with old key
         Grant::Encryption::KeyProvider.primary_key = original_primary_key
         Grant::Encryption::KeyProvider.deterministic_key = original_deterministic_key
+        Grant::Encryption::KeyProvider.key_derivation_salt = original_salt
         email_value = user.email
         
         # Re-encrypt with new key
         Grant::Encryption::KeyProvider.primary_key = new_primary_key
         Grant::Encryption::KeyProvider.deterministic_key = new_deterministic_key
+        Grant::Encryption::KeyProvider.key_derivation_salt = new_salt
         user.email = email_value
         user.save!(validate: false)
       end
@@ -391,6 +379,7 @@ describe "Grant::Encryption Key Rotation" do
           primary: original_primary_key,
           deterministic: original_deterministic_key
         },
+        old_salt: original_salt,
         progress: false
       )
       
@@ -398,7 +387,7 @@ describe "Grant::Encryption Key Rotation" do
       count.should eq(20)
       
       # Verify all records are readable
-      RotationTestUser.all.each_with_index do |user, i|
+      RotationTestUser.all("ORDER BY id").each_with_index do |user, i|
         user.email.should eq("resume#{i}@example.com")
       end
     end
@@ -433,6 +422,7 @@ describe "Grant::Encryption Key Rotation" do
             primary: original_primary_key,
             deterministic: original_deterministic_key
           },
+          old_salt: original_salt,
           progress: false
         )
         total_rotated += count
@@ -441,7 +431,7 @@ describe "Grant::Encryption Key Rotation" do
       total_rotated.should eq(30)  # 10 records × 3 fields
       
       # Verify all fields are accessible
-      RotationTestUser.all.each_with_index do |user, i|
+      RotationTestUser.all("ORDER BY id").each_with_index do |user, i|
         user.email.should eq("multi#{i}@example.com")
         user.phone.should eq("+1-555-#{i.to_s.rjust(4, '0')}")
         user.ssn.should eq("#{i.to_s.rjust(3, '0')}-77-8888")

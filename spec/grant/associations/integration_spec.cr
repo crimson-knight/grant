@@ -1,11 +1,37 @@
 require "../../spec_helper"
 
 describe "Grant::Associations Integration Tests" do
+  before_all do
+    AuthorNote.migrator.drop_and_create
+    PolymorphicAuthor.migrator.drop_and_create
+    Reaction.migrator.drop_and_create
+    CachedArticle.migrator.drop_and_create
+    CachedVideo.migrator.drop_and_create
+    ProjectTask.migrator.drop_and_create
+    TouchableProject.migrator.drop_and_create
+    Forum.migrator.drop_and_create
+    ForumPost.migrator.drop_and_create
+    ComplexOrder.migrator.drop_and_create
+    OrderItem.migrator.drop_and_create
+    AutosaveCompany.migrator.drop_and_create
+    AutosaveEmployee.migrator.drop_and_create
+    UserProfile.migrator.drop_and_create
+    ProfileSettings.migrator.drop_and_create
+    TreeNode.migrator.drop_and_create
+    ProductCategory.migrator.drop_and_create
+    ProductManufacturer.migrator.drop_and_create
+    ValidatedProduct.migrator.drop_and_create
+  end
+
   describe "polymorphic with advanced options" do
     it "works with dependent: :destroy on polymorphic associations" do
       author = PolymorphicAuthor.create!(name: "Jane")
-      note1 = AuthorNote.create!(content: "Note 1", notable: author)
-      note2 = AuthorNote.create!(content: "Note 2", notable: author)
+      note1 = AuthorNote.new(content: "Note 1")
+      note1.notable = author
+      note1.save!
+      note2 = AuthorNote.new(content: "Note 2")
+      note2.notable = author
+      note2.save!
       
       AuthorNote.where(notable_type: "PolymorphicAuthor", notable_id: author.id).count.should eq(2)
       
@@ -18,13 +44,19 @@ describe "Grant::Associations Integration Tests" do
       article = CachedArticle.create!(title: "Test Article", reactions_count: 0)
       video = CachedVideo.create!(title: "Test Video", reactions_count: 0)
       
-      reaction1 = Reaction.create!(emoji: "👍", reactable: article)
+      reaction1 = Reaction.new(emoji: "👍")
+      reaction1.reactable = article
+      reaction1.save!
       CachedArticle.find!(article.id.not_nil!).reactions_count.should eq(1)
       
-      reaction2 = Reaction.create!(emoji: "❤️", reactable: article)
+      reaction2 = Reaction.new(emoji: "❤️")
+      reaction2.reactable = article
+      reaction2.save!
       CachedArticle.find!(article.id.not_nil!).reactions_count.should eq(2)
       
-      reaction3 = Reaction.create!(emoji: "🎉", reactable: video)
+      reaction3 = Reaction.new(emoji: "🎉")
+      reaction3.reactable = video
+      reaction3.save!
       CachedVideo.find!(video.id.not_nil!).reactions_count.should eq(1)
       
       reaction1.destroy!
@@ -35,9 +67,12 @@ describe "Grant::Associations Integration Tests" do
       project = TouchableProject.create!(name: "Project")
       original_updated = project.updated_at
       
-      sleep 0.001
+      # touch stores timestamps at whole-second precision.
+      sleep 1.1.seconds
       
-      task = ProjectTask.create!(title: "Task", touchable: project)
+      task = ProjectTask.new(title: "Task")
+      task.touchable = project
+      task.save!
       
       updated_project = TouchableProject.find!(project.id.not_nil!)
       updated_project.updated_at.should_not eq(original_updated)
@@ -49,13 +84,16 @@ describe "Grant::Associations Integration Tests" do
       forum = Forum.create!(name: "Tech Forum", posts_count: 0)
       
       # Create post with forum
-      post1 = ForumPost.create!(title: "Post 1", forum: forum)
+      post1 = ForumPost.new(title: "Post 1")
+      post1.forum = forum
+      post1.save!
       
       updated_forum = Forum.find!(forum.id.not_nil!)
       updated_forum.posts_count.should eq(1)
       original_updated = updated_forum.updated_at
       
-      sleep 0.001
+      # touch stores timestamps at whole-second precision.
+      sleep 1.1.seconds
       
       # Create post without forum (optional: true)
       post2 = ForumPost.create!(title: "Post 2")
@@ -104,7 +142,9 @@ describe "Grant::Associations Integration Tests" do
     
     it "saves changes to existing associated records" do
       profile = UserProfile.create!(username: "johndoe")
-      settings = ProfileSettings.create!(theme: "light", user_profile: profile)
+      settings = ProfileSettings.new(theme: "light")
+      settings.user_profile = profile
+      settings.save!
       
       profile.reload
       profile.settings.not_nil!.theme = "dark"
@@ -117,7 +157,9 @@ describe "Grant::Associations Integration Tests" do
   describe "edge cases and error scenarios" do
     it "handles circular references gracefully" do
       parent = TreeNode.create!(name: "Parent")
-      child = TreeNode.create!(name: "Child", parent: parent)
+      child = TreeNode.new(name: "Child")
+      child.parent = parent
+      child.save!
       
       # This should not cause infinite loop
       parent.children.to_a.size.should eq(1)
@@ -139,7 +181,7 @@ end
 
 # Polymorphic with dependent
 class AuthorNote < Grant::Base
-  connection sqlite
+  connection {{ CURRENT_ADAPTER }}
   table author_notes
   
   column id : Int64, primary: true
@@ -149,7 +191,7 @@ class AuthorNote < Grant::Base
 end
 
 class PolymorphicAuthor < Grant::Base
-  connection sqlite
+  connection {{ CURRENT_ADAPTER }}
   table polymorphic_authors
   
   column id : Int64, primary: true
@@ -160,7 +202,7 @@ end
 
 # Polymorphic with counter_cache
 class Reaction < Grant::Base
-  connection sqlite
+  connection {{ CURRENT_ADAPTER }}
   table reactions
   
   column id : Int64, primary: true
@@ -170,7 +212,7 @@ class Reaction < Grant::Base
 end
 
 class CachedArticle < Grant::Base
-  connection sqlite
+  connection {{ CURRENT_ADAPTER }}
   table cached_articles
   
   column id : Int64, primary: true
@@ -181,7 +223,7 @@ class CachedArticle < Grant::Base
 end
 
 class CachedVideo < Grant::Base
-  connection sqlite
+  connection {{ CURRENT_ADAPTER }}
   table cached_videos
   
   column id : Int64, primary: true
@@ -193,7 +235,7 @@ end
 
 # Polymorphic with touch
 class ProjectTask < Grant::Base
-  connection sqlite
+  connection {{ CURRENT_ADAPTER }}
   table project_tasks
   
   column id : Int64, primary: true
@@ -203,7 +245,7 @@ class ProjectTask < Grant::Base
 end
 
 class TouchableProject < Grant::Base
-  connection sqlite
+  connection {{ CURRENT_ADAPTER }}
   table touchable_projects
   
   column id : Int64, primary: true
@@ -215,7 +257,7 @@ end
 
 # Multiple options combined
 class Forum < Grant::Base
-  connection sqlite
+  connection {{ CURRENT_ADAPTER }}
   table forums
   
   column id : Int64, primary: true
@@ -227,7 +269,7 @@ class Forum < Grant::Base
 end
 
 class ForumPost < Grant::Base
-  connection sqlite
+  connection {{ CURRENT_ADAPTER }}
   table forum_posts
   
   column id : Int64, primary: true
@@ -238,7 +280,7 @@ end
 
 # Autosave with dependent
 class ComplexOrder < Grant::Base
-  connection sqlite
+  connection {{ CURRENT_ADAPTER }}
   table complex_orders
   
   column id : Int64, primary: true
@@ -248,7 +290,7 @@ class ComplexOrder < Grant::Base
 end
 
 class OrderItem < Grant::Base
-  connection sqlite
+  connection {{ CURRENT_ADAPTER }}
   table order_items
   
   column id : Int64, primary: true
@@ -259,7 +301,7 @@ end
 
 # Has many autosave
 class AutosaveCompany < Grant::Base
-  connection sqlite
+  connection {{ CURRENT_ADAPTER }}
   table autosave_companies
   
   column id : Int64, primary: true
@@ -269,7 +311,7 @@ class AutosaveCompany < Grant::Base
 end
 
 class AutosaveEmployee < Grant::Base
-  connection sqlite
+  connection {{ CURRENT_ADAPTER }}
   table autosave_employees
   
   column id : Int64, primary: true
@@ -279,7 +321,7 @@ end
 
 # Has one autosave
 class UserProfile < Grant::Base
-  connection sqlite
+  connection {{ CURRENT_ADAPTER }}
   table user_profiles
   
   column id : Int64, primary: true
@@ -289,7 +331,7 @@ class UserProfile < Grant::Base
 end
 
 class ProfileSettings < Grant::Base
-  connection sqlite
+  connection {{ CURRENT_ADAPTER }}
   table profile_settings
   
   column id : Int64, primary: true
@@ -301,7 +343,7 @@ end
 
 # Self-referential
 class TreeNode < Grant::Base
-  connection sqlite
+  connection {{ CURRENT_ADAPTER }}
   table tree_nodes
   
   column id : Int64, primary: true
@@ -314,7 +356,7 @@ end
 
 # Validation order
 class ProductCategory < Grant::Base
-  connection sqlite
+  connection {{ CURRENT_ADAPTER }}
   table product_categories
   
   column id : Int64, primary: true
@@ -322,7 +364,7 @@ class ProductCategory < Grant::Base
 end
 
 class ProductManufacturer < Grant::Base
-  connection sqlite
+  connection {{ CURRENT_ADAPTER }}
   table product_manufacturers
   
   column id : Int64, primary: true
@@ -330,7 +372,7 @@ class ProductManufacturer < Grant::Base
 end
 
 class ValidatedProduct < Grant::Base
-  connection sqlite
+  connection {{ CURRENT_ADAPTER }}
   table validated_products
   
   column id : Int64, primary: true

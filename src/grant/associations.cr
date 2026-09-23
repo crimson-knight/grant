@@ -190,7 +190,7 @@ module Grant::Associations
 
     # Handle optional validation
     {% unless options[:optional] %}
-      setup_optional_validation({{method_name.id}}, {{foreign_key_name}}, {{class_name.id}}, {{primary_key_name}}, false)
+      setup_optional_validation({{method_name.id}}, {{foreign_key_name}}, {{class_name.id}}, {{primary_key_name}}, false, {{options[:autosave] || false}})
     {% end %}
     
     # Handle counter cache
@@ -378,6 +378,7 @@ module Grant::Associations
       else
         assert_association_can_lazy_load!({{method_name.stringify}})
         result = {{class_name.id}}.where({{foreign_key_name}}, :eq, self.read_attribute({{primary_key_name}})).first
+        set_loaded_association({{method_name.stringify}}, result)
         if result
           Grant::Logs::Association.debug { "Loaded has_one association - #{self.class.name}.#{{{method_name.stringify}}} [#{{{class_name.id.stringify}}}] [fk: #{{{foreign_key.id.stringify}}} = #{self.{{primary_key.id}}}]" }
           {% if inverse_of %}
@@ -622,7 +623,7 @@ module Grant::Associations
         Grant::Logs::Association.debug { "Created has_many association collection - #{self.class.name}.#{{{method_name.stringify}}} [#{{{class_name.id.stringify}}}] [fk: #{{{foreign_key.id.stringify}}}]#{{{through ? " [through: " + through.id.stringify + "]" : ""}}}" }
       end
       Grant::AssociationCollection(self, {{class_name.id}}).new(
-        self, {{foreign_key}}, {{through}}, {{primary_key}},
+        self, {{foreign_key}}, {{through}}, {{options[:primary_key] ? primary_key : nil}},
         {{inverse_of}}, scope_proc, {{method_name.stringify}}, loaded_records, through_delete_all,
         {{through ? source.id.stringify : nil}}
       )
@@ -639,7 +640,11 @@ module Grant::Associations
     {% unless through %}
     def {{singular_name.id}}_ids=(ids : Array)
       string_ids = ids.map(&.to_s)
-      owner_key = self.read_attribute({{primary_key_name}})
+      {% if options[:primary_key] %}
+        owner_key = self.read_attribute({{primary_key_name}})
+      {% else %}
+        owner_key = self.read_attribute(self.class.primary_name)
+      {% end %}
       # Nullify records no longer in the set
       {{class_name.id}}.where({{foreign_key_name}}, :eq, owner_key).each do |record|
         unless string_ids.includes?(record.primary_key_value.to_s)

@@ -1,6 +1,8 @@
 module Grant::Encryption
   # Handles the encryption/decryption lifecycle for individual attributes
   class EncryptedAttribute
+    alias Writer = Proc(Grant::Base, String?, Nil)
+
     getter model_class : Grant::Base.class
     getter attribute_name : String
     getter deterministic : Bool
@@ -9,8 +11,13 @@ module Grant::Encryption
     # Decrypted value cache
     @decrypted_cache = {} of UInt64 => String?
 
-    def initialize(@model_class : Grant::Base.class, @attribute_name : String, @deterministic : Bool = false)
+    def initialize(@model_class : Grant::Base.class, @attribute_name : String, @deterministic : Bool, @writer : Writer)
       @column_name = "#{attribute_name}_encrypted"
+    end
+
+    # Assigns plaintext through the model's generated encrypted setter.
+    def assign(record : Grant::Base, value : String?) : Nil
+      @writer.call(record, value)
     end
 
     # Encrypt a value

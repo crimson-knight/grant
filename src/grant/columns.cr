@@ -540,7 +540,18 @@ module Grant::Columns
         end
     {% end %}
     else
-      raise "Cannot write attribute #{attribute_name}, invalid attribute"
+      if encrypted_attribute = self.class.encrypted_attributes[attribute_name]?
+        case value
+        when String
+          encrypted_attribute.assign(self, value)
+        when Nil
+          encrypted_attribute.assign(self, nil)
+        else
+          errors << Grant::ConversionError.new(attribute_name, "Expected #{attribute_name} to be String? but got #{typeof(value)}.")
+        end
+      else
+        raise "Cannot write attribute #{attribute_name}, invalid attribute"
+      end
     end
     {% end %}
   end

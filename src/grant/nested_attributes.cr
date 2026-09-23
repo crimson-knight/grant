@@ -61,11 +61,10 @@ module Grant::NestedAttributes
       end
     %}
     
-    # Flag that this model has nested attributes
-    @_has_nested_attributes = true
-    
     # Generate the attributes setter method
     def {{assoc_name.id}}_attributes=(attributes)
+      @_has_nested_attributes = true
+
       # Configuration for this specific association
       config = {
         allow_destroy: {{ options[:allow_destroy] || false }},
@@ -103,6 +102,40 @@ module Grant::NestedAttributes
       end
       
       _nested_attributes_data[{{ assoc_name.stringify }}] = processed_attrs
+    end
+
+    # Validate the child records before the owner is saved and carry their
+    # errors onto the owner, matching the nested-save validation contract.
+    validate "nested {{assoc_name.id}} attributes are valid" do |owner|
+      nested_valid = true
+      if nested_records = owner._nested_attributes_data[{{ assoc_name.stringify }}]?
+        nested_records.each do |attrs|
+          destroy_value = attrs["_destroy"]?
+          destroy_requested = case destroy_value
+                              when Bool         then destroy_value
+                              when String       then destroy_value == "true" || destroy_value == "1"
+                              when Int32, Int64 then destroy_value == 1
+                              else                   false
+                              end
+          next if {{ options[:allow_destroy] || false }} && destroy_requested
+
+          nested_record = {{target_class}}.new
+          validation_attributes = {} of String => Grant::Columns::Type
+          attrs.each do |key, value|
+            next if key == "id" || key == "_destroy"
+            validation_attributes[key] = value
+          end
+          nested_record.set_attributes(validation_attributes)
+
+          unless nested_record.valid?
+            nested_record.errors.each do |error|
+              owner.errors << Grant::Error.new("{{assoc_name.id}}.#{error.field}", error.message)
+            end
+            nested_valid = false
+          end
+        end
+      end
+      nested_valid
     end
 
     # Get nested attributes (for testing)
@@ -148,13 +181,8 @@ module Grant::NestedAttributes
       }
       
       # Get foreign key from association metadata
-      {% if @type.has_constant?("_#{assoc_name.id}_association_meta") %}
-        foreign_key_name = self.class._{{assoc_name.id}}_association_meta[:foreign_key]
-        assoc_type = self.class._{{assoc_name.id}}_association_meta[:type]
-      {% else %}
-        foreign_key_name = "#{self.class.name.split("::").last.underscore}_id"
-        assoc_type = :has_many
-      {% end %}
+      foreign_key_name = self.class._{{assoc_name.id}}_association_meta[:foreign_key]
+      assoc_type = self.class._{{assoc_name.id}}_association_meta[:type]
       
       success = true
       

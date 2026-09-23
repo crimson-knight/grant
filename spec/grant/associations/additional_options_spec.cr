@@ -65,7 +65,8 @@ describe "Grant::Associations::AdditionalOptions" do
       post = TouchPost.create!(title: "Post")
       original_commented_at = post.last_commented_at
       
-      sleep 0.001
+      # touch stores timestamps at whole-second precision.
+      sleep 1.1.seconds
       
       comment = TouchComment.create!(content: "Great post!", touch_post_id: post.id)
       
@@ -79,7 +80,8 @@ describe "Grant::Associations::AdditionalOptions" do
       
       original_active_at = TouchUpdateUser.find!(user.id.not_nil!).last_active_at
       
-      sleep 0.001
+      # touch stores timestamps at whole-second precision.
+      sleep 1.1.seconds
       
       activity.description = "Updated profile"
       activity.save!

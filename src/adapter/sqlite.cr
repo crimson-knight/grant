@@ -12,6 +12,12 @@ require "../grant/sqlite_version_check"
 # (src/sqlite3/statement.cr) and adds only the ensure-reset.  When bumping the
 # sqlite3 shard, diff upstream perform_exec against this patch and re-apply.
 class SQLite3::Statement
+  # UUID columns are stored as CHAR(36) in SQLite, so bind the canonical text
+  # representation instead of passing a UUID object to sqlite3's native binder.
+  private def bind_arg(index, value : UUID)
+    bind_arg(index, value.to_s)
+  end
+
   protected def perform_exec(args : Enumerable) : DB::ExecResult
     LibSQLite3.reset(self.to_unsafe)
     args.each_with_index(1) do |arg, index|

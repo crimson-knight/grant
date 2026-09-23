@@ -1,6 +1,22 @@
 require "../../spec_helper"
 
 describe "Grant::Associations::Options" do
+  before_all do
+    DependentAuthor.migrator.drop_and_create
+    DependentPost.migrator.drop_and_create
+    NullifyCategory.migrator.drop_and_create
+    NullifyArticle.migrator.drop_and_create
+    RestrictTeam.migrator.drop_and_create
+    RestrictMember.migrator.drop_and_create
+    OptionalCategory.migrator.drop_and_create
+    OptionalItem.migrator.drop_and_create
+    RequiredItem.migrator.drop_and_create
+    CounterBlog.migrator.drop_and_create
+    CounterPost.migrator.drop_and_create
+    TouchUser.migrator.drop_and_create
+    TouchProfile.migrator.drop_and_create
+  end
+
   describe "dependent options" do
     describe "dependent: :destroy" do
       it "destroys associated records when parent is destroyed" do
@@ -83,7 +99,8 @@ describe "Grant::Associations::Options" do
       user = TouchUser.create!(name: "John")
       original_updated_at = user.updated_at
       
-      sleep 0.001 # Ensure time difference
+      # touch stores timestamps at whole-second precision.
+      sleep 1.1.seconds
       
       profile = TouchProfile.create!(bio: "Bio", touch_user_id: user.id)
       
@@ -95,7 +112,7 @@ end
 
 # Test models for dependent options
 class DependentAuthor < Grant::Base
-  connection sqlite
+  connection {{ CURRENT_ADAPTER }}
   table dependent_authors
   
   column id : Int64, primary: true
@@ -105,7 +122,7 @@ class DependentAuthor < Grant::Base
 end
 
 class DependentPost < Grant::Base
-  connection sqlite
+  connection {{ CURRENT_ADAPTER }}
   table dependent_posts
   
   column id : Int64, primary: true
@@ -115,7 +132,7 @@ end
 
 # Test models for nullify
 class NullifyCategory < Grant::Base
-  connection sqlite
+  connection {{ CURRENT_ADAPTER }}
   table nullify_categories
   
   column id : Int64, primary: true
@@ -125,7 +142,7 @@ class NullifyCategory < Grant::Base
 end
 
 class NullifyArticle < Grant::Base
-  connection sqlite
+  connection {{ CURRENT_ADAPTER }}
   table nullify_articles
   
   column id : Int64, primary: true
@@ -135,7 +152,7 @@ end
 
 # Test models for restrict
 class RestrictTeam < Grant::Base
-  connection sqlite
+  connection {{ CURRENT_ADAPTER }}
   table restrict_teams
   
   column id : Int64, primary: true
@@ -145,7 +162,7 @@ class RestrictTeam < Grant::Base
 end
 
 class RestrictMember < Grant::Base
-  connection sqlite
+  connection {{ CURRENT_ADAPTER }}
   table restrict_members
   
   column id : Int64, primary: true
@@ -155,7 +172,7 @@ end
 
 # Test models for optional
 class OptionalCategory < Grant::Base
-  connection sqlite
+  connection {{ CURRENT_ADAPTER }}
   table optional_categories
   
   column id : Int64, primary: true
@@ -163,7 +180,7 @@ class OptionalCategory < Grant::Base
 end
 
 class OptionalItem < Grant::Base
-  connection sqlite
+  connection {{ CURRENT_ADAPTER }}
   table optional_items
   
   column id : Int64, primary: true
@@ -173,7 +190,7 @@ class OptionalItem < Grant::Base
 end
 
 class RequiredItem < Grant::Base
-  connection sqlite
+  connection {{ CURRENT_ADAPTER }}
   table required_items
   
   column id : Int64, primary: true
@@ -185,7 +202,7 @@ end
 
 # Test models for counter cache
 class CounterBlog < Grant::Base
-  connection sqlite
+  connection {{ CURRENT_ADAPTER }}
   table counter_blogs
   
   column id : Int64, primary: true
@@ -194,7 +211,7 @@ class CounterBlog < Grant::Base
 end
 
 class CounterPost < Grant::Base
-  connection sqlite
+  connection {{ CURRENT_ADAPTER }}
   table counter_posts
   
   column id : Int64, primary: true
@@ -205,7 +222,7 @@ end
 
 # Test models for touch
 class TouchUser < Grant::Base
-  connection sqlite
+  connection {{ CURRENT_ADAPTER }}
   table touch_users
   
   column id : Int64, primary: true
@@ -214,7 +231,7 @@ class TouchUser < Grant::Base
 end
 
 class TouchProfile < Grant::Base
-  connection sqlite
+  connection {{ CURRENT_ADAPTER }}
   table touch_profiles
   
   column id : Int64, primary: true
