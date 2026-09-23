@@ -16,6 +16,10 @@ require "../spec_helper"
 {% end %}
 
 describe Grant::SignedId do
+  before_all do
+    SignedIdTestModel.migrator.drop_and_create
+  end
+
   before_each do
     ENV["GRANT_SIGNING_SECRET"] = "test_secret"
   end

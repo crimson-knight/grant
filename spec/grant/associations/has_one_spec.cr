@@ -2,6 +2,10 @@ require "../../spec_helper"
 
 describe "has_one" do
   before_each do
+    User.migrator.drop_and_create
+    Profile.migrator.drop_and_create
+    Courier.migrator.drop_and_create
+    Character.migrator.drop_and_create
     User.clear
     Profile.clear
     Courier.clear
@@ -18,7 +22,7 @@ describe "has_one" do
     user.save
 
     user.profile = profile
-    profile.user_id.should eq profile.id
+    profile.user_id.should eq user.id
   end
 
   it "provides a method to retrieve associated objects" do

@@ -1,25 +1,9 @@
 require "../spec_helper"
 require "../../src/grant/encryption"
 
-# Ensure we have the test database
-Grant::Adapter::Sqlite.new(name: "sqlite", url: "sqlite3://./spec_test_encryption.db").open do |db|
-  db.exec "DROP TABLE IF EXISTS encrypted_users"
-  db.exec <<-SQL
-    CREATE TABLE encrypted_users (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT NOT NULL,
-      email_encrypted TEXT,
-      ssn_encrypted TEXT,
-      phone_encrypted TEXT,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    )
-  SQL
-end
-
 # Test model with encrypted fields
 class EncryptedUser < Grant::Base
-  connection sqlite
+  connection {{ CURRENT_ADAPTER }}
   table encrypted_users
   
   column id : Int64, primary: true
@@ -34,6 +18,8 @@ class EncryptedUser < Grant::Base
   
   timestamps
 end
+
+EncryptedUser.migrator.drop_and_create
 
 describe "Grant::Encryption Database Integration" do
   # Use consistent keys for testing
@@ -86,8 +72,13 @@ describe "Grant::Encryption Database Integration" do
       # Query raw database to verify encryption
       adapter = EncryptedUser.adapter
       raw_data = adapter.open do |db|
+        query = {% if env("CURRENT_ADAPTER") == "pg" %}
+          "SELECT email_encrypted, ssn_encrypted FROM encrypted_users WHERE id = $1"
+        {% else %}
+          "SELECT email_encrypted, ssn_encrypted FROM encrypted_users WHERE id = ?"
+        {% end %}
         db.query_one(
-          "SELECT email_encrypted, ssn_encrypted FROM encrypted_users WHERE id = ?",
+          query,
           user.id.not_nil!,
           as: {String?, String?}
         )
@@ -111,12 +102,12 @@ describe "Grant::Encryption Database Integration" do
       user3 = EncryptedUser.create!(name: "User 3", email: "user1@example.com", phone: "+1-555-0003")
       
       # Query by encrypted email
-      results = EncryptedUser.where(email: "user1@example.com").select
+      results = EncryptedUser.where_email("user1@example.com")
       results.size.should eq(2)
       results.map(&.id.not_nil!).sort.should eq([user1.id.not_nil!, user3.id.not_nil!].sort)
       
       # Query by encrypted phone
-      found = EncryptedUser.find_by(phone: "+1-555-0002")
+      found = EncryptedUser.find_by_phone("+1-555-0002")
       found.should_not be_nil
       found.not_nil!.id.should eq(user2.id.not_nil!)
       
@@ -240,14 +231,14 @@ describe "Grant::Encryption Database Integration" do
       user3 = EncryptedUser.create!(name: "Alice", email: "alice2@example.com")
       
       # Query by name and encrypted email
-      results = EncryptedUser.where(name: "Alice").where(email: "alice@example.com").select
+      results = EncryptedUser.where_encrypted(name: "Alice", email: "alice@example.com")
       results.size.should eq(1)
-      results.first.id.should eq(user1.id.not_nil!)
+      results.first.not_nil!.id.should eq(user1.id.not_nil!)
       
       # Query with encrypted helper
       results = EncryptedUser.where_encrypted(name: "Alice", email: "alice2@example.com")
       results.size.should eq(1)
-      results.first.id.should eq(user3.id.not_nil!)
+      results.first.not_nil!.id.should eq(user3.id.not_nil!)
     end
   end
 end

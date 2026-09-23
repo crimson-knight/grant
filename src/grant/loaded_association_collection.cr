@@ -30,12 +30,36 @@ class Grant::LoadedAssociationCollection(Owner, Target)
     @records.size
   end
 
+  def count : Int64
+    if association_owner = @association_owner
+      relation = Target.current_scope
+      if key = @foreign_key
+        relation = relation.where(key, :eq, association_owner.read_attribute(@primary_key || Owner.primary_name))
+      end
+      if column = @type_column
+        relation = relation.where(column, :eq, association_owner.class.name)
+      end
+      result = relation.count
+      result.is_a?(Int64) ? result : result.values.sum
+    else
+      @records.size.to_i64
+    end
+  end
+
+  def length : Int32
+    @records.size
+  end
+
   def empty? : Bool
     @records.empty?
   end
 
   def any? : Bool
     !empty?
+  end
+
+  def none? : Bool
+    empty?
   end
 
   def first : Target?

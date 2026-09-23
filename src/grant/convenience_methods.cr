@@ -261,10 +261,11 @@ module Grant::BulkOperations
     # Add timestamps if needed
     if record_timestamps
       now = Time.utc.as(Grant::Columns::Type)
+      timestamp_columns = self.fields
       string_attributes = string_attributes.map do |attrs|
         new_attrs = attrs.dup
-        new_attrs["created_at"] ||= now
-        new_attrs["updated_at"] ||= now
+        new_attrs["created_at"] ||= now if timestamp_columns.includes?("created_at")
+        new_attrs["updated_at"] ||= now if timestamp_columns.includes?("updated_at")
         new_attrs
       end
     end
@@ -319,10 +320,11 @@ module Grant::BulkOperations
     # Add timestamps if needed
     if record_timestamps
       now = Time.utc.as(Grant::Columns::Type)
+      timestamp_columns = self.fields
       string_attributes = string_attributes.map do |attrs|
         new_attrs = attrs.dup
-        new_attrs["created_at"] ||= now
-        new_attrs["updated_at"] = now
+        new_attrs["created_at"] ||= now if timestamp_columns.includes?("created_at")
+        new_attrs["updated_at"] = now if timestamp_columns.includes?("updated_at")
         new_attrs
       end
     end

@@ -237,7 +237,7 @@ module Grant::Aggregations
       # Add updated_at if model has it
       {% if Model.instance_vars.select { |ivar| ivar.annotation(Grant::Column) && ivar.name == "updated_at" }.size > 0 %}
         set_parts << "#{Model.quote("updated_at")} = ?"
-        values << Time.local(Grant.settings.default_timezone).at_beginning_of_second
+        values << Time.local(Grant.settings.default_timezone)
       {% end %}
 
       sql = build_sql do |s|

@@ -1,7 +1,6 @@
 require "../../spec_helper"
 
-# Can run this spec for sqlite after https://www.sqlite.org/draft/releaselog/3_24_0.html is released.
-{% if ["pg", "mysql"].includes? env("CURRENT_ADAPTER") %}
+{% if ["pg", "sqlite", "mysql"].includes? env("CURRENT_ADAPTER") %}
   describe "timestamps" do
     it "should uses UTC for created_at by default" do
       parent = Parent.new(name: "parent").tap(&.save)
@@ -51,24 +50,28 @@ require "../../spec_helper"
       read_timestamp.location.should eq Time::Location.load("Asia/Shanghai")
     end
 
-    it "truncates the subsecond parts of created_at" do
-      parent = Parent.new(name: "parent").tap(&.save)
+    it "preserves microseconds in created_at" do
+      timestamp = Time.utc(2020, 1, 1) + 123_456.microseconds
+      parent = Parent.new(name: "parent")
+      parent.set_timestamps(to: timestamp)
+      parent.save!(skip_timestamps: true)
       found_parent = Parent.find!(parent.id)
 
-      original_timestamp = parent.created_at!
       read_timestamp = found_parent.created_at!
 
-      original_timestamp.to_unix.should eq read_timestamp.to_unix
+      read_timestamp.should eq timestamp
     end
 
-    it "truncates the subsecond parts of updated_at" do
-      parent = Parent.new(name: "parent").tap(&.save)
+    it "preserves microseconds in updated_at" do
+      timestamp = Time.utc(2020, 1, 1) + 654_321.microseconds
+      parent = Parent.new(name: "parent")
+      parent.set_timestamps(to: timestamp)
+      parent.save!(skip_timestamps: true)
       found_parent = Parent.find!(parent.id)
 
-      original_timestamp = parent.updated_at!
       read_timestamp = found_parent.updated_at!
 
-      original_timestamp.to_unix.should eq read_timestamp.to_unix
+      read_timestamp.should eq timestamp
     end
 
     context "bulk imports" do
@@ -90,8 +93,8 @@ require "../../spec_helper"
         parents.each do |parent|
           parent.updated_at.not_nil!.location.should eq Time::Location::UTC
           parent.created_at.not_nil!.location.should eq Time::Location::UTC
-          found_grandma.updated_at.not_nil!.to_unix.should eq parent.updated_at.not_nil!.to_unix
-          found_grandma.created_at.not_nil!.to_unix.should eq parent.created_at.not_nil!.to_unix
+          parent.updated_at.not_nil!.should be_close(found_grandma.updated_at.not_nil!, 1.second)
+          parent.created_at.not_nil!.should be_close(found_grandma.created_at.not_nil!, 1.second)
         end
       end
 
@@ -101,25 +104,20 @@ require "../../spec_helper"
         ]
 
         Parent.import(to_import)
-        import_time = Time.utc.at_beginning_of_second
-
         parent1 = Parent.find_by!(name: "ParentOne")
         parent1.name.should eq "ParentOne"
-        parent1.created_at!.should eq import_time
+        import_time = parent1.created_at!
         parent1.updated_at!.should eq import_time
 
         to_update = Parent.all("WHERE name = ?", ["ParentOne"])
         to_update.each { |parent| parent.name = "ParentOneEdited" }
 
-        sleep 1
-
         Parent.import(to_update, update_on_duplicate: true, columns: ["name"])
-        update_time = Time.utc.at_beginning_of_second
 
         parent1_edited = Parent.find_by!(name: "ParentOneEdited")
         parent1_edited.name.should eq "ParentOneEdited"
-        parent1_edited.created_at!.should be_close(import_time, 1.second)
-        parent1_edited.updated_at!.should be_close(update_time, 1.second)
+        parent1_edited.created_at!.should eq import_time
+        parent1_edited.updated_at!.should be > import_time
       end
     end
   end

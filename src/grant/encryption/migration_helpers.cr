@@ -158,6 +158,7 @@ module Grant::Encryption
       model_class : Grant::Base.class,
       attribute : Symbol,
       old_keys : NamedTuple(primary: String, deterministic: String?),
+      old_salt : String? = nil,
       batch_size : Int32 = 100,
       progress : Bool = true,
     )
@@ -167,6 +168,8 @@ module Grant::Encryption
       # Save current keys
       current_primary = KeyProvider.primary_key
       current_deterministic = KeyProvider.deterministic_key
+      current_salt = KeyProvider.key_derivation_salt
+      previous_salt = old_salt || current_salt
 
       # Get total count
       total = model_class.count
@@ -185,19 +188,29 @@ module Grant::Encryption
             encrypted_value = record.read_attribute("#{attribute_str}_encrypted")
             next if encrypted_value.nil?
 
-            # Decrypt with old keys
-            KeyProvider.primary_key = old_keys[:primary]
-            KeyProvider.deterministic_key = old_keys[:deterministic] if encrypted_attr.deterministic && old_keys[:deterministic]
-
-            decrypted = Grant::Encryption.decrypt(
-              encrypted_value.as(String),
-              model_class.name,
-              attribute_str
-            )
+            # First try the old configuration. If it fails, accept ciphertext
+            # already rotated with the current configuration so interrupted
+            # batches can resume safely.
+            decrypted = begin
+              KeyProvider.primary_key = old_keys[:primary]
+              KeyProvider.deterministic_key = old_keys[:deterministic] if encrypted_attr.deterministic && old_keys[:deterministic]
+              KeyProvider.key_derivation_salt = previous_salt
+              Grant::Encryption.decrypt(encrypted_value.as(String), model_class.name, attribute_str)
+            rescue ex : Cipher::DecryptionError
+              KeyProvider.primary_key = current_primary
+              KeyProvider.deterministic_key = current_deterministic if current_deterministic
+              KeyProvider.key_derivation_salt = current_salt
+              begin
+                Grant::Encryption.decrypt(encrypted_value.as(String), model_class.name, attribute_str)
+              rescue
+                raise ex
+              end
+            end
 
             # Re-encrypt with new keys
             KeyProvider.primary_key = current_primary
             KeyProvider.deterministic_key = current_deterministic if current_deterministic
+            KeyProvider.key_derivation_salt = current_salt
 
             new_encrypted = Grant::Encryption.encrypt(
               decrypted,
@@ -226,6 +239,7 @@ module Grant::Encryption
         # Restore current keys
         KeyProvider.primary_key = current_primary
         KeyProvider.deterministic_key = current_deterministic if current_deterministic
+        KeyProvider.key_derivation_salt = current_salt
       end
     end
 

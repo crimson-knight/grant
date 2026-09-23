@@ -168,11 +168,21 @@ module Grant::Associations
       end
     end
 
-    def {{method_name.id}}=(parent : {{class_name.id}})
-      {% if options[:foreign_key] && options[:foreign_key].is_a?(TypeDeclaration) && !options[:foreign_key].type.resolve.nilable? %}
-        self.{{foreign_key.id}} = parent.{{primary_key.id}}.not_nil!
-      {% else %}
-        self.{{foreign_key.id}} = parent.{{primary_key.id}}
+    def {{method_name.id}}=(parent : {{class_name.id}}?)
+      if parent
+        parent_key = parent.read_attribute({{primary_key_name}})
+        if parent_key.nil?
+          clear_nullable_attribute({{foreign_key_name}})
+        else
+          converted_key = Grant::Type.convert_type(parent_key, typeof(self.{{foreign_key.id}}))
+          self.{{foreign_key.id}} = converted_key.as(typeof(self.{{foreign_key.id}}))
+        end
+      else
+        clear_nullable_attribute({{foreign_key_name}})
+      end
+      set_loaded_association({{method_name.stringify}}, parent)
+      {% if options[:autosave] %}
+        @_{{method_name.id}}_for_autosave = parent
       {% end %}
     end
     
@@ -190,7 +200,7 @@ module Grant::Associations
 
     # Handle optional validation
     {% unless options[:optional] %}
-      setup_optional_validation({{method_name.id}}, {{foreign_key_name}}, {{class_name.id}}, {{primary_key_name}}, false)
+      setup_optional_validation({{method_name.id}}, {{foreign_key_name}}, {{class_name.id}}, {{primary_key_name}}, false, {{options[:autosave] || false}})
     {% end %}
     
     # Handle counter cache
@@ -218,15 +228,6 @@ module Grant::Associations
       # Define instance variable for tracking autosave
       @_{{method_name.id}}_for_autosave : {{class_name.id}}? = nil
       
-      # Override setter to track autosave
-      def {{method_name.id}}=(parent : {{class_name.id}})
-        {% if options[:foreign_key] && options[:foreign_key].is_a?(TypeDeclaration) && !options[:foreign_key].type.resolve.nilable? %}
-          self.{{foreign_key.id}} = parent.{{primary_key.id}}.not_nil!
-        {% else %}
-          self.{{foreign_key.id}} = parent.{{primary_key.id}}
-        {% end %}
-        @_{{method_name.id}}_for_autosave = parent
-      end
     {% end %}
     {% end %}
   end
@@ -378,6 +379,7 @@ module Grant::Associations
       else
         assert_association_can_lazy_load!({{method_name.stringify}})
         result = {{class_name.id}}.where({{foreign_key_name}}, :eq, self.read_attribute({{primary_key_name}})).first
+        set_loaded_association({{method_name.stringify}}, result)
         if result
           Grant::Logs::Association.debug { "Loaded has_one association - #{self.class.name}.#{{{method_name.stringify}}} [#{{{class_name.id.stringify}}}] [fk: #{{{foreign_key.id.stringify}}} = #{self.{{primary_key.id}}}]" }
           {% if inverse_of %}
@@ -402,8 +404,14 @@ module Grant::Associations
       end
     end
 
-    def {{method_name}}=(child)
-      child.set_attributes({ {{foreign_key_name}} => self.read_attribute({{primary_key_name}}) })
+    def {{method_name}}=(child : {{class_name.id}}?)
+      if child
+        if owner_key = self.read_attribute({{primary_key_name}})
+          child.set_attributes({ {{foreign_key_name}} => owner_key })
+        end
+      end
+      set_loaded_association({{method_name.stringify}}, child)
+      @_{{method_name.id}}_for_autosave = child
     end
 
     # Store association metadata
@@ -433,19 +441,9 @@ module Grant::Associations
       {% end %}
     {% end %}
 
-    # Handle autosave
-    {% if options[:autosave] %}
-      setup_autosave({{method_name.id}}, :has_one, {{foreign_key_name}}, {{primary_key_name}})
-
-      # Define instance variable for tracking autosave
-      @_{{method_name.id}}_for_autosave : {{class_name.id}}? = nil
-
-      # Override setter to track autosave
-      def {{method_name}}=(child)
-        child.set_attributes({ {{foreign_key_name}} => self.read_attribute({{primary_key_name}}) })
-        @_{{method_name.id}}_for_autosave = child
-      end
-    {% end %}
+    # Stage assigned has_one records and persist them through the owner's save.
+    setup_autosave({{method_name.id}}, :has_one, {{foreign_key_name}}, {{primary_key_name}}, {{options[:autosave] || false}})
+    @_{{method_name.id}}_for_autosave : {{class_name.id}}? = nil
     {% end %}
   end
 
@@ -622,7 +620,7 @@ module Grant::Associations
         Grant::Logs::Association.debug { "Created has_many association collection - #{self.class.name}.#{{{method_name.stringify}}} [#{{{class_name.id.stringify}}}] [fk: #{{{foreign_key.id.stringify}}}]#{{{through ? " [through: " + through.id.stringify + "]" : ""}}}" }
       end
       Grant::AssociationCollection(self, {{class_name.id}}).new(
-        self, {{foreign_key}}, {{through}}, {{primary_key}},
+        self, {{foreign_key}}, {{through}}, {{options[:primary_key] ? primary_key : nil}},
         {{inverse_of}}, scope_proc, {{method_name.stringify}}, loaded_records, through_delete_all,
         {{through ? source.id.stringify : nil}}
       )
@@ -639,7 +637,11 @@ module Grant::Associations
     {% unless through %}
     def {{singular_name.id}}_ids=(ids : Array)
       string_ids = ids.map(&.to_s)
-      owner_key = self.read_attribute({{primary_key_name}})
+      {% if options[:primary_key] %}
+        owner_key = self.read_attribute({{primary_key_name}})
+      {% else %}
+        owner_key = self.read_attribute(self.class.primary_name)
+      {% end %}
       # Nullify records no longer in the set
       {{class_name.id}}.where({{foreign_key_name}}, :eq, owner_key).each do |record|
         unless string_ids.includes?(record.primary_key_value.to_s)
@@ -686,18 +688,19 @@ module Grant::Associations
     {% end %}
 
     # Handle autosave
-    {% if options[:autosave] %}
-      setup_autosave({{method_name.id}}, :has_many, {{foreign_key_name}}, {{primary_key_name}})
-      
-      # Define instance variable for tracking autosave records
+    {% unless through %}
+      # Stage assigned has_many records and persist them through the owner's save.
+      setup_autosave({{method_name.id}}, :has_many, {{foreign_key_name}}, {{primary_key_name}}, {{options[:autosave] || false}})
       @_{{method_name.id}}_for_autosave : Array({{class_name.id}})? = nil
-      
-      # Override accessor to track autosave records
+
       def {{method_name.id}}=(records : Array({{class_name.id}}))
         owner_key = self.read_attribute({{primary_key_name}})
-        records.each do |record|
-          record.set_attributes({ {{foreign_key_name}} => owner_key })
+        if owner_key
+          records.each do |record|
+            record.set_attributes({ {{foreign_key_name}} => owner_key })
+          end
         end
+        set_loaded_association({{method_name.stringify}}, records.map(&.as(Grant::Base)))
         @_{{method_name.id}}_for_autosave = records
       end
     {% end %}
@@ -736,5 +739,39 @@ module Grant::Associations
         source:       {{source}},
       }
     )
+    {% if type == :belongs_to || (type == :has_one && through.nil?) || (type == :has_many && through.nil?) %}
+      Grant::AssociationRegistry.register_writer(
+        {{@type.name.stringify}}, {{name}},
+        ->(record : Grant::Base, value : Grant::AssociationRegistry::AssociationValue) : Bool {
+          owner = record.as({{@type}})
+          {% if type == :belongs_to || type == :has_one %}
+            if value.nil?
+              owner.{{name.id}} = nil
+              true
+            elsif associated = value.as?({{target_class.id}})
+              owner.{{name.id}} = associated
+              true
+            else
+              false
+            end
+          {% elsif type == :has_many %}
+            if value.nil?
+              owner.{{name.id}} = [] of {{target_class.id}}
+              true
+            elsif associated = value.as?(Array(Grant::Base))
+              if associated.all? { |item| item.is_a?({{target_class.id}}) }
+                typed_associated = associated.map(&.as({{target_class.id}}))
+                owner.{{name.id}} = typed_associated
+                true
+              else
+                false
+              end
+            else
+              false
+            end
+          {% end %}
+        }
+      )
+    {% end %}
   end
 end

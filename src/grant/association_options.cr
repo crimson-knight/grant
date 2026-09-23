@@ -213,21 +213,25 @@ module Grant::AssociationOptions
     macro setup_touch(association_name, touch_column = nil)
       after_save do
         if parent = self.{{association_name}}
-          {% if touch_column %}
-            parent.touch({{touch_column}})
-          {% else %}
-            parent.touch
-          {% end %}
+          if parent.persisted?
+            {% if touch_column %}
+              parent.touch({{touch_column}})
+            {% else %}
+              parent.touch
+            {% end %}
+          end
         end
       end
       
       after_destroy do
         if parent = self.{{association_name}}
-          {% if touch_column %}
-            parent.touch({{touch_column}})
-          {% else %}
-            parent.touch
-          {% end %}
+          if parent.persisted?
+            {% if touch_column %}
+              parent.touch({{touch_column}})
+            {% else %}
+              parent.touch
+            {% end %}
+          end
         end
       end
     end
@@ -248,7 +252,7 @@ module Grant::AssociationOptions
     # user.profile = Profile.new(bio: "hi")
     # user.save # also saves the new profile
     # ```
-    macro setup_autosave(association_name, association_type, foreign_key = nil, primary_key = nil)
+    macro setup_autosave(association_name, association_type, foreign_key = nil, primary_key = nil, autosave_existing = false)
       around_save do
         self.class.transaction do
           block.call
@@ -264,18 +268,32 @@ module Grant::AssociationOptions
         {% end %}
       end
 
+      {% if association_type == :belongs_to %}
+        def _{{association_name}}_assigned_for_autosave? : Bool
+          !@_{{association_name}}_for_autosave.nil?
+        end
+      {% end %}
+
       {% if association_type == :has_one || association_type == :has_many %}
       after_save do
         {% if association_type == :has_one %}
-          if association = @_{{association_name}}_for_autosave
+          association = @_{{association_name}}_for_autosave
+          {% if autosave_existing %}
+          if association.nil? && association_loaded?({{association_name.stringify}})
+            association = get_loaded_association({{association_name.stringify}}).as(typeof(@_{{association_name}}_for_autosave))
+          end
+          {% end %}
+          if association
+            key_changed = association.read_attribute({{foreign_key}}) != self.read_attribute({{primary_key}})
             association.set_attributes({ {{foreign_key}} => self.read_attribute({{primary_key}}) })
-            association.save! unless association.persisted?
+            association.save! if !association.persisted? || key_changed || ({{autosave_existing}} && association.changed?)
           end
         {% elsif association_type == :has_many %}
           if associations = @_{{association_name}}_for_autosave
             associations.each do |record|
+              key_changed = record.read_attribute({{foreign_key}}) != self.read_attribute({{primary_key}})
               record.set_attributes({ {{foreign_key}} => self.read_attribute({{primary_key}}) })
-              record.save! unless record.persisted?
+              record.save! if !record.persisted? || key_changed || ({{autosave_existing}} && record.changed?)
             end
           end
         {% end %}
@@ -296,11 +314,19 @@ module Grant::AssociationOptions
     #   belongs_to :editor, optional: true # editor_id may be nil
     # end
     # ```
-    macro setup_optional_validation(association_name, foreign_key, target_class, primary_key, optional)
+    macro setup_optional_validation(association_name, foreign_key, target_class, primary_key, optional, autosave = false)
       {% unless optional %}
         validate "{{association_name}} must exist" do |model|
           foreign_id = model.read_attribute({{foreign_key}})
-          !foreign_id.nil? && {{target_class.id}}.where({{primary_key}}, :eq, foreign_id).exists?
+          if foreign_id.nil?
+            {% if autosave %}
+              model._{{association_name}}_assigned_for_autosave?
+            {% else %}
+              false
+            {% end %}
+          else
+            {{target_class.id}}.where({{primary_key}}, :eq, foreign_id).exists?
+          end
         end
       {% end %}
     end
