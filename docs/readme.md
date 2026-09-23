@@ -80,6 +80,8 @@ end
 
 [Migrations](./migrations.md)
 
+[PostgreSQL Schema Tenancy](./schema_tenancy.md) - Apartment-compatible schema-per-tenant connection scoping
+
 [Imports](./imports.md)
 
 [Dirty Tracking](./dirty_tracking.md) - Track changes to model attributes

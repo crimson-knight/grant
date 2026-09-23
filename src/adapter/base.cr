@@ -25,6 +25,13 @@ abstract class Grant::Adapter::Base
   end
 
   def open(&)
+    # A schema-tenant block owns one pool connection for its lifetime. Check it
+    # before transaction routing so a model on another adapter cannot bypass
+    # the tenant context merely because that adapter already has a transaction.
+    if schema_conn = Grant::SchemaTenant.current_connection?(self)
+      return yield schema_conn
+    end
+
     # If the current fiber has an open transaction THAT THIS ADAPTER started,
     # reuse that connection so all DML issued inside the transaction block runs
     # on the same connection as BEGIN/COMMIT — making the transaction truly
@@ -193,9 +200,12 @@ abstract class Grant::Adapter::Base
     # `Grant::Sanitization.quote_identifier`.
     def quote(name : String) : String
       String.build do |str|
-        str << QUOTING_CHAR
-        str << name.gsub(QUOTING_CHAR, "#{QUOTING_CHAR}#{QUOTING_CHAR}")
-        str << QUOTING_CHAR
+        name.split('.').each_with_index do |part, index|
+          str << '.' unless index == 0
+          str << QUOTING_CHAR
+          str << part.gsub(QUOTING_CHAR, "#{QUOTING_CHAR}#{QUOTING_CHAR}")
+          str << QUOTING_CHAR
+        end
       end
     end
 
