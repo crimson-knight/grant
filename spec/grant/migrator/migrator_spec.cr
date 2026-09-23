@@ -87,7 +87,7 @@ describe Grant::Migrator do
           ,
           `published` BOOL
           ,
-          `created_at` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP
+          `created_at` TIMESTAMP(6) NULL DEFAULT CURRENT_TIMESTAMP(6)
           ) ;\n
           SQL
 

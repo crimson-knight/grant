@@ -265,7 +265,7 @@ module Grant::Transactions
   # This is a low-level helper invoked automatically by `#save`; you rarely call
   # it directly. With `mode: :create` both timestamps are set; with
   # `mode: :update` only `updated_at` is touched. Columns that the model doesn't
-  # declare are skipped. Times are truncated to the beginning of the second.
+  # declare are skipped. Sub-second precision is preserved.
   #
   # ```
   # user.set_timestamps                           # create mode: sets both
@@ -275,12 +275,12 @@ module Grant::Transactions
   def set_timestamps(*, to time = Time.local(Grant.settings.default_timezone), mode = :create)
     {% if @type.instance_vars.select { |ivar| ivar.annotation(Grant::Column) && ivar.type == Time? }.map(&.name.stringify).includes? "created_at" %}
       if mode == :create
-        @created_at = time.at_beginning_of_second
+        @created_at = time
       end
     {% end %}
 
     {% if @type.instance_vars.select { |ivar| ivar.annotation(Grant::Column) && ivar.type == Time? }.map(&.name.stringify).includes? "updated_at" %}
-      @updated_at = time.at_beginning_of_second
+      @updated_at = time
     {% end %}
   end
 
@@ -1024,7 +1024,7 @@ module Grant::Transactions
     __ensure_current_tenant!
     enlist_transaction_record
 
-    touch_time = Time.local(Grant.settings.default_timezone).at_beginning_of_second
+    touch_time = Time.local(Grant.settings.default_timezone)
     touch_fields = [] of String
 
     {% if @type.instance_vars.any? { |ivar| ivar.annotation(Grant::Column) && ivar.name.stringify == "updated_at" && (ivar.type == Time? || ivar.type == Time) } %}

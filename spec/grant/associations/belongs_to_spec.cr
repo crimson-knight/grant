@@ -1,6 +1,22 @@
 require "../../spec_helper"
 
 describe "belongs_to" do
+  before_each do
+    Teacher.migrator.drop_and_create
+    Klass.migrator.drop_and_create
+    Person.migrator.drop_and_create
+    Company.migrator.drop_and_create
+    Book.migrator.drop_and_create
+    BookReview.migrator.drop_and_create
+    CourierService.migrator.drop_and_create
+    Courier.migrator.drop_and_create
+    Character.migrator.drop_and_create
+    Chat.migrator.drop_and_create
+    ChatSettings.migrator.drop_and_create
+    UUIDModel.migrator.drop_and_create
+    UUIDRelation.migrator.drop_and_create
+  end
+
   it "provides a getter for the foreign entity" do
     teacher = Teacher.new
     teacher.name = "Test teacher"
@@ -28,14 +44,18 @@ describe "belongs_to" do
   end
 
   it "supports custom types for the join" do
+    author = Person.create!(name: "Book author")
+    publisher = Company.create!(name: "Book publisher")
     book = Book.new
     book.name = "Screw driver"
-    book.save
+    book.author = author
+    book.publisher = publisher
+    book.save!
 
     review = BookReview.new
     review.book = book
     review.body = "Best book ever!"
-    review.save
+    review.save!
 
     review.book.not_nil!.name.should eq "Screw driver"
   end
@@ -43,12 +63,14 @@ describe "belongs_to" do
   it "supports custom method name" do
     author = Person.new
     author.name = "John Titor"
-    author.save
+    author.save!
+    publisher = Company.create!(name: "Book publisher")
 
     book = Book.new
     book.name = "How to Time Traveling"
     book.author = author
-    book.save
+    book.publisher = publisher
+    book.save!
 
     book.author.not_nil!.name.should eq "John Titor"
   end
@@ -56,12 +78,13 @@ describe "belongs_to" do
   it "supports both custom method name and custom types for the join" do
     publisher = Company.new
     publisher.name = "Amber Framework"
-    publisher.save
+    publisher.save!
 
     book = Book.new
     book.name = "Introduction to Grant"
+    book.author = Person.create!(name: "Book author")
     book.publisher = publisher
-    book.save
+    book.save!
 
     book.publisher.not_nil!.name.should eq "Amber Framework"
   end
@@ -69,25 +92,27 @@ describe "belongs_to" do
   it "supports json_options" do
     publisher = Company.new
     publisher.name = "Amber Framework"
-    publisher.save
+    publisher.save!
 
     book = Book.new
     book.name = "Introduction to Grant"
+    book.author = Person.create!(name: "Book author")
     book.publisher = publisher
-    book.save
-    book.to_json.should eq %({"id":#{book.id},"name":"Introduction to Grant"})
+    book.save!
+    book.to_json.should eq %({"id":#{book.id},"name":"Introduction to Grant","author_id":#{book.author_id}})
   end
 
   it "supports yaml_options" do
     publisher = Company.new
     publisher.name = "Amber Framework"
-    publisher.save
+    publisher.save!
 
     book = Book.new
     book.name = "Introduction to Grant"
+    book.author = Person.create!(name: "Book author")
     book.publisher = publisher
-    book.save
-    book.to_yaml.should eq %(---\nid: #{book.id}\nname: Introduction to Grant\n)
+    book.save!
+    book.to_yaml.should eq %(---\nid: #{book.id}\nname: Introduction to Grant\nauthor_id: #{book.author_id}\n)
   end
 
   it "provides a method to retrieve parent object that will raise if record is not found" do

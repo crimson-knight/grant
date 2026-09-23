@@ -130,7 +130,7 @@ module Grant::Polymorphic
       case type_name
       {% for name, klass in REGISTERED_TYPES %}
       when {{name}}
-        {% if name.starts_with?("Validators::") || name.starts_with?("Spec::") %}
+        {% if name == "Grant::Base" || name.starts_with?("Validators::") || name.starts_with?("Spec::") %}
           [] of Grant::Base
         {% else %}
           return [] of Grant::Base if ids.empty?
@@ -142,6 +142,52 @@ module Grant::Polymorphic
       {% end %}
       else
         [] of Grant::Base
+      end
+    end
+
+    # Adjusts a numeric counter column on a polymorphic target without losing
+    # the concrete model's adapter, default scope, or tenancy behavior.
+    def self.adjust_polymorphic_counter_cache(type_name : String, id : Int64, column : String, delta : Int32) : Nil
+      case type_name
+      {% for name, klass in REGISTERED_TYPES %}
+      when {{name}}
+        {% if name == "Grant::Base" || name.starts_with?("Validators::") || name.starts_with?("Spec::") %}
+          nil
+        {% else %}
+          quoted_column = {{klass}}.quote(column)
+          {{klass}}.where({{klass}}.primary_name, :eq, id)
+            .update_all("#{quoted_column} = COALESCE(#{quoted_column}, 0) + #{delta}")
+        {% end %}
+      {% end %}
+      else
+        nil
+      end
+      nil
+    end
+
+    # Touches a polymorphic target through its model-scoped relation, avoiding
+    # record hydration while preserving the model's current scopes and tenancy.
+    def self.touch_polymorphic_target(type_name : String, id : Int64, column : String?) : Bool
+      case type_name
+      {% for name, klass in REGISTERED_TYPES %}
+      when {{name}}
+        {% if name == "Grant::Base" || name.starts_with?("Validators::") || name.starts_with?("Spec::") %}
+          false
+        {% else %}
+          if {{klass}}.fields.includes?("updated_at")
+            relation = {{klass}}.where({{klass}}.primary_name, :eq, id)
+            if column
+              relation.touch_all(column.to_sym) > 0
+            else
+              relation.touch_all > 0
+            end
+          else
+            false
+          end
+        {% end %}
+      {% end %}
+      else
+        false
       end
     end
     
@@ -165,7 +211,7 @@ module Grant::Polymorphic
       case type_name
       {% for name, klass in REGISTERED_TYPES %}
       when {{name}}
-        {% if name.starts_with?("Validators::") || name.starts_with?("Spec::") %}
+        {% if name == "Grant::Base" || name.starts_with?("Validators::") || name.starts_with?("Spec::") %}
           false
         {% else %}
           true
@@ -175,6 +221,7 @@ module Grant::Polymorphic
         false
       end
     end
+
   end
 
   # Lazy loader for a polymorphic `belongs_to` target, returned by the generated
@@ -259,6 +306,65 @@ module Grant::Polymorphic
     {% type_column = options[:type_column] || name.id.stringify + "_type" %}
     {% foreign_key = options[:foreign_key] || name.id.stringify + "_id" %}
     {% primary_key = options[:primary_key] || "id" %}
+
+    {% if options[:counter_cache] %}
+      {% if options[:counter_cache].is_a?(SymbolLiteral) %}
+        {% counter_column = options[:counter_cache].id.stringify %}
+      {% elsif options[:counter_cache].is_a?(StringLiteral) %}
+        {% counter_column = options[:counter_cache].id.stringify %}
+      {% else %}
+        {% counter_column = @type.stringify.split("::").last.underscore + "s_count" %}
+      {% end %}
+      after_create do
+        foreign_id = self.read_attribute({{foreign_key.id.stringify}})
+        type_name = self.read_attribute({{type_column.id.stringify}})
+        if foreign_id.is_a?(Int64) && type_name.is_a?(String)
+          Grant::Polymorphic.adjust_polymorphic_counter_cache(type_name, foreign_id, {{counter_column}}, 1)
+        end
+      end
+
+      before_update do
+        if attribute_changed?({{foreign_key.id.stringify}}) || attribute_changed?({{type_column.id.stringify}})
+          old_id = attribute_was({{foreign_key.id.stringify}})
+          old_type = attribute_was({{type_column.id.stringify}})
+          new_id = self.read_attribute({{foreign_key.id.stringify}})
+          new_type = self.read_attribute({{type_column.id.stringify}})
+
+          if old_id.is_a?(Int64) && old_type.is_a?(String)
+            Grant::Polymorphic.adjust_polymorphic_counter_cache(old_type, old_id, {{counter_column}}, -1)
+          end
+          if new_id.is_a?(Int64) && new_type.is_a?(String)
+            Grant::Polymorphic.adjust_polymorphic_counter_cache(new_type, new_id, {{counter_column}}, 1)
+          end
+        end
+      end
+
+      after_destroy do
+        foreign_id = self.read_attribute({{foreign_key.id.stringify}})
+        type_name = self.read_attribute({{type_column.id.stringify}})
+        if foreign_id.is_a?(Int64) && type_name.is_a?(String)
+          Grant::Polymorphic.adjust_polymorphic_counter_cache(type_name, foreign_id, {{counter_column}}, -1)
+        end
+      end
+    {% end %}
+
+    {% if options[:touch] %}
+      {% touch_column = options[:touch] == true ? nil : options[:touch] %}
+      after_save do
+        foreign_id = self.read_attribute({{foreign_key.id.stringify}})
+        type_name = self.read_attribute({{type_column.id.stringify}})
+        if foreign_id.is_a?(Int64) && type_name.is_a?(String)
+          Grant::Polymorphic.touch_polymorphic_target(type_name, foreign_id, {{touch_column ? touch_column.id.stringify : nil}})
+        end
+      end
+      after_destroy do
+        foreign_id = self.read_attribute({{foreign_key.id.stringify}})
+        type_name = self.read_attribute({{type_column.id.stringify}})
+        if foreign_id.is_a?(Int64) && type_name.is_a?(String)
+          Grant::Polymorphic.touch_polymorphic_target(type_name, foreign_id, {{touch_column ? touch_column.id.stringify : nil}})
+        end
+      end
+    {% end %}
     
     # Define the foreign key column
     column {{foreign_key.id}} : Int64?
@@ -300,19 +406,34 @@ module Grant::Polymorphic
         @{{foreign_key.id}} = nil
         @{{type_column.id}} = nil
       else
-        # Get primary key value and ensure it's Int64
-        pk_value = record.primary_key_value
-        @{{foreign_key.id}} = case pk_value
+        primary_key_value = record.read_attribute({{primary_key.id.stringify}})
+        @{{foreign_key.id}} = case primary_key_value
                               when Int64
-                                pk_value
+                                primary_key_value
                               when Int32
-                                pk_value.to_i64
+                                primary_key_value.to_i64
                               else
-                                raise "Polymorphic associations require numeric primary keys, got #{pk_value.class}"
+                                raise "Polymorphic associations require numeric primary keys, got #{primary_key_value.class}"
                               end
         @{{type_column.id}} = record.class.name
       end
+      set_loaded_association({{name.id.stringify}}, record)
     end
+
+    Grant::AssociationRegistry.register_writer(
+      {{@type.name.stringify}}, {{name.id.stringify}},
+      ->(owner : Grant::Base, value : Grant::AssociationRegistry::AssociationValue) : Bool {
+        if value.nil?
+          owner.as({{@type}}).{{name.id}} = nil
+          true
+        elsif associated = value.as?(Grant::Base)
+          owner.as({{@type}}).{{name.id}} = associated
+          true
+        else
+          false
+        end
+      }
+    )
     
     # Store association metadata
     class_getter _{{name.id}}_association_meta = {
@@ -330,45 +451,6 @@ module Grant::Polymorphic
       end
     {% end %}
 
-    {% if options[:counter_cache] %}
-      after_create do
-        if target_type = self.read_attribute({{type_column.id.stringify}}).as(String?)
-          if target_id = self.read_attribute({{foreign_key.id.stringify}}).as(Int64?)
-          counter_column_name = {% if options[:counter_cache].is_a?(SymbolLiteral) || options[:counter_cache].is_a?(StringLiteral) %}{{options[:counter_cache].id.stringify}}{% else %}"#{self.class.name.split("::").last.underscore}s_count"{% end %}
-          Grant::Polymorphic.update_counter(target_type, target_id, counter_column_name, 1)
-          end
-        end
-      end
-
-      after_destroy do
-        if target_type = self.read_attribute({{type_column.id.stringify}}).as(String?)
-          if target_id = self.read_attribute({{foreign_key.id.stringify}}).as(Int64?)
-          counter_column_name = {% if options[:counter_cache].is_a?(SymbolLiteral) || options[:counter_cache].is_a?(StringLiteral) %}{{options[:counter_cache].id.stringify}}{% else %}"#{self.class.name.split("::").last.underscore}s_count"{% end %}
-          Grant::Polymorphic.update_counter(target_type, target_id, counter_column_name, -1)
-          end
-        end
-      end
-    {% end %}
-
-    {% if options[:touch] %}
-      after_save do
-        if target_type = self.read_attribute({{type_column.id.stringify}}).as(String?)
-          if target_id = self.read_attribute({{foreign_key.id.stringify}}).as(Int64?)
-            fields = {% if options[:touch] == true %}[] of String{% else %}[{{options[:touch].id.stringify}}]{% end %}
-            Grant::Polymorphic.touch_target(target_type, target_id, fields)
-          end
-        end
-      end
-
-      after_destroy do
-        if target_type = self.read_attribute({{type_column.id.stringify}}).as(String?)
-          if target_id = self.read_attribute({{foreign_key.id.stringify}}).as(Int64?)
-            fields = {% if options[:touch] == true %}[] of String{% else %}[{{options[:touch].id.stringify}}]{% end %}
-            Grant::Polymorphic.touch_target(target_type, target_id, fields)
-          end
-        end
-      end
-    {% end %}
   end
 
   # Implements the polymorphic `has_many` (invoked by
@@ -448,6 +530,9 @@ module Grant::Polymorphic
       foreign_key: {{foreign_key.id.stringify}},
       type_column: {{type_column.id.stringify}}
     }
+
+    # Register this owner model as a concrete polymorphic target.
+    register_polymorphic_type
     
     # Handle dependent option
     {% if options[:dependent] %}
@@ -512,6 +597,9 @@ module Grant::Polymorphic
       foreign_key: {{foreign_key.id.stringify}},
       type_column: {{type_column.id.stringify}}
     }
+
+    # Register this owner model as a concrete polymorphic target.
+    register_polymorphic_type
     
     # Handle dependent option
     {% if options[:dependent] %}

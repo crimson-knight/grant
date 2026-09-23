@@ -33,7 +33,16 @@ module Grant::EagerLoading
 
     # Set loaded association data
     def set_loaded_association(name : String | Symbol, data)
-      loaded_associations[name.to_s] = data
+      if data.is_a?(Array)
+        records = [] of Grant::Base
+        data.each do |record|
+          raise ArgumentError.new("Loaded association arrays must contain Grant models") unless record.is_a?(Grant::Base)
+          records << record.as(Grant::Base)
+        end
+        loaded_associations[name.to_s] = records
+      else
+        loaded_associations[name.to_s] = data.as(Grant::Base | Nil)
+      end
     end
 
     # Marks this record so accessing an association that has not already been

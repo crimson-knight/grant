@@ -221,6 +221,8 @@ end
     
     column id : Int32, primary: true
     column title : String
+
+    register_polymorphic_type
   end
   
   # Model with string primary key (invalid for polymorphic)
@@ -230,6 +232,8 @@ end
     
     column id : String, primary: true
     column name : String
+
+    register_polymorphic_type
   end
   
   # Image model for has_one testing

@@ -6,7 +6,7 @@ module Grant
   Log = ::Log.for("grant")
 
   TIME_ZONE       = "UTC"
-  DATETIME_FORMAT = "%F %X%z"
+  DATETIME_FORMAT = "%F %X.%6N%z"
 
   alias ModelArgs = Hash(Symbol | String, Grant::Columns::Type)
 

@@ -63,28 +63,28 @@ describe "Grant::Associations::AdditionalOptions" do
   describe "touch with custom column" do
     it "touches custom column on parent" do
       post = TouchPost.create!(title: "Post")
-      original_commented_at = post.last_commented_at
-
-      sleep(1.1.seconds) # SQLite stores timestamps to whole-second precision.
+      original_commented_at = Time.utc(2000, 1, 1)
+      post.last_commented_at = original_commented_at
+      post.save!(skip_timestamps: true)
 
       comment = TouchComment.create!(content: "Great post!", touch_post_id: post.id)
 
       updated_post = TouchPost.find!(post.id.not_nil!)
-      updated_post.last_commented_at.should_not eq(original_commented_at)
+      updated_post.last_commented_at.not_nil!.should be > original_commented_at
     end
 
     it "touches on update as well as create" do
       user = TouchUpdateUser.create!(name: "John")
       activity = UserActivity.create!(description: "Joined", touch_update_user_id: user.id)
 
-      original_active_at = TouchUpdateUser.find!(user.id.not_nil!).last_active_at
-
-      sleep(1.1.seconds) # SQLite stores timestamps to whole-second precision.
+      original_active_at = Time.utc(2000, 1, 1)
+      user.last_active_at = original_active_at
+      user.save!(skip_timestamps: true)
 
       activity.description = "Updated profile"
       activity.save!
 
-      TouchUpdateUser.find!(user.id.not_nil!).last_active_at.should_not eq(original_active_at)
+      TouchUpdateUser.find!(user.id.not_nil!).last_active_at.not_nil!.should be > original_active_at
     end
   end
 

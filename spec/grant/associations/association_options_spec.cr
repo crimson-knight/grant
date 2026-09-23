@@ -86,7 +86,7 @@ describe "Grant::Associations::Options" do
       item = RequiredItem.new(name: "Item")
       item.valid?.should be_false
       item.errors.size.should be > 0
-      item.errors.first.message.not_nil!.should contain("must exist")
+      item.errors.full_messages.join(" ").should contain("must exist")
     end
   end
 
@@ -113,14 +113,14 @@ describe "Grant::Associations::Options" do
   describe "touch: true" do
     it "touches parent record on save" do
       user = TouchUser.create!(name: "John")
-      original_updated_at = user.updated_at
-
-      sleep(1.1.seconds) # SQLite stores timestamps to whole-second precision.
+      original_updated_at = Time.utc(2000, 1, 1)
+      user.updated_at = original_updated_at
+      user.save!(skip_timestamps: true)
 
       profile = TouchProfile.create!(bio: "Bio", touch_user_id: user.id)
 
       updated_user = TouchUser.find!(user.id.not_nil!)
-      updated_user.updated_at.should_not eq(original_updated_at)
+      updated_user.updated_at!.should be > original_updated_at
     end
   end
 end

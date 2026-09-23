@@ -241,7 +241,10 @@ module Grant::Encryption
         Grant::Encryption::EncryptedAttribute.new(
           self,
           {{attr_name}},
-          {{deterministic}}
+          {{deterministic}},
+          ->(record : Grant::Base, value : String?) do
+            record.as({{@type}}).{{attribute.id}} = value
+          end
         )
       
       # Store in registry

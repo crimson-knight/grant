@@ -354,6 +354,8 @@ describe "Grant Luna association regressions" do
 
     T3CacheOwner.find!(owner_a.id).t3_cache_articles_count.should eq(1)
     article.owner = owner_b
+    article.owner_ref_id.should eq(owner_b.id)
+    article.owner_ref_id_changed?.should be_true
     article.save!
     T3CacheOwner.find!(owner_a.id).t3_cache_articles_count.should eq(0)
     T3CacheOwner.find!(owner_b.id).t3_cache_articles_count.should eq(1)

@@ -20,6 +20,8 @@ class RotationTestUser < Grant::Base
   timestamps
 end
 
+RotationTestUser.migrator.drop_and_create
+
 describe "Grant::Encryption Key Rotation" do
   # Original keys
   original_primary_key = Base64.strict_encode("original_primary_key_32_bytes!!!".to_slice)
@@ -221,9 +223,9 @@ describe "Grant::Encryption Key Rotation" do
       found.not_nil!.id.should eq(user2.id)
 
       # Verify batch queries work
-      results = RotationTestUser.where(email: "search2@example.com").select
+      results = RotationTestUser.where_email("search2@example.com")
       results.size.should eq(1)
-      results.first.id.should eq(user2.id)
+      results.first.not_nil!.id.should eq(user2.id)
     end
 
     it "handles errors gracefully and restores original keys" do
@@ -395,7 +397,7 @@ describe "Grant::Encryption Key Rotation" do
       count.should eq(20)
 
       # Verify all records are readable
-      RotationTestUser.order(id: :asc).select.each_with_index do |user, i|
+      RotationTestUser.all("ORDER BY id").each_with_index do |user, i|
         user.email.should eq("resume#{i}@example.com")
       end
     end
@@ -439,7 +441,7 @@ describe "Grant::Encryption Key Rotation" do
       total_rotated.should eq(30) # 10 records × 3 fields
 
       # Verify all fields are accessible
-      RotationTestUser.order(id: :asc).select.each_with_index do |user, i|
+      RotationTestUser.all("ORDER BY id").each_with_index do |user, i|
         user.email.should eq("multi#{i}@example.com")
         user.phone.should eq("+1-555-#{i.to_s.rjust(4, '0')}")
         user.ssn.should eq("#{i.to_s.rjust(3, '0')}-77-8888")

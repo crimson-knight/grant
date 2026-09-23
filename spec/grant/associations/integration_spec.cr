@@ -66,19 +66,13 @@ describe "Grant::Associations Integration Tests" do
       article = CachedArticle.create!(title: "Test Article", reactions_count: 0)
       video = CachedVideo.create!(title: "Test Video", reactions_count: 0)
 
-      reaction1 = Reaction.new(emoji: "👍")
-      reaction1.reactable = article
-      reaction1.save!
+      reaction1 = Reaction.create!(emoji: "👍", reactable: article)
       CachedArticle.find!(article.id.not_nil!).reactions_count.should eq(1)
 
-      reaction2 = Reaction.new(emoji: "❤️")
-      reaction2.reactable = article
-      reaction2.save!
+      reaction2 = Reaction.create!(emoji: "❤️", reactable: article)
       CachedArticle.find!(article.id.not_nil!).reactions_count.should eq(2)
 
-      reaction3 = Reaction.new(emoji: "🎉")
-      reaction3.reactable = video
-      reaction3.save!
+      reaction3 = Reaction.create!(emoji: "🎉", reactable: video)
       CachedVideo.find!(video.id.not_nil!).reactions_count.should eq(1)
 
       reaction1.destroy!
@@ -87,16 +81,14 @@ describe "Grant::Associations Integration Tests" do
 
     it "works with touch on polymorphic associations" do
       project = TouchableProject.create!(name: "Project")
-      original_updated = project.updated_at
+      original_updated = Time.utc(2000, 1, 1)
+      project.updated_at = original_updated
+      project.save!(skip_timestamps: true)
 
-      sleep(1.1.seconds) # SQLite stores timestamps to whole-second precision.
-
-      task = ProjectTask.new(title: "Task")
-      task.touchable = project
-      task.save!
+      task = ProjectTask.create!(title: "Task", touchable: project)
 
       updated_project = TouchableProject.find!(project.id.not_nil!)
-      updated_project.updated_at.should_not eq(original_updated)
+      updated_project.updated_at.not_nil!.should be > original_updated
     end
   end
 
@@ -105,27 +97,26 @@ describe "Grant::Associations Integration Tests" do
       forum = Forum.create!(name: "Tech Forum", posts_count: 0)
 
       # Create post with forum
-      post1 = ForumPost.new(title: "Post 1")
-      post1.forum = forum
-      post1.save!
+      post1 = ForumPost.create!(title: "Post 1", forum: forum)
 
       updated_forum = Forum.find!(forum.id.not_nil!)
       updated_forum.posts_count.should eq(1)
-      original_updated = updated_forum.updated_at
-
-      sleep(1.1.seconds) # SQLite stores timestamps to whole-second precision.
+      original_updated = Time.utc(2000, 1, 1)
+      updated_forum.updated_at = original_updated
+      updated_forum.save!(skip_timestamps: true)
 
       # Create post without forum (optional: true)
       post2 = ForumPost.create!(title: "Post 2")
       post2.forum_id.should be_nil
 
       # Update post to add forum
-      post2.forum = forum
-      post2.save!
+      post2.update(forum: forum).should be_true
+      post2.forum_id.should eq(forum.id)
+      post2.forum.should be(forum)
 
       final_forum = Forum.find!(forum.id.not_nil!)
       final_forum.posts_count.should eq(2)
-      final_forum.updated_at.should_not eq(original_updated)
+      final_forum.updated_at.not_nil!.should be > original_updated
     end
 
     it "combines dependent and autosave" do
@@ -147,12 +138,9 @@ describe "Grant::Associations Integration Tests" do
 
   describe "autosave option" do
     it "saves new associated records on parent save" do
-      company = AutosaveCompany.create!(name: "ACME Corp")
-
       employee1 = AutosaveEmployee.new(name: "John Doe")
       employee2 = AutosaveEmployee.new(name: "Jane Smith")
-
-      company.employees = [employee1, employee2]
+      company = AutosaveCompany.new(name: "ACME Corp", employees: [employee1, employee2])
       company.save!
 
       AutosaveEmployee.where(autosave_company_id: company.id).count.should eq(2)
@@ -162,8 +150,7 @@ describe "Grant::Associations Integration Tests" do
 
     it "saves changes to existing associated records" do
       profile = UserProfile.create!(username: "johndoe")
-      settings = ProfileSettings.new(theme: "light")
-      settings.user_profile = profile
+      settings = ProfileSettings.new(theme: "light", user_profile: profile)
       settings.save!
 
       profile.reload
@@ -172,14 +159,54 @@ describe "Grant::Associations Integration Tests" do
 
       ProfileSettings.find!(settings.id.not_nil!).theme.should eq("dark")
     end
+
+    it "mass assigns belongs_to associations through new, create!, and update" do
+      first_profile = UserProfile.create!(username: "first")
+      second_profile = UserProfile.create!(username: "second")
+
+      new_settings = ProfileSettings.new(theme: "new", user_profile: first_profile)
+      new_settings.user_profile_id.should eq(first_profile.id)
+      new_settings.user_profile.should be(first_profile)
+      new_settings.save!
+
+      created_settings = ProfileSettings.create!(theme: "created", user_profile: first_profile)
+      created_settings.user_profile.should be(first_profile)
+
+      created_settings.update(user_profile: second_profile).should be_true
+      created_settings.user_profile_id.should eq(second_profile.id)
+      created_settings.user_profile.should be(second_profile)
+    end
+
+    it "mass assigns has_one associations and saves them with the owner" do
+      settings = ProfileSettings.new(theme: "dark")
+      profile = UserProfile.new(username: "with-settings", settings: settings)
+
+      profile.save!
+
+      settings.persisted?.should be_true
+      settings.user_profile_id.should eq(profile.id)
+      profile.settings.should be(settings)
+    end
+
+    it "mass assigns has_many associations without an autosave option" do
+      first_post = ForumPost.new(title: "First")
+      second_post = ForumPost.new(title: "Second")
+      forum = Forum.new(name: "with posts", posts_count: 0, posts: [first_post, second_post])
+
+      forum.save!
+
+      ForumPost.where(forum_id: forum.id).count.should eq(2)
+      first_post.persisted?.should be_true
+      second_post.persisted?.should be_true
+      first_post.forum_id.should eq(forum.id)
+      second_post.forum_id.should eq(forum.id)
+    end
   end
 
   describe "edge cases and error scenarios" do
     it "handles circular references gracefully" do
       parent = TreeNode.create!(name: "Parent")
-      child = TreeNode.new(name: "Child")
-      child.parent = parent
-      child.save!
+      child = TreeNode.create!(name: "Child", parent: parent)
 
       # This should not cause infinite loop
       parent.children.to_a.size.should eq(1)

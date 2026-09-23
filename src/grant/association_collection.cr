@@ -38,6 +38,12 @@ class Grant::AssociationCollection(Owner, Target)
     if inverse = @inverse_of
       results.each { |record| record.set_loaded_association(inverse.to_s, owner) }
     end
+    if clause.empty? && params.empty?
+      @loaded_records = results.dup
+      if association_name = @association_name
+        owner.set_loaded_association(association_name, @loaded_records.not_nil!)
+      end
+    end
     results
   end
 
@@ -50,15 +56,46 @@ class Grant::AssociationCollection(Owner, Target)
   end
 
   def size : Int32
+    if records = @loaded_records
+      records.size
+    else
+      count.to_i32
+    end
+  end
+
+  # Returns the database count within the owner's association scope without
+  # hydrating records, even when the association target has already been loaded.
+  def count : Int64
+    ensure_lazy_loading_allowed
+    result = association_relation.count
+    result.is_a?(Int64) ? result : result.values.sum
+  end
+
+  # Loads the records and returns their number, matching Enumerable semantics.
+  def length : Int32
     all.size
   end
 
   def empty? : Bool
-    all.empty?
+    if records = @loaded_records
+      records.empty?
+    else
+      ensure_lazy_loading_allowed
+      !association_relation.exists?
+    end
   end
 
   def any? : Bool
-    !empty?
+    if records = @loaded_records
+      !records.empty?
+    else
+      ensure_lazy_loading_allowed
+      association_relation.exists?
+    end
+  end
+
+  def none? : Bool
+    !any?
   end
 
   def first : Target?
@@ -120,7 +157,11 @@ class Grant::AssociationCollection(Owner, Target)
   def build(**attrs) : Target
     record = Target.new
     record.set_attributes(attrs.to_h.transform_keys(&.to_s))
-    record.set_attributes({@foreign_key.to_s => owner_key}) unless @through
+    record.set_attributes({@foreign_key.to_s => owner_key}) if !@through && !owner_key.nil?
+    @loaded_records.try do |records|
+      records << record unless records.includes?(record)
+      sync_loaded_association
+    end
     record
   end
 
@@ -142,11 +183,12 @@ class Grant::AssociationCollection(Owner, Target)
     raise ArgumentError.new("Cannot append to a has_many :through collection") if @through
 
     key_changed = record.read_attribute(@foreign_key.to_s) != owner_key
-    if key_changed
+    if key_changed && !owner_key.nil?
       record.write_attribute(@foreign_key.to_s, owner_key)
     end
     record.save! if owner.persisted? && (key_changed || !record.persisted?)
     @loaded_records.try { |records| records << record unless records.includes?(record) }
+    sync_loaded_association
     self
   end
 
@@ -172,6 +214,7 @@ class Grant::AssociationCollection(Owner, Target)
       associated_record.save!
       removed << associated_record
       @loaded_records.try(&.delete(associated_record))
+      sync_loaded_association
     end
     removed
   end
@@ -186,6 +229,7 @@ class Grant::AssociationCollection(Owner, Target)
       if associated_record.destroy!
         removed << associated_record
         @loaded_records.try(&.delete(associated_record))
+        sync_loaded_association
       end
     end
     removed
@@ -219,6 +263,7 @@ class Grant::AssociationCollection(Owner, Target)
       all.each { |record| delete(record) }
     end
     @loaded_records.try(&.clear)
+    sync_loaded_association
     self
   end
 
@@ -242,6 +287,7 @@ class Grant::AssociationCollection(Owner, Target)
               association_relation.delete_all
             end
     @loaded_records.try(&.clear)
+    sync_loaded_association
     count
   end
 
@@ -252,6 +298,14 @@ class Grant::AssociationCollection(Owner, Target)
       record.set_loaded_association(inverse.to_s, owner)
     end
     record
+  end
+
+  private def sync_loaded_association : Nil
+    if association_name = @association_name
+      if records = @loaded_records
+        owner.set_loaded_association(association_name, records)
+      end
+    end
   end
 
   private def ensure_lazy_loading_allowed : Nil

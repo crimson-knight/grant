@@ -169,6 +169,7 @@ module Grant::Encryption
       current_primary = KeyProvider.primary_key
       current_deterministic = KeyProvider.deterministic_key
       current_salt = KeyProvider.key_derivation_salt
+      previous_salt = old_salt || current_salt
 
       # Get total count
       total = model_class.count
@@ -187,30 +188,20 @@ module Grant::Encryption
             encrypted_value = record.read_attribute("#{attribute_str}_encrypted")
             next if encrypted_value.nil?
 
-            # Decrypt with old keys
-            KeyProvider.primary_key = old_keys[:primary]
-            KeyProvider.deterministic_key = old_keys[:deterministic] if encrypted_attr.deterministic && old_keys[:deterministic]
-            KeyProvider.key_derivation_salt = old_salt if old_salt
-
+            # First try the old configuration. If it fails, accept ciphertext
+            # already rotated with the current configuration so interrupted
+            # batches can resume safely.
             decrypted = begin
-              Grant::Encryption.decrypt(
-                encrypted_value.as(String),
-                model_class.name,
-                attribute_str
-              )
+              KeyProvider.primary_key = old_keys[:primary]
+              KeyProvider.deterministic_key = old_keys[:deterministic] if encrypted_attr.deterministic && old_keys[:deterministic]
+              KeyProvider.key_derivation_salt = previous_salt
+              Grant::Encryption.decrypt(encrypted_value.as(String), model_class.name, attribute_str)
             rescue ex : Cipher::DecryptionError
-              # A resumed rotation can encounter rows already encrypted with the
-              # current keys. Try those keys before treating the row as invalid.
               KeyProvider.primary_key = current_primary
-              KeyProvider.deterministic_key = current_deterministic
+              KeyProvider.deterministic_key = current_deterministic if current_deterministic
               KeyProvider.key_derivation_salt = current_salt
-
               begin
-                Grant::Encryption.decrypt(
-                  encrypted_value.as(String),
-                  model_class.name,
-                  attribute_str
-                )
+                Grant::Encryption.decrypt(encrypted_value.as(String), model_class.name, attribute_str)
               rescue
                 raise ex
               end

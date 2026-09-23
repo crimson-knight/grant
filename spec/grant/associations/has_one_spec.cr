@@ -2,6 +2,10 @@ require "../../spec_helper"
 
 describe "has_one" do
   before_each do
+    User.migrator.drop_and_create
+    Profile.migrator.drop_and_create
+    Courier.migrator.drop_and_create
+    Character.migrator.drop_and_create
     User.clear
     Profile.clear
     Courier.clear

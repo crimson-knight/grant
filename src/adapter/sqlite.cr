@@ -12,6 +12,14 @@ require "../grant/sqlite_version_check"
 # (src/sqlite3/statement.cr) and adds only the ensure-reset.  When bumping the
 # sqlite3 shard, diff upstream perform_exec against this patch and re-apply.
 class SQLite3::Statement
+  # Store SQLite timestamps as text with six fractional digits so Crystal's
+  # microsecond precision survives the database round trip.
+  private def bind_arg(index, value : Time)
+    bind_arg(index, value.in(SQLite3::TIME_ZONE).to_s("%F %H:%M:%S.%6N"))
+  end
+
+  # UUID columns are stored as CHAR(36) in SQLite, so bind the canonical text
+  # representation instead of passing a UUID object to sqlite3's native binder.
   private def bind_arg(index, value : UUID)
     bind_arg(index, value.to_s)
   end
@@ -37,6 +45,29 @@ class SQLite3::Statement
     # the step returned an error code.  This prevents "SQL statements in
     # progress" on a subsequent COMMIT/ROLLBACK on the same connection.
     LibSQLite3.reset(self.to_unsafe)
+  end
+end
+
+# sqlite3's shard parser accepts only millisecond fractions by default. Grant
+# writes six digits, so read those values at the same precision.
+class SQLite3::ResultSet
+  def read(t : Time.class) : Time
+    text = read(String).not_nil!
+    if text.includes?(".")
+      Time.parse(text, "%F %H:%M:%S.%N", location: SQLite3::TIME_ZONE)
+    else
+      Time.parse(text, SQLite3::DATE_FORMAT_SECOND, location: SQLite3::TIME_ZONE)
+    end
+  end
+
+  def read(t : Time?.class) : Time?
+    if text = read(String?)
+      if text.includes?(".")
+        Time.parse(text, "%F %H:%M:%S.%N", location: SQLite3::TIME_ZONE)
+      else
+        Time.parse(text, SQLite3::DATE_FORMAT_SECOND, location: SQLite3::TIME_ZONE)
+      end
+    end
   end
 end
 
@@ -103,9 +134,7 @@ class Grant::Adapter::Sqlite < Grant::Adapter::Base
 
     statement = String.build do |stmt|
       if options["update_on_duplicate"]?
-        # Note: This is legacy code. New code should use upsert_all
-        # which properly handles ON CONFLICT for SQLite 3.24+
-        stmt << "INSERT OR REPLACE "
+        stmt << "INSERT "
       elsif options["ignore_on_duplicate"]?
         stmt << "INSERT OR IGNORE "
       else
@@ -116,7 +145,6 @@ class Grant::Adapter::Sqlite < Grant::Adapter::Base
       stmt << ") VALUES "
 
       model_array.each do |model|
-        next unless model.valid?
         model.set_timestamps
         stmt << '('
         stmt << Array.new(fields.size, '?').join(',')
@@ -124,6 +152,17 @@ class Grant::Adapter::Sqlite < Grant::Adapter::Base
         stmt << "),"
       end
     end.chomp(',')
+
+    if options["update_on_duplicate"]?
+      if columns = options["columns"]?
+        update_columns = columns.dup
+        update_columns << "updated_at" if fields.includes?("updated_at") && !update_columns.includes?("updated_at")
+        unless update_columns.empty?
+          statement += " ON CONFLICT (#{quote(primary_name)}) DO UPDATE SET "
+          statement += update_columns.map { |key| "#{quote(key)} = excluded.#{quote(key)}" }.join(", ")
+        end
+      end
+    end
 
     elapsed_time = Time.measure do
       open do |db|
