@@ -199,10 +199,15 @@ begin
 rescue ex : Grant::Locking::Optimistic::StaleObjectError
   # Handle the conflict
   puts "Another user modified this record. Please reload and try again."
-  user2_product.reload
+  user2_product.reload # refreshes user2_product in place and discards its unsaved changes
   # Retry the operation
 end
 ```
+
+`reload` is available in application code. It refreshes the same record object,
+clears its unsaved and previous dirty state, and raises
+`Grant::Querying::NotFound` if the row is no longer visible in the model's
+current scope.
 
 ### Automatic Retries
 
