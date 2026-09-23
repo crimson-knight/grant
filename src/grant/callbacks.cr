@@ -171,7 +171,16 @@ module Grant::Callbacks
 
     macro __{{name.id}}
       @_current_callback = {{name}}
-      \{% for callback_data in CALLBACKS[{{name}}] %}
+      \{% callbacks = [] of ASTNode %}
+      \{% callback_classes = @type.ancestors + [@type] %}
+      \{% for ancestor in callback_classes %}
+        \{% if ancestor.class? && ancestor.has_constant?("CALLBACKS") %}
+          \{% for callback_data in ancestor.constant("CALLBACKS")[{{name}}] %}
+            \{% callbacks << callback_data %}
+          \{% end %}
+        \{% end %}
+      \{% end %}
+      \{% for callback_data in callbacks %}
         \{% if callback_data.is_a? NamedTupleLiteral %}
           \{% callback = callback_data[:callback] %}
           \{% condition = callback_data[:if] %}
@@ -251,7 +260,15 @@ module Grant::Callbacks
       @_current_callback = {{name}}
       @_around_halted = false
 
-      \{% callbacks = AROUND_CALLBACKS[{{name}}] %}
+      \{% callbacks = [] of ASTNode %}
+      \{% callback_classes = @type.ancestors + [@type] %}
+      \{% for ancestor in callback_classes %}
+        \{% if ancestor.class? && ancestor.has_constant?("AROUND_CALLBACKS") %}
+          \{% for callback in ancestor.constant("AROUND_CALLBACKS")[{{name}}] %}
+            \{% callbacks << callback %}
+          \{% end %}
+        \{% end %}
+      \{% end %}
       \{% if callbacks.empty? %}
         # No around callbacks — just run the operation directly
         begin
