@@ -101,11 +101,26 @@ private def restore_default_spec_connections
 end
 
 private def restore_default_spec_runtime_state
-  # A few connection/sharding specs deliberately clear or switch global state.
-  # Restore the default fiber context and database before the next file's hooks.
+  # Specs can change process-wide settings and fiber-local tenancy in addition
+  # to clearing connections. Restore them before the next file's before_all.
+  Grant.settings.default_timezone = Grant::TIME_ZONE
+  Grant.settings.index_hint_mode = :warn
+  Grant.settings.in_clause_limit = 1000
+  Grant::Tenant.clear
+  Grant::HealthMonitor.test_mode = true
+
   Grant::Base.connection_context = nil
   restore_default_spec_connections
   Grant::ConnectionRegistry.default_database = CURRENT_ADAPTER
+
+  Log.builder.clear
+  {% if flag?(:spec_logs) %}
+    Log.builder.bind(
+      source: "*",
+      level: Log::Severity::Trace,
+      backend: Log::IOBackend.new(STDOUT, dispatcher: :sync),
+    )
+  {% end %}
 end
 
 Spec.before_each do
