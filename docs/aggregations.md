@@ -130,15 +130,16 @@ last_user = User.last!  # Raises Grant::Querying::NotFound if table is empty
 
 ## Query Builder Integration
 
-All aggregation methods work seamlessly with Grant's query builder:
+The relation methods `sum`, `avg`, `min`, and `max` execute SQL calculations
+with the relation's filters, joins, and bound parameters intact. Their aliases
+`average`, `minimum`, and `maximum` are available on relations as well.
 
 ```crystal
-# Complex aggregations
-result = Order.joins(:items)
-              .where(status: "completed")
-              .where("orders.created_at > ?", 1.year.ago)
-              .group(:user_id)
-              .sum("items.quantity * items.price")
+# Calculations keep the relation's conditions
+completed_total = Order.where(status: "completed").sum(:total)
+completed_average = Order.where(status: "completed").average(:total)
+lowest_total = Order.where(status: "completed").minimum(:total)
+highest_total = Order.where(status: "completed").maximum(:total)
 
 # Multiple aggregations
 stats = {
