@@ -351,12 +351,12 @@ module Grant::Polymorphic
     end
     
     # Define setter method
-    def {{name.id}}=(record : T?) forall T
+    def {{name.id}}=(record : Grant::Base?)
       if record.nil?
         @{{foreign_key.id}} = nil
         @{{type_column.id}} = nil
       else
-        primary_key_value = record.primary_key_value
+        primary_key_value = record.read_attribute({{primary_key.id.stringify}})
         @{{foreign_key.id}} = case primary_key_value
                               when Int64
                                 primary_key_value
@@ -367,7 +367,23 @@ module Grant::Polymorphic
                               end
         @{{type_column.id}} = record.class.name
       end
+      set_loaded_association({{name.id.stringify}}, record)
     end
+
+    Grant::AssociationRegistry.register_writer(
+      {{@type.name.stringify}}, {{name.id.stringify}},
+      ->(owner : Grant::Base, value : Grant::AssociationRegistry::AssociationValue) : Bool {
+        if value.nil?
+          owner.as({{@type}}).{{name.id}} = nil
+          true
+        elsif associated = value.as?(Grant::Base)
+          owner.as({{@type}}).{{name.id}} = associated
+          true
+        else
+          false
+        end
+      }
+    )
     
     # Store association metadata
     class_getter _{{name.id}}_association_meta = {

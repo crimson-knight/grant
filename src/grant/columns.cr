@@ -511,6 +511,9 @@ module Grant::Columns
         errors << error if error
       end
     {% end %}
+    hash.each do |attribute_name, value|
+      Grant::AssociationRegistry.assign(self, attribute_name.to_s, value)
+    end
     self
   end
 

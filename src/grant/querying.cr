@@ -390,7 +390,7 @@ module Grant::Querying
         placeholder_index += 1
         placeholder = adapter.parameter_placeholder(placeholder_index)
         set_clause << "#{quote("updated_at")} = #{placeholder}"
-        set_values << Time.local(Grant.settings.default_timezone).at_beginning_of_second
+        set_values << Time.local(Grant.settings.default_timezone)
       {% end %}
 
       return 0_i64 if set_clause.empty?

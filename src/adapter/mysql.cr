@@ -64,7 +64,6 @@ class Grant::Adapter::Mysql < Grant::Adapter::Base
 
       model_array.each do |model|
         model.set_timestamps
-        next unless model.valid?
         stmt << "("
         stmt << Array.new(fields.size, '?').join(',')
         params.concat fields.map { |field| model.read_attribute field }

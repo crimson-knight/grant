@@ -26,152 +26,173 @@ describe "Grant::Associations Integration Tests" do
   describe "polymorphic with advanced options" do
     it "works with dependent: :destroy on polymorphic associations" do
       author = PolymorphicAuthor.create!(name: "Jane")
-      note1 = AuthorNote.new(content: "Note 1")
-      note1.notable = author
-      note1.save!
-      note2 = AuthorNote.new(content: "Note 2")
-      note2.notable = author
-      note2.save!
-      
+      note1 = AuthorNote.create!(content: "Note 1", notable: author)
+      note2 = AuthorNote.create!(content: "Note 2", notable: author)
+
       AuthorNote.where(notable_type: "PolymorphicAuthor", notable_id: author.id).count.should eq(2)
-      
+
       author.destroy!
-      
+
       AuthorNote.where(notable_type: "PolymorphicAuthor", notable_id: author.id).count.should eq(0)
     end
-    
+
     it "works with counter_cache on polymorphic associations" do
       article = CachedArticle.create!(title: "Test Article", reactions_count: 0)
       video = CachedVideo.create!(title: "Test Video", reactions_count: 0)
-      
-      reaction1 = Reaction.new(emoji: "👍")
-      reaction1.reactable = article
-      reaction1.save!
+
+      reaction1 = Reaction.create!(emoji: "👍", reactable: article)
       CachedArticle.find!(article.id.not_nil!).reactions_count.should eq(1)
-      
-      reaction2 = Reaction.new(emoji: "❤️")
-      reaction2.reactable = article
-      reaction2.save!
+
+      reaction2 = Reaction.create!(emoji: "❤️", reactable: article)
       CachedArticle.find!(article.id.not_nil!).reactions_count.should eq(2)
-      
-      reaction3 = Reaction.new(emoji: "🎉")
-      reaction3.reactable = video
-      reaction3.save!
+
+      reaction3 = Reaction.create!(emoji: "🎉", reactable: video)
       CachedVideo.find!(video.id.not_nil!).reactions_count.should eq(1)
-      
+
       reaction1.destroy!
       CachedArticle.find!(article.id.not_nil!).reactions_count.should eq(1)
     end
-    
+
     it "works with touch on polymorphic associations" do
       project = TouchableProject.create!(name: "Project")
-      original_updated = project.updated_at
-      
-      # touch stores timestamps at whole-second precision.
-      sleep 1.1.seconds
-      
-      task = ProjectTask.new(title: "Task")
-      task.touchable = project
-      task.save!
-      
+      original_updated = Time.utc(2000, 1, 1)
+      project.updated_at = original_updated
+      project.save!(skip_timestamps: true)
+
+      task = ProjectTask.create!(title: "Task", touchable: project)
+
       updated_project = TouchableProject.find!(project.id.not_nil!)
-      updated_project.updated_at.should_not eq(original_updated)
+      updated_project.updated_at.not_nil!.should be > original_updated
     end
   end
-  
+
   describe "multiple options combined" do
     it "combines optional, touch, and counter_cache" do
       forum = Forum.create!(name: "Tech Forum", posts_count: 0)
-      
+
       # Create post with forum
-      post1 = ForumPost.new(title: "Post 1")
-      post1.forum = forum
-      post1.save!
-      
+      post1 = ForumPost.create!(title: "Post 1", forum: forum)
+
       updated_forum = Forum.find!(forum.id.not_nil!)
       updated_forum.posts_count.should eq(1)
-      original_updated = updated_forum.updated_at
-      
-      # touch stores timestamps at whole-second precision.
-      sleep 1.1.seconds
-      
+      original_updated = Time.utc(2000, 1, 1)
+      updated_forum.updated_at = original_updated
+      updated_forum.save!(skip_timestamps: true)
+
       # Create post without forum (optional: true)
       post2 = ForumPost.create!(title: "Post 2")
       post2.forum_id.should be_nil
-      
+
       # Update post to add forum
-      post2.forum = forum
-      post2.save!
-      
+      post2.update(forum: forum).should be_true
+      post2.forum_id.should eq(forum.id)
+      post2.forum.should be(forum)
+
       final_forum = Forum.find!(forum.id.not_nil!)
       final_forum.posts_count.should eq(2)
-      final_forum.updated_at.should_not eq(original_updated)
+      final_forum.updated_at.not_nil!.should be > original_updated
     end
-    
+
     it "combines dependent and autosave" do
       order = ComplexOrder.create!(number: "ORD-001")
       item1 = OrderItem.new(product: "Widget", quantity: 2)
       item2 = OrderItem.new(product: "Gadget", quantity: 1)
-      
+
       order.items = [item1, item2]
       order.save!
-      
+
       # Items should be saved automatically
       OrderItem.where(complex_order_id: order.id).count.should eq(2)
-      
+
       # Destroying order should destroy items
       order.destroy!
       OrderItem.count.should eq(0)
     end
   end
-  
+
   describe "autosave option" do
     it "saves new associated records on parent save" do
-      company = AutosaveCompany.create!(name: "ACME Corp")
-      
       employee1 = AutosaveEmployee.new(name: "John Doe")
       employee2 = AutosaveEmployee.new(name: "Jane Smith")
-      
-      company.employees = [employee1, employee2]
+      company = AutosaveCompany.new(name: "ACME Corp", employees: [employee1, employee2])
       company.save!
-      
+
       AutosaveEmployee.where(autosave_company_id: company.id).count.should eq(2)
       employee1.persisted?.should be_true
       employee2.persisted?.should be_true
     end
-    
+
     it "saves changes to existing associated records" do
       profile = UserProfile.create!(username: "johndoe")
-      settings = ProfileSettings.new(theme: "light")
-      settings.user_profile = profile
+      settings = ProfileSettings.new(theme: "light", user_profile: profile)
       settings.save!
-      
+
       profile.reload
       profile.settings.not_nil!.theme = "dark"
       profile.save!
-      
+
       ProfileSettings.find!(settings.id.not_nil!).theme.should eq("dark")
     end
+
+    it "mass assigns belongs_to associations through new, create!, and update" do
+      first_profile = UserProfile.create!(username: "first")
+      second_profile = UserProfile.create!(username: "second")
+
+      new_settings = ProfileSettings.new(theme: "new", user_profile: first_profile)
+      new_settings.user_profile_id.should eq(first_profile.id)
+      new_settings.user_profile.should be(first_profile)
+      new_settings.save!
+
+      created_settings = ProfileSettings.create!(theme: "created", user_profile: first_profile)
+      created_settings.user_profile.should be(first_profile)
+
+      created_settings.update(user_profile: second_profile).should be_true
+      created_settings.user_profile_id.should eq(second_profile.id)
+      created_settings.user_profile.should be(second_profile)
+    end
+
+    it "mass assigns has_one associations and saves them with the owner" do
+      settings = ProfileSettings.new(theme: "dark")
+      profile = UserProfile.new(username: "with-settings", settings: settings)
+
+      profile.save!
+
+      settings.persisted?.should be_true
+      settings.user_profile_id.should eq(profile.id)
+      profile.settings.should be(settings)
+    end
+
+    it "mass assigns has_many associations without an autosave option" do
+      first_post = ForumPost.new(title: "First")
+      second_post = ForumPost.new(title: "Second")
+      forum = Forum.new(name: "with posts", posts_count: 0, posts: [first_post, second_post])
+
+      forum.save!
+
+      ForumPost.where(forum_id: forum.id).count.should eq(2)
+      first_post.persisted?.should be_true
+      second_post.persisted?.should be_true
+      first_post.forum_id.should eq(forum.id)
+      second_post.forum_id.should eq(forum.id)
+    end
   end
-  
+
   describe "edge cases and error scenarios" do
     it "handles circular references gracefully" do
       parent = TreeNode.create!(name: "Parent")
-      child = TreeNode.new(name: "Child")
-      child.parent = parent
-      child.save!
-      
+      child = TreeNode.create!(name: "Child", parent: parent)
+
       # This should not cause infinite loop
       parent.children.to_a.size.should eq(1)
       child.parent.not_nil!.name.should eq("Parent")
     end
-    
+
     it "validates required associations before optional ones" do
       # Product requires category but manufacturer is optional
       product = ValidatedProduct.new(name: "Widget")
       product.valid?.should be_false
       product.errors.map(&.message).should contain("category must exist")
-      
+
       category = ProductCategory.create!(name: "Electronics")
       product.category = category
       product.valid?.should be_true
@@ -183,20 +204,20 @@ end
 class AuthorNote < Grant::Base
   connection {{ CURRENT_ADAPTER }}
   table author_notes
-  
+
   column id : Int64, primary: true
   column content : String
-  
+
   belongs_to :notable, polymorphic: true
 end
 
 class PolymorphicAuthor < Grant::Base
   connection {{ CURRENT_ADAPTER }}
   table polymorphic_authors
-  
+
   column id : Int64, primary: true
   column name : String
-  
+
   has_many :notes, class_name: AuthorNote, as: :notable, dependent: :destroy
 end
 
@@ -204,32 +225,32 @@ end
 class Reaction < Grant::Base
   connection {{ CURRENT_ADAPTER }}
   table reactions
-  
+
   column id : Int64, primary: true
   column emoji : String
-  
+
   belongs_to :reactable, polymorphic: true, counter_cache: :reactions_count
 end
 
 class CachedArticle < Grant::Base
   connection {{ CURRENT_ADAPTER }}
   table cached_articles
-  
+
   column id : Int64, primary: true
   column title : String
   column reactions_count : Int32
-  
+
   has_many :reactions, as: :reactable
 end
 
 class CachedVideo < Grant::Base
   connection {{ CURRENT_ADAPTER }}
   table cached_videos
-  
+
   column id : Int64, primary: true
   column title : String
   column reactions_count : Int32
-  
+
   has_many :reactions, as: :reactable
 end
 
@@ -237,21 +258,21 @@ end
 class ProjectTask < Grant::Base
   connection {{ CURRENT_ADAPTER }}
   table project_tasks
-  
+
   column id : Int64, primary: true
   column title : String
-  
+
   belongs_to :touchable, polymorphic: true, touch: true
 end
 
 class TouchableProject < Grant::Base
   connection {{ CURRENT_ADAPTER }}
   table touchable_projects
-  
+
   column id : Int64, primary: true
   column name : String
   timestamps
-  
+
   has_many :tasks, class_name: ProjectTask, as: :touchable
 end
 
@@ -259,22 +280,22 @@ end
 class Forum < Grant::Base
   connection {{ CURRENT_ADAPTER }}
   table forums
-  
+
   column id : Int64, primary: true
   column name : String
   column posts_count : Int32
   timestamps
-  
+
   has_many :posts, class_name: ForumPost
 end
 
 class ForumPost < Grant::Base
   connection {{ CURRENT_ADAPTER }}
   table forum_posts
-  
+
   column id : Int64, primary: true
   column title : String
-  
+
   belongs_to :forum, optional: true, counter_cache: :posts_count, touch: true
 end
 
@@ -282,17 +303,17 @@ end
 class ComplexOrder < Grant::Base
   connection {{ CURRENT_ADAPTER }}
   table complex_orders
-  
+
   column id : Int64, primary: true
   column number : String
-  
+
   has_many :items, class_name: OrderItem, dependent: :destroy, autosave: true
 end
 
 class OrderItem < Grant::Base
   connection {{ CURRENT_ADAPTER }}
   table order_items
-  
+
   column id : Int64, primary: true
   column product : String
   column quantity : Int32
@@ -303,17 +324,17 @@ end
 class AutosaveCompany < Grant::Base
   connection {{ CURRENT_ADAPTER }}
   table autosave_companies
-  
+
   column id : Int64, primary: true
   column name : String
-  
+
   has_many :employees, class_name: AutosaveEmployee, autosave: true
 end
 
 class AutosaveEmployee < Grant::Base
   connection {{ CURRENT_ADAPTER }}
   table autosave_employees
-  
+
   column id : Int64, primary: true
   column name : String
   column autosave_company_id : Int64?
@@ -323,21 +344,21 @@ end
 class UserProfile < Grant::Base
   connection {{ CURRENT_ADAPTER }}
   table user_profiles
-  
+
   column id : Int64, primary: true
   column username : String
-  
+
   has_one :settings, class_name: ProfileSettings, autosave: true
 end
 
 class ProfileSettings < Grant::Base
   connection {{ CURRENT_ADAPTER }}
   table profile_settings
-  
+
   column id : Int64, primary: true
   column theme : String
   column user_profile_id : Int64?
-  
+
   belongs_to :user_profile
 end
 
@@ -345,11 +366,11 @@ end
 class TreeNode < Grant::Base
   connection {{ CURRENT_ADAPTER }}
   table tree_nodes
-  
+
   column id : Int64, primary: true
   column name : String
   column parent_id : Int64?
-  
+
   belongs_to :parent, class_name: TreeNode, foreign_key: :parent_id, optional: true
   has_many :children, class_name: TreeNode, foreign_key: :parent_id
 end
@@ -358,7 +379,7 @@ end
 class ProductCategory < Grant::Base
   connection {{ CURRENT_ADAPTER }}
   table product_categories
-  
+
   column id : Int64, primary: true
   column name : String
 end
@@ -366,7 +387,7 @@ end
 class ProductManufacturer < Grant::Base
   connection {{ CURRENT_ADAPTER }}
   table product_manufacturers
-  
+
   column id : Int64, primary: true
   column name : String
 end
@@ -374,10 +395,10 @@ end
 class ValidatedProduct < Grant::Base
   connection {{ CURRENT_ADAPTER }}
   table validated_products
-  
+
   column id : Int64, primary: true
   column name : String
-  
+
   belongs_to :category, class_name: ProductCategory
   belongs_to :manufacturer, class_name: ProductManufacturer, optional: true
 end

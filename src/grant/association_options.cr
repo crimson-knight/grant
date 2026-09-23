@@ -252,7 +252,7 @@ module Grant::AssociationOptions
     # user.profile = Profile.new(bio: "hi")
     # user.save # also saves the new profile
     # ```
-    macro setup_autosave(association_name, association_type, foreign_key = nil, primary_key = nil)
+    macro setup_autosave(association_name, association_type, foreign_key = nil, primary_key = nil, autosave_existing = false)
       around_save do
         self.class.transaction do
           block.call
@@ -278,18 +278,22 @@ module Grant::AssociationOptions
       after_save do
         {% if association_type == :has_one %}
           association = @_{{association_name}}_for_autosave
+          {% if autosave_existing %}
           if association.nil? && association_loaded?({{association_name.stringify}})
             association = get_loaded_association({{association_name.stringify}}).as(typeof(@_{{association_name}}_for_autosave))
           end
+          {% end %}
           if association
+            key_changed = association.read_attribute({{foreign_key}}) != self.read_attribute({{primary_key}})
             association.set_attributes({ {{foreign_key}} => self.read_attribute({{primary_key}}) })
-            association.save! if !association.persisted? || association.changed?
+            association.save! if !association.persisted? || key_changed || ({{autosave_existing}} && association.changed?)
           end
         {% elsif association_type == :has_many %}
           if associations = @_{{association_name}}_for_autosave
             associations.each do |record|
+              key_changed = record.read_attribute({{foreign_key}}) != self.read_attribute({{primary_key}})
               record.set_attributes({ {{foreign_key}} => self.read_attribute({{primary_key}}) })
-              record.save! unless record.persisted?
+              record.save! if !record.persisted? || key_changed || ({{autosave_existing}} && record.changed?)
             end
           end
         {% end %}

@@ -588,8 +588,6 @@ module Grant::Query::Assembler
     end
 
     def touch_all(fields : Tuple, time : Time) : Int64
-      time = time.at_beginning_of_second
-
       set_parts = ["#{Model.quote("updated_at")} = #{add_parameter(time)}"]
 
       # Add any additional fields to touch

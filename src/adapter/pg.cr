@@ -81,7 +81,6 @@ class Grant::Adapter::Pg < Grant::Adapter::Base
 
       model_array.each do |model|
         model.set_timestamps
-        next unless model.valid?
         stmt << '('
         stmt << fields.map_with_index { |_f, idx| "$#{index + idx + 1}" }.join(',')
         params.concat fields.map { |field| model.read_attribute field }

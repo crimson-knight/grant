@@ -73,4 +73,23 @@ abstract class Grant::Base
       end
     {% end %}
   end
+
+  # Clears a named column when its declared type accepts nil. Association
+  # setters use this so clearing a belongs_to remains valid for models that
+  # declare a required, non-null foreign key.
+  def clear_nullable_attribute(name : String) : Nil
+    {% begin %}
+      case name
+      {% for ivar in @type.instance_vars.select(&.annotation(Grant::Column)) %}
+        {% ann = ivar.annotation(Grant::Column) %}
+        {% if ann[:nilable] %}
+          when {{ivar.name.stringify}}
+            self.{{ivar.name.id}} = nil
+        {% end %}
+      {% end %}
+      else
+        nil
+      end
+    {% end %}
+  end
 end

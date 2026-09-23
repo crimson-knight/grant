@@ -1,6 +1,22 @@
 require "../../spec_helper"
 
 describe "belongs_to" do
+  before_each do
+    Teacher.migrator.drop_and_create
+    Klass.migrator.drop_and_create
+    Person.migrator.drop_and_create
+    Company.migrator.drop_and_create
+    Book.migrator.drop_and_create
+    BookReview.migrator.drop_and_create
+    CourierService.migrator.drop_and_create
+    Courier.migrator.drop_and_create
+    Character.migrator.drop_and_create
+    Chat.migrator.drop_and_create
+    ChatSettings.migrator.drop_and_create
+    UUIDModel.migrator.drop_and_create
+    UUIDRelation.migrator.drop_and_create
+  end
+
   it "provides a getter for the foreign entity" do
     teacher = Teacher.new
     teacher.name = "Test teacher"

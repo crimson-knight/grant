@@ -1,6 +1,13 @@
 require "../../spec_helper"
 
 describe "has_many" do
+  before_each do
+    Teacher.migrator.drop_and_create
+    Klass.migrator.drop_and_create
+    CourierService.migrator.drop_and_create
+    Courier.migrator.drop_and_create
+  end
+
   it "provides a method to retrieve associated objects" do
     teacher = Teacher.new
     teacher.name = "test teacher"

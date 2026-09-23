@@ -364,7 +364,7 @@ abstract class Grant::Base
       # user.new_record? # => true
       # user.save        # INSERTs the row
       # ```
-      def initialize(**args : Grant::Columns::Type)
+      def initialize(**args)
         ensure_dirty_tracking_initialized
         set_attributes(args.to_h.transform_keys(&.to_s))
         establish_initial_dirty_baseline
@@ -381,6 +381,15 @@ abstract class Grant::Base
       # user.save
       # ```
       def initialize(args : Grant::ModelArgs)
+        ensure_dirty_tracking_initialized
+        set_attributes(args.transform_keys(&.to_s))
+        establish_initial_dirty_baseline
+        __after_initialize
+      end
+
+      # Accept a dynamic attribute hash whose values may include association
+      # records or arrays of records as well as scalar columns.
+      def initialize(args : Hash(String | Symbol, T)) forall T
         ensure_dirty_tracking_initialized
         set_attributes(args.transform_keys(&.to_s))
         establish_initial_dirty_baseline
