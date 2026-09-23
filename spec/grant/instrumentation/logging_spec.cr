@@ -193,6 +193,7 @@ describe "Grant::Logging" do
       messages = backend.messages.join("\n")
       
       messages.should contain("Loaded has_many association")
+      messages.should contain("Teacher [Klass] [fk: teacher_id]")
       messages.should contain("2 records")
     end
   end
