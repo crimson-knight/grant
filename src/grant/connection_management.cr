@@ -6,7 +6,7 @@ require "./connection_registry"
 # (`connection` / `connects_to`), automatic read/write splitting across primary
 # and replica connections, horizontal sharding, read-only windows, and the
 # write-tracking that decides when a replica is safe to read. The public entry
-# points are the `connects_to` / `connection` / `connection_config` macros and
+# points are the `connects_to` / `connection` / `configure_connection` macros and
 # the `ClassMethods` (`connected_to`, `while_preventing_writes`, `current_role`,
 # `adapter`, etc.). Named connections themselves are established via
 # `Grant::ConnectionRegistry.establish_connection`.
@@ -36,15 +36,18 @@ module Grant::ConnectionManagement
   # threshold. Drives the decision of whether a read may safely use a replica.
   struct ReplicaLagTracker
     # Monotonic timestamp of the most recent tracked write.
-    property last_write_time : Time::Span
+    property last_write_time : Time::Instant
     # Monotonic deadline before which reads must use the primary, or `nil`.
-    property sticky_until : Time::Span?
+    property sticky_until : Time::Instant?
+    # Whether a write has been tracked since this tracker was created.
+    property has_written : Bool
     # How stale a replica may be before reads return to the primary.
     property lag_threshold : Time::Span
 
-    def initialize(@last_write_time = Time.monotonic,
+    def initialize(@last_write_time = Time.instant,
                    @sticky_until = nil,
-                   @lag_threshold = 2.seconds)
+                   @lag_threshold = 2.seconds,
+                   @has_written = false)
     end
 
     # Records a write now, resetting `last_write_time` to the current monotonic
@@ -54,7 +57,8 @@ module Grant::ConnectionManagement
     # tracker.mark_write
     # ```
     def mark_write
-      @last_write_time = Time.monotonic
+      @last_write_time = Time.instant
+      @has_written = true
     end
 
     # Forces reads onto the primary for the next *duration* by setting
@@ -64,7 +68,7 @@ module Grant::ConnectionManagement
     # tracker.stick_to_primary(5.seconds)
     # ```
     def stick_to_primary(duration : Time::Span)
-      @sticky_until = Time.monotonic + duration
+      @sticky_until = Time.instant + duration
     end
 
     # Returns `true` when a replica may be read from: there is no active sticky
@@ -74,7 +78,7 @@ module Grant::ConnectionManagement
     # tracker.can_use_replica?(2.seconds) # => true once 2s have passed write-free
     # ```
     def can_use_replica?(wait_period : Time::Span) : Bool
-      now = Time.monotonic
+      now = Time.instant
 
       # Check if we're in sticky period
       if sticky = @sticky_until
@@ -82,7 +86,7 @@ module Grant::ConnectionManagement
       end
 
       # Check if enough time has passed since last write
-      now - @last_write_time > wait_period
+      !@has_written || now - @last_write_time > wait_period
     end
   end
 
@@ -221,13 +225,13 @@ module Grant::ConnectionManagement
   #
   # ```
   # class User < Grant::Base
-  #   connection_config(
+  #   configure_connection(
   #     replica_lag_threshold: 2.seconds,
   #     failover_retry_attempts: 3
   #   )
   # end
   # ```
-  macro connection_config(**options)
+  macro configure_connection(**options)
     {% for key, value in options %}
       {% if key == :replica_lag_threshold %}
         self.replica_lag_threshold = {{value}}
@@ -444,15 +448,15 @@ module Grant::ConnectionManagement
       end
     end
 
-    # Returns the monotonic `Time::Span` timestamp of the most recent write
+    # Returns the monotonic `Time::Instant` timestamp of the most recent write
     # tracked for the current database/shard. Used by the read/write splitter to
     # decide when a replica is safe to read from after a write.
     #
     # ```
     # User.create(name: "Ada")
-    # User.last_write_time # => a monotonic Time::Span just recorded
+    # User.last_write_time # => a monotonic Time::Instant just recorded
     # ```
-    def last_write_time : Time::Span
+    def last_write_time : Time::Instant
       key = replica_tracker_key
       tracker = replica_lag_trackers[key] ||= ReplicaLagTracker.new(lag_threshold: replica_lag_threshold)
       tracker.last_write_time

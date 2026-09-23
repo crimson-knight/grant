@@ -107,7 +107,7 @@ module Grant::Associations
   # ```
   macro belongs_to(model, **options)
     {% if options[:polymorphic] %}
-      belongs_to_polymorphic({{model}}, {{options.double_splat}})
+      belongs_to_polymorphic({{model}}, {% for key, value in options %}{{key.id}}: {{value}}, {% end %})
     {% else %}
     {% if model.is_a? TypeDeclaration %}
       {% method_name = model.var %}
@@ -273,7 +273,7 @@ module Grant::Associations
   # ```
   macro has_one(model, **options)
     {% if options[:as] %}
-      has_one_polymorphic({{model}}, {{options[:as]}}, {{options.double_splat}})
+      has_one_polymorphic({{model}}, {{options[:as]}}, {% for key, value in options %}{{key.id}}: {{value}}, {% end %})
     {% elsif options[:through] %}
       # has_one :through — traverses an intermediate association to find a single target record
       {% if model.is_a? TypeDeclaration %}
@@ -521,7 +521,7 @@ module Grant::Associations
   # ```
   macro has_many(model, scope = nil, **options)
     {% if options[:as] %}
-      has_many_polymorphic({{model}}, {{options[:as]}}, {{options.double_splat}})
+      has_many_polymorphic({{model}}, {{options[:as]}}, {% for key, value in options %}{{key.id}}: {{value}}, {% end %})
     {% else %}
     {% if model.is_a? TypeDeclaration %}
       {% method_name = model.var %}

@@ -3,59 +3,59 @@ require "../../support/polymorphic_models"
 
 describe "Grant::Associations::Polymorphic" do
   before_all do
-    Comment.migrator.drop_and_create
+    PolymorphicComment.migrator.drop_and_create
     Image.migrator.drop_and_create
-    Post.migrator.drop_and_create
+    PolymorphicPost.migrator.drop_and_create
     PolyBook.migrator.drop_and_create
   end
   describe "polymorphic belongs_to" do
     it "creates the necessary columns" do
-      Comment.fields.includes?("commentable_id").should be_true
-      Comment.fields.includes?("commentable_type").should be_true
+      PolymorphicComment.fields.includes?("commentable_id").should be_true
+      PolymorphicComment.fields.includes?("commentable_type").should be_true
     end
 
     it "allows setting a polymorphic association" do
-      post = Post.create!(name: "Test Post")
-      comment = Comment.new(content: "Great post!")
+      post = PolymorphicPost.create!(name: "Test PolymorphicPost")
+      comment = PolymorphicComment.new(content: "Great post!")
 
       comment.commentable = post
       comment.commentable_id.should eq(post.id)
-      comment.commentable_type.should eq("Post")
+      comment.commentable_type.should eq("PolymorphicPost")
 
       comment.save!
     end
 
     it "retrieves the polymorphic association" do
-      post = Post.create!(name: "Test Post")
-      comment = Comment.new(content: "Great post!")
+      post = PolymorphicPost.create!(name: "Test PolymorphicPost")
+      comment = PolymorphicComment.new(content: "Great post!")
       comment.commentable = post
       comment.save!
 
-      loaded_comment = Comment.find!(comment.id.not_nil!)
-      loaded_comment.commentable.should be_a(Post)
+      loaded_comment = PolymorphicComment.find!(comment.id.not_nil!)
+      loaded_comment.commentable.should be_a(PolymorphicPost)
       loaded_commentable = loaded_comment.commentable.not_nil!
-      loaded_commentable.should be_a(Post)
-      loaded_commentable.as(Post).id.should eq(post.id)
+      loaded_commentable.should be_a(PolymorphicPost)
+      loaded_commentable.as(PolymorphicPost).id.should eq(post.id)
     end
 
     it "handles different polymorphic types" do
-      post = Post.create!(name: "Test Post")
+      post = PolymorphicPost.create!(name: "Test PolymorphicPost")
       book = PolyBook.create!(name: "Test PolyBook")
 
-      comment1 = Comment.new(content: "About the post")
+      comment1 = PolymorphicComment.new(content: "About the post")
       comment1.commentable = post
       comment1.save!
       
-      comment2 = Comment.new(content: "About the book")
+      comment2 = PolymorphicComment.new(content: "About the book")
       comment2.commentable = book
       comment2.save!
 
-      Comment.find!(comment1.id.not_nil!).commentable.should be_a(Post)
-      Comment.find!(comment2.id.not_nil!).commentable.should be_a(PolyBook)
+      PolymorphicComment.find!(comment1.id.not_nil!).commentable.should be_a(PolymorphicPost)
+      PolymorphicComment.find!(comment2.id.not_nil!).commentable.should be_a(PolyBook)
     end
 
     it "handles nil polymorphic associations" do
-      comment = Comment.create!(content: "Standalone comment")
+      comment = PolymorphicComment.create!(content: "Standalone comment")
       comment.commentable.should be_nil
       comment.commentable_id.should be_nil
       comment.commentable_type.should be_nil
@@ -64,18 +64,18 @@ describe "Grant::Associations::Polymorphic" do
 
   describe "polymorphic has_many" do
     it "retrieves associated records through polymorphic association" do
-      post = Post.create!(name: "Test Post")
+      post = PolymorphicPost.create!(name: "Test PolymorphicPost")
       book = PolyBook.create!(name: "Test PolyBook")
 
-      comment1 = Comment.new(content: "First post comment")
+      comment1 = PolymorphicComment.new(content: "First post comment")
       comment1.commentable = post
       comment1.save!
       
-      comment2 = Comment.new(content: "Second post comment")
+      comment2 = PolymorphicComment.new(content: "Second post comment")
       comment2.commentable = post
       comment2.save!
       
-      comment3 = Comment.new(content: "PolyBook comment")
+      comment3 = PolymorphicComment.new(content: "PolyBook comment")
       comment3.commentable = book
       comment3.save!
 
@@ -92,7 +92,7 @@ describe "Grant::Associations::Polymorphic" do
 
   describe "polymorphic has_one" do
     it "retrieves a single associated record through polymorphic association" do
-      post = Post.create!(name: "Test Post")
+      post = PolymorphicPost.create!(name: "Test PolymorphicPost")
       book = PolyBook.create!(name: "Test PolyBook")
 
       post_image = Image.new(url: "post.jpg")

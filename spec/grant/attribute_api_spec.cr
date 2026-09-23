@@ -27,7 +27,7 @@ end
 
 # Test models
 class AttributeApiProduct < Grant::Base
-  connection sqlite
+  connection {{(env("CURRENT_ADAPTER") || "sqlite").id}}
   table attribute_api_products
   
   column id : Int64, primary: true
@@ -59,7 +59,7 @@ class AttributeApiProduct < Grant::Base
 end
 
 class AttributeApiUser < Grant::Base
-  connection sqlite
+  connection {{(env("CURRENT_ADAPTER") || "sqlite").id}}
   table attribute_api_users
   
   column id : Int64, primary: true
@@ -79,8 +79,8 @@ end
 describe "Grant::AttributeApi" do
   # Create tables before running tests
   Spec.before_suite do
-    AttributeApiProduct.migrator.create
-    AttributeApiUser.migrator.create
+    AttributeApiProduct.migrator.drop_and_create
+    AttributeApiUser.migrator.drop_and_create
   end
   
   # Clean up tables after tests

@@ -20,17 +20,32 @@ module Grant::Testing
         shard_name = match[1]
         # Convert known shard names to symbols
         @shard = case shard_name
-                 when "shard_0" then :shard_0
-                 when "shard_1" then :shard_1
-                 when "shard_2" then :shard_2
-                 when "shard_3" then :shard_3
-                 when "shard_4" then :shard_4
-                 when "shard_5" then :shard_5
-                 when "shard_6" then :shard_6
-                 when "shard_7" then :shard_7
-                 when "shard_8" then :shard_8
-                 when "shard_9" then :shard_9
-                 else                :default
+                 when "shard_0"          then :shard_0
+                 when "shard_1"          then :shard_1
+                 when "shard_2"          then :shard_2
+                 when "shard_3"          then :shard_3
+                 when "shard_4"          then :shard_4
+                 when "shard_5"          then :shard_5
+                 when "shard_6"          then :shard_6
+                 when "shard_7"          then :shard_7
+                 when "shard_8"          then :shard_8
+                 when "shard_9"          then :shard_9
+                 when "shard_2023"       then :shard_2023
+                 when "shard_2024_h1"    then :shard_2024_h1
+                 when "shard_2024_h2"    then :shard_2024_h2
+                 when "shard_current"    then :shard_current
+                 when "shard_old"        then :shard_old
+                 when "shard_medium"     then :shard_medium
+                 when "shard_us_west"    then :shard_us_west
+                 when "shard_us_east"    then :shard_us_east
+                 when "shard_us_central" then :shard_us_central
+                 when "shard_eu"         then :shard_eu
+                 when "shard_apac"       then :shard_apac
+                 when "shard_asia"       then :shard_asia
+                 when "shard_global"     then :shard_global
+                 when "shard_us"         then :shard_us
+                 when "shard_other"      then :shard_other
+                 else                         :default
                  end
       else
         @shard = :default
@@ -185,68 +200,31 @@ module Grant::Testing
 
   # Simplified test helpers
   module ShardingHelpers
+    GENERIC_SHARDS = [:shard_0, :shard_1, :shard_2, :shard_3, :shard_4,
+                      :shard_5, :shard_6, :shard_7, :shard_8, :shard_9]
+
     def with_virtual_shards(count : Int32, &block)
+      unless count > 0 && count <= GENERIC_SHARDS.size
+        raise "Unsupported virtual shard count: #{count}. Supported: 1-#{GENERIC_SHARDS.size}"
+      end
+
+      with_virtual_shards(GENERIC_SHARDS.first(count), &block)
+    end
+
+    def with_virtual_shards(shards : Array(Symbol), &block)
       VirtualShardAdapter.clear_all
       Grant::HealthMonitor.test_mode = true
 
       begin
-        # Create virtual shards
-        # Crystal doesn't support dynamic symbol creation, so we need to handle known counts
-        case count
-        when 1
+        # Register the exact shard names from the model's resolver.
+        shards.each do |shard|
           Grant::ConnectionRegistry.establish_connection(
             database: "test",
             adapter: VirtualShardAdapter,
-            url: "virtual://shard_0",
+            url: "virtual://#{shard}",
             role: :primary,
-            shard: :shard_0
+            shard: shard
           )
-        when 2
-          Grant::ConnectionRegistry.establish_connection(
-            database: "test",
-            adapter: VirtualShardAdapter,
-            url: "virtual://shard_0",
-            role: :primary,
-            shard: :shard_0
-          )
-          Grant::ConnectionRegistry.establish_connection(
-            database: "test",
-            adapter: VirtualShardAdapter,
-            url: "virtual://shard_1",
-            role: :primary,
-            shard: :shard_1
-          )
-        when 4
-          Grant::ConnectionRegistry.establish_connection(
-            database: "test",
-            adapter: VirtualShardAdapter,
-            url: "virtual://shard_0",
-            role: :primary,
-            shard: :shard_0
-          )
-          Grant::ConnectionRegistry.establish_connection(
-            database: "test",
-            adapter: VirtualShardAdapter,
-            url: "virtual://shard_1",
-            role: :primary,
-            shard: :shard_1
-          )
-          Grant::ConnectionRegistry.establish_connection(
-            database: "test",
-            adapter: VirtualShardAdapter,
-            url: "virtual://shard_2",
-            role: :primary,
-            shard: :shard_2
-          )
-          Grant::ConnectionRegistry.establish_connection(
-            database: "test",
-            adapter: VirtualShardAdapter,
-            url: "virtual://shard_3",
-            role: :primary,
-            shard: :shard_3
-          )
-        else
-          raise "Unsupported virtual shard count: #{count}. Supported: 1, 2, 4"
         end
 
         # Don't do anything here - let the model register itself

@@ -1,7 +1,7 @@
 require "../spec_helper"
 
 {% begin %}
-  {% adapter_literal = env("CURRENT_ADAPTER").id %}
+  {% adapter_literal = (env("CURRENT_ADAPTER") || "sqlite").id %}
 
   class SecureTokenTestModel < Grant::Base
     connection {{ adapter_literal }}
@@ -22,48 +22,48 @@ describe Grant::SecureToken do
     it "generates tokens automatically on create" do
       model = SecureTokenTestModel.new
       model.name = "Test User"
-      
+
       model.auth_token.should be_nil
       model.api_key.should be_nil
-      
+
       model.save
-      
+
       model.auth_token.should_not be_nil
       model.auth_token.not_nil!.size.should eq(24)
       model.api_key.should_not be_nil
       model.api_key.not_nil!.size.should eq(36)
     end
-    
+
     it "generates tokens with different alphabets" do
       model = SecureTokenTestModel.create(name: "Test")
-      
+
       # Base58 token
       model.auth_token.not_nil!.should match(/^[123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz]+$/)
-      
+
       # Hex token
       model.api_key.not_nil!.should match(/^[0-9a-f]+$/)
     end
-    
+
     it "regenerates tokens" do
       model = SecureTokenTestModel.create(name: "Test")
-      
+
       original_token = model.auth_token
       original_api_key = model.api_key
-      
+
       model.regenerate_auth_token
       model.regenerate_api_key
-      
+
       model.auth_token.should_not eq(original_token)
       model.api_key.should_not eq(original_api_key)
     end
-    
+
     it "doesn't regenerate existing tokens on create" do
       model = SecureTokenTestModel.new
       model.name = "Test"
       model.auth_token = "existing_token"
-      
+
       model.save
-      
+
       model.auth_token.should eq("existing_token")
     end
   end
@@ -73,7 +73,7 @@ end
 adapter = Grant::Connections[CURRENT_ADAPTER]
 if adapter.is_a?(Grant::Adapter::Base)
   adapter.exec("DROP TABLE IF EXISTS secure_token_test_models")
-  
+
   case CURRENT_ADAPTER
   when "sqlite"
     adapter.exec(<<-SQL)

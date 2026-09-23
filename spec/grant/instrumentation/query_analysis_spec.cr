@@ -160,7 +160,7 @@ describe "Grant::QueryAnalysis" do
       # Since we can't access @stats directly, let's test through report output
       
       stats.report
-      sleep 100.milliseconds
+      sleep(100.milliseconds)
       messages = backend.messages.join("\n")
       
       # Verify the stats were recorded correctly
@@ -184,7 +184,7 @@ describe "Grant::QueryAnalysis" do
       
       stats.report
       
-      sleep 100.milliseconds
+      sleep(100.milliseconds)
       messages = backend.messages.join("\n")
       
       messages.should contain("Query Statistics Summary")

@@ -1,17 +1,17 @@
 require "../spec_helper"
 
 # Forward declarations for test
-class Post < Grant::Base
+class SimpleNestedPost < Grant::Base
   connection {{ CURRENT_ADAPTER }}
-  table posts
+  table simple_nested_posts
   column id : Int64, primary: true
   column title : String
   column author_id : Int64?
 end
 
-class Profile < Grant::Base
+class SimpleNestedProfile < Grant::Base
   connection {{ CURRENT_ADAPTER }}
-  table profiles
+  table simple_nested_profiles
   column id : Int64, primary: true
   column bio : String?
   column author_id : Int64?
@@ -20,18 +20,18 @@ end
 # Test model
 class TestAuthor < Grant::Base
   connection {{ CURRENT_ADAPTER }}
-  table test_authors
-  
+  table simple_nested_authors
+
   column id : Int64, primary: true
   column name : String
-  
+
   # Enable nested attributes with various options - using type declaration syntax
-  accepts_nested_attributes_for posts : Post, 
+  accepts_nested_attributes_for posts : SimpleNestedPost,
     allow_destroy: true,
     reject_if: :all_blank,
     limit: 3
-    
-  accepts_nested_attributes_for profile : Profile,
+
+  accepts_nested_attributes_for profile : SimpleNestedProfile,
     update_only: true
 end
 
@@ -42,33 +42,33 @@ describe "Grant::NestedAttributes Simple V2" do
       author.responds_to?(:posts_attributes=).should be_true
       author.responds_to?(:profile_attributes=).should be_true
     end
-    
+
     it "stores array of attributes" do
       author = TestAuthor.new(name: "John")
       author.posts_attributes = [
         {title: "Post 1", content: "Content 1"},
         {title: "Post 2", content: "Content 2"}
       ]
-      
+
       attrs = author.posts_nested_attributes
       attrs.should_not be_nil
       attrs.not_nil!.size.should eq(2)
       attrs.not_nil![0]["title"].should eq("Post 1")
       attrs.not_nil![1]["title"].should eq("Post 2")
     end
-    
+
     it "stores single hash as array" do
       author = TestAuthor.new(name: "John")
       # Since profile has update_only, we need an id
       author.profile_attributes = {id: 1, bio: "Developer"}
-      
+
       attrs = author.profile_nested_attributes
       attrs.should_not be_nil
       attrs.not_nil!.size.should eq(1)
       attrs.not_nil![0]["bio"].should eq("Developer")
     end
   end
-  
+
   describe "reject_if option" do
     it "rejects all blank attributes" do
       author = TestAuthor.new(name: "John")
@@ -77,21 +77,21 @@ describe "Grant::NestedAttributes Simple V2" do
         {title: "", content: ""},     # Should be rejected
         {title: "Another Valid", content: "More content"}
       ]
-      
+
       attrs = author.posts_nested_attributes
       attrs.should_not be_nil
       attrs.not_nil!.size.should eq(2)
       attrs.not_nil![0]["title"].should eq("Valid Post")
       attrs.not_nil![1]["title"].should eq("Another Valid")
     end
-    
+
     it "does not reject attributes with _destroy" do
       author = TestAuthor.new(name: "John")
       author.posts_attributes = [
         {id: 1, _destroy: true},  # Should not be rejected even though other fields are blank
         {title: "", content: ""}  # Should be rejected
       ]
-      
+
       attrs = author.posts_nested_attributes
       attrs.should_not be_nil
       attrs.not_nil!.size.should eq(1)
@@ -99,11 +99,11 @@ describe "Grant::NestedAttributes Simple V2" do
       attrs.not_nil![0]["_destroy"].should eq(true)
     end
   end
-  
+
   describe "limit option" do
     it "raises error when exceeding limit" do
       author = TestAuthor.new(name: "John")
-      
+
       expect_raises(ArgumentError, /Maximum 3 records/) do
         author.posts_attributes = [
           {title: "Post 1"},
@@ -113,7 +113,7 @@ describe "Grant::NestedAttributes Simple V2" do
         ]
       end
     end
-    
+
     it "allows exactly the limit" do
       author = TestAuthor.new(name: "John")
       author.posts_attributes = [
@@ -121,13 +121,13 @@ describe "Grant::NestedAttributes Simple V2" do
         {title: "Post 2"},
         {title: "Post 3"}
       ]
-      
+
       attrs = author.posts_nested_attributes
       attrs.should_not be_nil
       attrs.not_nil!.size.should eq(3)
     end
   end
-  
+
   describe "update_only option" do
     it "ignores new records when update_only is true" do
       author = TestAuthor.new(name: "John")
@@ -135,19 +135,19 @@ describe "Grant::NestedAttributes Simple V2" do
         bio: "New bio",
         website: "example.com"
       }
-      
+
       attrs = author.profile_nested_attributes
       attrs.should_not be_nil
       attrs.not_nil!.size.should eq(0)  # Should be empty because no id
     end
-    
+
     it "accepts records with id when update_only is true" do
       author = TestAuthor.new(name: "John")
       author.profile_attributes = {
         id: 123,
         bio: "Updated bio"
       }
-      
+
       attrs = author.profile_nested_attributes
       attrs.should_not be_nil
       attrs.not_nil!.size.should eq(1)
@@ -155,7 +155,7 @@ describe "Grant::NestedAttributes Simple V2" do
       attrs.not_nil![0]["bio"].should eq("Updated bio")
     end
   end
-  
+
   describe "mixed operations" do
     it "handles create, update, and destroy markers" do
       author = TestAuthor.new(name: "John")
@@ -164,19 +164,19 @@ describe "Grant::NestedAttributes Simple V2" do
         {id: 2, _destroy: true},               # Destroy
         {title: "New Post", content: "New"}    # Create
       ]
-      
+
       attrs = author.posts_nested_attributes
       attrs.should_not be_nil
       attrs.not_nil!.size.should eq(3)
-      
+
       # Check update
       attrs.not_nil![0]["id"].should eq(1)
       attrs.not_nil![0]["title"].should eq("Updated Post")
-      
+
       # Check destroy
       attrs.not_nil![1]["id"].should eq(2)
       attrs.not_nil![1]["_destroy"].should eq(true)
-      
+
       # Check create
       attrs.not_nil![2]["title"].should eq("New Post")
       attrs.not_nil![2]["id"]?.should be_nil

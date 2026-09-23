@@ -1,7 +1,7 @@
 require "../support/test_connection"
 
 class NestedAttributesOwnerScopeChild < Grant::Base
-  connection {{ env("CURRENT_ADAPTER").id }}
+  connection {{ (env("CURRENT_ADAPTER") || "sqlite").id }}
   table nested_attributes_owner_scope_children
 
   column id : Int64, primary: true
@@ -13,7 +13,7 @@ class NestedAttributesOwnerScopeChild < Grant::Base
 end
 
 class NestedAttributesOwnerScopeParent < Grant::Base
-  connection {{ env("CURRENT_ADAPTER").id }}
+  connection {{ (env("CURRENT_ADAPTER") || "sqlite").id }}
   table nested_attributes_owner_scope_parents
 
   column id : Int64, primary: true

@@ -283,7 +283,7 @@ module Grant::Validators
             \\{{block.body}}
           end
         \\{% else %}
-          validate_method(\\{{name_or_method}}, \\{{**options}})
+          validate_method(\\{{name_or_method}}, \\{% for key, value in options %}\\{{key.id}}: \\{{value}}, \\{% end %})
         \\{% end %}
       end
       \{% end %}
@@ -777,7 +777,7 @@ module Grant::Validators
 
       # Alias for `validates_length_of`.
       macro validates_size_of(field, **options)
-        validates_length_of(\\{{field}}, \\{{**options}})
+        validates_length_of(\\{{field}}, \\{% for key, value in options %}\\{{key.id}}: \\{{value}}, \\{% end %})
       end
 
       # Validates that a confirmation field matches the original field.

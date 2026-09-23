@@ -50,7 +50,7 @@ describe "Grant::Logging" do
       Teacher.all
       
       # Add a small delay to ensure log messages are processed
-      sleep 100.milliseconds
+      sleep(100.milliseconds)
       
       # Check that SQL was logged
       messages = backend.messages.join("\n")
@@ -72,7 +72,7 @@ describe "Grant::Logging" do
         "Teacher"
       )
       
-      sleep 100.milliseconds
+      sleep(100.milliseconds)
       messages = backend.messages.join("\n")
       
       messages.should contain("Slow query detected")
@@ -85,7 +85,7 @@ describe "Grant::Logging" do
         Teacher.find!(999999)
       end
       
-      sleep 100.milliseconds
+      sleep(100.milliseconds)
       messages = backend.messages.join("\n")
       
       # The query executes successfully, just returns 0 rows
@@ -99,7 +99,7 @@ describe "Grant::Logging" do
     it "logs record creation" do
       teacher = Teacher.create(name: "New Teacher")
       
-      sleep 100.milliseconds
+      sleep(100.milliseconds)
       messages = backend.messages.join("\n")
       
       messages.should contain("Creating record")
@@ -113,7 +113,7 @@ describe "Grant::Logging" do
       teacher.name = "Updated Teacher"
       teacher.save
       
-      sleep 100.milliseconds
+      sleep(100.milliseconds)
       messages = backend.messages.join("\n")
       
       messages.should contain("Updating record")
@@ -126,7 +126,7 @@ describe "Grant::Logging" do
       
       teacher.destroy
       
-      sleep 100.milliseconds
+      sleep(100.milliseconds)
       messages = backend.messages.join("\n")
       
       messages.should contain("Destroying record")
@@ -139,7 +139,7 @@ describe "Grant::Logging" do
       student = Student.new(name: "") # Assuming name is required
       student.save
       
-      sleep 100.milliseconds
+      sleep(100.milliseconds)
       messages = backend.messages.join("\n")
       
       if messages.includes?("Failed to save record")
@@ -159,7 +159,7 @@ describe "Grant::Logging" do
       # Access the belongs_to association
       loaded_student = enrollment.student
       
-      sleep 100.milliseconds
+      sleep(100.milliseconds)
       messages = backend.messages.join("\n")
       
       messages.should contain("Loaded belongs_to association")
@@ -173,7 +173,7 @@ describe "Grant::Logging" do
       # Access the has_many association
       klasses = teacher.klasses
       
-      sleep 100.milliseconds
+      sleep(100.milliseconds)
       messages = backend.messages.join("\n")
       
       messages.should contain("Created has_many association collection")
@@ -189,7 +189,7 @@ describe "Grant::Logging" do
       # Query through association
       klasses = teacher.klasses.all
       
-      sleep 100.milliseconds
+      sleep(100.milliseconds)
       messages = backend.messages.join("\n")
       
       messages.should contain("Loaded has_many association")

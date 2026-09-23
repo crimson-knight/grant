@@ -1,6 +1,26 @@
 require "../spec_helper"
 
 describe "Grant::EnumAttributes" do
+  before_all do
+    id_column = case CURRENT_ADAPTER
+                when "pg"
+                  "BIGSERIAL PRIMARY KEY"
+                when "mysql"
+                  "BIGINT AUTO_INCREMENT PRIMARY KEY"
+                else
+                  "INTEGER PRIMARY KEY AUTOINCREMENT"
+                end
+
+    EnumArticle.exec("DROP TABLE IF EXISTS enum_articles")
+    EnumArticle.exec("CREATE TABLE enum_articles (id #{id_column}, title TEXT NOT NULL, status TEXT)")
+    OptionalEnumItem.exec("DROP TABLE IF EXISTS optional_enum_items")
+    OptionalEnumItem.exec("CREATE TABLE optional_enum_items (id #{id_column}, name TEXT NOT NULL, priority TEXT)")
+    MultiEnumTask.exec("DROP TABLE IF EXISTS multi_enum_tasks")
+    MultiEnumTask.exec("CREATE TABLE multi_enum_tasks (id #{id_column}, title TEXT NOT NULL, status TEXT, priority TEXT)")
+    IntegerEnumUser.exec("DROP TABLE IF EXISTS integer_enum_users")
+    IntegerEnumUser.exec("CREATE TABLE integer_enum_users (id #{id_column}, name TEXT NOT NULL, role INTEGER)")
+  end
+
   describe "basic enum functionality" do
     it "creates enum column with converter" do
       article = EnumArticle.new(title: "Test Article")
@@ -8,7 +28,7 @@ describe "Grant::EnumAttributes" do
     end
     
     it "persists and retrieves enum values" do
-      article = EnumArticle.create!(title: "Test", status: :published)
+      article = EnumArticle.create!(title: "Test", status: EnumArticle::Status::Published)
       
       loaded = EnumArticle.find!(article.id.not_nil!)
       loaded.status.should eq(EnumArticle::Status::Published)
@@ -58,10 +78,10 @@ describe "Grant::EnumAttributes" do
   describe "scopes" do
     before_all do
       EnumArticle.clear
-      EnumArticle.create!(title: "Draft 1", status: :draft)
-      EnumArticle.create!(title: "Draft 2", status: :draft)
-      EnumArticle.create!(title: "Published 1", status: :published)
-      EnumArticle.create!(title: "Archived 1", status: :archived)
+      EnumArticle.create!(title: "Draft 1", status: EnumArticle::Status::Draft)
+      EnumArticle.create!(title: "Draft 2", status: EnumArticle::Status::Draft)
+      EnumArticle.create!(title: "Published 1", status: EnumArticle::Status::Published)
+      EnumArticle.create!(title: "Archived 1", status: EnumArticle::Status::Archived)
     end
     
     it "generates scopes for each enum value" do
@@ -133,13 +153,14 @@ describe "Grant::EnumAttributes" do
   
   describe "custom column types" do
     it "supports integer column storage" do
-      user = IntegerEnumUser.create!(name: "John", role: :admin)
+      user = IntegerEnumUser.create!(name: "John", role: IntegerEnumUser::Role::Admin)
       
       # Verify it's stored as integer
       raw_value = IntegerEnumUser.adapter.open do |db|
-        db.scalar("SELECT role FROM integer_enum_users WHERE id = ?", user.id).as(Int64)
+        placeholder = CURRENT_ADAPTER == "pg" ? "$1" : "?"
+        db.scalar("SELECT \"role\" FROM integer_enum_users WHERE id = #{placeholder}", user.id)
       end
-      raw_value.should eq(2) # Admin = 2
+      raw_value.to_s.should eq("2") # Admin = 2
       
       loaded = IntegerEnumUser.find!(user.id.not_nil!)
       loaded.role.should eq(IntegerEnumUser::Role::Admin)
@@ -149,7 +170,7 @@ end
 
 # Test models
 class EnumArticle < Grant::Base
-  connection sqlite
+  connection {{(env("CURRENT_ADAPTER") || "sqlite").id}}
   table enum_articles
   
   column id : Int64, primary: true
@@ -161,11 +182,11 @@ class EnumArticle < Grant::Base
     Archived
   end
   
-  enum_attribute status : EnumArticle::Status = :draft
+  enum_attribute status : EnumArticle::Status = :draft, column_type: String
 end
 
 class OptionalEnumItem < Grant::Base
-  connection sqlite
+  connection {{(env("CURRENT_ADAPTER") || "sqlite").id}}
   table optional_enum_items
   
   column id : Int64, primary: true
@@ -181,7 +202,7 @@ class OptionalEnumItem < Grant::Base
 end
 
 class MultiEnumTask < Grant::Base
-  connection sqlite
+  connection {{(env("CURRENT_ADAPTER") || "sqlite").id}}
   table multi_enum_tasks
   
   column id : Int64, primary: true
@@ -199,12 +220,12 @@ class MultiEnumTask < Grant::Base
     High
   end
   
-  enum_attribute status : MultiEnumTask::Status, default: :pending
-  enum_attribute priority : MultiEnumTask::Priority, default: :medium
+  enum_attribute status : MultiEnumTask::Status = :pending
+  enum_attribute priority : MultiEnumTask::Priority = :medium
 end
 
 class IntegerEnumUser < Grant::Base
-  connection sqlite
+  connection {{(env("CURRENT_ADAPTER") || "sqlite").id}}
   table integer_enum_users
   
   column id : Int64, primary: true

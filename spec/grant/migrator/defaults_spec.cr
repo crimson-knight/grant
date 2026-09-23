@@ -1,7 +1,7 @@
 require "../../support/test_connection"
 
 class MigratorDefaultLiteralRow < Grant::Base
-  connection {{ env("CURRENT_ADAPTER").id }}
+  connection {{ (env("CURRENT_ADAPTER") || "sqlite").id }}
   table migrator_default_literal_rows
 
   column id : Int64, primary: true

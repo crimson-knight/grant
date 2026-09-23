@@ -65,7 +65,7 @@ abstract class Grant::Adapter::Base
   end
 
   def log(query : String, elapsed_time : Time::Span, params = [] of String) : Nil
-    Log.debug { colorize query, params, elapsed_time.total_seconds }
+    Grant::Logs::SQL.debug { colorize query, params, elapsed_time.total_seconds }
   end
 
   # remove all rows from a table and reset the counter on the id.

@@ -3,8 +3,8 @@ require "../../spec_helper"
 describe "Advanced Query Interface" do
   describe "Query#merge" do
     it "merges where conditions" do
-      query1 = Parent.where(name: "test")
-      query2 = Parent.where(locked: true)
+      query1 = AdvancedQueryParent.where(name: "test")
+      query2 = AdvancedQueryParent.where(locked: true)
       
       merged = query1.merge(query2)
       
@@ -14,8 +14,8 @@ describe "Advanced Query Interface" do
     end
     
     it "uses other query's order when merging" do
-      query1 = Parent.order(name: :asc)
-      query2 = Parent.order(id: :desc)
+      query1 = AdvancedQueryParent.order(name: :asc)
+      query2 = AdvancedQueryParent.order(id: :desc)
       
       merged = query1.merge(query2)
       
@@ -24,8 +24,8 @@ describe "Advanced Query Interface" do
     end
     
     it "merges group fields without duplicates" do
-      query1 = Parent.where(id: [1, 2, 3]).group_by(:name)
-      query2 = Parent.where(id: [1, 2, 3]).group_by(:name).group_by(:locked)
+      query1 = AdvancedQueryParent.where(id: [1, 2, 3]).group_by(:name)
+      query2 = AdvancedQueryParent.where(id: [1, 2, 3]).group_by(:name).group_by(:locked)
       
       merged = query1.merge(query2)
       
@@ -34,8 +34,8 @@ describe "Advanced Query Interface" do
     end
     
     it "uses other query's limit and offset" do
-      query1 = Parent.limit(10).offset(5)
-      query2 = Parent.limit(20).offset(10)
+      query1 = AdvancedQueryParent.limit(10).offset(5)
+      query2 = AdvancedQueryParent.limit(20).offset(10)
       
       merged = query1.merge(query2)
       
@@ -46,7 +46,7 @@ describe "Advanced Query Interface" do
   
   describe "Query#dup" do
     it "creates a copy of the query" do
-      original = Parent.where(name: "test").order(id: :desc).limit(10)
+      original = AdvancedQueryParent.where(name: "test").order(id: :desc).limit(10)
       copy = original.dup
       
       # Modify copy
@@ -60,7 +60,7 @@ describe "Advanced Query Interface" do
   
   describe "WhereChain" do
     it "provides not_in method" do
-      query = Parent.where.not_in(:id, [1, 2, 3])
+      query = AdvancedQueryParent.where.not_in(:id, [1, 2, 3])
       
       query.where_fields.size.should eq(1)
       field = query.where_fields[0]
@@ -76,7 +76,7 @@ describe "Advanced Query Interface" do
     end
     
     it "provides like method" do
-      query = Parent.where.like(:name, "%test%")
+      query = AdvancedQueryParent.where.like(:name, "%test%")
       
       query.where_fields.size.should eq(1)
       field = query.where_fields[0]
@@ -90,7 +90,7 @@ describe "Advanced Query Interface" do
     end
     
     it "provides not_like method" do
-      query = Parent.where.not_like(:name, "%spam%")
+      query = AdvancedQueryParent.where.not_like(:name, "%spam%")
       
       query.where_fields.size.should eq(1)
       field = query.where_fields[0]
@@ -104,7 +104,7 @@ describe "Advanced Query Interface" do
     end
     
     it "provides comparison methods" do
-      query = Parent.where.gt(:id, 10).where.lt(:id, 20)
+      query = AdvancedQueryParent.where.gt(:id, 10).where.lt(:id, 20)
       
       query.where_fields.size.should eq(2)
       
@@ -128,7 +128,7 @@ describe "Advanced Query Interface" do
     end
     
     it "provides is_null and is_not_null methods" do
-      query = Parent.where.is_null(:deleted_at).where.is_not_null(:confirmed_at)
+      query = AdvancedQueryParent.where.is_null(:deleted_at).where.is_not_null(:confirmed_at)
       
       query.where_fields.size.should eq(2)
       
@@ -154,7 +154,7 @@ describe "Advanced Query Interface" do
     end
     
     it "provides between method" do
-      query = Parent.where.between(:id, 10..20)
+      query = AdvancedQueryParent.where.between(:id, 10..20)
       
       query.where_fields.size.should eq(2)
       
@@ -178,7 +178,7 @@ describe "Advanced Query Interface" do
     end
     
     it "chains back to regular query methods" do
-      query = Parent.where.gt(:id, 10).order(name: :asc).limit(5)
+      query = AdvancedQueryParent.where.gt(:id, 10).order(name: :asc).limit(5)
       
       query.where_fields.size.should eq(1)
       query.order_fields.size.should eq(1)
@@ -188,7 +188,7 @@ describe "Advanced Query Interface" do
   
   describe "Subquery support" do
     it "supports subqueries in where conditions" do
-      admin_ids = Parent.where(name: "admin").select(:id)
+      admin_ids = AdvancedQueryParent.where(name: "admin").select(:id)
       query = Child.where(parent_id: admin_ids)
       
       query.where_fields.size.should eq(1)
@@ -205,7 +205,7 @@ describe "Advanced Query Interface" do
     
     it "supports EXISTS subqueries" do
       subquery = Child.where(name: "test")
-      query = Parent.where.exists(subquery)
+      query = AdvancedQueryParent.where.exists(subquery)
       
       query.where_fields.size.should eq(1)
       field = query.where_fields[0]
@@ -220,7 +220,7 @@ describe "Advanced Query Interface" do
     
     it "supports NOT EXISTS subqueries" do
       subquery = Child.where(name: "test")
-      query = Parent.where.not_exists(subquery)
+      query = AdvancedQueryParent.where.not_exists(subquery)
       
       query.where_fields.size.should eq(1)
       field = query.where_fields[0]
@@ -237,7 +237,7 @@ describe "Advanced Query Interface" do
   describe "Complex query combinations" do
     it "combines multiple advanced features" do
       # Complex query using multiple features
-      query = Parent
+      query = AdvancedQueryParent
         .where(active: true)
         .where.gt(:created_at, 1.week.ago)
         .where.not_like(:email, "%spam%")
@@ -257,8 +257,8 @@ describe "Advanced Query Interface" do
 end
 
 # Test models for specs
-class Parent < Grant::Base
-  connection "test"
+class AdvancedQueryParent < Grant::Base
+  connection {{(env("CURRENT_ADAPTER") || "sqlite").id}}
   table parents
   
   column id : Int64, primary: true
@@ -276,7 +276,7 @@ class Parent < Grant::Base
 end
 
 class Child < Grant::Base
-  connection "test"
+  connection {{(env("CURRENT_ADAPTER") || "sqlite").id}}
   table children
   
   column id : Int64, primary: true
@@ -285,5 +285,5 @@ class Child < Grant::Base
   column created_at : Time = Time.utc
   column updated_at : Time = Time.utc
   
-  belongs_to parent : Parent
+  belongs_to parent : AdvancedQueryParent
 end

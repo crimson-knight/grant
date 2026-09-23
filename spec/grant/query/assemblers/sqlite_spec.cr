@@ -1,6 +1,6 @@
 require "../spec_helper"
 
-{% if env("CURRENT_ADAPTER").id == "sqlite" %}
+{% if (env("CURRENT_ADAPTER") || "sqlite").id == "sqlite" %}
   describe Grant::Query::Assembler::Sqlite(Model) do
     context "count" do
       it "counts for where/count queries" do

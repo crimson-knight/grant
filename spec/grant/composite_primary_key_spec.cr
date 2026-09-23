@@ -2,11 +2,11 @@ require "../spec_helper"
 require "../../src/grant/composite_primary_key"
 
 # Test model with composite primary key using DSL
-class OrderItem < Grant::Base
+class CompositeOrderItem < Grant::Base
   include Grant::CompositePrimaryKey
   
-  connection sqlite
-  table order_items
+  connection {{(env("CURRENT_ADAPTER") || "sqlite").id}}
+  table composite_order_items
   
   # Define columns first
   column order_id : Int64, primary: true
@@ -24,7 +24,7 @@ end
 class UserSession < Grant::Base
   include Grant::CompositePrimaryKey
   
-  connection sqlite
+  connection {{(env("CURRENT_ADAPTER") || "sqlite").id}}
   table user_sessions
   
   column user_id : UUID, primary: true
@@ -41,7 +41,7 @@ end
 class RegionData < Grant::Base
   include Grant::CompositePrimaryKey
   
-  connection sqlite
+  connection {{(env("CURRENT_ADAPTER") || "sqlite").id}}
   table region_data
   
   column country_code : String, primary: true
@@ -55,7 +55,7 @@ end
 # Test model with single primary key
 class SingleKeyModel < Grant::Base
   include Grant::CompositePrimaryKey
-  connection sqlite
+  connection {{(env("CURRENT_ADAPTER") || "sqlite").id}}
   table single_keys
   
   column id : Int64, primary: true
@@ -65,8 +65,8 @@ end
 describe Grant::CompositePrimaryKey do
   describe "configuration" do
     it "detects composite primary key from DSL" do
-      OrderItem.composite_primary_key?.should be_true
-      OrderItem.composite_primary_key_columns.should eq [:order_id, :product_id]
+      CompositeOrderItem.composite_primary_key?.should be_true
+      CompositeOrderItem.composite_primary_key_columns.should eq [:order_id, :product_id]
     end
     
     it "detects composite primary key from column annotations" do
@@ -76,7 +76,7 @@ describe Grant::CompositePrimaryKey do
     
     it "returns false for models without composite keys" do
       # Models without the module included won't have the method
-      OrderItem.responds_to?(:composite_primary_key?).should be_true
+      CompositeOrderItem.responds_to?(:composite_primary_key?).should be_true
       
       # Models with only one primary key return false
       SingleKeyModel.composite_primary_key?.should be_false
@@ -85,7 +85,7 @@ describe Grant::CompositePrimaryKey do
   
   describe "new_record? detection" do
     it "returns true when any part of composite key is nil" do
-      item = OrderItem.new
+      item = CompositeOrderItem.new
       item.new_record?.should be_true
       
       item.order_id = 1_i64
@@ -105,7 +105,7 @@ describe Grant::CompositePrimaryKey do
   
   describe "helpers" do
     it "provides composite_key_values" do
-      item = OrderItem.new
+      item = CompositeOrderItem.new
       item.order_id = 108_i64
       item.product_id = 208_i64
       
@@ -116,7 +116,7 @@ describe Grant::CompositePrimaryKey do
     end
     
     it "provides composite_key_string" do
-      item = OrderItem.new
+      item = CompositeOrderItem.new
       item.order_id = 109_i64
       item.product_id = 209_i64
       
@@ -124,7 +124,7 @@ describe Grant::CompositePrimaryKey do
     end
     
     it "returns nil for incomplete composite_key_string" do
-      item = OrderItem.new
+      item = CompositeOrderItem.new
       item.order_id = 110_i64
       # product_id is nil
       
@@ -150,15 +150,15 @@ describe Grant::CompositePrimaryKey do
   # These tests verify the API exists but don't test actual DB operations
   describe "API existence" do
     it "has find method that accepts composite keys" do
-      OrderItem.responds_to?(:find).should be_true
+      CompositeOrderItem.responds_to?(:find).should be_true
     end
     
     it "has find! method" do
-      OrderItem.responds_to?(:find!).should be_true
+      CompositeOrderItem.responds_to?(:find!).should be_true
     end
     
     it "has exists? method" do
-      OrderItem.responds_to?(:exists?).should be_true
+      CompositeOrderItem.responds_to?(:exists?).should be_true
     end
   end
 end

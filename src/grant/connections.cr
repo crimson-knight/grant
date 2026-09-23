@@ -6,6 +6,10 @@ module Grant
 
     # For backward compatibility - delegates to ConnectionRegistry
     def self.<<(adapter : Grant::Adapter::Base) : Nil
+      if ConnectionRegistry.connection_exists?(adapter.name, :primary)
+        raise "Adapter with name '#{adapter.name}' has already been registered."
+      end
+
       ConnectionRegistry.establish_connection(
         database: adapter.name,
         adapter: adapter.class,

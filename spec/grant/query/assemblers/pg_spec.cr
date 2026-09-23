@@ -1,6 +1,6 @@
 require "../spec_helper"
 
-{% if env("CURRENT_ADAPTER").id == "pg" %}
+{% if (env("CURRENT_ADAPTER") || "sqlite").id == "pg" %}
   describe Grant::Query::Assembler::Pg(Model) do
     context "count" do
       it "counts for where/count queries" do

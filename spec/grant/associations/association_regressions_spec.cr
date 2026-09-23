@@ -1,7 +1,7 @@
 require "../../spec_helper"
 
 {% begin %}
-  {% adapter_literal = env("CURRENT_ADAPTER").id %}
+  {% adapter_literal = (env("CURRENT_ADAPTER") || "sqlite").id %}
 
   class T3AssociationOwner < Grant::Base
     connection {{ adapter_literal }}

@@ -5,7 +5,12 @@ describe "Grant::ConvenienceMethods" do
   before_all do
     ConvenienceUser.migrator.drop_and_create
     # Add unique constraint for upsert tests
-    ConvenienceUser.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_convenience_users_email ON convenience_users(email)")
+    index_sql = if CURRENT_ADAPTER == "mysql"
+                  "CREATE UNIQUE INDEX idx_convenience_users_email ON convenience_users(email)"
+                else
+                  "CREATE UNIQUE INDEX IF NOT EXISTS idx_convenience_users_email ON convenience_users(email)"
+                end
+    ConvenienceUser.exec(index_sql)
   end
   
   before_each do
@@ -384,7 +389,7 @@ describe "Grant::ConvenienceMethods" do
       user2 = ConvenienceUser.create!(name: "Jane", email: "jane@example.com", age: 30)
       
       original_time = user1.updated_at!
-      sleep 1.second  # Ensure time difference for SQLite second precision
+      sleep(1.second)  # Ensure time difference for SQLite second precision
       
       rows_affected = ConvenienceUser.touch_all
       rows_affected.should eq(2)
@@ -401,7 +406,7 @@ describe "Grant::ConvenienceMethods" do
       user2 = ConvenienceUser.create!(name: "Jane", email: "jane@example.com", age: 30)
       
       original_time = user2.updated_at!
-      sleep 1.second  # Ensure time difference for SQLite second precision
+      sleep(1.second)  # Ensure time difference for SQLite second precision
       
       rows_affected = ConvenienceUser.where(name: "Jane").touch_all
       rows_affected.should eq(1)
@@ -453,7 +458,7 @@ end
 
 # Test model
 class ConvenienceUser < Grant::Base
-  connection sqlite
+  connection {{(env("CURRENT_ADAPTER") || "sqlite").id}}
   table convenience_users
   
   column id : Int64, primary: true

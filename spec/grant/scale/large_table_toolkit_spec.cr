@@ -5,7 +5,7 @@ require "../../spec_helper"
 # ---------------------------------------------------------------------------
 
 class HintModel < Grant::Base
-  connection {{ env("CURRENT_ADAPTER").id }}
+  connection {{ (env("CURRENT_ADAPTER") || "sqlite").id }}
   table hint_models
 
   column id : Int64, primary: true
@@ -14,7 +14,7 @@ class HintModel < Grant::Base
 end
 
 class ChunkModel < Grant::Base
-  connection {{ env("CURRENT_ADAPTER").id }}
+  connection {{ (env("CURRENT_ADAPTER") || "sqlite").id }}
   table chunk_models
 
   column id : Int64, primary: true
@@ -23,7 +23,7 @@ class ChunkModel < Grant::Base
 end
 
 class StreamModel < Grant::Base
-  connection {{ env("CURRENT_ADAPTER").id }}
+  connection {{ (env("CURRENT_ADAPTER") || "sqlite").id }}
   table stream_models
 
   column id : Int64, primary: true
@@ -31,7 +31,7 @@ class StreamModel < Grant::Base
 end
 
 class TenantTodo < Grant::Base
-  connection {{ env("CURRENT_ADAPTER").id }}
+  connection {{ (env("CURRENT_ADAPTER") || "sqlite").id }}
   table tenant_todos
 
   column id : Int64, primary: true
@@ -78,10 +78,10 @@ describe "Large-table / high-scale toolkit" do
   describe "index hints" do
     it "renders an adapter-supported hint into the SQL (SQLite INDEXED BY)" do
       sql = HintModel.where(score: 5).use_index("idx_hint_models_score").raw_sql
-      {% if env("CURRENT_ADAPTER") == "sqlite" %}
+      {% if (env("CURRENT_ADAPTER") || "sqlite") == "sqlite" %}
         sql.should contain("INDEXED BY")
         sql.should contain("idx_hint_models_score")
-      {% elsif env("CURRENT_ADAPTER") == "mysql" %}
+      {% elsif (env("CURRENT_ADAPTER") || "sqlite") == "mysql" %}
         sql.should contain("USE INDEX")
       {% else %}
         # Postgres degrades: no hint in SQL
@@ -125,7 +125,7 @@ describe "Large-table / high-scale toolkit" do
       results.should eq([1_i64])
     end
 
-    {% if env("CURRENT_ADAPTER") == "sqlite" %}
+    {% if (env("CURRENT_ADAPTER") || "sqlite") == "sqlite" %}
       it ":strict mode raises for a missing index (SQLite)" do
         Grant.settings.index_hint_mode = :strict
         HintModel.create(id: 1_i64, name: "a", score: 5)
@@ -153,7 +153,7 @@ describe "Large-table / high-scale toolkit" do
       end
     {% end %}
 
-    {% if env("CURRENT_ADAPTER") == "pg" %}
+    {% if (env("CURRENT_ADAPTER") || "sqlite") == "pg" %}
       it "Postgres degrades all hints (no core hint syntax) and still returns rows" do
         Grant.settings.index_hint_mode = :warn
         HintModel.create(id: 1_i64, name: "a", score: 5)

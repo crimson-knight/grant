@@ -18,7 +18,7 @@ describe "has_one" do
     user.save
 
     user.profile = profile
-    profile.user_id.should eq profile.id
+    profile.user_id.should eq user.id
   end
 
   it "provides a method to retrieve associated objects" do
