@@ -1,4 +1,4 @@
-require "../luna_t4_spec_helper"
+require "../../support/test_connection"
 
 class MigratorDefaultLiteralRow < Grant::Base
   connection {{ env("CURRENT_ADAPTER").id }}
@@ -14,7 +14,7 @@ end
 
 describe "Grant::Migrator column defaults" do
   before_each do
-    GrantLunaT4SpecHelper.ensure_test_connection
+    TestConnection.ensure_registered
     MigratorDefaultLiteralRow.migrator.drop_and_create
   end
 

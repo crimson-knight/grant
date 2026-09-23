@@ -1,7 +1,7 @@
 require "../spec_helper"
 
-module GrantLunaT4SpecHelper
-  def self.ensure_test_connection
+module TestConnection
+  def self.ensure_registered
     return if Grant::ConnectionRegistry.connection_exists?(CURRENT_ADAPTER, :primary)
 
     case CURRENT_ADAPTER
