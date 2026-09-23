@@ -414,12 +414,24 @@ module Grant::ConnectionManagement
     # User.connected_to(role: :reading) { User.adapter } # => the replica adapter
     # ```
     def adapter : Grant::Adapter::Base
+      resolve_adapter_for_role(current_role)
+    end
+
+    # Resolves a model's connection for an explicit raw-SQL operation role.
+    # An active `connected_to` role takes precedence, matching the surrounding
+    # connection context; otherwise *role* selects the model's configured
+    # writer or reader.
+    def connection_adapter(role : Symbol) : Grant::Adapter::Base
+      resolve_adapter_for_role(connection_context.try(&.role) || role)
+    end
+
+    private def resolve_adapter_for_role(role : Symbol) : Grant::Adapter::Base
       # Determine database name
       db_name = if shard = current_shard
                   # For sharded connections, look up the database name
                   shard_settings = shard_config[shard]?
-                  shard_settings.try(&.[current_role]?) || current_database
-                elsif role_db = connection_config[current_role]?
+                  shard_settings.try(&.[role]?) || current_database
+                elsif role_db = connection_config[role]?
                   # For role-based connections
                   role_db
                 else
@@ -428,7 +440,7 @@ module Grant::ConnectionManagement
                 end
 
       begin
-        ConnectionRegistry.get_adapter(db_name, current_role, current_shard)
+        ConnectionRegistry.get_adapter(db_name, role, current_shard)
       rescue ex : Grant::AdapterNotAvailableError
         # Fallback to first registered connection for backward compatibility.
         # This handles legacy setups where a model references a connection name
@@ -442,6 +454,22 @@ module Grant::ConnectionManagement
           raise ex
         end
       end
+    end
+
+    # Returns a raw connection facade for this model. Connection calls do not
+    # apply `default_scope`; model-level raw methods enforce the explicit
+    # `unscoped` rule before using this facade.
+    def connection : Grant::Connection
+      Grant::Connection.new(
+        ->(role : Symbol) do
+          role == :writing ? connection_adapter(:writing) : adapter
+        end,
+        -> do
+          guard_writes!
+          mark_write_operation
+          nil
+        end
+      )
     end
 
     # Returns the monotonic `Time::Span` timestamp of the most recent write
