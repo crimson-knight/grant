@@ -72,11 +72,17 @@ module Grant
     def with_result_set(sql : String, binds : Array(Grant::Columns::Type) = [] of Grant::Columns::Type, & : DB::ResultSet -> T) : T forall T
       selected_adapter = adapter(:reading)
       statement = selected_adapter.ensure_clause_template(sql)
+      value = uninitialized T
+      yielded_result_set = false
       selected_adapter.open do |database|
         database.query(statement, args: binds) do |result_set|
-          yield result_set
+          value = yield result_set
+          yielded_result_set = true
+          nil
         end
       end
+      raise DB::Error.new("The selected adapter did not yield a result set") unless yielded_result_set
+      value
     end
   end
 

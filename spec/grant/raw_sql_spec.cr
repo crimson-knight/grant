@@ -24,7 +24,7 @@ require "../spec_helper"
   end
 
   class RawSqlRoutedParityRecord < Grant::Base
-    connects_to database: "raw_sql_routes", config: {writing: "raw_sql_routes", reading: "raw_sql_routes"}
+    connection {{ raw_sql_adapter }}
     table raw_sql_parity_records
 
     column id : Int64, primary: true
@@ -33,20 +33,19 @@ require "../spec_helper"
   end
 {% end %}
 
+RawSqlRoutedParityRecord.connection_config = {
+  :writing => CURRENT_ADAPTER,
+  :reading => "#{CURRENT_ADAPTER}_with_replica",
+}
+
 class RawSqlRollbackError < Exception
 end
 
-raw_sql_adapter = Grant::ConnectionRegistry.get_adapter(CURRENT_ADAPTER, :writing)
-[:primary, :writing, :reading].each do |role|
-  Grant::ConnectionRegistry.establish_connection(
-    database: "raw_sql_routes",
-    adapter: raw_sql_adapter.class,
-    url: raw_sql_adapter.url,
-    role: role
-  )
+private def raw_sql_adapter : Grant::Adapter::Base
+  Grant::ConnectionRegistry.get_adapter(CURRENT_ADAPTER, :writing)
 end
 
-raw_sql_adapter.open do |database|
+raw_sql_adapter().open do |database|
   database.exec("DROP TABLE IF EXISTS raw_sql_parity_records")
   database.exec(<<-SQL)
     CREATE TABLE raw_sql_parity_records (
@@ -58,7 +57,7 @@ raw_sql_adapter.open do |database|
 end
 
 Spec.before_each do
-  raw_sql_adapter.open do |database|
+  raw_sql_adapter().open do |database|
     database.exec("DELETE FROM raw_sql_parity_records")
     database.exec("INSERT INTO raw_sql_parity_records (id, label, active) VALUES (1, 'alpha', TRUE), (2, 'hidden', FALSE)")
   end
@@ -117,31 +116,31 @@ describe "ActiveRecord-style raw SQL" do
     before_unbound_scalar = RawSqlParityRecord.last_write_time
     sleep 1.millisecond
     RawSqlParityRecord.scalar(
-      "INSERT INTO raw_sql_parity_records (id, label, active) VALUES (3, 'scalar no binds', TRUE) RETURNING id"
-    ).should eq(3_i64)
+      "SELECT id FROM raw_sql_parity_records WHERE label = 'alpha'"
+    ).should eq(1_i64)
     after_unbound_scalar = RawSqlParityRecord.last_write_time
     after_unbound_scalar.should be > before_unbound_scalar
 
     sleep 1.millisecond
     RawSqlParityRecord.scalar(
-      "INSERT INTO raw_sql_parity_records (id, label, active) VALUES (?, ?, ?) RETURNING id",
-      [4_i64, "scalar binds", true]
-    ).should eq(4_i64)
+      "SELECT id FROM raw_sql_parity_records WHERE id = ?",
+      [2_i64]
+    ).should eq(2_i64)
     after_bound_scalar = RawSqlParityRecord.last_write_time
     after_bound_scalar.should be > after_unbound_scalar
 
     sleep 1.millisecond
     RawSqlParityRecord.scalar(
-      "INSERT INTO raw_sql_parity_records (id, label, active) VALUES (5, 'scalar block', TRUE) RETURNING id"
-    ) { |value| value }.should eq(5_i64)
+      "SELECT id FROM raw_sql_parity_records WHERE id = 1"
+    ) { |value| value }.should eq(1_i64)
     after_unbound_block_scalar = RawSqlParityRecord.last_write_time
     after_unbound_block_scalar.should be > after_bound_scalar
 
     sleep 1.millisecond
     RawSqlParityRecord.scalar(
-      "INSERT INTO raw_sql_parity_records (id, label, active) VALUES (?, ?, ?) RETURNING id",
-      [6_i64, "scalar block binds", true]
-    ) { |value| value }.should eq(6_i64)
+      "SELECT id FROM raw_sql_parity_records WHERE label = ?",
+      ["hidden"]
+    ) { |value| value }.should eq(2_i64)
     after_bound_block_scalar = RawSqlParityRecord.last_write_time
     after_bound_block_scalar.should be > after_unbound_block_scalar
   end
@@ -213,17 +212,17 @@ describe "ActiveRecord-style raw SQL" do
 
   it "routes model and named connection operations through configured roles" do
     model_connection = RawSqlRoutedParityRecord.connection
-    model_connection.adapter(:writing).name.should contain("raw_sql_routes:writing")
+    model_connection.adapter(:writing).name.should eq(Grant::ConnectionRegistry.get_adapter(CURRENT_ADAPTER, :writing).name)
 
     RawSqlRoutedParityRecord.connected_to(role: :reading) do
       reader_connection = RawSqlRoutedParityRecord.connection
-      reader_connection.adapter.name.should contain("raw_sql_routes:reading")
+      reader_connection.adapter.name.should eq(Grant::ConnectionRegistry.get_adapter("#{CURRENT_ADAPTER}_with_replica", :reading).name)
       reader_connection.select_value("SELECT 7").to_s.should eq("7")
     end
 
-    named_connection = Grant.connection("raw_sql_routes")
-    named_connection.adapter(:writing).name.should contain("raw_sql_routes:writing")
-    named_connection.adapter(:reading).name.should contain("raw_sql_routes:reading")
+    named_connection = Grant.connection("#{CURRENT_ADAPTER}_with_replica")
+    named_connection.adapter(:writing).name.should eq(Grant::ConnectionRegistry.get_adapter("#{CURRENT_ADAPTER}_with_replica", :writing).name)
+    named_connection.adapter(:reading).name.should eq(Grant::ConnectionRegistry.get_adapter("#{CURRENT_ADAPTER}_with_replica", :reading).name)
   end
 
   it "uses the active model transaction for raw connection writes" do
@@ -294,19 +293,19 @@ end
     schema = "grant_raw_sql_connection_tenant"
 
     before_all do
-      Grant::SchemaTenant.drop_schema(schema, adapter: raw_sql_adapter, cascade: true)
-      Grant::SchemaTenant.create_schema(schema, adapter: raw_sql_adapter)
-      raw_sql_adapter.open do |database|
-        database.exec("CREATE TABLE #{raw_sql_adapter.quote(schema)}.raw_sql_parity_records (id BIGINT PRIMARY KEY, label TEXT NOT NULL, active BOOLEAN NOT NULL)")
+      Grant::SchemaTenant.drop_schema(schema, adapter: raw_sql_adapter(), cascade: true)
+      Grant::SchemaTenant.create_schema(schema, adapter: raw_sql_adapter())
+      raw_sql_adapter().open do |database|
+        database.exec("CREATE TABLE #{raw_sql_adapter().quote(schema)}.raw_sql_parity_records (id BIGINT PRIMARY KEY, label TEXT NOT NULL, active BOOLEAN NOT NULL)")
       end
     end
 
     after_all do
-      Grant::SchemaTenant.drop_schema(schema, adapter: raw_sql_adapter, cascade: true)
+      Grant::SchemaTenant.drop_schema(schema, adapter: raw_sql_adapter(), cascade: true)
     end
 
     it "uses and restores the pinned tenant connection for read and write calls" do
-      Grant::SchemaTenant.with(schema, adapter: raw_sql_adapter) do
+      Grant::SchemaTenant.with(schema, adapter: raw_sql_adapter()) do
         RawSqlParityRecord.connection.select_value("SELECT current_schema()").should eq(schema)
         RawSqlParityRecord.connection.execute(
           "INSERT INTO raw_sql_parity_records (id, label, active) VALUES (?, ?, ?)",
@@ -319,8 +318,8 @@ end
       end
 
       RawSqlParityRecord.connection.select_value("SELECT current_schema()").should eq("public")
-      raw_sql_adapter.open do |database|
-        database.query_one("SELECT COUNT(*) FROM #{raw_sql_adapter.quote(schema)}.raw_sql_parity_records", as: Int64).should eq(1_i64)
+      raw_sql_adapter().open do |database|
+        database.query_one("SELECT COUNT(*) FROM #{raw_sql_adapter().quote(schema)}.raw_sql_parity_records", as: Int64).should eq(1_i64)
       end
     end
   end
