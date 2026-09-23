@@ -633,6 +633,8 @@ Each model showcases different aspects while remaining realistic examples of how
 
 [Documentation](docs/readme.md)
 
+[PostgreSQL Schema Tenancy](docs/schema_tenancy.md)
+
 ### Experimental Features
 
 - **[Horizontal Sharding](docs/SHARDING.md)** ⚠️ - Distribute data across multiple databases (Alpha - not production ready)

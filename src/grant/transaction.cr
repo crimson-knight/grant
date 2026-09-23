@@ -221,7 +221,12 @@ module Grant::Transaction
     def transaction(options : Transaction::Options, &block) : Nil
       stack = transaction_stack
 
-      if options.requires_new || stack.empty?
+      if options.requires_new && !stack.empty? && Grant::SchemaTenant.current_connection?(adapter)
+        # A schema-tenant block owns one physical connection. Independent
+        # requires_new transactions cannot use a second connection without
+        # losing that block's search_path, so preserve nesting with a savepoint.
+        execute_savepoint(&block)
+      elsif options.requires_new || stack.empty?
         execute_transaction(options, &block)
       else
         execute_savepoint(&block)
@@ -281,42 +286,48 @@ module Grant::Transaction
     end
 
     private def execute_transaction(options : Transaction::Options, &block)
-      # Use open_pool_connection (not open) so that:
-      #   1. We always get a dedicated connection for this transaction's BEGIN/COMMIT.
-      #   2. requires_new: true transactions get a fresh connection independent of any
-      #      enclosing transaction, rather than inheriting the outer tx connection.
-      adapter.open_pool_connection do |conn|
-        start_transaction(conn, options)
-        state = TransactionState.new(conn, options, adapter)
-        transaction_stack.push(state)
-
-        begin
-          yield
-
-          conn.exec("COMMIT")
-          transaction_stack.pop
-          clear_transaction_stack if transaction_stack.empty?
-          # This transaction committed durably on its own connection — true
-          # even for a requires_new transaction nested inside another one —
-          # so its deferred after_commit callbacks fire now.  Callbacks
-          # enqueued by an enclosing transaction live on that transaction's
-          # own state and wait for its commit.
-          state.pending_callbacks.each(&.[:on_commit].call)
-        rescue ex : Rollback
-          conn.exec("ROLLBACK")
-          transaction_stack.pop
-          clear_transaction_stack if transaction_stack.empty?
-          state.pending_callbacks.each(&.[:on_rollback].call)
-        rescue ex
-          conn.exec("ROLLBACK")
-          transaction_stack.pop
-          clear_transaction_stack if transaction_stack.empty?
-          state.pending_callbacks.each(&.[:on_rollback].call)
-          raise ex
+      if conn = Grant::SchemaTenant.current_connection?(adapter)
+        execute_transaction_on(conn, options) { yield }
+      else
+        # Use a dedicated pool checkout outside schema tenancy. Inside a schema
+        # block the same already-pinned connection must carry BEGIN through
+        # COMMIT so every statement sees the active search_path.
+        adapter.open_pool_connection do |conn|
+          execute_transaction_on(conn, options) { yield }
         end
       end
     rescue ex : DB::Error
       handle_transaction_error(ex)
+    end
+
+    private def execute_transaction_on(conn : DB::Connection, options : Transaction::Options, &block)
+      start_transaction(conn, options)
+      state = TransactionState.new(conn, options, adapter)
+      transaction_stack.push(state)
+
+      begin
+        yield
+
+        conn.exec("COMMIT")
+        transaction_stack.pop
+        clear_transaction_stack if transaction_stack.empty?
+        # This transaction committed durably on its own connection — true
+        # even for a requires_new transaction nested inside another one —
+        # so its deferred after_commit callbacks fire now. Callbacks
+        # enqueued by an enclosing transaction wait for its commit.
+        state.pending_callbacks.each(&.[:on_commit].call)
+      rescue ex : Rollback
+        conn.exec("ROLLBACK")
+        transaction_stack.pop
+        clear_transaction_stack if transaction_stack.empty?
+        state.pending_callbacks.each(&.[:on_rollback].call)
+      rescue ex
+        conn.exec("ROLLBACK")
+        transaction_stack.pop
+        clear_transaction_stack if transaction_stack.empty?
+        state.pending_callbacks.each(&.[:on_rollback].call)
+        raise ex
+      end
     end
 
     private def execute_savepoint(&block)

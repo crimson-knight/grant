@@ -13,6 +13,7 @@ require "./scale/index_hints"
 require "./scale/in_chunking"
 require "./scale/streaming"
 require "./scale/tenant"
+require "./scale/schema_tenant"
 
 abstract class Grant::Base
   include Grant::Scale::MultiTenancy
