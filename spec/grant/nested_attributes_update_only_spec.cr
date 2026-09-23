@@ -1,7 +1,7 @@
 require "../support/test_connection"
 
 class NestedAttributesUpdateOnlyProfile < Grant::Base
-  connection {{ env("CURRENT_ADAPTER").id }}
+  connection {{ (env("CURRENT_ADAPTER") || "sqlite").id }}
   table nested_attributes_update_only_profiles
 
   column id : Int64, primary: true
@@ -10,7 +10,7 @@ class NestedAttributesUpdateOnlyProfile < Grant::Base
 end
 
 class NestedAttributesUpdateOnlyParent < Grant::Base
-  connection {{ env("CURRENT_ADAPTER").id }}
+  connection {{ (env("CURRENT_ADAPTER") || "sqlite").id }}
   table nested_attributes_update_only_parents
 
   column id : Int64, primary: true

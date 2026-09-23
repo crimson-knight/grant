@@ -1,7 +1,7 @@
 require "../spec_helper"
 
 class ConnectionDatabaseContextTestModel < Grant::Base
-  connection {{ env("CURRENT_ADAPTER").id }}
+  connection {{ (env("CURRENT_ADAPTER") || "sqlite").id }}
   table connection_database_context_test_models
 
   column id : Int64, primary: true

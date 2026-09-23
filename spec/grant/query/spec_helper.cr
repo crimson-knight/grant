@@ -4,6 +4,15 @@ require "pg"
 require "sqlite3"
 require "../../../src/grant"
 require "../../../src/adapter/**"
+require "../../../src/grant/locking"
+require "../../../src/adapter/base"
+require "../../../src/grant/query/builder"
+require "../../../src/grant/query/executors/**"
+require "../../../src/grant/query/assemblers/base"
+require "../../../src/grant/query/assemblers/sqlite"
+require "../../../src/grant/query/assemblers/pg"
+require "../../../src/grant/query/assemblers/mysql"
+require "../../../src/grant/scale/index_hints"
 
 class Model
   def self.table_name
@@ -37,9 +46,9 @@ def query_fields
 end
 
 def builder
-  {% if env("CURRENT_ADAPTER").id == "pg" %}
+{% if (env("CURRENT_ADAPTER") || "sqlite").id == "pg" %}
     Grant::Query::Builder(Model).new Grant::Query::Builder::DbType::Pg
-  {% elsif env("CURRENT_ADAPTER").id == "mysql" %}
+  {% elsif (env("CURRENT_ADAPTER") || "sqlite").id == "mysql" %}
     Grant::Query::Builder(Model).new Grant::Query::Builder::DbType::Mysql
   {% else %}
     Grant::Query::Builder(Model).new Grant::Query::Builder::DbType::Sqlite

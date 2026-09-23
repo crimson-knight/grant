@@ -2,61 +2,70 @@ module Grant
   module Async
     # Metrics tracking for async operations
     class Metrics
-      class_property total_operations = Atomic(Int64).new(0)
-      class_property active_operations = Atomic(Int64).new(0)
-      class_property failed_operations = Atomic(Int64).new(0)
-      class_property total_duration = Atomic(Int64).new(0) # in microseconds
+      @@total_operations = 0_i64
+      @@active_operations = 0_i64
+      @@failed_operations = 0_i64
+      @@total_duration = 0_i64 # in microseconds
+      @@mutex = Mutex.new
 
       # Track an operation
       def self.track_operation(&block)
-        active_operations.add(1)
-        total_operations.add(1)
-        start_time = Time.monotonic
+        @@mutex.synchronize do
+          @@active_operations += 1
+          @@total_operations += 1
+        end
+        start_time = Time.instant
 
         begin
           yield
         rescue e
-          failed_operations.add(1)
+          @@mutex.synchronize { @@failed_operations += 1 }
           raise e
         ensure
-          duration = Time.monotonic - start_time
-          total_duration.add(duration.total_microseconds.to_i64)
-          active_operations.sub(1)
+          duration = Time.instant - start_time
+          @@mutex.synchronize do
+            @@total_duration += duration.total_microseconds.to_i64
+            @@active_operations -= 1
+          end
         end
       end
 
       # Get current metrics
       def self.snapshot : NamedTuple
-        {
-          total:           total_operations.get,
-          active:          active_operations.get,
-          failed:          failed_operations.get,
-          success_rate:    calculate_success_rate,
-          avg_duration_ms: calculate_avg_duration_ms,
-        }
+        @@mutex.synchronize do
+          {
+            total:           @@total_operations,
+            active:          @@active_operations,
+            failed:          @@failed_operations,
+            success_rate:    calculate_success_rate,
+            avg_duration_ms: calculate_avg_duration_ms,
+          }
+        end
       end
 
       # Reset all metrics
       def self.reset
-        total_operations.set(0)
-        active_operations.set(0)
-        failed_operations.set(0)
-        total_duration.set(0)
+        @@mutex.synchronize do
+          @@total_operations = 0_i64
+          @@active_operations = 0_i64
+          @@failed_operations = 0_i64
+          @@total_duration = 0_i64
+        end
       end
 
       private def self.calculate_success_rate : Float64
-        total = total_operations.get
+        total = @@total_operations
         return 0.0 if total == 0
 
-        failed = failed_operations.get
+        failed = @@failed_operations
         ((total - failed) * 100.0) / total
       end
 
       private def self.calculate_avg_duration_ms : Float64
-        total = total_operations.get
+        total = @@total_operations
         return 0.0 if total == 0
 
-        duration_us = total_duration.get
+        duration_us = @@total_duration
         (duration_us / total) / 1000.0
       end
     end

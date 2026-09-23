@@ -1,7 +1,7 @@
 require "../../spec_helper"
 
 class SchemaTenantRecord < Grant::Base
-  connection {{ env("CURRENT_ADAPTER").id }}
+  connection {{ (env("CURRENT_ADAPTER") || "sqlite").id }}
   table schema_tenant_records
 
   column id : Int64, primary: true
@@ -9,7 +9,7 @@ class SchemaTenantRecord < Grant::Base
 end
 
 class SchemaTenantGlobalRecord < Grant::Base
-  connection {{ env("CURRENT_ADAPTER").id }}
+  connection {{ (env("CURRENT_ADAPTER") || "sqlite").id }}
   table schema_tenant_global_records
 
   column id : Int64, primary: true
@@ -19,7 +19,7 @@ class SchemaTenantGlobalRecord < Grant::Base
 end
 
 class SchemaTenantMigratedRecord < Grant::Base
-  connection {{ env("CURRENT_ADAPTER").id }}
+  connection {{ (env("CURRENT_ADAPTER") || "sqlite").id }}
   table schema_tenant_migrated_records
 
   column id : Int64, primary: true
@@ -30,7 +30,7 @@ end
 class SchemaTenantBlockError < Exception
 end
 
-{% if env("CURRENT_ADAPTER") == "pg" %}
+{% if (env("CURRENT_ADAPTER") || "sqlite") == "pg" %}
   describe Grant::SchemaTenant do
     adapter = Grant::ConnectionRegistry.get_adapter("pg", :writing)
     schema_one = "grant_schema_tenant_one"

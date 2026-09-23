@@ -2,7 +2,7 @@ require "../../spec_helper"
 
 # Test model with optimistic locking
 {% begin %}
-{% adapter_literal = env("CURRENT_ADAPTER").id %}
+{% adapter_literal = (env("CURRENT_ADAPTER") || "sqlite").id %}
 class OptimisticModel < Grant::Base
   connection {{adapter_literal}}
   table optimistic_models

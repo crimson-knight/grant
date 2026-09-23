@@ -8,13 +8,17 @@
 COMPOSE_FILE := docker-compose.test.yml
 AUTH_SCRIPT  := ./scripts/mysql-auth-test.sh
 
-.PHONY: help mysql-auth-test mysql-auth-up mysql-auth-down mysql-auth-ping \
+.PHONY: help mysql-spec mysql-auth-test mysql-auth-up mysql-auth-down mysql-auth-ping \
         mysql-auth-pubkey mysql-auth-config mysql-auth-matrix \
         mysql-auth-8011-amd64
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-22s\033[0m %s\n", $$1, $$2}'
+
+mysql-spec: ## Run the full spec suite against the MySQL 8 test service
+	docker compose -f $(COMPOSE_FILE) up -d --wait mysql8
+	CRYSTAL_CACHE_DIR=$(CURDIR)/.crystal-cache CURRENT_ADAPTER=mysql MYSQL_DATABASE_URL=mysql://grant:test_password@127.0.0.1:3308/grant_test crystal-alpha spec
 
 ## ---------------------------------------------------------------------------
 ## MySQL-family auth matrix (caching_sha2_password + MariaDB native_password)

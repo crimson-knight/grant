@@ -61,7 +61,7 @@ describe Grant::Query::BuilderMethods do
       end
 
       # SQLite stores boolean values as integers, but the model API remains Bool.
-      {% if env("CURRENT_ADAPTER") == "sqlite" %}
+      {% if (env("CURRENT_ADAPTER") || "sqlite") == "sqlite" %}
         it "correctly queries bool fields" do
           Review.clear
           Review.create(name: "one", published: true)

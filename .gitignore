@@ -2,6 +2,7 @@
 /.shards/
 /.deps/
 /.crystal/
+/.crystal-cache/
 /doc/
 *.db
 

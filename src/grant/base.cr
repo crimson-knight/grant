@@ -194,7 +194,7 @@ abstract class Grant::Base
     # model-specific default-scope method from that union triggers an LLVM bug
     # in Crystal 1.21. The per-model method keeps Builder's model type concrete
     # and still lets generic class references dispatch to the right scope.
-    def self.current_scope
+    def self.__builder
       db_type = case adapter.class.to_s
                 when "Grant::Adapter::Pg"
                   Grant::Query::Builder::DbType::Pg
@@ -204,7 +204,14 @@ abstract class Grant::Base
                   Grant::Query::Builder::DbType::Sqlite
                 end
 
-      query = Grant::Query::Builder({{@type}}).new(db_type)
+      Grant::Query::Builder({{@type}}).new(db_type)
+    end
+
+    def self.current_scope
+      # `__builder` may be overridden by the sharding macro and Crystal sees
+      # the union of builders from STI siblings here. Cast back to this model's
+      # builder type while retaining the sharded subclass at runtime.
+      query = __builder.as(Grant::Query::Builder({{@type}}))
 
       if !_unscoped? && _has_default_scope?
         query = apply_default_scope(query)

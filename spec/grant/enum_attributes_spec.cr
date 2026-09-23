@@ -2,22 +2,23 @@ require "../spec_helper"
 
 describe "Grant::EnumAttributes" do
   before_all do
-    EnumArticle.exec("DROP TABLE IF EXISTS enum_articles")
-    OptionalEnumItem.exec("DROP TABLE IF EXISTS optional_enum_items")
-    MultiEnumTask.exec("DROP TABLE IF EXISTS multi_enum_tasks")
-    IntegerEnumUser.exec("DROP TABLE IF EXISTS integer_enum_users")
+    id_column = case CURRENT_ADAPTER
+                when "pg"
+                  "BIGSERIAL PRIMARY KEY"
+                when "mysql"
+                  "BIGINT AUTO_INCREMENT PRIMARY KEY"
+                else
+                  "INTEGER PRIMARY KEY AUTOINCREMENT"
+                end
 
-    if ENV["CURRENT_ADAPTER"] == "pg"
-      EnumArticle.exec("CREATE TABLE enum_articles (id BIGSERIAL PRIMARY KEY, title TEXT NOT NULL, status TEXT NOT NULL)")
-      OptionalEnumItem.exec("CREATE TABLE optional_enum_items (id BIGSERIAL PRIMARY KEY, name TEXT NOT NULL, priority TEXT)")
-      MultiEnumTask.exec("CREATE TABLE multi_enum_tasks (id BIGSERIAL PRIMARY KEY, title TEXT NOT NULL, status TEXT NOT NULL, priority TEXT NOT NULL)")
-      IntegerEnumUser.exec("CREATE TABLE integer_enum_users (id BIGSERIAL PRIMARY KEY, name TEXT NOT NULL, role INTEGER NOT NULL)")
-    else
-      EnumArticle.exec("CREATE TABLE enum_articles (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, status TEXT NOT NULL)")
-      OptionalEnumItem.exec("CREATE TABLE optional_enum_items (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, priority TEXT)")
-      MultiEnumTask.exec("CREATE TABLE multi_enum_tasks (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, status TEXT NOT NULL, priority TEXT NOT NULL)")
-      IntegerEnumUser.exec("CREATE TABLE integer_enum_users (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, role INTEGER NOT NULL)")
-    end
+    EnumArticle.exec("DROP TABLE IF EXISTS enum_articles")
+    EnumArticle.exec("CREATE TABLE enum_articles (id #{id_column}, title TEXT NOT NULL, status TEXT)")
+    OptionalEnumItem.exec("DROP TABLE IF EXISTS optional_enum_items")
+    OptionalEnumItem.exec("CREATE TABLE optional_enum_items (id #{id_column}, name TEXT NOT NULL, priority TEXT)")
+    MultiEnumTask.exec("DROP TABLE IF EXISTS multi_enum_tasks")
+    MultiEnumTask.exec("CREATE TABLE multi_enum_tasks (id #{id_column}, title TEXT NOT NULL, status TEXT, priority TEXT)")
+    IntegerEnumUser.exec("DROP TABLE IF EXISTS integer_enum_users")
+    IntegerEnumUser.exec("CREATE TABLE integer_enum_users (id #{id_column}, name TEXT NOT NULL, role INTEGER)")
   end
 
   describe "basic enum functionality" do
@@ -157,11 +158,12 @@ describe "Grant::EnumAttributes" do
       user = IntegerEnumUser.create!(name: "John", role: :admin)
 
       # Verify it's stored as integer
-      placeholder = ENV["CURRENT_ADAPTER"] == "pg" ? "$1" : "?"
+      placeholder = CURRENT_ADAPTER == "pg" ? "$1" : "?"
+      role_column = CURRENT_ADAPTER == "mysql" ? "`role`" : "\"role\""
       raw_value = IntegerEnumUser.adapter.open do |db|
-        db.scalar("SELECT role FROM integer_enum_users WHERE id = #{placeholder}", user.id).as(Int32 | Int64).to_i64
+        db.scalar("SELECT #{role_column} FROM integer_enum_users WHERE id = #{placeholder}", user.id)
       end
-      raw_value.should eq(2_i64) # Admin = 2
+      raw_value.to_s.should eq("2") # Admin = 2
 
       loaded = IntegerEnumUser.find!(user.id.not_nil!)
       loaded.role.should eq(IntegerEnumUser::Role::Admin)
@@ -171,7 +173,7 @@ end
 
 # Test models
 class EnumArticle < Grant::Base
-  connection {{ env("CURRENT_ADAPTER").id }}
+  connection {{(env("CURRENT_ADAPTER") || "sqlite").id}}
   table enum_articles
 
   column id : Int64, primary: true
@@ -183,11 +185,11 @@ class EnumArticle < Grant::Base
     Archived
   end
 
-  enum_attribute status : EnumArticle::Status = :draft
+  enum_attribute status : EnumArticle::Status = :draft, column_type: String
 end
 
 class OptionalEnumItem < Grant::Base
-  connection {{ env("CURRENT_ADAPTER").id }}
+  connection {{(env("CURRENT_ADAPTER") || "sqlite").id}}
   table optional_enum_items
 
   column id : Int64, primary: true
@@ -203,7 +205,7 @@ class OptionalEnumItem < Grant::Base
 end
 
 class MultiEnumTask < Grant::Base
-  connection {{ env("CURRENT_ADAPTER").id }}
+  connection {{(env("CURRENT_ADAPTER") || "sqlite").id}}
   table multi_enum_tasks
 
   column id : Int64, primary: true
@@ -226,7 +228,7 @@ class MultiEnumTask < Grant::Base
 end
 
 class IntegerEnumUser < Grant::Base
-  connection {{ env("CURRENT_ADAPTER").id }}
+  connection {{(env("CURRENT_ADAPTER") || "sqlite").id}}
   table integer_enum_users
 
   column id : Int64, primary: true

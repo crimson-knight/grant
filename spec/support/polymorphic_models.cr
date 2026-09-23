@@ -1,10 +1,10 @@
 # Test models for polymorphic associations
 {% begin %}
-  {% adapter_literal = env("CURRENT_ADAPTER").id %}
+  {% adapter_literal = (env("CURRENT_ADAPTER") || "sqlite").id %}
   
-  class Comment < Grant::Base
+  class PolymorphicComment < Grant::Base
     connection {{ adapter_literal }}
-    table comments
+    table polymorphic_comments
 
     column id : Int64, primary: true
     column content : String
@@ -24,15 +24,15 @@
     belongs_to :imageable, polymorphic: true, optional: true
   end
 
-  class Post < Grant::Base
+  class PolymorphicPost < Grant::Base
     connection {{ adapter_literal }}
-    table posts
+    table polymorphic_posts
 
     column id : Int64, primary: true
     column name : String
 
     # Polymorphic associations
-    has_many :comments, as: :commentable, class_name: "Comment"
+    has_many :comments, as: :commentable, class_name: "PolymorphicComment"
     has_one :image, as: :imageable, class_name: "Image"
   end
 
@@ -44,7 +44,7 @@
     column name : String
 
     # Polymorphic associations
-    has_many :comments, as: :commentable, class_name: "Comment"
+    has_many :comments, as: :commentable, class_name: "PolymorphicComment"
     has_one :image, as: :imageable, class_name: "Image"
   end
 {% end %}

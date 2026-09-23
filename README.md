@@ -647,6 +647,30 @@ Each model showcases different aspects while remaining realistic examples of how
 4. Push to the branch (git push origin my-new-feature)
 5. Create a new Pull Request
 
+## Running the specs
+
+Use the project `crystal-alpha` toolchain. When `CURRENT_ADAPTER` is unset, the spec helper defaults to SQLite at `./grant_green.db`. Keep compilation in a private cache for parallel runs:
+
+```sh
+CRYSTAL_CACHE_DIR=$PWD/.crystal-cache crystal-alpha spec
+```
+
+Run against the Dockerized PostgreSQL service with:
+
+```sh
+docker compose -f docker-compose.test.yml up -d --wait postgres-primary
+CRYSTAL_CACHE_DIR=$PWD/.crystal-cache CURRENT_ADAPTER=pg PG_DATABASE_URL=postgres://grant:test_password@localhost:5434/grant_test crystal-alpha spec
+```
+
+Run against Dockerized MySQL 8 with:
+
+```sh
+docker compose -f docker-compose.test.yml up -d --wait mysql8
+CRYSTAL_CACHE_DIR=$PWD/.crystal-cache CURRENT_ADAPTER=mysql MYSQL_DATABASE_URL=mysql://grant:test_password@127.0.0.1:3308/grant_test crystal-alpha spec
+```
+
+`make mysql-spec` starts MySQL 8 and runs the same full suite.
+
 ## Running tests
 Grant uses Crystal's built in test framework. The tests can be run either within a [dockerized testing environment](#docker-setup) or [locally](#local-setup). 
 

@@ -1,7 +1,7 @@
 require "../../spec_helper"
 
 {% begin %}
-{% adapter_literal = env("CURRENT_ADAPTER").id %}
+{% adapter_literal = (env("CURRENT_ADAPTER") || "sqlite").id %}
 
 class InheritedLifecycleRoot < Grant::Base
   include Grant::STI
@@ -55,6 +55,15 @@ describe "Grant STI validation and callback inheritance" do
           CREATE TABLE grant_sti_inherited_lifecycle_records (
             id BIGSERIAL PRIMARY KEY,
             type TEXT NOT NULL,
+            name TEXT,
+            callback_mark TEXT
+          )
+        SQL
+      elsif CURRENT_ADAPTER == "mysql"
+        db.exec <<-SQL
+          CREATE TABLE grant_sti_inherited_lifecycle_records (
+            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            type VARCHAR(255) NOT NULL,
             name TEXT,
             callback_mark TEXT
           )

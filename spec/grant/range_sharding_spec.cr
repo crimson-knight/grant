@@ -80,7 +80,7 @@ describe "Range-based Sharding" do
     end
 
     it "queries route to single shard when using shard key" do
-      with_virtual_shards(4) do
+      with_virtual_shards(Grant::ShardManager.shards_for_model("RangeShardedOrder")) do
         # Query with specific ID should route to single shard
         query_log = track_shard_queries do
           RangeShardedOrder.where(id: "2024_03_15_123456_abc").select
@@ -152,7 +152,7 @@ describe "Range-based Sharding" do
 
   describe "Query routing" do
     it "performs scatter-gather for non-shard-key queries" do
-      with_virtual_shards(4) do
+      with_virtual_shards(Grant::ShardManager.shards_for_model("RangeShardedOrder")) do
         # Query without shard key should hit all shards
         query_log = track_shard_queries do
           RangeShardedOrder.where(user_id: 123_i64).select

@@ -1,6 +1,6 @@
 require "../spec_helper"
 
-{% if env("CURRENT_ADAPTER").id == "mysql" %}
+{% if (env("CURRENT_ADAPTER") || "sqlite").id == "mysql" %}
   describe Grant::Query::Assembler::Mysql(Model) do
     context "count" do
       it "counts for where/count queries" do

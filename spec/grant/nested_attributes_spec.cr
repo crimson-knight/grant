@@ -3,31 +3,31 @@ require "../spec_helper"
 # Test models
 class Author < Grant::Base
   connection {{ CURRENT_ADAPTER }}
-  table authors
+  table nested_attribute_authors
 
   column id : Int64, primary: true
   column name : String
   timestamps
 
-  has_many :posts, class_name: Post
-  has_one :profile
+  has_many :posts, class_name: NestedAttributePost
+  has_one :profile, class_name: NestedAttributeProfile
 
   # Enable nested attributes with explicit types
-  accepts_nested_attributes_for posts : Post,
+  accepts_nested_attributes_for posts : NestedAttributePost,
     allow_destroy: true,
     reject_if: :all_blank,
     limit: 5
 
-  accepts_nested_attributes_for profile : Profile,
+  accepts_nested_attributes_for profile : NestedAttributeProfile,
     update_only: true
 
   # Enable automatic nested saves via callbacks
   enable_nested_saves
 end
 
-class Post < Grant::Base
+class NestedAttributePost < Grant::Base
   connection {{ CURRENT_ADAPTER }}
-  table posts
+  table nested_attribute_posts
 
   column id : Int64, primary: true
   column title : String
@@ -36,29 +36,29 @@ class Post < Grant::Base
   timestamps
 
   belongs_to :author
-  has_many :comments, class_name: Comment
+  has_many :comments, class_name: NestedAttributeComment
 
-  accepts_nested_attributes_for comments : Comment,
+  accepts_nested_attributes_for comments : NestedAttributeComment,
     allow_destroy: true
 
   enable_nested_saves
 end
 
-class Comment < Grant::Base
+class NestedAttributeComment < Grant::Base
   connection {{ CURRENT_ADAPTER }}
-  table comments
+  table nested_attribute_comments
 
   column id : Int64, primary: true
   column body : String
   column post_id : Int64?
   timestamps
 
-  belongs_to :post
+  belongs_to :post, class_name: NestedAttributePost
 end
 
-class Profile < Grant::Base
+class NestedAttributeProfile < Grant::Base
   connection {{ CURRENT_ADAPTER }}
-  table profiles
+  table nested_attribute_profiles
 
   column id : Int64, primary: true
   column bio : String?
@@ -74,7 +74,7 @@ def setup_nested_attributes_tables
   case CURRENT_ADAPTER
   when "sqlite"
     Author.exec(<<-SQL)
-      CREATE TABLE IF NOT EXISTS authors (
+      CREATE TABLE IF NOT EXISTS nested_attribute_authors (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL,
         created_at TEXT,
@@ -82,43 +82,43 @@ def setup_nested_attributes_tables
       )
     SQL
 
-    Post.exec(<<-SQL)
-      CREATE TABLE IF NOT EXISTS posts (
+    NestedAttributePost.exec(<<-SQL)
+      CREATE TABLE IF NOT EXISTS nested_attribute_posts (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         title TEXT NOT NULL,
         content TEXT,
         author_id INTEGER,
         created_at TEXT,
         updated_at TEXT,
-        FOREIGN KEY(author_id) REFERENCES authors(id)
+        FOREIGN KEY(author_id) REFERENCES nested_attribute_authors(id)
       )
     SQL
 
-    Comment.exec(<<-SQL)
-      CREATE TABLE IF NOT EXISTS comments (
+    NestedAttributeComment.exec(<<-SQL)
+      CREATE TABLE IF NOT EXISTS nested_attribute_comments (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         body TEXT NOT NULL,
         post_id INTEGER,
         created_at TEXT,
         updated_at TEXT,
-        FOREIGN KEY(post_id) REFERENCES comments(id)
+        FOREIGN KEY(post_id) REFERENCES nested_attribute_posts(id)
       )
     SQL
 
-    Profile.exec(<<-SQL)
-      CREATE TABLE IF NOT EXISTS profiles (
+    NestedAttributeProfile.exec(<<-SQL)
+      CREATE TABLE IF NOT EXISTS nested_attribute_profiles (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         bio TEXT,
         website TEXT,
         author_id INTEGER,
         created_at TEXT,
         updated_at TEXT,
-        FOREIGN KEY(author_id) REFERENCES authors(id)
+        FOREIGN KEY(author_id) REFERENCES nested_attribute_authors(id)
       )
     SQL
   when "pg"
     Author.exec(<<-SQL)
-      CREATE TABLE IF NOT EXISTS authors (
+      CREATE TABLE IF NOT EXISTS nested_attribute_authors (
         id BIGSERIAL PRIMARY KEY,
         name VARCHAR NOT NULL,
         created_at TIMESTAMP,
@@ -126,40 +126,40 @@ def setup_nested_attributes_tables
       )
     SQL
 
-    Post.exec(<<-SQL)
-      CREATE TABLE IF NOT EXISTS posts (
+    NestedAttributePost.exec(<<-SQL)
+      CREATE TABLE IF NOT EXISTS nested_attribute_posts (
         id BIGSERIAL PRIMARY KEY,
         title VARCHAR NOT NULL,
         content TEXT,
-        author_id BIGINT REFERENCES authors(id),
+        author_id BIGINT REFERENCES nested_attribute_authors(id),
         created_at TIMESTAMP,
         updated_at TIMESTAMP
       )
     SQL
 
-    Comment.exec(<<-SQL)
-      CREATE TABLE IF NOT EXISTS comments (
+    NestedAttributeComment.exec(<<-SQL)
+      CREATE TABLE IF NOT EXISTS nested_attribute_comments (
         id BIGSERIAL PRIMARY KEY,
         body TEXT NOT NULL,
-        post_id BIGINT REFERENCES posts(id),
+        post_id BIGINT REFERENCES nested_attribute_posts(id),
         created_at TIMESTAMP,
         updated_at TIMESTAMP
       )
     SQL
 
-    Profile.exec(<<-SQL)
-      CREATE TABLE IF NOT EXISTS profiles (
+    NestedAttributeProfile.exec(<<-SQL)
+      CREATE TABLE IF NOT EXISTS nested_attribute_profiles (
         id BIGSERIAL PRIMARY KEY,
         bio TEXT,
         website VARCHAR,
-        author_id BIGINT REFERENCES authors(id),
+        author_id BIGINT REFERENCES nested_attribute_authors(id),
         created_at TIMESTAMP,
         updated_at TIMESTAMP
       )
     SQL
   when "mysql"
     Author.exec(<<-SQL)
-      CREATE TABLE IF NOT EXISTS authors (
+      CREATE TABLE IF NOT EXISTS nested_attribute_authors (
         id BIGINT PRIMARY KEY AUTO_INCREMENT,
         name VARCHAR(255) NOT NULL,
         created_at TIMESTAMP,
@@ -167,48 +167,48 @@ def setup_nested_attributes_tables
       )
     SQL
 
-    Post.exec(<<-SQL)
-      CREATE TABLE IF NOT EXISTS posts (
+    NestedAttributePost.exec(<<-SQL)
+      CREATE TABLE IF NOT EXISTS nested_attribute_posts (
         id BIGINT PRIMARY KEY AUTO_INCREMENT,
         title VARCHAR(255) NOT NULL,
         content TEXT,
         author_id BIGINT,
         created_at TIMESTAMP,
         updated_at TIMESTAMP,
-        FOREIGN KEY(author_id) REFERENCES authors(id)
+        FOREIGN KEY(author_id) REFERENCES nested_attribute_authors(id)
       )
     SQL
 
-    Comment.exec(<<-SQL)
-      CREATE TABLE IF NOT EXISTS comments (
+    NestedAttributeComment.exec(<<-SQL)
+      CREATE TABLE IF NOT EXISTS nested_attribute_comments (
         id BIGINT PRIMARY KEY AUTO_INCREMENT,
         body TEXT NOT NULL,
         post_id BIGINT,
         created_at TIMESTAMP,
         updated_at TIMESTAMP,
-        FOREIGN KEY(post_id) REFERENCES posts(id)
+        FOREIGN KEY(post_id) REFERENCES nested_attribute_posts(id)
       )
     SQL
 
-    Profile.exec(<<-SQL)
-      CREATE TABLE IF NOT EXISTS profiles (
+    NestedAttributeProfile.exec(<<-SQL)
+      CREATE TABLE IF NOT EXISTS nested_attribute_profiles (
         id BIGINT PRIMARY KEY AUTO_INCREMENT,
         bio TEXT,
         website VARCHAR(255),
         author_id BIGINT,
         created_at TIMESTAMP,
         updated_at TIMESTAMP,
-        FOREIGN KEY(author_id) REFERENCES authors(id)
+        FOREIGN KEY(author_id) REFERENCES nested_attribute_authors(id)
       )
     SQL
   end
 end
 
 def cleanup_nested_attributes_tables
-  Comment.exec("DROP TABLE IF EXISTS comments")
-  Post.exec("DROP TABLE IF EXISTS posts")
-  Profile.exec("DROP TABLE IF EXISTS profiles")
-  Author.exec("DROP TABLE IF EXISTS authors")
+  NestedAttributeComment.exec("DROP TABLE IF EXISTS nested_attribute_comments")
+  NestedAttributePost.exec("DROP TABLE IF EXISTS nested_attribute_posts")
+  NestedAttributeProfile.exec("DROP TABLE IF EXISTS nested_attribute_profiles")
+  Author.exec("DROP TABLE IF EXISTS nested_attribute_authors")
 end
 
 describe Grant::NestedAttributes do
@@ -241,7 +241,7 @@ describe Grant::NestedAttributes do
       author.id.should_not be_nil
 
       # Verify posts were created
-      posts = Post.where(author_id: author.id).select
+      posts = NestedAttributePost.where(author_id: author.id).select
       posts.size.should eq(2)
 
       titles = posts.map(&.title).sort
@@ -258,7 +258,7 @@ describe Grant::NestedAttributes do
       author.save.should be_true
 
       # Verify profile was created
-      profile = Profile.find_by(author_id: author.id)
+      profile = NestedAttributeProfile.find_by(author_id: author.id)
       profile.should_not be_nil
       profile.not_nil!.bio.should eq("Software developer")
       profile.not_nil!.website.should eq("https://example.com")
@@ -268,7 +268,7 @@ describe Grant::NestedAttributes do
   describe "updating nested records" do
     it "updates existing child records" do
       author = Author.create(name: "John Doe")
-      post = Post.create(title: "Original Title", author_id: author.id)
+      post = NestedAttributePost.create(title: "Original Title", author_id: author.id)
 
       author.posts_attributes = [
         {id: post.id, title: "Updated Title"},
@@ -277,7 +277,7 @@ describe Grant::NestedAttributes do
       author.save.should be_true
 
       # Verify post was updated
-      updated_post = Post.find!(post.id)
+      updated_post = NestedAttributePost.find!(post.id)
       updated_post.title.should eq("Updated Title")
     end
   end
@@ -285,8 +285,8 @@ describe Grant::NestedAttributes do
   describe "destroying nested records" do
     it "destroys child records when _destroy is true" do
       author = Author.create(name: "John Doe")
-      post1 = Post.create(title: "Post 1", author_id: author.id)
-      post2 = Post.create(title: "Post 2", author_id: author.id)
+      post1 = NestedAttributePost.create(title: "Post 1", author_id: author.id)
+      post2 = NestedAttributePost.create(title: "Post 2", author_id: author.id)
 
       author.posts_attributes = [
         {id: post1.id, _destroy: true},
@@ -296,14 +296,14 @@ describe Grant::NestedAttributes do
       author.save.should be_true
 
       # Verify post1 was destroyed and post2 was updated
-      Post.find(post1.id).should be_nil
-      Post.find!(post2.id).title.should eq("Post 2 Updated")
+      NestedAttributePost.find(post1.id).should be_nil
+      NestedAttributePost.find!(post2.id).title.should eq("Post 2 Updated")
     end
 
     it "ignores _destroy when allow_destroy is false" do
       # Profile doesn't have allow_destroy
       author = Author.create(name: "Jane Doe")
-      profile = Profile.create(bio: "Original bio", author_id: author.id)
+      profile = NestedAttributeProfile.create(bio: "Original bio", author_id: author.id)
 
       author.profile_attributes = {
         id:       profile.id,
@@ -314,7 +314,7 @@ describe Grant::NestedAttributes do
       author.save.should be_true
 
       # Profile should still exist and be updated
-      updated_profile = Profile.find!(profile.id)
+      updated_profile = NestedAttributeProfile.find!(profile.id)
       updated_profile.bio.should eq("This should update")
     end
   end
@@ -331,7 +331,7 @@ describe Grant::NestedAttributes do
       author.save.should be_true
 
       # Only one post should be created
-      posts = Post.where(author_id: author.id).select
+      posts = NestedAttributePost.where(author_id: author.id).select
       posts.size.should eq(1)
       posts[0].title.should eq("Valid Post")
     end
@@ -361,12 +361,12 @@ describe Grant::NestedAttributes do
       author.save.should be_true
 
       # No profile should be created
-      Profile.find_by(author_id: author.id).should be_nil
+      NestedAttributeProfile.find_by(author_id: author.id).should be_nil
     end
 
     it "updates existing records when update_only is true" do
       author = Author.create(name: "Jane Doe")
-      profile = Profile.create(bio: "Original bio", author_id: author.id)
+      profile = NestedAttributeProfile.create(bio: "Original bio", author_id: author.id)
 
       author.profile_attributes = {
         id:  profile.id,
@@ -376,7 +376,7 @@ describe Grant::NestedAttributes do
       author.save.should be_true
 
       # Profile should be updated
-      updated_profile = Profile.find!(profile.id)
+      updated_profile = NestedAttributeProfile.find!(profile.id)
       updated_profile.bio.should eq("Updated bio")
     end
   end
@@ -398,8 +398,8 @@ describe Grant::NestedAttributes do
   describe "complex nested scenarios" do
     it "handles mixed create, update, and destroy operations" do
       author = Author.create(name: "John Doe")
-      post1 = Post.create(title: "Post 1", author_id: author.id)
-      post2 = Post.create(title: "Post 2", author_id: author.id)
+      post1 = NestedAttributePost.create(title: "Post 1", author_id: author.id)
+      post2 = NestedAttributePost.create(title: "Post 2", author_id: author.id)
 
       author.posts_attributes = [
         {id: post1.id, title: "Post 1 Updated"},   # Update
@@ -410,14 +410,14 @@ describe Grant::NestedAttributes do
       author.save.should be_true
 
       # Verify results
-      posts = Post.where(author_id: author.id).select
+      posts = NestedAttributePost.where(author_id: author.id).select
       posts.size.should eq(2)
 
       # post1 should be updated
-      Post.find!(post1.id).title.should eq("Post 1 Updated")
+      NestedAttributePost.find!(post1.id).title.should eq("Post 1 Updated")
 
       # post2 should be destroyed
-      Post.find(post2.id).should be_nil
+      NestedAttributePost.find(post2.id).should be_nil
 
       # New post should exist
       posts.any? { |p| p.title == "Post 3" }.should be_true

@@ -481,13 +481,13 @@ module Grant::Query::Assembler
 
       log sql, numbered_parameters
 
-      start_time = Time.monotonic
+      start_time = Time.instant
       begin
         result = Model.adapter.open do |db|
           db.exec sql, args: numbered_parameters
         end
 
-        duration = Time.monotonic - start_time
+        duration = Time.instant - start_time
         Grant::Logs::SQL.info &.emit("Delete executed",
           sql: sql,
           model: Model.name,
@@ -497,7 +497,7 @@ module Grant::Query::Assembler
 
         result
       rescue e
-        duration = Time.monotonic - start_time
+        duration = Time.instant - start_time
         Grant::Logs::SQL.error &.emit("Delete failed",
           sql: sql,
           model: Model.name,
@@ -645,13 +645,13 @@ module Grant::Query::Assembler
 
       log sql, numbered_parameters
 
-      start_time = Time.monotonic
+      start_time = Time.instant
       begin
         rows_affected = Model.adapter.open do |db|
           db.exec(sql, args: numbered_parameters).rows_affected
         end
 
-        duration = Time.monotonic - start_time
+        duration = Time.instant - start_time
         Grant::Logs::SQL.info &.emit("Touch all executed",
           sql: sql,
           model: Model.name,
@@ -662,7 +662,7 @@ module Grant::Query::Assembler
 
         rows_affected
       rescue e
-        duration = Time.monotonic - start_time
+        duration = Time.instant - start_time
         Grant::Logs::SQL.error &.emit("Touch all failed",
           sql: sql,
           model: Model.name,

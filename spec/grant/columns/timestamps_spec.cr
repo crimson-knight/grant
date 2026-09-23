@@ -1,7 +1,7 @@
 require "../../spec_helper"
 
 # Can run this spec for sqlite after https://www.sqlite.org/draft/releaselog/3_24_0.html is released.
-{% if ["pg", "mysql"].includes? env("CURRENT_ADAPTER") %}
+{% if ["pg", "mysql"].includes?(env("CURRENT_ADAPTER") || "sqlite") %}
   describe "timestamps" do
     it "should uses UTC for created_at by default" do
       parent = Parent.new(name: "parent").tap(&.save)
@@ -111,7 +111,7 @@ require "../../spec_helper"
         to_update = Parent.all("WHERE name = ?", ["ParentOne"])
         to_update.each { |parent| parent.name = "ParentOneEdited" }
 
-        sleep 1
+        sleep(1.seconds)
 
         Parent.import(to_update, update_on_duplicate: true, columns: ["name"])
         update_time = Time.utc.at_beginning_of_second

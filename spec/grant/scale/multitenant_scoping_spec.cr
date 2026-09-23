@@ -1,7 +1,7 @@
 require "../../spec_helper"
 
 {% begin %}
-  {% adapter_literal = env("CURRENT_ADAPTER").id %}
+  {% adapter_literal = (env("CURRENT_ADAPTER") || "sqlite").id %}
 
   class ScopedTenantRecord < Grant::Base
     connection {{ adapter_literal }}

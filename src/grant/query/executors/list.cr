@@ -8,7 +8,7 @@ module Grant::Query::Executor
     def run : Array(Model)
       log @sql, @args
 
-      start_time = Time.monotonic
+      start_time = Time.instant
       results = [] of Model
 
       begin
@@ -20,10 +20,10 @@ module Grant::Query::Executor
           end
         end
 
-        duration = Time.monotonic - start_time
+        duration = Time.instant - start_time
         log_query_with_timing(@sql, @args, duration, results.size, Model.name)
       rescue e
-        duration = Time.monotonic - start_time
+        duration = Time.instant - start_time
         Grant::Logs::SQL.error { "Query failed (#{duration.total_milliseconds}ms) - #{@sql} [#{Model.name}] - #{e.message}" }
         raise e
       end

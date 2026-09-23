@@ -13,7 +13,7 @@ module Grant
 
     def next_index(total : Int32) : Int32
       return 0 if total == 1
-      @current_index.add(1) % total
+      (@current_index.add(1) + 1) % total
     end
 
     def reset
@@ -34,22 +34,22 @@ module Grant
 
   # Least connections load balancing (requires connection tracking)
   class LeastConnectionsStrategy < LoadBalancingStrategy
-    @connection_counts : Hash(Int32, Atomic(Int32)) = {} of Int32 => Atomic(Int32)
+    @connection_counts : Hash(Int32, Int32) = {} of Int32 => Int32
     @mutex = Mutex.new
 
     def next_index(total : Int32) : Int32
       @mutex.synchronize do
         # Initialize counters if needed
         (0...total).each do |i|
-          @connection_counts[i] ||= Atomic(Int32).new(0)
+          @connection_counts[i] ||= 0
         end
 
         # Find index with least connections
         min_index = 0
-        min_count = @connection_counts[0].get
+        min_count = @connection_counts[0]
 
         (1...total).each do |i|
-          count = @connection_counts[i].get
+          count = @connection_counts[i]
           if count < min_count
             min_count = count
             min_index = i
@@ -57,14 +57,16 @@ module Grant
         end
 
         # Increment counter for selected index
-        @connection_counts[min_index].add(1)
+        @connection_counts[min_index] += 1
         min_index
       end
     end
 
     def release_connection(index : Int32)
       @mutex.synchronize do
-        @connection_counts[index]?.try(&.sub(1))
+        if count = @connection_counts[index]?
+          @connection_counts[index] = Math.max(count - 1, 0)
+        end
       end
     end
 

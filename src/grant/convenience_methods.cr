@@ -249,7 +249,6 @@ module Grant::BulkOperations
                  record_timestamps : Bool = true) : Array(self)
     guard_writes!
     builder = __builder
-    return [] of self if attributes.empty?
 
     # Transform all keys to strings and ensure proper types
     string_attributes = attributes.map do |attrs|
@@ -257,6 +256,7 @@ module Grant::BulkOperations
     end
 
     string_attributes = __apply_tenant_to_bulk_attributes(string_attributes)
+    return [] of self if string_attributes.empty?
 
     # Add timestamps if needed
     if record_timestamps
@@ -307,7 +307,6 @@ module Grant::BulkOperations
                  record_timestamps : Bool = true) : Array(self)
     guard_writes!
     builder = __builder
-    return [] of self if attributes.empty?
 
     # Transform all keys to strings and ensure proper types
     string_attributes = attributes.map do |attrs|
@@ -315,6 +314,7 @@ module Grant::BulkOperations
     end
 
     string_attributes = __apply_tenant_to_bulk_attributes(string_attributes)
+    return [] of self if string_attributes.empty?
 
     # Add timestamps if needed
     if record_timestamps
