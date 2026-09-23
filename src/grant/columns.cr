@@ -514,7 +514,7 @@ module Grant::Columns
     self
   end
 
-  # Converts and assigns one ordinary column during value-object mass
+  # Converts and assigns one model column during value-object mass
   # assignment. Keeping this at the column boundary applies both the declared
   # conversion and the generated dirty-tracking setter.
   def assign_mass_assignment_column(attribute_name : String, value : Grant::Columns::Type) : Nil
@@ -523,15 +523,11 @@ module Grant::Columns
     {% for column in @type.instance_vars.select(&.annotation(Grant::Column)) %}
       {% ann = column.annotation(Grant::Column) %}
       when {{column.name.stringify}}
-        {% if ann[:primary] && ann[:auto] %}
-          # Auto-generated primary keys are ignored during mass assignment.
-          nil
+        {% if ann[:nilable] == true %}
+          {% setter_type = column.type %}
         {% else %}
-          {% if ann[:nilable] == true %}
-            {% setter_type = column.type %}
-          {% else %}
-            {% setter_type = ann[:setter_type] %}
-          {% end %}
+          {% setter_type = ann[:setter_type] %}
+        {% end %}
         begin
           converted_value = Grant::Type.convert_type(value, {{setter_type}})
           if converted_value.is_a?({{setter_type}})
@@ -542,7 +538,6 @@ module Grant::Columns
         rescue ex : ArgumentError
           errors << Grant::ConversionError.new({{column.name.stringify}}, ex.message)
         end
-        {% end %}
     {% end %}
     else
       raise "Cannot write attribute #{attribute_name}, invalid attribute"

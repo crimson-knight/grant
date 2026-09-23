@@ -12,6 +12,14 @@
     timestamps
   end
 
+  class T6MassAssignmentPrimaryKeyRecord < Grant::Base
+    connection {{ adapter_literal }}
+    table t6_mass_assignment_primary_key_records
+
+    column id : Int64, primary: true
+    column name : String
+  end
+
   class T6ReadonlyRecord < Grant::Base
     connection {{ adapter_literal }}
     table t6_readonly_records

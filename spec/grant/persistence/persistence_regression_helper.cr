@@ -3,6 +3,7 @@ require "./persistence_regression_models"
 
 Spec.before_suite do
   T6PersistenceRecord.migrator.drop_and_create
+  T6MassAssignmentPrimaryKeyRecord.migrator.drop_and_create
   T6ReadonlyRecord.migrator.drop_and_create
   T6HaltedRecord.migrator.drop_and_create
   T6CommitFailureRecord.migrator.drop_and_create
