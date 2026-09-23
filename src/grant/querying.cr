@@ -1,8 +1,13 @@
 module Grant::Querying
+  alias IdValue = Int32 | Int64 | Float32 | Float64 | String
+
   class NotFound < Exception
   end
 
   class NotUnique < Exception
+  end
+
+  class ScopedRawSqlError < Exception
   end
 
   module ClassMethods
@@ -38,9 +43,10 @@ module Grant::Querying
 
     # Runs a raw SQL fragment against the model's table and hydrates the rows.
     #
-    # Unlike `all`, this always bypasses the scope/query-builder layer and runs
-    # *clause* verbatim after the generated `SELECT ... FROM table`. Use it for
-    # JOINs or multi-parameter clauses the chainable builder can't express.
+    # Runs *clause* after the generated `SELECT ... FROM table`. When the model
+    # has a default scope, that scope is applied inside a subquery before the
+    # clause runs. Use it for JOINs or multi-parameter clauses the chainable
+    # builder can't express; use `unscoped` for a deliberate scope bypass.
     #
     # - *clause*: SQL appended after the SELECT list (e.g. `"WHERE email = ?"`,
     #   or a full `"JOIN ... WHERE ..."`). Defaults to `""` (all rows).
@@ -54,9 +60,33 @@ module Grant::Querying
     # ```
     def raw_all(clause = "", params = [] of Grant::Columns::Type) : Array(self)
       rows = [] of self
-      adapter.select(select_container, clause, params) do |results|
-        results.each do
-          rows << from_rs(results)
+      if responds_to?(:current_scope)
+        scoped_query = current_scope
+        scoped_assembler = scoped_query.assembler
+        scoped_sql = scoped_assembler.select.raw_sql
+        scoped_params = scoped_assembler.numbered_parameters.dup
+        scoped_params.concat(params)
+
+        clean_clause = clause.strip
+        unless clean_clause.empty?
+          alias_name = adapter.quote(table_name)
+          selected_fields = (scoped_query.select_columns || fields).map do |field|
+            "#{alias_name}.#{adapter.quote(field)}"
+          end.join(", ")
+          clean_clause = adapter.ensure_clause_template(clean_clause, scoped_params.size - params.size)
+          scoped_sql = "SELECT #{selected_fields} FROM (#{scoped_sql}) AS #{alias_name} #{clean_clause}"
+        end
+
+        adapter.select(Grant::Select::Container.new(scoped_sql), "", scoped_params) do |results|
+          results.each do
+            rows << from_rs(results)
+          end
+        end
+      else
+        adapter.select(select_container, clause, params) do |results|
+          results.each do
+            rows << from_rs(results)
+          end
         end
       end
       rows
@@ -95,7 +125,7 @@ module Grant::Querying
         # Fall back to raw_all for clauses that the query builder can't handle:
         # - JOIN clauses (e.g. from :through associations)
         # - Multiple parameters (query.where only accepts a single value)
-        if clean_clause.includes?("JOIN ") || params.size > 1
+        if clean_clause.includes?("JOIN ") || params.size > 1 || clean_clause.upcase.starts_with?("ORDER BY ")
           Collection(self).new(-> { raw_all(clause, params) })
         else
           query = current_scope
@@ -135,7 +165,7 @@ module Grant::Querying
         # Fall back to raw_all for clauses that the query builder can't handle:
         # - JOIN clauses (e.g. from :through associations)
         # - Multiple parameters (query.where only accepts a single value)
-        if clean_clause.includes?("JOIN ") || params.size > 1
+        if clean_clause.includes?("JOIN ") || params.size > 1 || clean_clause.upcase.starts_with?("ORDER BY ")
           all([clean_clause, "LIMIT 1"].join(" "), params, false).first?
         else
           query = current_scope
@@ -145,6 +175,9 @@ module Grant::Querying
               clean_clause = clean_clause[6..-1] # Remove "WHERE " prefix
             end
             query.where(clean_clause, params.first? || nil)
+          end
+          if query.order_fields.empty?
+            query.order_fields << {field: primary_name, direction: Grant::Query::Builder::Sort::Ascending}
           end
           query.limit(1).select.first?
         end
@@ -233,7 +266,7 @@ module Grant::Querying
       if responds_to?(:current_scope)
         clean_clause = clause.strip
         # Fall back to raw_all for clauses that the query builder can't handle
-        if clean_clause.includes?("JOIN ") || params.size > 1
+        if clean_clause.includes?("JOIN ") || params.size > 1 || clean_clause.upcase.starts_with?("ORDER BY ")
           results = all(clause, params, false).to_a
         else
           query = current_scope
@@ -284,11 +317,9 @@ module Grant::Querying
     # :ditto:
     def destroy_by(criteria : Grant::ModelArgs) : Int32
       guard_writes!
-      records = all
-      if !criteria.empty?
-        clause, params = build_find_by_clause(criteria)
-        records = all("WHERE #{clause}", params, false)
-      end
+      query = current_scope
+      query = query.where(criteria) unless criteria.empty?
+      records = query.select
 
       count = 0
       records.each do |record|
@@ -308,81 +339,61 @@ module Grant::Querying
     def delete_by(criteria : Grant::ModelArgs) : Int64
       guard_writes!
       mark_write_operation
-
-      if criteria.empty?
-        # Delete all records
-        sql = "DELETE FROM #{quoted_table_name}"
-        result = adapter.open do |db|
-          db.exec(sql).rows_affected
-        end
-        result
-      else
-        clause, params = build_find_by_clause(criteria)
-        sql = adapter.ensure_clause_template("DELETE FROM #{quoted_table_name} WHERE #{clause}")
-        result = adapter.open do |db|
-          db.exec(sql, args: params).rows_affected
-        end
-        result
-      end
+      query = current_scope
+      query = query.where(criteria) unless criteria.empty?
+      query.delete_all
     end
 
     # Updates updated_at timestamp for all records matching the given criteria
     def touch_all(*fields, time : Time = Time.local(Grant.settings.default_timezone)) : Int64
       guard_writes!
-      time = time.at_beginning_of_second
-
-      set_clause = ["#{quote("updated_at")} = ?"]
-      values = [time] of Grant::Columns::Type
-
-      # Add any additional fields to touch
-      fields.each do |field|
-        set_clause << "#{quote(field.to_s)} = ?"
-        values << time
-      end
-
-      sql = adapter.ensure_clause_template("UPDATE #{quoted_table_name} SET #{set_clause.join(", ")}")
-
-      mark_write_operation
-      rows_affected = adapter.open do |db|
-        db.exec(sql, args: values).rows_affected
-      end
-
-      rows_affected
+      current_scope.touch_all(*fields, time: time)
     end
 
     # Updates counter columns for all records
-    def update_counters(id : Number | String, counters : Hash(Symbol, Int32)) : Int64
+    def update_counters(id : IdValue, counters : Hash(Symbol, Int32)) : Int64
       guard_writes!
+      query = current_scope.where(primary_name, :eq, id)
+      assembler = query.assembler
+      where_clause = assembler.where
+      where_parameters = assembler.numbered_parameters
       set_clause = [] of String
-      values = [] of Grant::Columns::Type
+      set_values = [] of Grant::Columns::Type
+      placeholder_index = where_parameters.size
 
       counters.each do |column, value|
         column_name = quote(column.to_s)
+        placeholder_index += 1
+        placeholder = adapter.parameter_placeholder(placeholder_index)
         if value > 0
-          set_clause << "#{column_name} = #{column_name} + ?"
+          set_clause << "#{column_name} = #{column_name} + #{placeholder}"
         else
-          set_clause << "#{column_name} = #{column_name} - ?"
+          set_clause << "#{column_name} = #{column_name} - #{placeholder}"
         end
-        values << value.abs
+        set_values << value.abs
       end
-
-      return 0_i64 if set_clause.empty?
 
       # Also update the updated_at timestamp
       {% if @type.instance_vars.select { |ivar| ivar.annotation(Grant::Column) && ivar.name == "updated_at" }.size > 0 %}
-        set_clause << "#{quote("updated_at")} = ?"
-        values << Time.local(Grant.settings.default_timezone).at_beginning_of_second
+        placeholder_index += 1
+        placeholder = adapter.parameter_placeholder(placeholder_index)
+        set_clause << "#{quote("updated_at")} = #{placeholder}"
+        set_values << Time.local(Grant.settings.default_timezone).at_beginning_of_second
       {% end %}
 
-      sql = adapter.ensure_clause_template("UPDATE #{quoted_table_name} SET #{set_clause.join(", ")} WHERE #{quote(primary_name)} = ?")
-      values << id
+      return 0_i64 if set_clause.empty?
+
+      sql = "UPDATE #{quoted_table_name} SET #{set_clause.join(", ")} #{where_clause}"
+      values = if adapter.class.to_s == "Grant::Adapter::Pg"
+                 where_parameters + set_values
+               else
+                 set_values + where_parameters
+               end
 
       mark_write_operation
-      rows_affected = adapter.open do |db|
+      adapter.open do |db|
         db.exec(sql, args: values).rows_affected
       end
-
-      rows_affected
     end
 
     # Iterates over every matching record one at a time, loading them in batches.
@@ -435,7 +446,12 @@ module Grant::Querying
       end
 
       loop do
-        results = all "#{clause} LIMIT ? OFFSET ?", params + [limit, offset], false
+        ordered_clause = clause.strip
+        unless ordered_clause.upcase.includes?("ORDER BY")
+          order_clause = "ORDER BY #{quote(primary_name)} ASC"
+          ordered_clause = [ordered_clause, order_clause].reject(&.empty?).join(" ")
+        end
+        results = all "#{ordered_clause} LIMIT ? OFFSET ?", params + [limit, offset], false
         break if results.empty?
         yield results
         offset += limit
@@ -452,9 +468,10 @@ module Grant::Querying
     # User.exists?(999) # => false
     # User.exists?(nil) # => false
     # ```
-    def exists?(id : Number | String | Nil) : Bool
+    def exists?(id : IdValue | Nil) : Bool
+      query = current_scope
       return false if id.nil?
-      exec_exists "#{primary_name} = ?", [id]
+      query.where(primary_name.not_nil!, :eq, id).exists?
     end
 
     # Returns `true` if any record matches *criteria*, otherwise `false`.
@@ -473,37 +490,49 @@ module Grant::Querying
     #
     # Hash form — accepts a pre-built criteria hash (`Grant::ModelArgs`).
     def exists?(criteria : Grant::ModelArgs) : Bool
-      exec_exists *build_find_by_clause(criteria)
+      current_scope.where(criteria).exists?
     end
 
-    # Returns the total number of rows in the model's table.
+    # Returns the number of rows in the model's current scope.
     #
-    # Counts every row unconditionally (`SELECT COUNT(*)`). To count a filtered
-    # set, use the chainable builder instead: `User.where(active: true).count`.
+    # Counts the default scope and any active filters. To count an additional
+    # filtered set, use the chainable builder: `User.where(active: true).count`.
     #
     # ```
-    # User.count # => 42
+    # User.count # => 42 (within the default scope, when present)
     # ```
     def count : Int32
-      scalar "SELECT COUNT(*) FROM #{quoted_table_name}", &.to_s.to_i
+      current_scope.count.to_i32
     end
 
     def exec(clause = "")
       guard_writes!
+      ensure_raw_sql_unscoped!
       mark_write_operation
       adapter.open(&.exec(clause))
     end
 
     def query(clause = "", params = [] of Grant::Columns::Type, &)
       guard_writes!
+      ensure_raw_sql_unscoped!
       mark_write_operation
       clause = adapter.ensure_clause_template(clause)
       adapter.open { |db| db.query(clause, args: params) { |rs| yield rs } }
     end
 
     def scalar(clause = "", &)
+      ensure_raw_sql_unscoped!
       mark_write_operation
       adapter.open { |db| yield db.scalar(clause) }
+    end
+
+    private def ensure_raw_sql_unscoped!
+      if self.responds_to?(:_has_default_scope?) && self._has_default_scope? && !self._unscoped?
+        Grant::Tenant.current! if self.responds_to?(:multitenant_column)
+        raise Grant::Querying::ScopedRawSqlError.new(
+          "Raw SQL cannot apply the default scope for #{self.name}. " \
+          "Wrap deliberate raw access in #{self.name}.unscoped { ... }.")
+      end
     end
 
     private def exec_exists(clause : String, params : Array(Grant::Columns::Type)) : Bool

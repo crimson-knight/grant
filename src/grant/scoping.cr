@@ -47,18 +47,46 @@
 # Todo.unscoped { |q| q.select } # deliberate cross-tenant access
 # ```
 module Grant::Scoping
+  @@unscoped_fibers = {} of {Fiber, String} => Int32
+  @@unscoped_mutex = Mutex.new
+
+  # Tracks unscoped blocks per model and fiber so one request cannot disable
+  # another request's default scope.
+  def self.unscoped?(model_name : String) : Bool
+    @@unscoped_mutex.synchronize do
+      @@unscoped_fibers[{Fiber.current, model_name}]? == 1
+    end
+  end
+
+  def self.set_unscoped(model_name : String, value : Bool) : Nil
+    @@unscoped_mutex.synchronize do
+      key = {Fiber.current, model_name}
+      if value
+        @@unscoped_fibers[key] = 1
+      else
+        @@unscoped_fibers.delete(key)
+      end
+    end
+  end
+
   macro included
     macro inherited
-      # Flag to track if we're in unscoped mode
-      class_property? _unscoped : Bool = false
+      def self._unscoped? : Bool
+        Grant::Scoping.unscoped?(self.name)
+      end
+
+      def self._unscoped=(value : Bool)
+        Grant::Scoping.set_unscoped(self.name, value)
+      end
     end
   end
 
   # Defines a named scope — a reusable class method *name* that applies *body*
-  # (a lambda taking the current `Grant::Query::Builder` and returning a refined
-  # one) on top of the model's `current_scope` (so the default scope, if any, is
-  # included). Returns a `Grant::Query::Builder` you can chain further or
-  # terminate with `all`/`first`/etc.
+  # on top of the model's `current_scope` (so the default scope, if any, is
+  # included). The lambda may take the current `Grant::Query::Builder` as its
+  # first argument, or use class-level query methods such as `where`, which also
+  # start from `current_scope`. Any remaining lambda arguments are scope inputs.
+  # Returns a builder you can chain further or terminate with `all`/`first`/etc.
   #
   # ```
   # class Post < Grant::Base
@@ -71,9 +99,13 @@ module Grant::Scoping
   # ```
   macro scope(name, body)
     # Define on the model class
-    def self.{{name.id}}
+    def self.{{name.id}}(*args)
       query = current_scope
-      {{body}}.call(query)
+      {% if body.args.size > 0 && body.args.first.restriction.stringify.includes?("Grant::Query::Builder") %}
+        {{body}}.call(query, *args)
+      {% else %}
+        {{body}}.call(*args)
+      {% end %}
     end
   end
 
@@ -81,7 +113,8 @@ module Grant::Scoping
   # `where`, `find`, named scopes, etc. — until `unscoped` is used. *block* runs
   # in the context of a fresh `Grant::Query::Builder` for this model (so you call
   # `where`, `order`, ... directly). Declaring it sets `_has_default_scope?` to
-  # true and defines `apply_default_scope`, which `current_scope` invokes.
+  # true and defines `apply_default_scope`, which each concrete model's
+  # generated `current_scope` invokes.
   #
   # Prefer it for invariants that should hold for almost all reads (soft-delete
   # hiding, tenant isolation). For anything you need to vary per-query, use a
@@ -99,22 +132,68 @@ module Grant::Scoping
   macro default_scope(&block)
     class_getter? _has_default_scope : Bool = true
 
-    def self.apply_default_scope(query : Grant::Query::Builder({{ @type }}))
+    def self.apply_default_scope(query : Grant::Query::Builder(Model)) forall Model
       query.{{block.body}}
     end
   end
 
+  def __ensure_current_tenant! : Nil
+  end
+
+  # Defines a `QueryExtension` subclass of this model's `Grant::Query::Builder`
+  # carrying the custom methods in *block*, and a `.extending` class method that
+  # returns a fresh instance of it. Use it to add bespoke, chainable query
+  # helpers beyond what named scopes express.
+  macro extending(&block)
+    class QueryExtension < Grant::Query::Builder(\{{@type}})
+      {{block.body}}
+    end
+
+    def self.extending
+      QueryExtension.new(adapter.database_type)
+    end
+  end
+
   module ClassMethods
-    # Returns a fresh `Grant::Query::Builder` for this model with the
-    # `default_scope` already applied (unless the model has no default scope or
-    # execution is inside an `unscoped` block). This is the entry point every
-    # class-level query method routes through, so the default scope is included
-    # transparently.
-    #
-    # ```
-    # Post.current_scope # => Grant::Query::Builder(Post) (+ default scope)
-    # Post.current_scope.where(published: true).all
-    # ```
+    def _has_default_scope? : Bool
+      false
+    end
+
+    def apply_default_scope(query : Grant::Query::Builder(Model)) forall Model
+      query
+    end
+
+    def __sti_model? : Bool
+      false
+    end
+
+    def sti_root_class? : Bool
+      true
+    end
+
+    def sti_names_for_query : Array(String)
+      [] of String
+    end
+
+    def inheritance_column : String
+      "type"
+    end
+
+    def __multitenant? : Bool
+      false
+    end
+
+    def __tenant_write_scope
+      unscoped
+    end
+
+    def __apply_tenant_to_bulk_attributes(attributes : Array(Hash(String | Symbol, Grant::Columns::Type)))
+      attributes
+    end
+
+    # Fallback for Grant::Base itself. Concrete model classes generate their
+    # own version in Grant::Base's inherited hook so default scopes and STI
+    # filters use a builder specialized for that model.
     def current_scope
       db_type = case adapter.class.to_s
                 when "Grant::Adapter::Pg"
@@ -127,11 +206,6 @@ module Grant::Scoping
 
       # Always use the standard QueryBuilder for now
       query = Grant::Query::Builder(self).new(db_type)
-
-      # Apply default scope unless we're in unscoped mode
-      if !_unscoped? && self.responds_to?(:_has_default_scope?) && self.responds_to?(:apply_default_scope) && self._has_default_scope?
-        query = self.apply_default_scope(query)
-      end
 
       query
     end
@@ -243,99 +317,114 @@ module Grant::Scoping
 
       current
     end
-  end
 
-  # Defines a `QueryExtension` subclass of this model's `Grant::Query::Builder`
-  # carrying the custom methods in *block*, and a `.extending` class method that
-  # returns a fresh instance of it. Use it to add bespoke, chainable query
-  # helpers beyond what named scopes express.
-  #
-  # ```
-  # class Post < Grant::Base
-  #   extending do
-  #     def with_comments
-  #       where("comments_count > ?", 0)
-  #     end
-  #   end
-  # end
-  #
-  # Post.extending.with_comments # => a Post query builder, chainable
-  # ```
-  macro extending(&block)
-    class QueryExtension < Grant::Query::Builder(\{{@type}})
-      {{block.body}}
-    end
-
-    def self.extending
-      QueryExtension.new(adapter.database_type)
-    end
-  end
-
-  # Defines class-method delegations for *method_name* that forward to
-  # `current_scope`, so a class-level query call (`Model.where(...)`) starts from
-  # the scoped builder rather than a bare one — this is what makes the default
-  # scope apply to top-level queries. Generates both a plain and a
-  # block-accepting overload. Used internally to wire up `where`, `order`,
-  # `group_by`, `limit`, `offset`, `includes`, `preload`, and `eager_load`.
-  macro override_query_method(method_name)
-    def self.{{method_name.id}}(*args, **kwargs)
+    # Defines class-method delegations for *method_name* that forward to
+    # `current_scope`, so a class-level query call (`Model.where(...)`) starts from
+    # the scoped builder rather than a bare one — this is what makes the default
+    # scope apply to top-level queries. Generates both a plain and a
+    # block-accepting overload. Used internally to wire up `where`, `order`,
+    # `group_by`, `limit`, `offset`, `includes`, `preload`, and `eager_load`.
+    macro override_query_method(method_name)
+    def {{method_name.id}}(*args, **kwargs)
       current_scope.{{method_name.id}}(*args, **kwargs)
     end
-    
-    def self.{{method_name.id}}(*args, **kwargs, &block)
+
+    def {{method_name.id}}(*args, **kwargs, &block)
       current_scope.{{method_name.id}}(*args, **kwargs) do |*yield_args|
         yield *yield_args
       end
     end
   end
 
-  # Override common query methods to respect default scope
-  override_query_method where
-  override_query_method order
-  override_query_method group_by
-  override_query_method limit
-  override_query_method offset
-  override_query_method includes
-  override_query_method preload
-  override_query_method eager_load
+    # Override common query methods to respect default scope
+    override_query_method where
+    override_query_method order
+    override_query_method lock
+    override_query_method group_by
+    override_query_method limit
+    override_query_method offset
+    override_query_method reorder
+    override_query_method reverse_order
+    override_query_method rewhere
+    override_query_method reselect
+    override_query_method regroup
+    override_query_method joins
+    override_query_method left_joins
+    override_query_method distinct
+    override_query_method having
+    override_query_method none
+    override_query_method includes
+    override_query_method preload
+    override_query_method eager_load
+    override_query_method in_chunks
+    override_query_method use_index
+    override_query_method force_index
+    override_query_method ignore_index
+    override_query_method ids
+    override_query_method pluck
+    override_query_method pick
+    override_query_method in_batches
+    override_query_method annotate
+    override_query_method explain
+    override_query_method unscope
+    override_query_method or
+    override_query_method update_all
+    override_query_method delete_all
+    override_query_method destroy_all
+    override_query_method delete
+    override_query_method touch_all
 
-  # Returns all records of this model, honoring the `default_scope`. Equivalent
-  # to `current_scope.select`.
-  #
-  # ```
-  # Post.all # => Array(Post), default scope applied
-  # ```
-  def self.all
-    current_scope.select
-  end
+    # Returns all records of this model, honoring the `default_scope`. Equivalent
+    # to `current_scope.select`.
+    #
+    # ```
+    # Post.all # => Array(Post), default scope applied
+    # ```
+    def all
+      current_scope.select
+    end
 
-  # Executes the `current_scope` (with default scope) and returns the matching
-  # records. The scoping-aware override of the bare `select`.
-  #
-  # ```
-  # Post.select # => Array(Post), default scope applied
-  # ```
-  def self.select
-    current_scope.select
-  end
+    # Executes the `current_scope` (with default scope) and returns the matching
+    # records. The scoping-aware override of the bare `select`.
+    #
+    # ```
+    # Post.select # => Array(Post), default scope applied
+    # ```
+    def select
+      current_scope.select
+    end
 
-  # Finds a record by primary key within the `default_scope`, or `nil` if none
-  # matches (a soft-deleted row hidden by a default scope is not found).
-  #
-  # ```
-  # Post.find(1) # => Post? (respecting default scope)
-  # ```
-  def self.find(id)
-    current_scope.find(id)
-  end
+    def select(*columns : Symbol)
+      current_scope.select(*columns)
+    end
 
-  # Finds a record by primary key within the `default_scope`, raising
-  # `Grant::Querying::NotFound` when none matches.
-  #
-  # ```
-  # Post.find!(1) # => Post (raises if absent or scoped out)
-  # ```
-  def self.find!(id)
-    current_scope.find!(id)
+    # Returns one matching record, or up to *count* records, from the current scope.
+    def take : self?
+      current_scope.first
+    end
+
+    def take(count : Int32) : Array(self)
+      current_scope.first(count)
+    end
+
+    # Finds a record by primary key within the `default_scope`, or `nil` if none
+    # matches (a soft-deleted row hidden by a default scope is not found).
+    #
+    # ```
+    # Post.find(1) # => Post? (respecting default scope)
+    # ```
+    def find(id)
+      current_scope.where(primary_name, :eq, id).first
+    end
+
+    # Finds a record by primary key within the `default_scope`, raising
+    # `Grant::Querying::NotFound` when none matches.
+    #
+    # ```
+    # Post.find!(1) # => Post (raises if absent or scoped out)
+    # ```
+    def find!(id)
+      find(id) || raise Grant::Querying::NotFound.new("No #{self.name} found where #{primary_name} = #{id}")
+    end
   end
 end

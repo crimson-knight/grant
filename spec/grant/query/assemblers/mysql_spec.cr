@@ -21,12 +21,12 @@ require "../spec_helper"
 
     context "group_by" do
       it "adds group_by for select query" do
-        sql = "select #{query_fields} from table group by name order by id desc"
+        sql = "select #{query_fields} from table group by name"
         builder.group_by(:name).raw_sql.should match ignore_whitespace sql
       end
 
       it "adds multiple group_by for select query" do
-        sql = "select #{query_fields} from table group by name, age order by id desc"
+        sql = "select #{query_fields} from table group by name, age"
         builder.group_by([:name, :age]).raw_sql.should match ignore_whitespace sql
       end
 

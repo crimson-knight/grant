@@ -107,8 +107,15 @@ abstract class Grant::Adapter::Base
   # native parameter syntax. The base implementation is a no-op since
   # SQLite and MySQL use `?` natively. The PG adapter overrides this
   # to convert `?` to `$1`, `$2`, etc.
-  def ensure_clause_template(clause : String) : String
+  def ensure_clause_template(clause : String, starting_index : Int32 = 0) : String
     clause
+  end
+
+  # Returns the placeholder for the *index*th bound parameter. Adapters with
+  # positional question-mark placeholders ignore the index; PostgreSQL uses it
+  # to keep composed SQL fragments from reusing an earlier parameter number.
+  def parameter_placeholder(index : Int32) : String
+    "?"
   end
 
   # Quotes a boolean as a SQL literal for this adapter. PostgreSQL and SQLite

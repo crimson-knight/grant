@@ -36,7 +36,7 @@ module Grant::Migrator
     end
 
     def drop
-      Model.exec drop_sql
+      Model.unscoped { |_scope| Model.exec drop_sql }
     end
 
     def create_sql
@@ -85,7 +85,7 @@ module Grant::Migrator
     end
 
     def create
-      Model.exec create_sql
+      Model.unscoped { |_scope| Model.exec create_sql }
     end
   end
 end

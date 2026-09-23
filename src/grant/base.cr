@@ -189,6 +189,43 @@ abstract class Grant::Base
   end
 
   macro inherited
+    # Keep this method concrete per model. A shared class method invoked through
+    # `Grant::Base.class` gives `self` a union of model classes; dispatching a
+    # model-specific default-scope method from that union triggers an LLVM bug
+    # in Crystal 1.21. The per-model method keeps Builder's model type concrete
+    # and still lets generic class references dispatch to the right scope.
+    def self.current_scope
+      db_type = case adapter.class.to_s
+                when "Grant::Adapter::Pg"
+                  Grant::Query::Builder::DbType::Pg
+                when "Grant::Adapter::Mysql"
+                  Grant::Query::Builder::DbType::Mysql
+                else
+                  Grant::Query::Builder::DbType::Sqlite
+                end
+
+      query = Grant::Query::Builder({{@type}}).new(db_type)
+
+      if !_unscoped? && _has_default_scope?
+        query = apply_default_scope(query)
+        query.default_scope_where_fields.concat(query.where_fields)
+        query.where_fields.clear
+      end
+
+      if __sti_model? && !sti_root_class?
+        names = sti_names_for_query
+        if names.size == 1
+          query.where(inheritance_column, :eq, names.first)
+        else
+          query.where(inheritance_column, :in, names)
+        end
+        query.default_scope_where_fields.concat(query.where_fields)
+        query.where_fields.clear
+      end
+
+      query
+    end
+
     # The annotated ivars below — and the auto-generated JSON/YAML serializers —
     # may only be declared ONCE per inheritance chain. Crystal raises
     # "can't annotate @x ... because it was first defined in <Super>" if an

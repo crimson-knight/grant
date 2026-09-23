@@ -63,6 +63,11 @@ module Grant::Testing
       1_i64
     end
 
+    def scalar(query : String, args : Enumerable) : DB::Any
+      track_query(query)
+      1_i64
+    end
+
     # query_one (non-nilable) variant — always raises since no real DB backing
     def query_one(query : String, *args, as types : Tuple)
       raise DB::Error.new("VirtualShardAdapter: query_one not supported")

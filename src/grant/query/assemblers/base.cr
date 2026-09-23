@@ -2,7 +2,7 @@ require "../../aggregations"
 
 module Grant::Query::Assembler
   abstract class Base(Model)
-    include Grant::Aggregations::QueryMethods
+    include Grant::Aggregations::QueryMethods(Model)
     @placeholder : String = ""
     @where : String?
     @order : String?
@@ -33,11 +33,25 @@ module Grant::Query::Assembler
     end
 
     def field_list
-      if select_cols = @query.select_columns
-        select_cols.join(", ")
+      fields = @query.select_columns || [Model.fields].flatten
+      return fields.map { |field| quote_reserved_field(field) }.join(", ") if @query.join_clauses.empty?
+
+      table_name = Model.quote(Model.table_name)
+      fields.map do |field|
+        qualify_join_field(field, table_name)
+      end.join(", ")
+    end
+
+    private def qualify_join_field(field : String, quoted_table_name : String) : String
+      if !@query.join_clauses.empty? && field.matches?(/\A[A-Za-z_][A-Za-z0-9_]*\z/)
+        "#{quoted_table_name}.#{Model.quote(field)}"
       else
-        [Model.fields].flatten.join(", ")
+        field
       end
+    end
+
+    private def quote_reserved_field(field : String) : String
+      field.downcase == "all" ? Model.quote(field) : field
     end
 
     # Generates the SELECT keyword with optional DISTINCT modifier.
@@ -116,62 +130,65 @@ module Grant::Query::Assembler
     def where
       return @where if @where
 
-      clauses = ["WHERE"]
+      default_scope = render_where_fields(@query.default_scope_where_fields)
+      conditions = render_where_fields(@query.where_fields)
 
-      @query.where_fields.each do |expression|
-        clauses << expression[:join].to_s.upcase unless clauses.size == 1
+      return nil if default_scope.empty? && conditions.empty?
 
-        if expression[:field]?.nil? # custom SQL
-          clause = case expression
-                   when NamedTuple(join: Symbol, stmt: String, values: Array(Grant::Columns::Type))
-                     # Grouped or/not block: multiple ordered bind values — replace each ? in order
-                     sql = expression[:stmt]
-                     expression[:values].each do |val|
-                       token = add_parameter(val)
-                       sql = sql.sub(@placeholder, token)
-                     end
-                     sql
-                   else
-                     expr = expression.as(NamedTuple(join: Symbol, stmt: String, value: Grant::Columns::Type))
-                     if !expr[:value].nil?
-                       param_token = add_parameter expr[:value]
-                       expr[:stmt].gsub(@placeholder, param_token)
+      @where = String.build do |sql|
+        sql << "WHERE "
+        if !default_scope.empty? && !conditions.empty?
+          sql << "(#{default_scope}) AND (#{conditions})"
+        elsif !default_scope.empty?
+          sql << "(#{default_scope})"
+        else
+          sql << conditions
+        end
+      end
+    end
+
+    private def render_where_fields(fields : Array(Grant::Query::WhereField)) : String
+      String.build do |sql|
+        fields.each_with_index do |expression, index|
+          sql << " #{expression[:join].to_s.upcase} " unless index == 0
+
+          if expression[:field]?.nil?
+            clause = case expression
+                     when NamedTuple(join: Symbol, stmt: String, values: Array(Grant::Columns::Type))
+                       statement = expression[:stmt]
+                       expression[:values].each do |value|
+                         statement = statement.sub(@placeholder, add_parameter(value))
+                       end
+                       statement
                      else
-                       expr[:stmt]
+                       expr = expression.as(NamedTuple(join: Symbol, stmt: String, value: Grant::Columns::Type))
+                       if value = expr[:value]
+                         expr[:stmt].gsub(@placeholder, add_parameter(value))
+                       else
+                         expr[:stmt]
+                       end
                      end
-                   end
-
-          clauses << clause
-        else # standard where query
-          expression = expression.as(NamedTuple(join: Symbol, field: String, operator: Symbol, value: Grant::Columns::Type))
-          add_aggregate_field expression[:field]
-
-          if expression[:value].nil?
-            clauses << "#{expression[:field]} IS NULL"
-          elsif expression[:value].is_a?(Array)
-            in_stmt = String.build do |str|
-              str << '('
-              expression[:value].as(Array).each_with_index do |val, idx|
-                case val
-                when Bool, Number
-                  str << val
-                else
-                  str << add_parameter val
-                end
-                str << ',' if expression[:value].as(Array).size - 1 != idx
-              end
-              str << ')'
-            end
-            clauses << "#{expression[:field]} #{sql_operator(expression[:operator])} #{in_stmt}"
+            sql << clause
           else
-            clauses << "#{expression[:field]} #{sql_operator(expression[:operator])} #{add_parameter expression[:value]}"
+            expr = expression.as(NamedTuple(join: Symbol, field: String, operator: Symbol, value: Grant::Columns::Type))
+            field = qualify_join_field(expr[:field], Model.quote(Model.table_name))
+            add_aggregate_field(field)
+
+            if value = expr[:value]
+              if value.is_a?(Array)
+                placeholders = value.as(Array).map do |item|
+                  item.is_a?(Bool) || item.is_a?(Number) ? item.to_s : add_parameter(item)
+                end
+                sql << "#{field} #{sql_operator(expr[:operator])} (#{placeholders.join(",")})"
+              else
+                sql << "#{field} #{sql_operator(expr[:operator])} #{add_parameter(value)}"
+              end
+            else
+              sql << "#{field} IS NULL"
+            end
           end
         end
       end
-
-      return nil if clauses.size == 1
-
-      @where = clauses.join(" ")
     end
 
     def order(use_default_order = true)
@@ -181,14 +198,25 @@ module Grant::Query::Assembler
 
       if order_fields.none?
         if use_default_order
+          if @query.group_fields.any? && @query.group_fields.none? { |expression| expression[:field] == Model.primary_name }
+            return nil
+          end
+          if @query.distinct? && @query.select_columns && !@query.select_columns.not_nil!.includes?(Model.primary_name)
+            return nil
+          end
           order_fields = default_order
+          if !@query.join_clauses.empty?
+            order_fields = order_fields.map do |expression|
+              {field: qualify_join_field(expression[:field], Model.quote(Model.table_name)), direction: expression[:direction]}
+            end
+          end
         else
           return nil
         end
       end
 
       order_clauses = order_fields.map do |expression|
-        field = expression[:field]
+        field = qualify_join_field(expression[:field], Model.quote(Model.table_name))
         next unless field
 
         add_aggregate_field field
@@ -208,7 +236,7 @@ module Grant::Query::Assembler
       group_fields = @query.group_fields
       return nil if group_fields.none?
       group_clauses = group_fields.map do |expression|
-        "#{expression[:field]}"
+        qualify_join_field(expression[:field], Model.quote(Model.table_name))
       end
 
       @group_by = "GROUP BY #{group_clauses.join ", "}"
@@ -236,7 +264,8 @@ module Grant::Query::Assembler
     end
 
     def default_order
-      [{field: Model.primary_name, direction: "ASC"}]
+      field = qualify_join_field(Model.primary_name, Model.quote(Model.table_name))
+      [{field: field, direction: Builder::Sort::Descending}]
     end
 
     def count : (Executor::MultiValue(Model, Int64) | Executor::Value(Model, Int64))

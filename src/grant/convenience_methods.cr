@@ -65,7 +65,7 @@ module Grant::ConvenienceMethods(Model)
   # # Single column still yields nested arrays:
   # User.all.pluck(:id) # => [[1], [2], [3]]
   # ```
-  def pluck(*fields : Symbol) : Array(Array(Grant::Columns::Type))
+  def pluck(*fields : Symbol | String) : Array(Array(Grant::Columns::Type))
     field_names = fields.to_a.map(&.to_s)
 
     if should_chunk_in?
@@ -108,7 +108,7 @@ module Grant::ConvenienceMethods(Model)
   #
   # User.where(active: false).pick(:id) # => nil  (when no rows match)
   # ```
-  def pick(*fields : Symbol) : Array(Grant::Columns::Type)?
+  def pick(*fields : Symbol | String) : Array(Grant::Columns::Type)?
     limit(1).pluck(*fields).first?
   end
 
@@ -215,12 +215,15 @@ module Grant::BulkOperations
                  unique_by : Array(Symbol)? = nil,
                  record_timestamps : Bool = true) : Array(self)
     guard_writes!
+    builder = __builder
     return [] of self if attributes.empty?
 
     # Transform all keys to strings and ensure proper types
     string_attributes = attributes.map do |attrs|
       attrs.transform_keys(&.to_s).transform_values { |v| v.as(Grant::Columns::Type) }
     end
+
+    string_attributes = __apply_tenant_to_bulk_attributes(string_attributes)
 
     # Add timestamps if needed
     if record_timestamps
@@ -234,7 +237,6 @@ module Grant::BulkOperations
     end
 
     # Create a query builder to get assembler
-    builder = __builder
     assembler = builder.assembler
     sql = assembler.insert_all_sql(
       attributes: string_attributes,
@@ -271,12 +273,15 @@ module Grant::BulkOperations
                  update_only : Array(Symbol)? = nil,
                  record_timestamps : Bool = true) : Array(self)
     guard_writes!
+    builder = __builder
     return [] of self if attributes.empty?
 
     # Transform all keys to strings and ensure proper types
     string_attributes = attributes.map do |attrs|
       attrs.transform_keys(&.to_s).transform_values { |v| v.as(Grant::Columns::Type) }
     end
+
+    string_attributes = __apply_tenant_to_bulk_attributes(string_attributes)
 
     # Add timestamps if needed
     if record_timestamps
@@ -290,7 +295,6 @@ module Grant::BulkOperations
     end
 
     # Create a query builder to get assembler
-    builder = __builder
     assembler = builder.assembler
     sql = assembler.upsert_all_sql(
       attributes: string_attributes,
