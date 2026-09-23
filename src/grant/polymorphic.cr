@@ -73,6 +73,28 @@ module Grant::Polymorphic
         nil
       end
     end
+
+    # Loads one batch of targets that share a stored polymorphic type. The
+    # query runs through each target model's current scope, including tenant and
+    # default scopes.
+    def self.load_polymorphic_batch(type_name : String, primary_key : String, ids : Array(Grant::Columns::Type)) : Array(Grant::Base)
+      case type_name
+      {% for name, klass in REGISTERED_TYPES %}
+      when {{name}}
+        {% if name.starts_with?("Validators::") || name.starts_with?("Spec::") %}
+          [] of Grant::Base
+        {% else %}
+          return [] of Grant::Base if ids.empty?
+          placeholders = ids.map { "?" }.join(", ")
+          quoted_primary_key = {{klass}}.quote(primary_key)
+          {{klass}}.all("WHERE #{quoted_primary_key} IN (#{placeholders})", ids)
+            .to_a.map(&.as(Grant::Base))
+        {% end %}
+      {% end %}
+      else
+        [] of Grant::Base
+      end
+    end
     
     # Like `load_polymorphic`, but raises `Grant::Querying::NotFound` instead of
     # returning `nil`.
@@ -201,13 +223,26 @@ module Grant::Polymorphic
     end
     
     # Define getter method
+    @[Grant::Relationship(target: Grant::Base, type: :belongs_to, polymorphic: true,
+      foreign_key: {{foreign_key.id.stringify}}, type_column: {{type_column.id.stringify}},
+      primary_key: {{primary_key.id.stringify}})]
     def {{name.id}} : Grant::Base?
-      {{name.id}}_proxy.load
+      if association_loaded?({{name.id.stringify}})
+        get_loaded_association({{name.id.stringify}}).as(Grant::Base?)
+      else
+        assert_association_can_lazy_load!({{name.id.stringify}})
+        {{name.id}}_proxy.load
+      end
     end
     
     # Define bang getter
     def {{name.id}}! : Grant::Base
-      {{name.id}}_proxy.load!
+      if association_loaded?({{name.id.stringify}})
+        get_loaded_association({{name.id.stringify}}).as(Grant::Base?) || raise Grant::Querying::NotFound.new("Polymorphic association not found")
+      else
+        assert_association_can_lazy_load!({{name.id.stringify}})
+        {{name.id}}_proxy.load!
+      end
     end
     
     # Define setter method
@@ -267,6 +302,8 @@ module Grant::Polymorphic
   macro has_many_polymorphic(name, poly_as, **options)
     {% foreign_key = options[:foreign_key] || (poly_as.id.stringify + "_id") %}
     {% type_column = options[:type_column] || (poly_as.id.stringify + "_type") %}
+    {% primary_key = options[:primary_key] || "id" %}
+    {% primary_key_name = primary_key.stringify.gsub(/:/, "").gsub(/"/, "") %}
     {% if name.is_a? TypeDeclaration %}
       {% method_name = name.var %}
       {% class_name = name.type %}
@@ -279,16 +316,24 @@ module Grant::Polymorphic
       if association_loaded?({{method_name.stringify}})
         loaded_data = get_loaded_association({{method_name.stringify}})
         if loaded_data.is_a?(Array(Grant::Base))
-          Grant::LoadedAssociationCollection(self, {{class_name.id}}).new(loaded_data.map(&.as({{class_name.id}})))
+          Grant::LoadedAssociationCollection(self, {{class_name.id}}).new(
+            loaded_data.map(&.as({{class_name.id}})), self,
+            {{foreign_key.id.stringify}}, {{type_column.id.stringify}}, {{primary_key_name}}
+          )
         else
           # For polymorphic, we need to use where query with both type and id
-          records = {{class_name.id}}.where({{type_column.id}}: self.class.name, {{foreign_key.id}}: primary_key_value).select
-          Grant::LoadedAssociationCollection(self, {{class_name.id}}).new(records)
+          records = {{class_name.id}}.where({{type_column.id}}: self.class.name, {{foreign_key.id}}: self.read_attribute({{primary_key_name}})).select
+          Grant::LoadedAssociationCollection(self, {{class_name.id}}).new(
+            records, self, {{foreign_key.id.stringify}}, {{type_column.id.stringify}}, {{primary_key_name}}
+          )
         end
       else
+        assert_association_can_lazy_load!({{method_name.stringify}})
         # For polymorphic, we need to use where query with both type and id
-        records = {{class_name.id}}.where({{type_column.id}}: self.class.name, {{foreign_key.id}}: primary_key_value).select
-        Grant::LoadedAssociationCollection(self, {{class_name.id}}).new(records)
+        records = {{class_name.id}}.where({{type_column.id}}: self.class.name, {{foreign_key.id}}: self.read_attribute({{primary_key_name}})).select
+        Grant::LoadedAssociationCollection(self, {{class_name.id}}).new(
+          records, self, {{foreign_key.id.stringify}}, {{type_column.id.stringify}}, {{primary_key_name}}
+        )
       end
     end
     
@@ -347,10 +392,12 @@ module Grant::Polymorphic
     {% end %}
     
     def {{method_name.id}} : {{class_name.id}}?
+      assert_association_can_lazy_load!({{method_name.stringify}}) unless association_loaded?({{method_name.stringify}})
       {{class_name.id}}.where({{type_column.id}}: self.class.name, {{foreign_key.id}}: primary_key_value).first
     end
     
     def {{method_name.id}}! : {{class_name.id}}
+      assert_association_can_lazy_load!({{method_name.stringify}}) unless association_loaded?({{method_name.stringify}})
       {{class_name.id}}.where({{type_column.id}}: self.class.name, {{foreign_key.id}}: primary_key_value).first || raise Grant::Querying::NotFound.new("No {{class_name.id}} found for #{self.class.name} with id #{primary_key_value}")
     end
     

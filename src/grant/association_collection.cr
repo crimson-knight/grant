@@ -1,220 +1,314 @@
-# The lazy collection returned by a `has_many` association (e.g. `user.posts`).
-#
-# It is **not** loaded until you call a terminal method. Any method it doesn't
-# define is forwarded (via `forward_missing_to all`) to the loaded
-# `Array(Target)`, so standard `Enumerable`/`Array` methods (`map`, `select`,
-# `each`, `size`, `to_a`, ...) work directly. On top of that it provides
-# scoped finders (`find`, `find_by`, `find_by!`), builders (`build`, `create`,
-# `create!`) that pre-set the foreign key to the owner, and bulk removal
-# (`destroy_all`, `delete_all`).
-#
-# ```
-# user = User.find!(1)
-# user.posts.to_a # loads and returns Array(Post)
-# user.posts.size # forwarded to the loaded array
-# user.posts.where(published: true).to_a
-# user.posts.find_by(title: "Hello") # => Post? scoped to this user
-# user.posts.create(title: "New")    # builds + saves with user_id pre-set
-# user.posts.destroy_all             # destroy each child (runs callbacks)
-# ```
+# Lazy, owner-scoped collection returned by a has_many association.
 class Grant::AssociationCollection(Owner, Target)
-  forward_missing_to all
+  include Enumerable(Target)
 
-  # `@scope` carries an optional association-scope lambda (the `-> { ... }` form
-  # of `has_many :posts, -> { where(published: true) }`). When present it is
-  # applied to a fresh `Target` query builder and the resulting WHERE fragment is
-  # merged into the association query so the collection is filtered by the scope.
-  def initialize(@owner : Owner, @foreign_key : (Symbol | String), @through : (Symbol | String | Nil) = nil, @primary_key : (Symbol | String | Nil) = nil, @inverse_of : (Symbol | String | Nil) = nil, @scope : (Grant::Query::Builder(Target) -> Grant::Query::Builder(Target))? = nil)
+  def initialize(@owner : Owner,
+                 @foreign_key : (Symbol | String),
+                 @through : (Symbol | String | Nil) = nil,
+                 @primary_key : (Symbol | String | Nil) = nil,
+                 @inverse_of : (Symbol | String | Nil) = nil,
+                 @scope : (Grant::Query::Builder(Target) -> Grant::Query::Builder(Target))? = nil,
+                 @association_name : String? = nil,
+                 @loaded_records : Array(Target)? = nil,
+                 @through_delete_all : Proc(Int64)? = nil,
+                 @through_source : String? = nil)
   end
 
-  # Loads and returns the associated records as an `Array(Target)`, applying any
-  # association scope. An optional raw SQL *clause* (with `?` placeholders) and
-  # its *params* are AND-appended to the association's WHERE.
-  #
-  # ```
-  # user.posts.all                                # => Array(Post)
-  # user.posts.all("posts.published = ?", [true]) # extra raw filter
-  # ```
-  def all(clause = "", params = [] of DB::Any)
-    start_time = Time.monotonic
-    scope_clause, scope_params = scope_fragment
-    all_params = [owner.primary_key_value.as(Grant::Columns::Type)]
-    scope_params.each { |p| all_params << p }
-    params.each { |p| all_params << p.as(Grant::Columns::Type) }
-    results = Target.all(
-      [query, scope_clause, clause].reject(&.empty?).join(" "),
-      all_params
-    )
-    duration = Time.monotonic - start_time
-
-    Grant::Logs::Association.info { "Loaded has_many association - #{Owner.name} [#{Target.name}] [fk: #{@foreign_key}] - #{results.size} records (#{duration.total_milliseconds}ms)" }
-
-    # Set inverse association on loaded records to prevent N+1 queries
-    if inv = @inverse_of
-      results.each do |record|
-        record.set_loaded_association(inv.to_s, owner)
-      end
+  def all(clause = "", params = [] of DB::Any) : Array(Target)
+    if clause.empty? && params.empty? && (records = @loaded_records)
+      return records
     end
+    ensure_lazy_loading_allowed
 
+    results = if clause.empty? && params.empty?
+                association_relation.select
+              else
+                scope_clause, scope_params, scope_modifiers = scope_fragments
+                sql = [query, scope_clause, clause, scope_modifiers].reject(&.empty?).join(" ")
+                all_params = [owner_key]
+                scope_params.each { |value| all_params << value }
+                params.each { |value| all_params << value.as(Grant::Columns::Type) }
+                Target.all(sql, all_params).to_a
+              end
+
+    if inverse = @inverse_of
+      results.each { |record| record.set_loaded_association(inverse.to_s, owner) }
+    end
     results
   end
 
-  # Returns the first associated record matching *args* (column => value), or
-  # `nil`. The match is constrained to this owner's collection.
-  #
-  # ```
-  # user.posts.find_by(title: "Hello") # => Post? belonging to this user
-  # ```
-  def find_by(**args)
-    start_time = Time.monotonic
-    result = Target.first(
-      "#{query} AND #{args.map { |arg| "#{Target.quote(Target.table_name)}.#{Target.quote(arg.to_s)} = ?" }.join(" AND ")}",
-      [owner.primary_key_value] + args.values.to_a
-    )
-    duration = Time.monotonic - start_time
-
-    if result
-      Grant::Logs::Association.debug { "Found record in association - #{Owner.name} [#{Target.name}] [fk: #{@foreign_key}] (#{duration.total_milliseconds}ms) - #{args.to_h}" }
-      # Set inverse association on found record
-      if inv = @inverse_of
-        result.set_loaded_association(inv.to_s, owner)
-      end
-    end
-
-    result
+  def each(&block : Target ->)
+    all.each { |record| yield record }
   end
 
-  # Like `find_by`, but raises `Grant::Querying::NotFound` when no record in the
-  # collection matches *args*.
-  #
-  # ```
-  # user.posts.find_by!(title: "Hello") # => Post (raises if absent)
-  # ```
-  def find_by!(**args)
-    find_by(**args) || raise Grant::Querying::NotFound.new("No #{Target.name} found where #{args.map { |k, v| "#{k} = #{v}" }.join(" and ")}")
+  def to_a : Array(Target)
+    all
   end
 
-  # Finds a `Target` by primary key *value*, or `nil`. Note this delegates to
-  # `Target.find` and is **not** constrained to the collection.
-  #
-  # ```
-  # user.posts.find(1) # => Post? with id 1
-  # ```
-  def find(value)
-    Target.find(value)
+  def size : Int32
+    all.size
   end
 
-  # Finds a `Target` by primary key *value*, raising
-  # `Grant::Querying::NotFound` when absent. Delegates to `Target.find!` and is
-  # **not** constrained to the collection.
-  #
-  # ```
-  # user.posts.find!(1) # => Post with id 1 (raises if absent)
-  # ```
-  def find!(value)
-    Target.find!(value)
+  def empty? : Bool
+    all.empty?
   end
 
-  # Builds a new Target instance with the foreign key pre-set to the
-  # owner's primary key. The record is NOT saved to the database.
-  #
-  # ```
-  # post = author.posts.build(title: "New Post")
-  # post.author_id   # => author.id
-  # post.new_record? # => true
-  # ```
-  def build(**attrs) : Target
-    record = Target.new
-    record.set_attributes(attrs.to_h.transform_keys(&.to_s))
-    # Set foreign key to owner's primary key
-    record.set_attributes({@foreign_key.to_s => owner.primary_key_value})
+  def any? : Bool
+    !empty?
+  end
+
+  def first : Target?
+    all.first?
+  end
+
+  def first! : Target
+    all.first
+  end
+
+  def last : Target?
+    all.last?
+  end
+
+  def last! : Target
+    all.last
+  end
+
+  def where(**matches) : Grant::Query::Builder(Target)
+    ensure_lazy_loading_allowed
+    association_relation.where(**matches)
+  end
+
+  def find(value) : Target?
+    record = if records = @loaded_records
+               records.find { |item| item.primary_key_value == value }
+             elsif @through
+               ensure_lazy_loading_allowed
+               all.find { |record| record.primary_key_value == value }
+             else
+               ensure_lazy_loading_allowed
+               association_relation.where(Target.primary_name, :eq, value.as(Grant::Columns::Type)).first
+             end
+    set_inverse(record) if record
     record
   end
 
-  # Builds and saves a new Target instance with the foreign key pre-set.
-  # Returns the record (which may have errors if save failed).
-  #
-  # ```
-  # post = author.posts.create(title: "New Post")
-  # post.persisted? # => true (if valid)
-  # ```
+  def find!(value) : Target
+    find(value) || raise Grant::Querying::NotFound.new("No #{Target.name} found where #{Target.primary_name} = #{value}")
+  end
+
+  def find_by(**args) : Target?
+    record = if records = @loaded_records
+               records.find do |record|
+                 args.to_h.all? { |key, value| record.read_attribute(key.to_s) == value }
+               end
+             else
+               ensure_lazy_loading_allowed
+               association_relation.where(**args).first
+             end
+    set_inverse(record) if record
+    record
+  end
+
+  def find_by!(**args) : Target
+    find_by(**args) || raise Grant::Querying::NotFound.new("No #{Target.name} found where #{args.map { |key, value| "#{key} = #{value}" }.join(" and ")}")
+  end
+
+  def build(**attrs) : Target
+    record = Target.new
+    record.set_attributes(attrs.to_h.transform_keys(&.to_s))
+    record.set_attributes({@foreign_key.to_s => owner_key}) unless @through
+    record
+  end
+
   def create(**attrs) : Target
     record = build(**attrs)
     record.save
     record
   end
 
-  # Builds and saves a new Target instance. Raises
-  # `Grant::RecordNotSaved` if the save fails.
-  #
-  # ```
-  # post = author.posts.create!(title: "New Post") # raises if invalid
-  # ```
   def create!(**attrs) : Target
     record = build(**attrs)
     record.save!
     record
   end
 
-  # Destroys all associated records by loading each and calling destroy.
-  # This triggers callbacks on each record.
-  #
-  # Returns the number of records destroyed.
-  def destroy_all : Int32
-    records = all
-    count = 0
+  # Associates *record* with this owner and persists it when the owner already
+  # exists. Repeated appends of the same record do not issue another save.
+  def <<(record : Target) : self
+    raise ArgumentError.new("Cannot append to a has_many :through collection") if @through
+
+    key_changed = record.read_attribute(@foreign_key.to_s) != owner_key
+    if key_changed
+      record.write_attribute(@foreign_key.to_s, owner_key)
+    end
+    record.save! if owner.persisted? && (key_changed || !record.persisted?)
+    @loaded_records.try { |records| records << record unless records.includes?(record) }
+    self
+  end
+
+  def append(*records : Target) : self
+    records.each { |record| self << record }
+    self
+  end
+
+  def push(*records : Target) : self
+    append(*records)
+  end
+
+  # Disassociates matching records by nullifying their foreign key.
+  def delete(*records : Target) : Array(Target)
+    raise ArgumentError.new("Cannot delete targets through a has_many :through collection") if @through
+
+    removed = [] of Target
     records.each do |record|
-      if record.destroy
-        count += 1
+      associated_record = find(record.primary_key_value)
+      next unless associated_record
+
+      associated_record.write_attribute(@foreign_key.to_s, nil)
+      associated_record.save!
+      removed << associated_record
+      @loaded_records.try(&.delete(associated_record))
+    end
+    removed
+  end
+
+  # Destroys matching records and runs their callbacks.
+  def destroy(*records : Target) : Array(Target)
+    removed = [] of Target
+    records.each do |record|
+      associated_record = find(record.primary_key_value)
+      next unless associated_record
+      delete(associated_record) if @through
+      if associated_record.destroy!
+        removed << associated_record
+        @loaded_records.try(&.delete(associated_record))
       end
     end
+    removed
+  end
+
+  def ids : Array(Grant::Columns::Type)
+    all.map(&.primary_key_value.as(Grant::Columns::Type))
+  end
+
+  def exists? : Bool
+    if records = @loaded_records
+      !records.empty?
+    elsif @through
+      ensure_lazy_loading_allowed
+      !all.empty?
+    else
+      ensure_lazy_loading_allowed
+      association_relation.exists?
+    end
+  end
+
+  def exists?(value : Grant::Columns::Type) : Bool
+    !find(value).nil?
+  end
+
+  # Clears this association by disassociating its rows. Target records remain.
+  def clear : self
+    if @through
+      delete_all
+    else
+      all.each { |record| delete(record) }
+    end
+    @loaded_records.try(&.clear)
+    self
+  end
+
+  def destroy_all : Int32
+    records = all
+    records.count do |record|
+      destroyed = record.destroy
+      @loaded_records.try(&.delete(record)) if destroyed
+      destroyed
+    end
+  end
+
+  # Removes associated rows without callbacks. For a through association only
+  # the join rows are deleted; the target records remain.
+  def delete_all : Int64
+    count = if callback = @through_delete_all
+              callback.call
+            elsif @through
+              raise ArgumentError.new("Deleting this through association requires join metadata")
+            else
+              association_relation.delete_all
+            end
+    @loaded_records.try(&.clear)
     count
   end
 
-  # Deletes all associated records using a single SQL DELETE.
-  # Does NOT instantiate records or run callbacks.
-  #
-  # Returns the number of rows deleted.
-  def delete_all : Int64
-    Target.where("#{Target.table_name}.#{@foreign_key} = ?", owner.primary_key_value).delete_all
+  private getter owner
+
+  private def set_inverse(record : Target) : Target
+    if inverse = @inverse_of
+      record.set_loaded_association(inverse.to_s, owner)
+    end
+    record
   end
 
-  private getter owner
-  private getter foreign_key
-  private getter through
+  private def ensure_lazy_loading_allowed : Nil
+    owner.assert_association_can_lazy_load!(@association_name || Target.name)
+  end
 
-  # Maps Query::Builder operator symbols to SQL operators for raw fragment
-  # generation. Mirrors `Grant::Query::Assembler::Base::OPERATORS`.
-  SCOPE_OPERATORS = {"eq" => "=", "gteq" => ">=", "lteq" => "<=", "neq" => "!=", "ltgt" => "<>", "gt" => ">", "lt" => "<", "ngt" => "!>", "nlt" => "!<", "like" => "LIKE", "nlike" => "NOT LIKE"}
+  private def owner_key : Grant::Columns::Type
+    owner.read_attribute(@primary_key || Owner.primary_name)
+  end
 
-  # Evaluates the association scope lambda (if any) against a fresh `Target`
-  # query builder and translates its accumulated WHERE conditions into a raw
-  # SQL fragment (prefixed with `AND`) plus an ordered parameter array. The
-  # fragment uses `?` placeholders, which `Target.all` rewrites per-adapter.
-  #
-  # Only simple field/operator/value and raw-statement conditions are
-  # translated — this covers the common `-> { where(...) }` association-scope
-  # forms. The fragment is qualified with the target table name so it composes
-  # correctly with the JOIN used by `:through` associations.
-  private def scope_fragment : Tuple(String, Array(Grant::Columns::Type))
-    scope = @scope
-    return {"", [] of Grant::Columns::Type} unless scope
+  private def association_relation : Grant::Query::Builder(Target)
+    relation = Target.current_scope
+    if association_scope = @scope
+      relation = association_scope.call(relation)
+    end
+    if @through
+      through_metadata, source_metadata = through_associations
+      if source_metadata[:type] == :belongs_to
+        source_key = through_metadata[:target_class].quote(source_metadata[:foreign_key])
+        target_key = source_metadata[:primary_key]
+      else
+        source_key = through_metadata[:target_class].quote(through_metadata[:target_class].primary_name.not_nil!)
+        target_key = source_metadata[:foreign_key]
+      end
+      join_model = through_metadata[:target_class]
+      join_table = join_model.quoted_table_name
+      join_owner_key = join_model.quote(through_metadata[:foreign_key])
+      subquery = "SELECT #{source_key} FROM #{join_table} WHERE #{join_owner_key} = ?"
+      relation.where("#{Target.quote(target_key)} IN (#{subquery})", owner_key)
+    else
+      relation.where(@foreign_key.to_s, :eq, owner_key)
+    end
+  end
+
+  private def through_associations : Tuple(Grant::AssociationRegistry::AssociationMeta, Grant::AssociationRegistry::AssociationMeta)
+    through_name = @through || raise ArgumentError.new("Missing through association metadata")
+    source_name = @through_source || raise ArgumentError.new("Missing source association metadata")
+    through_metadata = Grant::AssociationRegistry.get(Owner.name, through_name.to_s) || raise ArgumentError.new("Cannot resolve through association #{Owner.name}##{through_name}")
+    source_metadata = Grant::AssociationRegistry.get(through_metadata[:target_class].name, source_name) || raise ArgumentError.new("Cannot resolve source association #{through_metadata[:target_class].name}##{source_name}")
+    {through_metadata, source_metadata}
+  end
+
+  private def scope_fragments : Tuple(String, Array(Grant::Columns::Type), String)
+    return {"", [] of Grant::Columns::Type, ""} unless association_scope = @scope
 
     db_type = case Target.adapter.class.to_s
               when "Grant::Adapter::Pg"    then Grant::Query::Builder::DbType::Pg
               when "Grant::Adapter::Mysql" then Grant::Query::Builder::DbType::Mysql
               else                              Grant::Query::Builder::DbType::Sqlite
               end
-    builder = scope.call(Grant::Query::Builder(Target).new(db_type))
+    builder = Grant::Query::Builder(Target).new(db_type)
+    builder = association_scope.call(builder)
     clauses = [] of String
     params = [] of Grant::Columns::Type
 
     builder.where_fields.each do |field|
       if field.is_a?(NamedTuple(join: Symbol, field: String, operator: Symbol, value: Grant::Columns::Type))
-        op = SCOPE_OPERATORS[field[:operator].to_s]? || field[:operator].to_s
-        col = field[:field]
-        col = "#{Target.quote(Target.table_name)}.#{Target.quote(col)}" unless col.includes?(".")
-        clauses << "#{col} #{op} ?"
+        operator = SCOPE_OPERATORS[field[:operator].to_s]? || field[:operator].to_s
+        column = field[:field]
+        column = "#{Target.quote(Target.table_name)}.#{Target.quote(column)}" unless column.includes?(".")
+        clauses << "#{column} #{operator} ?"
         params << field[:value]
       elsif field.is_a?(NamedTuple(join: Symbol, stmt: String, value: Grant::Columns::Type))
         clauses << "(#{field[:stmt]})"
@@ -222,24 +316,39 @@ class Grant::AssociationCollection(Owner, Target)
       end
     end
 
-    return {"", [] of Grant::Columns::Type} if clauses.empty?
-    {"AND #{clauses.join(" AND ")}", params}
+    where_clause = clauses.empty? ? "" : "AND #{clauses.join(" AND ")}"
+    modifiers = [] of String
+    unless builder.order_fields.empty?
+      order_fields = builder.order_fields.map do |order|
+        field = order[:field]
+        quoted = field.includes?(".") ? field.split(".").map { |part| Target.quote(part) }.join(".") : Target.quote(field)
+        direction = order[:direction] == Grant::Query::Builder::Sort::Descending ? "DESC" : "ASC"
+        "#{quoted} #{direction}"
+      end
+      modifiers << "ORDER BY #{order_fields.join(", ")}"
+    end
+    modifiers << "LIMIT #{builder.limit}" if builder.limit
+    modifiers << "OFFSET #{builder.offset}" if builder.offset
+    {where_clause, params, modifiers.join(" ")}
   end
 
-  private def query
-    if through.nil?
-      "WHERE #{Target.table_name}.#{@foreign_key} = ?"
+  private def query : String
+    if @through.nil?
+      "WHERE #{Target.quote(Target.table_name)}.#{Target.quote(@foreign_key.to_s)} = ?"
     else
-      # For :through associations, the join key is the foreign key on the join table
-      # that references the Target's primary key. If a custom primary_key was provided
-      # (and it's not the default "id"), use it; otherwise derive from Target class name.
-      key = if @primary_key && @primary_key != "id"
-              @primary_key
-            else
-              "#{Target.to_s.underscore}_id"
-            end
-      "JOIN #{through} ON #{through}.#{key} = #{Target.table_name}.#{Target.primary_name} " \
-      "WHERE #{through}.#{@foreign_key} = ?"
+      through_metadata, source_metadata = through_associations
+      join_model = through_metadata[:target_class]
+      join_table = join_model.quoted_table_name
+      target_table = Target.quoted_table_name
+      join_primary_key = join_model.quote(join_model.primary_name.not_nil!)
+      target_join = if source_metadata[:type] == :belongs_to
+                      "#{target_table}.#{Target.quote(source_metadata[:primary_key])} = #{join_table}.#{join_model.quote(source_metadata[:foreign_key])}"
+                    else
+                      "#{target_table}.#{Target.quote(source_metadata[:foreign_key])} = #{join_table}.#{join_primary_key}"
+                    end
+      "JOIN #{join_table} ON #{target_join} WHERE #{join_table}.#{join_model.quote(through_metadata[:foreign_key])} = ?"
     end
   end
+
+  SCOPE_OPERATORS = {"eq" => "=", "gteq" => ">=", "lteq" => "<=", "neq" => "!=", "ltgt" => "<>", "gt" => ">", "lt" => "<", "ngt" => "!>", "nlt" => "!<", "like" => "LIKE", "nlike" => "NOT LIKE"}
 end

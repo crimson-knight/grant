@@ -138,27 +138,29 @@ book.author_id       # => 1         (the generated FK column)
 author = Author.find!(1)
 author.books         # => collection (#books) — Array-like, Enumerable
 author.book_ids      # => [1, 2, 3] (#book_ids)
-author.books.size    # => 3   (forwarded to the loaded Array)
+author.books.size    # => 3   (loads only this owner's books)
 author.books.map(&.title)                # Enumerable methods work directly
+author.books.where(published: true).count # database query, still owner-scoped
+author.books << Book.new(title: "Draft") # persists the association
 ```
 
-The `has_many` collection is **Array-like (`Enumerable`)**, not a chainable
-query builder. It forwards any method it doesn't define to its loaded
-`Array(Target)` (via `forward_missing_to all`), so `.size`, `.each`, `.map`,
-`.select { }`, `.to_a`, etc. work — but it does **not** implement `where`, and
-the no-arg `count` resolves to `Array#count` (which needs a block/argument), so
-`author.books.where(...)` and `author.books.count` do **not** compile. For a
-filtered or aggregated *database* query, use the class-level query builder:
+The `has_many` collection is an owner-aware `Enumerable` and query entry point.
+Methods such as `.size`, `.each`, `.map`, `.select { }`, and `.to_a` load only
+records in the association. `where` returns a chainable database query that
+keeps the owner and association scope; use it for database-side filtering,
+ordering, limits, and aggregates:
 
 ```crystal
 Book.where(author_id: author.id).where(rating: 5).count  # filtered DB COUNT
 Book.where(author_id: author.id).order(title: :asc).to_a # filtered DB query
 ```
 
-The collection does add a few scoped, owner-aware helpers on top of the
-`Enumerable` forwarding: `find_by` / `find_by!` (constrained to this owner),
-`build` / `create` / `create!` (pre-set the foreign key), and bulk
-`destroy_all` / `delete_all`.
+The collection also supports owner-scoped `find` / `find!` / `find_by` /
+`find_by!`, `build` / `create` / `create!`, `<<` / `append` / `push`,
+`delete` / `destroy` / `clear`, `ids`, `exists?`, and bulk `destroy_all` /
+`delete_all`. Direct `delete` and `clear` nullify the child foreign key. A
+`has_many :through` collection's `delete_all` removes its join rows and keeps
+target records.
 
 For the full association guide (options like `dependent:`, `counter_cache:`,
 `through:`, polymorphic, eager loading), see
