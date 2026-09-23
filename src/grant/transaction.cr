@@ -101,6 +101,10 @@ module Grant::Transaction
     # the transaction enclosing it.
     getter pending_callbacks = [] of NamedTuple(on_commit: Proc(Nil), on_rollback: Proc(Nil))
 
+    # Model snapshots taken before each write in this transaction. Keeping
+    # every snapshot lets a savepoint restore only the writes made inside it.
+    getter list_of_record_rollback_actions = [] of Proc(Nil)
+
     def initialize(@connection : DB::Connection, @options : Options, @adapter : Grant::Adapter::Base)
     end
 
@@ -157,6 +161,14 @@ module Grant::Transaction
       state.pending_callbacks << {on_commit: on_commit, on_rollback: on_rollback}
     else
       on_commit.call
+    end
+  end
+
+  # Enlists a record snapshot with the innermost open transaction. The snapshot
+  # is discarded on commit and called in reverse order on rollback.
+  def self.enlist_record_rollback_action(rollback_action : Proc(Nil)) : Nil
+    if state = @@transaction_stacks[Fiber.current]?.try(&.last?)
+      state.list_of_record_rollback_actions << rollback_action
     end
   end
 
@@ -286,47 +298,56 @@ module Grant::Transaction
     end
 
     private def execute_transaction(options : Transaction::Options, &block)
-      if conn = Grant::SchemaTenant.current_connection?(adapter)
-        execute_transaction_on(conn, options) { yield }
-      else
-        # Use a dedicated pool checkout outside schema tenancy. Inside a schema
-        # block the same already-pinned connection must carry BEGIN through
-        # COMMIT so every statement sees the active search_path.
-        adapter.open_pool_connection do |conn|
+      callbacks_to_run = begin
+        if conn = Grant::SchemaTenant.current_connection?(adapter)
           execute_transaction_on(conn, options) { yield }
+        else
+          # Use a dedicated pool checkout outside schema tenancy. Inside a schema
+          # block the same already-pinned connection must carry BEGIN through
+          # COMMIT so every statement sees the active search_path.
+          adapter.open_pool_connection do |conn|
+            execute_transaction_on(conn, options) { yield }
+          end
         end
+      rescue ex : DB::Error
+        handle_transaction_error(ex)
       end
-    rescue ex : DB::Error
-      handle_transaction_error(ex)
+
+      # Commit callbacks run after the transaction leaves the fiber stack. Run
+      # them outside the database-error rescue so their exceptions are preserved.
+      callbacks_to_run.each(&.call)
     end
 
-    private def execute_transaction_on(conn : DB::Connection, options : Transaction::Options, &block)
+    private def execute_transaction_on(conn : DB::Connection, options : Transaction::Options, &block) : Array(Proc(Nil))
       start_transaction(conn, options)
       state = TransactionState.new(conn, options, adapter)
       transaction_stack.push(state)
 
       begin
         yield
-
         conn.exec("COMMIT")
-        transaction_stack.pop
-        clear_transaction_stack if transaction_stack.empty?
-        # This transaction committed durably on its own connection — true
-        # even for a requires_new transaction nested inside another one —
-        # so its deferred after_commit callbacks fire now. Callbacks
-        # enqueued by an enclosing transaction wait for its commit.
-        state.pending_callbacks.each(&.[:on_commit].call)
       rescue ex : Rollback
         conn.exec("ROLLBACK")
         transaction_stack.pop
         clear_transaction_stack if transaction_stack.empty?
-        state.pending_callbacks.each(&.[:on_rollback].call)
+        restore_transaction_records(state)
+        state.pending_callbacks.map(&.[:on_rollback])
       rescue ex
         conn.exec("ROLLBACK")
         transaction_stack.pop
         clear_transaction_stack if transaction_stack.empty?
+        restore_transaction_records(state)
         state.pending_callbacks.each(&.[:on_rollback].call)
         raise ex
+      else
+        transaction_stack.pop
+        clear_transaction_stack if transaction_stack.empty?
+        state.list_of_record_rollback_actions.clear
+        # This transaction committed durably on its own connection — true
+        # even for a requires_new transaction nested inside another one —
+        # so its deferred after_commit callbacks fire now. Callbacks
+        # enqueued by an enclosing transaction wait for its commit.
+        state.pending_callbacks.map(&.[:on_commit])
       end
     end
 
@@ -339,6 +360,7 @@ module Grant::Transaction
       # this mark are pruned and get after_rollback instead of waiting around
       # to incorrectly receive after_commit at the outer commit.
       mark = current.pending_callbacks.size
+      record_rollback_mark = current.list_of_record_rollback_actions.size
 
       begin
         current.connection.exec("SAVEPOINT #{savepoint_name}")
@@ -346,9 +368,11 @@ module Grant::Transaction
         current.connection.exec("RELEASE SAVEPOINT #{savepoint_name}")
       rescue ex : Rollback
         current.connection.exec("ROLLBACK TO SAVEPOINT #{savepoint_name}")
+        restore_savepoint_records(current, record_rollback_mark)
         fire_savepoint_rollback_callbacks(current, mark)
       rescue ex
         current.connection.exec("ROLLBACK TO SAVEPOINT #{savepoint_name}")
+        restore_savepoint_records(current, record_rollback_mark)
         fire_savepoint_rollback_callbacks(current, mark)
         raise ex
       end
@@ -359,6 +383,19 @@ module Grant::Transaction
     private def fire_savepoint_rollback_callbacks(state : TransactionState, mark : Int32)
       pruned = state.pending_callbacks.pop(state.pending_callbacks.size - mark)
       pruned.each(&.[:on_rollback].call)
+    end
+
+    private def restore_savepoint_records(state : TransactionState, mark : Int32)
+      number_to_restore = state.list_of_record_rollback_actions.size - mark
+      return if number_to_restore <= 0
+
+      rollback_actions = state.list_of_record_rollback_actions.pop(number_to_restore)
+      rollback_actions.reverse_each(&.call)
+    end
+
+    private def restore_transaction_records(state : TransactionState)
+      state.list_of_record_rollback_actions.reverse_each(&.call)
+      state.list_of_record_rollback_actions.clear
     end
 
     private def start_transaction(conn : DB::Connection, options : Transaction::Options)

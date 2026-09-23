@@ -378,18 +378,20 @@ module Grant::ValueObjects
     # keys through the normal `write_attribute` path. Overrides the base
     # `set_attributes` to make value objects mass-assignable.
     def set_attributes(args : Grant::ModelArgs)
-      args.each do |k, v|
+      args.each do |attribute_name, value|
         if {% for ivar in @type.class.instance_vars %}
              {% if ivar.name.ends_with?("_aggregation_meta") && ivar.name.starts_with?("_") %}
                {% name = ivar.name.gsub(/^_/, "").gsub(/_aggregation_meta$/, "") %}
-               k.to_s == {{name.stringify}} ||
+               attribute_name.to_s == {{name.stringify}} ||
              {% end %}
            {% end %} false
-          write_aggregation(k, v)
+          write_aggregation(attribute_name, value)
         else
-          write_attribute(k, v)
+          assign_mass_assignment_column(attribute_name.to_s, value)
         end
       end
+
+      self
     end
   end
 

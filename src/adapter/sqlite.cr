@@ -194,6 +194,11 @@ class Grant::Adapter::Sqlite < Grant::Adapter::Base
     db.scalar("SELECT changes()").as(Int64)
   end
 
+  # SQLite's DB::ExecResult does not reliably expose the affected-row count.
+  def rows_affected_after_write(db, result : DB::ExecResult) : Int64
+    db.scalar("SELECT changes()").as(Int64)
+  end
+
   # SQLite supports `INDEXED BY <name>` (a forced single-index choice). It has
   # no FORCE/IGNORE distinction, so only `:use` is honored — and only a single
   # index. `:force` is treated like `:use` (INDEXED BY *is* a force); `:ignore`

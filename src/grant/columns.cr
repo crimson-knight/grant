@@ -26,17 +26,17 @@ module Grant::Columns
 
     # Returns the list of column names declared read-only via `attr_readonly`.
     #
-    # Read-only columns may be set when a record is created, but are silently
-    # ignored on subsequent updates (mirroring ActiveRecord's `attr_readonly`).
+    # Read-only columns may be set when a record is created. Direct writes via
+    # `update_columns` reject them; normal updates omit them.
     def readonly_attributes : Array(String)
       [] of String
     end
   end
 
   # Marks one or more columns as read-only. Read-only columns are writable when
-  # a record is first created, but are excluded from any subsequent `UPDATE`
-  # (their in-memory value can still change, it just won't be persisted on
-  # update). Mirrors ActiveRecord's `attr_readonly`.
+  # a record is first created, but are excluded from subsequent normal `UPDATE`
+  # statements. Direct writes via `update_columns` raise for read-only columns.
+  # Mirrors ActiveRecord's `attr_readonly`.
   #
   # ```
   # class User < Grant::Base
@@ -72,6 +72,25 @@ module Grant::Columns
       parsed_params << {% if ann[:converter] %} {{ann[:converter]}}.to_db {{column.name.id}} {% else %} {{column.name.id}} {% end %}
     {% end %}
     parsed_params
+  end
+
+  # Captures typed column values for transaction rollback. The tuple keeps
+  # custom converter values at their application types.
+  protected def capture_column_values_for_transaction
+    {% begin %}
+    Tuple.new(
+      {% for column in @type.instance_vars.select(&.annotation(Grant::Column)) %}
+        @{{column.id}},
+      {% end %}
+    )
+    {% end %}
+  end
+
+  # Restores a tuple produced by `capture_column_values_for_transaction`.
+  protected def restore_column_values_for_transaction(values)
+    {% for column, index in @type.instance_vars.select(&.annotation(Grant::Column)) %}
+      @{{column.id}} = values[{{index}}]
+    {% end %}
   end
 
   # Consumes the result set to set self's property values.
@@ -180,46 +199,59 @@ module Grant::Columns
     {% end %}
 
     {% if emit %}
-    @[Grant::Column(column_type: {{column_type}}, converter: {{converter}}, auto: {{auto}}, primary: {{primary}}, nilable: {{nilable}})]
+    @[Grant::Column(column_type: {{column_type}}, converter: {{converter}}, auto: {{auto}}, primary: {{primary}}, nilable: {{nilable}}, setter_type: {{not_nilable_type}})]
     @{{decl.var}} : {{decl.type}}? {% unless decl.value.is_a? Nop %} = {{decl.value}} {% end %}
+
+    def will_save_change_to_{{decl.var.id}}? : Bool
+      will_save_change_to_attribute?({{decl.var.stringify}})
+    end
+
+    def will_save_change_to_{{decl.var.id}}?(*, from) : Bool
+      will_save_change_to_attribute?({{decl.var.stringify}}, from: from)
+    end
+
+    def will_save_change_to_{{decl.var.id}}?(*, to) : Bool
+      will_save_change_to_attribute?({{decl.var.stringify}}, to: to)
+    end
+
+    def will_save_change_to_{{decl.var.id}}?(*, from, to) : Bool
+      will_save_change_to_attribute?({{decl.var.stringify}}, from: from, to: to)
+    end
 
     {% if nilable || primary %}
       def {{decl.var.id}}=(value : {{not_nilable_type}}?)
-        # Dirty tracking - only track if we're not a new record
+        # Dirty tracking compares assignments against the initialized baseline.
         ensure_dirty_tracking_initialized
-        
-        if !new_record?
-          # Capture original value if not already captured
-          if !@original_attributes.not_nil!.has_key?({{decl.var.stringify}})
-            {% if converter %}
-              @original_attributes.not_nil![{{decl.var.stringify}}] = {{converter}}.to_db(@{{decl.var.id}}).as(Grant::Base::DirtyValue)
-            {% else %}
-              old_value = @{{decl.var.id}}
-              @original_attributes.not_nil![{{decl.var.stringify}}] = old_value.is_a?(Grant::Base::DirtyValue) ? old_value : old_value.to_s.as(Grant::Base::DirtyValue)
-            {% end %}
-          end
-          
-          # Convert values for comparison if there's a converter
+
+        # Capture original value if not already captured
+        if !@original_attributes.not_nil!.has_key?({{decl.var.stringify}})
           {% if converter %}
-            old_db_value = {{converter}}.to_db(@{{decl.var.id}}).as(Grant::Base::DirtyValue)
-            new_db_value = {{converter}}.to_db(value).as(Grant::Base::DirtyValue)
+            @original_attributes.not_nil![{{decl.var.stringify}}] = {{converter}}.to_db(@{{decl.var.id}}).as(Grant::Base::DirtyValue)
           {% else %}
-            # Handle values that might not be in DirtyValue union
             old_value = @{{decl.var.id}}
-            old_db_value = old_value.is_a?(Grant::Base::DirtyValue) ? old_value : old_value.to_s.as(Grant::Base::DirtyValue)
-            new_db_value = value.is_a?(Grant::Base::DirtyValue) ? value : value.to_s.as(Grant::Base::DirtyValue)
+            @original_attributes.not_nil![{{decl.var.stringify}}] = old_value.is_a?(Grant::Base::DirtyValue) ? old_value : old_value.to_s.as(Grant::Base::DirtyValue)
           {% end %}
-          
-          if old_db_value != new_db_value
-            original = @original_attributes.not_nil![{{decl.var.stringify}}]
-            if original == new_db_value
-              @changed_attributes.not_nil!.delete({{decl.var.stringify}})
-            else
-              @changed_attributes.not_nil![{{decl.var.stringify}}] = {original, new_db_value}
-            end
+        end
+
+        # Compare converted values when the column has a converter.
+        {% if converter %}
+          old_db_value = {{converter}}.to_db(@{{decl.var.id}}).as(Grant::Base::DirtyValue)
+          new_db_value = {{converter}}.to_db(value).as(Grant::Base::DirtyValue)
+        {% else %}
+          old_value = @{{decl.var.id}}
+          old_db_value = old_value.is_a?(Grant::Base::DirtyValue) ? old_value : old_value.to_s.as(Grant::Base::DirtyValue)
+          new_db_value = value.is_a?(Grant::Base::DirtyValue) ? value : value.to_s.as(Grant::Base::DirtyValue)
+        {% end %}
+
+        if old_db_value != new_db_value
+          original = @original_attributes.not_nil![{{decl.var.stringify}}]
+          if original == new_db_value
+            @changed_attributes.not_nil!.delete({{decl.var.stringify}})
+          else
+            @changed_attributes.not_nil![{{decl.var.stringify}}] = {original, new_db_value}
           end
         end
-        
+
         @{{decl.var.id}} = value
       end
 
@@ -308,41 +340,38 @@ module Grant::Columns
       end
     {% else %}
       def {{decl.var.id}}=(value : {{type.id}})
-        # Dirty tracking - only track if we're not a new record
+        # Dirty tracking compares assignments against the initialized baseline.
         ensure_dirty_tracking_initialized
-        
-        if !new_record?
-          # Capture original value if not already captured
-          if !@original_attributes.not_nil!.has_key?({{decl.var.stringify}})
-            {% if converter %}
-              @original_attributes.not_nil![{{decl.var.stringify}}] = {{converter}}.to_db(@{{decl.var.id}}).as(Grant::Base::DirtyValue)
-            {% else %}
-              old_value = @{{decl.var.id}}
-              @original_attributes.not_nil![{{decl.var.stringify}}] = old_value.is_a?(Grant::Base::DirtyValue) ? old_value : old_value.to_s.as(Grant::Base::DirtyValue)
-            {% end %}
-          end
-          
-          # Convert values for comparison if there's a converter
+
+        # Capture original value if not already captured.
+        if !@original_attributes.not_nil!.has_key?({{decl.var.stringify}})
           {% if converter %}
-            old_db_value = {{converter}}.to_db(@{{decl.var.id}}).as(Grant::Base::DirtyValue)
-            new_db_value = {{converter}}.to_db(value).as(Grant::Base::DirtyValue)
+            @original_attributes.not_nil![{{decl.var.stringify}}] = {{converter}}.to_db(@{{decl.var.id}}).as(Grant::Base::DirtyValue)
           {% else %}
-            # Handle values that might not be in DirtyValue union
             old_value = @{{decl.var.id}}
-            old_db_value = old_value.is_a?(Grant::Base::DirtyValue) ? old_value : old_value.to_s.as(Grant::Base::DirtyValue) 
-            new_db_value = value.is_a?(Grant::Base::DirtyValue) ? value : value.to_s.as(Grant::Base::DirtyValue)
+            @original_attributes.not_nil![{{decl.var.stringify}}] = old_value.is_a?(Grant::Base::DirtyValue) ? old_value : old_value.to_s.as(Grant::Base::DirtyValue)
           {% end %}
-          
-          if old_db_value != new_db_value
-            original = @original_attributes.not_nil![{{decl.var.stringify}}]
-            if original == new_db_value
-              @changed_attributes.not_nil!.delete({{decl.var.stringify}})
-            else
-              @changed_attributes.not_nil![{{decl.var.stringify}}] = {original, new_db_value}
-            end
+        end
+
+        # Compare converted values when the column has a converter.
+        {% if converter %}
+          old_db_value = {{converter}}.to_db(@{{decl.var.id}}).as(Grant::Base::DirtyValue)
+          new_db_value = {{converter}}.to_db(value).as(Grant::Base::DirtyValue)
+        {% else %}
+          old_value = @{{decl.var.id}}
+          old_db_value = old_value.is_a?(Grant::Base::DirtyValue) ? old_value : old_value.to_s.as(Grant::Base::DirtyValue)
+          new_db_value = value.is_a?(Grant::Base::DirtyValue) ? value : value.to_s.as(Grant::Base::DirtyValue)
+        {% end %}
+
+        if old_db_value != new_db_value
+          original = @original_attributes.not_nil![{{decl.var.stringify}}]
+          if original == new_db_value
+            @changed_attributes.not_nil!.delete({{decl.var.stringify}})
+          else
+            @changed_attributes.not_nil![{{decl.var.stringify}}] = {original, new_db_value}
           end
         end
-        
+
         @{{decl.var.id}} = value
       end
 
@@ -460,23 +489,60 @@ module Grant::Columns
 
   def set_attributes(hash : Hash(String | Symbol, T)) : self forall T
     {% for column in @type.instance_vars.select { |ivar| (ann = ivar.annotation(Grant::Column)) && (!ann[:primary] || (ann[:primary] && ann[:auto] == false)) } %}
+      {% ann = column.annotation(Grant::Column) %}
+      {% if ann[:nilable] == true %}
+        {% setter_type = column.type %}
+      {% else %}
+        {% setter_type = ann[:setter_type] %}
+      {% end %}
       if hash.has_key?({{column.stringify}})
         begin
-          val = Grant::Type.convert_type hash[{{column.stringify}}], {{column.type}}
+          val = Grant::Type.convert_type hash[{{column.stringify}}], {{setter_type}}
         rescue ex : ArgumentError
           error =  Grant::ConversionError.new({{column.name.stringify}}, ex.message)
         end
 
-        if !val.is_a? {{column.type}}
-          error = Grant::ConversionError.new({{column.name.stringify}}, "Expected {{column.id}} to be {{column.type}} but got #{typeof(val)}.")
+        if !val.is_a? {{setter_type}}
+          error = Grant::ConversionError.new({{column.name.stringify}}, "Expected {{column.id}} to be {{setter_type}} but got #{typeof(val)}.")
         else
-          @{{column}} = val
+          self.{{column}} = val
         end
 
         errors << error if error
       end
     {% end %}
     self
+  end
+
+  # Converts and assigns one model column during value-object mass
+  # assignment. Keeping this at the column boundary applies both the declared
+  # conversion and the generated dirty-tracking setter.
+  def assign_mass_assignment_column(attribute_name : String, value : Grant::Columns::Type) : Nil
+    {% begin %}
+    case attribute_name
+    {% for column in @type.instance_vars.select(&.annotation(Grant::Column)) %}
+      {% ann = column.annotation(Grant::Column) %}
+      when {{column.name.stringify}}
+        {% if ann[:nilable] == true %}
+          {% setter_type = column.type %}
+        {% else %}
+          {% setter_type = ann[:setter_type] %}
+        {% end %}
+        begin
+          converted_value = Grant::Type.convert_type(value, {{setter_type}})
+          if converted_value.is_a?({{setter_type}})
+            self.{{column.name.id}} = converted_value
+          else
+            errors << Grant::ConversionError.new({{column.name.stringify}}, "Expected {{column.name.id}} to be {{setter_type}} but got #{typeof(converted_value)}.")
+          end
+        rescue ex : ArgumentError
+          errors << Grant::ConversionError.new({{column.name.stringify}}, ex.message)
+        end
+    {% end %}
+    else
+      raise "Cannot write attribute #{attribute_name}, invalid attribute"
+    end
+    {% end %}
   end
 
   def read_attribute(attribute_name : Symbol | String) : Type

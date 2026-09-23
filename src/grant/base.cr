@@ -252,6 +252,14 @@ abstract class Grant::Base
       @[YAML::Field(ignore: true)]
       getter? destroyed : Bool = false
 
+      private def mark_destroyed
+        @destroyed = true
+      end
+
+      private def restore_destroyed_state(value : Bool)
+        @destroyed = value
+      end
+
       # Backing flag for record-level read-only marking. When true, attempts to
       # persist an update (or destroy) raise `Grant::ReadOnlyRecordError`.
       @[JSON::Field(ignore: true)]
@@ -359,6 +367,7 @@ abstract class Grant::Base
       def initialize(**args : Grant::Columns::Type)
         ensure_dirty_tracking_initialized
         set_attributes(args.to_h.transform_keys(&.to_s))
+        establish_initial_dirty_baseline
         __after_initialize
       end
 
@@ -374,6 +383,7 @@ abstract class Grant::Base
       def initialize(args : Grant::ModelArgs)
         ensure_dirty_tracking_initialized
         set_attributes(args.transform_keys(&.to_s))
+        establish_initial_dirty_baseline
         __after_initialize
       end
 
@@ -387,7 +397,53 @@ abstract class Grant::Base
       # ```
       def initialize
         ensure_dirty_tracking_initialized
+        establish_initial_dirty_baseline
         __after_initialize
+      end
+
+      # Captures the values supplied to initialize as the initial baseline.
+      # Later setter calls are then tracked even while the record is new.
+      private def establish_initial_dirty_baseline
+        ensure_dirty_tracking_initialized
+        @original_attributes.not_nil!.clear
+        @changed_attributes.not_nil!.clear
+        @previous_changes.not_nil!.clear
+        capture_original_attributes
+      end
+
+      private def enlist_transaction_record
+        return unless Grant::Transaction.in_explicit_transaction?
+
+        Grant::Transaction.enlist_record_rollback_action(__transaction_rollback_action)
+      end
+
+      # Captures the complete in-memory state needed to undo a transaction write.
+      # The action closes over typed column values so rollback does not pass
+      # custom converter values through the public attribute writer.
+      private def __transaction_rollback_action : Proc(Nil)
+        ensure_dirty_tracking_initialized
+        column_values = capture_column_values_for_transaction
+        original_attributes = @original_attributes.not_nil!.dup
+        changed_attributes = @changed_attributes.not_nil!.dup
+        previous_changes = @previous_changes.not_nil!.dup
+        aggregation_changes_snapshot = aggregation_changes.dup
+        pending_commit_callbacks = _pending_commit_callbacks.dup
+        was_new_record = new_record?
+        was_destroyed = destroyed?
+        was_readonly = readonly?
+
+        Proc(Nil).new do
+          restore_column_values_for_transaction(column_values)
+          @original_attributes = original_attributes.dup
+          @changed_attributes = changed_attributes.dup
+          @previous_changes = previous_changes.dup
+          @aggregation_changes = aggregation_changes_snapshot.dup
+          self.new_record = was_new_record
+          restore_destroyed_state(was_destroyed)
+          mark_readonly(was_readonly)
+          _pending_commit_callbacks.clear
+          _pending_commit_callbacks.concat(pending_commit_callbacks)
+        end
       end
     end
 
@@ -531,6 +587,42 @@ abstract class Grant::Base
       ensure_dirty_tracking_initialized
       @previous_changes.not_nil!.has_key?(name.to_s)
     end
+
+    # Returns `true` when *name* has a pending change that the next save will
+    # write. Optional `from:` and `to:` filters compare against the original and
+    # pending values, respectively.
+    def will_save_change_to_attribute?(name : String | Symbol) : Bool
+      !current_attribute_change(name).nil?
+    end
+
+    def will_save_change_to_attribute?(name : String | Symbol, *, from) : Bool
+      if change = current_attribute_change(name)
+        change[0] == from
+      else
+        false
+      end
+    end
+
+    def will_save_change_to_attribute?(name : String | Symbol, *, to) : Bool
+      if change = current_attribute_change(name)
+        change[1] == to
+      else
+        false
+      end
+    end
+
+    def will_save_change_to_attribute?(name : String | Symbol, *, from, to) : Bool
+      if change = current_attribute_change(name)
+        change[0] == from && change[1] == to
+      else
+        false
+      end
+    end
+
+    private def current_attribute_change(name : String | Symbol)
+      ensure_dirty_tracking_initialized
+      @changed_attributes.not_nil![name.to_s]?
+    end
     
     # Returns the value of an attribute before the last save.
     #
@@ -614,6 +706,16 @@ abstract class Grant::Base
       
       # Capture current state as new originals
       capture_original_attributes
+    end
+
+    # Clears pending changes for columns written by a callback-free persistence
+    # helper, without disturbing other unsaved changes or previous_changes.
+    private def clear_dirty_tracking_for(attribute_names : Array(String))
+      ensure_dirty_tracking_initialized
+      attribute_names.each do |attribute_name|
+        @changed_attributes.not_nil!.delete(attribute_name)
+        @original_attributes.not_nil![attribute_name] = read_attribute(attribute_name).as(DirtyValue)
+      end
     end
     
     # This will be overridden in each model to capture all column values
