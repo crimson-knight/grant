@@ -175,8 +175,8 @@ describe "Grant::Scoping" do
       query2 = ScopedModel.where(published: true)
 
       merged = ScopedModel.merge(query2)
-      merged.raw_sql.should contain(%("deleted_at" IS NULL))
-      merged.raw_sql.should contain(%("published" = ))
+      merged.raw_sql.should contain("(#{ScopedModel.quote("deleted_at")} IS NULL)")
+      merged.raw_sql.should contain("(#{ScopedModel.quote("published")} = ")
     end
 
     it "uses most restrictive limit" do

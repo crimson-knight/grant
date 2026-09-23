@@ -18,6 +18,10 @@ require "../spec_helper"
 {% end %}
 
 describe Grant::SecureToken do
+  before_all do
+    SecureTokenTestModel.migrator.drop_and_create
+  end
+
   describe "has_secure_token" do
     it "generates tokens automatically on create" do
       model = SecureTokenTestModel.new
@@ -66,47 +70,5 @@ describe Grant::SecureToken do
 
       model.auth_token.should eq("existing_token")
     end
-  end
-end
-
-# Setup table
-adapter = Grant::Connections[CURRENT_ADAPTER]
-if adapter.is_a?(Grant::Adapter::Base)
-  adapter.exec("DROP TABLE IF EXISTS secure_token_test_models")
-
-  case CURRENT_ADAPTER
-  when "sqlite"
-    adapter.exec(<<-SQL)
-      CREATE TABLE secure_token_test_models (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT,
-        auth_token TEXT,
-        api_key TEXT,
-        created_at TEXT,
-        updated_at TEXT
-      )
-    SQL
-  when "pg"
-    adapter.exec(<<-SQL)
-      CREATE TABLE secure_token_test_models (
-        id BIGSERIAL PRIMARY KEY,
-        name VARCHAR,
-        auth_token VARCHAR,
-        api_key VARCHAR,
-        created_at TIMESTAMP,
-        updated_at TIMESTAMP
-      )
-    SQL
-  when "mysql"
-    adapter.exec(<<-SQL)
-      CREATE TABLE secure_token_test_models (
-        id BIGINT PRIMARY KEY AUTO_INCREMENT,
-        name VARCHAR(255),
-        auth_token VARCHAR(255),
-        api_key VARCHAR(255),
-        created_at TIMESTAMP,
-        updated_at TIMESTAMP
-      )
-    SQL
   end
 end

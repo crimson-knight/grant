@@ -189,6 +189,17 @@ abstract class Grant::Base
   end
 
   macro inherited
+    # Connection settings belong to each model class. Copy the parent values
+    # when a subclass is declared so a later `connects_to` on another model
+    # cannot change this class's database, role map, or shard map.
+    self.database_name = {{@type.superclass}}.database_name
+    self.connection_config = {{@type.superclass}}.connection_config.dup
+    inherited_shard_config = {} of Symbol => Hash(Symbol, String)
+    {{@type.superclass}}.shard_config.each do |shard, config|
+      inherited_shard_config[shard] = config.dup
+    end
+    self.shard_config = inherited_shard_config
+
     # Keep this method concrete per model. A shared class method invoked through
     # `Grant::Base.class` gives `self` a union of model classes; dispatching a
     # model-specific default-scope method from that union triggers an LLVM bug

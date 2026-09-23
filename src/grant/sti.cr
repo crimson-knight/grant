@@ -140,6 +140,17 @@ module Grant::STI
     end
 
     macro inherited
+      # STI descendants share the root model's connection configuration and
+      # table. Keep their database/role/shard settings isolated from later
+      # configuration changes on unrelated model classes.
+      self.database_name = {{@type.superclass}}.database_name
+      self.connection_config = {{@type.superclass}}.connection_config.dup
+      inherited_shard_config = {} of Symbol => Hash(Symbol, String)
+      {{@type.superclass}}.shard_config.each do |shard, config|
+        inherited_shard_config[shard] = config.dup
+      end
+      self.shard_config = inherited_shard_config
+
       # Register every descendant for runtime type resolution. NOTE the escaped
       # interpolation below: this is a `macro inherited` nested inside `macro
       # included`, so an unescaped @type would resolve to the ROOT at

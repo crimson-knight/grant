@@ -63,10 +63,59 @@ module Grant::Polymorphic
       case type_name
       {% for name, klass in REGISTERED_TYPES %}
       when {{name}}
-        {% if name.starts_with?("Validators::") || name.starts_with?("Spec::") %}
+        {% if name == "Grant::Base" || name.starts_with?("Validators::") || name.starts_with?("Spec::") %}
           nil
         {% else %}
           {{klass}}.find(id)
+        {% end %}
+      {% end %}
+      else
+        nil
+      end
+    end
+
+    # Updates a counter on a polymorphic target through a compile-time
+    # dispatch table, retaining each target model's primary-key and adapter
+    # behavior even though the association is typed as Grant::Base.
+    def self.update_counter(type_name : String, id : Int64, column_name : String, amount : Int32) : Nil
+      case type_name
+      {% for name, klass in REGISTERED_TYPES %}
+      when {{name}}
+        {% if name == "Grant::Base" || name.starts_with?("Validators::") || name.starts_with?("Spec::") %}
+          nil
+        {% else %}
+          quoted_column = {{klass}}.quote(column_name)
+          operator = amount > 0 ? "+" : "-"
+          {{klass}}.where({{klass}}.primary_name, :eq, id)
+            .update_all("#{quoted_column} = #{quoted_column} #{operator} #{amount.abs}")
+          nil
+        {% end %}
+      {% end %}
+      else
+        nil
+      end
+    end
+
+    # Touches a polymorphic target through concrete model dispatch so its
+    # timestamp columns and primary key are resolved at compile time.
+    def self.touch_target(type_name : String, id : Int64, fields : Array(String)) : Nil
+      case type_name
+      {% for name, klass in REGISTERED_TYPES %}
+      when {{name}}
+        {% if name == "Grant::Base" || name.starts_with?("Validators::") || name.starts_with?("Spec::") %}
+          nil
+        {% else %}
+          if {{klass}}.fields.includes?("updated_at")
+            time = Time.local(Grant.settings.default_timezone).at_beginning_of_second
+            field_names = ["updated_at"] + fields
+            parameters = [] of DB::Any
+            field_names.each { parameters << time }
+            parameters << id
+            quoted_primary_key = {{klass}}.quote({{klass}}.primary_name)
+            where_clause = "#{quoted_primary_key} = ?"
+            {{klass}}.adapter.update_with_where({{klass}}.table_name, field_names, parameters, where_clause)
+          end
+          nil
         {% end %}
       {% end %}
       else
@@ -280,6 +329,46 @@ module Grant::Polymorphic
         !instance.{{foreign_key.id}}.nil? && !instance.{{type_column.id}}.nil?
       end
     {% end %}
+
+    {% if options[:counter_cache] %}
+      after_create do
+        if target_type = self.read_attribute({{type_column.id.stringify}}).as(String?)
+          if target_id = self.read_attribute({{foreign_key.id.stringify}}).as(Int64?)
+          counter_column_name = {% if options[:counter_cache].is_a?(SymbolLiteral) || options[:counter_cache].is_a?(StringLiteral) %}{{options[:counter_cache].id.stringify}}{% else %}"#{self.class.name.split("::").last.underscore}s_count"{% end %}
+          Grant::Polymorphic.update_counter(target_type, target_id, counter_column_name, 1)
+          end
+        end
+      end
+
+      after_destroy do
+        if target_type = self.read_attribute({{type_column.id.stringify}}).as(String?)
+          if target_id = self.read_attribute({{foreign_key.id.stringify}}).as(Int64?)
+          counter_column_name = {% if options[:counter_cache].is_a?(SymbolLiteral) || options[:counter_cache].is_a?(StringLiteral) %}{{options[:counter_cache].id.stringify}}{% else %}"#{self.class.name.split("::").last.underscore}s_count"{% end %}
+          Grant::Polymorphic.update_counter(target_type, target_id, counter_column_name, -1)
+          end
+        end
+      end
+    {% end %}
+
+    {% if options[:touch] %}
+      after_save do
+        if target_type = self.read_attribute({{type_column.id.stringify}}).as(String?)
+          if target_id = self.read_attribute({{foreign_key.id.stringify}}).as(Int64?)
+            fields = {% if options[:touch] == true %}[] of String{% else %}[{{options[:touch].id.stringify}}]{% end %}
+            Grant::Polymorphic.touch_target(target_type, target_id, fields)
+          end
+        end
+      end
+
+      after_destroy do
+        if target_type = self.read_attribute({{type_column.id.stringify}}).as(String?)
+          if target_id = self.read_attribute({{foreign_key.id.stringify}}).as(Int64?)
+            fields = {% if options[:touch] == true %}[] of String{% else %}[{{options[:touch].id.stringify}}]{% end %}
+            Grant::Polymorphic.touch_target(target_type, target_id, fields)
+          end
+        end
+      end
+    {% end %}
   end
 
   # Implements the polymorphic `has_many` (invoked by
@@ -309,7 +398,21 @@ module Grant::Polymorphic
       {% class_name = name.type %}
     {% else %}
       {% method_name = name.id %}
-      {% class_name = options[:class_name] || name.id.stringify.camelcase %}
+      {% if options[:class_name] %}
+        {% class_name = options[:class_name] %}
+      {% else %}
+        {% plural_name = name.id.stringify %}
+        {% if plural_name.ends_with?("ies") %}
+          {% singular_name = plural_name[0...(plural_name.size - 3)] + "y" %}
+        {% elsif plural_name.ends_with?("ses") || plural_name.ends_with?("xes") || plural_name.ends_with?("zes") || plural_name.ends_with?("ches") || plural_name.ends_with?("shes") %}
+          {% singular_name = plural_name[0...(plural_name.size - 2)] %}
+        {% elsif plural_name.ends_with?("s") && !plural_name.ends_with?("ss") %}
+          {% singular_name = plural_name[0...(plural_name.size - 1)] %}
+        {% else %}
+          {% singular_name = plural_name %}
+        {% end %}
+        {% class_name = singular_name.camelcase %}
+      {% end %}
     {% end %}
     
     def {{method_name.id}}

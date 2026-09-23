@@ -21,6 +21,17 @@ module Grant::Sharding
           false
         end
       end
+
+      def overlaps?(minimum : String | Int64, maximum : String | Int64) : Bool
+        case {min, max, minimum, maximum}
+        when {String, String, String, String}
+          min.as(String) <= maximum && max.as(String) >= minimum
+        when {Int64, Int64, Int64, Int64}
+          min.as(Int64) <= maximum && max.as(Int64) >= minimum
+        else
+          false
+        end
+      end
     end
 
     @ranges : Array(RangeDefinition)
@@ -42,6 +53,12 @@ module Grant::Sharding
 
     def all_shards : Array(Symbol)
       @ranges.map(&.shard).uniq
+    end
+
+    # Return only shards whose configured ranges intersect an inclusive query
+    # interval. A nil result means the bounds could not be compared safely.
+    def shards_for_range(minimum : String | Int64, maximum : String | Int64) : Array(Symbol)?
+      @ranges.select(&.overlaps?(minimum, maximum)).map(&.shard).uniq
     end
 
     def resolve_for_values(values : Array) : Symbol

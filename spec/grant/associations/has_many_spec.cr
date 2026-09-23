@@ -173,6 +173,11 @@ describe "has_many" do
     end
 
     it "should respect the current primary key" do
+      service = CourierService.new
+      service.name = "My service"
+      service.owner_id = 1
+      service.save!
+
       courier1 = Courier.new
       courier1.courier_id = 1
       courier1.issuer_id = 1
@@ -191,11 +196,7 @@ describe "has_many" do
       courier3.service_id = 1
       courier3.save
 
-      service = CourierService.new
-      service.name = "My service"
-      service.owner_id = 1
-
-      couriers = service.couriers.to_a
+      couriers = service.couriers.all("ORDER BY courier_id ASC")
 
       couriers.size.should eq 3
       couriers[0].courier_id.should eq courier1.courier_id

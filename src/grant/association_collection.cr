@@ -29,7 +29,7 @@ class Grant::AssociationCollection(Owner, Target)
                 all_params = [owner_key]
                 scope_params.each { |value| all_params << value }
                 params.each { |value| all_params << value.as(Grant::Columns::Type) }
-                Target.all(sql, all_params).to_a
+                Target.raw_all(sql, all_params)
               end
     duration = Time.instant - start_time
 

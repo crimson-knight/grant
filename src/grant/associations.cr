@@ -146,7 +146,7 @@ module Grant::Associations
         {% end %}
           parent
         else
-          {{class_name.id}}.new
+          nil
         end
       end
     end
@@ -190,7 +190,7 @@ module Grant::Associations
 
     # Handle optional validation
     {% unless options[:optional] %}
-      setup_optional_validation({{method_name.id}}, {{foreign_key_name}}, {{class_name.id}}, {{primary_key_name}}, false)
+      setup_optional_validation({{method_name.id}}, {{foreign_key_name}}, {{class_name.id}}, {{primary_key_name}}, false, {{options[:autosave] || false}})
     {% end %}
     
     # Handle counter cache
@@ -324,7 +324,8 @@ module Grant::Associations
             s << "JOIN #{{{through.id.stringify}}} ON #{{{through.id.stringify}}}.#{key} = #{{{class_name.id}}.table_name}.#{{{class_name.id}}.primary_name} "
             s << "WHERE #{{{through.id.stringify}}}.#{{{foreign_key.id.stringify}}} = ?"
           end
-          result = {{class_name.id}}.first(sql, [self.read_attribute({{primary_key_name}})])
+          owner_key = {% if options[:primary_key] %}self.read_attribute({{primary_key_name}}){% else %}self.read_attribute(self.class.primary_name){% end %}
+          result = {{class_name.id}}.first(sql, [owner_key])
           if result
             Grant::Logs::Association.debug { "Loaded has_one :through association - #{self.class.name}.#{{{method_name.stringify}}} [#{{{class_name.id.stringify}}}] [through: #{{{through.id.stringify}}}]" }
           end
@@ -374,12 +375,20 @@ module Grant::Associations
 
     def {{method_name}} : {{class_name}}?
       if association_loaded?({{method_name.stringify}})
-        get_loaded_association({{method_name.stringify}}).as({{class_name.id}}?)
+        loaded = get_loaded_association({{method_name.stringify}}).as({{class_name.id}}?)
+        {% if options[:autosave] %}
+          @_{{method_name.id}}_for_autosave = loaded if loaded
+        {% end %}
+        loaded
       else
         assert_association_can_lazy_load!({{method_name.stringify}})
-        result = {{class_name.id}}.where({{foreign_key_name}}, :eq, self.read_attribute({{primary_key_name}})).first
+        owner_key = {% if options[:primary_key] %}self.read_attribute({{primary_key_name}}){% else %}self.read_attribute(self.class.primary_name){% end %}
+        result = {{class_name.id}}.where({{foreign_key_name}}, :eq, owner_key).first
         if result
-          Grant::Logs::Association.debug { "Loaded has_one association - #{self.class.name}.#{{{method_name.stringify}}} [#{{{class_name.id.stringify}}}] [fk: #{{{foreign_key.id.stringify}}} = #{self.{{primary_key.id}}}]" }
+          {% if options[:autosave] %}
+            @_{{method_name.id}}_for_autosave = result
+          {% end %}
+          Grant::Logs::Association.debug { "Loaded has_one association - #{self.class.name}.#{{{method_name.stringify}}} [#{{{class_name.id.stringify}}}] [fk: #{{{foreign_key.id.stringify}}} = #{owner_key}]" }
           {% if inverse_of %}
             result.set_loaded_association({{inverse_of.id.stringify}}, self)
           {% end %}
@@ -393,7 +402,7 @@ module Grant::Associations
         get_loaded_association({{method_name.stringify}}).as({{class_name.id}}?) || raise Grant::Querying::NotFound.new("No {{class_name.id}} found")
       else
         assert_association_can_lazy_load!({{method_name.stringify}})
-        owner_value = self.read_attribute({{primary_key_name}})
+        owner_value = {% if options[:primary_key] %}self.read_attribute({{primary_key_name}}){% else %}self.read_attribute(self.class.primary_name){% end %}
         result = {{class_name.id}}.where({{foreign_key_name}}, :eq, owner_value).first || raise Grant::Querying::NotFound.new("No {{class_name.id}} found where #{{{foreign_key_name}}} = #{owner_value}")
       {% if inverse_of %}
         result.set_loaded_association({{inverse_of.id.stringify}}, self)
@@ -403,7 +412,8 @@ module Grant::Associations
     end
 
     def {{method_name}}=(child)
-      child.set_attributes({ {{foreign_key_name}} => self.read_attribute({{primary_key_name}}) })
+      owner_key = {% if options[:primary_key] %}self.read_attribute({{primary_key_name}}){% else %}self.read_attribute(self.class.primary_name){% end %}
+      child.set_attributes({ {{foreign_key_name}} => owner_key })
     end
 
     # Store association metadata
@@ -622,7 +632,7 @@ module Grant::Associations
         Grant::Logs::Association.debug { "Created has_many association collection - #{self.class.name}.#{{{method_name.stringify}}} [#{{{class_name.id.stringify}}}] [fk: #{{{foreign_key.id.stringify}}}]#{{{through ? " [through: " + through.id.stringify + "]" : ""}}}" }
       end
       Grant::AssociationCollection(self, {{class_name.id}}).new(
-        self, {{foreign_key}}, {{through}}, {{primary_key}},
+        self, {{foreign_key}}, {{through}}, {% if options[:primary_key] %}{{primary_key}}{% else %}nil{% end %},
         {{inverse_of}}, scope_proc, {{method_name.stringify}}, loaded_records, through_delete_all,
         {{through ? source.id.stringify : nil}}
       )
@@ -639,7 +649,7 @@ module Grant::Associations
     {% unless through %}
     def {{singular_name.id}}_ids=(ids : Array)
       string_ids = ids.map(&.to_s)
-      owner_key = self.read_attribute({{primary_key_name}})
+      owner_key = {% if options[:primary_key] %}self.read_attribute({{primary_key_name}}){% else %}self.read_attribute(self.class.primary_name){% end %}
       # Nullify records no longer in the set
       {{class_name.id}}.where({{foreign_key_name}}, :eq, owner_key).each do |record|
         unless string_ids.includes?(record.primary_key_value.to_s)

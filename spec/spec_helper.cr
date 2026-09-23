@@ -100,6 +100,18 @@ private def restore_default_spec_connections
   end
 end
 
-Spec.after_each do
+private def restore_default_spec_runtime_state
+  # A few connection/sharding specs deliberately clear or switch global state.
+  # Restore the default fiber context and database before the next file's hooks.
+  Grant::Base.connection_context = nil
   restore_default_spec_connections
+  Grant::ConnectionRegistry.default_database = CURRENT_ADAPTER
+end
+
+Spec.before_each do
+  restore_default_spec_runtime_state
+end
+
+Spec.after_each do
+  restore_default_spec_runtime_state
 end

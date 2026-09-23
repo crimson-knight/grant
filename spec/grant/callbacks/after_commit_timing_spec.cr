@@ -320,55 +320,31 @@ describe "after_commit / after_rollback timing (AR semantics)" do
       CommitTimingModel.event_log.should_not contain("after_commit:outer-doomed")
     end
 
-    {% if env("CURRENT_ADAPTER") == "sqlite" %}
-      it "fires queued callbacks at a write-free inner transaction's durable commit" do
-        expect_raises(Exception, "outer dies") do
+    it "keeps inner savepoint callbacks until the outer transaction completes" do
+      expect_raises(Exception, "outer dies") do
+        CommitTimingModel.transaction do
+          CommitTimingModel.new(name: "outer-doomed-inner-commit").save
+
           CommitTimingModel.transaction do
-            CommitTimingModel.new(name: "outer-doomed-inner-commit").save
-
-            CommitTimingModel.transaction(requires_new: true) do
-              # SQLite cannot take a second writer lock while the outer save is
-              # open, so exercise the transaction-local callback queue without
-              # issuing a second INSERT.
-              Grant::Transaction.enqueue_pending_callback(
-                Proc(Nil).new { CommitTimingModel.event_log << "after_commit:inner-durable" },
-                Proc(Nil).new { CommitTimingModel.event_log << "after_rollback:inner-durable" }
-              )
-            end
-
-            CommitTimingModel.event_log.should contain("after_commit:inner-durable")
-            CommitTimingModel.event_log.should_not contain("after_rollback:inner-durable")
-            CommitTimingModel.event_log.should_not contain("after_commit:outer-doomed-inner-commit")
-            raise "outer dies"
+            # A released savepoint is not durable while the outer transaction
+            # is open. Enqueue directly to avoid SQLite's second-writer limit.
+            Grant::Transaction.enqueue_pending_callback(
+              Proc(Nil).new { CommitTimingModel.event_log << "after_commit:inner-savepoint" },
+              Proc(Nil).new { CommitTimingModel.event_log << "after_rollback:inner-savepoint" }
+            )
           end
+
+          CommitTimingModel.event_log.should_not contain("after_commit:inner-savepoint")
+          CommitTimingModel.event_log.should_not contain("after_rollback:inner-savepoint")
+          CommitTimingModel.event_log.should_not contain("after_commit:outer-doomed-inner-commit")
+          raise "outer dies"
         end
-
-        CommitTimingModel.event_log.should contain("after_rollback:outer-doomed-inner-commit")
-        CommitTimingModel.event_log.should_not contain("after_commit:outer-doomed-inner-commit")
-        CommitTimingModel.where(name: "outer-doomed-inner-commit").first.should be_nil
       end
-    {% else %}
-      it "fires the inner transaction's callbacks at its own durable commit" do
-        expect_raises(Exception, "outer dies") do
-          CommitTimingModel.transaction do
-            CommitTimingModel.new(name: "outer-doomed-inner-commit").save
 
-            CommitTimingModel.transaction(requires_new: true) do
-              CommitTimingModel.new(name: "inner-durable").save
-            end
-
-            CommitTimingModel.event_log.should contain("after_commit:inner-durable")
-            CommitTimingModel.event_log.should contain("after_create_commit:inner-durable")
-            CommitTimingModel.event_log.should_not contain("after_commit:outer-doomed-inner-commit")
-            raise "outer dies"
-          end
-        end
-
-        CommitTimingModel.event_log.should contain("after_rollback:outer-doomed-inner-commit")
-        CommitTimingModel.event_log.should_not contain("after_commit:outer-doomed-inner-commit")
-        CommitTimingModel.where(name: "inner-durable").first.should be_a(CommitTimingModel)
-        CommitTimingModel.where(name: "outer-doomed-inner-commit").first.should be_nil
-      end
-    {% end %}
+      CommitTimingModel.event_log.should contain("after_rollback:inner-savepoint")
+      CommitTimingModel.event_log.should contain("after_rollback:outer-doomed-inner-commit")
+      CommitTimingModel.event_log.should_not contain("after_commit:inner-savepoint")
+      CommitTimingModel.where(name: "outer-doomed-inner-commit").first.should be_nil
+    end
   end
 end

@@ -320,6 +320,53 @@ module Grant::Sharding
       end
     end
 
+    # Copy a persisted record to another shard, then remove the source copy.
+    # Cross-database transactions are not available, so a failed source delete
+    # triggers a compensating delete on the destination. If compensation also
+    # fails, the raised error reports that both copies may need reconciliation.
+    def move_to_shard(target_shard : Symbol, from_shard : Symbol? = nil)
+      raise "Cannot move an unpersisted record" unless persisted?
+
+      config = self.class.sharding_config || raise "Model #{self.class.name} is not configured for sharding"
+      raise ArgumentError.new("Unknown target shard #{target_shard} for #{self.class.name}") unless config.resolver.all_shards.includes?(target_shard)
+
+      source_shard = from_shard || @current_shard || config.resolver.resolve(self)
+      raise ArgumentError.new("Unknown source shard #{source_shard} for #{self.class.name}") unless config.resolver.all_shards.includes?(source_shard)
+      return self if source_shard == target_shard
+      resolved_destination = config.resolver.resolve(self)
+      unless resolved_destination == target_shard
+        raise ArgumentError.new("Current shard key resolves to #{resolved_destination}; update the shard key for #{self.class.name} before moving it to #{target_shard}")
+      end
+
+      destination_record = self.class.new
+      self.class.content_fields.each do |field|
+        destination_record.write_attribute(field, read_attribute(field))
+      end
+      destination_record.write_attribute(self.class.primary_name, read_attribute(self.class.primary_name))
+      destination_record.current_shard = target_shard
+
+      Grant::ShardManager.with_shard(target_shard) do
+        destination_record.save!
+      end
+
+      begin
+        Grant::ShardManager.with_shard(source_shard) do
+          destroy!
+        end
+      rescue source_error
+        begin
+          Grant::ShardManager.with_shard(target_shard) do
+            destination_record.destroy!
+          end
+        rescue compensation_error
+          raise "Move of #{self.class.name} #{primary_key_value} failed on source cleanup (#{source_error.message}); destination compensation also failed (#{compensation_error.message})"
+        end
+        raise source_error
+      end
+
+      destination_record
+    end
+
     # Ensure we're on the correct shard before operations
     macro before_save
       if self.class.sharding_config

@@ -20,6 +20,10 @@ module Grant::Query::BuilderMethods
     __builder.where(stmt, value)
   end
 
+  def where(stmt : String, first, second, *rest)
+    __builder.where(stmt, first, second, *rest)
+  end
+
   def where : Grant::Query::WhereChain
     __builder.where
   end

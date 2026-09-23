@@ -82,11 +82,11 @@ describe "Grant::Associations::Options" do
       item.valid?.should be_true
     end
 
-    pending "requires foreign key without optional option" do
+    it "requires foreign key without optional option" do
       item = RequiredItem.new(name: "Item")
       item.valid?.should be_false
       item.errors.size.should be > 0
-      item.errors.first.message.should contain("must exist")
+      item.errors.first.message.not_nil!.should contain("must exist")
     end
   end
 

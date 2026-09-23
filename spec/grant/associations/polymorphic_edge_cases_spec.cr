@@ -2,6 +2,10 @@ require "../../spec_helper"
 
 # Test edge cases and advanced scenarios for polymorphic associations
 describe "Grant::Associations::Polymorphic - Edge Cases" do
+  before_all do
+    EdgePost.migrator.drop_and_create
+  end
+
   describe "error handling" do
     it "handles invalid type names gracefully" do
       proxy = Grant::Polymorphic::PolymorphicProxy.new("InvalidClass", 123_i64)

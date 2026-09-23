@@ -59,6 +59,18 @@ class CompoundKeyModel < Grant::Base
   column data : String
 end
 
+class LunaMoveRecord < Grant::Base
+  connection "test"
+  table luna_move_records
+
+  include Grant::Sharding::Model
+  shards_by :tenant_id, strategy: :hash, count: 2
+
+  column id : Int64, primary: true
+  column tenant_id : Int64
+  column label : String
+end
+
 describe "Sharding Integration Tests" do
   describe "Cross-strategy query routing" do
     it "routes a custom (non-id) shard-key column to a single shard" do
@@ -261,10 +273,53 @@ describe "Sharding Integration Tests" do
   end
 
   describe "Migration support" do
-    # Cross-shard record migration requires writing to two real shards inside a
-    # coordinated transaction; the virtual harness has no durable backing store
-    # (every adapter call is a no-op recorder), so this can only be validated
-    # against a real multi-DB setup. Left pending rather than faked.
-    pending "supports moving records between shards (needs real multi-DB)"
+    it "moves a persisted record between real SQLite shard databases" do
+      Grant::ConnectionRegistry.clear_all
+      [:shard_0, :shard_1].each do |shard|
+        Grant::ConnectionRegistry.establish_connection(
+          database: "test",
+          adapter: Grant::Adapter::Sqlite,
+          url: "sqlite3::memory:",
+          role: :primary,
+          shard: shard,
+          pool_size: 1,
+          initial_pool_size: 1
+        )
+        Grant::ShardManager.with_shard(shard) do
+          LunaMoveRecord.adapter.open do |db|
+            db.exec "CREATE TABLE luna_move_records (id INTEGER PRIMARY KEY, tenant_id INTEGER NOT NULL, label TEXT NOT NULL)"
+          end
+        end
+      end
+
+      begin
+        original = LunaMoveRecord.new(id: 812_i64, tenant_id: 123_i64, label: "preserve me")
+        source_shard = original.determine_shard
+        target_shard = source_shard == :shard_0 ? :shard_1 : :shard_0
+        original.current_shard = source_shard
+        Grant::ShardManager.with_shard(source_shard) { original.save! }
+
+        destination_tenant_id = (1_i64..10_000_i64).find do |tenant_id|
+          Grant::ShardManager.resolve_shard("LunaMoveRecord", tenant_id: tenant_id) == target_shard
+        end.not_nil!
+        original.tenant_id = destination_tenant_id
+
+        moved = original.move_to_shard(target_shard)
+
+        LunaMoveRecord.on_shard(source_shard).find(original.id).should be_nil
+        persisted = LunaMoveRecord.on_shard(target_shard).find(moved.id).not_nil!
+        persisted.label.should eq("preserve me")
+        persisted.tenant_id.should eq(destination_tenant_id)
+        moved.current_shard.should eq(target_shard)
+        original.destroyed?.should be_true
+      ensure
+        [:shard_0, :shard_1].each do |shard|
+          if adapter = Grant::ConnectionRegistry.get_adapter("test", :primary, shard).as?(Grant::Adapter::Sqlite)
+            adapter.database.pool.close
+          end
+        end
+        Grant::ConnectionRegistry.clear_all
+      end
+    end
   end
 end

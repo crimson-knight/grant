@@ -342,15 +342,52 @@ module Grant::Scoping
     # block-accepting overload. Used internally to wire up `where`, `order`,
     # `group_by`, `limit`, `offset`, `includes`, `preload`, and `eager_load`.
     macro override_query_method(method_name)
-    def {{method_name.id}}(*args, **kwargs)
-      current_scope.{{method_name.id}}(*args, **kwargs)
-    end
-
-    def {{method_name.id}}(*args, **kwargs, &block)
-      current_scope.{{method_name.id}}(*args, **kwargs) do |*yield_args|
-        yield *yield_args
+    {% if method_name.id == "where" %}
+      def where(**kwargs)
+        current_scope.where(**kwargs)
       end
-    end
+
+      def where(matches)
+        current_scope.where(matches)
+      end
+
+      def where(field : Symbol | String, operator : Symbol, value : Grant::Columns::Type)
+        current_scope.where(field, operator, value)
+      end
+
+      def where(stmt : String)
+        current_scope.where(stmt)
+      end
+
+      def where(stmt : String, value : Nil)
+        current_scope.where(stmt, value)
+      end
+
+      def where(stmt : String, values : Array)
+        current_scope.where(stmt, values)
+      end
+
+      def where(stmt : String, value : Grant::Columns::Type)
+        current_scope.where(stmt, value)
+      end
+
+      def where(stmt : String, first, second, *rest)
+        values = [] of Grant::Columns::Type
+        values << first.as(Grant::Columns::Type) << second.as(Grant::Columns::Type)
+        rest.each { |value| values << value.as(Grant::Columns::Type) }
+        current_scope.where(stmt, values)
+      end
+    {% else %}
+      def {{method_name.id}}(*args, **kwargs)
+        current_scope.{{method_name.id}}(*args, **kwargs)
+      end
+
+      def {{method_name.id}}(*args, **kwargs, &block)
+        current_scope.{{method_name.id}}(*args, **kwargs) do |*yield_args|
+          yield *yield_args
+        end
+      end
+    {% end %}
   end
 
     # Override common query methods to respect default scope

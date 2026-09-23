@@ -5,6 +5,7 @@ module Grant::Query::Assembler
     @placeholder = "?"
 
     def add_parameter(value : Grant::Columns::Type) : String
+      value = value.to_s if value.is_a?(UUID)
       @numbered_parameters << value
       "?"
     end

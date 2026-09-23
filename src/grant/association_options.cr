@@ -269,13 +269,13 @@ module Grant::AssociationOptions
         {% if association_type == :has_one %}
           if association = @_{{association_name}}_for_autosave
             association.set_attributes({ {{foreign_key}} => self.read_attribute({{primary_key}}) })
-            association.save! unless association.persisted?
+            association.save! if !association.persisted? || association.changed?
           end
         {% elsif association_type == :has_many %}
           if associations = @_{{association_name}}_for_autosave
             associations.each do |record|
               record.set_attributes({ {{foreign_key}} => self.read_attribute({{primary_key}}) })
-              record.save! unless record.persisted?
+              record.save! if !record.persisted? || record.changed?
             end
           end
         {% end %}
@@ -296,11 +296,23 @@ module Grant::AssociationOptions
     #   belongs_to :editor, optional: true # editor_id may be nil
     # end
     # ```
-    macro setup_optional_validation(association_name, foreign_key, target_class, primary_key, optional)
+    macro setup_optional_validation(association_name, foreign_key, target_class, primary_key, optional, autosave = false)
       {% unless optional %}
         validate "{{association_name}} must exist" do |model|
-          foreign_id = model.read_attribute({{foreign_key}})
-          !foreign_id.nil? && {{target_class.id}}.where({{primary_key}}, :eq, foreign_id).exists?
+          if model._grant_nested_owner_foreign_key_skipped?({{foreign_key}})
+            true
+          else
+            foreign_id = model.read_attribute({{foreign_key}})
+            {% if autosave %}
+              if foreign_id.nil? && model.@_{{association_name.id}}_for_autosave
+                true
+              else
+                !foreign_id.nil? && {{target_class.id}}.where({{primary_key}}, :eq, foreign_id).exists?
+              end
+            {% else %}
+              !foreign_id.nil? && {{target_class.id}}.where({{primary_key}}, :eq, foreign_id).exists?
+            {% end %}
+          end
         end
       {% end %}
     end

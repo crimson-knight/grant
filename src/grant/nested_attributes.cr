@@ -15,6 +15,23 @@ module Grant::NestedAttributes
       @_nested_attributes_data ||= {} of String => Array(Hash(String, Grant::Columns::Type))
     end
 
+    @[JSON::Field(ignore: true)]
+    @[YAML::Field(ignore: true)]
+    @_grant_nested_owner_foreign_keys_to_skip : Array(String)?
+
+    def _grant_skip_nested_owner_foreign_key_validation(foreign_key : String) : Nil
+      keys = @_grant_nested_owner_foreign_keys_to_skip ||= [] of String
+      keys << foreign_key unless keys.includes?(foreign_key)
+    end
+
+    def _grant_nested_owner_foreign_key_skipped?(foreign_key : String) : Bool
+      @_grant_nested_owner_foreign_keys_to_skip.try(&.includes?(foreign_key)) || false
+    end
+
+    def _grant_nested_saves_enabled? : Bool
+      false
+    end
+
     # Track if we have nested attributes to avoid unnecessary overhead.
     # Nilable for the same reason as above; `nil` is treated as `false`.
     @[JSON::Field(ignore: true)]
@@ -25,6 +42,10 @@ module Grant::NestedAttributes
   # Macro to enable automatic nested saves via callbacks
   # Call this after all accepts_nested_attributes_for declarations
   macro enable_nested_saves
+    def _grant_nested_saves_enabled? : Bool
+      true
+    end
+
     after_save :save_all_nested_attributes
     
     private def save_all_nested_attributes
@@ -63,6 +84,10 @@ module Grant::NestedAttributes
     
     # Flag that this model has nested attributes
     @_has_nested_attributes = true
+
+    @[JSON::Field(ignore: true)]
+    @[YAML::Field(ignore: true)]
+    @_{{assoc_name.id}}_nested_owner_was_new : Bool? = nil
     
     # Generate the attributes setter method
     def {{assoc_name.id}}_attributes=(attributes)
@@ -94,15 +119,44 @@ module Grant::NestedAttributes
         raise ArgumentError.new("Nested attributes must be an Array, Hash, or NamedTuple")
       end
 
-      # `update_only` never creates an association for a new owner. Preserve
-      # the established no-op behavior there; persisted owners keep id-less
-      # attributes so save_nested_* can update the associated record or report
-      # a missing association.
-      if config[:update_only] && self.new_record?
-        processed_attrs.reject! { |attr_hash| !attr_hash.has_key?("id") }
-      end
-      
+      @_{{assoc_name.id}}_nested_owner_was_new = self.new_record?
       _nested_attributes_data[{{ assoc_name.stringify }}] = processed_attrs
+    end
+
+    validate "nested {{assoc_name.id}} must be valid" do |owner|
+      nested_valid = true
+      {% if options[:update_only] %}
+      validate_nested = owner.new_record?
+      {% else %}
+      validate_nested = true
+      {% end %}
+      if validate_nested && (attrs_array = owner._nested_attributes_data[{{assoc_name.stringify}}]?)
+        attrs_array.each do |attr_hash|
+          next if attr_hash["_destroy"]?.try(&.to_s) == "true"
+
+          nested_record = {{target_class.id}}.new
+          nested_attributes = {} of String => String
+          attr_hash.each do |key, value|
+            next if key == "id" || key == "_destroy"
+          nested_attributes[key] = value.to_s
+          end
+          nested_record.set_attributes(nested_attributes)
+          if owner.new_record? && owner._grant_nested_saves_enabled?
+            if association = Grant::AssociationRegistry.get(owner.class.name, {{assoc_name.stringify}})
+              if association[:type] == :has_many || association[:type] == :has_one
+                nested_record._grant_skip_nested_owner_foreign_key_validation(association[:foreign_key])
+              end
+            end
+          end
+          unless nested_record.valid?
+            nested_record.errors.each do |error|
+              owner.errors << Grant::Error.new("{{assoc_name.id}}.#{error.field}", error.message)
+            end
+            nested_valid = false
+          end
+        end
+      end
+      nested_valid
     end
 
     # Get nested attributes (for testing)
@@ -201,7 +255,7 @@ module Grant::NestedAttributes
               self.errors << Grant::Error.new("{{ assoc_name.id }}", "Record with id #{id} is not associated with this record")
               success = false
             end
-          elsif config[:update_only]
+          elsif config[:update_only] && !@_{{assoc_name.id}}_nested_owner_was_new
             if record = first_nested_{{assoc_name.id}}
               update_attrs = {} of String => String
               attr_hash.each do |key, value|
@@ -275,6 +329,10 @@ module Grant::NestedAttributes
     # Check reject_if
     if config[:reject_if] == :all_blank
       return nil if hash_attrs.all? { |k, v| k == "_destroy" || blank_value?(v) }
+    end
+
+    if config[:update_only] && !hash_attrs.has_key?("id") && !_grant_nested_saves_enabled?
+      return nil
     end
 
     hash_attrs

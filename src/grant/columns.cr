@@ -7,6 +7,34 @@ module Grant::Columns
   alias SupportedArrayTypes = Array(String) | Array(Int16) | Array(Int32) | Array(Int64) | Array(Float32) | Array(Float64) | Array(Bool) | Array(UUID)
   alias Type = DB::Any | SupportedArrayTypes | UUID
 
+  # Virtual attributes can participate in model mass assignment without
+  # becoming database columns. Encrypted attributes register their setters
+  # here so `new(email: ...)` and `set_attributes` use the same perimeter.
+  module VirtualAttributeRegistry
+    @@setters = {} of Tuple(String, String) => Proc(Grant::Base, Type, Nil)
+
+    def self.register(model_name : String, attribute_name : String, setter : Proc(Grant::Base, Type, Nil)) : Nil
+      @@setters[{model_name, attribute_name}] = setter
+    end
+
+    def self.assign(record : Grant::Base, attribute_name : String, value : Type) : Bool
+      if setter = @@setters[{record.class.name, attribute_name}]?
+        setter.call(record, value)
+        true
+      else
+        false
+      end
+    end
+
+    def self.string_value(value : Type) : String?
+      case value
+      when Nil    then nil
+      when String then value
+      else             value.to_s
+      end
+    end
+  end
+
   module ClassMethods
     # All fields
     def fields : Array(String)
@@ -518,6 +546,8 @@ module Grant::Columns
   # assignment. Keeping this at the column boundary applies both the declared
   # conversion and the generated dirty-tracking setter.
   def assign_mass_assignment_column(attribute_name : String, value : Grant::Columns::Type) : Nil
+    return if Grant::Columns::VirtualAttributeRegistry.assign(self, attribute_name, value)
+
     {% begin %}
     case attribute_name
     {% for column in @type.instance_vars.select(&.annotation(Grant::Column)) %}

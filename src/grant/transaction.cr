@@ -341,15 +341,15 @@ module Grant::Transaction
         rescue ex : IO::Error
           raise PreservedIOError.new(ex)
         end
-        conn.exec("COMMIT")
+        execute_transaction_control(conn, adapter, "COMMIT")
       rescue ex : Rollback
-        conn.exec("ROLLBACK")
+        execute_transaction_control(conn, adapter, "ROLLBACK")
         transaction_stack.pop
         clear_transaction_stack if transaction_stack.empty?
         restore_transaction_records(state)
         state.pending_callbacks.map(&.[:on_rollback])
       rescue ex
-        conn.exec("ROLLBACK")
+        execute_transaction_control(conn, adapter, "ROLLBACK")
         transaction_stack.pop
         clear_transaction_stack if transaction_stack.empty?
         restore_transaction_records(state)
@@ -379,21 +379,32 @@ module Grant::Transaction
       record_rollback_mark = current.list_of_record_rollback_actions.size
 
       begin
-        current.connection.exec("SAVEPOINT #{savepoint_name}")
+        execute_transaction_control(current.connection, current.adapter, "SAVEPOINT #{savepoint_name}")
         yield
-        current.connection.exec("RELEASE SAVEPOINT #{savepoint_name}")
+        execute_transaction_control(current.connection, current.adapter, "RELEASE SAVEPOINT #{savepoint_name}")
       rescue ex : Rollback
-        current.connection.exec("ROLLBACK TO SAVEPOINT #{savepoint_name}")
+        execute_transaction_control(current.connection, current.adapter, "ROLLBACK TO SAVEPOINT #{savepoint_name}")
         restore_savepoint_records(current, record_rollback_mark)
         fire_savepoint_rollback_callbacks(current, mark)
       rescue ex
-        current.connection.exec("ROLLBACK TO SAVEPOINT #{savepoint_name}")
+        execute_transaction_control(current.connection, current.adapter, "ROLLBACK TO SAVEPOINT #{savepoint_name}")
         restore_savepoint_records(current, record_rollback_mark)
         fire_savepoint_rollback_callbacks(current, mark)
         raise ex
       end
     rescue ex : DB::Error
       handle_transaction_error(ex)
+    end
+
+    # crystal-mysql's prepared-statement protocol does not implement transaction
+    # control commands. Route those statements over COM_QUERY for MySQL; the
+    # other adapters accept them through the normal DB execution path.
+    private def execute_transaction_control(conn : DB::Connection, adapter : Grant::Adapter::Base, statement : String)
+      if adapter.class.name == "Grant::Adapter::Mysql"
+        conn.unprepared.exec(statement)
+      else
+        conn.exec(statement)
+      end
     end
 
     private def fire_savepoint_rollback_callbacks(state : TransactionState, mark : Int32)
@@ -425,22 +436,25 @@ module Grant::Transaction
       # with `undefined constant Grant::Adapter::Mysql`. The string form is the
       # same pattern used in scoping.cr / sti.cr / association_collection.cr.
       adapter_name = adapter.class.name
-      if options.isolation && adapter_name == "Grant::Adapter::Mysql"
-        conn.exec("SET TRANSACTION ISOLATION LEVEL #{options.isolation.not_nil!.to_sql}")
+      case adapter_name
+      when "Grant::Adapter::Mysql"
+        # crystal-mysql cannot prepare START TRANSACTION or SET TRANSACTION.
+        # Send transaction-control statements through DB's unprepared path.
+        if isolation = options.isolation
+          conn.unprepared.exec("SET TRANSACTION ISOLATION LEVEL #{isolation.to_sql}")
+        end
+        conn.unprepared.exec(build_mysql_transaction_sql(options))
+      else
+        sql = case adapter_name
+              when "Grant::Adapter::Pg"
+                build_pg_transaction_sql(options)
+              when "Grant::Adapter::Sqlite"
+                build_sqlite_transaction_sql(options)
+              else
+                "BEGIN"
+              end
+        conn.exec(sql)
       end
-
-      sql = case adapter_name
-            when "Grant::Adapter::Pg"
-              build_pg_transaction_sql(options)
-            when "Grant::Adapter::Mysql"
-              build_mysql_transaction_sql(options)
-            when "Grant::Adapter::Sqlite"
-              build_sqlite_transaction_sql(options)
-            else
-              "BEGIN"
-            end
-
-      conn.exec(sql)
     end
 
     private def build_pg_transaction_sql(options : Transaction::Options) : String

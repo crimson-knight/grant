@@ -281,17 +281,22 @@ module Grant::BulkOperations
 
     mark_write_operation
     adapter.open do |db|
-      db.query(sql, args: assembler.numbered_parameters) do |rs|
-        rs.each do
-          record = self.new
-          # Populate record from result set if returning was specified
-          if returning
-            returning.each do |field|
-              value = read_column_value(rs, field.to_s)
-              record.write_attribute(field.to_s, value)
+      if adapter.class.name == "Grant::Adapter::Mysql"
+        raise ArgumentError.new("MySQL does not support insert_all returning columns") if returning
+        db.exec(sql, args: assembler.numbered_parameters)
+      else
+        db.query(sql, args: assembler.numbered_parameters) do |rs|
+          rs.each do
+            record = self.new
+            # Populate record from result set if returning was specified
+            if returning
+              returning.each do |field|
+                value = read_column_value(rs, field.to_s)
+                record.write_attribute(field.to_s, value)
+              end
             end
+            records << record
           end
-          records << record
         end
       end
     end
@@ -340,17 +345,22 @@ module Grant::BulkOperations
 
     mark_write_operation
     adapter.open do |db|
-      db.query(sql, args: assembler.numbered_parameters) do |rs|
-        rs.each do
-          record = self.new
-          # Populate record from result set if returning was specified
-          if returning
-            returning.each do |field|
-              value = read_column_value(rs, field.to_s)
-              record.write_attribute(field.to_s, value)
+      if adapter.class.name == "Grant::Adapter::Mysql"
+        raise ArgumentError.new("MySQL does not support upsert_all returning columns") if returning
+        db.exec(sql, args: assembler.numbered_parameters)
+      else
+        db.query(sql, args: assembler.numbered_parameters) do |rs|
+          rs.each do
+            record = self.new
+            # Populate record from result set if returning was specified
+            if returning
+              returning.each do |field|
+                value = read_column_value(rs, field.to_s)
+                record.write_attribute(field.to_s, value)
+              end
             end
+            records << record
           end
-          records << record
         end
       end
     end

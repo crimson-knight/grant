@@ -7,6 +7,7 @@ describe "Grant::STI personas/permissions" do
   end
 
   before_each do
+    setup_sti_tables
     clear_sti_tables
   end
 

@@ -163,18 +163,15 @@ describe "Range-based Sharding" do
       end
     end
 
-    # pending: multi-param where("stmt", val1, val2) form not yet supported in Builder API
-    pending "optimizes range queries when possible" do
-      with_virtual_shards(4) do
+    it "optimizes range queries when possible" do
+      with_virtual_shards(Grant::ShardManager.shards_for_model("RangeShardedOrder")) do
         # Query with ID range that spans specific shards
         query_log = track_shard_queries do
           RangeShardedOrder.where("id >= ? AND id <= ?", "2024_01", "2024_08").select
         end
 
-        # Should only query 2024 shards (both H1 and H2)
-        # Note: Current implementation might query all shards
-        # This is a future optimization opportunity
-        query_log.shards_accessed.should_not be_empty
+        # Should only query 2024 shards (both H1 and H2).
+        query_log.shards_accessed.sort.should eq([:shard_2024_h1, :shard_2024_h2])
       end
     end
   end

@@ -257,9 +257,9 @@ end
 
     @[JSON::Field(ignore: true)]
     @[YAML::Field(ignore: true)]
-    belongs_to publisher : Company, foreign_key: publisher_id : Int32?
+    belongs_to publisher : Company, foreign_key: publisher_id : Int32?, optional: true
     has_many :book_reviews, class_name: BookReview
-    belongs_to author : Person
+    belongs_to author : Person, optional: true
   end
 
   class BookReview < Grant::Base
@@ -415,7 +415,7 @@ end
 
   class UUIDNaturalModel < Grant::Base
     connection {{ adapter_literal }}
-    table uuids
+    table uuid_natural_models
 
     column uuid : UUID, primary: true, auto: false
     column field_uuid : UUID?

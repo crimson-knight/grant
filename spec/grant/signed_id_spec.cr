@@ -16,6 +16,10 @@ require "../spec_helper"
 {% end %}
 
 describe Grant::SignedId do
+  before_all do
+    SignedIdTestModel.migrator.drop_and_create
+  end
+
   before_each do
     ENV["GRANT_SIGNING_SECRET"] = "test_secret"
   end
@@ -42,7 +46,12 @@ describe Grant::SignedId do
 
     it "finds by signed ID with correct purpose" do
       model = SignedIdTestModel.create(name: "Test User")
+      model.id.should_not be_nil
       signed_id = model.signed_id(purpose: :password_reset)
+      payload = SignedIdTestModel.verify_signed_token(signed_id)
+      payload.should_not be_nil
+      payload.not_nil!["id"].as_s.should eq(model.id.to_s)
+      SignedIdTestModel.find(model.id).should_not be_nil
 
       found = SignedIdTestModel.find_signed(signed_id, purpose: :password_reset)
       found.should_not be_nil
@@ -94,41 +103,5 @@ describe Grant::SignedId do
       found = SignedIdTestModel.find_signed(signed_id, purpose: :password_reset)
       found.should be_nil
     end
-  end
-end
-
-# Setup table
-adapter = Grant::Connections[CURRENT_ADAPTER]
-if adapter.is_a?(Grant::Adapter::Base)
-  adapter.exec("DROP TABLE IF EXISTS signed_id_test_models")
-
-  case CURRENT_ADAPTER
-  when "sqlite"
-    adapter.exec(<<-SQL)
-      CREATE TABLE signed_id_test_models (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT,
-        created_at TEXT,
-        updated_at TEXT
-      )
-    SQL
-  when "pg"
-    adapter.exec(<<-SQL)
-      CREATE TABLE signed_id_test_models (
-        id BIGSERIAL PRIMARY KEY,
-        name VARCHAR,
-        created_at TIMESTAMP,
-        updated_at TIMESTAMP
-      )
-    SQL
-  when "mysql"
-    adapter.exec(<<-SQL)
-      CREATE TABLE signed_id_test_models (
-        id BIGINT PRIMARY KEY AUTO_INCREMENT,
-        name VARCHAR(255),
-        created_at TIMESTAMP,
-        updated_at TIMESTAMP
-      )
-    SQL
   end
 end

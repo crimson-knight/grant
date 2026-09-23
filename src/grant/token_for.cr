@@ -141,18 +141,18 @@ module Grant::TokenFor
       return nil unless payload
 
       # Check purpose
-      return nil unless payload["purpose"]? == purpose.to_s
+      return nil unless payload["purpose"]?.try(&.as_s) == purpose.to_s
 
       # Check expiration
-      if expires_at = payload["expires_at"]?
-        return nil if expires_at.as_i64 < Time.utc.to_unix
+      if expires_at = payload["expires_at"]?.try(&.as_i64?)
+        return nil if expires_at < Time.utc.to_unix
       end
 
       # Find record
       id = payload["id"]?.try(&.as_s)
       return nil unless id
 
-      record = find(id)
+      record = find(id.to_i64)
       return nil unless record
 
       # Verify data hasn't changed

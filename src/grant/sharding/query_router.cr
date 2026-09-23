@@ -25,10 +25,8 @@ module Grant::Sharding
         # All shard keys present and resolvable -> target one shard.
         SingleShardExecution(Model).new(@model, query, single_shard)
       else
-        # Missing/partial/unresolvable shard keys -> scatter-gather across all
-        # shards. Correct (if less efficient) regardless of the where clause.
-        all_shards = Grant::ShardManager.shards_for_model(@model.name)
-        ScatterGatherExecution(Model).new(@model, query, all_shards)
+        shards = resolve_range_shards(query) || Grant::ShardManager.shards_for_model(@model.name)
+        ScatterGatherExecution(Model).new(@model, query, shards)
       end
     end
 
@@ -78,6 +76,44 @@ module Grant::Sharding
         # caller fall back to scatter-gather instead of misrouting.
         nil
       end
+    end
+
+    # Route a simple inclusive range predicate to the configured shards it
+    # intersects. Unknown SQL shapes and OR conditions retain scatter-gather.
+    private def resolve_range_shards(query : Query::Builder(Model)) : Array(Symbol)?
+      resolver = @shard_config.resolver.as?(RangeResolver)
+      return nil unless resolver
+      key_name = @shard_config.key_column_names.first?
+      return nil unless key_name
+      return nil if query.where_fields.any? { |condition| condition[:join] != :and }
+
+      minimum = nil.as(Grant::Columns::Type?)
+      maximum = nil.as(Grant::Columns::Type?)
+      query.where_fields.each do |condition|
+        case condition
+        when NamedTuple(join: Symbol, field: String, operator: Symbol, value: Grant::Columns::Type)
+          next unless condition[:field] == key_name
+          case condition[:operator]
+          when :gt, :gteq
+            minimum = condition[:value]
+          when :lt, :lteq
+            maximum = condition[:value]
+          end
+        when NamedTuple(join: Symbol, stmt: String, values: Array(Grant::Columns::Type))
+          match = condition[:stmt].match(/^\s*["`]?([a-zA-Z_][a-zA-Z0-9_]*)["`]?\s*>=\s*\?\s+AND\s+["`]?([a-zA-Z_][a-zA-Z0-9_]*)["`]?\s*<=\s*\?\s*$/i)
+          if match && match[1] == key_name && match[2] == key_name && condition[:values].size == 2
+            minimum = condition[:values][0]
+            maximum = condition[:values][1]
+          end
+        end
+      end
+
+      low = minimum
+      high = maximum
+      return nil unless low && high
+      return nil unless low.is_a?(String) || low.is_a?(Int64)
+      return nil unless high.is_a?(String) || high.is_a?(Int64)
+      resolver.shards_for_range(low, high)
     end
   end
 

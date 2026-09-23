@@ -19,7 +19,12 @@ describe "Grant::Migrator column defaults" do
   end
 
   it "persists Crystal literal defaults for direct SQL inserts" do
-    MigratorDefaultLiteralRow.exec("INSERT INTO migrator_default_literal_rows DEFAULT VALUES")
+    insert_sql = if CURRENT_ADAPTER == "mysql"
+                   "INSERT INTO migrator_default_literal_rows () VALUES ()"
+                 else
+                   "INSERT INTO migrator_default_literal_rows DEFAULT VALUES"
+                 end
+    MigratorDefaultLiteralRow.exec(insert_sql)
 
     row = MigratorDefaultLiteralRow.first.not_nil!
     row.status.should eq("it's ready")

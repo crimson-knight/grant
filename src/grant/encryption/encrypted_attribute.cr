@@ -1,4 +1,18 @@
 module Grant::Encryption
+  # Keeps each model's encrypted attribute definitions isolated. Inherited
+  # class variables made one model's declarations visible to every other model.
+  module EncryptedAttributeRegistry
+    @@attributes = {} of String => Hash(String, EncryptedAttribute)
+
+    def self.for(model_name : String) : Hash(String, EncryptedAttribute)
+      @@attributes[model_name] ||= {} of String => EncryptedAttribute
+    end
+
+    def self.register(model_name : String, attribute_name : String, attribute : EncryptedAttribute) : Nil
+      for(model_name)[attribute_name] = attribute
+    end
+  end
+
   # Handles the encryption/decryption lifecycle for individual attributes
   class EncryptedAttribute
     getter model_class : Grant::Base.class

@@ -38,6 +38,9 @@ end
     schema_three = "grant_schema_tenant_three"
 
     before_all do
+      # Earlier connection specs clear and rebuild the registry. Resolve the
+      # current adapter after that reset instead of using the initial instance.
+      adapter = Grant::ConnectionRegistry.get_adapter("pg", :writing)
       [schema_one, schema_two, schema_three].each do |schema|
         Grant::SchemaTenant.drop_schema(schema, adapter: adapter, cascade: true)
         Grant::SchemaTenant.create_schema(schema, adapter: adapter)
@@ -52,6 +55,7 @@ end
     end
 
     before_each do
+      adapter = Grant::ConnectionRegistry.get_adapter("pg", :writing)
       [schema_one, schema_two, schema_three].each do |schema|
         Grant::SchemaTenant.with(schema, adapter: adapter) do
           SchemaTenantRecord.clear
@@ -62,6 +66,7 @@ end
     end
 
     after_all do
+      adapter = Grant::ConnectionRegistry.get_adapter("pg", :writing)
       [schema_one, schema_two, schema_three].each do |schema|
         Grant::SchemaTenant.drop_schema(schema, adapter: adapter, cascade: true)
       end

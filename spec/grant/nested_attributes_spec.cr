@@ -35,7 +35,10 @@ class NestedAttributePost < Grant::Base
   column author_id : Int64?
   timestamps
 
-  belongs_to :author
+  belongs_to :author, optional: true
+  validate "title must be present" do |post|
+    !post.title.blank?
+  end
   has_many :comments, class_name: NestedAttributeComment
 
   accepts_nested_attributes_for comments : NestedAttributeComment,

@@ -435,7 +435,12 @@ module Grant::Validators
             _field_name = \\{{field.id.stringify}}
             query = self.where("LOWER(#{_field_name}) = LOWER(?)", value)
           \\{% else %}
-            query = self.where(\\{{field.id}}: value)
+            if self.adapter.class.name == "Grant::Adapter::Mysql"
+              _field_name = self.quote(\\{{field.id.stringify}})
+              query = self.where("BINARY #{_field_name} = BINARY ?", value)
+            else
+              query = self.where(\\{{field.id}}: value)
+            end
           \\{% end %}
 
           # Add scope conditions
@@ -792,12 +797,11 @@ module Grant::Validators
       macro validates_confirmation_of(field, **options)
         \\{%
           message = options[:message] || "doesn't match confirmation"
-          confirmation_field = (field.stringify + "_confirmation").id
           context = options[:on] || :save
         %}
 
         # Create virtual attribute for confirmation
-        property \\{{confirmation_field}} : String?
+        property \\{{field.id}}_confirmation : String?
 
         validate(\\{{field}}, \\{{message}}, context: \\{{context}}, code: :confirmation) do |record|
           \\{% if options[:if] %}
@@ -819,7 +823,7 @@ module Grant::Validators
             \\{% end %}
           \\{% end %}
 
-          confirmation_value = record.\\{{confirmation_field}}
+          confirmation_value = record.\\{{field.id}}_confirmation
           next true if confirmation_value.nil?
 
           record.\\{{field.id}}.to_s == confirmation_value
@@ -842,10 +846,8 @@ module Grant::Validators
           context = options[:on] || :save
         %}
 
-        # Create virtual attribute if it doesn't exist
-        \\{% unless @type.instance_vars.any? { |ivar| ivar.name == field.id } %}
-          property \\{{field}} : String?
-        \\{% end %}
+        # Acceptance values are virtual unless a model declares its own column.
+        property \\{{field.id}} : String?
 
         validate(\\{{field}}, \\{{message}}, context: \\{{context}}, code: :accepted) do |record|
           \\{% if options[:if] %}
@@ -922,6 +924,10 @@ module Grant::Validators
               true
             when Array
               associated.all? { |item| item.valid? }
+            when Grant::AssociationCollection
+              associated.to_a.all? { |item| item.valid? }
+            when Grant::LoadedAssociationCollection
+              associated.to_a.all? { |item| item.valid? }
             else
               associated.valid?
             end

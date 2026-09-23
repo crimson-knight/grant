@@ -158,6 +158,7 @@ module Grant::Encryption
       model_class : Grant::Base.class,
       attribute : Symbol,
       old_keys : NamedTuple(primary: String, deterministic: String?),
+      old_salt : String? = nil,
       batch_size : Int32 = 100,
       progress : Bool = true,
     )
@@ -167,6 +168,7 @@ module Grant::Encryption
       # Save current keys
       current_primary = KeyProvider.primary_key
       current_deterministic = KeyProvider.deterministic_key
+      current_salt = KeyProvider.key_derivation_salt
 
       # Get total count
       total = model_class.count
@@ -188,16 +190,36 @@ module Grant::Encryption
             # Decrypt with old keys
             KeyProvider.primary_key = old_keys[:primary]
             KeyProvider.deterministic_key = old_keys[:deterministic] if encrypted_attr.deterministic && old_keys[:deterministic]
+            KeyProvider.key_derivation_salt = old_salt if old_salt
 
-            decrypted = Grant::Encryption.decrypt(
-              encrypted_value.as(String),
-              model_class.name,
-              attribute_str
-            )
+            decrypted = begin
+              Grant::Encryption.decrypt(
+                encrypted_value.as(String),
+                model_class.name,
+                attribute_str
+              )
+            rescue ex : Cipher::DecryptionError
+              # A resumed rotation can encounter rows already encrypted with the
+              # current keys. Try those keys before treating the row as invalid.
+              KeyProvider.primary_key = current_primary
+              KeyProvider.deterministic_key = current_deterministic
+              KeyProvider.key_derivation_salt = current_salt
+
+              begin
+                Grant::Encryption.decrypt(
+                  encrypted_value.as(String),
+                  model_class.name,
+                  attribute_str
+                )
+              rescue
+                raise ex
+              end
+            end
 
             # Re-encrypt with new keys
             KeyProvider.primary_key = current_primary
-            KeyProvider.deterministic_key = current_deterministic if current_deterministic
+            KeyProvider.deterministic_key = current_deterministic
+            KeyProvider.key_derivation_salt = current_salt
 
             new_encrypted = Grant::Encryption.encrypt(
               decrypted,
@@ -225,7 +247,8 @@ module Grant::Encryption
       ensure
         # Restore current keys
         KeyProvider.primary_key = current_primary
-        KeyProvider.deterministic_key = current_deterministic if current_deterministic
+        KeyProvider.deterministic_key = current_deterministic
+        KeyProvider.key_derivation_salt = current_salt
       end
     end
 
@@ -242,13 +265,13 @@ module Grant::Encryption
         add_column :#{column_name}, :text
         add_index :#{column_name} if deterministic # Only for deterministic encryption
       end
-      
+
       # Encrypt existing data
       Grant::Encryption::MigrationHelpers.encrypt_column(
         #{model_class.name},
         :#{attribute}
       )
-      
+
       # Optional: Remove original column after verification
       # alter_table :#{table_name} do
       #   drop_column :#{attribute}

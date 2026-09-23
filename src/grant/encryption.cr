@@ -150,11 +150,15 @@ module Grant::Encryption
   # `encrypts` macro and the per-instance decrypted-value cache. You normally do
   # not include this directly — `Grant::Base` already does.
   module Model
+    module ClassMethods
+      def encrypted_attributes : Hash(String, Grant::Encryption::EncryptedAttribute)
+        Grant::Encryption::EncryptedAttributeRegistry.for(name)
+      end
+    end
+
     macro included
       include Grant::Encryption::QueryExtensions
-
-      # Track encrypted attributes at the class level
-      class_getter encrypted_attributes = {} of String => Grant::Encryption::EncryptedAttribute
+      extend ClassMethods
 
       # Instance cache for decrypted values.
       # Declared nilable (with lazy initialization in `encrypted_attribute_cache`
@@ -241,7 +245,11 @@ module Grant::Encryption
         )
       
       # Store in registry
-      @@encrypted_attributes[{{attr_name}}] = {{attribute.id}}_encrypted_attribute
+      Grant::Encryption::EncryptedAttributeRegistry.register(
+        self.name,
+        {{attr_name}},
+        {{attribute.id}}_encrypted_attribute
+      )
       
       # Create the encrypted column (stores Base64-encoded string)
       column {{attribute.id}}_encrypted : String?
@@ -291,6 +299,14 @@ module Grant::Encryption
           @changed_attributes.not_nil!["{{attribute.id}}_encrypted"] = {old_val, @{{attribute.id}}_encrypted}
         end
       end
+
+      Grant::Columns::VirtualAttributeRegistry.register(
+        {{@type.name.stringify}},
+        {{attr_name}},
+        ->(record : Grant::Base, value : Grant::Columns::Type) do
+          record.as({{@type}}).{{attribute.id}} = Grant::Columns::VirtualAttributeRegistry.string_value(value)
+        end
+      )
       
       # Add query support for deterministic fields
       {% if deterministic %}

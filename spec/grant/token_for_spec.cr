@@ -26,6 +26,10 @@ require "../spec_helper"
 {% end %}
 
 describe Grant::TokenFor do
+  before_all do
+    TokenForTestModel.migrator.drop_and_create
+  end
+
   before_each do
     ENV["GRANT_SIGNING_SECRET"] = "test_secret"
   end
@@ -134,47 +138,5 @@ describe Grant::TokenFor do
         model.generate_token_for(:undefined_purpose)
       end
     end
-  end
-end
-
-# Setup table
-adapter = Grant::Connections[CURRENT_ADAPTER]
-if adapter.is_a?(Grant::Adapter::Base)
-  adapter.exec("DROP TABLE IF EXISTS token_for_test_models")
-
-  case CURRENT_ADAPTER
-  when "sqlite"
-    adapter.exec(<<-SQL)
-      CREATE TABLE token_for_test_models (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT,
-        email TEXT,
-        password_salt TEXT,
-        created_at TEXT,
-        updated_at TEXT
-      )
-    SQL
-  when "pg"
-    adapter.exec(<<-SQL)
-      CREATE TABLE token_for_test_models (
-        id BIGSERIAL PRIMARY KEY,
-        name VARCHAR,
-        email VARCHAR,
-        password_salt VARCHAR,
-        created_at TIMESTAMP,
-        updated_at TIMESTAMP
-      )
-    SQL
-  when "mysql"
-    adapter.exec(<<-SQL)
-      CREATE TABLE token_for_test_models (
-        id BIGINT PRIMARY KEY AUTO_INCREMENT,
-        name VARCHAR(255),
-        email VARCHAR(255),
-        password_salt VARCHAR(255),
-        created_at TIMESTAMP,
-        updated_at TIMESTAMP
-      )
-    SQL
   end
 end

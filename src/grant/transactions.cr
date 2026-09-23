@@ -307,9 +307,17 @@ module Grant::Transactions
       end
 
       {% if primary_key.type == Int32? && ann[:auto] == true %}
-        @{{primary_key.name.id}} = self.class.adapter.insert(self.class.table_name, fields, params, lastval: {{primary_key.name.stringify}}).to_i32
+        if @{{primary_key.name.id}}
+          self.class.adapter.insert(self.class.table_name, fields, params, lastval: nil)
+        else
+          @{{primary_key.name.id}} = self.class.adapter.insert(self.class.table_name, fields, params, lastval: {{primary_key.name.stringify}}).to_i32
+        end
       {% elsif primary_key.type == Int64? && ann[:auto] == true %}
-        @{{primary_key.name.id}} = self.class.adapter.insert(self.class.table_name, fields, params, lastval: {{primary_key.name.stringify}})
+        if @{{primary_key.name.id}}
+          self.class.adapter.insert(self.class.table_name, fields, params, lastval: nil)
+        else
+          @{{primary_key.name.id}} = self.class.adapter.insert(self.class.table_name, fields, params, lastval: {{primary_key.name.stringify}})
+        end
       {% elsif primary_key.type == UUID? && ann[:auto] == true %}
           # if the primary key has not been set, then do so
 
@@ -390,7 +398,12 @@ module Grant::Transactions
           .where(self.class.primary_name, :eq, @{{primary_key.name.id}}.as(Grant::Columns::Type))
           .update_all(assignments)
         if affected == 0 && !self.class._unscoped?
-          raise Grant::TenantMismatchError.new("#{self.class.name} row #{@{{primary_key.name.id}}} is outside the current tenant.")
+          row_is_in_scope = self.class.__tenant_write_scope
+            .where(self.class.primary_name, :eq, @{{primary_key.name.id}}.as(Grant::Columns::Type))
+            .exists?
+          unless row_is_in_scope
+            raise Grant::TenantMismatchError.new("#{self.class.name} row #{@{{primary_key.name.id}}} is outside the current tenant.")
+          end
         end
       else
         self.class.adapter.update(self.class.table_name, self.class.primary_name, fields, params)
@@ -718,7 +731,12 @@ module Grant::Transactions
           .where(self.class.primary_name, :eq, persisted_primary_key.as(Grant::Columns::Type))
           .update_all(assignments)
         if affected == 0 && !self.class._unscoped?
-          raise Grant::TenantMismatchError.new("#{self.class.name} row #{persisted_primary_key} is outside the current tenant.")
+          row_is_in_scope = self.class.__tenant_write_scope
+            .where(self.class.primary_name, :eq, persisted_primary_key.as(Grant::Columns::Type))
+            .exists?
+          unless row_is_in_scope
+            raise Grant::TenantMismatchError.new("#{self.class.name} row #{persisted_primary_key} is outside the current tenant.")
+          end
         end
         clear_dirty_tracking_for(fields)
         return true
@@ -816,7 +834,12 @@ module Grant::Transactions
       assembler.numbered_parameters
     )
     if affected == 0 && self.class.__multitenant? && !self.class._unscoped?
-      raise Grant::TenantMismatchError.new("#{self.class.name} row #{primary_key_value} is outside the current tenant.")
+      row_is_in_scope = self.class.__tenant_write_scope
+        .where(self.class.primary_name, :eq, primary_key_value)
+        .exists?
+      unless row_is_in_scope
+        raise Grant::TenantMismatchError.new("#{self.class.name} row #{primary_key_value} is outside the current tenant.")
+      end
     end
 
     clear_dirty_tracking_for([attribute_name])

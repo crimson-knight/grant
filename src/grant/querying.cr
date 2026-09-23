@@ -247,6 +247,10 @@ module Grant::Querying
     # User.find_by({"email" => "a@example.com", "active" => true})
     # ```
     def find_by(criteria : Grant::ModelArgs)
+      if criteria.keys.any? { |field| Grant::Encryption::EncryptedAttributeRegistry.for(name).has_key?(field.to_s) }
+        return current_scope.where(criteria).first
+      end
+
       clause, params = build_find_by_clause(criteria)
       first "WHERE #{clause}", params
     end

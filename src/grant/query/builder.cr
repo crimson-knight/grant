@@ -203,6 +203,13 @@ class Grant::Query::Builder(Model)
     and(stmt, value)
   end
 
+  def where(stmt : String, first, second, *rest) : self
+    values = [] of Grant::Columns::Type
+    values << first.as(Grant::Columns::Type) << second.as(Grant::Columns::Type)
+    rest.each { |value| values << value.as(Grant::Columns::Type) }
+    and(stmt, values)
+  end
+
   # Returns a WhereChain for advanced where methods.
   #
   # Example:
@@ -258,6 +265,13 @@ class Grant::Query::Builder(Model)
     values.each { |item| bind_values << item.as(Grant::Columns::Type) }
     @where_fields << {join: :and, stmt: stmt, values: bind_values}
     self
+  end
+
+  def and(stmt : String, first, second, *rest) : self
+    values = [] of Grant::Columns::Type
+    values << first.as(Grant::Columns::Type) << second.as(Grant::Columns::Type)
+    rest.each { |value| values << value.as(Grant::Columns::Type) }
+    and(stmt, values)
   end
 
   # Adds a structured `IN` or `NOT IN` predicate from a possibly nilable list.
@@ -701,7 +715,7 @@ class Grant::Query::Builder(Model)
       through_table = through_class.table_name
       first_on = "#{through_table}.#{through_meta[:foreign_key]} = #{current_table}.#{through_meta[:primary_key]}"
 
-      source_name = meta[:target_class].name.split("::").last.underscore
+      source_name = meta[:source] || meta[:target_class].name.split("::").last.underscore
       source_meta = Grant::AssociationRegistry.get(through_class.name, source_name)
       source_foreign_key = if source = source_meta
                              source[:foreign_key]

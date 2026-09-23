@@ -176,7 +176,7 @@ module Grant::Query::Assembler
             field = structured_field_sql(expr[:field])
             add_aggregate_field(field)
 
-            value = expr[:value]
+            value = encrypted_query_value(expr[:field], expr[:value])
             if value.nil?
               case expr[:operator]
               when :eq
@@ -212,8 +212,11 @@ module Grant::Query::Assembler
 
       column = parts.last
       qualifier = parts.first if parts.size == 2
+      encrypted_attribute = if qualifier.nil? || qualifier == Model.table_name
+                              Grant::Encryption::EncryptedAttributeRegistry.for(Model.name)[column]?
+                            end
       valid_column = if qualifier.nil? || qualifier == Model.table_name
-                       Model.fields.includes?(column)
+                       Model.fields.includes?(column) || !encrypted_attribute.nil?
                      elsif @query.join_clauses.any? { |join| join[:table] == qualifier }
                        if association = Grant::AssociationRegistry.get(Model.name, qualifier)
                          association[:target_class].fields.includes?(column)
@@ -228,12 +231,37 @@ module Grant::Query::Assembler
         raise ArgumentError.new("Unknown query field #{field.inspect} for #{Model.name}")
       end
 
+      column_name = encrypted_attribute.try(&.column_name) || column
+
       if qualifier
-        "#{Model.quote(qualifier)}.#{Model.quote(column)}"
+        "#{Model.quote(qualifier)}.#{Model.quote(column_name)}"
       elsif !@query.join_clauses.empty?
-        "#{Model.quote(Model.table_name)}.#{Model.quote(column)}"
+        "#{Model.quote(Model.table_name)}.#{Model.quote(column_name)}"
       else
-        Model.quote(column)
+        Model.quote(column_name)
+      end
+    end
+
+    private def encrypted_query_value(field : String, value : Grant::Columns::Type) : Grant::Columns::Type
+      parts = field.split('.')
+      return value unless parts.size == 1 || parts.first == Model.table_name
+
+      attribute_name = parts.last
+      encrypted_attribute = Grant::Encryption::EncryptedAttributeRegistry.for(Model.name)[attribute_name]?
+      return value unless encrypted_attribute
+      unless encrypted_attribute.deterministic
+        raise ArgumentError.new("Cannot query non-deterministic encrypted field: #{attribute_name}")
+      end
+
+      case value
+      when Nil
+        nil
+      when String
+        Grant::Encryption.encrypt(value, Model.name, attribute_name, true).not_nil!
+      when Array(String)
+        value.map { |item| Grant::Encryption.encrypt(item, Model.name, attribute_name, true).not_nil! }
+      else
+        raise ArgumentError.new("Encrypted field #{attribute_name.inspect} can only be queried with String values")
       end
     end
 
@@ -723,13 +751,21 @@ module Grant::Query::Assembler
     # The inner query selects the exact primary keys targeted by a bulk write.
     # The outer UPDATE/DELETE syntax works across PostgreSQL and SQLite.
     private def write_target_subquery : String
-      build_sql do |s|
+      subquery = build_sql do |s|
         s << "SELECT #{Model.quote(Model.primary_name)} FROM #{table_name}"
         s << joins
         s << where
         s << order(use_default_order: false)
         s << limit
         s << offset
+      end
+
+      # MySQL rejects LIMIT directly inside an IN subquery. A derived-table
+      # layer makes the selected target keys legal for bounded bulk writes.
+      if Model.adapter.class.name == "Grant::Adapter::Mysql"
+        "SELECT grant_write_targets.#{Model.quote(Model.primary_name)} FROM (#{subquery}) AS grant_write_targets"
+      else
+        subquery
       end
     end
 

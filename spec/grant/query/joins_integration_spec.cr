@@ -36,7 +36,7 @@ describe "Joins, Distinct, Having - Integration" do
       sql.should contain("INNER JOIN")
       sql.should contain("ORDER BY")
       sql.should contain("LIMIT 10")
-      sql.should contain(%(GROUP BY "parents"."name"))
+      sql.should contain("GROUP BY #{Parent.quote("parents.name")}")
     end
   end
 
@@ -94,7 +94,7 @@ describe "Joins, Distinct, Having - Integration" do
         .having("COUNT(*) > ?", 3)
         .raw_sql
       sql.should contain("INNER JOIN")
-      sql.should contain(%(GROUP BY "parents"."name"))
+      sql.should contain("GROUP BY #{Parent.quote("parents.name")}")
       sql.should contain("HAVING")
     end
   end

@@ -20,22 +20,49 @@ module Grant::Encryption
     end
 
     # Primary encryption key
-    class_property primary_key : Bytes? = nil
+    @@primary_key : Bytes? = nil
+
+    def self.primary_key : Bytes?
+      @@primary_key
+    end
+
+    def self.primary_key=(key : Bytes?)
+      @@primary_key = key
+      clear_cache
+    end
 
     # Deterministic encryption key (separate for security)
-    class_property deterministic_key : Bytes? = nil
+    @@deterministic_key : Bytes? = nil
+
+    def self.deterministic_key : Bytes?
+      @@deterministic_key
+    end
+
+    def self.deterministic_key=(key : Bytes?)
+      @@deterministic_key = key
+      clear_cache
+    end
 
     # Key derivation salt
-    class_property key_derivation_salt : String = DEFAULT_SALT
+    @@key_derivation_salt : String = DEFAULT_SALT
+
+    def self.key_derivation_salt : String
+      @@key_derivation_salt
+    end
+
+    def self.key_derivation_salt=(salt : String)
+      @@key_derivation_salt = salt
+      clear_cache
+    end
 
     # Load primary key from base64-encoded string
     def self.primary_key=(key : String)
-      @@primary_key = decode_key(key)
+      self.primary_key = decode_key(key)
     end
 
     # Load deterministic key from base64-encoded string
     def self.deterministic_key=(key : String)
-      @@deterministic_key = decode_key(key)
+      self.deterministic_key = decode_key(key)
     end
 
     # Get the primary encryption key

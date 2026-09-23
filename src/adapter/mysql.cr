@@ -1,9 +1,25 @@
 require "./base"
 require "mysql"
 
+# MySQL reports JSON columns with the protocol type code 245. The pinned
+# crystal-mysql driver returns JSON as text, so decode it with the string type.
+MySql::Type.types_by_code[245_u8] = MySql::Type::String
+
 # Mysql implementation of the Adapter
 class Grant::Adapter::Mysql < Grant::Adapter::Base
   QUOTING_CHAR = '`'
+
+  # crystal-mysql defaults its handshake charset to utf8 (utf8mb3), which
+  # cannot bind four-byte Unicode such as emoji into MySQL 8 utf8mb4 columns.
+  # Keep an explicit caller setting and use a broadly supported utf8mb4
+  # collation when the URL does not provide one.
+  def initialize(name : String, url : String)
+    unless url.matches?(/[?&]encoding=/i)
+      separator = url.includes?("?") ? "&" : "?"
+      url = "#{url}#{separator}encoding=utf8mb4_general_ci"
+    end
+    super(name, url)
+  end
 
   module Schema
     TYPES = {
@@ -42,7 +58,7 @@ class Grant::Adapter::Mysql < Grant::Adapter::Base
     last_id = -1_i64
     elapsed_time = Time.measure do
       open do |conn|
-        conn.exec statement, args: params
+        conn.exec statement, args: mysql_values(params)
         last_id = conn.scalar(last_val()).as(Int64) if lastval
       end
     end
@@ -85,7 +101,7 @@ class Grant::Adapter::Mysql < Grant::Adapter::Base
 
     elapsed_time = Time.measure do
       open do |db|
-        db.exec statement, args: params
+        db.exec statement, args: mysql_values(params)
       end
     end
 
@@ -106,7 +122,7 @@ class Grant::Adapter::Mysql < Grant::Adapter::Base
 
     elapsed_time = Time.measure do
       open do |db|
-        db.exec statement, args: params
+        db.exec statement, args: mysql_values(params)
       end
     end
 
@@ -119,11 +135,26 @@ class Grant::Adapter::Mysql < Grant::Adapter::Base
 
     elapsed_time = Time.measure do
       open do |db|
-        db.exec statement, value
+        db.exec statement, mysql_value(value)
       end
     end
 
     log statement, elapsed_time, value
+  end
+
+  # Grant stores MySQL UUID columns as CHAR(36), while crystal-mysql's UUID
+  # parameter encoder sends the 16-byte binary representation. Bind the
+  # canonical string used by this adapter's schema instead.
+  private def mysql_values(params)
+    params.map { |value| mysql_value(value) }
+  end
+
+  private def mysql_value(value : UUID) : String
+    value.to_s
+  end
+
+  private def mysql_value(value)
+    value
   end
 
   def supports_lock_mode?(mode : Grant::Locking::LockMode) : Bool
