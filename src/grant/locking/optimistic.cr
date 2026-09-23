@@ -22,7 +22,6 @@ module Grant::Locking::Optimistic
   macro included
     column lock_version : Int32 = 0
 
-    before_update :__check_lock_version
     after_update :__increment_lock_version
 
     # Declared nilable (coalesced to 0 on read) rather than carrying a default
@@ -77,55 +76,79 @@ module Grant::Locking::Optimistic
     @lock_conflict_retry_count = 0
   end
 
-  private def __check_lock_version
-    return true unless persisted?
-    return true if lock_version_was == 0 && lock_version == 0
+  # Replaces the normal update with one atomic UPDATE that writes both the
+  # record's attributes and the incremented lock version, guarded by the
+  # version that was loaded from the database.
+  protected def __update_with_optimistic_lock(skip_timestamps : Bool = false) : Bool
+    raise Grant::ReadOnlyRecordError.new("#{self.class.name} is marked as read only") if readonly?
 
-    @lock_version_was = lock_version_was
+    set_timestamps(mode: :update) unless skip_timestamps
 
-    {% begin %}
-      {% primary_key = @type.instance_vars.find { |ivar| (ann = ivar.annotation(Grant::Column)) && ann[:primary] } %}
-      {% raise "A primary key must be defined for #{@type.name}." unless primary_key %}
-      
-      affected_rows = self.class.adapter.open do |db|
-        fields = self.class.content_fields.dup
-        values = content_values.dup
-        
-        if created_at_index = fields.index("created_at")
-          fields.delete_at created_at_index
-          values.delete_at created_at_index
+    fields = self.class.content_fields.dup
+    params = content_values
+
+    if created_at_index = fields.index("created_at")
+      fields.delete_at(created_at_index)
+      params.delete_at(created_at_index)
+    end
+
+    self.class.readonly_attributes.each do |readonly_field|
+      next if readonly_field == "lock_version"
+
+      if readonly_index = fields.index(readonly_field)
+        fields.delete_at(readonly_index)
+        params.delete_at(readonly_index)
+      end
+    end
+
+    next_lock_version = lock_version_was + 1
+    if lock_version_index = fields.index("lock_version")
+      params[lock_version_index] = next_lock_version
+    else
+      fields << "lock_version"
+      params << next_lock_version
+    end
+
+    assignments = [] of Tuple(String, Grant::Columns::Type)
+    fields.each_with_index do |field, index|
+      assignments << {field, params[index]}
+    end
+
+    record_id = primary_key_value.as(Grant::Columns::Type)
+    query = if self.class.__multitenant?
+              self.class.__tenant_write_scope
+            else
+              self.class.unscoped
+            end
+
+    affected_rows = query
+      .where(self.class.primary_name, :eq, record_id)
+      .where("lock_version = ?", lock_version_was.as(Grant::Columns::Type))
+      .update_all(assignments)
+
+    if affected_rows == 0
+      if self.class.__multitenant? && !self.class._unscoped?
+        tenant_record_exists = self.class.__tenant_write_scope
+          .where(self.class.primary_name, :eq, record_id)
+          .exists?
+        unless tenant_record_exists
+          raise Grant::TenantMismatchError.new(
+            "#{self.class.name} row #{record_id} is outside the current tenant.")
         end
-        
-        fields_clause = fields.map { |f| "#{self.class.adapter.quote(f)} = ?" }.join(", ")
-        where_clause = "#{self.class.adapter.quote({{primary_key.name.stringify}})} = ? AND #{self.class.adapter.quote("lock_version")} = ?"
-        
-        statement = "UPDATE #{self.class.adapter.quote(self.class.table_name)} SET #{fields_clause} WHERE #{where_clause}"
-        params = values + [@{{primary_key.name.id}}, lock_version_was]
-        
-        result = db.exec(statement, args: params)
+      end
 
-        # Ask the adapter how many rows the UPDATE affected. Dispatching on
-        # the adapter (rather than `case`ing over Pg/Mysql/Sqlite class
-        # literals) keeps this path from forcing all three adapter shards to
-        # compile when only one is required (issue #40). SQLite overrides to
-        # query `changes()`; pg/mysql use `result.rows_affected`.
-        self.class.adapter.rows_affected_for_optimistic_lock(db, result)
-      end
-      
-      if affected_rows == 0
-        raise StaleObjectError.new(self)
-      end
-      
-      true
-    {% end %}
-  rescue ex : StaleObjectError
+      raise StaleObjectError.new(self)
+    end
+
+    true
+  rescue ex : StaleObjectError | Grant::TenantMismatchError | Grant::NoTenantError | Grant::ReadOnlyRecordError
     raise ex
-  rescue ex
-    raise ex
+  rescue err
+    raise DB::Error.new(err.message, cause: err)
   end
 
   private def __increment_lock_version
-    @lock_version = lock_version + 1
+    @lock_version = lock_version_was + 1
     @lock_version_was = lock_version
   end
 

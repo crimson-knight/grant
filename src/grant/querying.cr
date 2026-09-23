@@ -558,19 +558,31 @@ module Grant::Querying
     end
   end
 
-  # Returns the record with the attributes reloaded from the database.
-  #
-  # **Note:** this method is only defined when the `Spec` module is present.
+  # Reloads the record's attributes from the database in place and clears its
+  # current and previous dirty state. Raises `Grant::Querying::NotFound` if the
+  # record no longer exists in the current scope.
   #
   # ```
   # post = Post.create(name: "Grant Rocks!", body: "Check this out.")
   # # record gets updated by another process
-  # post.reload # performs another find to fetch the record again
+  # post.reload # refreshes this same object from the database
   # ```
   def reload
-    {% if !@top_level.has_constant? "Spec" %}
-      raise "#reload is a convenience method for testing only, please use #find in your application code"
+    fresh = self.class.find!(primary_key_value)
+
+    {% begin %}
+      {% for column in @type.instance_vars.select(&.annotation(Grant::Column)) %}
+        @{{column.name.id}} = fresh.@{{column.name.id}}
+      {% end %}
     {% end %}
-    self.class.find!(primary_key_value)
+
+    self.new_record = false
+    ensure_dirty_tracking_initialized
+    @original_attributes.not_nil!.clear
+    @changed_attributes.not_nil!.clear
+    @previous_changes.not_nil!.clear
+    capture_original_attributes
+
+    self
   end
 end
