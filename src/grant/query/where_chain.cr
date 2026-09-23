@@ -20,7 +20,7 @@ module Grant::Query
     # # SQL: WHERE id NOT IN (1, 2, 3)
     # ```
     def not_in(field : Symbol | String, values : Array)
-      @query.and(field: field.to_s, operator: :nin, value: values)
+      @query.and_in(field, values, negated: true)
     end
 
     # LIKE operator for pattern matching
@@ -68,22 +68,22 @@ module Grant::Query
 
     # IS NULL
     def is_null(field : Symbol | String)
-      @query.and(stmt: "#{field} IS NULL", value: nil)
+      @query.and(field, :eq, nil)
     end
 
     # IS NOT NULL
     def is_not_null(field : Symbol | String)
-      @query.and(stmt: "#{field} IS NOT NULL", value: nil)
+      @query.and(field, :neq, nil)
     end
 
-    # BETWEEN range check (inclusive)
+    # BETWEEN range check. An exclusive range excludes its upper endpoint.
     # ```
     # User.where.between(:age, 25..35)
     # # SQL: WHERE age >= 25 AND age <= 35
     # ```
     def between(field : Symbol | String, range : Range)
       @query.and(field: field.to_s, operator: :gteq, value: range.begin)
-      @query.and(field: field.to_s, operator: :lteq, value: range.end)
+      @query.and(field: field.to_s, operator: range.exclusive? ? :lt : :lteq, value: range.end)
     end
 
     # EXISTS subquery condition
@@ -92,14 +92,26 @@ module Grant::Query
     # # SQL: WHERE EXISTS (SELECT * FROM posts WHERE posts.user_id = users.id)
     # ```
     def exists(subquery : Builder)
-      sql = subquery.assembler.select.raw_sql
-      @query.and(stmt: "EXISTS (#{sql})", value: nil)
+      subquery_assembler = subquery.assembler
+      sql = subquery_assembler.select.raw_sql
+      values = subquery_assembler.numbered_parameters
+      if values.empty?
+        @query.and("EXISTS (#{sql})")
+      else
+        @query.and(stmt: "EXISTS (#{sql})", values: values)
+      end
     end
 
     # NOT EXISTS subquery
     def not_exists(subquery : Builder)
-      sql = subquery.assembler.select.raw_sql
-      @query.and(stmt: "NOT EXISTS (#{sql})", value: nil)
+      subquery_assembler = subquery.assembler
+      sql = subquery_assembler.select.raw_sql
+      values = subquery_assembler.numbered_parameters
+      if values.empty?
+        @query.and("NOT EXISTS (#{sql})")
+      else
+        @query.and(stmt: "NOT EXISTS (#{sql})", values: values)
+      end
     end
 
     # Checks if associated records exist using an INNER JOIN.
@@ -116,7 +128,7 @@ module Grant::Query
     # ```
     def has(association : Symbol, *, table : String, foreign_key : String, primary_key : String = "id")
       @query.joins(table, on: "#{table}.#{foreign_key} = #{Model.table_name}.#{primary_key}")
-      @query.and(stmt: "#{table}.#{foreign_key} IS NOT NULL", value: nil)
+      @query.and("#{table}.#{foreign_key} IS NOT NULL")
     end
 
     # Checks if associated records do NOT exist using a LEFT JOIN.
@@ -131,7 +143,7 @@ module Grant::Query
     # ```
     def missing(association : Symbol, *, table : String, foreign_key : String, primary_key : String = "id")
       @query.left_joins(table, on: "#{table}.#{foreign_key} = #{Model.table_name}.#{primary_key}")
-      @query.and(stmt: "#{table}.#{foreign_key} IS NULL", value: nil)
+      @query.and("#{table}.#{foreign_key} IS NULL")
     end
 
     # Allow chaining back to the query builder

@@ -46,7 +46,7 @@ query = User.where(active: true).order(:name)
 # Execution happens here
 users = query.select     # Returns array of User
 first = query.first      # Returns User?
-count = query.count      # Returns Int32
+count = query.count      # Returns Int64, or a hash when grouped
 exists = query.exists?   # Returns Bool
 ```
 
@@ -126,13 +126,14 @@ User.where.not(:role, "guest")
 For database-specific features or complex conditions:
 
 ```crystal
-# With placeholders (? for MySQL/SQLite, $ for PostgreSQL)
+# Raw clauses accept `?` placeholders on every adapter or numbered `$1`, `$2`, … placeholders for PostgreSQL.
+# Pass values as an array when the clause has multiple placeholders; Grant validates the count.
 Post.where("LOWER(title) LIKE ?", ["%crystal%"])
 User.where("age * 2 > ?", [50])
 
 # PostgreSQL specific
 Post.where("tags @> ARRAY[?]::varchar[]", ["ruby"])
-Post.where("metadata->>'key' = $", ["value"])
+Post.where("metadata->>'key' = $1", ["value"])
 
 # MySQL specific
 Post.where("MATCH(title, content) AGAINST(? IN BOOLEAN MODE)", ["+crystal +orm"])
@@ -470,6 +471,10 @@ User.distinct.count(:country)
 # Group count
 User.group_by(:role).count
 # => {"admin" => 5, "user" => 100, "moderator" => 10}
+
+# Multiple group fields use an array key
+Sale.group_by([:product_id, :store_id]).count
+# => {[12, 3] => 8, [12, 4] => 5}
 ```
 
 ### Sum, Average, Min, Max

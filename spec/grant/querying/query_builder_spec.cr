@@ -60,14 +60,14 @@ describe Grant::Query::BuilderMethods do
         found[1].id.should eq review1.id
       end
 
-      # Sqlite doesnt have bool literals
+      # SQLite stores boolean values as integers, but the model API remains Bool.
       {% if env("CURRENT_ADAPTER") == "sqlite" %}
         it "correctly queries bool fields" do
           Review.clear
-          Review.create(name: "one", published: 1)
-          review2 = Review.create(name: "two", published: 0)
+          Review.create(name: "one", published: true)
+          review2 = Review.create(name: "two", published: false)
 
-          found = Review.where(published: [0]).select
+          found = Review.where(published: [false]).select
 
           found.size.should eq 1
           found[0].id.should eq review2.id

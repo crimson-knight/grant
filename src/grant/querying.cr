@@ -134,7 +134,11 @@ module Grant::Querying
             if clean_clause.starts_with?("WHERE ")
               clean_clause = clean_clause[6..-1] # Remove "WHERE " prefix
             end
-            query.where(clean_clause, params.first? || nil)
+            if params.empty?
+              query.where(clean_clause)
+            else
+              query.where(clean_clause, params.first)
+            end
           end
           query.select
         end
@@ -174,7 +178,11 @@ module Grant::Querying
             if clean_clause.starts_with?("WHERE ")
               clean_clause = clean_clause[6..-1] # Remove "WHERE " prefix
             end
-            query.where(clean_clause, params.first? || nil)
+            if params.empty?
+              query.where(clean_clause)
+            else
+              query.where(clean_clause, params.first)
+            end
           end
           if query.order_fields.empty?
             query.order_fields << {field: primary_name, direction: Grant::Query::Builder::Sort::Ascending}
@@ -275,7 +283,11 @@ module Grant::Querying
             if clean_clause.starts_with?("WHERE ")
               clean_clause = clean_clause[6..-1] # Remove "WHERE " prefix
             end
-            query.where(clean_clause, params.first? || nil)
+            if params.empty?
+              query.where(clean_clause)
+            else
+              query.where(clean_clause, params.first)
+            end
           end
           results = query.select.to_a
         end
@@ -502,7 +514,16 @@ module Grant::Querying
     # User.count # => 42 (within the default scope, when present)
     # ```
     def count : Int32
-      current_scope.count.to_i32
+      result = current_scope.count
+      total = case result
+              when Int64
+                result
+              when Hash(Grant::Columns::Type, Int64)
+                result.values.sum
+              else
+                result.values.sum
+              end
+      total.to_i32
     end
 
     def exec(clause = "")

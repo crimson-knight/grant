@@ -61,18 +61,9 @@ module Grant::Sharding
     #
     # Executes directly against the current shard's adapter via the assembler
     # — no routing, hence no recursion. Normalizes the assembler's
-    # Int64 | Array(Int64) (the latter arises with GROUP BY) into a single
-    # Int64, matching Query::Builder#count.
-    def count_without_routing : Int64
-      result = assembler.count.run
-      case result
-      when Int64
-        result
-      when Array(Int64)
-        result.sum
-      else
-        0_i64
-      end
+    # grouped count results into the same shape as Query::Builder#count.
+    def count_without_routing : Query::Builder::CountResult
+      super
     end
 
     # Internal method to exists? without routing (see count_without_routing).
@@ -89,7 +80,7 @@ module Grant::Sharding
     end
 
     # Override count to use routing
-    def count : Int64
+    def count : Query::Builder::CountResult
       if force_shard = @force_shard
         if force_shard == :all
           all_shards = Grant::ShardManager.shards_for_model(Model.name)

@@ -42,6 +42,12 @@ module Grant::Query::Assembler
       end.join(", ")
     end
 
+    # Qualifies a simple plucked model field when joins can introduce another
+    # column with the same name.
+    def pluck_field_sql(field : String) : String
+      qualify_join_field(field, Model.quote(Model.table_name))
+    end
+
     private def qualify_join_field(field : String, quoted_table_name : String) : String
       if !@query.join_clauses.empty? && field.matches?(/\A[A-Za-z_][A-Za-z0-9_]*\z/)
         "#{quoted_table_name}.#{Model.quote(field)}"
@@ -155,40 +161,162 @@ module Grant::Query::Assembler
           if expression[:field]?.nil?
             clause = case expression
                      when NamedTuple(join: Symbol, stmt: String, values: Array(Grant::Columns::Type))
-                       statement = expression[:stmt]
-                       expression[:values].each do |value|
-                         statement = statement.sub(@placeholder, add_parameter(value))
-                       end
-                       statement
+                       bind_raw_statement(expression[:stmt], expression[:values])
                      else
                        expr = expression.as(NamedTuple(join: Symbol, stmt: String, value: Grant::Columns::Type))
-                       if value = expr[:value]
-                         expr[:stmt].gsub(@placeholder, add_parameter(value))
-                       else
-                         expr[:stmt]
-                       end
+                       value = expr[:value]
+                       bind_raw_statement(expr[:stmt], value.nil? ? [] of Grant::Columns::Type : [value])
                      end
             sql << clause
           else
             expr = expression.as(NamedTuple(join: Symbol, field: String, operator: Symbol, value: Grant::Columns::Type))
-            field = qualify_join_field(expr[:field], Model.quote(Model.table_name))
+            field = structured_field_sql(expr[:field])
             add_aggregate_field(field)
 
-            if value = expr[:value]
+            value = expr[:value]
+            if value.nil?
+              case expr[:operator]
+              when :eq
+                sql << "#{field} IS NULL"
+              when :neq, :ltgt
+                sql << "#{field} IS NOT NULL"
+              else
+                raise ArgumentError.new("Operator #{expr[:operator].inspect} does not support nil values")
+              end
+            else
               if value.is_a?(Array)
-                placeholders = value.as(Array).map do |item|
-                  item.is_a?(Bool) || item.is_a?(Number) ? item.to_s : add_parameter(item)
+                array = value.as(Array)
+                if array.empty?
+                  sql << (expr[:operator] == :nin ? "1=1" : "1=0")
+                else
+                  placeholders = array.map { |item| add_parameter(item.as(Grant::Columns::Type)) }
+                  sql << "#{field} #{sql_operator(expr[:operator])} (#{placeholders.join(",")})"
                 end
-                sql << "#{field} #{sql_operator(expr[:operator])} (#{placeholders.join(",")})"
               else
                 sql << "#{field} #{sql_operator(expr[:operator])} #{add_parameter(value)}"
               end
-            else
-              sql << "#{field} IS NULL"
             end
           end
         end
       end
+    end
+
+    private def structured_field_sql(field : String) : String
+      parts = field.split('.')
+      unless parts.size.in?(1..2) && parts.all?(&.matches?(/\A[A-Za-z_][A-Za-z0-9_]*\z/))
+        raise ArgumentError.new("Invalid query field #{field.inspect}")
+      end
+
+      column = parts.last
+      qualifier = parts.first if parts.size == 2
+      valid_column = if qualifier.nil? || qualifier == Model.table_name
+                       Model.fields.includes?(column)
+                     elsif @query.join_clauses.any? { |join| join[:table] == qualifier }
+                       if association = Grant::AssociationRegistry.get(Model.name, qualifier)
+                         association[:target_class].fields.includes?(column)
+                       else
+                         Model.fields.includes?(column)
+                       end
+                     else
+                       false
+                     end
+
+      unless valid_column
+        raise ArgumentError.new("Unknown query field #{field.inspect} for #{Model.name}")
+      end
+
+      if qualifier
+        "#{Model.quote(qualifier)}.#{Model.quote(column)}"
+      elsif !@query.join_clauses.empty?
+        "#{Model.quote(Model.table_name)}.#{Model.quote(column)}"
+      else
+        Model.quote(column)
+      end
+    end
+
+    # Rewrites raw-clause placeholders to this assembler's local bind numbering
+    # and rejects mismatched argument counts before the driver sees the SQL.
+    private def bind_raw_statement(statement : String, values : Array(Grant::Columns::Type)) : String
+      output = String::Builder.new
+      chars = statement.chars
+      dollar_tokens = {} of Int32 => String
+      dollar_indices = [] of Int32
+      question_count = 0
+      dollar_style = false
+      index = 0
+      quote : Char? = nil
+
+      while index < chars.size
+        char = chars[index]
+
+        if current_quote = quote
+          output << char
+          if char == current_quote
+            if index + 1 < chars.size && chars[index + 1] == current_quote
+              output << chars[index + 1]
+              index += 1
+            else
+              quote = nil
+            end
+          elsif char == '\\' && index + 1 < chars.size
+            output << chars[index + 1]
+            index += 1
+          end
+        elsif char == '\'' || char == '"'
+          quote = char
+          output << char
+        elsif char == '-' && index + 1 < chars.size && chars[index + 1] == '-'
+          output << char << chars[index + 1]
+          index += 1
+          while index + 1 < chars.size && chars[index + 1] != '\n'
+            output << chars[index + 1]
+            index += 1
+          end
+        elsif char == '/' && index + 1 < chars.size && chars[index + 1] == '*'
+          output << char << chars[index + 1]
+          index += 1
+          while index + 1 < chars.size
+            index += 1
+            output << chars[index]
+            break if chars[index - 1] == '*' && chars[index] == '/'
+          end
+        elsif char == '?'
+          raise ArgumentError.new("Do not mix ? and numbered placeholders in one query clause") if dollar_style
+          raise ArgumentError.new("Raw query placeholder count does not match bind values") if question_count >= values.size
+          output << add_parameter(values[question_count])
+          question_count += 1
+        elsif char == '$' && index + 1 < chars.size && chars[index + 1].number?
+          raise ArgumentError.new("Do not mix ? and numbered placeholders in one query clause") if question_count > 0
+          dollar_style = true
+          number_start = index + 1
+          number_end = number_start
+          while number_end < chars.size && chars[number_end].number?
+            number_end += 1
+          end
+          parameter_index = chars[number_start...number_end].join.to_i
+          unless parameter_index.in?(1..values.size)
+            raise ArgumentError.new("Raw query placeholder count does not match bind values")
+          end
+          dollar_indices << parameter_index unless dollar_indices.includes?(parameter_index)
+          token = dollar_tokens[parameter_index] ||= add_parameter(values[parameter_index - 1])
+          output << token
+          index = number_end - 1
+        else
+          output << char
+        end
+
+        index += 1
+      end
+
+      if dollar_style
+        unless dollar_indices.size == values.size && values.size.times.all? { |number| dollar_indices.includes?(number + 1) }
+          raise ArgumentError.new("Raw query placeholder count does not match bind values")
+        end
+      elsif question_count != values.size
+        raise ArgumentError.new("Raw query placeholder count does not match bind values")
+      end
+
+      output.to_s
     end
 
     def order(use_default_order = true)
@@ -269,9 +397,44 @@ module Grant::Query::Assembler
     end
 
     def count : (Executor::MultiValue(Model, Int64) | Executor::Value(Model, Int64))
-      count_expr = @query.distinct? ? "COUNT(DISTINCT #{field_list})" : "COUNT(*)"
+      if @query.distinct?
+        distinct_rows_sql = build_sql do |s|
+          s << "SELECT DISTINCT #{field_list}"
+          s << from_clause
+          s << joins
+          s << where
+          s << group_by
+          s << having
+          s << order(use_default_order: false) if @query.limit || @query.offset
+          s << limit
+          s << offset
+        end
+        sql = "SELECT COUNT(*) FROM (#{distinct_rows_sql}) AS grant_distinct_rows"
+      else
+        sql = build_sql do |s|
+          s << "SELECT COUNT(*)"
+          s << from_clause
+          s << joins
+          s << where
+          s << group_by
+          s << having
+          s << order(use_default_order: false)
+          s << limit
+          s << offset
+        end
+      end
+
+      Executor::Value(Model, Int64).new sql, numbered_parameters, default: 0_i64
+    end
+
+    # Builds a grouped count that keeps every group key in the result.
+    def grouped_count : Executor::Grouped(Model)
+      group_expressions = @query.group_fields.map do |expression|
+        qualify_join_field(expression[:field], Model.quote(Model.table_name))
+      end
+
       sql = build_sql do |s|
-        s << "SELECT #{count_expr}"
+        s << "SELECT #{group_expressions.join(", ")}, COUNT(*)"
         s << from_clause
         s << joins
         s << where
@@ -282,11 +445,7 @@ module Grant::Query::Assembler
         s << offset
       end
 
-      if group_by
-        Executor::MultiValue(Model, Int64).new sql, numbered_parameters, default: 0_i64
-      else
-        Executor::Value(Model, Int64).new sql, numbered_parameters, default: 0_i64
-      end
+      Executor::Grouped(Model).new(sql, group_expressions.size, numbered_parameters)
     end
 
     def first(n : Int32 = 1) : Executor::List(Model)
@@ -307,11 +466,15 @@ module Grant::Query::Assembler
     end
 
     def delete
-      sql = build_sql do |s|
-        s << "DELETE FROM #{table_name}"
-        s << joins
-        s << where
-      end
+      sql = if limited_or_joined_write?
+              key_sql = write_target_subquery
+              "DELETE FROM #{table_name} WHERE #{Model.quote(Model.primary_name)} IN (#{key_sql})"
+            else
+              build_sql do |s|
+                s << "DELETE FROM #{table_name}"
+                s << where
+              end
+            end
 
       log sql, numbered_parameters
 
@@ -434,10 +597,15 @@ module Grant::Query::Assembler
         set_parts << "#{Model.quote(field.to_s)} = #{add_parameter(time)}"
       end
 
+      where_clause = if limited_or_joined_write?
+                       "WHERE #{Model.quote(Model.primary_name)} IN (#{write_target_subquery})"
+                     else
+                       where
+                     end
       sql = build_sql do |s|
         s << "UPDATE #{table_name}"
         s << "SET #{set_parts.join(", ")}"
-        s << where
+        s << where_clause
       end
 
       log sql, numbered_parameters
@@ -485,12 +653,48 @@ module Grant::Query::Assembler
       end
 
       # Render WHERE after SET so its parameters follow the SET parameters.
-      where_clause = where
+      where_clause = if limited_or_joined_write?
+                       "WHERE #{Model.quote(Model.primary_name)} IN (#{write_target_subquery})"
+                     else
+                       where
+                     end
 
       build_sql do |s|
         s << "UPDATE #{table_name}"
         s << "SET #{set_parts.join(", ")}"
         s << where_clause
+      end
+    end
+
+    # Builds an UPDATE for a developer-controlled SET fragment while preserving
+    # any relation joins, order, limit, and offset.
+    def update_all_fragment_sql(assignments : String) : String
+      where_clause = if limited_or_joined_write?
+                       "WHERE #{Model.quote(Model.primary_name)} IN (#{write_target_subquery})"
+                     else
+                       where
+                     end
+
+      build_sql do |s|
+        s << "UPDATE #{table_name} SET #{assignments}"
+        s << where_clause
+      end
+    end
+
+    private def limited_or_joined_write? : Bool
+      !@query.limit.nil? || !@query.offset.nil? || !@query.join_clauses.empty?
+    end
+
+    # The inner query selects the exact primary keys targeted by a bulk write.
+    # The outer UPDATE/DELETE syntax works across PostgreSQL and SQLite.
+    private def write_target_subquery : String
+      build_sql do |s|
+        s << "SELECT #{Model.quote(Model.primary_name)} FROM #{table_name}"
+        s << joins
+        s << where
+        s << order(use_default_order: false)
+        s << limit
+        s << offset
       end
     end
 

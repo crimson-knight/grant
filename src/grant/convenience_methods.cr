@@ -66,6 +66,8 @@ module Grant::ConvenienceMethods(Model)
   # User.all.pluck(:id) # => [[1], [2], [3]]
   # ```
   def pluck(*fields : Symbol | String) : Array(Array(Grant::Columns::Type))
+    return [] of Array(Grant::Columns::Type) if is_none?
+
     field_names = fields.to_a.map(&.to_s)
 
     if should_chunk_in?
@@ -115,7 +117,8 @@ module Grant::ConvenienceMethods(Model)
   # Processes matching records in batches, yielding each batch as an Array.
   #
   # Uses primary-key cursor pagination (not OFFSET), so it stays efficient and
-  # stable on large tables even as rows are inserted/deleted during iteration.
+  # stable on large tables when the relation uses its primary-key order. A
+  # custom order uses deterministic offset pages so the requested sort is kept.
   # The caller's relation is never mutated.
   #
   # - *of*: maximum records per batch (default `1000`).
@@ -136,17 +139,24 @@ module Grant::ConvenienceMethods(Model)
   # end
   # ```
   def in_batches(of batch_size : Int32 = 1000, start : Int64? = nil, finish : Int64? = nil, load : Bool = false, error_on_ignore : Bool = false, order : Symbol = :asc, &block : Array(Model) -> _)
-    ascending = order != :desc
-    primary_key = Model.primary_name
+    raise ArgumentError.new("Batch size must be greater than zero") unless batch_size > 0
 
-    # Build the fixed base relation ONCE: the caller's conditions + a primary-key
-    # order + the optional start/finish bounds. We `dup` so the caller's query is
-    # never mutated, and so each batch can be derived fresh below. `Builder#where`
-    # mutates and returns `self`, so reusing one relation across iterations would
-    # stack a new `WHERE pk > ?` predicate every batch (the cursor accumulation
-    # bug). Instead we keep a single moving cursor and re-derive per batch.
+    primary_key = Model.primary_name
     base_relation = self.dup
-    base_relation = base_relation.order({primary_key => ascending ? :asc : :desc})
+
+    primary_order = base_relation.order_fields.find { |field| field[:field] == primary_key }
+    ascending = if primary_order
+                  primary_order[:direction] == Grant::Query::Builder::Sort::Ascending
+                else
+                  order != :desc
+                end
+
+    custom_order = base_relation.order_fields.any? { |field| field[:field] != primary_key }
+    if base_relation.order_fields.empty?
+      base_relation.order({primary_key => ascending ? :asc : :desc})
+    elsif custom_order && base_relation.order_fields.none? { |field| field[:field] == primary_key }
+      base_relation.order({primary_key => :asc})
+    end
 
     if start
       base_relation = base_relation.where(primary_key, ascending ? :gteq : :lteq, start.as(Grant::Columns::Type))
@@ -156,25 +166,48 @@ module Grant::ConvenienceMethods(Model)
       base_relation = base_relation.where(primary_key, ascending ? :lteq : :gteq, finish.as(Grant::Columns::Type))
     end
 
-    cursor_op = ascending ? :gt : :lt
-    cursor_id : Int64? = nil
+    if custom_order
+      base_offset = base_relation.offset || 0_i64
+      processed = 0_i64
+      remaining = base_relation.limit
 
-    loop do
-      # Derive this batch from a pristine copy of the base relation and add at
-      # most ONE cursor predicate, so the WHERE clause stays constant in size.
-      batch_relation = base_relation.dup
-      if cid = cursor_id
-        batch_relation = batch_relation.where(primary_key, cursor_op, cid)
+      loop do
+        break if remaining == 0
+
+        current_batch_size = remaining ? Math.min(batch_size.to_i64, remaining) : batch_size.to_i64
+        batch_relation = base_relation.dup
+        batch_relation.offset(base_offset + processed).limit(current_batch_size)
+        records = batch_relation.select
+        break if records.empty?
+
+        yield records
+        processed += records.size
+        remaining -= records.size if remaining
+        break if records.size < current_batch_size
       end
-      records = batch_relation.limit(batch_size).select
+    else
+      cursor_operator = ascending ? :gt : :lt
+      cursor_id : Grant::Columns::Type? = nil
+      remaining = base_relation.limit
 
-      break if records.empty?
+      loop do
+        break if remaining == 0
 
-      yield records
+        current_batch_size = remaining ? Math.min(batch_size.to_i64, remaining) : batch_size.to_i64
+        batch_relation = base_relation.dup
+        if current_id = cursor_id
+          batch_relation = batch_relation.where(primary_key, cursor_operator, current_id)
+          batch_relation.offset(nil)
+        end
+        records = batch_relation.limit(current_batch_size).select
+        break if records.empty?
 
-      break if records.size < batch_size
+        yield records
+        remaining -= records.size if remaining
+        break if records.size < current_batch_size || remaining == 0
 
-      cursor_id = records.last.read_attribute(primary_key).as(Int64)
+        cursor_id = records.last.read_attribute(primary_key).as(Grant::Columns::Type)
+      end
     end
   end
 

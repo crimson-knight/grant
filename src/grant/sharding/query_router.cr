@@ -84,7 +84,7 @@ module Grant::Sharding
   # Base class for query execution strategies
   abstract class QueryExecution(Model)
     abstract def execute : Array(Model)
-    abstract def count : Int64
+    abstract def count : Grant::Query::Builder::CountResult
     abstract def exists? : Bool
     abstract def pluck(column : String | Symbol) : Array(Grant::Columns::Type)
   end
@@ -105,7 +105,7 @@ module Grant::Sharding
       end
     end
 
-    def count : Int64
+    def count : Grant::Query::Builder::CountResult
       Grant::ShardManager.with_shard(@shard) do
         # Always use the non-routing method to avoid infinite recursion
         @query.as(Grant::Sharding::ShardedQueryBuilder(Model)).count_without_routing
@@ -151,8 +151,8 @@ module Grant::Sharding
       merge_results(results.values)
     end
 
-    def count : Int64
-      results = Grant::Async::ShardedExecutor.execute_and_aggregate(@shards) do |shard|
+    def count : Grant::Query::Builder::CountResult
+      results = Grant::Async::ShardedExecutor.execute_and_wait(@shards) do |shard|
         Grant::Async::AsyncResult.new do
           Grant::ShardManager.with_shard(shard) do
             # Always use the non-routing method to avoid infinite recursion
@@ -161,7 +161,30 @@ module Grant::Sharding
         end
       end
 
-      results.as(Int64)
+      merge_count_results(results.values)
+    end
+
+    private def merge_count_results(results : Array(Grant::Query::Builder::CountResult)) : Grant::Query::Builder::CountResult
+      case @query.group_fields.size
+      when 0
+        results.sum(0_i64) { |result| result.as(Int64) }
+      when 1
+        counts = {} of Grant::Columns::Type => Int64
+        results.each do |result|
+          result.as(Hash(Grant::Columns::Type, Int64)).each do |key, count|
+            counts[key] = counts.fetch(key, 0_i64) + count
+          end
+        end
+        counts
+      else
+        counts = {} of Array(Grant::Columns::Type) => Int64
+        results.each do |result|
+          result.as(Hash(Array(Grant::Columns::Type), Int64)).each do |key, count|
+            counts[key] = counts.fetch(key, 0_i64) + count
+          end
+        end
+        counts
+      end
     end
 
     def exists? : Bool
@@ -265,7 +288,7 @@ module Grant::Sharding
       ScatterGatherExecution(Model).new(@model, @query, @shards).execute
     end
 
-    def count : Int64
+    def count : Grant::Query::Builder::CountResult
       ScatterGatherExecution(Model).new(@model, @query, @shards).count
     end
 
