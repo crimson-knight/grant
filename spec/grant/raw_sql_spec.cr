@@ -113,6 +113,48 @@ describe "ActiveRecord-style raw SQL" do
     ) { |value| value }.should eq("alpha")
   end
 
+  it "marks model scalar calls as writes for every overload" do
+    before_unbound_scalar = RawSqlParityRecord.last_write_time
+    sleep 1.millisecond
+    RawSqlParityRecord.scalar(
+      "INSERT INTO raw_sql_parity_records (id, label, active) VALUES (3, 'scalar no binds', TRUE) RETURNING id"
+    ).should eq(3_i64)
+    after_unbound_scalar = RawSqlParityRecord.last_write_time
+    after_unbound_scalar.should be > before_unbound_scalar
+
+    sleep 1.millisecond
+    RawSqlParityRecord.scalar(
+      "INSERT INTO raw_sql_parity_records (id, label, active) VALUES (?, ?, ?) RETURNING id",
+      [4_i64, "scalar binds", true]
+    ).should eq(4_i64)
+    after_bound_scalar = RawSqlParityRecord.last_write_time
+    after_bound_scalar.should be > after_unbound_scalar
+
+    sleep 1.millisecond
+    RawSqlParityRecord.scalar(
+      "INSERT INTO raw_sql_parity_records (id, label, active) VALUES (5, 'scalar block', TRUE) RETURNING id"
+    ) { |value| value }.should eq(5_i64)
+    after_unbound_block_scalar = RawSqlParityRecord.last_write_time
+    after_unbound_block_scalar.should be > after_bound_scalar
+
+    sleep 1.millisecond
+    RawSqlParityRecord.scalar(
+      "INSERT INTO raw_sql_parity_records (id, label, active) VALUES (?, ?, ?) RETURNING id",
+      [6_i64, "scalar block binds", true]
+    ) { |value| value }.should eq(6_i64)
+    after_bound_block_scalar = RawSqlParityRecord.last_write_time
+    after_bound_block_scalar.should be > after_unbound_block_scalar
+  end
+
+  it "keeps connection select_value a pure read for write tracking" do
+    last_write_time = RawSqlParityRecord.last_write_time
+
+    RawSqlParityRecord.connection.select_value("SELECT COUNT(*) FROM raw_sql_parity_records")
+      .should eq(2_i64)
+
+    RawSqlParityRecord.last_write_time.should eq(last_write_time)
+  end
+
   it "exposes raw connection results and all select helpers" do
     connection = RawSqlParityRecord.connection
     result = connection.exec_query(

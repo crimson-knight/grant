@@ -599,7 +599,12 @@ module Grant::Querying
 
     def scalar(clause : String = "", binds : Array(Grant::Columns::Type) = [] of Grant::Columns::Type) : DB::Any?
       ensure_raw_sql_unscoped!
-      connection.select_value(clause, binds)
+      mark_write_operation
+      selected_adapter = adapter
+      statement = selected_adapter.ensure_clause_template(clause)
+      selected_adapter.open do |database|
+        database.scalar(statement, args: binds).as(DB::Any?)
+      end
     end
 
     # Yields the result of a raw scalar query. The bound overload mirrors the
