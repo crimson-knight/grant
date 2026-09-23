@@ -66,6 +66,8 @@ end
 
 ## Additional Documentation
 
+[ActiveRecord 8 parity tracker](./PARITY.md) - generated feature status, evidence, gaps, and prioritized missing features
+
 [Models](./models.md)
 
 [CRUD](./crud.md)
@@ -103,3 +105,11 @@ end
 [Data Normalization](./normalization.md) - Automatic data normalization before validation
 
 [Value Objects](./value_objects.md) - Domain-Driven Design aggregations for composing columns into objects
+
+## Releasing
+
+For a release, bump `Grant::VERSION`, re-verify feature statuses against
+PostgreSQL specs, then run `CRYSTAL_CACHE_DIR=$PWD/.crystal-cache crystal-alpha
+run scripts/generate_parity.cr`. Commit the generated
+`docs/parity/<version>.md` snapshot with the release. The generator refuses to
+replace an existing version snapshot.
