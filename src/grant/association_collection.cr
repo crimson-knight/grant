@@ -20,6 +20,7 @@ class Grant::AssociationCollection(Owner, Target)
     end
     ensure_lazy_loading_allowed
 
+    start_time = Time.instant
     results = if clause.empty? && params.empty?
                 association_relation.select
               else
@@ -30,6 +31,9 @@ class Grant::AssociationCollection(Owner, Target)
                 params.each { |value| all_params << value.as(Grant::Columns::Type) }
                 Target.all(sql, all_params).to_a
               end
+    duration = Time.instant - start_time
+
+    Grant::Logs::Association.info { "Loaded has_many association - #{Owner.name} [#{Target.name}] [fk: #{@foreign_key}] - #{results.size} records (#{duration.total_milliseconds}ms)" }
 
     if inverse = @inverse_of
       results.each { |record| record.set_loaded_association(inverse.to_s, owner) }
