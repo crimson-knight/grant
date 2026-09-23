@@ -82,8 +82,14 @@ class Grant::Query::Builder(Model)
 
   # Flag for null relation (none) — short-circuits to empty results.
   getter? is_none : Bool = false
+  getter? strict_loading : Bool = false
 
   def initialize(@db_type, @boolean_operator = :and)
+  end
+
+  def strict_loading(value : Bool = true) : self
+    @strict_loading = value
+    self
   end
 
   def assembler : Assembler::Base(Model)
@@ -732,6 +738,45 @@ class Grant::Query::Builder(Model)
     [{type: type, table: target_table, on: on}]
   end
 
+  private def add_eager_load_join(association : Symbol) : Nil
+    metadata = Grant::AssociationRegistry.get(Model.name, association.to_s)
+    raise ArgumentError.new("Unknown association #{association.inspect} for #{Model.name}") unless metadata
+    if metadata[:target_class] == Grant::Base
+      raise ArgumentError.new("Cannot eager_load polymorphic association #{Model.name}##{association}; use includes or preload")
+    end
+
+    if metadata[:through]
+      raise ArgumentError.new("Cannot eager_load through association #{Model.name}##{association}: unresolved through/source metadata") unless add_through_eager_load_join(metadata)
+    else
+      left_joins(association)
+    end
+    distinct
+  end
+
+  private def add_through_eager_load_join(metadata : Grant::AssociationRegistry::AssociationMeta) : Bool
+    through_name = metadata[:through]
+    source_name = metadata[:source]
+    return false unless through_name && source_name
+
+    through_metadata = Grant::AssociationRegistry.get(Model.name, through_name)
+    return false unless through_metadata
+    source_metadata = Grant::AssociationRegistry.get(through_metadata[:target_class].name, source_name)
+    return false unless source_metadata
+
+    through_model = through_metadata[:target_class]
+    target_model = metadata[:target_class]
+    owner_join = "#{through_model.quote(through_model.table_name)}.#{through_model.quote(through_metadata[:foreign_key])} = #{Model.quote(Model.table_name)}.#{Model.quote(through_metadata[:primary_key])}"
+    left_joins(through_model.table_name, on: owner_join)
+
+    target_join = if source_metadata[:type] == :belongs_to
+                    "#{target_model.quote(target_model.table_name)}.#{target_model.quote(source_metadata[:primary_key])} = #{through_model.quote(through_model.table_name)}.#{through_model.quote(source_metadata[:foreign_key])}"
+                  else
+                    "#{target_model.quote(target_model.table_name)}.#{target_model.quote(source_metadata[:foreign_key])} = #{through_model.quote(through_model.table_name)}.#{through_model.quote(source_metadata[:primary_key])}"
+                  end
+    left_joins(target_model.table_name, on: target_join)
+    true
+  end
+
   # Sets the query to return only distinct (unique) rows.
   #
   # When enabled, duplicate rows are removed from the result set.
@@ -978,6 +1023,7 @@ class Grant::Query::Builder(Model)
   # the chunked/fallback paths and directly when no chunking is needed.
   protected def select_single : Array(Model)
     records = assembler.select.run
+    records.each(&.strict_loading!) if strict_loading?
 
     # Apply eager loading if any associations are specified
     all_associations = @includes_associations + @preload_associations + @eager_load_associations
@@ -1446,6 +1492,7 @@ class Grant::Query::Builder(Model)
   def eager_load(*associations) : self
     associations.each do |assoc|
       @eager_load_associations << assoc
+      add_eager_load_join(assoc)
     end
     self
   end
@@ -1461,6 +1508,7 @@ class Grant::Query::Builder(Model)
   def eager_load(**nested_associations) : self
     nested_associations.each do |name, nested|
       @eager_load_associations << {name => nested.is_a?(Array) ? nested : [nested]}
+      add_eager_load_join(name)
     end
     self
   end
@@ -1669,6 +1717,7 @@ class Grant::Query::Builder(Model)
     @eager_load_associations.concat(other.eager_load_associations).uniq!
     @preload_associations.concat(other.preload_associations).uniq!
     @includes_associations.concat(other.includes_associations).uniq!
+    @strict_loading = true if other.strict_loading?
 
     # Use other's lock mode if set
     @lock_mode = other.lock_mode if other.lock_mode
@@ -1733,6 +1782,7 @@ class Grant::Query::Builder(Model)
 
     # Copy none flag
     new_query.none if @is_none
+    new_query.strict_loading if strict_loading?
 
     # Copy select columns
     if sc = @select_columns

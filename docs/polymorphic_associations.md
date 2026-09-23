@@ -232,7 +232,7 @@ Grant::Polymorphic.register_type("MyModel", MyModel)
 
 2. **Foreign Key Constraints**: Database-level foreign key constraints cannot be used with polymorphic associations since the foreign key can reference multiple tables.
 
-3. **Eager Loading**: Currently, eager loading polymorphic associations requires special handling and may not be as efficient as regular associations.
+3. **Eager Loading**: `includes` and `preload` batch polymorphic targets by stored type and apply each target model's active scope. `eager_load` cannot use one fixed SQL join for a polymorphic target; use `includes` or `preload` instead.
 
 4. **Querying**: When querying polymorphic associations, you need to specify both the type and ID:
 

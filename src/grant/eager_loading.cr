@@ -1,3 +1,6 @@
+class Grant::StrictLoadingViolationError < Exception
+end
+
 module Grant::EagerLoading
   macro included
     # Eager-loaded association cache.
@@ -9,6 +12,10 @@ module Grant::EagerLoading
     @[JSON::Field(ignore: true)]
     @[YAML::Field(ignore: true)]
     @loaded_associations : Hash(String, Array(Grant::Base) | Grant::Base | Nil)?
+
+    @[JSON::Field(ignore: true)]
+    @[YAML::Field(ignore: true)]
+    @strict_loading : Bool?
 
     protected def loaded_associations : Hash(String, Array(Grant::Base) | Grant::Base | Nil)
       @loaded_associations ||= {} of String => Array(Grant::Base) | Grant::Base | Nil
@@ -29,18 +36,47 @@ module Grant::EagerLoading
       loaded_associations[name.to_s] = data
     end
 
+    # Marks this record so accessing an association that has not already been
+    # loaded raises `StrictLoadingViolationError`.
+    def strict_loading!(value : Bool = true) : self
+      @strict_loading = value
+      self
+    end
+
+    def strict_loading? : Bool
+      !!@strict_loading
+    end
+
+    def strict_loading : Bool
+      strict_loading?
+    end
+
+    # Mirrors ActiveRecord's writable strict-loading flag.
+    def strict_loading=(value : Bool)
+      @strict_loading = value
+    end
+
+    # Called by generated association accessors and collection proxies before
+    # they issue a lazy query.
+    def assert_association_can_lazy_load!(name : String) : Nil
+      if strict_loading?
+        raise Grant::StrictLoadingViolationError.new("#{self.class.name}##{name} was not preloaded and strict loading is enabled")
+      end
+    end
+
     # Clear all loaded associations
     def clear_loaded_associations
       loaded_associations.clear
     end
 
-    # Batch-loads a named association for an array of records of this model.
-    # Issues exactly one SQL query per direct association type (belongs_to,
-    # has_one, has_many) and distributes results to every record in the array
-    # so subsequent accessor calls return cached data without extra queries.
+    # Batch-loads a named association for records of this model and distributes
+    # results so subsequent accessor calls return cached data. Direct
+    # associations use one query; polymorphic belongs_to loads once per target
+    # type; through collections load bridge rows and then target rows.
     #
-    # has_many :through associations are not batch-loaded here — they fall back
-    # to lazy loading transparently.  Polymorphic associations also fall back.
+    # has_many :through associations load bridge rows and then target rows.
+    # Polymorphic belongs_to associations are grouped by stored target type so
+    # each concrete target receives one scoped batch query.
     #
     # The method body iterates @type.methods at compile time per concrete class,
     # giving full type knowledge for each association target.
@@ -59,79 +95,169 @@ module Grant::EagerLoading
           \{% assoc_type = ann[:type] %}
           \{% if assoc_type == :belongs_to %}
             if assoc_name == \{{method.name.symbolize}}
-              fk = \{{ann[:foreign_key].id.stringify}}
-              pk = \{{ann[:primary_key].id.stringify}}
-              fk_values = records.compact_map { |r|
-                v = r.read_attribute(fk)
-                v.is_a?(DB::Any) ? v.as(DB::Any) : nil
-              }.uniq
-              unless fk_values.empty?
-                placeholders = fk_values.map { "?" }.join(", ")
-                loaded = \{{ann[:target].id}}.raw_all("WHERE #{pk} IN (#{placeholders})", fk_values)
-                lookup = {} of Grant::Columns::Type => Grant::Base
-                loaded.each { |r| lookup[r.read_attribute(pk)] = r.as(Grant::Base) }
+              \{% if ann[:polymorphic] %}
+                foreign_key = \{{ann[:foreign_key].id.stringify}}
+                type_column = \{{ann[:type_column].id.stringify}}
+                primary_key = \{{ann[:primary_key].id.stringify}}
+                ids_by_type = {} of String => Array(Grant::Columns::Type)
                 records.each do |record|
-                  fkv = record.read_attribute(fk)
-                  record.set_loaded_association(assoc_name, lookup[fkv]?.as(Grant::Base | Nil))
+                  type_name = record.read_attribute(type_column)
+                  target_id = record.read_attribute(foreign_key)
+                  if type_name.is_a?(String) && !target_id.nil?
+                    ids_by_type[type_name] ||= [] of Grant::Columns::Type
+                    ids_by_type[type_name] << target_id
+                  end
                 end
-              else
-                records.each { |record| record.set_loaded_association(assoc_name, nil) }
-              end
+                lookup = {} of Tuple(String, Grant::Columns::Type) => Grant::Base
+                ids_by_type.each do |type_name, ids|
+                  Grant::Polymorphic.load_polymorphic_batch(type_name, primary_key, ids.uniq).each do |target|
+                    lookup[{type_name, target.read_attribute(primary_key)}] = target
+                  end
+                end
+                records.each do |record|
+                  type_name = record.read_attribute(type_column)
+                  target_id = record.read_attribute(foreign_key)
+                  value = if type_name.is_a?(String) && !target_id.nil?
+                            lookup[{type_name, target_id}]?.as(Grant::Base | Nil)
+                          else
+                            nil
+                          end
+                  record.set_loaded_association(assoc_name, value)
+                end
+              \{% else %}
+                foreign_key = \{{ann[:foreign_key].id.stringify}}
+                primary_key = \{{ann[:primary_key].id.stringify}}
+                key_values = [] of Grant::Columns::Type
+                records.each do |record|
+                  value = record.read_attribute(foreign_key)
+                  key_values << value unless value.nil?
+                end
+                key_values.uniq!
+                lookup = {} of Grant::Columns::Type => Grant::Base
+                unless key_values.empty?
+                  placeholders = key_values.map { "?" }.join(", ")
+                  target_model = \{{ann[:target].id}}
+                  quoted_primary_key = target_model.quote(primary_key)
+                  loaded = target_model.all("WHERE #{quoted_primary_key} IN (#{placeholders})", key_values).to_a
+                  loaded.each { |target| lookup[target.read_attribute(primary_key)] = target.as(Grant::Base) }
+                end
+                records.each do |record|
+                  key = record.read_attribute(foreign_key)
+                  record.set_loaded_association(assoc_name, lookup[key]?.as(Grant::Base | Nil))
+                end
+              \{% end %}
               return true
             end
           \{% elsif assoc_type == :has_one %}
             if assoc_name == \{{method.name.symbolize}}
-              pk = \{{ann[:primary_key].id.stringify}}
-              fk = \{{ann[:foreign_key].id.stringify}}
-              pk_values = records.compact_map { |r|
-                v = r.read_attribute(pk)
-                v.is_a?(DB::Any) ? v.as(DB::Any) : nil
-              }.uniq
-              unless pk_values.empty?
-                placeholders = pk_values.map { "?" }.join(", ")
-                loaded = \{{ann[:target].id}}.raw_all("WHERE #{fk} IN (#{placeholders})", pk_values)
-                grouped = {} of Grant::Columns::Type => Grant::Base
-                loaded.each { |r| grouped[r.read_attribute(fk)] = r.as(Grant::Base) }
-                records.each do |record|
-                  pkv = record.read_attribute(pk)
-                  record.set_loaded_association(assoc_name, grouped[pkv]?.as(Grant::Base | Nil))
-                end
-              else
-                records.each { |record| record.set_loaded_association(assoc_name, nil) }
+              primary_key = \{{ann[:primary_key].id.stringify}}
+              foreign_key = \{{ann[:foreign_key].id.stringify}}
+              owner_values = [] of Grant::Columns::Type
+              records.each do |record|
+                value = record.read_attribute(primary_key)
+                owner_values << value unless value.nil?
+              end
+              owner_values.uniq!
+              lookup = {} of Grant::Columns::Type => Grant::Base
+              unless owner_values.empty?
+                placeholders = owner_values.map { "?" }.join(", ")
+                target_model = \{{ann[:target].id}}
+                quoted_foreign_key = target_model.quote(foreign_key)
+                loaded = target_model.all("WHERE #{quoted_foreign_key} IN (#{placeholders})", owner_values).to_a
+                loaded.each { |target| lookup[target.read_attribute(foreign_key)] = target.as(Grant::Base) }
+              end
+              records.each do |record|
+                key = record.read_attribute(primary_key)
+                record.set_loaded_association(assoc_name, lookup[key]?.as(Grant::Base | Nil))
               end
               return true
             end
           \{% elsif assoc_type == :has_many %}
-            \{% if ann[:through] %}
-            \{% else %}
-              \{% own_pk = @type.instance_vars.find { |v| (a = v.annotation(Grant::Column)) && a[:primary] } %}
-              \{% pk_name = own_pk ? own_pk.name.stringify : "id" %}
-              if assoc_name == \{{method.name.symbolize}}
-                pk = \{{pk_name}}
-                fk = \{{ann[:foreign_key].id.stringify}}
-                pk_values = records.compact_map { |r|
-                  v = r.read_attribute(pk)
-                  v.is_a?(DB::Any) ? v.as(DB::Any) : nil
-                }.uniq
-                unless pk_values.empty?
-                  placeholders = pk_values.map { "?" }.join(", ")
-                  loaded = \{{ann[:target].id}}.raw_all("WHERE #{fk} IN (#{placeholders})", pk_values)
-                  grouped = {} of Grant::Columns::Type => Array(Grant::Base)
-                  loaded.each do |r|
-                    fkv = r.read_attribute(fk)
-                    grouped[fkv] ||= [] of Grant::Base
-                    grouped[fkv] << r.as(Grant::Base)
-                  end
-                  records.each do |record|
-                    pkv = record.read_attribute(pk)
-                    record.set_loaded_association(assoc_name, (grouped[pkv]? || [] of Grant::Base).as(Array(Grant::Base)))
-                  end
-                else
-                  records.each { |record| record.set_loaded_association(assoc_name, [] of Grant::Base) }
+            if assoc_name == \{{method.name.symbolize}}
+              \{% if ann[:through] %}
+                \{% through_name = ann[:through].id.stringify %}
+                \{% through_method = @type.methods.find { |candidate| candidate.name.stringify == through_name } %}
+                \{% through_ann = through_method ? through_method.annotation(Grant::Relationship) : nil %}
+                \{% join_model = through_ann && through_ann[:target].resolve? ? through_ann[:target] : nil %}
+                \{% source_name = ann[:source].id.stringify %}
+                \{% source_method = join_model && join_model.resolve.methods.find { |candidate| candidate.name.stringify == source_name } %}
+                \{% source_ann = source_method ? source_method.annotation(Grant::Relationship) : nil %}
+                \{% unless join_model && source_ann && source_ann[:target].resolve? %}
+                  \{% raise "Cannot preload through association; declare a resolvable through and source association" %}
+                \{% end %}
+                owner_primary_key = \{{ann[:owner_primary_key].id.stringify}}
+                join_owner_key = \{{through_ann[:foreign_key].id.stringify}}
+                source_foreign_key = \{{source_ann[:foreign_key].id.stringify}}
+                target_primary_key = \{{source_ann[:primary_key].id.stringify}}
+                owner_values = [] of Grant::Columns::Type
+                records.each do |record|
+                  value = record.read_attribute(owner_primary_key)
+                  owner_values << value unless value.nil?
                 end
-                return true
-              end
-            \{% end %}
+                owner_values.uniq!
+                join_rows = [] of \{{join_model.id}}
+                unless owner_values.empty?
+                  placeholders = owner_values.map { "?" }.join(", ")
+                  join_model_class = \{{join_model.id}}
+                  quoted_join_key = join_model_class.quote(join_owner_key)
+                  join_rows = join_model_class.all("WHERE #{quoted_join_key} IN (#{placeholders})", owner_values).to_a
+                end
+                target_values = [] of Grant::Columns::Type
+                join_rows.each do |join_row|
+                  value = join_row.read_attribute(source_foreign_key)
+                  target_values << value unless value.nil?
+                end
+                target_values.uniq!
+                targets = [] of \{{source_ann[:target].id}}
+                unless target_values.empty?
+                  placeholders = target_values.map { "?" }.join(", ")
+                  target_model = \{{source_ann[:target].id}}
+                  quoted_target_key = target_model.quote(target_primary_key)
+                  targets = target_model.all("WHERE #{quoted_target_key} IN (#{placeholders})", target_values).to_a
+                end
+                target_lookup = {} of Grant::Columns::Type => Grant::Base
+                targets.each { |target| target_lookup[target.read_attribute(target_primary_key)] = target.as(Grant::Base) }
+                records.each do |record|
+                  owner_value = record.read_attribute(owner_primary_key)
+                  associated = [] of Grant::Base
+                  join_rows.each do |join_row|
+                    next unless join_row.read_attribute(join_owner_key) == owner_value
+                    target_value = join_row.read_attribute(source_foreign_key)
+                    if target = target_lookup[target_value]?
+                      associated << target
+                    end
+                  end
+                  record.set_loaded_association(assoc_name, associated)
+                end
+              \{% else %}
+                primary_key = \{{ann[:primary_key].id.stringify}}
+                foreign_key = \{{ann[:foreign_key].id.stringify}}
+                owner_values = [] of Grant::Columns::Type
+                records.each do |record|
+                  value = record.read_attribute(primary_key)
+                  owner_values << value unless value.nil?
+                end
+                owner_values.uniq!
+                loaded = [] of \{{ann[:target].id}}
+                unless owner_values.empty?
+                  placeholders = owner_values.map { "?" }.join(", ")
+                  target_model = \{{ann[:target].id}}
+                  quoted_foreign_key = target_model.quote(foreign_key)
+                  loaded = target_model.all("WHERE #{quoted_foreign_key} IN (#{placeholders})", owner_values).to_a
+                end
+                grouped = {} of Grant::Columns::Type => Array(Grant::Base)
+                loaded.each do |target|
+                  owner_value = target.read_attribute(foreign_key)
+                  grouped[owner_value] ||= [] of Grant::Base
+                  grouped[owner_value] << target.as(Grant::Base)
+                end
+                records.each do |record|
+                  owner_value = record.read_attribute(primary_key)
+                  record.set_loaded_association(assoc_name, grouped[owner_value]? || [] of Grant::Base)
+                end
+              \{% end %}
+              return true
+            end
           \{% end %}
         \{% end %}
       \{% end %}
@@ -140,6 +266,12 @@ module Grant::EagerLoading
   end
 
   module ClassMethods
+    def strict_loading(value : Bool = true)
+      query = get_query_builder
+      query.strict_loading(value)
+      query
+    end
+
     def includes(*associations)
       query = get_query_builder
       query.includes(*associations)

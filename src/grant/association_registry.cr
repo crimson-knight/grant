@@ -6,7 +6,8 @@ module Grant
       target_class: Grant::Base.class,
       foreign_key: String,
       primary_key: String,
-      through: String?)
+      through: String?,
+      source: String?)
 
     @@registry = {} of String => Hash(String, AssociationMeta)
 

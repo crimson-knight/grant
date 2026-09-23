@@ -48,11 +48,11 @@ team.destroy! # => Raises Grant::RecordNotDestroyed if members exist
 
 ## Optional Associations
 
-By default, `belongs_to` associations are required (the foreign key cannot be NULL). Use `optional: true` to allow NULL foreign keys.
+By default, `belongs_to` associations are required. Grant validates that the foreign key is set and that the target exists in its active scope. Use `optional: true` to allow a missing target.
 
 ```crystal
 class Product < Grant::Base
-  # Required by default - validates presence of category_id
+  # Required by default - validates that category_id resolves to a category
   belongs_to :category
   
   # Optional - allows product without manufacturer
@@ -147,7 +147,7 @@ order.save! # => Also saves line_items, invoice, and customer
 ### How Autosave Works
 
 1. **For new records**: Autosave will create the associated records when the parent is saved
-2. **For existing records**: Autosave will update any modified associated records
+2. **For existing records**: Autosave leaves persisted associated records unchanged; save those records directly after editing them
 3. **Validation**: If any associated record fails validation, the entire save operation fails
 
 ### Autosave with has_many
@@ -188,7 +188,20 @@ comment.save! # Also saves the new author
 
 - Autosave only works with records assigned via the association setter
 - Direct manipulation of foreign keys bypasses autosave
-- Autosave respects validation - if associated records are invalid, nothing is saved
+- Autosave respects validation and wraps the owner plus associated saves in a transaction
+- New `belongs_to` targets are saved before the owner; `has_one` and `has_many` targets are saved after the owner has its key
+
+## Association Collections
+
+A `has_many` accessor returns an owner-aware collection. It can load records lazily, preserve association scopes, and build relation queries without dropping the owner condition:
+
+```crystal
+author.books.where(published: true).order(created_at: :desc).limit(10).select
+author.books.find_by(title: "A book") # searches only this author's books
+author.books.build(title: "Draft")   # sets the configured owner foreign key
+```
+
+The collection supports `<<`, `append`, `push`, `delete`, `destroy`, `clear`, `ids`, `exists?`, `create`, `create!`, `delete_all`, and `destroy_all`. For a direct association, `delete` and `clear` nullify the foreign key; `destroy` runs record callbacks. For a `has_many :through` association, `delete_all` removes join rows and leaves target records intact.
 
 ## Combining Options
 
@@ -217,7 +230,7 @@ Most association options are implemented using Grant's callback system:
 - `dependent` options use `before_destroy` or `after_destroy` callbacks
 - `counter_cache` uses `after_create`, `after_destroy`, and `before_update` callbacks
 - `touch` uses `after_save` and `after_destroy` callbacks
-- `autosave` uses `before_save` callbacks
+- `autosave` saves `belongs_to` records before the owner and `has_one`/`has_many` records after the owner, in a transaction
 
 ### Performance Considerations
 
@@ -290,7 +303,7 @@ end
 ### Dependent Destroy Too Slow
 
 For large associations, consider:
-1. Using `dependent: :delete_all` (when implemented)
+1. Using `dependent: :delete_all` when child callbacks are not needed
 2. Database-level CASCADE
 3. Background job processing
 
