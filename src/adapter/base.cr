@@ -162,8 +162,65 @@ abstract class Grant::Adapter::Base
     log statement, elapsed_time, params
   end
 
+  # Atomically adds *amount* to one column for rows matching *where_clause*.
+  # The `where_clause` includes its WHERE keyword. Its placeholders and
+  # parameters are shifted after the amount parameter for PostgreSQL.
+  def increment_with_where(
+    table_name : String,
+    field_name : String,
+    amount : Grant::Columns::Type,
+    where_clause : String,
+    where_params : Array(Grant::Columns::Type),
+  ) : Int64
+    field = quote(field_name)
+    shifted_where_clause = shift_parameter_placeholders(where_clause, 1)
+    statement = "UPDATE #{quote(table_name)} SET #{field} = COALESCE(#{field}, 0) + #{parameter_placeholder(1)} #{shifted_where_clause}"
+    parameters = [] of Grant::Columns::Type
+    parameters << amount
+    parameters.concat(where_params)
+
+    affected = 0_i64
+    elapsed_time = Time.measure do
+      open do |db|
+        result = db.exec(statement, args: parameters)
+        affected = rows_affected_after_write(db, result)
+      end
+    end
+
+    log statement, elapsed_time, parameters
+    affected
+  end
+
+  private def shift_parameter_placeholders(clause : String, offset : Int32) : String
+    clause.gsub(/\$(\d+)/) do |match|
+      "$#{match[1..].to_i + offset}"
+    end
+  end
+
   # This will delete a row from the database.
   abstract def delete(table_name : String, primary_name : String, value)
+
+  # Deletes one row and returns its affected-row count.
+  def delete_with_rows_affected(table_name : String, primary_name : String, value : Grant::Columns::Type) : Int64
+    statement = "DELETE FROM #{quote(table_name)} WHERE #{quote(primary_name)} = ?"
+    statement = ensure_clause_template(statement)
+    affected = 0_i64
+    elapsed_time = Time.measure do
+      open do |db|
+        result = db.exec(statement, args: [value])
+        affected = rows_affected_after_write(db, result)
+      end
+    end
+
+    log statement, elapsed_time, value
+    affected
+  end
+
+  # Returns the number of rows affected by a completed write. SQLite overrides
+  # this because its driver does not report the count on DB::ExecResult.
+  def rows_affected_after_write(db, result : DB::ExecResult) : Int64
+    result.rows_affected
+  end
 
   # Delete with custom WHERE clause for composite keys
   def delete_with_where(table_name : String, where_clause : String, params : Array(DB::Any))

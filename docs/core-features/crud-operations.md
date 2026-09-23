@@ -279,6 +279,11 @@ user.update_columns(
 )
 ```
 
+`update_columns` skips validations, callbacks, and automatic timestamps. It
+updates only the named columns, clears dirty state for those columns, and leaves
+other pending changes dirty. Read-only attributes raise an error. The primary
+key may be changed; Grant locates the row using its original key.
+
 ### Mass Updates
 
 ```crystal
@@ -307,7 +312,8 @@ post.increment(:view_count)      # +1
 post.increment(:view_count, 5)   # +5
 post.save
 
-# Increment and save
+# Increment and persist only the counter. Other pending changes remain dirty;
+# validations and save callbacks do not run.
 post.increment!(:view_count)
 
 # Decrement
@@ -332,10 +338,12 @@ post.touch  # Updates updated_at
 # Touch specific timestamp
 post.touch(:published_at)
 
-# Touch associated records
-comment = Comment.find(1)
-comment.touch(include_parent: true)  # Also touches parent post
+# Touch another declared Time column as well as updated_at
+post.touch(:published_at)
 ```
+
+`touch` writes only `updated_at` and the named Time columns. It runs `after_touch`
+and transaction callbacks, while unrelated dirty attributes remain pending.
 
 ### Upsert (Insert or Update)
 
@@ -377,13 +385,17 @@ end
 # Method 2: Destroy with exception
 user.destroy!  # Raises if callbacks prevent deletion
 
+# Method 3: Delete this instance without destroy callbacks
+user.delete
+user.destroyed?  # => true
+
 # Check if destroyed
 user.destroyed?  # => true
 
-# Method 3: Delete by ID (skips callbacks)
+# Delete by ID (skips callbacks)
 User.delete(1)
 
-# Method 4: Delete by IDs
+# Delete by IDs
 User.delete([1, 2, 3])
 ```
 
