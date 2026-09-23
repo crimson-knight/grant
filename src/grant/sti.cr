@@ -101,11 +101,8 @@ module Grant::STI
       true
     end
 
-    # Base-class (root) queries apply NO type filter — they return the whole
-    # hierarchy. They select the root's own columns; rows are dispatched to the
-    # correct concrete subclass by `from_rs` below.
-    def self.current_scope
-      __sti_unfiltered_scope
+    def self.__sti_model? : Bool
+      true
     end
 
     # Polymorphic loader for base-class queries.
@@ -204,24 +201,6 @@ module Grant::STI
         end
       end
 
-      # Scope every query for this subclass to its own type plus any
-      # registered descendants (AR semantics). We build the unfiltered base
-      # scope directly (NOT via `super`, which would reach the root's
-      # column-expanding `current_scope`), preserving default scopes and the
-      # chosen DB adapter, then AND-in the type filter. The root class is
-      # intentionally left unscoped (returns mixed types).
-      def self.current_scope
-        query = __sti_unfiltered_scope
-        names = sti_names_for_query
-        if names.size == 1
-          query.where(inheritance_column, :eq, names.first)
-        else
-          # `names` is an Array(String) — a member of Grant::Columns::Type's
-          # SupportedArrayTypes — which the builder expands into an IN clause.
-          query.where(inheritance_column, :in, names)
-        end
-        query
-      end
     end
   end
 
@@ -347,31 +326,6 @@ module Grant::STI
     # ```
     def sti_names_for_query : Array(String)
       Grant::STI.descendant_names(self.name)
-    end
-
-    # Builds an unfiltered `Grant::Query::Builder` for this class, applying any
-    # default scope but NOT the STI type filter. Mirrors
-    # `Grant::Scoping::ClassMethods#current_scope` so STI can compose without
-    # relying on the `super` chain (which the root re-points for column
-    # expansion). Internal building block for `current_scope`; not part of the
-    # public query API.
-    def __sti_unfiltered_scope
-      db_type = case adapter.class.to_s
-                when "Grant::Adapter::Pg"
-                  Grant::Query::Builder::DbType::Pg
-                when "Grant::Adapter::Mysql"
-                  Grant::Query::Builder::DbType::Mysql
-                else
-                  Grant::Query::Builder::DbType::Sqlite
-                end
-
-      query = Grant::Query::Builder(self).new(db_type)
-
-      if !_unscoped? && self.responds_to?(:_has_default_scope?) && self.responds_to?(:apply_default_scope) && self._has_default_scope?
-        query = self.apply_default_scope(query)
-      end
-
-      query
     end
   end
 

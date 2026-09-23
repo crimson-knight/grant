@@ -253,12 +253,10 @@ adapter's assembler emits the right SQL dialect underneath.
 
 Grant::Tenant.with(current_tenant_id) do
   # create
-  user = User.create!(tenant_id: current_tenant_id,
-                      email: "ada@example.com",
+  user = User.create!(email: "ada@example.com",
                       display_name: "Ada")
 
-  todo = Todo.create!(tenant_id: current_tenant_id,
-                     user_id: user.id,
+  todo = Todo.create!(user_id: user.id,
                      title: "Ship the app")
 
   # query (lazy, chainable, Enumerable) — auto-scoped to the tenant
@@ -294,8 +292,35 @@ identical.
 Grant::Tenant.with(tenant_id) { Todo.where(done: false).find_each { |t| ... } }
 # => WHERE tenant_id = ? AND done = ?   (on both SQLite and Postgres)
 
-Todo.unscoped.count   # deliberate cross-tenant access — bypasses the scope
+Todo.unscoped.count # deliberate cross-tenant access — bypasses the scope
 ```
+
+All class-level and chained reads retain the tenant predicate, including
+`where`, ordering, projections, joins, calculations, `count`, `exists?`,
+`first`/`last`/`take`, and batch or streamed iteration. Bulk updates and deletes
+are tenant-scoped too, including `clear`. Each scoped entry point raises `Grant::NoTenantError`
+without a current tenant, including `count`, `exists?`, and empty bulk writes.
+
+New records with a `nil` tenant column inherit `Grant::Tenant.current`. An
+explicit tenant value must match the current tenant when the record is saved;
+otherwise Grant raises `Grant::TenantMismatchError`. This also guards instance
+`save`, `update`, `destroy`, and `reload`, including records loaded through an
+unscoped query. A deliberate cross-tenant operation can use either unscoped
+form:
+
+```crystal
+Todo.unscoped.where(id: other_tenant_id).first
+
+Todo.unscoped do |query|
+  query.where(id: other_tenant_id).delete_all
+end
+
+Todo.unscoped { |_query| Todo.count }
+```
+
+Raw `exec`, `query`, and `scalar` calls cannot apply model scopes; run those
+inside `Todo.unscoped { ... }` only when you intend to bypass tenant isolation.
+`raw_all` remains scope-aware.
 
 See [`large_tables.md`](large_tables.md) for the full tenancy + scale playbook
 (keyset batching, index hints, `IN`-chunking, streaming) — all of which is the

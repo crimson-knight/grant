@@ -28,7 +28,12 @@ module Grant::Transactions
     # ```
     def clear
       guard_writes!
-      adapter.clear table_name
+      query = current_scope
+      if !_unscoped? && (_has_default_scope? || (__sti_model? && !sti_root_class?))
+        query.delete_all
+      else
+        adapter.clear table_name
+      end
     end
 
     # Builds a new record from the given keyword attributes and attempts to save
@@ -350,8 +355,8 @@ module Grant::Transactions
     Grant::Logs::Model.debug { "Updating record - #{self.class.name} [id: #{@{{primary_key.name.id}}}]" }
 
     set_timestamps(mode: :update) unless skip_timestamps
-    fields = self.class.content_fields.dup
-    params = content_values + [@{{primary_key.name.id}}]
+      fields = self.class.content_fields.dup
+      params = content_values + [@{{primary_key.name.id}}]
 
     # Do not update created_at on update
     if created_at_index = fields.index("created_at")
@@ -369,9 +374,24 @@ module Grant::Transactions
     end
 
     begin
-     self.class.adapter.update(self.class.table_name, self.class.primary_name, fields, params)
+      if self.class.__multitenant?
+        assignments = [] of Tuple(String, Grant::Columns::Type)
+        fields.each_with_index do |field, index|
+          assignments << {field, params[index]}
+        end
+        affected = self.class.__tenant_write_scope
+          .where(self.class.primary_name, :eq, @{{primary_key.name.id}}.as(Grant::Columns::Type))
+          .update_all(assignments)
+        if affected == 0 && !self.class._unscoped?
+          raise Grant::TenantMismatchError.new("#{self.class.name} row #{@{{primary_key.name.id}}} is outside the current tenant.")
+        end
+      else
+        self.class.adapter.update(self.class.table_name, self.class.primary_name, fields, params)
+      end
      
      Grant::Logs::Model.info { "Record updated - #{self.class.name} [id: #{@{{primary_key.name.id}}}]" }
+    rescue ex : Grant::TenantMismatchError | Grant::NoTenantError
+      raise ex
     rescue err
       Grant::Logs::Model.error { "Failed to update record - #{self.class.name} [id: #{@{{primary_key.name.id}}}] - #{err.message}" }
       raise DB::Error.new(err.message, cause: err)
@@ -387,7 +407,16 @@ module Grant::Transactions
     
     Grant::Logs::Model.debug { "Destroying record - #{self.class.name} [id: #{@{{primary_key.name.id}}}]" }
     
-    self.class.adapter.delete(self.class.table_name, self.class.primary_name, @{{primary_key.name.id}})
+    if self.class.__multitenant?
+      affected = self.class.__tenant_write_scope
+        .where(self.class.primary_name, :eq, @{{primary_key.name.id}}.as(Grant::Columns::Type))
+        .delete_all
+      if affected == 0 && !self.class._unscoped?
+        raise Grant::TenantMismatchError.new("#{self.class.name} row #{@{{primary_key.name.id}}} is outside the current tenant.")
+      end
+    else
+      self.class.adapter.delete(self.class.table_name, self.class.primary_name, @{{primary_key.name.id}})
+    end
     @destroyed = true
     
     Grant::Logs::Model.info { "Record destroyed - #{self.class.name} [id: #{@{{primary_key.name.id}}}]" }
@@ -604,6 +633,7 @@ module Grant::Transactions
   # ```
   def update_columns(args : Grant::ModelArgs) : Bool
     guard_writes!
+    __ensure_current_tenant!
     raise Grant::ReadOnlyRecordError.new("#{self.class.name} is marked as read only") if readonly?
     raise "Cannot update columns on a new record object" unless persisted?
     raise ArgumentError.new("No columns given to update_columns") if args.empty?
@@ -623,6 +653,23 @@ module Grant::Transactions
         fields << column_name
         params << read_attribute(column_name)
       end
+
+      __ensure_current_tenant!
+
+      if self.class.__multitenant?
+        assignments = [] of Tuple(String, Grant::Columns::Type)
+        fields.each_with_index do |field, index|
+          assignments << {field, params[index]}
+        end
+        affected = self.class.__tenant_write_scope
+          .where(self.class.primary_name, :eq, @{{primary_key.name.id}}.as(Grant::Columns::Type))
+          .update_all(assignments)
+        if affected == 0 && !self.class._unscoped?
+          raise Grant::TenantMismatchError.new("#{self.class.name} row #{@{{primary_key.name.id}}} is outside the current tenant.")
+        end
+        return true
+      end
+
       params << @{{primary_key.name.id}}
 
       begin

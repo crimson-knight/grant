@@ -33,6 +33,12 @@ require "./where_chain"
 # `not { |q| ... }`, or chained inline with `and`/`or`. Advanced operators
 # (`like`, `gt`, `not_in`, …) are available via the no-argument `where`, which
 # returns a `WhereChain`.
+module Grant::Query
+  alias WhereField = NamedTuple(join: Symbol, field: String, operator: Symbol, value: Grant::Columns::Type) |
+                     NamedTuple(join: Symbol, stmt: String, value: Grant::Columns::Type) |
+                     NamedTuple(join: Symbol, stmt: String, values: Array(Grant::Columns::Type))
+end
+
 class Grant::Query::Builder(Model)
   include Grant::Async::QueryMethods(Model)
   include Enumerable(Model)
@@ -48,13 +54,12 @@ class Grant::Query::Builder(Model)
     Descending
   end
 
-  alias WhereField = NamedTuple(join: Symbol, field: String, operator: Symbol, value: Grant::Columns::Type) |
-                     NamedTuple(join: Symbol, stmt: String, value: Grant::Columns::Type) |
-                     NamedTuple(join: Symbol, stmt: String, values: Array(Grant::Columns::Type))
+  alias WhereField = Grant::Query::WhereField
   alias AssociationQuery = Symbol | Hash(Symbol, Array(Symbol))
 
   getter db_type : DbType
   getter where_fields : Array(WhereField) = [] of WhereField
+  getter default_scope_where_fields : Array(WhereField) = [] of WhereField
   getter order_fields = [] of NamedTuple(field: String, direction: Sort)
   getter group_fields = [] of NamedTuple(field: String)
   getter offset : Int64?
@@ -826,6 +831,9 @@ class Grant::Query::Builder(Model)
   # User.where(active: true).order(id: :asc).first # => #<User ...> or nil
   # ```
   def first : Model?
+    if order_fields.empty?
+      order_fields << {field: Model.primary_name, direction: Sort::Ascending}
+    end
     limit(1).select.first?
   end
 
@@ -844,7 +852,32 @@ class Grant::Query::Builder(Model)
   # User.where(active: true).order(id: :desc).first(3) # => up to 3 users
   # ```
   def first(n : Int32) : Array(Model)
+    if order_fields.empty?
+      order_fields << {field: Model.primary_name, direction: Sort::Ascending}
+    end
     limit(n).select
+  end
+
+  # Executes the relation in reverse order and returns its last matching row.
+  def last : Model?
+    last_query = dup
+    last_query.order_fields.clear
+
+    if order_fields.empty?
+      last_query.order_fields << {field: Model.primary_name, direction: Sort::Descending}
+    else
+      order_fields.each do |field|
+        sort_direction = field[:direction] == Sort::Ascending ? Sort::Descending : Sort::Ascending
+        last_query.order_fields << {field: field[:field], direction: sort_direction}
+      end
+    end
+
+    last_query.limit(1).select.first?
+  end
+
+  # Like `last`, but raises when the relation has no matching records.
+  def last! : Model
+    last || raise Grant::Querying::NotFound.new("No record found")
   end
 
   # Returns `true` if the query matches at least one record, otherwise `false`.
@@ -1403,6 +1436,7 @@ class Grant::Query::Builder(Model)
     new_query = self.class.new(@db_type, @boolean_operator)
 
     # Copy all fields
+    @default_scope_where_fields.each { |f| new_query.default_scope_where_fields << f }
     @where_fields.each { |f| new_query.where_fields << f }
     @order_fields.each { |f| new_query.order_fields << f }
     @group_fields.each { |f| new_query.group_fields << f }

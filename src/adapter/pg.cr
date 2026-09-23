@@ -147,16 +147,20 @@ class Grant::Adapter::Pg < Grant::Adapter::Base
     value ? "TRUE" : "FALSE"
   end
 
-  def ensure_clause_template(clause : String) : String
+  def ensure_clause_template(clause : String, starting_index : Int32 = 0) : String
     if clause.includes?("?")
       num_subs = clause.count("?")
 
       num_subs.times do |i|
-        clause = clause.sub("?", "$#{i + 1}")
+        clause = clause.sub("?", "$#{starting_index + i + 1}")
       end
     end
 
     clause
+  end
+
+  def parameter_placeholder(index : Int32) : String
+    "$#{index}"
   end
 
   private def position_str(n : Int32) : String

@@ -69,8 +69,7 @@ describe "Large-table / high-scale toolkit" do
     HintModel.clear
     ChunkModel.clear
     StreamModel.clear
-    # `clear` truncates directly via the adapter, bypassing the tenant scope.
-    TenantTodo.clear
+    TenantTodo.unscoped.delete_all
   end
 
   # -------------------------------------------------------------------------

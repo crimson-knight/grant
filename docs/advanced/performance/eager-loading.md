@@ -549,18 +549,20 @@ end
 ```crystal
 class Post < Grant::Base
   # Define reusable eager loading scopes
-  scope :with_author, -> { includes(:author) }
-  scope :with_comments, -> { includes(:comments) }
-  scope :with_all, -> { includes(:author, :comments, :tags) }
+  scope :with_author, ->(query : Grant::Query::Builder(Post)) { query.includes(:author) }
+  scope :with_comments, ->(query : Grant::Query::Builder(Post)) { query.includes(:comments) }
+  scope :with_all, ->(query : Grant::Query::Builder(Post)) { query.includes(:author, :comments, :tags) }
   
   # Compose as needed
-  scope :for_index, -> { with_author.published.recent }
-  scope :for_detail, -> { with_all }
+  scope :for_index, ->(query : Grant::Query::Builder(Post)) {
+    query.includes(:author).where(published: true).order(created_at: :desc)
+  }
+  scope :for_detail, ->(query : Grant::Query::Builder(Post)) { query.includes(:author, :comments, :tags) }
 end
 
 # Clean controller code
-Post.for_index.page(params[:page])
-Post.for_detail.find(params[:id])
+Post.for_index.limit(20).select
+Post.for_detail.where(id: params[:id]).first
 ```
 
 ### 3. Default Includes
@@ -572,11 +574,15 @@ class Comment < Grant::Base
   # Always load author by default
   default_scope { includes(:author) }
   
-  # Or conditional default
-  def self.default_scope
-    current_user.admin? ? all : includes(:author)
-  end
+  # For conditional eager loading, use an explicit scope instead of a default:
+  scope :with_author_when, ->(query : Grant::Query::Builder(Comment), should_include : Bool) {
+    should_include ? query.includes(:author) : query
+  }
 end
+
+# In controller code, pass the request-specific decision explicitly.
+include_author = !current_user.admin?
+Comment.with_author_when(include_author).select
 ```
 
 ### 4. Lazy Loading Detection

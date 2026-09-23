@@ -14,113 +14,132 @@ module Grant
     module ClassMethods
       # Async count
       def async_count : AsyncResult(Int64)
+        query = current_scope
         AsyncResult(Int64).new do
-          count.to_i64
+          query.count
         end
       end
 
       # Async sum
       def async_sum(column : Symbol | String) : AsyncResult(Float64)
+        query = current_scope
         AsyncResult(Float64).new do
-          sum(column)
+          query.sum(column)
         end
       end
 
       # Async average
       def async_avg(column : Symbol | String) : AsyncResult(Float64?)
+        query = current_scope
         AsyncResult(Float64?).new do
-          avg(column)
+          query.avg(column)
         end
       end
 
       # Async min
       def async_min(column : Symbol | String) : AsyncResult(Grant::Columns::Type)
+        query = current_scope
         AsyncResult(Grant::Columns::Type).new do
-          min(column)
+          query.min(column)
         end
       end
 
       # Async max
       def async_max(column : Symbol | String) : AsyncResult(Grant::Columns::Type)
+        query = current_scope
         AsyncResult(Grant::Columns::Type).new do
-          max(column)
+          query.max(column)
         end
       end
 
       # Async pluck
       def async_pluck(column : Symbol | String) : AsyncResult(Array(Grant::Columns::Type))
+        query = current_scope
         AsyncResult(Array(Grant::Columns::Type)).new do
-          pluck(column)
+          query.pluck(column).map(&.first)
         end
       end
 
       # Async pick (first value)
       def async_pick(column : Symbol | String) : AsyncResult(Grant::Columns::Type?)
+        query = current_scope
+        if query.order_fields.empty?
+          query.order_fields << {field: primary_name, direction: Grant::Query::Builder::Sort::Ascending}
+        end
         AsyncResult(Grant::Columns::Type?).new do
-          pick(column)
+          query.pick(column).try(&.first)
         end
       end
 
       # Async find
       def async_find(id) : AsyncResult(self?)
+        query = current_scope.where(primary_name, :eq, id.as(Grant::Columns::Type))
         AsyncResult(self?).new do
-          find(id)
+          query.first
         end
       end
 
       # Async find!
       def async_find!(id) : AsyncResult(self)
+        query = current_scope.where(primary_name, :eq, id.as(Grant::Columns::Type))
         AsyncResult(self).new do
-          find!(id)
+          query.first || raise Grant::Querying::NotFound.new("No #{self.name} found where #{primary_name} = #{id}")
         end
       end
 
       # Async find_by
       def async_find_by(**args) : AsyncResult(self?)
+        query = current_scope.where(**args)
         AsyncResult(self?).new do
-          find_by(**args)
+          query.first
         end
       end
 
       # Async find_by!
       def async_find_by!(**args) : AsyncResult(self)
+        query = current_scope.where(**args)
         AsyncResult(self).new do
-          find_by!(**args)
+          query.first || raise Grant::Querying::NotFound.new("No #{self.name} found where #{args}")
         end
       end
 
       # Async first
       def async_first : AsyncResult(self?)
+        query = current_scope
         AsyncResult(self?).new do
-          first
+          query.first
         end
       end
 
       # Async first!
       def async_first! : AsyncResult(self)
+        query = current_scope
         AsyncResult(self).new do
-          first!
+          query.first || raise Grant::Querying::NotFound.new("No #{self.name} found with first")
         end
       end
 
       # Async last
       def async_last : AsyncResult(self?)
+        query = current_scope
         AsyncResult(self?).new do
-          last
+          query.last
         end
       end
 
       # Async last!
       def async_last! : AsyncResult(self)
+        query = current_scope
         AsyncResult(self).new do
-          last!
+          query.last || raise Grant::Querying::NotFound.new("No #{self.name} found with last")
         end
       end
 
       # Async all
       def async_all : AsyncResult(Array(self))
+        query = current_scope
         AsyncResult(Array(self)).new do
-          all.to_a
+          query.select
         end
       end
 
