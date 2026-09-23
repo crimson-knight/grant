@@ -30,7 +30,9 @@ require "../../spec_helper"
     column record_id : Int64
     column value : String
 
-    belongs_to :record, class_name: EverywhereScopedRecord, foreign_key: :record_id
+    # Optional: one fixture child deliberately points at a parent the default
+    # scope hides, and a required belongs_to would (like Rails) reject that.
+    belongs_to :record, class_name: EverywhereScopedRecord, foreign_key: :record_id, optional: true
   end
 
   class EverywhereScopedStiRecord < Grant::Base
