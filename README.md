@@ -2,83 +2,11 @@
 
 The `Grant` ORM is an Active Record pattern ORM that aims to achieve feature parity with Rails 8+.
 
-## Grant vs ActiveRecord Feature Comparison
+## ActiveRecord compatibility
 
-| Feature/Query Method | Grant | ActiveRecord |
-|---------------------|-------|--------------|
-| **Core Persistence** | | |
-| Basic CRUD (create, save, update, destroy) | ✅ | ✅ |
-| Timestamps (created_at, updated_at) | ✅ | ✅ |
-| Touch methods | ✅ | ✅ |
-| **Query Interface** | | |
-| Basic querying (where, order, limit, select) | ✅ | ✅ |
-| Advanced querying (joins, group, having) | 🔶 | ✅ |
-| Finder methods (find_by, exists?, any?, none?) | ✅ | ✅ |
-| Scopes and default_scope | ✅ | ✅ |
-| Query chaining | ✅ | ✅ |
-| OR queries | ✅ | ✅ |
-| NOT queries | ✅ | ✅ |
-| Enumerable collection methods on queries | ✅ | ✅ |
-| **Associations** | | |
-| belongs_to, has_one, has_many | ✅ | ✅ |
-| has_many :through | ✅ | ✅ |
-| Polymorphic associations | ✅ | ✅ |
-| Association options (dependent, counter_cache) | 🔶 | ✅ |
-| Nested attributes | ✅ | ✅ |
-| **Validations** | | |
-| Basic validations (presence, uniqueness, length) | ✅ | ✅ |
-| Built-in validators (numericality, format, etc.) | 🔶 | ✅ |
-| Custom validators | ✅ | ✅ |
-| Validation contexts | 🔶 | ✅ |
-| **Callbacks** | | |
-| Lifecycle callbacks (before_save, after_create, etc.) | ✅ | ✅ |
-| Transaction callbacks (after_commit, after_rollback) | ✅ | ✅ |
-| **Advanced Features** | | |
-| Dirty tracking (changed?, attribute_was) | ✅ | ✅ |
-| Enum attributes | ✅ | ✅ |
-| Serialized columns (JSON/YAML) | ✅ | ✅ |
-| Attribute API (custom types, virtual attributes) | ✅ | ✅ |
-| Value objects/aggregations | ✅ | ✅ |
-| **Security & Data Protection** | | |
-| Encrypted attributes | ✅ | ✅ |
-| Secure tokens | ✅ | ✅ |
-| Signed IDs | ✅ | ✅ |
-| Token generation (token_for) | ✅ | ✅ |
-| Data normalization | ✅ | ✅ |
-| **Database Features** | | |
-| Transactions (explicit blocks) | ✅ | ✅ |
-| Nested transactions | ✅ | ✅ |
-| Transaction isolation levels | ✅ | ✅ |
-| Pessimistic locking | ✅ | ✅ |
-| Optimistic locking | ✅ | ✅ |
-| **Performance & Optimization** | | |
-| Eager loading (includes, preload) | ✅ | ✅ |
-| Query batching (find_each, find_in_batches) | ✅ | ✅ |
-| Connection pooling | 🔶 | ✅ |
-| Query caching | 🔶 | ✅ |
-| **Multi-Database Support** | | |
-| Multiple database connections | 🔶 | ✅ |
-| Read/write splitting | 🔶 | ✅ |
-| Horizontal sharding | ✅ | ❌ |
-| **Convenience Methods** | | |
-| Pluck, pick | ✅ | ✅ |
-| Increment, decrement, toggle | ✅ | ✅ |
-| Update columns | ✅ | ✅ |
-| Upsert operations | ✅ | ✅ |
-| **Migrations** | | |
-| Schema migrations | 🔶 | ✅ |
-| Index management | 🔶 | ✅ |
-| Foreign key constraints | ✅ | ✅ |
-| Migration rollbacks | 🔶 | ✅ |
-| **Development Tools** | | |
-| SQL logging and instrumentation | ✅ | ✅ |
-| Query analysis and debugging | ✅ | ✅ |
-| N+1 query detection | ✅ | ✅ |
-
-**Legend:**
-- ✅ Fully implemented and production-ready
-- 🔶 Partially implemented (basic functionality present, some advanced features missing)
-- ❌ Not implemented
+See the [generated ActiveRecord 8 parity tracker](docs/PARITY.md) for the
+current score, per-feature evidence, known gaps, and prioritized missing
+features.
 
 **Grant's Unique Features:**
 - **Horizontal Sharding**: Built-in support for distributing data across multiple databases
@@ -86,8 +14,6 @@ The `Grant` ORM is an Active Record pattern ORM that aims to achieve feature par
 - **Crystal Type Safety**: Compile-time type checking eliminates many runtime errors
 - **Fiber-based Concurrency**: Native async support without callback complexity
 - **Zero-cost Abstractions**: Performance comparable to hand-written SQL
-
-**Note**: Grant achieves strong feature parity with ActiveRecord (~80-85%) while adding Crystal-specific enhancements and some advanced features (like built-in sharding) that ActiveRecord lacks. While many core features are fully implemented, some advanced options and edge cases found in ActiveRecord's 20+ years of development are still being developed.
 
 [Amber](https://github.com/amberframework/amber) is a web framework written in
 the [Crystal](https://github.com/crystal-lang/crystal) language.

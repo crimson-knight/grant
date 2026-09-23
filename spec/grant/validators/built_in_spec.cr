@@ -201,9 +201,10 @@ describe "Grant::Validators::BuiltIn" do
   end
 end
 
-# Test models
+# Test models use the adapter selected by the current spec run. This keeps
+# PostgreSQL parity evidence from silently exercising SQLite instead.
 class NumericProduct < Grant::Base
-  connection sqlite
+  connection {{ (env("CURRENT_ADAPTER") || "sqlite").id }}
   table numeric_products
 
   column id : Int64, primary: true
@@ -215,7 +216,7 @@ class NumericProduct < Grant::Base
 end
 
 class NumericScore < Grant::Base
-  connection sqlite
+  connection {{ (env("CURRENT_ADAPTER") || "sqlite").id }}
   table numeric_scores
 
   column id : Int64, primary: true
@@ -227,7 +228,7 @@ class NumericScore < Grant::Base
 end
 
 class ConditionalOrder < Grant::Base
-  connection sqlite
+  connection {{ (env("CURRENT_ADAPTER") || "sqlite").id }}
   table conditional_orders
 
   column id : Int64, primary: true
@@ -242,7 +243,7 @@ class ConditionalOrder < Grant::Base
 end
 
 class FormatUser < Grant::Base
-  connection sqlite
+  connection {{ (env("CURRENT_ADAPTER") || "sqlite").id }}
   table format_users
 
   column id : Int64, primary: true
@@ -254,7 +255,7 @@ class FormatUser < Grant::Base
 end
 
 class EmailContact < Grant::Base
-  connection sqlite
+  connection {{ (env("CURRENT_ADAPTER") || "sqlite").id }}
   table email_contacts
 
   column id : Int64, primary: true
@@ -264,7 +265,7 @@ class EmailContact < Grant::Base
 end
 
 class UrlLink < Grant::Base
-  connection sqlite
+  connection {{ (env("CURRENT_ADAPTER") || "sqlite").id }}
   table url_links
 
   column id : Int64, primary: true
@@ -274,7 +275,7 @@ class UrlLink < Grant::Base
 end
 
 class LengthPost < Grant::Base
-  connection sqlite
+  connection {{ (env("CURRENT_ADAPTER") || "sqlite").id }}
   table length_posts
 
   column id : Int64, primary: true
@@ -286,7 +287,7 @@ class LengthPost < Grant::Base
 end
 
 class ExactLengthCode < Grant::Base
-  connection sqlite
+  connection {{ (env("CURRENT_ADAPTER") || "sqlite").id }}
   table exact_length_codes
 
   column id : Int64, primary: true
@@ -296,7 +297,7 @@ class ExactLengthCode < Grant::Base
 end
 
 class RangePassword < Grant::Base
-  connection sqlite
+  connection {{ (env("CURRENT_ADAPTER") || "sqlite").id }}
   table range_passwords
 
   column id : Int64, primary: true
@@ -306,7 +307,7 @@ class RangePassword < Grant::Base
 end
 
 class ConfirmAccount < Grant::Base
-  connection sqlite
+  connection {{ (env("CURRENT_ADAPTER") || "sqlite").id }}
   table confirm_accounts
 
   column id : Int64, primary: true
@@ -316,7 +317,7 @@ class ConfirmAccount < Grant::Base
 end
 
 class AcceptanceSignup < Grant::Base
-  connection sqlite
+  connection {{ (env("CURRENT_ADAPTER") || "sqlite").id }}
   table acceptance_signups
 
   column id : Int64, primary: true
@@ -325,7 +326,7 @@ class AcceptanceSignup < Grant::Base
 end
 
 class InclusionSubscription < Grant::Base
-  connection sqlite
+  connection {{ (env("CURRENT_ADAPTER") || "sqlite").id }}
   table inclusion_subscriptions
 
   column id : Int64, primary: true
@@ -335,7 +336,7 @@ class InclusionSubscription < Grant::Base
 end
 
 class ExclusionUser < Grant::Base
-  connection sqlite
+  connection {{ (env("CURRENT_ADAPTER") || "sqlite").id }}
   table exclusion_users
 
   column id : Int64, primary: true
@@ -345,7 +346,7 @@ class ExclusionUser < Grant::Base
 end
 
 class AssociatedOrder < Grant::Base
-  connection sqlite
+  connection {{ (env("CURRENT_ADAPTER") || "sqlite").id }}
   table associated_orders
 
   column id : Int64, primary: true
@@ -357,7 +358,7 @@ class AssociatedOrder < Grant::Base
 end
 
 class AssociatedItem < Grant::Base
-  connection sqlite
+  connection {{ (env("CURRENT_ADAPTER") || "sqlite").id }}
   table associated_items
 
   column id : Int64, primary: true
@@ -370,7 +371,7 @@ class AssociatedItem < Grant::Base
 end
 
 class ComplexProfile < Grant::Base
-  connection sqlite
+  connection {{ (env("CURRENT_ADAPTER") || "sqlite").id }}
   table complex_profiles
 
   column id : Int64, primary: true

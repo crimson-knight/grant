@@ -18,6 +18,8 @@ end
 require "./adapter/base"
 require "./grant/sanitization"
 require "./grant/connection_registry"
+require "./grant/result"
+require "./grant/connection"
 require "./grant/target"
 require "./grant/base"
 require "./grant/sti"
@@ -26,3 +28,4 @@ require "./grant/sti"
 # tenant scoping). Required after Grant::Base is fully defined so the toolkit
 # can reopen the builder and include the tenant-scoping macros into Base.
 require "./grant/scale"
+require "./grant/parity"

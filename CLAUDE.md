@@ -1,6 +1,6 @@
 # Grant ORM
 
-Grant is an ActiveRecord-pattern ORM for the Crystal programming language, targeting ~80-85% feature parity with Rails 8+ ActiveRecord. It replaces the older Granite ORM as part of the Amber framework ecosystem's V2 refresh.
+Grant is an ActiveRecord-pattern ORM for the Crystal programming language, pursuing the closest practical parity with the Rails 8 ActiveRecord public API. See [docs/PARITY.md](docs/PARITY.md) for the current evidence-backed score and gaps. It replaces the older Granite ORM as part of the Amber framework ecosystem's V2 refresh.
 
 ## Project Identity
 

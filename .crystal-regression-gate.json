@@ -1,0 +1,30 @@
+{
+  "parallelism": 4,
+  "timeout_seconds": 300,
+  "serialize_adapters": true,
+  "adapters": {
+    "pg": {
+      "env": {
+        "CURRENT_ADAPTER": "pg"
+      },
+      "command": [
+        "/bin/sh",
+        "-c",
+        "export PG_DATABASE_URL=\"${PG_DATABASE_URL:-postgres://localhost/grant_parity_docs}\"; exec crystal-alpha spec \"$1\"",
+        "crystal-regression-gate",
+        "{file}"
+      ]
+    },
+    "sqlite": {
+      "env": {
+        "CURRENT_ADAPTER": "sqlite",
+        "SQLITE_DATABASE_URL": "sqlite3:{worktree}/.crystal-cache/regression-gate.sqlite3"
+      },
+      "command": [
+        "crystal-alpha",
+        "spec",
+        "{file}"
+      ]
+    }
+  }
+}

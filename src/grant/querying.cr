@@ -41,6 +41,64 @@ module Grant::Querying
       model
     end
 
+    # Executes arbitrary bound SQL and hydrates each row as this model.
+    # Raw SQL cannot infer or apply a default scope. Scoped models must call
+    # this inside `unscoped { ... }` when bypassing that scope is intentional.
+    def find_by_sql(sql : String, binds : Array(Grant::Columns::Type) = [] of Grant::Columns::Type) : Array(self)
+      ensure_raw_sql_unscoped!
+
+      records = [] of self
+      connection.with_result_set(sql, binds) do |result_set|
+        result_set.each do
+          records << from_rs(result_set)
+        end
+      end
+      records
+    end
+
+    # Executes a bound count query and returns its value as `Int64`.
+    # The SQL is raw and cannot have a default scope applied; scoped models must
+    # call this inside `unscoped { ... }` when appropriate.
+    def count_by_sql(sql : String, binds : Array(Grant::Columns::Type) = [] of Grant::Columns::Type) : Int64
+      ensure_raw_sql_unscoped!
+
+      value = connection.select_value(sql, binds)
+      case value
+      when Int32
+        value.to_i64
+      when Int64
+        value
+      when Float32
+        value.to_i64
+      when Float64
+        value.to_i64
+      when String
+        value.to_i64
+      when Nil
+        0_i64
+      else
+        raise ArgumentError.new("count_by_sql did not return a numeric value")
+      end
+    end
+
+    # Sanitizes an ActiveRecord-style `[sql, *values]` array for this model's
+    # current adapter. Prefer bound query methods for statements sent to a
+    # database.
+    def sanitize_sql_array(conditions : Array) : String
+      Grant::Sanitization.sanitize_sql_array(conditions, adapter)
+    end
+
+    # Returns a SQL string unchanged, or sanitizes an array condition using
+    # this model's current adapter.
+    def sanitize_sql(sql : String) : String
+      sql
+    end
+
+    # :ditto:
+    def sanitize_sql(conditions : Array) : String
+      sanitize_sql_array(conditions)
+    end
+
     # Runs a raw SQL fragment against the model's table and hydrates the rows.
     #
     # Runs *clause* after the generated `SELECT ... FROM table`. When the model
@@ -530,11 +588,9 @@ module Grant::Querying
       total.to_i32
     end
 
-    def exec(clause = "")
-      guard_writes!
+    def exec(clause : String = "", binds : Array(Grant::Columns::Type) = [] of Grant::Columns::Type) : DB::ExecResult
       ensure_raw_sql_unscoped!
-      mark_write_operation
-      adapter.open(&.exec(clause))
+      connection.execute(clause, binds)
     end
 
     def query(clause = "", params = [] of Grant::Columns::Type, &)
@@ -545,18 +601,33 @@ module Grant::Querying
       adapter.open { |db| db.query(clause, args: params) { |rs| yield rs } }
     end
 
-    def scalar(clause = "", &)
+    def scalar(clause : String = "", binds : Array(Grant::Columns::Type) = [] of Grant::Columns::Type) : DB::Any?
       ensure_raw_sql_unscoped!
       mark_write_operation
-      adapter.open { |db| yield db.scalar(clause) }
+      selected_adapter = adapter
+      statement = selected_adapter.ensure_clause_template(clause)
+      selected_adapter.open do |database|
+        database.scalar(statement, args: binds).as(DB::Any?)
+      end
+    end
+
+    # Yields the result of a raw scalar query. The bound overload mirrors the
+    # direct-return form while preserving the existing block API.
+    def scalar(clause : String = "", &)
+      yield scalar(clause)
+    end
+
+    # :ditto:
+    def scalar(clause : String, binds : Array(Grant::Columns::Type), &)
+      yield scalar(clause, binds)
     end
 
     private def ensure_raw_sql_unscoped!
-      if self.responds_to?(:_has_default_scope?) && self._has_default_scope? && !self._unscoped?
-        Grant::Tenant.current! if self.responds_to?(:multitenant_column)
+      if responds_to?(:_has_default_scope?) && _has_default_scope? && !_unscoped?
+        Grant::Tenant.current! if responds_to?(:multitenant_column)
         raise Grant::Querying::ScopedRawSqlError.new(
-          "Raw SQL cannot apply the default scope for #{self.name}. " \
-          "Wrap deliberate raw access in #{self.name}.unscoped { ... }.")
+          "Raw SQL cannot apply the default scope for #{name}. " \
+          "Wrap deliberate raw access in #{name}.unscoped { ... }.")
       end
     end
 
