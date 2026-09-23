@@ -1,0 +1,121 @@
+pack: grant/tenancy
+library: grant
+version: 1.0.0
+
+modes:
+  row:
+    declared_by:
+      key_path: grant.tenancy
+      expected_value: row
+    evidence:
+      - '^\s*multitenant\b'
+    tenant_column: tenant_id
+    context: |
+      Wrap jobs and other non-controller queries in `Grant::Tenant.with(tenant_id) { ... }`.
+      The tenant context is fiber-local and is restored when the block returns.
+      `unscoped { ... }` disables default scopes for that model inside one bounded block.
+      Use it only for deliberate cross-tenant administrative work; never in request controllers.
+      Raw `exec`, `query`, and `scalar` calls bypass tenant scoping; keep deliberate raw access inside that model's `unscoped { ... }` block.
+      Controllers should resolve the tenant and use a request-wide pipe that wraps `call_next(context)` in `Grant::Tenant.with(tenant_id) { ... }`.
+  schema:
+    declared_by:
+      key_path: grant.tenancy
+      expected_value: schema
+    evidence:
+      - '^\s*Grant::SchemaTenant\.with\b'
+      - '^\s*schema_tenant_excluded\b'
+    context: |
+      This pack only checks that schema markers are not mixed with row-mode tenancy.
+      Schema-specific checks are not included yet.
+
+rules:
+  - id: grant/tenant-column-without-multitenant
+    modes: [row]
+    severity: error
+    applies_to: ["src/models/**"]
+    message: "A model with the tenant column must declare `multitenant` so Grant scopes every query."
+    check:
+      kind: file_requires
+      required_pattern: '^\s*multitenant\b'
+
+  - id: grant/tenancy-modes-mixed
+    modes: [row, schema]
+    severity: error
+    applies_to: ["**/*.cr"]
+    message: "This project declares or uses both Grant row-mode and schema-mode tenancy. Choose one mode."
+    check:
+      kind: project_conflict
+      condition: mixed_modes
+
+  - id: grant/row-query-outside-tenant
+    modes: [row]
+    severity: warning
+    applies_to: ["**/*.cr"]
+    exclude_from: ["src/controllers/**"]
+    message: "Query on a multitenant model is outside `Grant::Tenant.with`; wrap the work or use a deliberate same-model `unscoped { ... }` block."
+    check:
+      kind: call_outside_block
+      source_globs: ["src/models/**"]
+      tenant_macro: multitenant
+      methods:
+        - where
+        - find
+        - find!
+        - find_by
+        - all
+        - first
+        - last
+        - count
+        - exists?
+        - update_all
+        - delete_all
+        - pluck
+        - sum
+        - average
+        - avg
+        - minimum
+        - maximum
+        - min
+        - max
+        - group_by
+        - order
+        - select
+        - limit
+        - offset
+        - distinct
+        - joins
+        - left_joins
+        - includes
+        - having
+      required_call: Grant::Tenant.with
+      escape_call: unscoped
+
+  - id: grant/unscoped-in-request-code
+    modes: [row]
+    severity: warning
+    applies_to: ["src/controllers/**"]
+    message: "`unscoped` in a controller bypasses the request tenant pipe; move cross-tenant work to an explicitly authorized service or job."
+    check:
+      kind: line_regex
+      pattern: '^\s*[^#]*\.unscoped\b'
+
+  - id: grant/raw-sql-on-scoped-model
+    modes: [row]
+    severity: warning
+    applies_to: ["**/*.cr"]
+    message: "Raw SQL on a multitenant model bypasses its tenant scope; put deliberate cross-tenant access inside that model's `unscoped { ... }` block."
+    check:
+      kind: call_outside_block
+      source_globs: ["src/models/**"]
+      tenant_macro: multitenant
+      methods: [exec, query, scalar]
+      escape_call: unscoped
+
+  - id: grant/tenancy-undeclared
+    modes: [row]
+    severity: warning
+    applies_to: ["**/*.cr"]
+    message: "This project uses Grant `multitenant` but does not declare `grant.tenancy: row` in shard.yml."
+    check:
+      kind: project_conflict
+      condition: evidence_without_declaration

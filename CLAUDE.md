@@ -96,3 +96,12 @@ All branches follow: `feature/phase-{number}-{feature-group-name}` naming conven
 - Grant uses Crystal **macros** extensively for its DSL (`column`, `connection`, `table`, `timestamps`, `scope`, `belongs_to`, `has_many`, `validates_*`, `before_*`, `after_*`, `encrypts`, `enum_attribute`, etc.). These generate code at compile time.
 - Query::Builder is **lazy** -- queries do not execute until a terminal method is called.
 - Query::Builder includes `Enumerable(Model)` -- standard Crystal collection methods work directly on query chains without calling `.all` first.
+
+## Row-mode tenancy in consuming apps
+
+- A consuming app opts in through the top-level `grant` mapping in `shard.yml`, with `tenancy: row`. Keep the mode explicit; do not infer it from model macros.
+- Declare `multitenant :tenant_id` on each shared-row model that has a tenant column.
+- Wrap non-controller queries in `Grant::Tenant.with(tenant_id) { ... }`. Controllers should resolve the tenant in a request-wide pipe and scope `call_next(context)` inside that block.
+- `Model.unscoped { ... }` deliberately disables that model's default scopes for the bounded block. Use it only for approved cross-tenant administrative work, not in request controllers.
+- `exec`, `query`, and `scalar` are raw adapter calls and do not apply the model's tenant scope. Put deliberate raw SQL inside the same model's `unscoped { ... }` block.
+- The consumer checks ship in `.claude/rules/tenancy.yml`; `amber-lsp` loads them from the installed Grant dependency. Keep the app declaration and pack rules in sync. Schema-mode checks are not included in this pack apart from mixed-mode detection.
