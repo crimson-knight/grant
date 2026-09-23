@@ -88,9 +88,23 @@ module Grant::ConnectionManagement
 
   macro included
     # Connection configuration
-    class_property database_name : String = "primary"
+    # The configured connection is class-wide; temporary selections live only
+    # in the current fiber's ConnectionContext.
+    class_property default_database_name : String = "primary"
     class_property connection_config = {} of Symbol => String
     class_property shard_config = {} of Symbol => Hash(Symbol, String)
+
+    # Returns the active database for this fiber, falling back to the model's
+    # configured default when no connected_to block is active.
+    def self.database_name : String
+      connection_context.try(&.database) || default_database_name
+    end
+
+    # Sets the model's configured default database. connected_to never changes
+    # this shared class-level value.
+    def self.database_name=(database : String)
+      self.default_database_name = database
+    end
 
     # Fiber-keyed connection context — one slot per fiber so concurrent fibers
     # that each call connected_to cannot corrupt each other's role/database/shard.
@@ -304,7 +318,6 @@ module Grant::ConnectionManagement
     )
       # Save current context
       previous_context = connection_context
-      previous_database = database_name if database
 
       # Create new context
       self.connection_context = ConnectionContext.new(
@@ -314,26 +327,22 @@ module Grant::ConnectionManagement
         prevent_writes || preventing_writes?
       )
 
-      # Update database name if provided
-      self.database_name = database if database
-
       yield
     ensure
       # Restore previous context
       self.connection_context = previous_context
-      self.database_name = previous_database if database && previous_database
     end
 
     # Returns the name (`String`) of the database the model is currently using —
     # the active `#connected_to` context's database if one is set, otherwise the
-    # model's default `database_name`.
+    # model's configured `default_database_name`.
     #
     # ```
     # User.current_database                                              # => "primary"
     # User.connected_to(database: "analytics") { User.current_database } # => "analytics"
     # ```
     def current_database : String
-      connection_context.try(&.database) || database_name
+      connection_context.try(&.database) || default_database_name
     end
 
     # Returns the connection role (`Symbol`) currently in effect: an explicit

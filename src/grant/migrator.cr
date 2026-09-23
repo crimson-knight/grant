@@ -26,6 +26,21 @@ module Grant::Migrator
     def initialize(@table_options = "")
     end
 
+    private def default_clause_for(value) : String
+      case value
+      when String
+        " DEFAULT '#{value.gsub("'", "''")}'"
+      when Bool
+        " DEFAULT #{value ? "TRUE" : "FALSE"}"
+      when Number
+        " DEFAULT #{value}"
+      when Nil
+        " DEFAULT NULL"
+      else
+        ""
+      end
+    end
+
     def drop_and_create
       drop
       create
@@ -59,7 +74,17 @@ module Grant::Migrator
             {% else %}
               resolve.call("{{ivar.type.union_types.find { |t| t != Nil }.id}}")
             {% end %}
-          s.print "#{k} #{v} PRIMARY KEY"
+          default_clause = {% if !ann[:auto] && primary_key.has_default_value? %}
+            {% default_value = primary_key.default_value %}
+            {% if default_value.is_a?(StringLiteral) || default_value.is_a?(NumberLiteral) || default_value.is_a?(BoolLiteral) || default_value.is_a?(NilLiteral) %}
+              default_clause_for({{default_value}})
+            {% else %}
+              ""
+            {% end %}
+          {% else %}
+            ""
+          {% end %}
+          s.print "#{k} #{v} PRIMARY KEY#{default_clause}"
         {% end %}
 
         # content fields
@@ -77,7 +102,17 @@ module Grant::Migrator
             {% else %}
               resolve.call("{{ivar.type.union_types.find { |t| t != Nil }.id}}") + " NOT NULL"
             {% end %}
-          s.puts "#{k} #{v}"
+          default_clause = {% if ivar.has_default_value? %}
+            {% default_value = ivar.default_value %}
+            {% if default_value.is_a?(StringLiteral) || default_value.is_a?(NumberLiteral) || default_value.is_a?(BoolLiteral) || default_value.is_a?(NilLiteral) %}
+              default_clause_for({{default_value}})
+            {% else %}
+              ""
+            {% end %}
+          {% else %}
+            ""
+          {% end %}
+          s.puts "#{k} #{v}#{default_clause}"
         {% end %}
 
         s.puts ") #{@table_options};"

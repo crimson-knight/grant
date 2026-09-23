@@ -93,6 +93,14 @@ module Grant::NestedAttributes
       else
         raise ArgumentError.new("Nested attributes must be an Array, Hash, or NamedTuple")
       end
+
+      # `update_only` never creates an association for a new owner. Preserve
+      # the established no-op behavior there; persisted owners keep id-less
+      # attributes so save_nested_* can update the associated record or report
+      # a missing association.
+      if config[:update_only] && self.new_record?
+        processed_attrs.reject! { |attr_hash| !attr_hash.has_key?("id") }
+      end
       
       _nested_attributes_data[{{ assoc_name.stringify }}] = processed_attrs
     end
@@ -100,6 +108,32 @@ module Grant::NestedAttributes
     # Get nested attributes (for testing)
     def {{assoc_name.id}}_nested_attributes
       _nested_attributes_data[{{ assoc_name.stringify }}]?
+    end
+
+    # Resolve IDs through this owner's association so another parent's
+    # records cannot be updated or destroyed by submitting their primary key.
+    private def find_nested_{{assoc_name.id}}_by_id(id : Grant::Columns::Type) : {{target_class.id}}?
+      association = self.{{assoc_name.id}}
+      if association.responds_to?(:all)
+        association.all.to_a.find do |record|
+          record.primary_key_value.to_s == id.to_s
+        end
+      elsif record = association
+        if !record.new_record? && record.primary_key_value.to_s == id.to_s
+          record
+        end
+      end
+    end
+
+    # `update_only` without an ID applies to the current singular association
+    # (or the first record for a collection association).
+    private def first_nested_{{assoc_name.id}} : {{target_class.id}}?
+      association = self.{{assoc_name.id}}
+      if association.responds_to?(:all)
+        association.all.to_a.first?
+      elsif record = association
+        record unless record.new_record?
+      end
     end
 
     # Generate save method for this specific association
@@ -128,19 +162,26 @@ module Grant::NestedAttributes
         begin
           if config[:allow_destroy] && should_destroy?(attr_hash)
             # Handle destroy
-            if id = attr_hash["id"]?
-              if record = {{target_class}}.find(id)
+            record = if id = attr_hash["id"]?
+                       find_nested_{{assoc_name.id}}_by_id(id)
+                     elsif config[:update_only]
+                       first_nested_{{assoc_name.id}}
+                     end
+
+            if record
                 unless record.destroy
                   record.errors.each do |error|
                     self.errors << Grant::Error.new("{{ assoc_name.id }}.#{error.field}", error.message)
                   end
                   success = false
                 end
-              end
+            elsif attr_hash.has_key?("id") || config[:update_only]
+              self.errors << Grant::Error.new("{{ assoc_name.id }}", "Nested record is not associated with this record")
+              success = false
             end
           elsif id = attr_hash["id"]?
             # Handle update
-            if record = {{target_class}}.find(id)
+            if record = find_nested_{{assoc_name.id}}_by_id(id)
               # Update attributes
               update_attrs = {} of String => String
               attr_hash.each do |key, value|
@@ -156,8 +197,31 @@ module Grant::NestedAttributes
                 end
                 success = false
               end
+            else
+              self.errors << Grant::Error.new("{{ assoc_name.id }}", "Record with id #{id} is not associated with this record")
+              success = false
             end
-          elsif !config[:update_only]
+          elsif config[:update_only]
+            if record = first_nested_{{assoc_name.id}}
+              update_attrs = {} of String => String
+              attr_hash.each do |key, value|
+                next if key == "_destroy"
+                update_attrs[key] = value.to_s
+              end
+
+              record.set_attributes(update_attrs)
+
+              unless record.save
+                record.errors.each do |error|
+                  self.errors << Grant::Error.new("{{ assoc_name.id }}.#{error.field}", error.message)
+                end
+                success = false
+              end
+            else
+              self.errors << Grant::Error.new("{{ assoc_name.id }}", "Associated record not found for update_only nested attributes")
+              success = false
+            end
+          else
             # Handle create
             record = {{target_class}}.new
             
@@ -211,11 +275,6 @@ module Grant::NestedAttributes
     # Check reject_if
     if config[:reject_if] == :all_blank
       return nil if hash_attrs.all? { |k, v| k == "_destroy" || blank_value?(v) }
-    end
-
-    # Skip create if update_only and no id
-    if config[:update_only] && !hash_attrs["id"]?
-      return nil
     end
 
     hash_attrs
