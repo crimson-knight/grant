@@ -92,8 +92,9 @@ module Grant::STI
       super(attribute_name, value)
     end
 
-    # Register the auto-set callback on the root (and again per subclass below,
-    # since each class keeps its own CALLBACKS table).
+    # Register the auto-set callback once on the root. Grant's callback runner
+    # inherits this callback through the hierarchy, and the method reads the
+    # concrete class's STI name when it runs.
     Grant::STI.register_type_callback
 
     # Mark this concrete class as the STI root for the hierarchy.
@@ -153,18 +154,6 @@ module Grant::STI
         \{{@type.superclass}}.table_name
       end
 
-      # Register the auto-set callback in this subclass's own CALLBACKS table.
-      # (The immutable-type `write_attribute` guard is inherited from the root.)
-      #
-      # This runs inside `macro finished` because Grant's `Grant::Callbacks`
-      # re-initializes the per-class `CALLBACKS` store in ITS OWN `macro
-      # inherited`, which (for a subclass) may execute after this STI
-      # `inherited` block. Registering in `finished` guarantees the callback is
-      # appended after the callback store exists, so it is not wiped.
-      macro finished
-        Grant::STI.register_type_callback
-      end
-
       # Subclasses are NOT the root.
       def self.sti_root_class? : Bool
         false
@@ -204,10 +193,8 @@ module Grant::STI
     end
   end
 
-  # Registers the before-save callback that auto-sets the inheritance column on
-  # new records. Invoked once per STI class so the callback lands in that
-  # class's own CALLBACKS table (callbacks do not merge across the hierarchy in
-  # Grant's model).
+  # Registers the root's before-save callback that auto-sets the inheritance
+  # column on new records. The callback is inherited by STI descendants.
   #
   # NOTE: the `@_sti_type_mutable` ivar and accessors, plus the `write_attribute`
   # immutability guard, are defined ONCE on the root (and inherited) — see the
