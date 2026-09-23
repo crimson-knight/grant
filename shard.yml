@@ -13,11 +13,13 @@ license: MIT
 dependencies:
   db:
     github: crystal-lang/crystal-db
+    # crystal-db 0.14.0, pinned to the peeled release tag commit.
+    version: "0.14.0"
+    commit: 9fff44dd1f61446f9aaffafbb50c4118fe92a3dc
     # Bumped 0.13 -> 0.14 to satisfy the bridged mysql 0.17.0 (crystal-mysql
     # PR #123). The current sqlite3 (0.23) and pg (0.30) also support db 0.14,
     # so the whole set resolves cleanly. Revert to ~> 0.13 if the bridge is
     # rolled back.
-    version: ~> 0.14.0
 
 development_dependencies:
   # MySQL 8/9 BRIDGE: crystal-lang/crystal-mysql does not yet have a RELEASE with
@@ -33,16 +35,22 @@ development_dependencies:
   # password inside the TLS tunnel and skips RSA).
   mysql:
     github: crimson-knight/crystal-mysql
+    version: "0.17.0"
     commit: c061324dcef89a200a7a3f86a59b2ebf03f83602
   sqlite3:
     github: crystal-lang/crystal-sqlite3
-    version: ">= 0.21.0"
+    # crystal-sqlite3 0.23.0, pinned to the peeled release tag commit.
+    version: "0.23.0"
+    commit: 271a1314a6c64e6c3d98942a39bf1b3e8326b190
   pg:
     github: will/crystal-pg
-    version: ">= 0.29.0"
+    # crystal-pg 0.30.0, pinned to the peeled release tag commit.
+    version: "0.30.0"
+    commit: 1f4aefd82440cffd6e70ccb02b7d27bfbfc6d25d
   ameba:
     github: crystal-ameba/ameba
     # Crystal 1.21 compatibility pending Ameba 1.7.0.
+    version: "1.7.0-dev"
     commit: cdd58b34b0d8a9c785d67183a7a8f07541549e55
 
 ai_docs:

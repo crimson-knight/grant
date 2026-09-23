@@ -15,9 +15,9 @@ jobs:
       - name: Install Crystal
         uses: crystal-lang/install-crystal@d8ef131ecec0352ce0e39b81b0a6d95def58fe2f # v1
         with:
-          crystal: latest
+          crystal: 1.21.0
       - name: Install shards
-        run: shards install
+        run: shards install --frozen
       - name: Check formatting
         run: crystal tool format --check
       - name: Check linting
@@ -28,7 +28,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        crystal: [1.14.0, 1.15.1, 1.16.3, latest]
+        crystal: [1.14.0, 1.15.1, 1.16.3, 1.21.0]
     steps:
       - name: Download source
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -37,7 +37,7 @@ jobs:
         with:
           crystal: ${{ matrix.crystal }}
       - name: Install shards
-        run: shards update --ignore-crystal-version --skip-postinstall --skip-executables
+        run: shards install --frozen --skip-postinstall --skip-executables
       - name: Run tests
         timeout-minutes: 5
         run: crystal spec
@@ -51,10 +51,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        crystal: [1.14.0, 1.15.1, 1.16.3, latest]
+        crystal: [1.14.0, 1.15.1, 1.16.3, 1.21.0]
     services:
       mysql-primary:
-        image: mysql:8.0
+        image: mysql:8.0@sha256:7dcddc01f13bab2f15cde676d44d01f61fc9f99fe7785e86196dfc07d358ae2b
         options: >-
           --health-cmd "mysqladmin ping"
           --health-interval 10s
@@ -68,7 +68,7 @@ jobs:
         ports:
           - 3306:3306
       mysql-replica:
-        image: mysql:8.0
+        image: mysql:8.0@sha256:7dcddc01f13bab2f15cde676d44d01f61fc9f99fe7785e86196dfc07d358ae2b
         options: >-
           --health-cmd "mysqladmin ping"
           --health-interval 10s
@@ -89,7 +89,7 @@ jobs:
         with:
           crystal: ${{ matrix.crystal }}
       - name: Install shards
-        run: shards update --ignore-crystal-version --skip-postinstall --skip-executables
+        run: shards install --frozen --skip-postinstall --skip-executables
       - name: Run tests
         timeout-minutes: 5
         run: crystal spec
@@ -107,11 +107,15 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        crystal: [1.16.3, latest]
-        mysql: ["8.0", "9.0"]
+        crystal: [1.16.3, 1.21.0]
+        mysql:
+          - version: "8.0"
+            digest: "7dcddc01f13bab2f15cde676d44d01f61fc9f99fe7785e86196dfc07d358ae2b"
+          - version: "9.0"
+            digest: "92dc869678019f65d761155dacac660a904f6245bfe1b7997da0a73b2bfc68c9"
     services:
       mysql:
-        image: mysql:${{ matrix.mysql }}
+        image: "mysql:${{ matrix.mysql.version }}@sha256:${{ matrix.mysql.digest }}"
         # NOTE: no --default-authentication-plugin override. MySQL 8.0+ and
         # 9.x default to caching_sha2_password.
         options: >-
@@ -135,7 +139,7 @@ jobs:
         with:
           crystal: ${{ matrix.crystal }}
       - name: Install shards
-        run: shards update --ignore-crystal-version --skip-postinstall --skip-executables
+        run: shards install --frozen --skip-postinstall --skip-executables
       - name: Ensure grant user uses caching_sha2_password
         # The entrypoint already creates MYSQL_USER with the server default
         # plugin, but we pin it explicitly so the test intent is unambiguous,
@@ -164,10 +168,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        crystal: [1.14.0, 1.15.1, 1.16.3, latest]
+        crystal: [1.14.0, 1.15.1, 1.16.3, 1.21.0]
     services:
       postgres-primary:
-        image: postgres:16
+        image: postgres:16@sha256:a3b7f434b2dc57ce85a67e171163eb8ab1a1ebcb39d27484661f26b1dfbe30d6
         env:
           POSTGRES_USER: grant
           POSTGRES_PASSWORD: password
@@ -180,7 +184,7 @@ jobs:
         ports:
           - 5432:5432
       postgres-replica:
-        image: postgres:16
+        image: postgres:16@sha256:a3b7f434b2dc57ce85a67e171163eb8ab1a1ebcb39d27484661f26b1dfbe30d6
         env:
           POSTGRES_USER: grant
           POSTGRES_PASSWORD: password
@@ -200,7 +204,7 @@ jobs:
         with:
           crystal: ${{ matrix.crystal }}
       - name: Install shards
-        run: shards update --ignore-crystal-version --skip-postinstall --skip-executables
+        run: shards install --frozen --skip-postinstall --skip-executables
       - name: Run tests
         timeout-minutes: 5
         run: crystal spec
@@ -213,11 +217,11 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        crystal: [1.16.3, latest]
+        crystal: [1.16.3, 1.21.0]
     services:
       # Shard 0 - Primary
       postgres-shard0-primary:
-        image: postgres:16
+        image: postgres:16@sha256:a3b7f434b2dc57ce85a67e171163eb8ab1a1ebcb39d27484661f26b1dfbe30d6
         env:
           POSTGRES_USER: grant
           POSTGRES_PASSWORD: password
@@ -231,7 +235,7 @@ jobs:
           - 5440:5432
       # Shard 0 - Replica
       postgres-shard0-replica:
-        image: postgres:16
+        image: postgres:16@sha256:a3b7f434b2dc57ce85a67e171163eb8ab1a1ebcb39d27484661f26b1dfbe30d6
         env:
           POSTGRES_USER: grant
           POSTGRES_PASSWORD: password
@@ -245,7 +249,7 @@ jobs:
           - 5441:5432
       # Shard 1 - Primary
       postgres-shard1-primary:
-        image: postgres:16
+        image: postgres:16@sha256:a3b7f434b2dc57ce85a67e171163eb8ab1a1ebcb39d27484661f26b1dfbe30d6
         env:
           POSTGRES_USER: grant
           POSTGRES_PASSWORD: password
@@ -259,7 +263,7 @@ jobs:
           - 5442:5432
       # Shard 1 - Replica
       postgres-shard1-replica:
-        image: postgres:16
+        image: postgres:16@sha256:a3b7f434b2dc57ce85a67e171163eb8ab1a1ebcb39d27484661f26b1dfbe30d6
         env:
           POSTGRES_USER: grant
           POSTGRES_PASSWORD: password
@@ -279,7 +283,7 @@ jobs:
         with:
           crystal: ${{ matrix.crystal }}
       - name: Install shards
-        run: shards update --ignore-crystal-version --skip-postinstall --skip-executables
+        run: shards install --frozen --skip-postinstall --skip-executables
       - name: Run sharding tests
         timeout-minutes: 10
         run: |

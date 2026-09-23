@@ -1,0 +1,21 @@
+version: 2.0
+shards:
+  ameba:
+    git: https://github.com/crystal-ameba/ameba.git
+    version: 1.7.0-dev+git.commit.cdd58b34b0d8a9c785d67183a7a8f07541549e55
+
+  db:
+    git: https://github.com/crystal-lang/crystal-db.git
+    version: 0.14.0+git.commit.9fff44dd1f61446f9aaffafbb50c4118fe92a3dc
+
+  mysql:
+    git: https://github.com/crimson-knight/crystal-mysql.git
+    version: 0.17.0+git.commit.c061324dcef89a200a7a3f86a59b2ebf03f83602
+
+  pg:
+    git: https://github.com/will/crystal-pg.git
+    version: 0.30.0+git.commit.1f4aefd82440cffd6e70ccb02b7d27bfbfc6d25d
+
+  sqlite3:
+    git: https://github.com/crystal-lang/crystal-sqlite3.git
+    version: 0.23.0+git.commit.271a1314a6c64e6c3d98942a39bf1b3e8326b190

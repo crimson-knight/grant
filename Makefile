@@ -7,6 +7,8 @@
 
 COMPOSE_FILE := docker-compose.test.yml
 AUTH_SCRIPT  := ./scripts/mysql-auth-test.sh
+MYSQL_TEST_COMPOSE_PROJECT ?= grant-full-green
+MYSQL_TEST_HOST_PORT ?= 3316
 
 .PHONY: help mysql-spec mysql-auth-test mysql-auth-up mysql-auth-down mysql-auth-ping \
         mysql-auth-pubkey mysql-auth-config mysql-auth-matrix \
@@ -17,8 +19,10 @@ help: ## Show available targets
 		awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-22s\033[0m %s\n", $$1, $$2}'
 
 mysql-spec: ## Run the full spec suite against the MySQL 8 test service
-	docker compose -f $(COMPOSE_FILE) up -d --wait mysql8
-	CRYSTAL_CACHE_DIR=$(CURDIR)/.crystal-cache CURRENT_ADAPTER=mysql MYSQL_DATABASE_URL=mysql://grant:test_password@127.0.0.1:3308/grant_test crystal-alpha spec
+	@set -e; \
+	trap 'docker compose -p "$(MYSQL_TEST_COMPOSE_PROJECT)" -f $(COMPOSE_FILE) down --remove-orphans' EXIT; \
+	GRANT_MYSQL_TEST_PORT=$(MYSQL_TEST_HOST_PORT) docker compose -p "$(MYSQL_TEST_COMPOSE_PROJECT)" -f $(COMPOSE_FILE) up -d --wait mysql8; \
+	CRYSTAL_CACHE_DIR=$(CURDIR)/.crystal-cache CURRENT_ADAPTER=mysql MYSQL_DATABASE_URL=mysql://grant:test_password@127.0.0.1:$(MYSQL_TEST_HOST_PORT)/grant_test crystal-alpha spec
 
 ## ---------------------------------------------------------------------------
 ## MySQL-family auth matrix (caching_sha2_password + MariaDB native_password)
