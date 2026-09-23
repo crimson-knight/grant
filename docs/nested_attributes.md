@@ -84,6 +84,10 @@ author.posts_attributes = [
 author.save
 ```
 
+For `has_many` and `has_one` associations, a submitted `id` must identify a
+record in that parent's association. IDs from another parent are rejected and
+added to the parent's errors; they are never updated or destroyed.
+
 ### Destroying Nested Records
 
 When `allow_destroy: true` is set:
@@ -113,6 +117,11 @@ Only allows updates to existing records, prevents creation:
 ```crystal
 accepts_nested_attributes_for profile : Profile, update_only: true
 ```
+
+When `update_only: true` is used for a singular association, the nested
+attributes update the existing associated record even when the `id` is omitted.
+If no associated record exists, the parent receives an association error rather
+than silently dropping the submitted attributes.
 
 ### reject_if
 
