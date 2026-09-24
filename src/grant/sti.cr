@@ -102,6 +102,7 @@ module Grant::STI
       true
     end
 
+    # :nodoc:
     def self.__sti_model? : Bool
       true
     end
@@ -357,6 +358,7 @@ module Grant::STI
     # After a polymorphic base-class load, snapshot the current attribute
     # values as the dirty-tracking baseline (the standard `from_rs` does this
     # for sequential loads; the polymorphic path must do it explicitly).
+    # :nodoc:
     def __sti_capture_loaded_state
       ensure_dirty_tracking_initialized
       dirty_tracking_hashes[1].clear
@@ -431,6 +433,7 @@ module Grant::STI
     end
 
     # :nodoc: setter for the destroyed flag (no public setter exists).
+    # :nodoc:
     def __sti_set_destroyed(value : Bool)
       @destroyed = value
     end

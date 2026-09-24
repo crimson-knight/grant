@@ -1,4 +1,5 @@
 module Grant::Query::BuilderMethods
+  # :nodoc:
   def __builder
     current_scope
   end

@@ -113,6 +113,7 @@ module Grant::Scale::MultiTenancy
     # Records the tenant column for diagnostics / introspection.
     class_getter multitenant_column : String = {{ column.id.stringify }}
 
+    # :nodoc:
     def self.__multitenant? : Bool
       true
     end

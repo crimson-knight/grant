@@ -305,6 +305,7 @@ module Grant::Sharding
       )
       
       # Override query builder to use sharded version
+      # :nodoc:
       def self.__builder
         # For sharded models, we can't call adapter directly since it requires shard context
         # Instead, we'll default to sqlite for now - the actual adapter will be determined

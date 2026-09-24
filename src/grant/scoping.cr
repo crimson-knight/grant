@@ -154,6 +154,7 @@ module Grant::Scoping
     end
   end
 
+  # :nodoc:
   def __ensure_current_tenant! : Nil
   end
 
@@ -180,6 +181,7 @@ module Grant::Scoping
       query
     end
 
+    # :nodoc:
     def __sti_model? : Bool
       false
     end
@@ -196,6 +198,7 @@ module Grant::Scoping
       "type"
     end
 
+    # :nodoc:
     def __multitenant? : Bool
       false
     end
@@ -205,6 +208,7 @@ module Grant::Scoping
       unscoped
     end
 
+    # :nodoc:
     def __apply_tenant_to_bulk_attributes(attributes : Array(Hash(String | Symbol, Grant::Columns::Type)))
       attributes
     end
