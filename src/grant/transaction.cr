@@ -429,15 +429,7 @@ module Grant::Transaction
       # MySQL: SET TRANSACTION ISOLATION LEVEL must be issued BEFORE START TRANSACTION.
       # (Issuing it after START TRANSACTION silently applies to the *next* transaction.)
       #
-      # Dispatch on the adapter's class NAME (a String), never on the adapter
-      # constant itself. Referencing `Grant::Adapter::Mysql`/`Pg`/`Sqlite` here
-      # would force all three adapters to be compiled into every binary (the
-      # constant must exist), breaking single-adapter / compile-target builds
-      # with `undefined constant Grant::Adapter::Mysql`. The string form is the
-      # same pattern used in scoping.cr / sti.cr / association_collection.cr.
-      adapter_name = adapter.class.name
-      case adapter_name
-      when "Grant::Adapter::Mysql"
+      if adapter.mysql?
         # crystal-mysql cannot prepare START TRANSACTION or SET TRANSACTION.
         # Send transaction-control statements through DB's unprepared path.
         if isolation = options.isolation
@@ -445,10 +437,9 @@ module Grant::Transaction
         end
         conn.unprepared.exec(build_mysql_transaction_sql(options))
       else
-        sql = case adapter_name
-              when "Grant::Adapter::Pg"
+        sql = if adapter.postgres?
                 build_pg_transaction_sql(options)
-              when "Grant::Adapter::Sqlite"
+              elsif adapter.sqlite?
                 build_sqlite_transaction_sql(options)
               else
                 "BEGIN"

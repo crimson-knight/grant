@@ -435,7 +435,7 @@ module Grant::Validators
             _field_name = \\{{field.id.stringify}}
             query = self.where("LOWER(#{_field_name}) = LOWER(?)", value)
           \\{% else %}
-            if self.adapter.class.name == "Grant::Adapter::Mysql"
+            if self.adapter.mysql?
               _field_name = self.quote(\\{{field.id.stringify}})
               query = self.where("BINARY #{_field_name} = BINARY ?", value)
             else
