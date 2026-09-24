@@ -1,4 +1,4 @@
-class Grant::StrictLoadingViolationError < Exception
+class Grant::StrictLoadingViolationError < Grant::ErrorBase
 end
 
 module Grant::EagerLoading
@@ -275,7 +275,7 @@ module Grant::EagerLoading
   end
 
   module ClassMethods
-    def strict_loading(value : Bool = true)
+    def strict_loading(value : Bool = true) : Grant::Query::Builder(self)
       query = get_query_builder
       query.strict_loading(value)
       query
@@ -329,10 +329,9 @@ module Grant::EagerLoading
         current_scope
       else
         # Fallback to creating a new query builder
-        db_type = case adapter.class.to_s
-                  when /Pg/
+        db_type = if adapter.postgres?
                     Grant::Query::Builder::DbType::Pg
-                  when /Mysql/
+                  elsif adapter.mysql?
                     Grant::Query::Builder::DbType::Mysql
                   else
                     Grant::Query::Builder::DbType::Sqlite

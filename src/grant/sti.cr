@@ -391,8 +391,9 @@ module Grant::STI
         params = [klass.sti_name.as(Grant::Columns::Type), primary_key_value.as(Grant::Columns::Type)]
 
         self.class.mark_write_operation
-        self.class.adapter.open do |db|
-          db.exec(sql, args: params)
+        adapter = self.class.adapter
+        adapter.open do |db|
+          db.exec(sql, args: adapter.normalize_bind_values(params))
         end
 
         # Reflect the persisted change on the receiver as well.

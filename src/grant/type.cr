@@ -66,10 +66,28 @@ module Grant::Type
     result.read(Time?).try &.in(Grant.settings.default_timezone)
   end
 
+  def from_rs(result : DB::ResultSet, t : Time.class, adapter : Grant::Adapter::Base) : Time
+    adapter.read_time(result).in(Grant.settings.default_timezone)
+  end
+
+  def from_rs(result : DB::ResultSet, t : Time?.class, adapter : Grant::Adapter::Base) : Time?
+    adapter.read_nullable_time(result).try &.in(Grant.settings.default_timezone)
+  end
+
+  def from_rs(result : DB::ResultSet, t : T.class, adapter : Grant::Adapter::Base) : T forall T
+    from_rs(result, t)
+  end
+
+  def from_rs(result : DB::ResultSet, t : T?.class, adapter : Grant::Adapter::Base) : T? forall T
+    from_rs(result, t)
+  end
+
   # Converts a `DB::ResultSet` to `UUID`.
   def from_rs(result : DB::ResultSet, t : UUID.class) : UUID
-    value = result.read(String | Bytes)
+    value = result.read(UUID | String | Bytes)
     case value
+    when UUID
+      value
     when String
       UUID.new(value)
     when Bytes
@@ -81,10 +99,12 @@ module Grant::Type
 
   # Converts a `DB::ResultSet` to `UUID?`.
   def from_rs(result : DB::ResultSet, t : UUID?.class) : UUID?
-    value = result.read(String? | Bytes?)
+    value = result.read(UUID? | String? | Bytes?)
     return nil if value.nil?
 
     case value
+    when UUID
+      value
     when String
       UUID.new(value)
     when Bytes

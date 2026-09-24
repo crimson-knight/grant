@@ -7,7 +7,13 @@ module Grant::Querying
   class NotUnique < Exception
   end
 
-  class ScopedRawSqlError < Exception
+  class ScopedRawSqlError < Grant::ErrorBase
+  end
+
+  class MissingPrimaryKeyError < Grant::ErrorBase
+  end
+
+  class MissingWhereClauseError < Grant::ErrorBase
   end
 
   module ClassMethods
@@ -63,22 +69,7 @@ module Grant::Querying
       ensure_raw_sql_unscoped!
 
       value = connection.select_value(sql, binds)
-      case value
-      when Int32
-        value.to_i64
-      when Int64
-        value
-      when Float32
-        value.to_i64
-      when Float64
-        value.to_i64
-      when String
-        value.to_i64
-      when Nil
-        0_i64
-      else
-        raise ArgumentError.new("count_by_sql did not return a numeric value")
-      end
+      Grant::Result.integer_count(value)
     end
 
     # Sanitizes an ActiveRecord-style `[sql, *values]` array for this model's
@@ -458,7 +449,7 @@ module Grant::Querying
       return 0_i64 if set_clause.empty?
 
       sql = "UPDATE #{quoted_table_name} SET #{set_clause.join(", ")} #{where_clause}"
-      values = if adapter.class.to_s == "Grant::Adapter::Pg"
+      values = if adapter.postgres?
                  where_parameters + set_values
                else
                  set_values + where_parameters
@@ -466,7 +457,7 @@ module Grant::Querying
 
       mark_write_operation
       adapter.open do |db|
-        db.exec(sql, args: values).rows_affected
+        db.exec(sql, args: adapter.normalize_bind_values(values)).rows_affected
       end
     end
 
@@ -545,7 +536,8 @@ module Grant::Querying
     def exists?(id : IdValue | Nil) : Bool
       query = current_scope
       return false if id.nil?
-      query.where(primary_name.not_nil!, :eq, id).exists?
+      key = primary_name || raise MissingPrimaryKeyError.new("#{name} has no primary key")
+      query.where(key, :eq, id).exists?
     end
 
     # Returns `true` if any record matches *criteria*, otherwise `false`.
@@ -598,16 +590,16 @@ module Grant::Querying
       ensure_raw_sql_unscoped!
       mark_write_operation
       clause = adapter.ensure_clause_template(clause)
-      adapter.open { |db| db.query(clause, args: params) { |rs| yield rs } }
+      adapter.open { |db| db.query(clause, args: adapter.normalize_bind_values(params)) { |rs| yield rs } }
     end
 
-    def scalar(clause : String = "", binds : Array(Grant::Columns::Type) = [] of Grant::Columns::Type) : DB::Any?
+    def scalar(clause : String = "", binds : Array(Grant::Columns::Type) = [] of Grant::Columns::Type)
       ensure_raw_sql_unscoped!
       mark_write_operation
       selected_adapter = adapter
       statement = selected_adapter.ensure_clause_template(clause)
       selected_adapter.open do |database|
-        database.scalar(statement, args: binds).as(DB::Any?)
+        database.scalar(statement, args: selected_adapter.normalize_bind_values(binds))
       end
     end
 
@@ -674,9 +666,10 @@ module Grant::Querying
 
     self.new_record = false
     ensure_dirty_tracking_initialized
-    @original_attributes.not_nil!.clear
-    @changed_attributes.not_nil!.clear
-    @previous_changes.not_nil!.clear
+    original_attributes, changed_attributes, previous_changes = dirty_tracking_hashes
+    original_attributes.clear
+    changed_attributes.clear
+    previous_changes.clear
     capture_original_attributes
 
     self

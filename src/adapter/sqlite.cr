@@ -12,18 +12,6 @@ require "../grant/sqlite_version_check"
 # (src/sqlite3/statement.cr) and adds only the ensure-reset.  When bumping the
 # sqlite3 shard, diff upstream perform_exec against this patch and re-apply.
 class SQLite3::Statement
-  # Store SQLite timestamps as text with six fractional digits so Crystal's
-  # microsecond precision survives the database round trip.
-  private def bind_arg(index, value : Time)
-    bind_arg(index, value.in(SQLite3::TIME_ZONE).to_s("%F %H:%M:%S.%6N"))
-  end
-
-  # UUID columns are stored as CHAR(36) in SQLite, so bind the canonical text
-  # representation instead of passing a UUID object to sqlite3's native binder.
-  private def bind_arg(index, value : UUID)
-    bind_arg(index, value.to_s)
-  end
-
   protected def perform_exec(args : Enumerable) : DB::ExecResult
     LibSQLite3.reset(self.to_unsafe)
     args.each_with_index(1) do |arg, index|
@@ -48,32 +36,36 @@ class SQLite3::Statement
   end
 end
 
-# sqlite3's shard parser accepts only millisecond fractions by default. Grant
-# writes six digits, so read those values at the same precision.
-class SQLite3::ResultSet
-  def read(t : Time.class) : Time
-    text = read(String).not_nil!
-    if text.includes?(".")
-      Time.parse(text, "%F %H:%M:%S.%N", location: SQLite3::TIME_ZONE)
-    else
-      Time.parse(text, SQLite3::DATE_FORMAT_SECOND, location: SQLite3::TIME_ZONE)
-    end
-  end
-
-  def read(t : Time?.class) : Time?
-    if text = read(String?)
-      if text.includes?(".")
-        Time.parse(text, "%F %H:%M:%S.%N", location: SQLite3::TIME_ZONE)
-      else
-        Time.parse(text, SQLite3::DATE_FORMAT_SECOND, location: SQLite3::TIME_ZONE)
-      end
-    end
-  end
-end
-
 # Sqlite implementation of the Adapter
 class Grant::Adapter::Sqlite < Grant::Adapter::Base
   QUOTING_CHAR = '"'
+
+  def sqlite? : Bool
+    true
+  end
+
+  # SQLite stores Grant timestamps as text and UUID columns as CHAR(36).
+  def normalize_bind_value(value : Time) : String
+    value.in(SQLite3::TIME_ZONE).to_s("%F %H:%M:%S.%6N")
+  end
+
+  def normalize_bind_value(value : UUID) : String
+    value.to_s
+  end
+
+  def read_time(result : DB::ResultSet) : Time
+    text = result.read(String)
+    parse_time(text)
+  end
+
+  def read_nullable_time(result : DB::ResultSet) : Time?
+    result.read(String?).try { |text| parse_time(text) }
+  end
+
+  private def parse_time(text : String) : Time
+    format = text.includes?(".") ? "%F %H:%M:%S.%N" : SQLite3::DATE_FORMAT_SECOND
+    Time.parse(text, format, location: SQLite3::TIME_ZONE)
+  end
 
   def initialize(@name : String, @url : String)
     super
@@ -119,7 +111,7 @@ class Grant::Adapter::Sqlite < Grant::Adapter::Base
     last_id = -1_i64
     elapsed_time = Time.measure do
       open do |db|
-        db.exec statement, args: params
+        db.exec statement, args: normalize_bind_values(params)
         last_id = db.scalar(last_val()).as(Int64) if lastval
       end
     end
@@ -166,7 +158,7 @@ class Grant::Adapter::Sqlite < Grant::Adapter::Base
 
     elapsed_time = Time.measure do
       open do |db|
-        db.exec statement, args: params
+        db.exec statement, args: normalize_bind_values(params)
       end
     end
 
@@ -187,7 +179,7 @@ class Grant::Adapter::Sqlite < Grant::Adapter::Base
 
     elapsed_time = Time.measure do
       open do |db|
-        db.exec statement, args: params
+        db.exec statement, args: normalize_bind_values(params)
       end
     end
 
@@ -200,7 +192,7 @@ class Grant::Adapter::Sqlite < Grant::Adapter::Base
 
     elapsed_time = Time.measure do
       open do |db|
-        db.exec statement, value
+        db.exec statement, normalize_bind_value(value)
       end
     end
 

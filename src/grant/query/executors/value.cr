@@ -15,8 +15,9 @@ module Grant::Query::Executor
       else
         start_time = Time.instant
         begin
-          result = Model.adapter.open do |db|
-            db.query_one?(@sql, args: @args, as: Scalar) || @default
+          adapter = Model.adapter
+          result = adapter.open do |db|
+            db.query_one?(@sql, args: adapter.normalize_bind_values(@args), as: Scalar) || @default
           end
 
           duration = Time.instant - start_time

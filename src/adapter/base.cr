@@ -20,6 +20,41 @@ abstract class Grant::Adapter::Base
   def initialize(@name : String, @url : String)
   end
 
+  # Adapters convert Grant values at the bind boundary when their drivers do
+  # not accept the model type directly.
+  def normalize_bind_value(value)
+    value
+  end
+
+  def normalize_bind_values(values)
+    values.map { |value| normalize_bind_value(value) }
+  end
+
+  def read_time(result : DB::ResultSet) : Time
+    result.read(Time)
+  end
+
+  def read_nullable_time(result : DB::ResultSet) : Time?
+    result.read(Time?)
+  end
+
+  # Normalizes one buffered result value into Grant's stable result union.
+  def normalize_result_value(value) : Grant::Result::Value
+    Grant::Result.normalize(value)
+  end
+
+  def postgres? : Bool
+    false
+  end
+
+  def mysql? : Bool
+    false
+  end
+
+  def sqlite? : Bool
+    false
+  end
+
   def database : DB::Database
     @_database ||= DB.open(@url)
   end
@@ -85,7 +120,7 @@ abstract class Grant::Adapter::Base
 
     elapsed_time = Time.measure do
       open do |db|
-        db.query statement, args: params do |rs|
+        db.query statement, args: normalize_bind_values(params) do |rs|
           yield rs
         end
       end
@@ -101,7 +136,7 @@ abstract class Grant::Adapter::Base
     exists = false
     elapsed_time = Time.measure do
       open do |db|
-        exists = db.query_one?(statement, args: params, as: Bool) || exists
+        exists = db.query_one?(statement, args: normalize_bind_values(params), as: Bool) || exists
       end
     end
 
@@ -155,7 +190,7 @@ abstract class Grant::Adapter::Base
 
     elapsed_time = Time.measure do
       open do |db|
-        db.exec statement, args: params
+        db.exec statement, args: normalize_bind_values(params)
       end
     end
 
@@ -182,7 +217,7 @@ abstract class Grant::Adapter::Base
     affected = 0_i64
     elapsed_time = Time.measure do
       open do |db|
-        result = db.exec(statement, args: parameters)
+        result = db.exec(statement, args: normalize_bind_values(parameters))
         affected = rows_affected_after_write(db, result)
       end
     end
@@ -207,7 +242,7 @@ abstract class Grant::Adapter::Base
     affected = 0_i64
     elapsed_time = Time.measure do
       open do |db|
-        result = db.exec(statement, args: [value])
+        result = db.exec(statement, args: normalize_bind_values([value]))
         affected = rows_affected_after_write(db, result)
       end
     end
@@ -228,7 +263,7 @@ abstract class Grant::Adapter::Base
 
     elapsed_time = Time.measure do
       open do |db|
-        db.exec statement, args: params
+        db.exec statement, args: normalize_bind_values(params)
       end
     end
 

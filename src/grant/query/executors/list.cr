@@ -12,8 +12,9 @@ module Grant::Query::Executor
       results = [] of Model
 
       begin
-        Model.adapter.open do |db|
-          db.query @sql, args: @args do |record_set|
+        adapter = Model.adapter
+        adapter.open do |db|
+          db.query @sql, args: adapter.normalize_bind_values(@args) do |record_set|
             record_set.each do
               results << Model.from_rs record_set
             end

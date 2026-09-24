@@ -25,8 +25,9 @@ class Grant::Query::Builder(Model)
     sql = string_assembler.update_all_fragment_sql(assignments)
     Model.mark_write_operation
 
-    Model.adapter.open do |db|
-      db.exec(sql, args: string_assembler.numbered_parameters)
+    adapter = Model.adapter
+    adapter.open do |db|
+      db.exec(sql, args: adapter.normalize_bind_values(string_assembler.numbered_parameters))
     end
   end
 
@@ -101,8 +102,9 @@ class Grant::Query::Builder(Model)
     sql = builder_assembler.update_all_sql(assignments)
     params = builder_assembler.numbered_parameters
 
-    Model.adapter.open do |db|
-      db.exec(sql, args: params).rows_affected
+    adapter = Model.adapter
+    adapter.open do |db|
+      db.exec(sql, args: adapter.normalize_bind_values(params)).rows_affected
     end
   end
 end

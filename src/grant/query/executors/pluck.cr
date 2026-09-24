@@ -12,8 +12,9 @@ module Grant::Query::Executor
       results = [] of Array(Grant::Columns::Type)
 
       begin
-        Model.adapter.open do |db|
-          db.query @sql, args: @args do |rs|
+        adapter = Model.adapter
+        adapter.open do |db|
+          db.query @sql, args: adapter.normalize_bind_values(@args) do |rs|
             rs.each do
               row = [] of Grant::Columns::Type
               @fields.each do |field|

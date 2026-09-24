@@ -132,7 +132,7 @@ module Grant::Columns
             @{{column.id}} = {% if ann[:converter] %}
               {{ann[:converter]}}.from_rs result
             {% else %}
-              value = Grant::Type.from_rs(result, {{ann[:nilable] ? column.type : column.type.union_types.reject { |t| t == Nil }.first}})
+              value = Grant::Type.from_rs(result, {{ann[:nilable] ? column.type : column.type.union_types.reject { |t| t == Nil }.first}}, self.class.adapter)
 
               {% if column.has_default_value? && !column.default_value.nil? %}
                 return {{column.default_value}} if value.nil?

@@ -11,8 +11,9 @@ module Grant::Query::Executor
       raise "No default provided" if @default.nil?
       results = [] of Scalar
 
-      Model.adapter.open do |db|
-        db.query @sql, args: @args do |record_set|
+      adapter = Model.adapter
+      adapter.open do |db|
+        db.query @sql, args: adapter.normalize_bind_values(@args) do |record_set|
           record_set.each do
             results << record_set.read(Scalar)
           end

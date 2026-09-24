@@ -351,10 +351,13 @@ class Grant::AssociationCollection(Owner, Target)
   private def scope_fragments : Tuple(String, Array(Grant::Columns::Type), String)
     return {"", [] of Grant::Columns::Type, ""} unless association_scope = @scope
 
-    db_type = case Target.adapter.class.to_s
-              when "Grant::Adapter::Pg"    then Grant::Query::Builder::DbType::Pg
-              when "Grant::Adapter::Mysql" then Grant::Query::Builder::DbType::Mysql
-              else                              Grant::Query::Builder::DbType::Sqlite
+    adapter = Target.adapter
+    db_type = if adapter.postgres?
+                Grant::Query::Builder::DbType::Pg
+              elsif adapter.mysql?
+                Grant::Query::Builder::DbType::Mysql
+              else
+                Grant::Query::Builder::DbType::Sqlite
               end
     builder = Grant::Query::Builder(Target).new(db_type)
     builder = association_scope.call(builder)

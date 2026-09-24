@@ -282,11 +282,11 @@ module Grant::BulkOperations
 
     mark_write_operation
     adapter.open do |db|
-      if adapter.class.name == "Grant::Adapter::Mysql"
+      if adapter.mysql?
         raise ArgumentError.new("MySQL does not support insert_all returning columns") if returning
-        db.exec(sql, args: assembler.numbered_parameters)
+        db.exec(sql, args: adapter.normalize_bind_values(assembler.numbered_parameters))
       else
-        db.query(sql, args: assembler.numbered_parameters) do |rs|
+        db.query(sql, args: adapter.normalize_bind_values(assembler.numbered_parameters)) do |rs|
           rs.each do
             record = self.new
             # Populate record from result set if returning was specified
@@ -347,11 +347,11 @@ module Grant::BulkOperations
 
     mark_write_operation
     adapter.open do |db|
-      if adapter.class.name == "Grant::Adapter::Mysql"
+      if adapter.mysql?
         raise ArgumentError.new("MySQL does not support upsert_all returning columns") if returning
-        db.exec(sql, args: assembler.numbered_parameters)
+        db.exec(sql, args: adapter.normalize_bind_values(assembler.numbered_parameters))
       else
-        db.query(sql, args: assembler.numbered_parameters) do |rs|
+        db.query(sql, args: adapter.normalize_bind_values(assembler.numbered_parameters)) do |rs|
           rs.each do
             record = self.new
             # Populate record from result set if returning was specified
