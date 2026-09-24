@@ -2,20 +2,25 @@ require "./tenant"
 
 module Grant
   # Raised when a schema name is not a safe PostgreSQL identifier.
-  class InvalidSchemaNameError < ArgumentError
+  class InvalidSchemaNameError < Grant::ErrorBase
   end
 
   # Raised when schema tenancy is used with a non-PostgreSQL adapter.
-  class UnsupportedSchemaTenantAdapterError < Exception
+  class UnsupportedSchemaTenantAdapterError < Grant::ErrorBase
   end
 
   # Raised when a model tries to use a different adapter inside one pinned
   # schema-tenant block.
-  class SchemaTenantConnectionMismatchError < Exception
+  class SchemaTenantConnectionMismatchError < Grant::ErrorBase
   end
 
   # Raised when PostgreSQL cannot restore search_path before pool return.
-  class SchemaTenantResetError < Exception
+  class SchemaTenantResetError < Grant::ErrorBase
+    getter block_exception : ::Exception?
+
+    def initialize(message : String, cause : ::Exception, @block_exception : ::Exception? = nil)
+      super(message, cause: cause)
+    end
   end
 
   # PostgreSQL schema-per-tenant context. A block checks out one physical
@@ -27,11 +32,13 @@ module Grant
     SCHEMA_NAME_PATTERN  = /\A[a-zA-Z_][a-zA-Z0-9_$]*\z/
     MAX_IDENTIFIER_BYTES = 63
 
+    # :nodoc:
     class Context
       getter adapter : Grant::Adapter::Base
       getter connection : DB::Connection
       property schema : String
-      property is_usable : Bool = true
+      property? usable : Bool = true
+      property reset_error : SchemaTenantResetError?
 
       def initialize(@adapter, @connection, @schema)
       end
@@ -62,19 +69,18 @@ module Grant
         previous_schema = context.schema
 
         begin
-          context.connection.exec(search_path_sql(selected_adapter, schema))
-          context.schema = schema
-          yield
+          with_reset(
+            context.connection,
+            search_path_sql(selected_adapter, previous_schema),
+            "Could not restore PostgreSQL search_path for schema '#{previous_schema}'",
+            context
+          ) do
+            context.connection.exec(search_path_sql(selected_adapter, schema))
+            context.schema = schema
+            yield
+          end
         ensure
           context.schema = previous_schema
-          begin
-            context.connection.exec(search_path_sql(selected_adapter, previous_schema))
-          rescue ex
-            context.is_usable = false
-            raise SchemaTenantResetError.new(
-              "Could not restore PostgreSQL search_path for schema '#{previous_schema}': #{ex.message}"
-            )
-          end
         end
       elsif transaction_connection = Grant::Transaction.current_connection?(selected_adapter)
         with_transaction_connection(schema, selected_adapter, transaction_connection) { yield }
@@ -175,24 +181,18 @@ module Grant
         set_current_context(context)
 
         begin
-          connection.exec(search_path_sql(adapter, schema))
-          yield
-        ensure
-          begin
-            connection.exec("RESET search_path")
-          rescue ex
-            # Closing discards the checked-out DB connection so it cannot be
-            # reused with unknown session state if RESET itself fails.
-            begin
-              connection.close
-            rescue
-            end
-            raise SchemaTenantResetError.new(
-              "Could not reset PostgreSQL search_path before returning the tenant connection: #{ex.message}"
-            )
-          ensure
-            clear_current_context(context)
+          with_reset(
+            connection,
+            "RESET search_path",
+            "Could not reset PostgreSQL search_path before returning the tenant connection",
+            context,
+            close_on_failure: true
+          ) do
+            connection.exec(search_path_sql(adapter, schema))
+            yield
           end
+        ensure
+          clear_current_context(context)
         end
       end
     end
@@ -202,23 +202,69 @@ module Grant
       set_current_context(context)
 
       begin
-        connection.exec(search_path_sql(adapter, schema))
+        with_reset(
+          connection,
+          "RESET search_path",
+          "Could not reset PostgreSQL search_path before leaving the tenant block",
+          context,
+          close_on_failure: true
+        ) do
+          connection.exec(search_path_sql(adapter, schema))
+          yield
+        end
+      ensure
+        clear_current_context(context)
+      end
+    end
+
+    private def self.with_reset(
+      connection : DB::Connection,
+      reset_sql : String,
+      message : String,
+      context : Context? = nil,
+      close_on_failure : Bool = false,
+      &block : -> T
+    ) : T forall T
+      block_exception = nil.as(::Exception?)
+
+      begin
         yield
+      rescue ex : ::Exception
+        block_exception = ex
+        raise ex
       ensure
         begin
-          connection.exec("RESET search_path")
-        rescue ex
-          # The surrounding transaction owns this lease. Discard the
-          # connection if its session state cannot be restored safely.
-          begin
-            connection.close
-          rescue
+          connection.exec(reset_sql)
+        rescue reset_exception : DB::Error | IO::Error
+          context.try { |active_context| active_context.usable = false }
+
+          if close_on_failure
+            begin
+              connection.close
+            rescue close_exception : DB::Error | IO::Error
+              Grant::Log.warn(exception: close_exception) do
+                "Could not close PostgreSQL connection after search_path reset failed"
+              end
+            end
           end
-          raise SchemaTenantResetError.new(
-            "Could not reset PostgreSQL search_path before leaving the tenant block: #{ex.message}"
+
+          reset_error = SchemaTenantResetError.new(
+            "#{message}: #{reset_exception.message}",
+            cause: reset_exception,
+            block_exception: block_exception
           )
-        ensure
-          clear_current_context(context)
+          context.try { |active_context| active_context.reset_error = reset_error }
+          if original_exception = block_exception
+            if grant_exception = original_exception.as?(Grant::ErrorBase)
+              grant_exception.cleanup_error = reset_error
+            end
+            Grant::Log.warn(exception: reset_error) do
+              "Preserving schema-tenant block exception #{original_exception.class} after search_path reset failed"
+            end
+            raise original_exception
+          else
+            raise reset_error
+          end
         end
       end
     end
@@ -240,7 +286,7 @@ module Grant
     end
 
     private def self.postgres_adapter!(adapter : Grant::Adapter::Base) : Grant::Adapter::Base
-      unless adapter.class.name == "Grant::Adapter::Pg"
+      unless adapter.postgres?
         raise UnsupportedSchemaTenantAdapterError.new(
           "Grant schema tenancy requires PostgreSQL; got #{adapter.class.name}"
         )
@@ -271,9 +317,10 @@ module Grant
     end
 
     private def self.ensure_same_adapter!(context : Context, adapter : Grant::Adapter::Base) : Nil
-      unless context.is_usable
+      unless context.usable?
         raise SchemaTenantResetError.new(
-          "The schema-tenant connection could not restore schema '#{context.schema}' and is no longer usable"
+          "The schema-tenant connection could not restore schema '#{context.schema}' and is no longer usable",
+          cause: context.reset_error || Grant::ErrorBase.new("The previous schema reset failed")
         )
       end
 

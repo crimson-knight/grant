@@ -5,11 +5,11 @@ module Grant
   # large shared table — the billion-row footgun. Wrap queries in
   # `Grant::Tenant.with(id) { ... }`, or use `Model.unscoped { ... }` for
   # deliberate cross-tenant access.
-  class NoTenantError < Exception
+  class NoTenantError < Grant::ErrorBase
   end
 
   # Raised when a record or bulk insert attempts to write another tenant's row.
-  class TenantMismatchError < Exception
+  class TenantMismatchError < Grant::ErrorBase
   end
 
   # Fiber-local current-tenant context for `multitenant` models.
@@ -29,7 +29,7 @@ module Grant
 
     # Runs *block* with *id* as the current tenant for this fiber, restoring the
     # previous tenant (or clearing it) afterward.
-    def self.with(id : Grant::Columns::Type, &)
+    def self.with(id : Grant::Columns::Type, &block : -> T) : T forall T
       fiber = Fiber.current
       had_previous = false
       previous = nil.as(Grant::Columns::Type)
@@ -78,7 +78,7 @@ module Grant
     end
 
     # Clears the current tenant for this fiber (mainly for tests).
-    def self.clear
+    def self.clear : Nil
       @@mutex.synchronize { @@current.delete(Fiber.current) }
     end
   end
@@ -122,7 +122,8 @@ module Grant::Scale::MultiTenancy
     # Keep instance writes tenant-bound even when a record came from an
     # unscoped query. Only the tenant predicate is used here so unrelated
     # default scopes do not block updates to already-loaded records.
-    def self.__tenant_write_scope
+    # :nodoc:
+    def self.__tenant_write_scope : Grant::Query::Builder(self)
       if _unscoped?
         unscoped
       else
@@ -130,6 +131,7 @@ module Grant::Scale::MultiTenancy
       end
     end
 
+    # :nodoc:
     def self.__apply_tenant_to_bulk_attributes(attributes : Array(Hash(String | Symbol, Grant::Columns::Type)))
       return attributes if _unscoped?
 

@@ -511,8 +511,9 @@ module Grant::Query::Assembler
 
       start_time = Time.instant
       begin
-        result = Model.adapter.open do |db|
-          db.exec sql, args: numbered_parameters
+        adapter = Model.adapter
+        result = adapter.open do |db|
+          db.exec sql, args: adapter.normalize_bind_values(numbered_parameters)
         end
 
         duration = Time.instant - start_time
@@ -620,8 +621,9 @@ module Grant::Query::Assembler
 
       begin
         rows = [] of String
-        Model.adapter.open do |db|
-          db.query(sql, args: params) do |rs|
+        adapter = Model.adapter
+        adapter.open do |db|
+          db.query(sql, args: adapter.normalize_bind_values(params)) do |rs|
             rs.each do
               cells = [] of String
               rs.column_count.times do
@@ -673,8 +675,9 @@ module Grant::Query::Assembler
 
       start_time = Time.instant
       begin
-        rows_affected = Model.adapter.open do |db|
-          db.exec(sql, args: numbered_parameters).rows_affected
+        adapter = Model.adapter
+        rows_affected = adapter.open do |db|
+          db.exec(sql, args: adapter.normalize_bind_values(numbered_parameters)).rows_affected
         end
 
         duration = Time.instant - start_time
@@ -760,7 +763,7 @@ module Grant::Query::Assembler
 
       # MySQL rejects LIMIT directly inside an IN subquery. A derived-table
       # layer makes the selected target keys legal for bounded bulk writes.
-      if Model.adapter.class.name == "Grant::Adapter::Mysql"
+      if Model.adapter.mysql?
         "SELECT grant_write_targets.#{Model.quote(Model.primary_name)} FROM (#{subquery}) AS grant_write_targets"
       else
         subquery

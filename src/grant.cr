@@ -5,6 +5,13 @@ require "log"
 module Grant
   Log = ::Log.for("grant")
 
+  # Base class for domain errors raised by Grant's public behavior.
+  class ErrorBase < ::Exception
+    # A secondary cleanup error attached while preserving the original failure.
+    # :nodoc:
+    property cleanup_error : ::Exception?
+  end
+
   TIME_ZONE       = "UTC"
   DATETIME_FORMAT = "%F %X.%6N%z"
 

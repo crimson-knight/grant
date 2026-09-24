@@ -1,4 +1,13 @@
 module Grant::Sharding
+  class ShardMoveError < Grant::ErrorBase
+    getter source_error : ::Exception
+    getter compensation_error : ::Exception
+
+    def initialize(message : String, @source_error : ::Exception, @compensation_error : ::Exception)
+      super(message, cause: compensation_error)
+    end
+  end
+
   # Base class for all shard resolvers
   abstract class ShardResolver
     # Resolve shard for a model instance
@@ -359,7 +368,11 @@ module Grant::Sharding
             destination_record.destroy!
           end
         rescue compensation_error
-          raise "Move of #{self.class.name} #{primary_key_value} failed on source cleanup (#{source_error.message}); destination compensation also failed (#{compensation_error.message})"
+          raise ShardMoveError.new(
+            "Move of #{self.class.name} #{primary_key_value} failed on source cleanup (#{source_error.message}); destination compensation also failed (#{compensation_error.message})",
+            source_error,
+            compensation_error
+          )
         end
         raise source_error
       end

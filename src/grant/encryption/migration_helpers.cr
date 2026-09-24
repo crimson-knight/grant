@@ -165,11 +165,14 @@ module Grant::Encryption
       attribute_str = attribute.to_s
       encrypted_attr = model_class.encrypted_attributes[attribute_str]
 
-      # Save current keys
+      # Capture current settings; rotation passes them explicitly rather than
+      # swapping process-wide keys while application fibers may be encrypting.
       current_primary = KeyProvider.primary_key
       current_deterministic = KeyProvider.deterministic_key
       current_salt = KeyProvider.key_derivation_salt
       previous_salt = old_salt || current_salt
+      previous_primary = KeyProvider.decode_key(old_keys[:primary])
+      previous_deterministic = old_keys[:deterministic].try { |key| KeyProvider.decode_key(key) }
 
       # Get total count
       total = model_class.count
@@ -177,70 +180,66 @@ module Grant::Encryption
 
       puts "Rotating encryption keys for #{total} records..." if progress
 
-      begin
-        # Process in batches
-        offset = 0
-        loop do
-          records = model_class.limit(batch_size).offset(offset).select
-          break if records.empty?
+      # Process in batches
+      offset = 0
+      loop do
+        records = model_class.limit(batch_size).offset(offset).select
+        break if records.empty?
 
-          records.each do |record|
-            encrypted_value = record.read_attribute("#{attribute_str}_encrypted")
-            next if encrypted_value.nil?
+        records.each do |record|
+          encrypted_value = record.read_attribute("#{attribute_str}_encrypted")
+          next if encrypted_value.nil?
 
-            # First try the old configuration. If it fails, accept ciphertext
-            # already rotated with the current configuration so interrupted
-            # batches can resume safely.
-            decrypted = begin
-              KeyProvider.primary_key = old_keys[:primary]
-              KeyProvider.deterministic_key = old_keys[:deterministic] if encrypted_attr.deterministic && old_keys[:deterministic]
-              KeyProvider.key_derivation_salt = previous_salt
-              Grant::Encryption.decrypt(encrypted_value.as(String), model_class.name, attribute_str)
-            rescue ex : Cipher::DecryptionError
-              KeyProvider.primary_key = current_primary
-              KeyProvider.deterministic_key = current_deterministic if current_deterministic
-              KeyProvider.key_derivation_salt = current_salt
-              begin
-                Grant::Encryption.decrypt(encrypted_value.as(String), model_class.name, attribute_str)
-              rescue
-                raise ex
-              end
-            end
-
-            # Re-encrypt with new keys
-            KeyProvider.primary_key = current_primary
-            KeyProvider.deterministic_key = current_deterministic
-            KeyProvider.key_derivation_salt = current_salt
-
-            new_encrypted = Grant::Encryption.encrypt(
-              decrypted,
+          # First try the old configuration. If it fails, accept ciphertext
+          # already rotated with the current configuration so interrupted
+          # batches can resume safely.
+          decrypted = begin
+            Grant::Encryption.decrypt_with_keys(
+              encrypted_value.as(String),
               model_class.name,
               attribute_str,
-              encrypted_attr.deterministic
+              previous_primary,
+              previous_deterministic,
+              previous_salt
             )
-
-            record.write_attribute("#{attribute_str}_encrypted", new_encrypted)
-            record.save!(validate: false)
-
-            processed += 1
+          rescue ex : Cipher::DecryptionError
+            Grant::Encryption.decrypt_with_keys(
+              encrypted_value.as(String),
+              model_class.name,
+              attribute_str,
+              current_primary,
+              current_deterministic,
+              current_salt
+            )
           end
 
-          if progress
-            percent = (processed.to_f / total * 100).round(2)
-            print "\rProgress: #{processed}/#{total} (#{percent}%)    "
-          end
+          # Re-encrypt with new keys
+          new_encrypted = Grant::Encryption.encrypt_with_keys(
+            decrypted,
+            model_class.name,
+            attribute_str,
+            encrypted_attr.deterministic,
+            current_primary,
+            current_deterministic,
+            current_salt
+          )
 
-          offset += batch_size
+          record.write_attribute("#{attribute_str}_encrypted", new_encrypted)
+          record.save!(validate: false)
+
+          processed += 1
         end
 
-        puts "\nKey rotation complete!" if progress
-        processed
-      ensure
-        # Restore current keys
-        KeyProvider.primary_key = current_primary
-        KeyProvider.deterministic_key = current_deterministic
-        KeyProvider.key_derivation_salt = current_salt
+        if progress
+          percent = (processed.to_f / total * 100).round(2)
+          print "\rProgress: #{processed}/#{total} (#{percent}%)    "
+        end
+
+        offset += batch_size
       end
+
+      puts "\nKey rotation complete!" if progress
+      processed
     end
 
     # Generate migration code for adding encrypted columns

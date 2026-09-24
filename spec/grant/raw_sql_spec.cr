@@ -168,7 +168,7 @@ describe "ActiveRecord-style raw SQL" do
     result.empty?.should be_false
     result.to_a.first["label"].should eq("alpha")
 
-    yielded_rows = [] of Hash(String, DB::Any)
+    yielded_rows = [] of Grant::Result::HashRow
     result.each { |row| yielded_rows << row }
     yielded_rows.size.should eq(1)
 
@@ -237,6 +237,24 @@ describe "ActiveRecord-style raw SQL" do
     end
 
     RawSqlParityRecord.count_by_sql("SELECT COUNT(*) FROM raw_sql_parity_records WHERE id = ?", [9_i64]).should eq(0_i64)
+  end
+
+  it "blocks Grant.connection writes inside a write-preventing model context" do
+    begin
+      expect_raises(Grant::Transaction::ReadOnlyError) do
+        RawSqlParityRecord.while_preventing_writes do
+          Grant.connection(CURRENT_ADAPTER).execute(
+            "INSERT INTO raw_sql_parity_records (id, label, active) VALUES (?, ?, ?)",
+            [99_i64, "blocked", true]
+          )
+        end
+      end
+    ensure
+      Grant.connection(CURRENT_ADAPTER).execute(
+        "DELETE FROM raw_sql_parity_records WHERE id = ?",
+        [99_i64]
+      )
+    end
   end
 
   it "exposes ActiveRecord-shaped sanitization class methods" do

@@ -526,8 +526,9 @@ module Grant::Transactions
         save_succeeded = !around_halted?
       rescue ex : DB::Error | Grant::Callbacks::Abort
         save_failed = true
-        failure_message = ex.message
-        errors << Grant::Error.new(:base, failure_message.not_nil!) if failure_message
+        if message = ex.message
+          errors << Grant::Error.new(:base, message)
+        end
 
         clear_commit_callbacks if responds_to?(:clear_commit_callbacks)
         Grant::Transaction.enqueue_pending_callback(
@@ -823,7 +824,7 @@ module Grant::Transactions
               self.class.unscoped
             end
     assembler = query.where(self.class.primary_name, :eq, primary_key_value).assembler
-    where_clause = assembler.where.not_nil!
+    where_clause = assembler.where || raise Grant::Querying::MissingWhereClauseError.new("Increment query has no WHERE clause")
 
     self.class.mark_write_operation
     affected = self.class.adapter.increment_with_where(

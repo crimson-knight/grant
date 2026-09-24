@@ -1,4 +1,7 @@
 module Grant
+  class DuplicateConnectionError < Grant::ErrorBase
+  end
+
   # Legacy connections module - now delegates to ConnectionRegistry
   # This will be removed in a future version
   class Connections
@@ -7,7 +10,7 @@ module Grant
     # For backward compatibility - delegates to ConnectionRegistry
     def self.<<(adapter : Grant::Adapter::Base) : Nil
       if ConnectionRegistry.connection_exists?(adapter.name, :primary)
-        raise "Adapter with name '#{adapter.name}' has already been registered."
+        raise DuplicateConnectionError.new("Adapter with name '#{adapter.name}' has already been registered.")
       end
 
       ConnectionRegistry.establish_connection(

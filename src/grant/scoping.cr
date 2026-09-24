@@ -200,7 +200,8 @@ module Grant::Scoping
       false
     end
 
-    def __tenant_write_scope
+    # :nodoc:
+    def __tenant_write_scope : Grant::Query::Builder(self)
       unscoped
     end
 
@@ -211,11 +212,10 @@ module Grant::Scoping
     # Fallback for Grant::Base itself. Concrete model classes generate their
     # own version in Grant::Base's inherited hook so default scopes and STI
     # filters use a builder specialized for that model.
-    def current_scope
-      db_type = case adapter.class.to_s
-                when "Grant::Adapter::Pg"
+    def current_scope : Grant::Query::Builder(self)
+      db_type = if adapter.postgres?
                   Grant::Query::Builder::DbType::Pg
-                when "Grant::Adapter::Mysql"
+                elsif adapter.mysql?
                   Grant::Query::Builder::DbType::Mysql
                 else
                   Grant::Query::Builder::DbType::Sqlite
@@ -245,10 +245,9 @@ module Grant::Scoping
       old_unscoped = _unscoped?
       self._unscoped = true
 
-      db_type = case adapter.class.to_s
-                when "Grant::Adapter::Pg"
+      db_type = if adapter.postgres?
                   Grant::Query::Builder::DbType::Pg
-                when "Grant::Adapter::Mysql"
+                elsif adapter.mysql?
                   Grant::Query::Builder::DbType::Mysql
                 else
                   Grant::Query::Builder::DbType::Sqlite
@@ -274,10 +273,9 @@ module Grant::Scoping
     # Post.unscoped.delete_all         # bypass soft-delete scope to purge
     # ```
     def unscoped
-      db_type = case adapter.class.to_s
-                when "Grant::Adapter::Pg"
+      db_type = if adapter.postgres?
                   Grant::Query::Builder::DbType::Pg
-                when "Grant::Adapter::Mysql"
+                elsif adapter.mysql?
                   Grant::Query::Builder::DbType::Mysql
                 else
                   Grant::Query::Builder::DbType::Sqlite
@@ -343,35 +341,39 @@ module Grant::Scoping
     # `group_by`, `limit`, `offset`, `includes`, `preload`, and `eager_load`.
     macro override_query_method(method_name)
     {% if method_name.id == "where" %}
-      def where(**kwargs)
+      def where : Grant::Query::WhereChain(self)
+        current_scope.where
+      end
+
+      def where(**kwargs) : Grant::Query::Builder(self)
         current_scope.where(**kwargs)
       end
 
-      def where(matches)
+      def where(matches) : Grant::Query::Builder(self)
         current_scope.where(matches)
       end
 
-      def where(field : Symbol | String, operator : Symbol, value : Grant::Columns::Type)
+      def where(field : Symbol | String, operator : Symbol, value : Grant::Columns::Type) : Grant::Query::Builder(self)
         current_scope.where(field, operator, value)
       end
 
-      def where(stmt : String)
+      def where(stmt : String) : Grant::Query::Builder(self)
         current_scope.where(stmt)
       end
 
-      def where(stmt : String, value : Nil)
+      def where(stmt : String, value : Nil) : Grant::Query::Builder(self)
         current_scope.where(stmt, value)
       end
 
-      def where(stmt : String, values : Array)
+      def where(stmt : String, values : Array) : Grant::Query::Builder(self)
         current_scope.where(stmt, values)
       end
 
-      def where(stmt : String, value : Grant::Columns::Type)
+      def where(stmt : String, value : Grant::Columns::Type) : Grant::Query::Builder(self)
         current_scope.where(stmt, value)
       end
 
-      def where(stmt : String, first, second, *rest)
+      def where(stmt : String, first, second, *rest) : Grant::Query::Builder(self)
         values = [] of Grant::Columns::Type
         values << first.as(Grant::Columns::Type) << second.as(Grant::Columns::Type)
         rest.each { |value| values << value.as(Grant::Columns::Type) }

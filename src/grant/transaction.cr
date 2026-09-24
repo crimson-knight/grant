@@ -13,7 +13,7 @@ module Grant::Transaction
 
   # Preserves an IOError escaping a transaction block so the adapter's pool
   # wrapper does not mistake it for a broken connection during cleanup.
-  class PreservedIOError < Exception
+  class PreservedIOError < Grant::ErrorBase
     getter original : IO::Error
 
     def initialize(@original : IO::Error)
@@ -400,7 +400,7 @@ module Grant::Transaction
     # control commands. Route those statements over COM_QUERY for MySQL; the
     # other adapters accept them through the normal DB execution path.
     private def execute_transaction_control(conn : DB::Connection, adapter : Grant::Adapter::Base, statement : String)
-      if adapter.class.name == "Grant::Adapter::Mysql"
+      if adapter.mysql?
         conn.unprepared.exec(statement)
       else
         conn.exec(statement)

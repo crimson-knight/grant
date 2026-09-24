@@ -146,6 +146,58 @@ module Grant::Encryption
     end
   end
 
+  # :nodoc:
+  def self.encrypt_with_keys(
+    value : String,
+    model_name : String,
+    attribute_name : String,
+    deterministic : Bool,
+    primary_key : Bytes?,
+    deterministic_key : Bytes?,
+    salt : String,
+  ) : String
+    key = KeyProvider.derive_key_with_keys(
+      model_name, attribute_name, deterministic, primary_key, deterministic_key, salt
+    )
+    Base64.strict_encode(Cipher.encrypt(value, key, deterministic))
+  end
+
+  # :nodoc:
+  def self.decrypt_with_keys(
+    encrypted : String,
+    model_name : String,
+    attribute_name : String,
+    primary_key : Bytes?,
+    deterministic_key : Bytes?,
+    salt : String,
+  ) : String
+    encrypted_bytes = Base64.decode(encrypted)
+    last_error = nil.as(Cipher::DecryptionError?)
+
+    if primary_key
+      begin
+        key = KeyProvider.derive_key_with_keys(model_name, attribute_name, false, primary_key, deterministic_key, salt)
+        return Cipher.decrypt(encrypted_bytes, key)
+      rescue ex : Cipher::DecryptionError
+        last_error = ex
+      end
+    end
+
+    if deterministic_key
+      begin
+        key = KeyProvider.derive_key_with_keys(model_name, attribute_name, true, primary_key, deterministic_key, salt)
+        return Cipher.decrypt(encrypted_bytes, key)
+      rescue ex : Cipher::DecryptionError
+        last_error = ex
+      end
+    end
+
+    raise last_error if last_error
+    raise KeyProvider::KeyError.new("No encryption key was provided")
+  rescue ex : Base64::Error
+    raise Cipher::DecryptionError.new("Failed to decode Base64: #{ex.message}")
+  end
+
   # Encryption support mixed into every `Grant::Base` model. Provides the
   # `encrypts` macro and the per-instance decrypted-value cache. You normally do
   # not include this directly — `Grant::Base` already does.
