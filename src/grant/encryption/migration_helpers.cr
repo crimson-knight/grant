@@ -26,7 +26,7 @@ module Grant::Encryption
       total = model_class.count
       processed = 0
 
-      puts "Encrypting #{total} records..." if progress
+      Grant::Log.info { "Encrypting #{total} records..." } if progress
 
       # Process in batches
       offset = 0
@@ -60,13 +60,13 @@ module Grant::Encryption
 
         if progress
           percent = (processed.to_f / total * 100).round(2)
-          print "\rProgress: #{processed}/#{total} (#{percent}%)    "
+          Grant::Log.info { "Progress: #{processed}/#{total} (#{percent}%)" }
         end
 
         offset += batch_size
       end
 
-      puts "\nEncryption complete!" if progress
+      Grant::Log.info { "Encryption complete!" } if progress
       processed
     end
 
@@ -97,7 +97,7 @@ module Grant::Encryption
       total = model_class.count
       processed = 0
 
-      puts "Decrypting #{total} records..." if progress
+      Grant::Log.info { "Decrypting #{total} records..." } if progress
 
       # Process in batches
       offset = 0
@@ -127,13 +127,13 @@ module Grant::Encryption
 
         if progress
           percent = (processed.to_f / total * 100).round(2)
-          print "\rProgress: #{processed}/#{total} (#{percent}%)    "
+          Grant::Log.info { "Progress: #{processed}/#{total} (#{percent}%)" }
         end
 
         offset += batch_size
       end
 
-      puts "\nDecryption complete!" if progress
+      Grant::Log.info { "Decryption complete!" } if progress
       processed
     end
 
@@ -178,7 +178,7 @@ module Grant::Encryption
       total = model_class.count
       processed = 0
 
-      puts "Rotating encryption keys for #{total} records..." if progress
+      Grant::Log.info { "Rotating encryption keys for #{total} records..." } if progress
 
       # Process in batches
       offset = 0
@@ -232,13 +232,13 @@ module Grant::Encryption
 
         if progress
           percent = (processed.to_f / total * 100).round(2)
-          print "\rProgress: #{processed}/#{total} (#{percent}%)    "
+          Grant::Log.info { "Progress: #{processed}/#{total} (#{percent}%)" }
         end
 
         offset += batch_size
       end
 
-      puts "\nKey rotation complete!" if progress
+      Grant::Log.info { "Key rotation complete!" } if progress
       processed
     end
 
