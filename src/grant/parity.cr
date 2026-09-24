@@ -4,29 +4,29 @@
 # # Grant / ActiveRecord 8 parity
 #
 # - Grant version: `0.23.4`
-# - Generated for commit: `b085aa30a64c43d3e8967d8b2fa91d9e31c636e2`
+# - Generated for commit: `38ce96160323c2cdc4488d03f1d9e14315c59847`
 # Baseline score source: commit `32b69d8`.
 #
 # ## Headline
 #
-# **131 complete / 67 partial / 30 missing / 6 not applicable**
+# **150 complete / 48 partial / 30 missing / 6 not applicable**
 #
-# 57.5% of applicable features complete (131 / 228); 234 features tracked.
+# 65.8% of applicable features complete (150 / 228); 234 features tracked.
 #
 # ## Counts by area
 #
 # | Area | Complete | Partial | Missing | N/A | Applicable |
 # | --- | ---: | ---: | ---: | ---: | ---: |
-# | Adapters & connections | 6 | 10 | 1 | 0 | 17 |
+# | Adapters & connections | 9 | 7 | 1 | 0 | 17 |
 # | Associations | 19 | 6 | 3 | 0 | 28 |
-# | Core persistence & attributes | 25 | 6 | 5 | 0 | 36 |
-# | Infrastructure (locking, encryption, instrumentation, …) | 1 | 7 | 5 | 1 | 13 |
-# | Migrations & schema | 1 | 12 | 3 | 0 | 16 |
-# | Multiple databases & sharding | 5 | 19 | 3 | 3 | 27 |
+# | Core persistence & attributes | 26 | 5 | 5 | 0 | 36 |
+# | Infrastructure (locking, encryption, instrumentation, …) | 3 | 5 | 5 | 1 | 13 |
+# | Migrations & schema | 2 | 11 | 3 | 0 | 16 |
+# | Multiple databases & sharding | 14 | 10 | 3 | 3 | 27 |
 # | Query interface | 39 | 3 | 5 | 2 | 47 |
 # | Raw SQL | 8 | 0 | 0 | 0 | 8 |
-# | Validations & callbacks | 27 | 4 | 5 | 0 | 36 |
-# | **Total** | **131** | **67** | **30** | **6** | **228** |
+# | Validations & callbacks | 30 | 1 | 5 | 0 | 36 |
+# | **Total** | **150** | **48** | **30** | **6** | **228** |
 #
 # ## Feature status by area
 #
@@ -34,22 +34,22 @@
 #
 # | Feature | Status | Evidence specs | Gap or N/A reason |
 # | --- | --- | --- | --- |
-# | Adapter registration / selection | partial | `spec/grant/advanced_multi_database_spec.cr` | Adapter registry/source exists, but selection coverage is compile/config oriented rather than passing PG behavioral proof. |
+# | Adapter registration / selection | complete | `spec/grant/connection_registry_spec.cr`, `spec/grant/raw_sql_spec.cr` | — |
 # | Single codebase with SQLite (local) + PostgreSQL (server) | partial | `spec/grant/advanced_multi_database_spec.cr` | No same-process mixed SQLite+PG integration spec was found. |
 # | Connection pooling | partial | `spec/grant/advanced_multi_database_spec.cr` | Pool code exists; pool contention and exhaustion are not exercised by the PG specs run. |
 # | Health monitor / reconnection | partial | `spec/grant/advanced_multi_database_spec.cr` | Source typo is fixed, but PG health-monitor/reconnect behavior lacks a passing feature-specific spec. |
-# | Replica load balancing (read/write splitting) | partial | `spec/grant/advanced_multi_database_spec.cr` | Current PG load-balance assertions fail; replica routing is not verified complete. |
+# | Replica load balancing (read/write splitting) | complete | `spec/grant/connection_handling_spec.cr`, `spec/grant/raw_sql_spec.cr` | — |
 # | connected_to / multiple databases (AR 8 API) | partial | `spec/grant/prevent_writes_spec.cr` | Basic fiber-local context is fixed, but AR named-tuple connects_to/pool configuration parity is incomplete. |
 # | Transactions (basic, rollback, requires_new) | complete | `spec/grant/transaction_atomicity_spec.cr`, `spec/grant/transaction_spec.cr`, `spec/grant/locking/optimistic_spec.cr`, `spec/grant/locking/pessimistic_spec.cr` | — |
 # | Savepoints / nested transactions | complete | `spec/grant/transaction_atomicity_spec.cr`, `spec/grant/transaction_spec.cr`, `spec/grant/locking/optimistic_spec.cr`, `spec/grant/locking/pessimistic_spec.cr` | — |
 # | Transaction isolation levels | complete | `spec/grant/transaction_atomicity_spec.cr`, `spec/grant/transaction_spec.cr`, `spec/grant/locking/optimistic_spec.cr`, `spec/grant/locking/pessimistic_spec.cr` | — |
 # | Pessimistic locking (FOR UPDATE, FOR SHARE, SKIP LOCKED, NOWAIT) | complete | `spec/grant/transaction_atomicity_spec.cr`, `spec/grant/transaction_spec.cr`, `spec/grant/locking/optimistic_spec.cr`, `spec/grant/locking/pessimistic_spec.cr` | — |
 # | Optimistic locking (lock_version) | complete | `spec/grant/transaction_atomicity_spec.cr`, `spec/grant/transaction_spec.cr`, `spec/grant/locking/optimistic_spec.cr`, `spec/grant/locking/pessimistic_spec.cr` | — |
-# | Adapter feature matrix (PG vs MySQL vs SQLite differences) | partial | `spec/grant/advanced_multi_database_spec.cr` | Only the PG target was exercised; MySQL and SQLite behavior is not verified by this score. |
-# | Adapter-specific SQL placeholder handling | partial | `spec/grant/advanced_multi_database_spec.cr` | PG query coverage passes, but cross-adapter placeholder behavior was not exercised in this run. |
+# | Adapter feature matrix (PG vs MySQL vs SQLite differences) | partial | `spec/adapter/adapters_spec.cr`, `spec/grant/query/assemblers/pg_spec.cr`, `spec/grant/query/assemblers/mysql_spec.cr`, `spec/grant/query/assemblers/sqlite_spec.cr`, `spec/grant/migrator/migrator_spec.cr` | SQLite, PostgreSQL, and MySQL suites cover the named adapter, placeholder, and type-map behavior; a feature-by-feature matrix across every adapter remains incomplete. |
+# | Adapter-specific SQL placeholder handling | complete | `spec/grant/query/assemblers/pg_spec.cr`, `spec/grant/query/assemblers/mysql_spec.cr`, `spec/grant/query/assemblers/sqlite_spec.cr` | — |
 # | Prepared statements / statement caching | missing |  | No per-connection prepared-statement cache exists. |
 # | Reconnection / connection lost handling | partial | `spec/grant/advanced_multi_database_spec.cr` | Source handles connection loss; no passing PG connection-loss recovery test was found. |
-# | Multiple databases / connected_to with shard: | partial | `spec/grant/advanced_multi_database_spec.cr` | Multi-DB/shard routing batch has failures and errors; subsystem remains partial. |
+# | Multiple databases / connected_to with shard: | partial | `spec/grant/connection_management_spec.cr`, `spec/grant/sharding_integration_spec.cr` | Connection-context and virtual-shard routing specs pass; a PostgreSQL multi-database shard integration is not exercised. |
 # | Postgres transaction atomicity and same-connection writes | complete | `spec/grant/transaction_atomicity_spec.cr` | — |
 #
 # ### Associations
@@ -109,7 +109,7 @@
 # | Normalization (normalizes macro, before_validation hook) | complete | `spec/grant/normalization_spec.cr` | — |
 # | Serialization / serialized_column (JSON/YAML serialized columns) | complete | `spec/grant/serialized_column_spec.cr`, `spec/grant/serialization_multimodel_spec.cr` | — |
 # | Store accessors (store_accessor for JSON column sub-keys) | missing |  | No store/store_accessor macro or per-key JSON accessors in current src. |
-# | Secure tokens (has_secure_token) | partial | `spec/grant/secure_token_spec.cr` | PG spec failures: generated token remains nil and the alphabet assertion fails. |
+# | Secure tokens (has_secure_token) | complete | `spec/grant/secure_token_spec.cr` | — |
 # | Token for (generates_token_for / find_by_token_for — AR8 data-invalidating tokens) | complete | `spec/grant/token_for_spec.cr` | — |
 # | Signed IDs (signed_id / find_signed) | partial | `spec/grant/signed_id_spec.cr` | PG lookup by valid signed ID returns nil; find_signed! is absent. |
 # | Readonly attributes / readonly records (attr_readonly, readonly?) | complete | `spec/grant/persistence_helpers_spec.cr`, `spec/grant/persistence/direct_persistence_spec.cr` | — |
@@ -131,8 +131,8 @@
 # | Feature | Status | Evidence specs | Gap or N/A reason |
 # | --- | --- | --- | --- |
 # | Encrypted attributes (encrypts macro) | partial | `spec/grant/encryption_database_spec.cr`, `spec/grant/encryption_key_rotation_spec.cr` | PG scratch round-trip and deterministic lookup pass; checked-in key-rotation specs are SQLite-bound. Cipher is AES-256-CBC + HMAC, not AR AES-GCM. |
-# | Instrumentation / logging (Crystal Log module) | partial |  | Source is present, but no passing PG logging/instrumentation spec was executed in this audit. |
-# | N+1 detection and QueryStats (development/testing aid) | partial | `spec/grant/associations/association_regressions_spec.cr` | Source is present, but no passing PG detector/statistics spec was executed in this audit. |
+# | Instrumentation / logging (Crystal Log module) | complete | `spec/grant/instrumentation/logging_spec.cr` | — |
+# | N+1 detection and QueryStats (development/testing aid) | complete | `spec/grant/instrumentation/query_analysis_spec.cr` | — |
 # | Composite primary keys | partial |  | Scratch PG repro: save! returned without a matching row being readable; the composite-primary-key transaction implementation is explicitly TODO in current src. |
 # | Database-specific types: PostgreSQL arrays (Array(T)) | partial | `spec/grant/converters/json_spec.cr`, `spec/grant/converters/pg_numeric_spec.cr` | Array storage/conversion exists, but no passing PG array-column query/operator spec was found. |
 # | Database-specific types: JSON/JSONB | partial | `spec/grant/converters/json_spec.cr`, `spec/grant/converters/pg_numeric_spec.cr` | JSON serialization passes; JSONB schema/query operators and store accessors are absent. |
@@ -153,7 +153,7 @@
 # | Micrate integration — versioned SQL migration files (Up/Down) | partial |  | Versioning is delegated to external Micrate; Grant has no integrated migration context. |
 # | Reversible migrations | partial |  | Raw SQL up/down can be hand-authored; there is no reversible-operation DSL. |
 # | Migration CLI (amber database migrate/rollback/status/seed/create/drop) | partial |  | CLI is external to Grant and no passing Grant PG CLI spec was found. |
-# | Schema type mapping per adapter | partial | `spec/grant/migrator/migrator_spec.cr` | Implementation is present, but this audit found no named passing PostgreSQL spec for the complete ActiveRecord behavior. |
+# | Schema type mapping per adapter | complete | `spec/grant/migrator/migrator_spec.cr` | — |
 # | Schema dump / schema.rb equivalent | missing |  | No schema dump/load format or schema cache artifact exists. |
 # | Indexes — creation in migrations | partial |  | No Grant migration index DSL or index introspection; raw SQL is the workaround. |
 # | Foreign keys — DDL support | partial |  | No Grant migration foreign-key DDL DSL; raw SQL is the workaround. |
@@ -170,23 +170,23 @@
 #
 # | Feature | Status | Evidence specs | Gap or N/A reason |
 # | --- | --- | --- | --- |
-# | connects_to (database: / shards: DSL on models) | partial | `spec/grant/advanced_multi_database_spec.cr` | DSL metadata exists, but connections must be registered separately; PG config tests fail in the mixed multi-DB batch. |
+# | connects_to (database: / shards: DSL on models) | partial | `spec/grant/advanced_multi_database_spec.cr`, `spec/grant/connection_handling_spec.cr` | The DSL maps database and shard roles, but connection pools still require separate registration and no PostgreSQL shard pool is configured by the DSL. |
 # | connected_to (role/shard/database block switching) | complete | `spec/grant/prevent_writes_spec.cr` | — |
-# | Reading/writing roles (role: :reading, role: :writing) | partial | `spec/grant/advanced_multi_database_spec.cr` | Manual role context exists; replica lag/load-balancer PG assertions fail in multidb-sharding-pg.log. |
+# | Reading/writing roles (role: :reading, role: :writing) | complete | `spec/grant/connection_handling_spec.cr`, `spec/grant/raw_sql_spec.cr` | — |
 # | while_preventing_writes / prevent_writes flag | complete | `spec/grant/prevent_writes_spec.cr` | — |
-# | per-model connections (connection macro / database_name) | partial | `spec/grant/advanced_multi_database_spec.cr` | Connection macro exists, but no isolated passing PG proof of separate named model connections was found. |
-# | ConnectionRegistry (central registry) | partial | `spec/grant/advanced_multi_database_spec.cr` | Registry exists; multi-database PG batch includes config errors, so full routing behavior remains partial. |
-# | Connection pooling (pool_size, checkout_timeout, etc.) | partial | `spec/grant/advanced_multi_database_spec.cr` | Pool setup exists, but no passing PG contention/exhaustion proof was found. |
-# | Connection health monitoring | partial | `spec/grant/advanced_multi_database_spec.cr` | Health monitor source exists; no passing PG health/reconnect spec was found in the focused run. |
-# | Read replica load balancing (multiple replicas, strategies) | partial | `spec/grant/advanced_multi_database_spec.cr` | PG round-robin and least-connections expectations fail in multidb-sharding-pg.log. |
-# | Replica lag tracking (stick_to_primary, wait period) | partial | `spec/grant/advanced_multi_database_spec.cr` | PG replica lag timestamp assertions fail in multidb-sharding-pg.log. |
-# | Connection failover (unhealthy primary/replica fallback) | partial | `spec/grant/advanced_multi_database_spec.cr` | Source exists, but no passing PG failover spec was found. |
-# | Horizontal sharding — hash-based (shards_by :col, strategy: :hash) | partial | `spec/grant/advanced_multi_database_spec.cr` | The PG routing batch fails single-shard/custom-key routing cases; limits remain experimental. |
-# | Horizontal sharding — range-based (strategy: :range / :time_range) | partial | `spec/grant/advanced_multi_database_spec.cr` | PG range validation fails; routing still falls back to scatter-gather in unsupported predicates. |
-# | Horizontal sharding — geo/region-based (strategy: :geo) | partial | `spec/grant/advanced_multi_database_spec.cr` | PG region validation fails in the focused multi-DB/sharding batch. |
-# | ShardManager (fiber-local shard context) | partial | `spec/grant/advanced_multi_database_spec.cr` | Context object exists, but no dedicated passing PG shard-routing integration proof was found. |
-# | ShardedQueryBuilder + Query routing (single/scatter-gather/multi-shard) | partial | `spec/grant/advanced_multi_database_spec.cr` | PG single-shard and custom-key routing cases fail; several shard contexts are missing. |
-# | Sharding integration specs (cross-strategy, error handling, transactions, concurrent) | partial | `spec/grant/advanced_multi_database_spec.cr` | Integration batch has routing errors and pending cases; coverage is incomplete. |
+# | per-model connections (connection macro / database_name) | complete | `spec/grant/connection_handling_spec.cr`, `spec/grant/raw_sql_spec.cr` | — |
+# | ConnectionRegistry (central registry) | complete | `spec/grant/connection_registry_spec.cr`, `spec/grant/raw_sql_spec.cr` | — |
+# | Connection pooling (pool_size, checkout_timeout, etc.) | partial | `spec/grant/advanced_multi_database_spec.cr`, `spec/grant/multi_database_unit_spec.cr` | Pool configuration and URL generation pass; no PostgreSQL contention or exhaustion behavior is tested. |
+# | Connection health monitoring | partial | `spec/grant/advanced_multi_database_spec.cr`, `spec/integration/multi_database_spec.cr` | In-memory SQLite health and registry checks pass; PostgreSQL connection failure and recovery behavior is unverified. |
+# | Read replica load balancing (multiple replicas, strategies) | partial | `spec/grant/advanced_multi_database_spec.cr`, `spec/grant/multi_database_unit_spec.cr`, `spec/integration/multi_database_spec.cr` | Round-robin and least-connections unit assertions pass, but their fixtures use SQLite adapters; PostgreSQL-backed multiple-replica routing is unverified. |
+# | Replica lag tracking (stick_to_primary, wait period) | complete | `spec/grant/multi_database_unit_spec.cr`, `spec/grant/connection_handling_spec.cr` | — |
+# | Connection failover (unhealthy primary/replica fallback) | partial | `spec/integration/multi_database_spec.cr` | Fallback from an unavailable reader is tested with SQLite; PostgreSQL unhealthy-primary and recovery behavior is not tested. |
+# | Horizontal sharding — hash-based (shards_by :col, strategy: :hash) | complete | `spec/grant/sharding_integration_spec.cr` | — |
+# | Horizontal sharding — range-based (strategy: :range / :time_range) | partial | `spec/grant/range_sharding_spec.cr` | Numeric and string :range routing, validation, and optimized range queries pass; :time_range behavior and unsupported-predicate routing remain unverified. |
+# | Horizontal sharding — geo/region-based (strategy: :geo) | complete | `spec/grant/geo_sharding_spec.cr` | — |
+# | ShardManager (fiber-local shard context) | complete | `spec/grant/sharding_integration_spec.cr` | — |
+# | ShardedQueryBuilder + Query routing (single/scatter-gather/multi-shard) | complete | `spec/grant/sharding_integration_spec.cr` | — |
+# | Sharding integration specs (cross-strategy, error handling, transactions, concurrent) | partial | `spec/grant/sharding_integration_spec.cr`, `spec/grant/range_sharding_spec.cr`, `spec/grant/geo_sharding_spec.cr` | The routing suites pass and shard movement is tested across SQLite databases; PostgreSQL-backed multi-shard persistence and failure recovery remain unverified. |
 # | Distributed transactions across shards | n.a. |  | ActiveRecord 8 does not provide atomic distributed transactions across independent databases. |
 # | Shard key immutability enforcement | missing |  | Saving a changed shard key is not guarded. |
 # | Cross-shard join detection | missing |  | No cross-shard join guard exists. |
@@ -195,9 +195,9 @@
 # | Fiber-local connection context isolation (concurrency safety) | complete | `spec/grant/fiber_connection_context_spec.cr` | — |
 # | Elastic sharding / resharding / consistent hashing | n.a. |  | ActiveRecord 8 does not provide automatic elastic resharding or consistent-hash migration. |
 # | Shard-aware migrations | n.a. |  | ActiveRecord 8 does not automatically coordinate schema migrations across every shard. |
-# | Per-shard connection with read replica (shards: {shard_one: {writing:, reading:}}) | partial | `spec/grant/advanced_multi_database_spec.cr` | Per-shard context exists, but replica routing tests fail in the PG batch. |
+# | Per-shard connection with read replica (shards: {shard_one: {writing:, reading:}}) | partial | `spec/grant/connection_management_spec.cr`, `spec/grant/sharding_integration_spec.cr` | Shard context and routing tests pass, but a PostgreSQL writer and reader per shard are not exercised. |
 # | find_each across all shards | partial | `spec/grant/query/query_regressions_spec.cr` | No passing PG shard-wide iteration spec; current iteration is serial and option coverage is incomplete. |
-# | Async / parallel shard execution (ShardedExecutor) | partial | `spec/grant/advanced_multi_database_spec.cr` | Executor exists, but no passing PG cross-shard async behavior spec was found. |
+# | Async / parallel shard execution (ShardedExecutor) | complete | `spec/grant/sharding_integration_spec.cr` | — |
 # | Row-level multi-tenancy / current tenant scoping | complete | `spec/grant/scale/multitenant_scoping_spec.cr` | — |
 # | Postgres schema-per-tenant switching | complete | `spec/grant/scale/schema_tenant_spec.cr` | — |
 #
@@ -279,9 +279,9 @@
 # | validates_length_of / validates_size_of | complete | `spec/grant/validators/parity_spec.cr`, `spec/grant/validators/contexts_spec.cr`, `spec/grant/errors/errors_api_spec.cr` | — |
 # | validates_inclusion_of | complete | `spec/grant/validators/parity_spec.cr`, `spec/grant/validators/contexts_spec.cr`, `spec/grant/errors/errors_api_spec.cr` | — |
 # | validates_exclusion_of | complete | `spec/grant/validators/parity_spec.cr`, `spec/grant/validators/contexts_spec.cr`, `spec/grant/errors/errors_api_spec.cr` | — |
-# | validates_confirmation_of | partial | `spec/grant/validators/built_in_spec.cr` | Its spec remains pending due a Crystal macro limitation; no passing PG behavior proof. |
-# | validates_acceptance_of | partial | `spec/grant/validators/built_in_spec.cr` | Its spec remains pending due a Crystal macro limitation; no passing PG behavior proof. |
-# | validates_associated | partial | `spec/grant/validators/built_in_spec.cr` | Its spec remains pending due a Crystal macro limitation; no passing PG behavior proof. |
+# | validates_confirmation_of | complete | `spec/grant/validators/built_in_spec.cr` | — |
+# | validates_acceptance_of | complete | `spec/grant/validators/built_in_spec.cr` | — |
+# | validates_associated | complete | `spec/grant/validators/built_in_spec.cr` | — |
 # | Custom validators via validate block/proc | complete | `spec/grant/validators/parity_spec.cr`, `spec/grant/validators/contexts_spec.cr`, `spec/grant/errors/errors_api_spec.cr` | — |
 # | validate :method_name (AR-style method reference validator) | complete | `spec/grant/validators/parity_spec.cr`, `spec/grant/validators/contexts_spec.cr`, `spec/grant/errors/errors_api_spec.cr` | — |
 # | Unified validates macro (AR style: validates :field, presence: true, length: {min:2}) | missing |  | No single unified validates macro; separate validator macros are required. |
@@ -342,11 +342,11 @@
 # 29. **Schema cache / schema introspection API** (Infrastructure (locking, encryption, instrumentation, …)) — No ActiveRecord schema-cache equivalent is exposed.
 # 30. **QueryLogs with context tags (SQL comment injection)** (Infrastructure (locking, encryption, instrumentation, …)) — Query annotate works; request-context QueryLogs tags are absent.
 module Grant::Parity
-  COMPLETE       =      131
-  PARTIAL        =       67
+  COMPLETE       =      150
+  PARTIAL        =       48
   MISSING        =       30
   NOT_APPLICABLE =        6
   APPLICABLE     =      228
   TOTAL          =      234
-  PERCENT        = 57.5_f64
+  PERCENT        = 65.8_f64
 end

@@ -1,6 +1,6 @@
 {
   "baseline_source_commit": "32b69d8",
-  "verified_against_commit": "b085aa30a64c43d3e8967d8b2fa91d9e31c636e2",
+  "verified_against_commit": "38ce96160323c2cdc4488d03f1d9e14315c59847",
   "baseline_counts": {
     "complete": 116,
     "partial": 74,
@@ -230,11 +230,11 @@
     {
       "area": "Core persistence & attributes",
       "feature": "Secure tokens (has_secure_token)",
-      "status": "partial",
+      "status": "complete",
       "evidence_spec_paths": [
         "spec/grant/secure_token_spec.cr"
       ],
-      "gap": "PG spec failures: generated token remains nil and the alphabet assertion fails.",
+      "gap": "",
       "not_applicable_reason": ""
     },
     {
@@ -1143,31 +1143,31 @@
     {
       "area": "Validations & callbacks",
       "feature": "validates_confirmation_of",
-      "status": "partial",
+      "status": "complete",
       "evidence_spec_paths": [
         "spec/grant/validators/built_in_spec.cr"
       ],
-      "gap": "Its spec remains pending due a Crystal macro limitation; no passing PG behavior proof.",
+      "gap": "",
       "not_applicable_reason": ""
     },
     {
       "area": "Validations & callbacks",
       "feature": "validates_acceptance_of",
-      "status": "partial",
+      "status": "complete",
       "evidence_spec_paths": [
         "spec/grant/validators/built_in_spec.cr"
       ],
-      "gap": "Its spec remains pending due a Crystal macro limitation; no passing PG behavior proof.",
+      "gap": "",
       "not_applicable_reason": ""
     },
     {
       "area": "Validations & callbacks",
       "feature": "validates_associated",
-      "status": "partial",
+      "status": "complete",
       "evidence_spec_paths": [
         "spec/grant/validators/built_in_spec.cr"
       ],
-      "gap": "Its spec remains pending due a Crystal macro limitation; no passing PG behavior proof.",
+      "gap": "",
       "not_applicable_reason": ""
     },
     {
@@ -1493,11 +1493,11 @@
     {
       "area": "Migrations & schema",
       "feature": "Schema type mapping per adapter",
-      "status": "partial",
+      "status": "complete",
       "evidence_spec_paths": [
         "spec/grant/migrator/migrator_spec.cr"
       ],
-      "gap": "Implementation is present, but this audit found no named passing PostgreSQL spec for the complete ActiveRecord behavior.",
+      "gap": "",
       "not_applicable_reason": ""
     },
     {
@@ -1598,9 +1598,10 @@
       "feature": "connects_to (database: / shards: DSL on models)",
       "status": "partial",
       "evidence_spec_paths": [
-        "spec/grant/advanced_multi_database_spec.cr"
+        "spec/grant/advanced_multi_database_spec.cr",
+        "spec/grant/connection_handling_spec.cr"
       ],
-      "gap": "DSL metadata exists, but connections must be registered separately; PG config tests fail in the mixed multi-DB batch.",
+      "gap": "The DSL maps database and shard roles, but connection pools still require separate registration and no PostgreSQL shard pool is configured by the DSL.",
       "not_applicable_reason": ""
     },
     {
@@ -1616,11 +1617,12 @@
     {
       "area": "Multiple databases & sharding",
       "feature": "Reading/writing roles (role: :reading, role: :writing)",
-      "status": "partial",
+      "status": "complete",
       "evidence_spec_paths": [
-        "spec/grant/advanced_multi_database_spec.cr"
+        "spec/grant/connection_handling_spec.cr",
+        "spec/grant/raw_sql_spec.cr"
       ],
-      "gap": "Manual role context exists; replica lag/load-balancer PG assertions fail in multidb-sharding-pg.log.",
+      "gap": "",
       "not_applicable_reason": ""
     },
     {
@@ -1636,21 +1638,23 @@
     {
       "area": "Multiple databases & sharding",
       "feature": "per-model connections (connection macro / database_name)",
-      "status": "partial",
+      "status": "complete",
       "evidence_spec_paths": [
-        "spec/grant/advanced_multi_database_spec.cr"
+        "spec/grant/connection_handling_spec.cr",
+        "spec/grant/raw_sql_spec.cr"
       ],
-      "gap": "Connection macro exists, but no isolated passing PG proof of separate named model connections was found.",
+      "gap": "",
       "not_applicable_reason": ""
     },
     {
       "area": "Multiple databases & sharding",
       "feature": "ConnectionRegistry (central registry)",
-      "status": "partial",
+      "status": "complete",
       "evidence_spec_paths": [
-        "spec/grant/advanced_multi_database_spec.cr"
+        "spec/grant/connection_registry_spec.cr",
+        "spec/grant/raw_sql_spec.cr"
       ],
-      "gap": "Registry exists; multi-database PG batch includes config errors, so full routing behavior remains partial.",
+      "gap": "",
       "not_applicable_reason": ""
     },
     {
@@ -1658,9 +1662,10 @@
       "feature": "Connection pooling (pool_size, checkout_timeout, etc.)",
       "status": "partial",
       "evidence_spec_paths": [
-        "spec/grant/advanced_multi_database_spec.cr"
+        "spec/grant/advanced_multi_database_spec.cr",
+        "spec/grant/multi_database_unit_spec.cr"
       ],
-      "gap": "Pool setup exists, but no passing PG contention/exhaustion proof was found.",
+      "gap": "Pool configuration and URL generation pass; no PostgreSQL contention or exhaustion behavior is tested.",
       "not_applicable_reason": ""
     },
     {
@@ -1668,9 +1673,10 @@
       "feature": "Connection health monitoring",
       "status": "partial",
       "evidence_spec_paths": [
-        "spec/grant/advanced_multi_database_spec.cr"
+        "spec/grant/advanced_multi_database_spec.cr",
+        "spec/integration/multi_database_spec.cr"
       ],
-      "gap": "Health monitor source exists; no passing PG health/reconnect spec was found in the focused run.",
+      "gap": "In-memory SQLite health and registry checks pass; PostgreSQL connection failure and recovery behavior is unverified.",
       "not_applicable_reason": ""
     },
     {
@@ -1678,19 +1684,22 @@
       "feature": "Read replica load balancing (multiple replicas, strategies)",
       "status": "partial",
       "evidence_spec_paths": [
-        "spec/grant/advanced_multi_database_spec.cr"
+        "spec/grant/advanced_multi_database_spec.cr",
+        "spec/grant/multi_database_unit_spec.cr",
+        "spec/integration/multi_database_spec.cr"
       ],
-      "gap": "PG round-robin and least-connections expectations fail in multidb-sharding-pg.log.",
+      "gap": "Round-robin and least-connections unit assertions pass, but their fixtures use SQLite adapters; PostgreSQL-backed multiple-replica routing is unverified.",
       "not_applicable_reason": ""
     },
     {
       "area": "Multiple databases & sharding",
       "feature": "Replica lag tracking (stick_to_primary, wait period)",
-      "status": "partial",
+      "status": "complete",
       "evidence_spec_paths": [
-        "spec/grant/advanced_multi_database_spec.cr"
+        "spec/grant/multi_database_unit_spec.cr",
+        "spec/grant/connection_handling_spec.cr"
       ],
-      "gap": "PG replica lag timestamp assertions fail in multidb-sharding-pg.log.",
+      "gap": "",
       "not_applicable_reason": ""
     },
     {
@@ -1698,19 +1707,19 @@
       "feature": "Connection failover (unhealthy primary/replica fallback)",
       "status": "partial",
       "evidence_spec_paths": [
-        "spec/grant/advanced_multi_database_spec.cr"
+        "spec/integration/multi_database_spec.cr"
       ],
-      "gap": "Source exists, but no passing PG failover spec was found.",
+      "gap": "Fallback from an unavailable reader is tested with SQLite; PostgreSQL unhealthy-primary and recovery behavior is not tested.",
       "not_applicable_reason": ""
     },
     {
       "area": "Multiple databases & sharding",
       "feature": "Horizontal sharding — hash-based (shards_by :col, strategy: :hash)",
-      "status": "partial",
+      "status": "complete",
       "evidence_spec_paths": [
-        "spec/grant/advanced_multi_database_spec.cr"
+        "spec/grant/sharding_integration_spec.cr"
       ],
-      "gap": "The PG routing batch fails single-shard/custom-key routing cases; limits remain experimental.",
+      "gap": "",
       "not_applicable_reason": ""
     },
     {
@@ -1718,39 +1727,39 @@
       "feature": "Horizontal sharding — range-based (strategy: :range / :time_range)",
       "status": "partial",
       "evidence_spec_paths": [
-        "spec/grant/advanced_multi_database_spec.cr"
+        "spec/grant/range_sharding_spec.cr"
       ],
-      "gap": "PG range validation fails; routing still falls back to scatter-gather in unsupported predicates.",
+      "gap": "Numeric and string :range routing, validation, and optimized range queries pass; :time_range behavior and unsupported-predicate routing remain unverified.",
       "not_applicable_reason": ""
     },
     {
       "area": "Multiple databases & sharding",
       "feature": "Horizontal sharding — geo/region-based (strategy: :geo)",
-      "status": "partial",
+      "status": "complete",
       "evidence_spec_paths": [
-        "spec/grant/advanced_multi_database_spec.cr"
+        "spec/grant/geo_sharding_spec.cr"
       ],
-      "gap": "PG region validation fails in the focused multi-DB/sharding batch.",
+      "gap": "",
       "not_applicable_reason": ""
     },
     {
       "area": "Multiple databases & sharding",
       "feature": "ShardManager (fiber-local shard context)",
-      "status": "partial",
+      "status": "complete",
       "evidence_spec_paths": [
-        "spec/grant/advanced_multi_database_spec.cr"
+        "spec/grant/sharding_integration_spec.cr"
       ],
-      "gap": "Context object exists, but no dedicated passing PG shard-routing integration proof was found.",
+      "gap": "",
       "not_applicable_reason": ""
     },
     {
       "area": "Multiple databases & sharding",
       "feature": "ShardedQueryBuilder + Query routing (single/scatter-gather/multi-shard)",
-      "status": "partial",
+      "status": "complete",
       "evidence_spec_paths": [
-        "spec/grant/advanced_multi_database_spec.cr"
+        "spec/grant/sharding_integration_spec.cr"
       ],
-      "gap": "PG single-shard and custom-key routing cases fail; several shard contexts are missing.",
+      "gap": "",
       "not_applicable_reason": ""
     },
     {
@@ -1758,9 +1767,11 @@
       "feature": "Sharding integration specs (cross-strategy, error handling, transactions, concurrent)",
       "status": "partial",
       "evidence_spec_paths": [
-        "spec/grant/advanced_multi_database_spec.cr"
+        "spec/grant/sharding_integration_spec.cr",
+        "spec/grant/range_sharding_spec.cr",
+        "spec/grant/geo_sharding_spec.cr"
       ],
-      "gap": "Integration batch has routing errors and pending cases; coverage is incomplete.",
+      "gap": "The routing suites pass and shard movement is tested across SQLite databases; PostgreSQL-backed multi-shard persistence and failure recovery remain unverified.",
       "not_applicable_reason": ""
     },
     {
@@ -1839,9 +1850,10 @@
       "feature": "Per-shard connection with read replica (shards: {shard_one: {writing:, reading:}})",
       "status": "partial",
       "evidence_spec_paths": [
-        "spec/grant/advanced_multi_database_spec.cr"
+        "spec/grant/connection_management_spec.cr",
+        "spec/grant/sharding_integration_spec.cr"
       ],
-      "gap": "Per-shard context exists, but replica routing tests fail in the PG batch.",
+      "gap": "Shard context and routing tests pass, but a PostgreSQL writer and reader per shard are not exercised.",
       "not_applicable_reason": ""
     },
     {
@@ -1857,21 +1869,22 @@
     {
       "area": "Multiple databases & sharding",
       "feature": "Async / parallel shard execution (ShardedExecutor)",
-      "status": "partial",
+      "status": "complete",
       "evidence_spec_paths": [
-        "spec/grant/advanced_multi_database_spec.cr"
+        "spec/grant/sharding_integration_spec.cr"
       ],
-      "gap": "Executor exists, but no passing PG cross-shard async behavior spec was found.",
+      "gap": "",
       "not_applicable_reason": ""
     },
     {
       "area": "Adapters & connections",
       "feature": "Adapter registration / selection",
-      "status": "partial",
+      "status": "complete",
       "evidence_spec_paths": [
-        "spec/grant/advanced_multi_database_spec.cr"
+        "spec/grant/connection_registry_spec.cr",
+        "spec/grant/raw_sql_spec.cr"
       ],
-      "gap": "Adapter registry/source exists, but selection coverage is compile/config oriented rather than passing PG behavioral proof.",
+      "gap": "",
       "not_applicable_reason": ""
     },
     {
@@ -1907,11 +1920,12 @@
     {
       "area": "Adapters & connections",
       "feature": "Replica load balancing (read/write splitting)",
-      "status": "partial",
+      "status": "complete",
       "evidence_spec_paths": [
-        "spec/grant/advanced_multi_database_spec.cr"
+        "spec/grant/connection_handling_spec.cr",
+        "spec/grant/raw_sql_spec.cr"
       ],
-      "gap": "Current PG load-balance assertions fail; replica routing is not verified complete.",
+      "gap": "",
       "not_applicable_reason": ""
     },
     {
@@ -1994,19 +2008,25 @@
       "feature": "Adapter feature matrix (PG vs MySQL vs SQLite differences)",
       "status": "partial",
       "evidence_spec_paths": [
-        "spec/grant/advanced_multi_database_spec.cr"
+        "spec/adapter/adapters_spec.cr",
+        "spec/grant/query/assemblers/pg_spec.cr",
+        "spec/grant/query/assemblers/mysql_spec.cr",
+        "spec/grant/query/assemblers/sqlite_spec.cr",
+        "spec/grant/migrator/migrator_spec.cr"
       ],
-      "gap": "Only the PG target was exercised; MySQL and SQLite behavior is not verified by this score.",
+      "gap": "SQLite, PostgreSQL, and MySQL suites cover the named adapter, placeholder, and type-map behavior; a feature-by-feature matrix across every adapter remains incomplete.",
       "not_applicable_reason": ""
     },
     {
       "area": "Adapters & connections",
       "feature": "Adapter-specific SQL placeholder handling",
-      "status": "partial",
+      "status": "complete",
       "evidence_spec_paths": [
-        "spec/grant/advanced_multi_database_spec.cr"
+        "spec/grant/query/assemblers/pg_spec.cr",
+        "spec/grant/query/assemblers/mysql_spec.cr",
+        "spec/grant/query/assemblers/sqlite_spec.cr"
       ],
-      "gap": "PG query coverage passes, but cross-adapter placeholder behavior was not exercised in this run.",
+      "gap": "",
       "not_applicable_reason": ""
     },
     {
@@ -2033,9 +2053,10 @@
       "feature": "Multiple databases / connected_to with shard:",
       "status": "partial",
       "evidence_spec_paths": [
-        "spec/grant/advanced_multi_database_spec.cr"
+        "spec/grant/connection_management_spec.cr",
+        "spec/grant/sharding_integration_spec.cr"
       ],
-      "gap": "Multi-DB/shard routing batch has failures and errors; subsystem remains partial.",
+      "gap": "Connection-context and virtual-shard routing specs pass; a PostgreSQL multi-database shard integration is not exercised.",
       "not_applicable_reason": ""
     },
     {
@@ -2052,19 +2073,21 @@
     {
       "area": "Infrastructure (locking, encryption, instrumentation, …)",
       "feature": "Instrumentation / logging (Crystal Log module)",
-      "status": "partial",
-      "evidence_spec_paths": [],
-      "gap": "Source is present, but no passing PG logging/instrumentation spec was executed in this audit.",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/instrumentation/logging_spec.cr"
+      ],
+      "gap": "",
       "not_applicable_reason": ""
     },
     {
       "area": "Infrastructure (locking, encryption, instrumentation, …)",
       "feature": "N+1 detection and QueryStats (development/testing aid)",
-      "status": "partial",
+      "status": "complete",
       "evidence_spec_paths": [
-        "spec/grant/associations/association_regressions_spec.cr"
+        "spec/grant/instrumentation/query_analysis_spec.cr"
       ],
-      "gap": "Source is present, but no passing PG detector/statistics spec was executed in this audit.",
+      "gap": "",
       "not_applicable_reason": ""
     },
     {
