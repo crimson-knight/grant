@@ -250,8 +250,12 @@ module Grant::Polymorphic
     # comment.commentable_proxy.load # => Post? / Photo? / nil
     # ```
     def load : Grant::Base?
-      return nil unless @type && @id
-      Grant::Polymorphic.load_polymorphic(@type.not_nil!, @id.not_nil!)
+      if type = @type
+        if id = @id
+          return Grant::Polymorphic.load_polymorphic(type, id)
+        end
+      end
+      nil
     end
 
     # Resolves and returns the target record, raising `Grant::Querying::NotFound`
@@ -261,8 +265,9 @@ module Grant::Polymorphic
     # comment.commentable_proxy.load! # => Grant::Base (raises if absent)
     # ```
     def load! : Grant::Base
-      raise Grant::Querying::NotFound.new("Polymorphic association not set") unless @type && @id
-      Grant::Polymorphic.load_polymorphic!(@type.not_nil!, @id.not_nil!)
+      type = @type || raise Grant::Querying::NotFound.new("Polymorphic association not set")
+      id = @id || raise Grant::Querying::NotFound.new("Polymorphic association not set")
+      Grant::Polymorphic.load_polymorphic!(type, id)
     end
 
     # True when both the type and id are set (so a target can be resolved).

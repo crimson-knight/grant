@@ -359,7 +359,7 @@ module Grant::STI
     # for sequential loads; the polymorphic path must do it explicitly).
     def __sti_capture_loaded_state
       ensure_dirty_tracking_initialized
-      @changed_attributes.not_nil!.clear
+      dirty_tracking_hashes[1].clear
       capture_original_attributes
     end
 

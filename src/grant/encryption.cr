@@ -103,12 +103,15 @@ module Grant::Encryption
   # sealed = Grant::Encryption.encrypt("123-45-6789", "User", "ssn")
   # sealed # => Base64 ciphertext (String), differs each call (non-deterministic)
   # ```
-  def self.encrypt(value : String?, model_name : String, attribute_name : String, deterministic : Bool = false) : String?
-    return nil if value.nil?
-
+  def self.encrypt(value : String, model_name : String, attribute_name : String, deterministic : Bool = false) : String
     key = KeyProvider.derive_key(model_name, attribute_name, deterministic)
     encrypted_bytes = Cipher.encrypt(value, key, deterministic)
     Base64.strict_encode(encrypted_bytes)
+  end
+
+  def self.encrypt(value : String?, model_name : String, attribute_name : String, deterministic : Bool = false) : String?
+    return nil if value.nil?
+    encrypt(value, model_name, attribute_name, deterministic)
   end
 
   # Decrypts the Base64-encoded *encrypted* ciphertext for the
@@ -350,8 +353,8 @@ module Grant::Encryption
         if responds_to?(:changed_attributes)
           ensure_dirty_tracking_initialized
           # Track encrypted column change
-          old_val = @original_attributes.not_nil!["{{attribute.id}}_encrypted"]? || nil
-          @changed_attributes.not_nil!["{{attribute.id}}_encrypted"] = {old_val, @{{attribute.id}}_encrypted}
+          old_val = dirty_tracking_hashes[0]["{{attribute.id}}_encrypted"]? || nil
+          dirty_tracking_hashes[1]["{{attribute.id}}_encrypted"] = {old_val, @{{attribute.id}}_encrypted}
         end
       end
 

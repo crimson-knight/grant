@@ -139,7 +139,11 @@ class Grant::LoadedAssociationCollection(Owner, Target)
     association_owner = owner
     owner_value = association_owner.read_attribute(primary_key)
     key_changed = record.read_attribute(foreign_key) != owner_value
-    type_changed = type_column ? record.read_attribute(type_column.not_nil!) != association_owner.class.name : false
+    type_changed = if column = type_column
+                    record.read_attribute(column) != association_owner.class.name
+                  else
+                    false
+                  end
     assign_to_owner(record)
     if association_owner.persisted? && (!record.persisted? || key_changed || type_changed)
       record.save!

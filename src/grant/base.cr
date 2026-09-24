@@ -384,21 +384,6 @@ abstract class Grant::Base
       {original_attributes, changed_attributes, previous_changes}
     end
 
-    private def dirty_tracking_hashes : Tuple(
-      Hash(String, DirtyValue),
-      Hash(String, Tuple(DirtyValue, DirtyValue)),
-      Hash(String, Tuple(DirtyValue, DirtyValue)),
-    )
-      ensure_dirty_tracking_initialized
-      original_attributes = @original_attributes || {} of String => DirtyValue
-      changed_attributes = @changed_attributes || {} of String => Tuple(DirtyValue, DirtyValue)
-      previous_changes = @previous_changes || {} of String => Tuple(DirtyValue, DirtyValue)
-      @original_attributes = original_attributes
-      @changed_attributes = changed_attributes
-      @previous_changes = previous_changes
-      {original_attributes, changed_attributes, previous_changes}
-    end
-    
     # Hook for JSON/YAML deserialization
     def after_initialize
       ensure_dirty_tracking_initialized
@@ -464,9 +449,9 @@ abstract class Grant::Base
       # Later setter calls are then tracked even while the record is new.
       private def establish_initial_dirty_baseline
         ensure_dirty_tracking_initialized
-        @original_attributes.not_nil!.clear
-        @changed_attributes.not_nil!.clear
-        @previous_changes.not_nil!.clear
+        dirty_tracking_hashes[0].clear
+        dirty_tracking_hashes[1].clear
+        dirty_tracking_hashes[2].clear
         capture_original_attributes
       end
 
@@ -482,9 +467,9 @@ abstract class Grant::Base
       private def __transaction_rollback_action : Proc(Nil)
         ensure_dirty_tracking_initialized
         column_values = capture_column_values_for_transaction
-        original_attributes = @original_attributes.not_nil!.dup
-        changed_attributes = @changed_attributes.not_nil!.dup
-        previous_changes = @previous_changes.not_nil!.dup
+        original_attributes = dirty_tracking_hashes[0].dup
+        changed_attributes = dirty_tracking_hashes[1].dup
+        previous_changes = dirty_tracking_hashes[2].dup
         aggregation_changes_snapshot = aggregation_changes.dup
         pending_commit_callbacks = _pending_commit_callbacks.dup
         was_new_record = new_record?
@@ -527,7 +512,7 @@ abstract class Grant::Base
     # ```
     def changed? : Bool
       ensure_dirty_tracking_initialized
-      !@changed_attributes.not_nil!.empty?
+      !dirty_tracking_hashes[1].empty?
     end
     
     # Returns a hash of all changed attributes with their original and new values.
@@ -547,7 +532,7 @@ abstract class Grant::Base
     # ```
     def changes
       ensure_dirty_tracking_initialized
-      @changed_attributes.not_nil!.dup
+      dirty_tracking_hashes[1].dup
     end
     
     # Returns an array of names of attributes that have been changed.
@@ -561,7 +546,7 @@ abstract class Grant::Base
     # ```
     def changed_attributes
       ensure_dirty_tracking_initialized
-      @changed_attributes.not_nil!.keys
+      dirty_tracking_hashes[1].keys
     end
     
     # Returns the changes that were saved in the last save operation.
@@ -578,7 +563,7 @@ abstract class Grant::Base
     # ```
     def previous_changes
       ensure_dirty_tracking_initialized
-      @previous_changes.not_nil!.dup
+      dirty_tracking_hashes[2].dup
     end
     
     # Alias for `previous_changes`. Returns the changes from the last save.
@@ -604,7 +589,7 @@ abstract class Grant::Base
     # ```
     def attribute_changed?(name : String | Symbol) : Bool
       ensure_dirty_tracking_initialized
-      @changed_attributes.not_nil!.has_key?(name.to_s)
+      dirty_tracking_hashes[1].has_key?(name.to_s)
     end
     
     # Returns the original value of an attribute before it was changed.
@@ -622,8 +607,8 @@ abstract class Grant::Base
     def attribute_was(name : String | Symbol)
       ensure_dirty_tracking_initialized
       name_str = name.to_s
-      if @changed_attributes.not_nil!.has_key?(name_str)
-        @changed_attributes.not_nil![name_str][0]
+      if dirty_tracking_hashes[1].has_key?(name_str)
+        dirty_tracking_hashes[1][name_str][0]
       else
         read_attribute(name_str)
       end
@@ -644,7 +629,7 @@ abstract class Grant::Base
     # ```
     def saved_change_to_attribute?(name : String | Symbol) : Bool
       ensure_dirty_tracking_initialized
-      @previous_changes.not_nil!.has_key?(name.to_s)
+      dirty_tracking_hashes[2].has_key?(name.to_s)
     end
 
     # Returns `true` when *name* has a pending change that the next save will
@@ -680,7 +665,7 @@ abstract class Grant::Base
 
     private def current_attribute_change(name : String | Symbol)
       ensure_dirty_tracking_initialized
-      @changed_attributes.not_nil![name.to_s]?
+      dirty_tracking_hashes[1][name.to_s]?
     end
     
     # Returns the value of an attribute before the last save.
@@ -701,8 +686,8 @@ abstract class Grant::Base
     def attribute_before_last_save(name : String | Symbol)
       ensure_dirty_tracking_initialized
       name_str = name.to_s
-      if @previous_changes.not_nil!.has_key?(name_str)
-        @previous_changes.not_nil![name_str][0]
+      if dirty_tracking_hashes[2].has_key?(name_str)
+        dirty_tracking_hashes[2][name_str][0]
       else
         read_attribute(name_str)
       end
@@ -732,35 +717,35 @@ abstract class Grant::Base
     # ```
     def restore_attributes(attributes : Array(String)? = nil)
       ensure_dirty_tracking_initialized
-      attrs = attributes || @changed_attributes.not_nil!.keys
+      attrs = attributes || dirty_tracking_hashes[1].keys
       
       # Temporarily store changed attributes to restore
       changes_to_restore = {} of String => {Grant::Columns::Type, Grant::Columns::Type}
       attrs.each do |attr|
-        if change = @changed_attributes.not_nil![attr]?
+        if change = dirty_tracking_hashes[1][attr]?
           changes_to_restore[attr] = change
         end
       end
       
       # Clear the changes for the attributes being restored
       attrs.each do |attr|
-        @changed_attributes.not_nil!.delete(attr)
+        dirty_tracking_hashes[1].delete(attr)
       end
       
       # Restore the values using write_attribute
       changes_to_restore.each do |attr, change|
         write_attribute(attr, change[0])
         # Remove the change that write_attribute just added
-        @changed_attributes.not_nil!.delete(attr)
+        dirty_tracking_hashes[1].delete(attr)
       end
     end
     
     # Clear dirty state after save
     private def clear_dirty_state
       ensure_dirty_tracking_initialized
-      @previous_changes = @changed_attributes.not_nil!.dup
-      @changed_attributes.not_nil!.clear
-      @original_attributes.not_nil!.clear
+      @previous_changes = dirty_tracking_hashes[1].dup
+      dirty_tracking_hashes[1].clear
+      dirty_tracking_hashes[0].clear
       @new_record = false
       
       # Capture current state as new originals
@@ -772,8 +757,8 @@ abstract class Grant::Base
     private def clear_dirty_tracking_for(attribute_names : Array(String))
       ensure_dirty_tracking_initialized
       attribute_names.each do |attribute_name|
-        @changed_attributes.not_nil!.delete(attribute_name)
-        @original_attributes.not_nil![attribute_name] = read_attribute(attribute_name).as(DirtyValue)
+        dirty_tracking_hashes[1].delete(attribute_name)
+        dirty_tracking_hashes[0][attribute_name] = read_attribute(attribute_name).as(DirtyValue)
       end
     end
     

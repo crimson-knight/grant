@@ -257,9 +257,9 @@ module Grant::Query::Assembler
       when Nil
         nil
       when String
-        Grant::Encryption.encrypt(value, Model.name, attribute_name, true).not_nil!
+        Grant::Encryption.encrypt(value, Model.name, attribute_name, true)
       when Array(String)
-        value.map { |item| Grant::Encryption.encrypt(item, Model.name, attribute_name, true).not_nil! }
+        value.map { |item| Grant::Encryption.encrypt(item, Model.name, attribute_name, true) }
       else
         raise ArgumentError.new("Encrypted field #{attribute_name.inspect} can only be queried with String values")
       end
@@ -360,7 +360,7 @@ module Grant::Query::Assembler
           if @query.group_fields.any? && @query.group_fields.none? { |expression| expression[:field] == Model.primary_name }
             return nil
           end
-          if @query.distinct? && @query.select_columns && !@query.select_columns.not_nil!.includes?(Model.primary_name)
+          if @query.distinct? && (select_columns = @query.select_columns) && !select_columns.includes?(Model.primary_name)
             return nil
           end
           order_fields = default_order

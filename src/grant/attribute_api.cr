@@ -84,15 +84,15 @@ module Grant::AttributeApi
           ensure_dirty_tracking_initialized
           
           if !new_record? && @{{name}} != value
-            if !@original_attributes.not_nil!.has_key?({{name.stringify}})
-              @original_attributes.not_nil![{{name.stringify}}] = @{{name}}.as(Grant::Base::DirtyValue)
+            if !dirty_tracking_hashes[0].has_key?({{name.stringify}})
+              dirty_tracking_hashes[0][{{name.stringify}}] = @{{name}}.as(Grant::Base::DirtyValue)
             end
             
-            original = @original_attributes.not_nil![{{name.stringify}}]
+            original = dirty_tracking_hashes[0][{{name.stringify}}]
             if original == value
-              @changed_attributes.not_nil!.delete({{name.stringify}})
+              dirty_tracking_hashes[1].delete({{name.stringify}})
             else
-              @changed_attributes.not_nil![{{name.stringify}}] = {original, value.as(Grant::Base::DirtyValue)}
+              dirty_tracking_hashes[1][{{name.stringify}}] = {original, value.as(Grant::Base::DirtyValue)}
             end
           end
           
@@ -102,13 +102,13 @@ module Grant::AttributeApi
         # Dirty tracking methods
         def {{name}}_changed? : Bool
           ensure_dirty_tracking_initialized
-          @changed_attributes.not_nil!.has_key?({{name.stringify}})
+          dirty_tracking_hashes[1].has_key?({{name.stringify}})
         end
         
         def {{name}}_was : {{type}}?
           ensure_dirty_tracking_initialized
-          if @changed_attributes.not_nil!.has_key?({{name.stringify}})
-            @changed_attributes.not_nil![{{name.stringify}}][0].as({{type}}?)
+          if dirty_tracking_hashes[1].has_key?({{name.stringify}})
+            dirty_tracking_hashes[1][{{name.stringify}}][0].as({{type}}?)
           else
             @{{name}}
           end
@@ -116,7 +116,7 @@ module Grant::AttributeApi
         
         def {{name}}_change : Tuple({{type}}?, {{type}}?)?
           ensure_dirty_tracking_initialized
-          if change = @changed_attributes.not_nil![{{name.stringify}}]?
+          if change = dirty_tracking_hashes[1][{{name.stringify}}]?
             {change[0].as({{type}}?), change[1].as({{type}}?)}
           end
         end

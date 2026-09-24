@@ -174,7 +174,8 @@ module Grant::ValueObjects
 
       # A partially populated value object cannot satisfy its constructor.
       {% for column_name, attr_name in mapping_hash %}
-        return nil if @{{column_name.id}}.nil?
+        grant_{{column_name.id}}_value = @{{column_name.id}}
+        return nil if grant_{{column_name.id}}_value.nil?
       {% end %}
       
       # Build the value object
@@ -182,7 +183,7 @@ module Grant::ValueObjects
         # Use custom constructor
         result = {{actual_constructor}}.call(
           {% for column_name, attr_name in mapping_hash %}
-            @{{column_name.id}},
+            grant_{{column_name.id}}_value,
           {% end %}
         )
         result.as({{klass}}?)
@@ -190,7 +191,7 @@ module Grant::ValueObjects
         # Use default constructor with named arguments
         {{klass}}.new(
           {% for column_name, attr_name in mapping_hash %}
-            {{attr_name.id}}: @{{column_name.id}}.not_nil!,
+            {{attr_name.id}}: grant_{{column_name.id}}_value,
           {% end %}
         )
       {% end %}
@@ -230,19 +231,20 @@ module Grant::ValueObjects
     # Get the previous value of the aggregation
     def {{method_name}}_was : {{klass}}?
       {% for column_name, attr_name in mapping_hash %}
-        return nil if {{column_name.id}}_was.nil?
+        grant_{{column_name.id}}_was_value = {{column_name.id}}_was
+        return nil if grant_{{column_name.id}}_was_value.nil?
       {% end %}
 
       {% if actual_constructor %}
         {{actual_constructor}}.call(
           {% for column_name, attr_name in mapping_hash %}
-            {{column_name.id}}_was,
+            grant_{{column_name.id}}_was_value,
           {% end %}
         ).as({{klass}}?)
       {% else %}
         {{klass}}.new(
           {% for column_name, attr_name in mapping_hash %}
-            {{attr_name.id}}: {{column_name.id}}_was.not_nil!,
+            {{attr_name.id}}: grant_{{column_name.id}}_was_value,
           {% end %}
         )
       {% end %}

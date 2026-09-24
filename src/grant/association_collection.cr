@@ -39,9 +39,10 @@ class Grant::AssociationCollection(Owner, Target)
       results.each { |record| record.set_loaded_association(inverse.to_s, owner) }
     end
     if clause.empty? && params.empty?
-      @loaded_records = results.dup
+      loaded_records = results.dup
+      @loaded_records = loaded_records
       if association_name = @association_name
-        owner.set_loaded_association(association_name, @loaded_records.not_nil!)
+        owner.set_loaded_association(association_name, loaded_records)
       end
     end
     results
@@ -327,7 +328,9 @@ class Grant::AssociationCollection(Owner, Target)
         source_key = through_metadata[:target_class].quote(source_metadata[:foreign_key])
         target_key = source_metadata[:primary_key]
       else
-        source_key = through_metadata[:target_class].quote(through_metadata[:target_class].primary_name.not_nil!)
+        join_model = through_metadata[:target_class]
+        primary_name = join_model.primary_name || raise Grant::Querying::MissingPrimaryKeyError.new("#{join_model.name} has no primary key")
+        source_key = join_model.quote(primary_name)
         target_key = source_metadata[:foreign_key]
       end
       join_model = through_metadata[:target_class]
@@ -401,7 +404,8 @@ class Grant::AssociationCollection(Owner, Target)
       join_model = through_metadata[:target_class]
       join_table = join_model.quoted_table_name
       target_table = Target.quoted_table_name
-      join_primary_key = join_model.quote(join_model.primary_name.not_nil!)
+      join_primary_name = join_model.primary_name || raise Grant::Querying::MissingPrimaryKeyError.new("#{join_model.name} has no primary key")
+      join_primary_key = join_model.quote(join_primary_name)
       target_join = if source_metadata[:type] == :belongs_to
                       "#{target_table}.#{Target.quote(source_metadata[:primary_key])} = #{join_table}.#{join_model.quote(source_metadata[:foreign_key])}"
                     else
