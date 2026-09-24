@@ -343,7 +343,7 @@ module Grant::ConnectionManagement
       Grant::Connections.connection_switch_wait_period = value
     end
 
-    # Keeps calls to the former `connection_config(**options)` macro working
+    # Keeps calls to the former `connection_config(**options)` method working
     # while applications transition to `configure_connection(**options)`.
     @[Deprecated("Use configure_connection instead")]
     def connection_config(**options) : Nil
