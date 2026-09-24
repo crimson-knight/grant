@@ -3,19 +3,25 @@ shards:
   ameba:
     git: https://github.com/crystal-ameba/ameba.git
     version: 1.7.0-dev+git.commit.cdd58b34b0d8a9c785d67183a7a8f07541549e55
+    checksum: sha256:18ee1d2c96b1b32707b7e43e37f66b8809ee024927d6ba508f0e56e06a5d9876
 
   db:
     git: https://github.com/crystal-lang/crystal-db.git
     version: 0.14.0+git.commit.9fff44dd1f61446f9aaffafbb50c4118fe92a3dc
+    checksum: sha256:4a4dea15c27b985cd9d8c5c545024daafab347b56986252fd24fcc3f18e5c024
 
   mysql:
     git: https://github.com/crimson-knight/crystal-mysql.git
     version: 0.17.0+git.commit.c061324dcef89a200a7a3f86a59b2ebf03f83602
+    checksum: sha256:1566e612cc9021f40db16153491d79191b327576f3dd5facaf1e71b37a574dbc
 
   pg:
     git: https://github.com/will/crystal-pg.git
     version: 0.30.0+git.commit.1f4aefd82440cffd6e70ccb02b7d27bfbfc6d25d
+    checksum: sha256:0fcacb5e2d717882de0f809b937224338d171e2a7937c97cb5d5b0306c90eff9
 
   sqlite3:
     git: https://github.com/crystal-lang/crystal-sqlite3.git
     version: 0.23.0+git.commit.271a1314a6c64e6c3d98942a39bf1b3e8326b190
+    checksum: sha256:e62db0abc50b1437630a25594e175cb3e6949c21bcf55cebefdc7d3a8425988d
+

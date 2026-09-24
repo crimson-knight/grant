@@ -13,13 +13,9 @@ license: MIT
 dependencies:
   db:
     github: crystal-lang/crystal-db
-    # crystal-db 0.14.0, pinned to the peeled release tag commit.
+    # Leave this runtime dependency versioned so driver semver ranges resolve.
+    # The regenerated lockfile pins the source commit and verifies its hash.
     version: "0.14.0"
-    commit: 9fff44dd1f61446f9aaffafbb50c4118fe92a3dc
-    # Bumped 0.13 -> 0.14 to satisfy the bridged mysql 0.17.0 (crystal-mysql
-    # PR #123). The current sqlite3 (0.23) and pg (0.30) also support db 0.14,
-    # so the whole set resolves cleanly. Revert to ~> 0.13 if the bridge is
-    # rolled back.
 
 development_dependencies:
   # MySQL 8/9 BRIDGE: crystal-lang/crystal-mysql does not yet have a RELEASE with
