@@ -45,7 +45,7 @@ describe "Grant::Associations::Polymorphic" do
       comment1 = PolymorphicComment.new(content: "About the post")
       comment1.commentable = post
       comment1.save!
-      
+
       comment2 = PolymorphicComment.new(content: "About the book")
       comment2.commentable = book
       comment2.save!
@@ -70,11 +70,11 @@ describe "Grant::Associations::Polymorphic" do
       comment1 = PolymorphicComment.new(content: "First post comment")
       comment1.commentable = post
       comment1.save!
-      
+
       comment2 = PolymorphicComment.new(content: "Second post comment")
       comment2.commentable = post
       comment2.save!
-      
+
       comment3 = PolymorphicComment.new(content: "PolyBook comment")
       comment3.commentable = book
       comment3.save!
@@ -98,7 +98,7 @@ describe "Grant::Associations::Polymorphic" do
       post_image = Image.new(url: "post.jpg")
       post_image.imageable = post
       post_image.save!
-      
+
       book_image = Image.new(url: "book.jpg")
       book_image.imageable = book
       book_image.save!

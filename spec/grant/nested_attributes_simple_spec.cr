@@ -47,7 +47,7 @@ describe "Grant::NestedAttributes Simple V2" do
       author = TestAuthor.new(name: "John")
       author.posts_attributes = [
         {title: "Post 1", content: "Content 1"},
-        {title: "Post 2", content: "Content 2"}
+        {title: "Post 2", content: "Content 2"},
       ]
 
       attrs = author.posts_nested_attributes
@@ -74,8 +74,8 @@ describe "Grant::NestedAttributes Simple V2" do
       author = TestAuthor.new(name: "John")
       author.posts_attributes = [
         {title: "Valid Post", content: "Content"},
-        {title: "", content: ""},     # Should be rejected
-        {title: "Another Valid", content: "More content"}
+        {title: "", content: ""}, # Should be rejected
+        {title: "Another Valid", content: "More content"},
       ]
 
       attrs = author.posts_nested_attributes
@@ -89,7 +89,7 @@ describe "Grant::NestedAttributes Simple V2" do
       author = TestAuthor.new(name: "John")
       author.posts_attributes = [
         {id: 1, _destroy: true},  # Should not be rejected even though other fields are blank
-        {title: "", content: ""}  # Should be rejected
+        {title: "", content: ""}, # Should be rejected
       ]
 
       attrs = author.posts_nested_attributes
@@ -109,7 +109,7 @@ describe "Grant::NestedAttributes Simple V2" do
           {title: "Post 1"},
           {title: "Post 2"},
           {title: "Post 3"},
-          {title: "Post 4"}  # This exceeds the limit
+          {title: "Post 4"}, # This exceeds the limit
         ]
       end
     end
@@ -119,7 +119,7 @@ describe "Grant::NestedAttributes Simple V2" do
       author.posts_attributes = [
         {title: "Post 1"},
         {title: "Post 2"},
-        {title: "Post 3"}
+        {title: "Post 3"},
       ]
 
       attrs = author.posts_nested_attributes
@@ -132,20 +132,20 @@ describe "Grant::NestedAttributes Simple V2" do
     it "ignores new records when update_only is true" do
       author = TestAuthor.new(name: "John")
       author.profile_attributes = {
-        bio: "New bio",
-        website: "example.com"
+        bio:     "New bio",
+        website: "example.com",
       }
 
       attrs = author.profile_nested_attributes
       attrs.should_not be_nil
-      attrs.not_nil!.size.should eq(0)  # Should be empty because no id
+      attrs.not_nil!.size.should eq(0) # Should be empty because no id
     end
 
     it "accepts records with id when update_only is true" do
       author = TestAuthor.new(name: "John")
       author.profile_attributes = {
-        id: 123,
-        bio: "Updated bio"
+        id:  123,
+        bio: "Updated bio",
       }
 
       attrs = author.profile_nested_attributes
@@ -160,9 +160,9 @@ describe "Grant::NestedAttributes Simple V2" do
     it "handles create, update, and destroy markers" do
       author = TestAuthor.new(name: "John")
       author.posts_attributes = [
-        {id: 1, title: "Updated Post"},        # Update
-        {id: 2, _destroy: true},               # Destroy
-        {title: "New Post", content: "New"}    # Create
+        {id: 1, title: "Updated Post"},      # Update
+        {id: 2, _destroy: true},             # Destroy
+        {title: "New Post", content: "New"}, # Create
       ]
 
       attrs = author.posts_nested_attributes

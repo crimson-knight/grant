@@ -71,7 +71,6 @@ class ReadWriteModel < Grant::Base
       reading: "postgres://reader@localhost/test",
     }
   )
-
 end
 
 # Now define the actual tests

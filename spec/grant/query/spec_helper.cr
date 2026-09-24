@@ -46,7 +46,7 @@ def query_fields
 end
 
 def builder
-{% if (env("CURRENT_ADAPTER") || "sqlite").id == "pg" %}
+  {% if (env("CURRENT_ADAPTER") || "sqlite").id == "pg" %}
     Grant::Query::Builder(Model).new Grant::Query::Builder::DbType::Pg
   {% elsif (env("CURRENT_ADAPTER") || "sqlite").id == "mysql" %}
     Grant::Query::Builder(Model).new Grant::Query::Builder::DbType::Mysql
