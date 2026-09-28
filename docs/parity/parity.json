@@ -624,11 +624,12 @@
     },
     {
       "area": "Query interface",
-      "feature": "aggregations (count / sum / avg / min / max)",
+      "feature": "aggregations (count / sum / avg / min / max; Model.count returns Int64)",
       "status": "complete",
       "evidence_spec_paths": [
         "spec/grant/query/query_parity_spec.cr",
         "spec/grant/querying/relation_calculations_spec.cr",
+        "spec/grant/querying/count_spec.cr",
         "spec/grant/query/modifiers_spec.cr"
       ],
       "gap": "",

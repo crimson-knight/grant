@@ -174,18 +174,15 @@ module Grant::Sharding
       # for a sharded model with no shard context. Route it through the sharded
       # query builder instead so `Model.count` scatter-gathers across all shards
       # (and still single-shards if a shard context is active).
-      def self.count : Int32
+      # Returns the count as `Int64`.
+      def self.count : Int64
         if sharding_config
           result = __builder.count
-          total = case result
-                  when Int64
-                    result
-                  when Hash(Grant::Columns::Type, Int64)
-                    result.values.sum
-                  else
-                    result.values.sum
-                  end
-          total.to_i32
+          if result.is_a?(Int64)
+            result
+          else
+            result.values.sum
+          end
         else
           super
         end
@@ -413,7 +410,8 @@ module Grant::Sharding
       @scope.all
     end
 
-    def count
+    # Returns scalar or grouped counts from the selected shard.
+    def count : Grant::Query::Builder::CountResult
       @scope.count
     end
 
@@ -431,13 +429,11 @@ module Grant::Sharding
       @scope = MultiShardScope(Model).new(@model)
     end
 
+    # Returns the summed count across all shards as `Int64`.
     def count : Int64
       result = @scope.count
-      case result
-      when Int64
+      if result.is_a?(Int64)
         result
-      when Hash(Grant::Columns::Type, Int64)
-        result.values.sum
       else
         result.values.sum
       end

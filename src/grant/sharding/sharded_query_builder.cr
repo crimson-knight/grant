@@ -221,7 +221,7 @@ module Grant::Sharding
       query_builder.on_shard(@shard).find!(id)
     end
 
-    def count
+    def count : Query::Builder::CountResult
       query_builder.on_shard(@shard).count
     end
 
@@ -254,7 +254,7 @@ module Grant::Sharding
       query_builder.on_all_shards.where(**conditions)
     end
 
-    def count
+    def count : Query::Builder::CountResult
       query_builder.on_all_shards.count
     end
 

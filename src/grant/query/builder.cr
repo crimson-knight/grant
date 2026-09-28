@@ -1235,6 +1235,7 @@ class Grant::Query::Builder(Model)
   # Executes a `COUNT(*)` for the current conditions and returns the row count.
   #
   # Counts in the database (no rows are hydrated). A `none` relation returns `0`.
+  # Ungrouped results are `Int64`; grouped results map each group key to `Int64`.
   # Routes through IN-list chunking and the index-hint fallback like `select`.
   #
   # ```
@@ -1330,17 +1331,15 @@ class Grant::Query::Builder(Model)
   end
 
   # Returns the number of matching records. Alias for `count`.
+  # Returns an `Int64`, summing grouped counts when the relation is grouped.
   #
   # ```
   # User.where(active: true).size # => 42
   # ```
   def size : Int64
     result = count
-    case result
-    when Int64
+    if result.is_a?(Int64)
       result
-    when Hash(Grant::Columns::Type, Int64)
-      result.values.sum
     else
       result.values.sum
     end

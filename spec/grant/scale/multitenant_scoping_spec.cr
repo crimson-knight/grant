@@ -81,7 +81,9 @@ describe "Grant multitenant default scope" do
       ScopedTenantRecord.preload(:children).select.map(&.title).sort.should eq(["tenant one", "tenant one other"])
       ScopedTenantRecord.eager_load(:children).select.map(&.title).sort.should eq(["tenant one", "tenant one other"])
 
-      ScopedTenantRecord.count.should eq(2)
+      tenant_count = ScopedTenantRecord.count
+      tenant_count.should be_a(Int64)
+      tenant_count.should eq(2)
       ScopedTenantRecord.async_count.wait.should eq(2_i64)
       ScopedTenantRecord.async_all.wait.map(&.title).sort.should eq(["tenant one", "tenant one other"])
       ScopedTenantRecord.sum(:score).should eq(30.0)

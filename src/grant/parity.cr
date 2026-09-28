@@ -235,7 +235,7 @@
 # | joins (INNER JOIN) | complete | `spec/grant/query/query_parity_spec.cr` | — |
 # | left_outer_joins (LEFT JOIN) | complete | `spec/grant/query/query_parity_spec.cr` | — |
 # | where.missing / where.has (association-based JOIN conditions) | partial |  | Grant requires explicit table and foreign_key arguments; Rails accepts association names. |
-# | aggregations (count / sum / avg / min / max) | complete | `spec/grant/query/query_parity_spec.cr`, `spec/grant/querying/relation_calculations_spec.cr`, `spec/grant/query/modifiers_spec.cr` | — |
+# | aggregations (count / sum / avg / min / max; Model.count returns Int64) | complete | `spec/grant/query/query_parity_spec.cr`, `spec/grant/querying/relation_calculations_spec.cr`, `spec/grant/querying/count_spec.cr`, `spec/grant/query/modifiers_spec.cr` | — |
 # | calculate (generic aggregation method) | missing |  | Named aggregate methods exist; the AR calculate API is absent. |
 # | tally_by (group count via Enumerable) | n.a. |  | tally_by is not an ActiveRecord 8 public API. |
 # | none (null relation) | complete | `spec/grant/query/query_parity_spec.cr`, `spec/grant/querying/relation_calculations_spec.cr`, `spec/grant/query/modifiers_spec.cr` | — |

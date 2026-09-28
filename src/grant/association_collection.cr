@@ -56,16 +56,18 @@ class Grant::AssociationCollection(Owner, Target)
     all
   end
 
-  def size : Int32
+  # Returns the association size as `Int64`, using loaded records when present.
+  def size : Int64
     if records = @loaded_records
-      records.size
+      records.size.to_i64
     else
-      count.to_i32
+      count
     end
   end
 
   # Returns the database count within the owner's association scope without
   # hydrating records, even when the association target has already been loaded.
+  # Returns `Int64`.
   def count : Int64
     ensure_lazy_loading_allowed
     result = association_relation.count

@@ -41,6 +41,7 @@ describe "association collection query methods" do
 
     owner.posts.count.should eq(2_i64)
     owner.posts.size.should eq(2)
+    owner.posts.size.should be_a(Int64)
     owner.posts.length.should eq(2)
     owner.posts.empty?.should be_false
     owner.posts.any?.should be_true
@@ -54,6 +55,7 @@ describe "association collection query methods" do
     owner.set_loaded_association("posts", [first_post])
 
     owner.posts.size.should eq(1)
+    owner.posts.size.should be_a(Int64)
     owner.posts.length.should eq(1)
     owner.posts.count.should eq(2_i64)
     owner.posts.empty?.should be_false

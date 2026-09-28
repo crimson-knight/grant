@@ -26,8 +26,9 @@ class Grant::LoadedAssociationCollection(Owner, Target)
     Collection(Target).new(-> { @records })
   end
 
-  def size : Int32
-    @records.size
+  # Returns the number of loaded records as `Int64`.
+  def size : Int64
+    @records.size.to_i64
   end
 
   def count : Int64

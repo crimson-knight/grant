@@ -563,21 +563,18 @@ module Grant::Querying
     #
     # Counts the default scope and any active filters. To count an additional
     # filtered set, use the chainable builder: `User.where(active: true).count`.
+    # The scalar result is an `Int64`.
     #
     # ```
     # User.count # => 42 (within the default scope, when present)
     # ```
-    def count : Int32
+    def count : Int64
       result = current_scope.count
-      total = case result
-              when Int64
-                result
-              when Hash(Grant::Columns::Type, Int64)
-                result.values.sum
-              else
-                result.values.sum
-              end
-      total.to_i32
+      if result.is_a?(Int64)
+        result
+      else
+        result.values.sum
+      end
     end
 
     def exec(clause : String = "", binds : Array(Grant::Columns::Type) = [] of Grant::Columns::Type) : DB::ExecResult
