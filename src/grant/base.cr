@@ -139,7 +139,6 @@ abstract class Grant::Base
   extend Attributes::ClassMethods
   extend Integration::ClassMethods
 
-
   # Serialization support is included on the abstract base itself (not only on
   # concrete subclasses via `inherited`) so that the abstract `Grant::Base` type
   # — to which Crystal widens a union of two-or-more subclasses (`Grant::Base+`)

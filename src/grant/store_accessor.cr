@@ -23,11 +23,11 @@
 # end
 #
 # u = User.new
-# u.theme                  # => "light"  (default; nothing built yet)
-# u.theme = "dark"         # builds UserSettings, marks the column dirty
-# u.theme_changed?         # => true
-# u.theme_was              # => "light"
-# u.notifications?         # => true
+# u.theme          # => "light"  (default; nothing built yet)
+# u.theme = "dark" # builds UserSettings, marks the column dirty
+# u.theme_changed? # => true
+# u.theme_was      # => "light"
+# u.notifications? # => true
 # ```
 #
 # Keys typed `Bool` also get a `key?` predicate. `prefix: true` (or a Symbol or
