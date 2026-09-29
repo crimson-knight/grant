@@ -227,7 +227,7 @@ module Grant::Query::Assembler
                             end
       valid_column = if qualifier.nil? || qualifier == Model.table_name
                        Model.fields.includes?(column) || !encrypted_attribute.nil?
-                     elsif @query.join_clauses.any? { |join| Grant::Query::JoinSupport.qualifier(join[:table]) == qualifier }
+                     elsif Grant::Query::JoinSupport.joins?(@query.join_clauses, qualifier)
                        if association = Grant::AssociationRegistry.get(Model.name, qualifier)
                          association[:target_class].fields.includes?(column)
                        else
@@ -419,7 +419,7 @@ module Grant::Query::Assembler
       parts = field.split('.')
       return qualify_join_field(field, Model.quote(Model.table_name)) unless parts.size == 2 && Grant::Query::SqlExpression.identifier?(field)
 
-      unless parts[0] == Model.table_name || @query.join_clauses.any? { |join| Grant::Query::JoinSupport.qualifier(join[:table]) == parts[0] }
+      unless parts[0] == Model.table_name || Grant::Query::JoinSupport.joins?(@query.join_clauses, parts[0])
         raise ArgumentError.new("Unknown query table #{parts[0].inspect} in ORDER BY for #{Model.name}")
       end
       "#{Model.quote(parts[0])}.#{Model.quote(parts[1])}"

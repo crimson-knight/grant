@@ -15,6 +15,22 @@ module Grant::Query::JoinSupport
     end
   end
 
+  RAW_JOIN_TARGET = /\bJOIN\s+([A-Za-z_][A-Za-z0-9_]*)(?:\s+(?:AS\s+)?(?!ON\b|USING\b|INNER\b|LEFT\b|RIGHT\b|FULL\b|CROSS\b|NATURAL\b|JOIN\b)([A-Za-z_][A-Za-z0-9_]*))?/i
+
+  # Every name *clause* makes available to qualify columns with. A raw
+  # fragment contributes each table (or its alias) it joins, so
+  # `joins("INNER JOIN posts ON ...").where("posts.title": "x")` works.
+  def self.qualifiers(clause : Clause) : Array(String)
+    return [qualifier(clause[:table])] unless clause[:type] == :raw
+
+    clause[:on].scan(RAW_JOIN_TARGET).map { |match| match[2]? || match[1] }
+  end
+
+  # `true` when one of *clauses* makes *name* available as a qualifier.
+  def self.joins?(clauses : Array(Clause), name : String) : Bool
+    clauses.any? { |clause| qualifiers(clause).includes?(name) }
+  end
+
   # Resolves *association* on *owner* into join clauses of *type* (`:inner` or
   # `:left`). Naming *alias_name* joins the target table under that alias, which
   # is how a table is joined to itself.

@@ -634,7 +634,7 @@ class Grant::Query::Builder(Model)
 
     if parts.size == 2
       qualifier = parts.first
-      allowed_qualifiers = [Model.table_name] + @join_clauses.map { |join| Grant::Query::JoinSupport.qualifier(join[:table]) }
+      allowed_qualifiers = [Model.table_name] + @join_clauses.flat_map { |join| Grant::Query::JoinSupport.qualifiers(join) }
       unless allowed_qualifiers.includes?(qualifier)
         raise ArgumentError.new("Unknown query table #{qualifier.inspect} for #{Model.name}")
       end

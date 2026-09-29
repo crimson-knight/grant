@@ -174,7 +174,7 @@ module Grant::Aggregations
       if Grant::Query::SqlExpression.identifier?(column)
         parts = column.split('.')
         if parts.size == 2
-          unless parts[0] == Model.table_name || @query.join_clauses.any? { |join| Grant::Query::JoinSupport.qualifier(join[:table]) == parts[0] }
+          unless parts[0] == Model.table_name || Grant::Query::JoinSupport.joins?(@query.join_clauses, parts[0])
             raise ArgumentError.new("Unknown query table #{parts[0].inspect} for #{Model.name}")
           end
           "#{Model.quote(parts[0])}.#{Model.quote(parts[1])}"

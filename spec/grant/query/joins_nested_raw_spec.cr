@@ -120,6 +120,18 @@ describe "joins: nested, raw fragments, aliases and de-duplication" do
       names.should eq(["Nobody"])
     end
 
+    it "lets where, order and aggregates qualify columns with the tables a fragment joins" do
+      seed_blog
+      relation = JnUser.joins("INNER JOIN jn_posts ON jn_posts.jn_user_id = jn_users.id")
+      relation.where("jn_posts.title": "Other").select.map(&.name).should eq(["Grace"])
+      relation.order("jn_posts.title", :desc).select.map(&.name).should eq(["Ada", "Grace", "Ada"])
+      relation.count("jn_posts.id").should eq(3_i64)
+
+      aliased = JnUser.joins("LEFT JOIN jn_posts AS p ON p.jn_user_id = jn_users.id INNER JOIN jn_comments c ON c.jn_post_id = p.id")
+      aliased.where("c.body": "hm").select.map(&.name).should eq(["Grace"])
+      aliased.where("p.title": "First").distinct.select.map(&.name).should eq(["Ada"])
+    end
+
     it "refuses fragments that could carry another statement" do
       expect_raises(ArgumentError, /statement separator/) { JnUser.joins("INNER JOIN jn_posts ON 1=1; DROP TABLE jn_users") }
       expect_raises(ArgumentError, /comment marker/) { JnUser.joins("INNER JOIN jn_posts ON 1=1 -- x") }
