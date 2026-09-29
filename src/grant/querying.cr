@@ -662,6 +662,7 @@ module Grant::Querying
     {% end %}
 
     self.new_record = false
+    clear_loaded_associations
     ensure_dirty_tracking_initialized
     original_attributes, changed_attributes, previous_changes = dirty_tracking_hashes
     original_attributes.clear
