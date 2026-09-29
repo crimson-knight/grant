@@ -1,4 +1,4 @@
-require "../../spec_helper"
+require "../spec_helper"
 
 {% begin %}
   {% adapter_literal = (env("CURRENT_ADAPTER") || "sqlite").id %}
