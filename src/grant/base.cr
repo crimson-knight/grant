@@ -469,6 +469,32 @@ abstract class Grant::Base
         __after_initialize
       end
 
+      # Builds a new (unsaved) record from keyword arguments and yields it
+      # before `after_initialize` runs, so the block can set further attributes.
+      # Values assigned in the block count as changes, like any later setter.
+      #
+      # ```
+      # user = User.new(email: "a@example.com") { |u| u.name = "Ada" }
+      # ```
+      def initialize(**args, &)
+        ensure_dirty_tracking_initialized
+        set_attributes(args.to_h.transform_keys(&.to_s))
+        establish_initial_dirty_baseline
+        yield self
+        __after_initialize
+      end
+
+      # :ditto:
+      #
+      # Attributes-hash form of the initializer block.
+      def initialize(args : Grant::ModelArgs, &)
+        ensure_dirty_tracking_initialized
+        set_attributes(args.transform_keys(&.to_s))
+        establish_initial_dirty_baseline
+        yield self
+        __after_initialize
+      end
+
       # Captures the values supplied to initialize as the initial baseline.
       # Later setter calls are then tracked even while the record is new.
       private def establish_initial_dirty_baseline
