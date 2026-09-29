@@ -33,6 +33,14 @@ describe "alias_attribute" do
     AttrPost.where(title: "a").where(name: "b").count.should eq(0)
   end
 
+  it "is resolved in the hash forms of and and or" do
+    AttrPost.create!(title: "a")
+    AttrPost.create!(title: "b")
+
+    AttrPost.where(title: "a").or(name: "b").count.should eq(2)
+    AttrPost.where(title: "a").and(name: "b").count.should eq(0)
+  end
+
   it "keeps several aliases and resolves them on STI subclasses" do
     AttrAliasRoot.clear
     AttrAliasRoot.attribute_aliases.should eq({"headline" => "title", "hits" => "views"})
