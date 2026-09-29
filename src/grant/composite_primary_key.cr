@@ -154,6 +154,7 @@ module Grant::CompositePrimaryKey
         write_attribute(key, value)
       end
       @new_record = false
+      clear_loaded_associations
     end
 
     self
