@@ -12,7 +12,18 @@ class FilterEncAccount < Grant::Base
   encrypts :legacy_email
 end
 
+class FilterEncPlainCard < Grant::Base
+  connection {{ (env("CURRENT_ADAPTER") || "sqlite").id }}
+  table filter_enc_plain_cards
+
+  column id : Int64, primary: true
+  column holder : String?
+  column pin_code : String?
+  filter_attributes :pin_code
+end
+
 FilterEncAccount.migrator.drop_and_create
+FilterEncPlainCard.migrator.drop_and_create
 
 def filter_enc_capture(& : ->) : String
   backend = Log::MemoryBackend.new
@@ -39,6 +50,7 @@ describe "Grant::Encryption SQL log and inspect filtering" do
       config.key_derivation_salt = "filter-salt"
     end
     FilterEncAccount.migrator.drop_and_create
+    FilterEncPlainCard.migrator.drop_and_create
   end
 
   before_each do
@@ -86,6 +98,15 @@ describe "Grant::Encryption SQL log and inspect filtering" do
       FilterEncAccount.where(api_token: "tok-123456").select
     end
     log.should_not contain("tok-123456")
+    log.should contain("Grace")
+  end
+
+  it "redacts a model's own filter_attributes even without an encrypts declaration" do
+    log = filter_enc_capture do
+      FilterEncPlainCard.create!(holder: "Grace", pin_code: "pin-987654")
+      FilterEncPlainCard.where(pin_code: "pin-987654").select
+    end
+    log.should_not contain("pin-987654")
     log.should contain("Grace")
   end
 

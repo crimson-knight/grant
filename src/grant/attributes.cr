@@ -312,6 +312,9 @@ module Grant
     # end
     # ```
     macro filter_attributes(*names)
+      # Bound values of these columns are also redacted from the SQL log.
+      Grant::Encryption::LogFilter.track(self)
+
       def self.filter_attributes : Array(String | Regex)
         filters = Grant.settings.filter_attributes.dup
         {% for name in names %}
