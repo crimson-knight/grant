@@ -172,3 +172,68 @@ $ bin/micrate up
 ```
 
 You should now have a `posts` table in your database ready to query.
+
+## Create-table DSL and column options
+
+`Grant::Schema::SchemaStatements` builds DDL for tables that do not come from a
+model. Each operation has a `*_statements` form that returns the SQL and a plain
+form that runs it. `AdapterStatements` runs on a real adapter;
+`RecordingStatements` records the SQL for any `Grant::Schema::Dialect` without a
+database, which is how the specs assert the SQL of all three adapters.
+
+```crystal
+statements = Grant::Schema::AdapterStatements.new(User.adapter)
+
+statements.create_table(:users, comment: "People", if_not_exists: true) do |t|
+  t.string :name, null: false, limit: 100, collation: "C"
+  t.decimal :balance, precision: 12, scale: 2, default: 0
+  t.datetime :seen_at, default_sql: "CURRENT_TIMESTAMP"
+  t.timestamps precision: 6 # created_at, updated_at, NOT NULL
+end
+
+# join table, composite key
+statements.create_table(:memberships, id: false, primary_key: [:user_id, :group_id]) do |t|
+  t.bigint :user_id
+  t.bigint :group_id
+end
+
+statements.add_timestamps(:posts, null: true)
+statements.remove_timestamps(:posts)
+statements.change_column_default(:users, :role, from: nil, to: "member")
+```
+
+`create_table` options: `id:` (`true`/`:bigint`, `:integer`, `:smallint`,
+`:uuid`, `:string`, `false`), `primary_key:` (auto column name, or an array of
+declared columns), `if_not_exists:`, `temporary:`, `force:` (`true` or
+`:cascade`, cascade on PostgreSQL only), `comment:` (PostgreSQL and MySQL) and
+`options:` (raw trailing SQL).
+
+Column kinds: `string`, `text`, `integer`, `smallint`, `tinyint`, `bigint`,
+`boolean`, `float` (4 byte), `double` (8 byte), `decimal`, `datetime`,
+`timestamp`, `time`, `date`, `binary`, `json`, `jsonb` (PostgreSQL only), `uuid`,
+or `column :x, "raw type"`. Options: `null:`, `default:`, `default_sql:`,
+`limit:`, `precision:`, `scale:`, `comment:`, `collation:`, `array:` (PostgreSQL
+only), `primary_key:`. SQL expression defaults are emitted verbatim on
+PostgreSQL and parenthesized on MySQL and SQLite where those databases need it.
+
+Model `column` declarations take the same `null:`, `limit:`, `precision:`,
+`scale:`, `comment:`, `collation:` and `default_sql:` options, and several
+`primary: true` columns produce `PRIMARY KEY (a, b)`:
+
+```crystal
+column price : BigDecimal, precision: 12, scale: 2
+Invoice.migrator.create(if_not_exists: true, comment: "Invoices")
+```
+
+Known limits: `change_column_default` and a `NOT NULL` `add_timestamps` without
+a default raise `UnsupportedOperation` on SQLite (they need a table rebuild);
+column comments are skipped on SQLite; Grant models cannot yet hold `Int8`,
+`Int16`, `BigDecimal`, `JSON::Any` or `Bytes` values, so those types are mapped
+for the DSL and the type catalog but not exercised through model persistence.
+
+### Cost
+
+These are DDL statements; none does per-row work. Adding a column with a
+constant default is metadata-only on PostgreSQL 11+ and can rewrite the table on
+MySQL. Changing a default is metadata-only on PostgreSQL and MySQL 8+, and may
+rewrite on older MySQL.
