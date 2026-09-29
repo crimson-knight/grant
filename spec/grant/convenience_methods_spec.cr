@@ -93,8 +93,8 @@ describe "Grant::ConvenienceMethods" do
       batch_sizes = [] of Int32
       total_processed = 0
       ConvenienceUser.in_batches(of: 3) do |batch|
-        batch_sizes << batch.size
-        total_processed += batch.size
+        batch_sizes << batch.to_a.size
+        total_processed += batch.to_a.size
       end
 
       total_processed.should eq(10)
@@ -129,7 +129,7 @@ describe "Grant::ConvenienceMethods" do
 
       batch_first_names = [] of String
       ConvenienceUser.in_batches(of: 2, order: :desc) do |batch|
-        batch_first_names << batch.first.name
+        batch_first_names << batch.first!.name
       end
 
       # Should process from highest ID to lowest

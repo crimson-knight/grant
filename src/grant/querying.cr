@@ -420,13 +420,16 @@ module Grant::Querying
 
     # Iterates over every matching record one at a time, loading them in batches.
     #
-    # Memory-friendly for large tables: instead of loading the whole result set,
-    # it pages through it with LIMIT/OFFSET and yields each record individually.
-    # Built on `find_in_batches`.
+    # Delegates to the relation's `find_each`, which pages with a keyset
+    # cursor (never OFFSET), so the cost of a page does not grow with the
+    # table. Accepts the relation options `start`, `finish`, `cursor`, `order`
+    # and `error_on_ignore`; without a block it returns an iterator.
     #
-    # - *clause* / *params*: optional raw SQL filter (as in `all`).
-    # - *batch_size*: rows fetched per page (default `100`).
-    # - *offset*: starting row offset (default `0`).
+    # - *clause* / *params*: optional raw `WHERE` filter (as in `all`). It must
+    #   not contain ORDER BY, LIMIT, OFFSET or GROUP BY; use the relation
+    #   methods for those.
+    # - *batch_size*: rows fetched per batch (default `1000`).
+    # - *offset*: rows to skip before the first batch (default `0`).
     #
     # ```
     # User.find_each(batch_size: 500) do |user|
@@ -437,23 +440,23 @@ module Grant::Querying
     #   process(user)
     # end
     # ```
-    def find_each(clause = "", params = [] of Grant::Columns::Type, batch_size limit = 100, offset = 0, &)
-      find_in_batches(clause, params, batch_size: limit, offset: offset) do |batch|
-        batch.each do |record|
-          yield record
-        end
+    def find_each(clause = "", params = [] of Grant::Columns::Type, batch_size limit = 1000, offset = 0, start : Grant::Columns::Type = nil, finish : Grant::Columns::Type = nil, cursor : Array(Symbol)? = nil, order : Symbol = :asc, error_on_ignore : Bool = false, &)
+      batch_scope(clause, params, offset).find_each(limit, start, finish, cursor, order, error_on_ignore) do |record|
+        yield record
       end
+    end
+
+    # :ditto:
+    def find_each(clause = "", params = [] of Grant::Columns::Type, batch_size limit = 1000, offset = 0, start : Grant::Columns::Type = nil, finish : Grant::Columns::Type = nil, cursor : Array(Symbol)? = nil, order : Symbol = :asc, error_on_ignore : Bool = false) : Iterator(self)
+      batch_scope(clause, params, offset).find_each(limit, start, finish, cursor, order, error_on_ignore)
     end
 
     # Iterates over matching records in batches, yielding each batch as an Array.
     #
-    # Pages through the result set with LIMIT/OFFSET so a large table is never
-    # fully materialized at once. Use this (rather than `find_each`) when you can
-    # process records a batch at a time (e.g. bulk updates).
-    #
-    # - *clause* / *params*: optional raw SQL filter (as in `all`).
-    # - *batch_size*: rows per batch (default `100`). Must be `>= 1`.
-    # - *offset*: starting row offset (default `0`).
+    # Delegates to the relation's `find_in_batches` (keyset cursor, never
+    # OFFSET), so a large table is never fully materialized and deep pages cost
+    # the same as the first. Takes the same options as `find_each`. Use this
+    # (rather than `find_each`) when you can process records a batch at a time.
     #
     # Raises `ArgumentError` if *batch_size* is less than 1.
     #
@@ -462,23 +465,30 @@ module Grant::Querying
     #   puts "processing #{batch.size} users"
     # end
     # ```
-    def find_in_batches(clause = "", params = [] of Grant::Columns::Type, batch_size limit = 100, offset = 0, &)
-      if limit < 1
-        raise ArgumentError.new("batch_size must be >= 1")
+    def find_in_batches(clause = "", params = [] of Grant::Columns::Type, batch_size limit = 1000, offset = 0, start : Grant::Columns::Type = nil, finish : Grant::Columns::Type = nil, cursor : Array(Symbol)? = nil, order : Symbol = :asc, error_on_ignore : Bool = false, &)
+      batch_scope(clause, params, offset).find_in_batches(limit, start, finish, cursor, order, error_on_ignore) do |batch|
+        yield batch
       end
+    end
 
-      loop do
-        ordered_clause = clause.strip
-        unless ordered_clause.upcase.includes?("ORDER BY")
-          order_columns = (implicit_order_columns + [primary_name]).uniq
-          order_clause = "ORDER BY #{order_columns.map { |column| "#{quote(column)} ASC" }.join(", ")}"
-          ordered_clause = [ordered_clause, order_clause].reject(&.empty?).join(" ")
+    # :ditto:
+    def find_in_batches(clause = "", params = [] of Grant::Columns::Type, batch_size limit = 1000, offset = 0, start : Grant::Columns::Type = nil, finish : Grant::Columns::Type = nil, cursor : Array(Symbol)? = nil, order : Symbol = :asc, error_on_ignore : Bool = false) : Iterator(Array(self))
+      batch_scope(clause, params, offset).find_in_batches(limit, start, finish, cursor, order, error_on_ignore)
+    end
+
+    # The relation a class-level batching call runs on: the current scope with
+    # the legacy raw `WHERE` *clause* and *offset* folded in.
+    private def batch_scope(clause : String, params : Array(Grant::Columns::Type), offset : Int) : Grant::Query::Builder(self)
+      scope = current_scope
+      filter = clause.strip
+      unless filter.empty?
+        if filter.matches?(/\b(ORDER\s+BY|LIMIT|OFFSET|GROUP\s+BY)\b/i)
+          raise ArgumentError.new("find_each/find_in_batches accept only a WHERE clause; use order, limit and offset on the relation instead")
         end
-        results = all "#{ordered_clause} LIMIT ? OFFSET ?", params + [limit, offset], false
-        break if results.empty?
-        yield results
-        offset += limit
+        scope = scope.where(filter.sub(/\AWHERE\s+/i, ""), params)
       end
+      scope = scope.offset(offset) if offset > 0
+      scope
     end
 
     # Returns `true` if a record exists with primary key *id*, otherwise `false`.
