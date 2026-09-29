@@ -26,9 +26,8 @@ require "./adapter/schema"
 # ```
 # class Invoice < Grant::Base
 #   column id : Int64, primary: true
-#   column total : BigDecimal, precision: 12, scale: 2
 #   column code : String, limit: 20, collation: "C", comment: "Public code"
-#   column issued_at : Time, default_sql: "CURRENT_TIMESTAMP"
+#   column issued_at : Time, precision: 3, default_sql: "CURRENT_TIMESTAMP"
 # end
 #
 # Invoice.migrator.create(if_not_exists: true, comment: "Invoices")
@@ -144,7 +143,14 @@ module Grant::Migrator
         {% for ivar in Model.instance_vars.select { |ivar| (ann = ivar.annotation(Grant::Column)) && !ann[:primary] } %}
           {% ann = ivar.annotation(Grant::Column) %}
           {% key = ivar.type.union_types.find { |t| t != Nil } %}
-          {% key = (key < Enum ? "String" : key.id.stringify) %}
+          {% if key < Enum %}
+            # An enum is stored through `Grant::Converters::Enum(E, T)`: map
+            # the column to `T`, which is `String` unless the model says so.
+            {% converter = ann[:converter] %}
+            {% key = converter.is_a?(Generic) && converter.type_vars.size == 2 ? converter.type_vars.last.resolve.id.stringify : "String" %}
+          {% else %}
+            {% key = key.id.stringify %}
+          {% end %}
           {% key = "Bytes" if key == "Slice(UInt8)" %}
           s.puts ","
           s.puts column_line("{{ivar.name}}", "{{key.id}}", {{ann[:column_type]}},
@@ -205,7 +211,8 @@ module Grant::Migrator
     end
 
     private def native_type(key : String) : String
-      Grant::Schema::TypeCatalog.lookup(Model.adapter, key) || raise "Migrator(#{Model.adapter.class.name}) doesn't support '#{key}' yet."
+      Grant::Schema::TypeCatalog.lookup(Model.adapter, key) ||
+        raise Grant::Schema::UnsupportedOperation.new("Migrator(#{Model.adapter.class.name}) doesn't support '#{key}' yet.")
     end
 
     private def column_comments : Array({String, String})

@@ -203,7 +203,11 @@ module Grant::Schema
                limit : Int32? = nil, precision : Int32? = nil, scale : Int32? = nil,
                comment : ::String? = nil, collation : ::String? = nil,
                array : Bool = false, primary_key : Bool = false) : ColumnDefinition
-      kind = type.is_a?(Symbol) ? ColumnKind.parse(type.to_s) : type
+      kind = if type.is_a?(Symbol)
+               ColumnKind.parse?(type.to_s) || raise InvalidDefinition.new("Unknown column type #{type.inspect} for '#{name}'")
+             else
+               type
+             end
       if default_sql && !default.is_a?(Unset)
         raise InvalidDefinition.new("Column '#{name}' has both default: and default_sql:")
       end

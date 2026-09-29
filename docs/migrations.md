@@ -221,7 +221,8 @@ Model `column` declarations take the same `null:`, `limit:`, `precision:`,
 `primary: true` columns produce `PRIMARY KEY (a, b)`:
 
 ```crystal
-column price : BigDecimal, precision: 12, scale: 2
+column code : String, limit: 20, collation: "C", comment: "Public code"
+column issued_at : Time, precision: 3, default_sql: "CURRENT_TIMESTAMP"
 Invoice.migrator.create(if_not_exists: true, comment: "Invoices")
 ```
 
@@ -229,7 +230,11 @@ Known limits: `change_column_default` and a `NOT NULL` `add_timestamps` without
 a default raise `UnsupportedOperation` on SQLite (they need a table rebuild);
 column comments are skipped on SQLite; Grant models cannot yet hold `Int8`,
 `Int16`, `BigDecimal`, `JSON::Any` or `Bytes` values, so those types are mapped
-for the DSL and the type catalog but not exercised through model persistence.
+for the DSL and the type catalog but not exercised through model persistence
+(a model with a `BigDecimal` column does not compile once it is queried, so
+`precision:`/`scale:` on a model column apply to `Time` precision today).
+An enum column maps to the `T` of its `Grant::Converters::Enum(E, T)`
+converter, `String` by default.
 
 ### Cost
 
