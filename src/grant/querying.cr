@@ -1,10 +1,13 @@
 module Grant::Querying
   alias IdValue = Int32 | Int64 | Float32 | Float64 | String
 
-  class NotFound < Exception
+  # Raised by `first!`, `take!`, `sole`, the ordinal bang finders and friends
+  # when no record matches.
+  class NotFound < Grant::ErrorBase
   end
 
-  class NotUnique < Exception
+  # Raised by `sole`/`find_sole_by` when more than one record matches.
+  class NotUnique < Grant::ErrorBase
   end
 
   class ScopedRawSqlError < Grant::ErrorBase
