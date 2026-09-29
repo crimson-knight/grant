@@ -38,6 +38,7 @@ require "./eager_loading"
 require "./association_loader"
 require "./commit_callbacks"
 require "./scoping"
+require "./query_cache"
 require "./attribute_api"
 require "./logging"
 require "./query_analysis"
@@ -132,6 +133,7 @@ abstract class Grant::Base
   extend Select
   extend EagerLoading::ClassMethods
   extend Scoping::ClassMethods
+  extend QueryCache::ClassMethods
   extend Grant::Async::ClassMethods
   extend Grant::Aggregations::ClassMethods
   extend ValueObjects::ClassMethods
@@ -351,6 +353,10 @@ abstract class Grant::Base
     end
 
     def self.current_scope : Grant::Query::Builder({{@type}})
+      if scoped = Grant::Scoping.current_relation({{@type}})
+        return scoped
+      end
+
       # `__builder` may be overridden by the sharding macro and Crystal sees
       # the union of builders from STI siblings here. Cast back to this model's
       # builder type while retaining the sharded subclass at runtime.
