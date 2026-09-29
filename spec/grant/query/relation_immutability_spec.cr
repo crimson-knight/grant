@@ -208,15 +208,17 @@ describe "Relation immutability" do
     base.limit.should eq 3
   end
 
-  it "makes dup an independent relation whose arrays can be edited directly" do
+  it "makes dup a copy-on-write copy that never writes through to the original" do
     base = Parent.where(name: "a")
     copy = base.dup
 
-    copy.where_fields.clear
-    copy.order_fields << {field: "id", direction: Grant::Query::Builder::Sort::Ascending}
+    copy.clear_where_fields
+    copy.own_order_fields << {field: "id", direction: Grant::Query::Builder::Sort::Ascending}
 
     base.where_fields.size.should eq 1
     base.order_fields.should be_empty
+    copy.where_fields.should be_empty
+    copy.order_fields.size.should eq 1
   end
 
   it "does not leak default-scope or unscope changes into the base" do

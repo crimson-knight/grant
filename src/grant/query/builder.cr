@@ -152,14 +152,28 @@ class Grant::Query::Builder(Model)
   # every non-bang chain method starts from, so chaining allocates one small
   # object plus a copy of only the arrays the step touches.
   #
-  # Subclass state (named-scope relations, sharded builders) is carried over
-  # because the copy is a shallow memory copy, like `Reference#dup`.
+  # The copy has the receiver's runtime class (named-scope relations, sharded
+  # builders). Builder's own state is a shallow memory copy; a subclass that
+  # adds instance variables carries them over in `copy_subclass_state_from`.
+  def dup : self
+    chain_copy
+  end
+
+  # Same as `dup`; the name states the intent at chain-method call sites.
   protected def chain_copy : self
     @shared_arrays = ALL_ARRAYS_SHARED
     copy = self.class.allocate
-    copy.as(Void*).copy_from(self.as(Void*), instance_sizeof(self))
+    copy.as(Void*).copy_from(self.as(Void*), instance_sizeof(Grant::Query::Builder(Model)))
+    copy.copy_subclass_state_from(self)
     copy.forget_copied_state
     copy
+  end
+
+  # Hook for subclasses that declare their own instance variables: copy them
+  # from *source* into the receiver, a fresh copy of the same class.
+  #
+  # :nodoc:
+  protected def copy_subclass_state_from(source : Grant::Query::Builder(Model)) : Nil
   end
 
   # :nodoc:
@@ -167,23 +181,6 @@ class Grant::Query::Builder(Model)
     @records = nil
     @cache_version = nil
     @_cached_assembler = nil
-  end
-
-  # Returns an independent copy: no clause array is shared with the receiver,
-  # so callers may mutate the copy's arrays directly.
-  def dup : self
-    copy = chain_copy
-    copy.detach_all_arrays
-    copy
-  end
-
-  # :nodoc:
-  protected def detach_all_arrays : Nil
-    {% for name in %w(where_fields default_scope_where_fields order_fields group_fields join_clauses having_clauses includes_associations preload_associations eager_load_associations index_hints) %}
-      @{{name.id}} = @{{name.id}}.dup
-    {% end %}
-    @select_columns = @select_columns.try(&.dup)
-    @shared_arrays = 0_u16
   end
 
   # Returns a copy whose WHERE clauses are recorded as default-scope clauses

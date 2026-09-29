@@ -220,7 +220,7 @@ module Grant::Sharding
             Grant::ShardManager.with_shard(shard) do
               offset = 0_i64
               loop do
-                batch = limit(batch_size).offset(offset).select
+                batch = order({primary_name => :asc}).limit(batch_size).offset(offset).select
                 break if batch.empty?
                 
                 batch.each do |record|
@@ -236,7 +236,7 @@ module Grant::Sharding
           # Not sharded - use regular batch processing
           offset = 0_i64
           loop do
-            batch = limit(batch_size).offset(offset).select
+            batch = order({primary_name => :asc}).limit(batch_size).offset(offset).select
             break if batch.empty?
             
             batch.each { |record| yield record }

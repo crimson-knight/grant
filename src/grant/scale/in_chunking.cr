@@ -107,8 +107,8 @@ class Grant::Query::Builder(Model)
           f
         end
       end
-      chunk_query.where_fields.clear
-      new_fields.each { |f| chunk_query.where_fields << f }
+      chunk_query.clear_where_fields
+      new_fields.each { |f| chunk_query.own_where_fields << f }
       yield chunk_query
     end
   end

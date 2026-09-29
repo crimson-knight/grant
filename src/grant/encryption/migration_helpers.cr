@@ -31,7 +31,7 @@ module Grant::Encryption
       # Process in batches
       offset = 0
       loop do
-        records = model_class.limit(batch_size).offset(offset).select
+        records = model_class.order({model_class.primary_name => :asc}).limit(batch_size).offset(offset).select
         break if records.empty?
 
         records.each do |record|
@@ -102,7 +102,7 @@ module Grant::Encryption
       # Process in batches
       offset = 0
       loop do
-        records = model_class.limit(batch_size).offset(offset).select
+        records = model_class.order({model_class.primary_name => :asc}).limit(batch_size).offset(offset).select
         break if records.empty?
 
         records.each do |record|
@@ -183,7 +183,7 @@ module Grant::Encryption
       # Process in batches
       offset = 0
       loop do
-        records = model_class.limit(batch_size).offset(offset).select
+        records = model_class.order({model_class.primary_name => :asc}).limit(batch_size).offset(offset).select
         break if records.empty?
 
         records.each do |record|

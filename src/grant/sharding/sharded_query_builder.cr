@@ -15,6 +15,14 @@ module Grant::Sharding
     end
 
     # Force query to run on specific shard
+    # A copy made by a chain method keeps the router and any pinned shard.
+    # :nodoc:
+    protected def copy_subclass_state_from(source : Query::Builder(Model)) : Nil
+      sharded = source.as(ShardedQueryBuilder(Model))
+      @router = sharded.@router
+      @force_shard = sharded.@force_shard
+    end
+
     def on_shard(shard : Symbol) : self
       @force_shard = shard
       self
