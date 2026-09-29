@@ -2226,7 +2226,7 @@ class Grant::Query::Builder(Model)
     @is_none = true if other.is_none?
 
     @readonly = true if other.readonly?
-    @optimizer_hints = @optimizer_hints + other.optimizer_hint_list
+    @optimizer_hints = @optimizer_hints | other.optimizer_hint_list
 
     self
   end

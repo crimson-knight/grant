@@ -51,6 +51,9 @@ describe "select and order expressions" do
       row.extra_attribute("total", Int64).should eq(2_i64)
       row.extra_attributes.keys.should eq(["total"])
       row.extra_attribute(:total).should eq(2_i64)
+      expect_raises(TypeCastError, /"total" is Int64, not String/) { row.extra_attribute("total", String) }
+      expect_raises(TypeCastError, /"missing" is Nil/) { row.extra_attribute("missing", Int64) }
+      row.extra_attribute("missing", Int64?).should be_nil
     end
 
     it "reads the columns that follow a computed column" do

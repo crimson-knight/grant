@@ -21,11 +21,15 @@ module Grant::Query::SelectExtras
     @extra_attributes.try(&.[name.to_s]?)
   end
 
-  # The computed column *name* as *type*. Raises `TypeCastError` when the
-  # database returned another type; cast in SQL (`CAST(x AS BIGINT)`) when it
+  # The computed column *name* as *type*. Raises `TypeCastError` naming the
+  # column when the database returned another type (or no such column, unless
+  # *type* is nilable); cast in SQL (`CAST(x AS BIGINT)`) when the type
   # differs between adapters.
   def extra_attribute(name : String | Symbol, type : T.class) : T forall T
-    extra_attribute(name).as(T)
+    value = extra_attribute(name)
+    return value if value.is_a?(T)
+
+    raise TypeCastError.new("Extra attribute #{name.to_s.inspect} is #{value.class}, not #{T}")
   end
 
   # :nodoc:

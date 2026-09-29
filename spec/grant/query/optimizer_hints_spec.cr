@@ -77,6 +77,7 @@ describe "optimizer hints" do
     base.optimizer_hints("HINT(x)")
     base.optimizer_hint_list.should be_empty
     OhRow.all.merge(OhRow.optimizer_hints("HINT(y)")).optimizer_hint_list.should eq(["HINT(y)"])
+    OhRow.optimizer_hints("HINT(y)").merge(OhRow.optimizer_hints("HINT(y)", "HINT(z)")).optimizer_hint_list.should eq(["HINT(y)", "HINT(z)"])
   end
 
   it "has a bang form" do

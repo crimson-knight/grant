@@ -185,7 +185,7 @@ class Grant::Query::Builder(Model)
     return self if cleaned.empty?
 
     reset_load_state
-    @optimizer_hints = @optimizer_hints + cleaned
+    @optimizer_hints = @optimizer_hints | cleaned
     self
   end
 
