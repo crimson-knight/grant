@@ -1,3 +1,9 @@
+# Declared ahead of builder.cr so the batch iterators below can name it: the
+# builder requires this file before its own body, and whichever file loads
+# first decides the order.
+class Grant::Query::Builder(Model)
+end
+
 module Grant
   # Raised by the batching methods when `error_on_ignore: true` is set and the
   # relation carries an ORDER BY that an explicit `cursor:` overrides.
