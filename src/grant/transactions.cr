@@ -485,10 +485,9 @@ module Grant::Transactions
     save_succeeded = true
     save_failed = false
     failure_message : String? = nil
-    save_transaction = Grant::Transaction::Options.new(
-      requires_new: Grant::Transaction.in_explicit_transaction? &&
-        Grant::Transaction.current_connection?(self.class.adapter).nil?
-    )
+    # A save always gets its own savepoint when nested so a failed save undoes
+    # only its own partial writes.
+    save_transaction = Grant::Transaction::Options.new(requires_new: true)
 
     self.class.transaction(save_transaction) do
       enlist_transaction_record
