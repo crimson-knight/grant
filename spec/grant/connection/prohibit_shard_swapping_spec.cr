@@ -60,11 +60,11 @@ describe "prohibit_shard_swapping" do
     end
   end
 
-  it "shows the connected shard to Grant::ShardManager" do
-    Grant::ShardManager.current_shard.should be_nil
+  it "scopes the connected shard to the class tree, not Grant::ShardManager" do
     C01ShardSwapModel.connected_to(shard: :tenant_a) do
-      Grant::ShardManager.current_shard.should eq :tenant_a
+      C01ShardSwapModel.current_shard.should eq :tenant_a
+      Todo.current_shard.should be_nil
+      Grant::ShardManager.current_shard.should be_nil
     end
-    Grant::ShardManager.current_shard.should be_nil
   end
 end

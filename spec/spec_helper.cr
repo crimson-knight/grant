@@ -109,7 +109,9 @@ private def restore_default_spec_runtime_state
   Grant::Tenant.clear
   Grant::HealthMonitor.test_mode = true
 
-  Grant::Base.connection_context = nil
+  # Drop every class's contexts (connected_to leftovers and connecting_to that
+  # a failed example never reset), not only those Grant::Base owns.
+  Fiber.current.grant_connection_state = nil
   restore_default_spec_connections
   Grant::ConnectionRegistry.default_database = CURRENT_ADAPTER
 
