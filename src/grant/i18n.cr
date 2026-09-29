@@ -154,8 +154,8 @@ module Grant::I18n
         model_key = model_key(model)
         translator = @@translator
         translator.translate(@@locale, "attributes.#{model_key}.#{attribute}") ||
-          translator.translate(@@locale, "attributes.#{attribute}") ||
-          humanize(attribute)
+        translator.translate(@@locale, "attributes.#{attribute}") ||
+        humanize(attribute)
       end
     end
   end

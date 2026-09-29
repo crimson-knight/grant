@@ -53,7 +53,7 @@ class Grant::Errors
   #
   # ```
   # errors.add(:name, :too_short, count: 3)
-  # errors[:name] # => ["is too short (minimum is 3 characters)"]
+  # errors[:name]                                         # => ["is too short (minimum is 3 characters)"]
   # errors.add(:name, :invalid, message: :must_be_unique) # message from a translation key
   # errors.add(:name, :invalid, message: ->(record : Grant::Base, data : Grant::Error::Options) { "..." })
   # ```
@@ -158,9 +158,9 @@ class Grant::Errors
   #
   # ```
   # errors.add(:name, :too_short, count: 3)
-  # errors.where(:name).size                     # => 1
-  # errors.where(:name, :too_short, count: 3)    # => [Error]
-  # errors.where(:name, :blank)                  # => []
+  # errors.where(:name).size                  # => 1
+  # errors.where(:name, :too_short, count: 3) # => [Error]
+  # errors.where(:name, :blank)               # => []
   # ```
   def where(field : (String | Symbol), type : Symbol | String | Nil = nil, **options) : Array(Error)
     list = by_attribute[field.to_s]?
@@ -234,8 +234,8 @@ class Grant::Errors
   # *options*, and returns their messages.
   #
   # ```
-  # errors.delete(:name)                # removes every error on name
-  # errors.delete(:name, :too_short)    # removes one type
+  # errors.delete(:name)             # removes every error on name
+  # errors.delete(:name, :too_short) # removes one type
   # ```
   def delete(field : (String | Symbol), type : Symbol | String | Nil = nil, **options) : Array(String)
     removed = where(field, type, **options)
@@ -379,7 +379,7 @@ class Grant::Errors
   # errors.add(:name, "can't be blank")
   # errors.add(:name, "is too short")
   # errors.add(:email, "is invalid")
-  # errors.to_hash                     # => {"name" => ["can't be blank", "is too short"], "email" => ["is invalid"]}
+  # errors.to_hash                      # => {"name" => ["can't be blank", "is too short"], "email" => ["is invalid"]}
   # errors.to_hash(full_messages: true) # => {"name" => ["Name can't be blank", ...], ...}
   # ```
   def to_hash(full_messages : Bool = false) : Hash(String, Array(String))

@@ -5,11 +5,11 @@ require "./error"
 #
 # ```
 # User.validators_on(:name).each do |info|
-#   info.kind          # => :length
-#   info.attribute     # => "name"
-#   info.options       # => {:maximum => 40}
-#   info.contexts      # => [:save]
-#   info.conditional?  # => false (no if: / unless:)
+#   info.kind         # => :length
+#   info.attribute    # => "name"
+#   info.options      # => {:maximum => 40}
+#   info.contexts     # => [:save]
+#   info.conditional? # => false (no if: / unless:)
 # end
 # ```
 #

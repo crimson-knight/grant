@@ -235,9 +235,9 @@ class Grant::Error
   # *options*.
   #
   # ```
-  # error.match?(:name)                         # any error on name
-  # error.match?(:name, :too_short)             # by type
-  # error.match?(:name, :too_short, count: 3)   # by type and options
+  # error.match?(:name)                       # any error on name
+  # error.match?(:name, :too_short)           # by type
+  # error.match?(:name, :too_short, count: 3) # by type and options
   # ```
   def match?(attribute : String | Symbol, type : Symbol | String | Nil = nil, **options) : Bool
     return false unless self.attribute == attribute.to_s

@@ -29,7 +29,7 @@ module Grant::Validators
   # validates_uniqueness_of :username, case_sensitive: false
   # validates_uniqueness_of :slug, scope: [:category_id]
   # validates_uniqueness_of :slug, scope: :author # the belongs_to association
-  # validates_uniqueness_of :email, :username # validates both fields
+  # validates_uniqueness_of :email, :username     # validates both fields
   # ```
   macro validates_uniqueness_of(*fields, **options)
     {% message = options[:message] %}
