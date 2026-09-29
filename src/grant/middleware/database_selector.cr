@@ -88,8 +88,8 @@ module Grant
       getter delay : Time::Span
 
       def initialize(@store : LastWriteStore, @delay : Time::Span = 2.seconds,
-                     @database : String? = nil, @writing_role : Symbol = :writing,
-                     @reading_role : Symbol = :reading, @resolver : Resolver? = nil,
+                     @database : String? = nil, @writing_role : Symbol = Grant.settings.writing_role,
+                     @reading_role : Symbol = Grant.settings.reading_role, @resolver : Resolver? = nil,
                      @clock : Proc(Time) = -> { Time.utc })
       end
 
