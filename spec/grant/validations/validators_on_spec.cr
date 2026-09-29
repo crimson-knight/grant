@@ -89,6 +89,7 @@ describe "validator reflection" do
     V02vPerson.validators.map(&.kind).should contain(:method)
     V02vPerson.validators.map(&.kind).should contain(:custom)
     V02vPerson.validators.select { |info| info.kind == :method }.first.attribute.should eq("base")
+    V02vPerson.validators.find { |info| info.kind == :method }.not_nil!.option(:name).should eq("some_rule")
   end
 
   it "returns nothing for an attribute without validators" do

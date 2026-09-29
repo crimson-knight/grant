@@ -263,7 +263,7 @@ module Grant::Validators
         # "fails" (driving valid? false) only if the method added errors. The
         # placeholder entry carries a blank `:base` message that is never shown
         # because the validator block returns true on success.
-        validate(:base, "", context: \\{{context}}, kind: :method, conditional: \\{{(options[:if] || options[:unless]) ? true : false}}) do |record|
+        validate(:base, "", context: \\{{context}}, kind: :method, info_options: Grant::Error.options_from({name: \\{{method_name.id.stringify}}}), conditional: \\{{(options[:if] || options[:unless]) ? true : false}}) do |record|
           next true unless Grant::Conditions.met?(record, \\{{options[:if]}}, \\{{options[:unless]}}, nil, true)
 
           %before = record.errors.size
