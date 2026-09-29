@@ -175,7 +175,13 @@ class Grant::Query::Builder(Model)
   # # => SELECT /*+ MAX_EXECUTION_TIME(1000) */ ... FROM posts
   # ```
   def optimizer_hints!(*hints : String) : self
-    cleaned = hints.map { |hint| Grant::Query::OptimizerHint.sanitize(hint) }.reject(&.empty?)
+    add_optimizer_hints(hints.map { |hint| Grant::Query::OptimizerHint.sanitize(hint) }.reject(&.empty?))
+  end
+
+  # Appends already sanitized hints (from a merged or scoped relation).
+  #
+  # :nodoc:
+  def add_optimizer_hints(cleaned : Array(String)) : self
     return self if cleaned.empty?
 
     reset_load_state

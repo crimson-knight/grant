@@ -28,7 +28,7 @@ class Grant::Query::Builder(Model)
     target.select_columns = select_columns.try(&.dup)
     target.own_index_hints.concat(index_hints)
     target.readonly! if readonly?
-    target.optimizer_hints!(*optimizer_hint_list) unless optimizer_hint_list.empty?
+    target.add_optimizer_hints(optimizer_hint_list)
     target.copy_in_chunk_size_from(self)
   end
 
@@ -70,7 +70,7 @@ class Grant::Query::Builder(Model)
     own_having_clauses.concat(other.having_clauses)
     none! if other.is_none?
     readonly! if other.readonly?
-    optimizer_hints!(*other.optimizer_hint_list) unless other.optimizer_hint_list.empty?
+    add_optimizer_hints(other.optimizer_hint_list)
     self
   end
 

@@ -90,13 +90,13 @@ class Grant::Query::Builder(Model)
     # reversed by `Grant::Query::OrderSupport.reverse_raw`.
     def reverse : Sort
       case self
-      when Ascending           then Descending
-      when Descending          then Ascending
-      when AscendingNullsFirst then DescendingNullsLast
-      when AscendingNullsLast  then DescendingNullsFirst
+      when Ascending            then Descending
+      when Descending           then Ascending
+      when AscendingNullsFirst  then DescendingNullsLast
+      when AscendingNullsLast   then DescendingNullsFirst
       when DescendingNullsFirst then AscendingNullsLast
-      when DescendingNullsLast then AscendingNullsFirst
-      else                          self
+      when DescendingNullsLast  then AscendingNullsFirst
+      else                           self
       end
     end
   end

@@ -17,13 +17,6 @@ module Grant::Aggregations
       result
     end
 
-    # Counts rows whose *column* is not NULL, or distinct values with
-    # `distinct: true`. `count(:all)` and `count("*")` are `count`.
-    def count(column : Symbol | String, distinct : Bool = false) : Int64
-      result = current_scope.count(column, distinct)
-      result.is_a?(Int64) ? result : result.values.sum
-    end
-
     # Generic aggregate, like ActiveRecord's `calculate`. See
     # `Grant::Query::Builder#calculate`.
     def calculate(operation : Grant::Calculation | Symbol, column : Symbol | String | Nil = nil)

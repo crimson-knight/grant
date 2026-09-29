@@ -578,6 +578,19 @@ module Grant::Querying
       end
     end
 
+    # Counts rows whose *column* is not NULL, or the distinct values of it with
+    # `distinct: true`. `count(:all)` and `count("*")` are `count`. The
+    # relation's `count(column)` returns a `Hash` per group.
+    #
+    # ```
+    # User.count(:deleted_at)              # => 3
+    # User.count(:email, distinct: true)   # => 40
+    # ```
+    def count(column : Symbol | String, distinct : Bool = false) : Int64
+      result = current_scope.count(column, distinct)
+      result.is_a?(Int64) ? result : result.values.sum
+    end
+
     def exec(clause : String = "", binds : Array(Grant::Columns::Type) = [] of Grant::Columns::Type) : DB::ExecResult
       ensure_raw_sql_unscoped!
       connection.execute(clause, binds)

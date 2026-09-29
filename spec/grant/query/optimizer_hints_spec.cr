@@ -59,7 +59,7 @@ describe "optimizer hints" do
     capture_sql { OhRow.optimizer_hints("HINT(x)").count }.first.should start_with("SELECT /*+ HINT(x) */ COUNT(*)")
     OhRow.optimizer_hints("HINT(x)").where(label: "a").first!.label.should eq("a")
     OhRow.optimizer_hints("HINT(x)").pluck(:label).size.should eq(2)
-    OhRow.optimizer_hints("HINT(x)").sum(:id).should eq(3_i64)
+    OhRow.optimizer_hints("HINT(x)").sum(:id).should eq(OhRow.all.sum(:id))
   end
 
   it "is dropped by unscope and except" do

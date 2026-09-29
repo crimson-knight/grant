@@ -16,11 +16,11 @@ module Grant
     # Raises `ArgumentError` for any other symbol.
     def self.from_symbol(name : Symbol) : Calculation
       case name
-      when :count           then Count
-      when :sum             then Sum
-      when :average, :avg   then Average
-      when :minimum, :min   then Minimum
-      when :maximum, :max   then Maximum
+      when :count         then Count
+      when :sum           then Sum
+      when :average, :avg then Average
+      when :minimum, :min then Minimum
+      when :maximum, :max then Maximum
       else
         raise ArgumentError.new("Unknown calculation #{name.inspect}; use :count, :sum, :average, :minimum or :maximum")
       end
@@ -48,9 +48,9 @@ class Grant::Query::Builder(Model)
   # returns a `Hash` per group.
   #
   # ```
-  # User.count(:deleted_at)                   # rows with a value
-  # User.count(:email, distinct: true)        # distinct emails
-  # Order.group(:status).count(:shipped_at)   # => {"open" => 2, "done" => 5}
+  # User.count(:deleted_at)                 # rows with a value
+  # User.count(:email, distinct: true)      # distinct emails
+  # Order.group(:status).count(:shipped_at) # => {"open" => 2, "done" => 5}
   # ```
   def count(column : Symbol | String, distinct : Bool = false) : CountResult
     name = column.to_s
@@ -85,8 +85,8 @@ class Grant::Query::Builder(Model)
   # single GROUP BY statement.
   #
   # ```
-  # Order.where(paid: true).sum(:cents)    # => 1_250_000_i64
-  # Order.group(:status).sum(:cents)       # => {"open" => 400_i64, "done" => 850_i64}
+  # Order.where(paid: true).sum(:cents) # => 1_250_000_i64
+  # Order.group(:status).sum(:cents)    # => {"open" => 400_i64, "done" => 850_i64}
   # ```
   def sum(column : Symbol | String) : SumResult
     name = column.to_s
