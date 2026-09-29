@@ -117,6 +117,23 @@ describe Grant::Adapter::PlaceholderScanner do
       mysql.ensure_clause_template("a ?? b AND id = ?").should eq("a ? b AND id = ?")
     end
 
+    it "escapes ? in raw where fragments built by the query builder" do
+      sql = Parent.where("name ?? 'x' AND id = ?", 7_i64).raw_sql
+      sql.should contain("name ? 'x' AND id = ")
+    end
+
+    it "runs a JSONB ?? operator through the query builder on PostgreSQL" do
+      unless Parent.adapter.postgres?
+        pending!("PostgreSQL only")
+      end
+      Parent.clear
+      parent = Parent.create!(name: "x")
+      Parent.create!(name: "y")
+
+      found = Parent.where("to_jsonb(name) ?? 'x' AND id = ?", parent.id).to_a
+      found.map(&.id).should eq([parent.id])
+    end
+
     it "leaves native placeholder clauses without ?? untouched" do
       clause = "id = ? AND name = 'x?'"
       sqlite.ensure_clause_template(clause).should be(clause)
