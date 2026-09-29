@@ -1,6 +1,7 @@
 require "json"
 require "base64"
 require "openssl/hmac"
+require "crypto/subtle"
 
 # Tamper-proof, optionally expiring signed IDs for a model record, in the style
 # of Rails' `signed_id`.
@@ -12,8 +13,10 @@ require "openssl/hmac"
 # signature, purpose, and (if set) expiry all check out.
 #
 # This module is **opt-in** — `include Grant::SignedId` in the models that need
-# it. The signing secret is read from the `GRANT_SIGNING_SECRET` environment
-# variable; generating or verifying a token without it raises.
+# it. The signing secret comes from `Grant::TokenFor.configure` (or
+# `Grant::SignedId.configure`), falling back to the `GRANT_SIGNING_SECRET`
+# environment variable; generating or verifying a token without either raises
+# `Grant::MissingSigningSecret`.
 #
 # ```
 # ENV["GRANT_SIGNING_SECRET"] = "a-long-random-secret"
@@ -27,32 +30,161 @@ require "openssl/hmac"
 # token = user.signed_id(purpose: :password_reset, expires_in: 15.minutes)
 #
 # # later, from the link:
-# User.find_signed(token, purpose: :password_reset)     # => the user
-# User.find_signed(token, purpose: :email_confirmation) # => nil (wrong purpose)
+# User.find_signed(token, purpose: :password_reset)      # => the user
+# User.find_signed(token, purpose: :email_confirmation)  # => nil (wrong purpose)
+# User.find_signed!(token, purpose: :email_confirmation) # raises Grant::InvalidSignedId
 # ```
+module Grant
+  # Raised by `find_signed!` and `find_by_token_for!` when the signature, purpose,
+  # or expiry of a token does not check out.
+  class InvalidSignedId < ErrorBase
+    def initialize(message : String = "Invalid or expired signed id", cause : ::Exception? = nil)
+      super(message, cause)
+    end
+  end
+
+  # Raised by `find_by_token_for!` when a token is malformed, forged, expired,
+  # for another purpose, or invalidated by a change to the record's data.
+  class InvalidToken < ErrorBase
+    def initialize(message : String = "Invalid or expired token", cause : ::Exception? = nil)
+      super(message, cause)
+    end
+  end
+
+  # Raised when a token is generated or verified with no signing secret
+  # configured.
+  class MissingSigningSecret < ErrorBase
+    def initialize
+      super("No signing secret: call Grant::TokenFor.configure or set GRANT_SIGNING_SECRET")
+    end
+  end
+
+  # Signing keys shared by `Grant::SignedId` and `Grant::TokenFor`.
+  #
+  # Set the secret once at the app boundary; verification then never reads the
+  # environment. `previous_secrets` are accepted for verification only, so a key
+  # can be rotated without invalidating tokens already handed out.
+  class SigningConfig
+    property secret : String?
+    property previous_secrets : Array(String) = [] of String
+  end
+
+  # HMAC-SHA256 envelope signing behind `Grant::SignedId` and `Grant::TokenFor`.
+  module Signer
+    # The decoded, signature-checked contents of a token.
+    struct Payload
+      include JSON::Serializable
+
+      getter id : String
+      getter purpose : String
+      getter data : String?
+      getter expires_at : Int64?
+
+      def expired?(now : Time = Time.utc) : Bool
+        if at = expires_at
+          at < now.to_unix
+        else
+          false
+        end
+      end
+    end
+
+    private struct Envelope
+      include JSON::Serializable
+
+      getter data : String
+      getter signature : String
+    end
+
+    @@config = SigningConfig.new
+
+    def self.config : SigningConfig
+      @@config
+    end
+
+    def self.sign(json : String) : String
+      Base64.urlsafe_encode(OpenSSL::HMAC.digest(:sha256, primary_secret, json), padding: false)
+    end
+
+    def self.envelope(json : String) : String
+      wrapper = {
+        "data"      => Base64.urlsafe_encode(json, padding: false),
+        "signature" => sign(json),
+      }
+      Base64.urlsafe_encode(wrapper.to_json, padding: false)
+    end
+
+    # Returns the signed JSON body of *token*, or `nil` when it is malformed or
+    # the signature matches no configured secret. Only decode and parse errors
+    # are rescued.
+    def self.open(token : String) : String?
+      envelope = Envelope.from_json(String.new(Base64.decode(token)))
+      json = String.new(Base64.decode(envelope.data))
+      signature = envelope.signature
+      verified = false
+      each_secret do |secret|
+        expected = Base64.urlsafe_encode(OpenSSL::HMAC.digest(:sha256, secret, json), padding: false)
+        # Evaluate every candidate without short-circuiting on the first hit.
+        verified = true if Crypto::Subtle.constant_time_compare(signature, expected)
+      end
+      verified ? json : nil
+    rescue Base64::Error | JSON::ParseException
+      nil
+    end
+
+    def self.open_payload(token : String) : Payload?
+      json = open(token)
+      return nil unless json
+      Payload.from_json(json)
+    rescue JSON::ParseException
+      nil
+    end
+
+    private def self.primary_secret : String
+      config.secret || ENV["GRANT_SIGNING_SECRET"]? || raise MissingSigningSecret.new
+    end
+
+    private def self.each_secret(& : String ->)
+      yield primary_secret
+      config.previous_secrets.each { |secret| yield secret }
+    end
+  end
+end
+
 module Grant::SignedId
   macro included
     extend ClassMethods
   end
 
+  # Configures the signing keys shared with `Grant::TokenFor`. Call it once at
+  # the app boundary.
+  def self.configure(& : Grant::SigningConfig ->) : Nil
+    yield Grant::Signer.config
+  end
+
   # Returns a signed, URL-safe token encoding this record's id, the given
   # *purpose*, and an optional expiry.
   #
-  # The token is bound to *purpose*, so a token minted for `:password_reset`
-  # cannot be redeemed for `:email_confirmation`. When *expires_in* is given, the
-  # token is rejected by `find_signed` after that span elapses; when `nil`
-  # (default), it never expires. Requires `GRANT_SIGNING_SECRET` to be set.
+  # *purpose* defaults to the model's table name. The token is bound to it, so a
+  # token minted for `:password_reset` cannot be redeemed for
+  # `:email_confirmation`. *expires_in* (relative) or *expires_at* (absolute)
+  # bound the lifetime; with neither the token never expires. Passing both
+  # raises `ArgumentError`.
   #
   # ```
-  # ENV["GRANT_SIGNING_SECRET"] = "secret"
+  # user.signed_id                                               # purpose is "users"
   # user.signed_id(purpose: :password_reset)                     # never expires
   # user.signed_id(purpose: :password_reset, expires_in: 1.hour) # 1-hour window
+  # user.signed_id(purpose: :invite, expires_at: Time.utc(2030, 1, 1))
   # ```
-  def signed_id(purpose : Symbol, expires_in : Time::Span? = nil) : String
+  def signed_id(purpose : Symbol | String | Nil = nil, expires_in : Time::Span? = nil, expires_at : Time? = nil) : String
+    raise ArgumentError.new("Pass either expires_in or expires_at, not both") if expires_in && expires_at
+    expiry = expires_at || (expires_in ? Time.utc + expires_in : nil)
+
     payload = {
       "id"         => self.id.to_s,
-      "purpose"    => purpose.to_s,
-      "expires_at" => expires_in ? (Time.utc + expires_in).to_unix : nil,
+      "purpose"    => (purpose || self.class.table_name).to_s,
+      "expires_at" => expiry.try(&.to_unix),
     }
 
     self.class.generate_signed_token(payload)
@@ -62,116 +194,58 @@ module Grant::SignedId
   # ClassMethods` when a model does `include Grant::SignedId`.
   module ClassMethods
     # Finds and returns the record referenced by *signed_id*, or `nil` if the
-    # token is invalid for *purpose*.
+    # token is invalid for *purpose* (default: the table name).
     #
-    # Returns `nil` (never raises) when the signature does not verify, the
-    # *purpose* does not match the one the token was minted with, the token has
-    # expired, or no record with the encoded id exists. This is the verification
-    # counterpart to the instance `#signed_id`. Requires `GRANT_SIGNING_SECRET`.
+    # Returns `nil` when the signature does not verify, the token is malformed,
+    # the *purpose* does not match, the token has expired, or no record with the
+    # encoded id exists. Only decode and verify failures become `nil`; a missing
+    # signing secret still raises `Grant::MissingSigningSecret`.
     #
     # ```
-    # ENV["GRANT_SIGNING_SECRET"] = "secret"
-    # token = user.signed_id(purpose: :password_reset, expires_in: 15.minutes)
-    #
     # User.find_signed(token, purpose: :password_reset)     # => the user
     # User.find_signed("garbage", purpose: :password_reset) # => nil
     # ```
-    def find_signed(signed_id : String, purpose : Symbol) : self?
-      payload = verify_signed_token(signed_id)
+    def find_signed(signed_id : String, purpose : Symbol | String | Nil = nil) : self?
+      payload = signed_id_payload(signed_id, purpose)
       return nil unless payload
-
-      # Check purpose
-      return nil unless payload["purpose"]?.try(&.as_s) == purpose.to_s
-
-      # Check expiration
-      if expires_at = payload["expires_at"]?
-        return nil if !expires_at.raw.nil? && expires_at.as_i64 < Time.utc.to_unix
-      end
-
-      # Find record
-      id = payload["id"]?.try(&.as_s)
-      return nil unless id
 
       # IDs are encoded as strings in the signed payload. Restore integer
       # bindings before querying so PostgreSQL and SQLite compare like types.
-      find(id.to_i64? || id)
-    rescue
-      nil
+      find(payload.id.to_i64? || payload.id)
+    end
+
+    # Like `find_signed` but raises `Grant::InvalidSignedId` for a bad, forged,
+    # expired, or wrong-purpose token and `Grant::RecordNotFound` when the record
+    # is gone.
+    def find_signed!(signed_id : String, purpose : Symbol | String | Nil = nil) : self
+      payload = signed_id_payload(signed_id, purpose) || raise Grant::InvalidSignedId.new
+      find(payload.id.to_i64? || payload.id) || raise Grant::RecordNotFound.new("Couldn't find #{name} with signed id")
     end
 
     # Serializes *payload* to JSON, signs it with HMAC-SHA256, and returns the
     # Base64-url-encoded `{data, signature}` envelope. Low-level building block for
-    # `#signed_id`; prefer that method. Requires `GRANT_SIGNING_SECRET`.
-    #
-    # ```
-    # ENV["GRANT_SIGNING_SECRET"] = "secret"
-    # User.generate_signed_token({"id" => "1", "purpose" => "x", "expires_at" => nil})
-    # ```
+    # `#signed_id`; prefer that method.
     def generate_signed_token(payload : Hash(String, String | Int64 | Nil)) : String
-      json = payload.to_json
-      signature = generate_signature(json)
-
-      data = {
-        "data"      => Base64.urlsafe_encode(json, padding: false),
-        "signature" => signature,
-      }
-
-      Base64.urlsafe_encode(data.to_json, padding: false)
+      Grant::Signer.envelope(payload.to_json)
     end
 
     # Verifies a token produced by `generate_signed_token` and returns its decoded
     # payload as a `Hash(String, JSON::Any)`, or `nil` if the signature does not
-    # verify or the token is malformed. Does not check purpose/expiry —
-    # `find_signed` layers those on top. Requires `GRANT_SIGNING_SECRET`.
-    #
-    # ```
-    # ENV["GRANT_SIGNING_SECRET"] = "secret"
-    # tok = user.signed_id(purpose: :x)
-    # User.verify_signed_token(tok).try(&.["purpose"]) # => "x"
-    # ```
+    # verify or the token is malformed. Does not check purpose/expiry.
     def verify_signed_token(token : String) : Hash(String, JSON::Any)?
-      # Decode outer wrapper
-      wrapper_json = String.new(Base64.decode(token))
-      wrapper = JSON.parse(wrapper_json)
-
-      # Extract data and signature
-      data = wrapper["data"].as_s
-      signature = wrapper["signature"].as_s
-
-      # Decode and verify
-      json = String.new(Base64.decode(data))
-
-      # Verify signature
-      expected_signature = generate_signature(json)
-      return nil unless secure_compare(signature, expected_signature)
-
-      JSON.parse(json).as_h
-    rescue
+      json = Grant::Signer.open(token)
+      return nil unless json
+      JSON.parse(json).as_h?
+    rescue JSON::ParseException
       nil
     end
 
-    private def generate_signature(data : String) : String
-      secret = signing_secret
-      Base64.urlsafe_encode(
-        OpenSSL::HMAC.digest(:sha256, secret, data),
-        padding: false
-      )
-    end
-
-    private def signing_secret : String
-      # In a real app, this should come from environment or config
-      ENV["GRANT_SIGNING_SECRET"]? || raise "GRANT_SIGNING_SECRET not set"
-    end
-
-    private def secure_compare(a : String, b : String) : Bool
-      return false unless a.bytesize == b.bytesize
-
-      result = 0_u8
-      a.bytes.zip(b.bytes) do |byte_a, byte_b|
-        result |= byte_a ^ byte_b
-      end
-
-      result == 0
+    private def signed_id_payload(token : String, purpose : Symbol | String | Nil) : Grant::Signer::Payload?
+      payload = Grant::Signer.open_payload(token)
+      return nil unless payload
+      return nil unless payload.purpose == (purpose || table_name).to_s
+      return nil if payload.expired?
+      payload
     end
   end
 end
