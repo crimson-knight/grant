@@ -84,6 +84,26 @@ abstract class Grant::Base
   # Make secure token macros available
   macro has_secure_token(name, length = 24, alphabet = :base58)
     Grant::SecureToken.has_secure_token({{ name }}, {{ length }}, {{ alphabet }})
+
+    # Token columns are credentials: `inspect` prints them as [FILTERED].
+    {% if @type.has_constant?(:GRANT_SECURE_TOKEN_COLUMNS) %}
+      {% token_columns = @type.constant(:GRANT_SECURE_TOKEN_COLUMNS) %}
+      {% token_columns << name.id.stringify %}
+    {% else %}
+      {% token_columns = [name.id.stringify] %}
+      GRANT_SECURE_TOKEN_COLUMNS = {{ token_columns }}
+    {% end %}
+
+    def self.secure_token_column?(name : String) : Bool
+      case name
+      {% for token_column in token_columns %}
+      when {{ token_column }}
+        true
+      {% end %}
+      else
+        false
+      end
+    end
   end
 
   # Auto-register class for polymorphic associations will be handled in the main inherited macro

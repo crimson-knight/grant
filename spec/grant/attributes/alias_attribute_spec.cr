@@ -32,4 +32,14 @@ describe "alias_attribute" do
     AttrPost.where(name: ["a", "b"]).count.should eq(2)
     AttrPost.where(title: "a").where(name: "b").count.should eq(0)
   end
+
+  it "keeps several aliases and resolves them on STI subclasses" do
+    AttrAliasRoot.clear
+    AttrAliasRoot.attribute_aliases.should eq({"headline" => "title", "hits" => "views"})
+    child = AttrAliasChild.create!(headline: "x", hits: 3)
+    child.title.should eq("x")
+    child.views.should eq(3)
+    AttrAliasChild.where(headline: "x", hits: 3).count.should eq(1)
+    AttrAliasChild.has_column?("hits").should be_true
+  end
 end

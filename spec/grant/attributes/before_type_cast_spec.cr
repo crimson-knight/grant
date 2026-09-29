@@ -34,6 +34,15 @@ describe "attribute_before_type_cast" do
     loaded.instance_variable_get_for_spec.should be_nil
   end
 
+  it "forgets the raw input on reload" do
+    post = AttrPost.create!(title: "Reloaded", views: 5)
+    post.assign_attributes(views: "7")
+    post.views_before_type_cast.should eq("7")
+    post.reload
+    post.views.should eq(5)
+    post.views_before_type_cast.should eq(5)
+  end
+
   it "returns the converted database value for converter columns" do
     post = AttrPost.new(level: AttributeSpecModels::Level::Low)
     post.attribute_before_type_cast("level").should eq("Low")

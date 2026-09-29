@@ -36,6 +36,8 @@ end
     column api_token : String?
     encrypts :ssn
     filter_attributes :api_token
+    has_secure_token :session_key
+    has_secure_token :invite_code
   end
 
   class AttrSlugged < Grant::Base
@@ -46,6 +48,22 @@ end
     column slug : String?
 
     to_param :slug
+  end
+
+  class AttrAliasRoot < Grant::Base
+    include Grant::STI
+    connection {{ adapter_literal }}
+    table attr_alias_roots
+
+    column id : Int64, primary: true
+    column type : String
+    column title : String?
+    column views : Int32?
+    alias_attribute :headline, :title
+    alias_attribute :hits, :views
+  end
+
+  class AttrAliasChild < AttrAliasRoot
   end
 
   class AttrPlain < Grant::Base
@@ -62,4 +80,5 @@ Spec.before_suite do
   AttrAccount.migrator.drop_and_create
   AttrSlugged.migrator.drop_and_create
   AttrPlain.migrator.drop_and_create
+  AttrAliasRoot.migrator.drop_and_create
 end

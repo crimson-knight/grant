@@ -29,6 +29,8 @@ describe "attribute introspection" do
   it "answers attribute_present? like ActiveRecord" do
     post = AttrPost.new(title: "", views: 0)
     post.attribute_present?("title").should be_false
+    post.title = "   "
+    post.attribute_present?("title").should be_true
     post.attribute_present?("published").should be_false
     post.attribute_present?("views").should be_true
     post.title = "x"

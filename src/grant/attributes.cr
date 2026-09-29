@@ -167,6 +167,12 @@ module Grant
         end
       end
 
+      # Whether *name* was declared with `has_secure_token`; such columns are
+      # printed as `[FILTERED]` by `inspect`.
+      def secure_token_column?(name : String) : Bool
+        false
+      end
+
       # Present for ActiveRecord source compatibility. Grant declares columns at
       # compile time, so there is no cached column information to discard.
       def reset_column_information : Nil
@@ -449,6 +455,11 @@ module Grant
       store.delete(attribute) if store
     end
 
+    # Forgets every retained raw input, for example after `reload`.
+    protected def clear_before_type_cast : Nil
+      @attributes_before_type_cast = nil
+    end
+
     private def resolved_attribute_name(name : String | Symbol) : String
       attribute = self.class.resolve_attribute_alias(name.to_s)
       raise Grant::UnknownAttributeError.new(self.class.name, attribute) unless self.class.has_column?(attribute)
@@ -475,7 +486,8 @@ module Grant
 
     # A readable, redacted representation: only column values, none of the
     # dirty-tracking state. Values of columns matched by `filter_attributes`,
-    # and encrypted columns, print as `[FILTERED]` (nil stays `nil`).
+    # encrypted columns and `has_secure_token` columns print as `[FILTERED]`
+    # (nil stays `nil`).
     #
     # ```
     # user.inspect # => #<User id: 1, email: "a@b.c", password_digest: [FILTERED]>
@@ -495,7 +507,7 @@ module Grant
     private def inspect_attribute_value(io : IO, name : String, value, filters : Array(String | Regex)) : Nil
       if value.nil?
         io << "nil"
-      elsif Grant::Attributes.filtered?(name, filters) || encrypted_column?(name)
+      elsif Grant::Attributes.filtered?(name, filters) || encrypted_column?(name) || self.class.secure_token_column?(name)
         io << "[FILTERED]"
       elsif value.is_a?(String) && value.size > 50
         io << value[0, 50].inspect.rchop << "...\""

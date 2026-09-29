@@ -49,6 +49,19 @@ describe "inspect and filter_attributes" do
     account.inspect.should contain("api_token: [FILTERED]")
   end
 
+  it "filters has_secure_token columns by default" do
+    account = AttrAccount.new(email: "a@b.c")
+    account.session_key = "session-secret"
+    account.invite_code = "invite-secret"
+    text = account.inspect
+    text.should contain("session_key: [FILTERED]")
+    text.should contain("invite_code: [FILTERED]")
+    text.should_not contain("session-secret")
+    text.should_not contain("invite-secret")
+    AttrAccount.secure_token_column?("email").should be_false
+    AttrPost.secure_token_column?("title").should be_false
+  end
+
   it "does not leak filtered values through to_s of a collection" do
     Grant.settings.filter_attributes = ["password"] of String | Regex
     account = AttrAccount.new(password_digest: "hunter2")
