@@ -15,13 +15,8 @@ module Grant::Encryption
           if encrypted_attr = encrypted_attributes[key_str]?
             # Only deterministic fields can be queried
             if encrypted_attr.deterministic
-              encrypted_value = Grant::Encryption.encrypt(
-                value.to_s,
-                self.name,
-                key_str,
-                true # deterministic
-              )
-              clauses << "#{key}_encrypted = ?"
+              encrypted_value = encrypted_attr.query_value(value.to_s)
+              clauses << "#{encrypted_attr.column_name} = ?"
               params << encrypted_value
             else
               raise ArgumentError.new("Cannot query non-deterministic encrypted field: #{key}")
@@ -39,6 +34,36 @@ module Grant::Encryption
       # Add find_by_encrypted helper
       def self.find_by_encrypted(**attrs)
         where_encrypted(**attrs).first
+      end
+    end
+  end
+end
+
+module Grant::Encryption
+  # Turns the value of a predicate on an encrypted attribute into what the
+  # storage column holds, once per statement. Called while the SQL is
+  # assembled, so the comparison stays in the database.
+  module QueryValue
+    # *value* is nil, a single value or a list. Returns nil, the ciphertext,
+    # or (a list, or a value that also matches its plaintext while
+    # `support_unencrypted_data` is on) an array of stored forms.
+    def self.rewrite(attribute : EncryptedAttribute, value : Grant::Columns::Type) : Grant::Columns::Type
+      unless attribute.deterministic
+        raise ArgumentError.new("Cannot query non-deterministic encrypted field: #{attribute.attribute_name}")
+      end
+
+      if value.nil?
+        nil
+      elsif value.is_a?(Array)
+        stored = [] of String
+        value.each do |item|
+          raise ArgumentError.new("Encrypted field #{attribute.attribute_name.inspect} cannot be matched against nil inside a list") if item.nil?
+          stored.concat(attribute.query_values(Serializer.dump(item)))
+        end
+        stored.as(Grant::Columns::Type)
+      else
+        stored = attribute.query_values(Serializer.dump(value))
+        stored.size == 1 ? stored.first : stored.as(Grant::Columns::Type)
       end
     end
   end

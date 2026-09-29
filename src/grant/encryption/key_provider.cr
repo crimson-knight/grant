@@ -20,6 +20,31 @@ module Grant::Encryption
     class KeyError < Grant::ErrorBase
     end
 
+    # One primary/deterministic key pair with the salt it was derived under.
+    # Decryption tries the current pair first and then each previous pair, so a
+    # rotation can read data written under either without a maintenance window.
+    class KeySet
+      getter primary_key : Bytes?
+      getter deterministic_key : Bytes?
+      getter salt : String
+
+      def initialize(@primary_key : Bytes?, @deterministic_key : Bytes?, @salt : String)
+      end
+    end
+
+    # Bumped whenever keys or the salt change, so caches built from them (the
+    # derived keys here and each attribute's previous-scheme keys) can tell
+    # they are stale.
+    @@generation = 0
+
+    def self.generation : Int32
+      @@derived_keys_mutex.synchronize { @@generation }
+    end
+
+    @@previous_primary_keys = [] of Bytes
+    @@previous_deterministic_keys = [] of Bytes
+    @@previous_key_sets = [] of KeySet
+
     # Primary encryption key
     @@primary_key : Bytes? = nil
 
@@ -31,6 +56,7 @@ module Grant::Encryption
       @@derived_keys_mutex.synchronize do
         @@primary_key = key
         @@derived_keys.clear
+        rebuild_previous_key_sets
       end
     end
 
@@ -45,6 +71,7 @@ module Grant::Encryption
       @@derived_keys_mutex.synchronize do
         @@deterministic_key = key
         @@derived_keys.clear
+        rebuild_previous_key_sets
       end
     end
 
@@ -59,6 +86,7 @@ module Grant::Encryption
       @@derived_keys_mutex.synchronize do
         @@key_derivation_salt = salt
         @@derived_keys.clear
+        rebuild_previous_key_sets
       end
     end
 
@@ -70,6 +98,49 @@ module Grant::Encryption
     # Load deterministic key from base64-encoded string
     def self.deterministic_key=(key : String)
       self.deterministic_key = decode_key(key)
+    end
+
+    # Older primary keys, newest first. Data written under them stays readable;
+    # new writes always use `primary_key`.
+    def self.previous_primary_keys : Array(Bytes)
+      @@derived_keys_mutex.synchronize { @@previous_primary_keys.dup }
+    end
+
+    def self.previous_primary_keys=(keys : Array(Bytes))
+      @@derived_keys_mutex.synchronize do
+        @@previous_primary_keys = keys.dup
+        @@derived_keys.clear
+        rebuild_previous_key_sets
+      end
+    end
+
+    # Older deterministic keys, newest first. See `previous_primary_keys`.
+    def self.previous_deterministic_keys : Array(Bytes)
+      @@derived_keys_mutex.synchronize { @@previous_deterministic_keys.dup }
+    end
+
+    def self.previous_deterministic_keys=(keys : Array(Bytes))
+      @@derived_keys_mutex.synchronize do
+        @@previous_deterministic_keys = keys.dup
+        @@derived_keys.clear
+        rebuild_previous_key_sets
+      end
+    end
+
+    # The previous keys zipped into pairs, newest first, each with the current
+    # salt. Rebuilt whenever a key or the salt changes; callers hold the result
+    # and compare `KeyProvider.generation` to notice a change.
+    def self.previous_key_sets : Array(KeySet)
+      @@derived_keys_mutex.synchronize { @@previous_key_sets }
+    end
+
+    # Callers must hold `@@derived_keys_mutex`.
+    private def self.rebuild_previous_key_sets : Nil
+      @@generation += 1
+      count = Math.max(@@previous_primary_keys.size, @@previous_deterministic_keys.size)
+      @@previous_key_sets = Array(KeySet).new(count) do |index|
+        KeySet.new(@@previous_primary_keys[index]?, @@previous_deterministic_keys[index]?, @@key_derivation_salt)
+      end
     end
 
     # Get the primary encryption key
@@ -105,6 +176,21 @@ module Grant::Encryption
           @@derived_keys[cache_key] = derived_key
         end
       end
+    end
+
+    # The key for one attribute under *key_set*, or `nil` when that set has no
+    # key of the requested kind. Not cached here; callers that decrypt often keep
+    # the result (see `EncryptedAttribute`).
+    def self.derive_key_from_set?(model_name : String, attribute_name : String, deterministic : Bool, key_set : KeySet) : Bytes?
+      master_key = deterministic ? key_set.deterministic_key : key_set.primary_key
+      return nil unless master_key
+
+      hkdf(
+        secret: master_key,
+        salt: key_set.salt,
+        info: "#{DERIVE_INFO_PREFIX}.#{model_name}.#{attribute_name}",
+        length: KEY_SIZE
+      )
     end
 
     # Derives a key from explicit configuration without reading or changing the

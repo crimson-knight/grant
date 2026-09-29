@@ -77,8 +77,32 @@ module Grant::Encryption
       raise EncryptionError.new("Encryption failed: #{ex.message}")
     end
 
+    # Smallest possible payload: header byte, IV, one cipher block and the HMAC.
+    MIN_PAYLOAD_SIZE = 1 + IV_SIZE + 16 + HMAC_SIZE
+
+    # Whether *bytes* has the shape of a payload this cipher wrote: long enough
+    # and carrying the current version in the header byte. It does not verify
+    # the HMAC, so it is the cheap check that tells ciphertext from plaintext
+    # without raising.
+    def self.encrypted_payload?(bytes : Bytes) : Bool
+      bytes.size >= MIN_PAYLOAD_SIZE && (bytes[0] & 0x7F_u8) == VERSION
+    end
+
+    # Whether the header byte marks a deterministic payload (which key wrote it).
+    def self.deterministic_payload?(bytes : Bytes) : Bool
+      !bytes.empty? && (bytes[0] & Flags::DETERMINISTIC) != 0
+    end
+
     # Decrypt data with the given key
     def self.decrypt(encrypted : Bytes, key : Bytes) : String
+      decrypt?(encrypted, key) || raise DecryptionError.new("HMAC verification failed - data may have been tampered with")
+    end
+
+    # Like `decrypt`, but returns `nil` instead of raising when the HMAC does
+    # not match *key*. A wrong key is the normal outcome while trying the
+    # current key and then the previous ones, so it must not cost an exception.
+    # Malformed payloads still raise `DecryptionError`.
+    def self.decrypt?(encrypted : Bytes, key : Bytes) : String?
       return "" if encrypted.empty?
 
       # Check minimum size
@@ -95,9 +119,7 @@ module Grant::Encryption
 
       # Verify HMAC
       expected_hmac = OpenSSL::HMAC.digest(:sha256, mac_key, payload)
-      unless secure_compare(provided_hmac, expected_hmac)
-        raise DecryptionError.new("HMAC verification failed - data may have been tampered with")
-      end
+      return nil unless secure_compare(provided_hmac, expected_hmac)
 
       # Parse the encrypted payload
       header, iv, ciphertext = parse_encrypted_payload(payload)

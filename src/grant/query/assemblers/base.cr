@@ -187,26 +187,30 @@ module Grant::Query::Assembler
             add_aggregate_field(field)
 
             value = encrypted_query_value(expr[:field], expr[:value])
+            operator = expr[:operator]
+            # A single value that matches its ciphertext and its plaintext (while
+            # unencrypted data is still supported) becomes an IN list.
+            operator = :in if operator == :eq && value.is_a?(Array) && !expr[:value].is_a?(Array)
             if value.nil?
-              case expr[:operator]
+              case operator
               when :eq
                 sql << "#{field} IS NULL"
               when :neq, :ltgt
                 sql << "#{field} IS NOT NULL"
               else
-                raise ArgumentError.new("Operator #{expr[:operator].inspect} does not support nil values")
+                raise ArgumentError.new("Operator #{operator.inspect} does not support nil values")
               end
             else
               if value.is_a?(Array)
                 array = value.as(Array)
                 if array.empty?
-                  sql << (expr[:operator] == :nin ? "1=1" : "1=0")
+                  sql << (operator == :nin ? "1=1" : "1=0")
                 else
                   placeholders = array.map { |item| add_parameter(item.as(Grant::Columns::Type)) }
-                  sql << "#{field} #{sql_operator(expr[:operator])} (#{placeholders.join(",")})"
+                  sql << "#{field} #{sql_operator(operator)} (#{placeholders.join(",")})"
                 end
               else
-                sql << "#{field} #{sql_operator(expr[:operator])} #{add_parameter(value)}"
+                sql << "#{field} #{sql_operator(operator)} #{add_parameter(value)}"
               end
             end
           end
@@ -267,16 +271,7 @@ module Grant::Query::Assembler
         raise ArgumentError.new("Cannot query non-deterministic encrypted field: #{attribute_name}")
       end
 
-      case value
-      when Nil
-        nil
-      when String
-        Grant::Encryption.encrypt(value, Model.name, attribute_name, true)
-      when Array(String)
-        value.map { |item| Grant::Encryption.encrypt(item, Model.name, attribute_name, true) }
-      else
-        raise ArgumentError.new("Encrypted field #{attribute_name.inspect} can only be queried with String values")
-      end
+      Grant::Encryption::QueryValue.rewrite(encrypted_attribute, value)
     end
 
     # Rewrites raw-clause placeholders to this assembler's local bind numbering
