@@ -65,7 +65,9 @@ module Grant::Sharding
         if config = sharding_config
           # For class-level queries, we need context to determine shard
           # This would typically come from query builder context
-          if shard = Grant::ShardManager.current_shard
+          # `ShardManager.with_shard` wins; otherwise the shard of a
+          # `connected_to(shard:)` block that applies to this class.
+          if shard = Grant::ShardManager.current_shard || current_shard
             Grant::ConnectionRegistry.get_adapter(database_name, current_role, shard)
           else
             # No shard context - this is an error for sharded models

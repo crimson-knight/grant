@@ -34,6 +34,24 @@ module Grant
     # turn it on while configuring a development environment.
     property? capture_statement_bind_values : Bool = false
 
+    # Role name that `connected_to(role: ...)` treats as the writer. `:primary`,
+    # the role of a model that never chose one, is an alias of it.
+    getter writing_role : Symbol = :writing
+
+    # Role name that `connected_to(role: ...)` treats as the reader. Switching to
+    # it prevents writes, as in ActiveRecord.
+    getter reading_role : Symbol = :reading
+
+    def writing_role=(role : Symbol)
+      raise ArgumentError.new("writing_role must differ from reading_role (got #{role.inspect})") if role == @reading_role
+      @writing_role = role
+    end
+
+    def reading_role=(role : Symbol)
+      raise ArgumentError.new("reading_role must differ from writing_role (got #{role.inspect})") if role == @writing_role
+      @reading_role = role
+    end
+
     def index_hint_mode=(mode : Symbol)
       unless {:warn, :strict, :ignore}.includes?(mode)
         raise ArgumentError.new("index_hint_mode must be :warn, :strict, or :ignore (got #{mode.inspect})")

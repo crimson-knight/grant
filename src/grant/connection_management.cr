@@ -1,4 +1,6 @@
 require "./connection_registry"
+require "./connection_context"
+require "./connection_handling"
 
 # Multi-database connection management, mixed into every `Grant::Base` model.
 #
@@ -11,36 +13,25 @@ require "./connection_registry"
 # `adapter`, etc.). Named connections themselves are established via
 # `Grant::ConnectionRegistry.establish_connection`.
 module Grant::ConnectionManagement
-  @@write_prevention_depth = {} of Fiber => Int32
-  @@write_prevention_mutex = Mutex.new
-
+  # Whether any class's innermost context in this fiber prevents writes. Raw
+  # connections that belong to no model (`Grant.connection`) use this, so a
+  # write-preventing block on one model is not hidden by a later, unrelated
+  # `connected_to` on another. An owner's own later context (for example an
+  # explicit writing role) still lifts that owner's prevention.
+  #
   # :nodoc:
   def self.preventing_writes? : Bool
-    @@write_prevention_mutex.synchronize do
-      @@write_prevention_depth[Fiber.current]?.try(&.positive?) || false
-    end
-  end
+    return false unless state = ConnectionState.current?
 
-  # :nodoc:
-  def self.with_write_prevention(&block : -> T) : T forall T
-    fiber = Fiber.current
-    @@write_prevention_mutex.synchronize do
-      @@write_prevention_depth[fiber] = (@@write_prevention_depth[fiber]? || 0) + 1
-    end
+    contexts = state.contexts
+    contexts.each_with_index do |context, index|
+      next unless context.prevent_writes
 
-    begin
-      yield
-    ensure
-      @@write_prevention_mutex.synchronize do
-        if depth = @@write_prevention_depth[fiber]?
-          if depth <= 1
-            @@write_prevention_depth.delete(fiber)
-          else
-            @@write_prevention_depth[fiber] = depth - 1
-          end
-        end
-      end
+      owner = context.owner
+      superseded = (index + 1...contexts.size).any? { |later| contexts[later].owner == owner }
+      return true unless superseded
     end
+    false
   end
 
   # :nodoc:
@@ -50,23 +41,40 @@ module Grant::ConnectionManagement
     raise Grant::Transaction::ReadOnlyError.new("Write query attempted while writes are prevented")
   end
 
-  # Snapshot of a fiber's active connection context: which database, role, and
-  # shard a unit of work is targeting, and whether writes are prevented.
+  # Maps the legacy `:primary` role onto the configured writing role, so
+  # `connects_to(config: {writing: ...})` also serves models that never named a
+  # role.
   #
-  # Pushed and popped by `ClassMethods#connected_to`; you generally read it
-  # indirectly via `current_database` / `current_role` / `current_shard` /
-  # `preventing_writes?` rather than constructing one yourself.
-  struct ConnectionContext
-    # The target database (connection) name.
-    property database : String
-    # The target role (`:primary`, `:writing`, `:reading`, ...).
-    property role : Symbol
-    # The target shard, or `nil` for the unsharded connection.
-    property shard : Symbol?
-    # When true, writes raise `Grant::Transaction::ReadOnlyError`.
-    property prevent_writes : Bool
+  # :nodoc:
+  def self.canonical_role(role : Symbol) : Symbol
+    role == :primary ? Grant.settings.writing_role : role
+  end
 
-    def initialize(@database, @role = :primary, @shard = nil, @prevent_writes = false)
+  # :nodoc:
+  def self.reading_role?(role : Symbol) : Bool
+    canonical_role(role) == Grant.settings.reading_role
+  end
+
+  # :nodoc:
+  def self.writing_role?(role : Symbol) : Bool
+    canonical_role(role) == Grant.settings.writing_role
+  end
+
+  # Role name the connection registry knows a configured role by. The registry
+  # always says `:reading` and `:writing`, whatever `Grant.settings` renames
+  # them; `:primary` is the writing role, which the registry also serves from a
+  # connection established without a role.
+  #
+  # :nodoc:
+  def self.registry_role(role : Symbol) : Symbol
+    settings = Grant.settings
+    role = canonical_role(role)
+    if role == settings.reading_role
+      :reading
+    elsif role == settings.writing_role
+      :writing
+    else
+      role
     end
   end
 
@@ -130,12 +138,55 @@ module Grant::ConnectionManagement
   end
 
   macro included
-    # Connection configuration
-    # The configured connection is class-wide; temporary selections live only
-    # in the current fiber's ConnectionContext.
-    class_property default_database_name : String = "primary"
-    class_property connection_config = {} of Symbol => String
-    class_property shard_config = {} of Symbol => Hash(Symbol, String)
+    # Connection configuration. Each class keeps only the values declared on
+    # itself and resolves the rest through its superclass at use time, so a
+    # `connects_to` on an abstract parent reaches subclasses declared earlier
+    # and later. Temporary selections live only in the current fiber's
+    # `ConnectionState`.
+    @@own_default_database_name : String? = nil
+    @@own_connection_config : Hash(Symbol, String)? = nil
+    @@own_shard_config : Hash(Symbol, Hash(Symbol, String))? = nil
+    @@abstract_class : Bool = false
+
+    def self.default_database_name : String
+      @@own_default_database_name || "primary"
+    end
+
+    def self.default_database_name=(database : String)
+      @@own_default_database_name = database
+    end
+
+    def self.connection_config : Hash(Symbol, String)
+      @@own_connection_config || (@@own_connection_config = {} of Symbol => String)
+    end
+
+    def self.connection_config=(config : Hash(Symbol, String))
+      @@own_connection_config = config
+    end
+
+    def self.shard_config : Hash(Symbol, Hash(Symbol, String))
+      @@own_shard_config || (@@own_shard_config = {} of Symbol => Hash(Symbol, String))
+    end
+
+    def self.shard_config=(config : Hash(Symbol, Hash(Symbol, String)))
+      @@own_shard_config = config
+    end
+
+    # Whether this class is an abstract connection holder: it declares
+    # `connects_to` for its subclasses and is not backed by a table itself. Not
+    # inherited.
+    def self.abstract_class? : Bool
+      @@abstract_class
+    end
+
+    def self.abstract_class=(value : Bool)
+      @@abstract_class = value
+    end
+
+    # :nodoc:
+    def self.__connection_owned_by?(owner : String) : Bool
+      owner == "Grant::Base"
+    end
 
     # Returns the active database for this fiber, falling back to the model's
     # configured default when no connected_to block is active.
@@ -149,33 +200,37 @@ module Grant::ConnectionManagement
       self.default_database_name = database
     end
 
-    # Fiber-keyed connection context — one slot per fiber so concurrent fibers
-    # that each call connected_to cannot corrupt each other's role/database/shard.
-    @@connection_contexts = {} of Fiber => ConnectionContext
-    @@connection_contexts_mutex = Mutex.new
-
-    # Returns the current fiber's `ConnectionContext`, or `nil` when no
-    # `#connected_to` block is active (the default primary/writing context).
+    # Returns the current fiber's innermost `ConnectionContext` that applies to
+    # this class, or `nil` when no `#connected_to` block is active (the default
+    # primary/writing context). Reads a fiber-local slot without taking a lock.
     #
     # ```
     # User.connection_context # => nil (outside any connected_to block)
     # ```
     def self.connection_context : ConnectionContext?
-      @@connection_contexts_mutex.synchronize { @@connection_contexts[Fiber.current]? }
+      return nil unless state = ConnectionState.current?
+
+      state.contexts.reverse_each do |context|
+        owner = context.owner
+        return context if owner.nil? || __connection_owned_by?(owner)
+      end
+      nil
     end
 
-    # Sets (or with `nil`, clears) the current fiber's `ConnectionContext`.
-    # Managed by `#connected_to`; you rarely call it directly. Passing `nil`
-    # deletes the fiber's entry to avoid leaking context on long-lived fibers.
+    # Sets (or with `nil`, clears) this class's own `ConnectionContext` in the
+    # current fiber. Managed by `#connected_to` and `#connecting_to`; you rarely
+    # call it directly. Passing `nil` removes the contexts this class created
+    # at the current block level: contexts of enclosing `#connected_to` blocks
+    # stay until those blocks end.
     def self.connection_context=(ctx : ConnectionContext?)
-      @@connection_contexts_mutex.synchronize do
-        if ctx.nil?
-          # Delete the entry rather than storing nil — avoids a memory leak
-          # where long-lived fibers accumulate dead entries.
-          @@connection_contexts.delete(Fiber.current)
-        else
-          @@connection_contexts[Fiber.current] = ctx
-        end
+      if ctx.nil?
+        return unless state = ConnectionState.current?
+        state.remove_block_level_contexts(self.name)
+      else
+        state = ConnectionState.current
+        state.remove_block_level_contexts(self.name)
+        state.contexts << ConnectionContext.new(
+          ctx.database, ctx.role, ctx.shard, ctx.prevent_writes, self.name)
       end
     end
 
@@ -200,22 +255,38 @@ module Grant::ConnectionManagement
 
   # Declares which database(s), roles, and shards a model connects to.
   #
-  # All three arguments are optional:
+  # All arguments are optional:
   #
-  # * *database* — the default connection name (a `String`). Sets
-  #   `database_name`, the connection used when no role/shard override is active.
-  # * *config* — a `NamedTuple` of `role => connection_name`, e.g.
-  #   `{writing: "primary", reading: "primary_replica"}`. Enables automatic
-  #   read/write splitting: reads route to the `:reading` connection once enough
-  #   time has passed since the last write (see `#stick_to_primary`).
+  # * *database* — the default connection name (a `String`), or a `NamedTuple`
+  #   of `role => connection_name` such as
+  #   `{writing: "primary", reading: "primary_replica"}`, which is the
+  #   ActiveRecord form. The hash form enables automatic read/write splitting:
+  #   reads route to the `:reading` connection once enough time has passed since
+  #   the last write (see `#stick_to_primary`), and the `:writing` name becomes
+  #   the default database.
+  # * *config* — the same `NamedTuple` as a separate argument, kept for
+  #   compatibility. Do not pass it together with a `NamedTuple` *database*.
   # * *shards* — a `NamedTuple` of `shard_name => {role => connection_name}` for
   #   horizontal sharding. Switch the active shard at runtime with
   #   `#connected_to(shard: ...)`.
+  #
+  # Declared names are checked while compiling: they must be non-empty literals.
+  # Whether each name is an established connection is checked by
+  # `.verify_connections!` (or `Grant::ConnectionHandling.verify_all!`), because
+  # models load before an application establishes its connections.
+  #
+  # A class that declares nothing inherits its superclass's settings when they
+  # are read, so `connects_to` on an abstract parent applies to every subclass.
   #
   # The named connections themselves must be established separately with
   # `Grant::ConnectionRegistry.establish_connection`.
   #
   # ```
+  # abstract class ApplicationRecord < Grant::Base
+  #   abstract_class
+  #   connects_to database: {writing: "primary", reading: "primary_replica"}
+  # end
+  #
   # class User < Grant::Base
   #   connects_to(
   #     database: "primary",
@@ -228,33 +299,65 @@ module Grant::ConnectionManagement
   # end
   # ```
   macro connects_to(database = nil, config = nil, shards = nil)
+    {% if database.is_a?(NamedTupleLiteral) %}
+      {% raise "connects_to: pass roles either as `database: {writing:, reading:}` or as `config:`, not both" if config %}
+      {% config = database %}
+      {% database = config[:writing] || config[:primary] %}
+    {% end %}
+
     {% if database %}
-      self.database_name = {{database}}
+      {% raise "connects_to: database name must be a String or Symbol literal, got #{database}" unless database.is_a?(StringLiteral) || database.is_a?(SymbolLiteral) %}
+      {% raise "connects_to: database name must not be empty" if database.id.stringify.empty? %}
+      self.database_name = {{database.id.stringify}}
     {% end %}
-    
+
     {% if config %}
-      {% if config.is_a?(NamedTupleLiteral) %}
-        self.connection_config = {
-          {% for role, db_name in config %}
-            {{role.id.symbolize}} => {{db_name.id.stringify}},
-          {% end %}
-        } of Symbol => String
-      {% end %}
+      {% raise "connects_to: config must be a NamedTuple of role: \"connection\"" unless config.is_a?(NamedTupleLiteral) %}
+      self.connection_config = {
+        {% for role, db_name in config %}
+          {% raise "connects_to: connection name for #{role} must be a String or Symbol literal, got #{db_name}" unless db_name.is_a?(StringLiteral) || db_name.is_a?(SymbolLiteral) %}
+          {% raise "connects_to: connection name for #{role} must not be empty" if db_name.id.stringify.empty? %}
+          {{role.id.symbolize}} => {{db_name.id.stringify}},
+        {% end %}
+      } of Symbol => String
     {% end %}
-    
+
     {% if shards %}
-      {% if shards.is_a?(NamedTupleLiteral) %}
-        self.shard_config = {
-          {% for shard_name, shard_settings in shards %}
-            {{shard_name.id.symbolize}} => {
-              {% for role, db_name in shard_settings %}
-                {{role.id.symbolize}} => {{db_name.id.stringify}},
-              {% end %}
-            } of Symbol => String,
-          {% end %}
-        } of Symbol => Hash(Symbol, String)
-      {% end %}
+      {% raise "connects_to: shards must be a NamedTuple of shard: {role: \"connection\"}" unless shards.is_a?(NamedTupleLiteral) %}
+      self.shard_config = {
+        {% for shard_name, shard_settings in shards %}
+          {% raise "connects_to: shard #{shard_name} must be a NamedTuple of role: \"connection\"" unless shard_settings.is_a?(NamedTupleLiteral) %}
+          {{shard_name.id.symbolize}} => {
+            {% for role, db_name in shard_settings %}
+              {% raise "connects_to: shard #{shard_name} connection for #{role} must be a non-empty String or Symbol literal, got #{db_name}" unless (db_name.is_a?(StringLiteral) || db_name.is_a?(SymbolLiteral)) && !db_name.id.stringify.empty? %}
+              {{role.id.symbolize}} => {{db_name.id.stringify}},
+            {% end %}
+          } of Symbol => String,
+        {% end %}
+      } of Symbol => Hash(Symbol, String)
     {% end %}
+
+    Grant::ConnectionHandling.declare({{@type.name.stringify}}, -> { {{@type}}.connection_names })
+  end
+
+  # Marks the class as an abstract connection holder (see `.abstract_class?`).
+  #
+  # ```
+  # abstract class AnalyticsRecord < Grant::Base
+  #   abstract_class
+  #   connects_to database: {writing: "analytics", reading: "analytics_replica"}
+  # end
+  # ```
+  macro abstract_class
+    self.abstract_class = true
+  end
+
+  # Marks the class as the application's primary abstract class, usually
+  # `ApplicationRecord`. It is an abstract class that
+  # `Grant::ConnectionHandling.primary_abstract_class_name` reports.
+  macro primary_abstract_class
+    self.abstract_class = true
+    Grant::ConnectionHandling.primary_abstract_class_name = {{@type.name.stringify}}
   end
 
   # Configures connection behavior on the model from keyword *options*.
@@ -368,19 +471,31 @@ module Grant::ConnectionManagement
     # previous context afterward (even on exception). Returns the block's value.
     #
     # Each argument defaults to `nil`/`false`, meaning "keep the current value".
-    # The context is fiber-local, so concurrent fibers do not interfere. This is
-    # the primary way to target a replica, a specific shard, or a read-only
-    # window for a unit of work.
+    # The context is fiber-local, so concurrent fibers do not interfere, and it
+    # applies to this class and its subclasses. This is the primary way to
+    # target a replica, a specific shard, or a read-only window for a unit of
+    # work.
+    #
+    # Switching to the reading role (`Grant.settings.reading_role`, `:reading`
+    # by default) prevents writes, as in ActiveRecord: a write in the block
+    # raises `Grant::Transaction::ReadOnlyError`. Passing an explicit writing
+    # role inside such a block allows writes again. `:primary` is an alias of
+    # the writing role.
+    #
+    # Passing *shard* raises `Grant::ShardSwappingProhibited` while
+    # `#prohibit_shard_swapping` is active. A `Grant::Sharding::Model` class
+    # routes to the block's shard when the block applies to it (the class or
+    # an ancestor entered it) and no `Grant::ShardManager.with_shard` is active.
     #
     # ```
-    # # force reads through the replica for this block
+    # # force reads through the replica for this block (writes raise)
     # users = User.connected_to(role: :reading) { User.where(active: true).select }
     #
     # # target a specific shard
     # User.connected_to(shard: :shard_two) { User.find(id) }
     #
-    # # read-only window
-    # User.connected_to(role: :reading, prevent_writes: true) { report.run }
+    # # read-only window on the writer
+    # User.connected_to(prevent_writes: true) { report.run }
     # ```
     def connected_to(
       database : String? = nil,
@@ -389,26 +504,168 @@ module Grant::ConnectionManagement
       prevent_writes : Bool = false,
       &block : -> T
     ) : T forall T
-      # Save current context
-      previous_context = connection_context
+      context = build_connection_context(database, role, shard, prevent_writes)
+      state = ConnectionState.current
+      depth = state.contexts.size
+      state.contexts << context
+      outer_floor = state.block_floor
+      state.block_floor = depth + 1
 
-      # Create new context
-      context = ConnectionContext.new(
+      begin
+        yield
+      ensure
+        # Restore the stack to its depth on entry rather than popping one entry,
+        # so a `connecting_to` made inside the block ends with it. Contexts
+        # below the floor are never removed while the block runs, so this
+        # removes exactly the block's own entries.
+        contexts = state.contexts
+        contexts.pop(contexts.size - depth) if contexts.size > depth
+        state.block_floor = outer_floor
+      end
+    end
+
+    # Switches this fiber to the given *role*, *shard*, and/or *database*
+    # without a block; the switch lasts until `#reset_connecting_to` or the end
+    # of the fiber. The rules of `#connected_to` apply, including write
+    # prevention for the reading role.
+    #
+    # ```
+    # User.connecting_to(role: :reading)
+    # User.connected_to?(role: :reading) # => true
+    # User.reset_connecting_to
+    # ```
+    def connecting_to(
+      database : String? = nil,
+      role : Symbol? = nil,
+      shard : Symbol? = nil,
+      prevent_writes : Bool = false,
+    ) : Nil
+      context = build_connection_context(database, role, shard, prevent_writes)
+      ConnectionState.current.contexts << context
+      nil
+    end
+
+    # Removes every context `#connecting_to` or `#connected_to` created for this
+    # class in the current fiber.
+    def reset_connecting_to : Nil
+      self.connection_context = nil
+    end
+
+    # Returns `true` when the connection in effect has the given *role* and/or
+    # *shard*. Roles are compared after aliasing `:primary` to the writing role.
+    # An unsharded connection counts as `default_shard`.
+    #
+    # ```
+    # User.connected_to?(role: :reading)                                       # => false
+    # User.connected_to(role: :reading) { User.connected_to?(role: :reading) } # => true
+    # ```
+    def connected_to?(role : Symbol? = nil, shard : Symbol? = nil) : Bool
+      raise ArgumentError.new("connected_to? needs a role or a shard") if role.nil? && shard.nil?
+
+      if role
+        return false unless Grant::ConnectionManagement.canonical_role(current_role) == Grant::ConnectionManagement.canonical_role(role)
+      end
+      if shard
+        return false unless (current_shard || default_shard) == shard
+      end
+      true
+    end
+
+    # Runs the block while `connected_to(shard: ...)` raises
+    # `Grant::ShardSwappingProhibited`, so nested code cannot leave the shard a
+    # request is pinned to. The flag is fiber-local and restored afterward;
+    # passing `false` lifts it for the block.
+    #
+    # ```
+    # User.connected_to(shard: :tenant_a) do
+    #   User.prohibit_shard_swapping do
+    #     User.connected_to(shard: :tenant_b) { } # raises
+    #   end
+    # end
+    # ```
+    def prohibit_shard_swapping(enabled : Bool = true, &block : -> T) : T forall T
+      state = ConnectionState.current
+      previous = state.shard_swapping_prohibited?
+      state.shard_swapping_prohibited = enabled
+      begin
+        yield
+      ensure
+        state.shard_swapping_prohibited = previous
+      end
+    end
+
+    # Returns `true` while `#prohibit_shard_swapping` is active in this fiber.
+    def shard_swapping_prohibited? : Bool
+      return false unless state = ConnectionState.current?
+
+      state.shard_swapping_prohibited?
+    end
+
+    # Shard names declared with `connects_to(shards: ...)`, in declaration order.
+    def shard_keys : Array(Symbol)
+      shard_config.keys
+    end
+
+    # The shard an unsharded connection counts as: `:default` when declared,
+    # otherwise the first declared shard, otherwise `:default`.
+    def default_shard : Symbol
+      return :default if shard_config.has_key?(:default)
+
+      shard_config.first_key? || :default
+    end
+
+    # Returns `true` when `connects_to(shards: ...)` declared any shard.
+    def sharded? : Bool
+      !shard_config.empty?
+    end
+
+    # Every connection name this class's `connects_to` reaches, with the role
+    # and shard each one serves.
+    def connection_names : Array({String, Symbol, Symbol?})
+      names = [] of {String, Symbol, Symbol?}
+      if connection_config.empty? && shard_config.empty?
+        names << {default_database_name, :writing, nil}
+      end
+      connection_config.each { |role, name| names << {name, role, nil} }
+      shard_config.each do |shard, roles|
+        roles.each { |role, name| names << {name, role, shard} }
+      end
+      names.uniq
+    end
+
+    # Raises `Grant::UnestablishedConnectionError` when a connection this class
+    # declares is not established; call it at boot to fail early rather than at
+    # the first query. See `Grant::ConnectionHandling.verify!`.
+    def verify_connections! : Nil
+      Grant::ConnectionHandling.verify!(self.name, connection_names)
+    end
+
+    private def build_connection_context(
+      database : String?,
+      role : Symbol?,
+      shard : Symbol?,
+      prevent_writes : Bool,
+    ) : ConnectionContext
+      if shard && shard_swapping_prohibited?
+        raise Grant::ShardSwappingProhibited.new(
+          "Cannot switch to shard #{shard.inspect} for #{name} while shard swapping is prohibited")
+      end
+
+      previous = connection_context
+      inherited_prevention = previous ? previous.prevent_writes : false
+      # An explicit writing role lifts prevention that only came from a reading role.
+      if inherited_prevention && role && previous && Grant::ConnectionManagement.writing_role?(role) && Grant::ConnectionManagement.reading_role?(previous.role)
+        inherited_prevention = false
+      end
+      implied = role ? Grant::ConnectionManagement.reading_role?(role) : false
+
+      ConnectionContext.new(
         database || current_database,
         role || current_role,
         shard || current_shard,
-        prevent_writes || preventing_writes?
+        prevent_writes || implied || inherited_prevention,
+        self.name
       )
-      self.connection_context = context
-
-      if context.prevent_writes
-        Grant::ConnectionManagement.with_write_prevention { yield }
-      else
-        yield
-      end
-    ensure
-      # Restore previous context
-      self.connection_context = previous_context
     end
 
     # Returns the name (`String`) of the database the model is currently using —
@@ -432,7 +689,7 @@ module Grant::ConnectionManagement
     # User.connected_to(role: :reading) { User.current_role } # => :reading
     # ```
     def current_role : Symbol
-      return :reading if should_use_reader?
+      return Grant.settings.reading_role if should_use_reader?
       connection_context.try(&.role) || :primary
     end
 
@@ -504,13 +761,17 @@ module Grant::ConnectionManagement
     end
 
     private def resolve_adapter_for_role(role : Symbol) : Grant::Adapter::Base
+      shard = current_shard
+      registry_role = Grant::ConnectionManagement.registry_role(role)
+      configured_role = Grant::ConnectionManagement.canonical_role(role)
+
       # Determine database name
-      db_name = if shard = current_shard
+      db_name = if shard
                   # For sharded connections, look up the database name
                   shard_settings = shard_config[shard]?
-                  shard_settings.try(&.[role]?) || current_database
-                elsif role_db = connection_config[role]?
-                  # For role-based connections
+                  shard_settings.try(&.[configured_role]?) || current_database
+                elsif role_db = connection_config[configured_role]? || connection_config[role]?
+                  # For role-based connections; `:primary` is the writing role
                   role_db
                 else
                   # Default database
@@ -518,7 +779,7 @@ module Grant::ConnectionManagement
                 end
 
       begin
-        ConnectionRegistry.get_adapter(db_name, role, current_shard)
+        ConnectionRegistry.get_adapter(db_name, registry_role, shard)
       rescue ex : Grant::AdapterNotAvailableError
         # Fallback to first registered connection for backward compatibility.
         # This handles legacy setups where a model references a connection name
@@ -597,7 +858,7 @@ module Grant::ConnectionManagement
       # 2. Enough time has passed since last write
       # 3. We're not explicitly using a different role
       # 4. Read replicas are healthy
-      return false unless connection_config.has_key?(:reading)
+      return false unless connection_config.has_key?(Grant.settings.reading_role)
       return false if connection_context.try(&.role)
       # Every statement inside an open transaction must reach the transaction's
       # writer connection; a replica read would miss its uncommitted rows and a
