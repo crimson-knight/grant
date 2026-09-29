@@ -56,7 +56,7 @@ class Grant::Query::Builder(Model)
 
   alias WhereField = Grant::Query::WhereField
   alias CountResult = Int64 | Hash(Grant::Columns::Type, Int64) | Hash(Array(Grant::Columns::Type), Int64)
-  alias AssociationQuery = Symbol | Hash(Symbol, Array(Symbol))
+  alias AssociationQuery = Grant::Includes
 
   getter db_type : DbType
   getter where_fields : Array(WhereField) = [] of WhereField
@@ -65,9 +65,9 @@ class Grant::Query::Builder(Model)
   getter group_fields = [] of NamedTuple(field: String)
   getter offset : Int64?
   getter limit : Int64?
-  getter eager_load_associations : Array(AssociationQuery) = [] of AssociationQuery
-  getter preload_associations : Array(AssociationQuery) = [] of AssociationQuery
-  getter includes_associations : Array(AssociationQuery) = [] of AssociationQuery
+  getter eager_load_associations : Array(Grant::Includes) = [] of Grant::Includes
+  getter preload_associations : Array(Grant::Includes) = [] of Grant::Includes
+  getter includes_associations : Array(Grant::Includes) = [] of Grant::Includes
   getter lock_mode : Grant::Locking::LockMode?
   property select_columns : Array(String)?
 
@@ -753,11 +753,19 @@ class Grant::Query::Builder(Model)
   end
 
   private def add_eager_load_join(association : Symbol) : Nil
-    metadata = Grant::AssociationRegistry.get(Model.name, association.to_s)
-    raise ArgumentError.new("Unknown association #{association.inspect} for #{Model.name}") unless metadata
-    if metadata[:target_class] == Grant::Base
+    reflection = Grant::AssociationRegistry.reflection(Model.name, association.to_s)
+    raise Grant::AssociationNotFoundError.new(Model.name, association.to_s) unless reflection
+    if reflection.polymorphic?
       raise ArgumentError.new("Cannot eager_load polymorphic association #{Model.name}##{association}; use includes or preload")
     end
+
+    if reflection.polymorphic_as
+      add_polymorphic_as_eager_load_join(reflection)
+      return distinct
+    end
+
+    metadata = Grant::AssociationRegistry.get(Model.name, association.to_s)
+    raise Grant::AssociationNotFoundError.new(Model.name, association.to_s) unless metadata
 
     if metadata[:through]
       raise ArgumentError.new("Cannot eager_load through association #{Model.name}##{association}: unresolved through/source metadata") unless add_through_eager_load_join(metadata)
@@ -765,6 +773,16 @@ class Grant::Query::Builder(Model)
       left_joins(association)
     end
     distinct
+  end
+
+  # `has_many/has_one ..., as:` joins on the key and on the stored type name.
+  private def add_polymorphic_as_eager_load_join(reflection : Grant::Reflection) : Nil
+    target_model = reflection.klass
+    type_column = reflection.foreign_type || return
+    type_name = Model.polymorphic_name.gsub("'", "''")
+    on = "#{target_model.quote(target_model.table_name)}.#{target_model.quote(reflection.foreign_key)} = #{Model.quote(Model.table_name)}.#{Model.quote(reflection.primary_key)}" \
+         " AND #{target_model.quote(target_model.table_name)}.#{target_model.quote(type_column)} = '#{type_name}'"
+    left_joins(target_model.table_name, on: on)
   end
 
   private def add_through_eager_load_join(metadata : Grant::AssociationRegistry::AssociationMeta) : Bool
@@ -1036,13 +1054,14 @@ class Grant::Query::Builder(Model)
   # Executes a single SELECT (no IN-chunking), applying eager loading. Used by
   # the chunked/fallback paths and directly when no chunking is needed.
   protected def select_single : Array(Model)
+    restrictions = association_restrictions
     records = assembler.select.run
     records.each(&.strict_loading!) if strict_loading?
 
     # Apply eager loading if any associations are specified
     all_associations = @includes_associations + @preload_associations + @eager_load_associations
     unless all_associations.empty?
-      Grant::AssociationLoader.load_associations(records, all_associations)
+      Grant::AssociationLoader.load_associations(records, all_associations, restrictions)
     end
 
     records
@@ -1430,100 +1449,65 @@ class Grant::Query::Builder(Model)
 
   # Marks *associations* to be loaded with the query, avoiding N+1 queries. Returns `self`.
   #
-  # `includes` lets Grant choose the loading strategy (typically a separate
-  # query per association, like `preload`). Use `eager_load` to force a JOIN.
-  # Records are loaded when the query executes (`select`/`first`/iteration).
+  # `includes` uses one extra query per association level (like `preload`),
+  # and switches to a JOIN (like `eager_load`) when a `where` names the
+  # included association's table. Records are loaded when the query executes
+  # (`select`/`first`/iteration). An unknown association name raises
+  # `Grant::AssociationNotFoundError` at that point.
+  #
+  # Accepts names, arrays, and nested hashes to any depth:
   #
   # ```
-  # # assuming `User has_many :posts`
   # User.where(active: true).includes(:posts).each do |user|
   #   user.posts # already loaded, no extra query per user
   # end
+  # User.all.includes(posts: {comments: :author}, profile: [:avatar])
   # ```
-  def includes(*associations) : self
-    associations.each do |assoc|
-      @includes_associations << assoc
-    end
+  def includes(*associations, **nested_associations) : self
+    add_association_specs(@includes_associations, associations, nested_associations)
     self
   end
 
-  # :ditto:
+  # Loads *associations* via separate queries (one per association level). Returns `self`.
   #
-  # Nested form — keyword arguments name a parent association mapped to its
-  # nested association(s) to also load.
-  #
-  # ```
-  # # load each user's posts, and each post's comments
-  # User.all.includes(posts: :comments)
-  # User.all.includes(posts: [:comments, :tags])
-  # ```
-  def includes(**nested_associations) : self
-    nested_associations.each do |name, nested|
-      @includes_associations << {name => nested.is_a?(Array) ? nested : [nested]}
-    end
-    self
-  end
-
-  # Loads *associations* via separate queries (one per association). Returns `self`.
-  #
-  # Like `includes` but always uses the separate-query strategy (never a JOIN),
-  # which avoids row multiplication for has_many associations.
+  # Like `includes` but never switches to a JOIN, which avoids row
+  # multiplication for has_many associations. Takes the same nested forms.
   #
   # ```
   # User.where(active: true).preload(:posts)
-  # ```
-  def preload(*associations) : self
-    associations.each do |assoc|
-      @preload_associations << assoc
-    end
-    self
-  end
-
-  # :ditto:
-  #
-  # Nested form — keyword arguments map a parent association to its nested
-  # association(s) to also preload.
-  #
-  # ```
   # User.all.preload(posts: :comments)
   # ```
-  def preload(**nested_associations) : self
-    nested_associations.each do |name, nested|
-      @preload_associations << {name => nested.is_a?(Array) ? nested : [nested]}
-    end
+  def preload(*associations, **nested_associations) : self
+    add_association_specs(@preload_associations, associations, nested_associations)
     self
   end
 
-  # Loads *associations* with a single JOIN against the main query. Returns `self`.
-  #
-  # Forces the JOIN strategy (in contrast to `preload`'s separate queries). Best
-  # when you also want to filter or order on the joined table in the same query.
+  # Loads *associations* with a single JOIN against the main query, so the
+  # query can filter or order on the joined table, and the loaded association
+  # holds only the rows the `where` allows (as in ActiveRecord). Takes the same
+  # nested forms as `includes`. Raises `ArgumentError` for a polymorphic
+  # `belongs_to` (which has no single table to join).
   #
   # ```
   # User.where(active: true).eager_load(:posts)
   # ```
-  def eager_load(*associations) : self
-    associations.each do |assoc|
-      @eager_load_associations << assoc
-      add_eager_load_join(assoc)
+  def eager_load(*associations, **nested_associations) : self
+    specs = [] of Grant::Includes
+    associations.each { |spec| specs.concat(Grant::AssociationLoader.normalize(spec)) }
+    specs.concat(Grant::AssociationLoader.normalize(nested_associations)) unless nested_associations.empty?
+    specs.each do |spec|
+      @eager_load_associations << spec
+      case spec
+      when Symbol then add_eager_load_join(spec)
+      when Hash   then spec.each_key { |name| add_eager_load_join(name) }
+      end
     end
     self
   end
 
-  # :ditto:
-  #
-  # Nested form — keyword arguments map a parent association to its nested
-  # association(s) to also eager-load.
-  #
-  # ```
-  # User.all.eager_load(posts: :comments)
-  # ```
-  def eager_load(**nested_associations) : self
-    nested_associations.each do |name, nested|
-      @eager_load_associations << {name => nested.is_a?(Array) ? nested : [nested]}
-      add_eager_load_join(name)
-    end
-    self
+  private def add_association_specs(target : Array(Grant::Includes), positional : Tuple, nested : NamedTuple) : Nil
+    positional.each { |spec| target.concat(Grant::AssociationLoader.normalize(spec)) }
+    target.concat(Grant::AssociationLoader.normalize(nested)) unless nested.empty?
   end
 
   # Create a new query builder for OR conditions.

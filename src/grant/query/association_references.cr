@@ -1,0 +1,72 @@
+# `includes` that filters on an included association's table, and `eager_load`,
+# load the association through a JOIN in ActiveRecord: the rows that match the
+# WHERE are the rows the association holds. Grant loads associations in a second
+# query, so it joins for the filter and then repeats the conditions that name
+# only the association's table on that second query.
+class Grant::Query::Builder(Model)
+  # Joins the tables of included associations that the WHERE conditions refer
+  # to (so `includes` behaves as `eager_load` there), and returns, for each
+  # association loaded through a join, the conditions that mention only its table.
+  protected def association_restrictions : Hash(Symbol, Array(WhereField))
+    restrictions = {} of Symbol => Array(WhereField)
+    return restrictions if @includes_associations.empty? && @eager_load_associations.empty?
+
+    referenced = referenced_where_tables
+    (@includes_associations + @eager_load_associations).each do |spec|
+      names = case spec
+              when Symbol then [spec]
+              when Hash   then spec.keys
+              else             [] of Symbol
+              end
+      names.each do |name|
+        next if restrictions.has_key?(name)
+        reflection = Grant::AssociationRegistry.reflection(Model.name, name.to_s)
+        next unless reflection
+        next if reflection.polymorphic? || reflection.through?
+        target_table = reflection.klass.table_name
+        joined = @eager_load_associations.any? { |eager| eager == name || (eager.is_a?(Hash) && eager.has_key?(name)) }
+        next unless joined || referenced.includes?(target_table)
+
+        add_eager_load_join(name) unless @join_clauses.any? { |clause| clause[:table] == target_table }
+        restrictions[name] = where_fields_for_table(target_table)
+      end
+    end
+    restrictions
+  end
+
+  private def referenced_where_tables : Set(String)
+    tables = Set(String).new
+    @where_fields.each do |field|
+      qualifiers_of(field).each { |qualifier| tables << qualifier }
+    end
+    tables
+  end
+
+  # The WHERE conditions that refer only to *table*, safe to replay on a query
+  # over that table alone.
+  private def where_fields_for_table(table : String) : Array(WhereField)
+    @where_fields.select do |field|
+      qualifiers = qualifiers_of(field)
+      !qualifiers.empty? && qualifiers.all? { |qualifier| qualifier == table }
+    end
+  end
+
+  private def qualifiers_of(field : WhereField) : Array(String)
+    qualifiers = [] of String
+    if field.is_a?(NamedTuple(join: Symbol, field: String, operator: Symbol, value: Grant::Columns::Type))
+      parts = field[:field].split('.')
+      qualifiers << parts.first if parts.size == 2
+    elsif field.is_a?(NamedTuple(join: Symbol, stmt: String, value: Grant::Columns::Type))
+      scan_qualifiers(field[:stmt], qualifiers)
+    elsif field.is_a?(NamedTuple(join: Symbol, stmt: String, values: Array(Grant::Columns::Type)))
+      scan_qualifiers(field[:stmt], qualifiers)
+    end
+    qualifiers
+  end
+
+  private def scan_qualifiers(statement : String, into qualifiers : Array(String)) : Nil
+    statement.scan(/(?<![\w.])"?([A-Za-z_][A-Za-z0-9_]*)"?\.(?=["A-Za-z_])/) do |match|
+      qualifiers << match[1]
+    end
+  end
+end
