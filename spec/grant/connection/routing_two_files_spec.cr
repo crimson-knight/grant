@@ -45,7 +45,11 @@ describe "role routing across two SQLite files" do
   end
 
   after_all do
-    Grant::ConnectionRegistry.clear_all
+    # Remove only this file's connections: clear_all would also drop the
+    # default spec connections, and the next file's before_all runs before any
+    # before_each can restore them.
+    Grant::ConnectionRegistry.remove_connection("c01_route_writer", :writing)
+    Grant::ConnectionRegistry.remove_connection("c01_route_reader", :reading)
     FileUtils.rm_rf(C01_ROUTE_DIR)
   end
 
