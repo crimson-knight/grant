@@ -2,6 +2,7 @@ require "./health_monitor"
 require "./replica_load_balancer"
 require "./pool_reaper"
 require "./connection_pool"
+require "../adapter/registry"
 
 module Grant
   # Raised when a model resolves an adapter for a connection that was never
@@ -288,6 +289,21 @@ module Grant
         replica_weight: replica_weight
       )
       register_spec(spec, eager: true)
+    end
+
+    # Establishes a connection whose adapter is chosen from the *url* scheme
+    # (`postgres://`, `mysql://`, `sqlite3:`) using `Grant::Adapter::Registry`.
+    # Only adapters that were required are known; an unknown scheme raises
+    # `Grant::UnknownAdapterError`. Accepts every option of the explicit-adapter
+    # overload.
+    #
+    # ```
+    # Grant::ConnectionRegistry.establish_connection(
+    #   database: "primary", url: "postgres://localhost/app")
+    # ```
+    def self.establish_connection(database : String, url : String, role : Symbol = :primary, shard : Symbol? = nil, **options)
+      adapter = Grant::Adapter::Registry.for_url(url)
+      establish_connection(**options, database: database, adapter: adapter, url: url, role: role, shard: shard)
     end
 
     # Establish a new connection with a *lazy* URL provider.

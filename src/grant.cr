@@ -40,4 +40,5 @@ require "./grant/schema/schema_statements"
 # can reopen the builder and include the tenant-scoping macros into Base.
 require "./grant/scale"
 require "./grant/middleware/query_cache"
+require "./grant/database_configurations"
 require "./grant/parity"

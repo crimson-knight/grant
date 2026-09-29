@@ -1,6 +1,7 @@
 require "pg"
 require "./base"
 require "../grant/schema/column_info"
+require "./registry"
 
 # PostgreSQL implementation of the Adapter
 class Grant::Adapter::Pg < Grant::Adapter::Base
@@ -539,3 +540,5 @@ class Grant::Adapter::Pg < Grant::Adapter::Base
 end
 
 require "./pg_test_helpers"
+
+Grant::Adapter::Registry.register(Grant::Adapter::Pg, "postgres", "postgresql", "pg")

@@ -1,6 +1,7 @@
 require "./base"
 require "../grant/schema/column_info"
 require "mysql"
+require "./registry"
 
 # crystal-mysql 0.17.0 does not register the protocol JSON type (245), so its
 # result-set decoder raises before Grant can normalize the returned text. This
@@ -571,3 +572,5 @@ class Grant::Adapter::Mysql < Grant::Adapter::Base
 end
 
 require "./mysql_test_helpers"
+
+Grant::Adapter::Registry.register(Grant::Adapter::Mysql, "mysql", "mysql2")
