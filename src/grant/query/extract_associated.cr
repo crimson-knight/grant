@@ -32,4 +32,19 @@ class Grant::Query::Builder(Model)
     end
     extracted
   end
+
+  # Like `extract_associated(association)`, typed: returns `Array(T)`, so the
+  # records need no cast at the call site. Raises `ArgumentError` when a
+  # record of the association is not a *type*.
+  #
+  # ```
+  # Post.where(published: true).extract_associated(:author, as: Author).map(&.name)
+  # ```
+  def extract_associated(association : Symbol, as type : T.class) : Array(T) forall T
+    extract_associated(association).map do |record|
+      typed = record.as?(T)
+      raise ArgumentError.new("extract_associated(#{association.inspect}) found a #{record.class}, not #{T}") unless typed
+      typed
+    end
+  end
 end

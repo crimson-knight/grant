@@ -66,6 +66,14 @@ describe "extract_associated" do
     EaArticle.where(title: "Orphan").extract_associated(:ea_author).should be_empty
   end
 
+  it "returns a typed array with as:" do
+    authors = EaArticle.where(published: true).order(:id).extract_associated(:ea_author, as: EaAuthor)
+    typeof(authors).should eq(Array(EaAuthor))
+    authors.map(&.name).should eq(["Ada", "Grace"])
+    EaAuthor.order(:id).extract_associated(:articles, as: EaArticle).map(&.title).should eq(["A1", "A2", "G1", "Draft"])
+    expect_raises(ArgumentError, /not EaArticle/) { EaArticle.extract_associated(:ea_author, as: EaArticle) }
+  end
+
   it "is available on the model class" do
     EaArticle.extract_associated(:ea_author).size.should eq(2)
   end
