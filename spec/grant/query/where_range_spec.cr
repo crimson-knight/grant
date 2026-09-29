@@ -77,6 +77,15 @@ describe "where with a Range" do
     rank_labels(relation).should eq(["m3", "m4", "m5"])
   end
 
+  it "accepts ranges inside an array" do
+    rank_labels(WfMeasure.where(rank: [1, 4..5])).should eq(["m1", "m4", "m5"])
+    rank_labels(WfMeasure.where(rank: [2..3, 5])).should eq(["m2", "m3", "m5"])
+    rank_labels(WfMeasure.where(rank: [..1, 5..])).should eq(["m1", "m5"])
+    rank_labels(WfMeasure.where(rank: [2...4, nil])).should eq(["m2", "m3"])
+    rank_labels(WfMeasure.where(label: ["m1", "m4".."m5"])).should eq(["m1", "m4", "m5"])
+    rank_labels(WfMeasure.where(rank: [1, 2..3]).where(amount: 3.0..)).should eq(["m2", "m3"])
+  end
+
   it "applies to where.between" do
     rank_labels(WfMeasure.where.between(:rank, 2..3)).should eq(["m2", "m3"])
   end

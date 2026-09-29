@@ -69,10 +69,13 @@ class Grant::Query::Builder(Model)
   end
 
   # An array under a column becomes `IN`. An array of records only makes sense
-  # under an association name, which `add_condition` routes elsewhere.
+  # under an association name, which `add_condition` routes elsewhere. Ranges
+  # inside the array are ORed in as spans (`[1, 5..9]`).
   private def add_array_condition(join : Symbol, field : String, values : Array(T)) : Nil forall T
     {% if T.union_types.any? { |type| type <= Grant::Base } %}
       raise ArgumentError.new("#{field.inspect} is not an association of #{Model.name}; records cannot be compared with a column")
+    {% elsif T.union_types.any? { |type| type <= Range } %}
+      add_mixed_array_condition(join, field, values)
     {% else %}
       if join == :or
         or_array(field, :in, values)
@@ -80,6 +83,52 @@ class Grant::Query::Builder(Model)
         and_array(field, :in, values)
       end
     {% end %}
+  end
+
+  # `field IN (...) OR field IS NULL OR (field >= ? AND field <= ?)` for an
+  # array that mixes plain values, nil and ranges.
+  private def add_mixed_array_condition(join : Symbol, field : String, values : Array) : Nil
+    field_sql = structured_field_sql(field)
+    scalars = [] of Grant::Columns::Type
+    spans = [] of String
+    span_values = [] of Grant::Columns::Type
+    has_nil = false
+
+    values.each do |item|
+      if item.is_a?(Range)
+        predicate, bound_values = range_predicate(field_sql, item)
+        spans << predicate
+        span_values.concat(bound_values)
+      elsif item.nil?
+        has_nil = true
+      else
+        scalars << item.as(Grant::Columns::Type)
+      end
+    end
+
+    parts = [] of String
+    parts << (scalars.size == 1 ? "#{field_sql} = ?" : "#{field_sql} IN (#{Array.new(scalars.size, "?").join(", ")})") unless scalars.empty?
+    parts << "#{field_sql} IS NULL" if has_nil
+    parts.concat(spans)
+
+    bound = scalars + span_values
+    own_where_fields << {join: join, stmt: parts.empty? ? "1=0" : "(#{parts.join(" OR ")})", values: bound}
+  end
+
+  # SQL for one range over an already-quoted column: the bounds it has, ANDed
+  # (`1=1` when it has neither), with their values.
+  private def range_predicate(field_sql : String, range : Range) : Tuple(String, Array(Grant::Columns::Type))
+    parts = [] of String
+    values = [] of Grant::Columns::Type
+    if lower = range.begin
+      parts << "#{field_sql} >= ?"
+      values << lower.as(Grant::Columns::Type)
+    end
+    if upper = range.end
+      parts << "#{field_sql} #{range.exclusive? ? "<" : "<="} ?"
+      values << upper.as(Grant::Columns::Type)
+    end
+    {parts.empty? ? "1=1" : "(#{parts.join(" AND ")})", values}
   end
 
   private def add_field_condition(join : Symbol, field : String, operator : Symbol, value : Grant::Columns::Type) : Nil
@@ -102,18 +151,8 @@ class Grant::Query::Builder(Model)
       return
     end
 
-    field_sql = structured_field_sql(field)
-    parts = [] of String
-    values = [] of Grant::Columns::Type
-    if lower = range.begin
-      parts << "#{field_sql} >= ?"
-      values << lower.as(Grant::Columns::Type)
-    end
-    if upper = range.end
-      parts << "#{field_sql} #{range.exclusive? ? "<" : "<="} ?"
-      values << upper.as(Grant::Columns::Type)
-    end
-    own_where_fields << {join: :or, stmt: parts.empty? ? "1=1" : "(#{parts.join(" AND ")})", values: values}
+    predicate, values = range_predicate(structured_field_sql(field), range)
+    own_where_fields << {join: :or, stmt: predicate, values: values}
   end
 
   # `where(posts: {published: true})`: conditions on a joined table. The table
@@ -633,6 +672,10 @@ class Grant::Query::Builder(Model)
     reflection = Grant::AssociationRegistry.reflection(Model.name, name) || raise Grant::AssociationNotFoundError.new(Model.name, name)
     if reflection.polymorphic?
       raise ArgumentError.new("Cannot use where.associated or where.missing with polymorphic belongs_to #{Model.name}##{name}")
+    end
+
+    if reflection.scope?
+      raise ArgumentError.new("Cannot use where.associated or where.missing with scoped association #{Model.name}##{name}: the scope would be ignored")
     end
 
     target = reflection.klass
