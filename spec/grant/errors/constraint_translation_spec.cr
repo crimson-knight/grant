@@ -386,7 +386,7 @@ describe "Grant constraint and lock error translation" do
 
       spawn do
         outcome = begin
-          adapter.database.using_connection do |conn|
+          adapter.open_pool_connection("UPDATE g01_accounts") do |conn|
             conn.exec "BEGIN"
             conn.exec "UPDATE g01_accounts SET code = 'a' WHERE id = #{first_id}"
             ready.send(nil)
@@ -401,14 +401,14 @@ describe "Grant constraint and lock error translation" do
           end
           nil
         rescue ex
-          adapter.translate_exception(ex)
+          ex
         end
         results.send(outcome)
       end
 
       spawn do
         outcome = begin
-          adapter.database.using_connection do |conn|
+          adapter.open_pool_connection("UPDATE g01_accounts") do |conn|
             conn.exec "BEGIN"
             conn.exec "UPDATE g01_accounts SET code = 'b' WHERE id = #{second_id}"
             ready.send(nil)
@@ -423,7 +423,7 @@ describe "Grant constraint and lock error translation" do
           end
           nil
         rescue ex
-          adapter.translate_exception(ex)
+          ex
         end
         results.send(outcome)
       end
@@ -433,6 +433,108 @@ describe "Grant constraint and lock error translation" do
       outcomes = [results.receive, results.receive]
 
       outcomes.compact.any?(Grant::Deadlocked).should be_true
+    end
+
+    it "raises StatementTimeout when the server's statement_timeout expires" do
+      unless G01Account.adapter.postgres?
+        pending!("PostgreSQL only")
+      end
+
+      error = expect_raises(Grant::StatementTimeout) do
+        G01Account.adapter.open_pool_connection("SELECT pg_sleep(2)") do |conn|
+          conn.exec "SET statement_timeout = 50"
+          begin
+            conn.exec "SELECT pg_sleep(2)"
+          ensure
+            conn.exec "RESET statement_timeout"
+          end
+        end
+      end
+      error.cause.should be_a(PQ::PQError)
+    end
+
+    it "raises QueryCanceled when another session cancels the statement" do
+      unless G01Account.adapter.postgres?
+        pending!("PostgreSQL only")
+      end
+      adapter = G01Account.adapter
+
+      error = expect_raises(Grant::QueryCanceled) do
+        adapter.open_pool_connection("SELECT pg_sleep(5)") do |conn|
+          backend_pid = conn.scalar("SELECT pg_backend_pid()").as(Int32)
+          spawn do
+            sleep 200.milliseconds
+            adapter.database.using_connection do |other|
+              other.exec "SELECT pg_cancel_backend($1)", backend_pid
+            end
+          end
+          conn.exec "SELECT pg_sleep(5)"
+        end
+      end
+      error.should_not be_a(Grant::StatementTimeout)
+    end
+
+    it "raises LockWaitTimeout for a NOWAIT lock on a row another session holds" do
+      unless G01Account.adapter.postgres?
+        pending!("PostgreSQL only")
+      end
+      create_g01_tables
+      adapter = G01Account.adapter
+      account_id = G01Account.create!(email: "locked@example.com").id
+
+      locked = Channel(Nil).new
+      release = Channel(Nil).new
+      finished = Channel(Nil).new
+      spawn do
+        adapter.database.using_connection do |conn|
+          conn.exec "BEGIN"
+          conn.exec "SELECT id FROM g01_accounts WHERE id = #{account_id} FOR UPDATE"
+          locked.send(nil)
+          release.receive
+          conn.exec "ROLLBACK"
+        end
+        finished.send(nil)
+      end
+
+      locked.receive
+      begin
+        error = expect_raises(Grant::LockWaitTimeout) do
+          G01Account.where(id: account_id).lock(Grant::Locking::LockMode::UpdateNoWait).to_a
+        end
+        error.should be_a(Grant::Locking::LockWaitTimeoutError)
+      ensure
+        release.send(nil)
+        finished.receive
+      end
+    end
+  end
+
+  describe "SQLite server errors" do
+    it "raises LockWaitTimeout when another connection holds the write lock" do
+      unless G01Account.adapter.sqlite?
+        pending!("SQLite only")
+      end
+
+      path = File.tempname("g01_busy", ".sqlite3")
+      adapter = Grant::Adapter::Sqlite.new(name: "g01_busy", url: "sqlite3:#{path}?busy_timeout=0")
+      begin
+        adapter.open { |db| db.exec "CREATE TABLE busy_rows (id INTEGER PRIMARY KEY)" }
+        adapter.database.using_connection do |holder|
+          holder.exec "BEGIN IMMEDIATE"
+          begin
+            statement = "INSERT INTO busy_rows (id) VALUES (1)"
+            error = expect_raises(Grant::LockWaitTimeout) do
+              adapter.open_pool_connection(statement) { |db| db.exec statement }
+            end
+            error.cause.should be_a(SQLite3::Exception)
+          ensure
+            holder.exec "ROLLBACK"
+          end
+        end
+      ensure
+        adapter.database.close
+        {path, "#{path}-wal", "#{path}-shm"}.each { |file| File.delete?(file) }
+      end
     end
   end
 end
