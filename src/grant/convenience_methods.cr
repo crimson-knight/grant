@@ -144,6 +144,16 @@ module Grant::ConvenienceMethods(Model)
     primary_key = Model.primary_name
     base_relation = self.dup
 
+    # A model that declares `implicit_order_column` batches by that order (then
+    # the primary key) unless the relation is already ordered.
+    implicit_columns = Model.implicit_order_columns
+    if base_relation.order_fields.empty? && !implicit_columns.empty?
+      direction = order == :desc ? :desc : :asc
+      implicit_order = {} of String => Symbol
+      (implicit_columns + [primary_key]).uniq.each { |column| implicit_order[column] = direction }
+      base_relation = base_relation.order(implicit_order)
+    end
+
     primary_order = base_relation.order_fields.find { |field| field[:field] == primary_key }
     ascending = if primary_order
                   primary_order[:direction] == Grant::Query::Builder::Sort::Ascending
@@ -153,9 +163,9 @@ module Grant::ConvenienceMethods(Model)
 
     custom_order = base_relation.order_fields.any? { |field| field[:field] != primary_key }
     if base_relation.order_fields.empty?
-      base_relation.order({primary_key => ascending ? :asc : :desc})
+      base_relation = base_relation.order({primary_key => ascending ? :asc : :desc})
     elsif custom_order && base_relation.order_fields.none? { |field| field[:field] == primary_key }
-      base_relation.order({primary_key => :asc})
+      base_relation = base_relation.order({primary_key => :asc})
     end
 
     if start
@@ -175,8 +185,8 @@ module Grant::ConvenienceMethods(Model)
         break if remaining == 0
 
         current_batch_size = remaining ? Math.min(batch_size.to_i64, remaining) : batch_size.to_i64
-        batch_relation = base_relation.dup
-        batch_relation.offset(base_offset + processed).limit(current_batch_size)
+        batch_relation = base_relation.all
+        batch_relation = batch_relation.offset(base_offset + processed).limit(current_batch_size)
         records = batch_relation.select
         break if records.empty?
 
@@ -194,10 +204,10 @@ module Grant::ConvenienceMethods(Model)
         break if remaining == 0
 
         current_batch_size = remaining ? Math.min(batch_size.to_i64, remaining) : batch_size.to_i64
-        batch_relation = base_relation.dup
+        batch_relation = base_relation.all
         if current_id = cursor_id
           batch_relation = batch_relation.where(primary_key, cursor_operator, current_id)
-          batch_relation.offset(nil)
+          batch_relation = batch_relation.offset(nil)
         end
         records = batch_relation.limit(current_batch_size).select
         break if records.empty?
@@ -211,7 +221,7 @@ module Grant::ConvenienceMethods(Model)
     end
   end
 
-  # Attaches a SQL comment to this query and returns the relation for chaining.
+  # Returns a copy of this relation carrying a SQL comment.
   #
   # The *comment* is emitted as an inline `/* ... */` comment in the generated
   # SQL (see `annotation_comment`), which is handy for tracing a query back to
@@ -223,8 +233,15 @@ module Grant::ConvenienceMethods(Model)
   # # => SELECT ... FROM users WHERE active = ? /* dashboard#index */
   # ```
   def annotate(comment : String) : self
+    copy = chain_copy
+    copy.set_query_annotation(comment)
+    copy
+  end
+
+  # :nodoc:
+  protected def set_query_annotation(comment : String) : Nil
+    reset_load_state
     @query_annotation = comment
-    self
   end
 
   # Returns the SQL comment fragment for this query's annotation, sanitized.

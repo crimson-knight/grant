@@ -1,6 +1,8 @@
 require "./spec_helper"
 
 describe "Grant::Query::Builder - Distinct" do
+  around_each { |example| with_legacy_implicit_order(example) }
+
   describe "#distinct" do
     it "sets the distinct flag" do
       query = builder.distinct
@@ -56,14 +58,14 @@ describe "Grant::Query::Builder - Distinct" do
     it "merges distinct flag from other builder" do
       b1 = builder
       b2 = builder.distinct
-      b1.merge(b2)
+      b1 = b1.merge(b2)
       b1.distinct?.should be_true
     end
 
     it "does not set distinct when other is not distinct" do
       b1 = builder
       b2 = builder
-      b1.merge(b2)
+      b1 = b1.merge(b2)
       b1.distinct?.should be_false
     end
   end

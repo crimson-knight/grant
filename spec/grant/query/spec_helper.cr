@@ -39,6 +39,26 @@ class Model
   def self.custom_select_statement : String?
     nil
   end
+
+  def self.implicit_order_columns : Array(String)
+    [] of String
+  end
+end
+
+# The stub-model assembler and builder specs pin the exact SQL of the legacy
+# unordered-SELECT shape, which ends in ORDER BY id DESC. Each of those files
+# wraps its examples with this helper (`around_each`) so the setting is on only
+# while they run: a global hook would leak into every other spec file when the
+# whole suite runs in one process. spec/grant/query/implicit_order_spec.cr
+# covers the default (no ORDER BY).
+def with_legacy_implicit_order(example : Spec::Example::Procsy) : Nil
+  previous = Grant.settings.implicit_order
+  Grant.settings.implicit_order = true
+  begin
+    example.run
+  ensure
+    Grant.settings.implicit_order = previous
+  end
 end
 
 def query_fields

@@ -50,7 +50,7 @@ describe "Advanced Query Interface" do
       copy = original.dup
 
       # Modify copy
-      copy.where(locked: true)
+      copy = copy.where(locked: true)
 
       # Original should be unchanged
       original.where_fields.size.should eq(1)

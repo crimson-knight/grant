@@ -1,6 +1,8 @@
 require "./spec_helper"
 
 describe "Grant::Query::Builder - Modifiers" do
+  around_each { |example| with_legacy_implicit_order(example) }
+
   describe "#reorder" do
     it "clears existing order and replaces" do
       query = builder.order(name: :asc).reorder(age: :desc)
@@ -120,7 +122,7 @@ describe "Grant::Query::Builder - Modifiers" do
     it "merges none flag from other builder" do
       b1 = builder
       b2 = builder.none
-      b1.merge(b2)
+      b1 = b1.merge(b2)
       b1.is_none?.should be_true
     end
   end

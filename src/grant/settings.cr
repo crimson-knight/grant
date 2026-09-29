@@ -52,6 +52,15 @@ module Grant
       @reading_role = role
     end
 
+    # Legacy implicit ordering. When `true`, an unordered SELECT gets
+    # `ORDER BY <primary key> DESC` appended (Grant's behavior before the
+    # relation-core rework). When `false` (the default), unordered relations
+    # carry no `ORDER BY`, like ActiveRecord; `first`, `last`, the ordinal
+    # finders and `find_each` still order by `implicit_order_column`s and the
+    # primary key. The flag exists for one release so apps that depended on
+    # the newest-first default can opt back in.
+    property implicit_order : Bool = false
+
     def index_hint_mode=(mode : Symbol)
       unless {:warn, :strict, :ignore}.includes?(mode)
         raise ArgumentError.new("index_hint_mode must be :warn, :strict, or :ignore (got #{mode.inspect})")

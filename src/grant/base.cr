@@ -241,19 +241,17 @@ abstract class Grant::Base
 
       if !_unscoped? && _has_default_scope?
         query = apply_default_scope(query)
-        query.default_scope_where_fields.concat(query.where_fields)
-        query.where_fields.clear
+        query = query.promote_where_to_default_scope
       end
 
       if __sti_model? && !sti_root_class?
         names = sti_names_for_query
-        if names.size == 1
-          query.where(inheritance_column, :eq, names.first)
-        else
-          query.where(inheritance_column, :in, names)
-        end
-        query.default_scope_where_fields.concat(query.where_fields)
-        query.where_fields.clear
+        query = if names.size == 1
+                  query.where(inheritance_column, :eq, names.first)
+                else
+                  query.where(inheritance_column, :in, names)
+                end
+        query = query.promote_where_to_default_scope
       end
 
       query

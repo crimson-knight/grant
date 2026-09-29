@@ -1,3 +1,4 @@
+require "digest/md5"
 require "../columns"
 require "../async"
 require "./where_chain"
@@ -5,8 +6,11 @@ require "./where_chain"
 # Lazy, chainable SQL query builder returned by `Model.where`, `Model.order`, etc.
 #
 # A `Builder` accumulates query components (WHERE/ORDER/GROUP BY/LIMIT/…) and
-# does **not** touch the database until a terminal method is called. Most
-# chaining methods mutate and return `self`, so calls compose left-to-right:
+# does **not** touch the database until a terminal method is called. Chain
+# methods never change the receiver: each returns a new relation (sharing its
+# clause arrays copy-on-write), so a stored relation can be reused safely and
+# calls compose left-to-right. The `name!` variants (`where!`, `order!`, …)
+# mutate in place for callers that own the relation:
 #
 # ```
 # class User < Grant::Base
@@ -23,7 +27,14 @@ require "./where_chain"
 # query.first      # => User? (LIMIT 1)
 # query.count      # => Int64
 # query.delete_all # => Int64 (rows affected)
+#
+# # Reuse is safe: chaining never changes `query`.
+# admins = query.where(role: "admin")
 # ```
+#
+# Iterating a relation (`each`, `to_a`, `records`, `load`) memoizes its records,
+# so `empty?`/`size`/`first` on a loaded relation cost no SQL. `reset` and
+# `reload` discard the memo, and any chain method returns an unloaded relation.
 #
 # Because `Builder` includes `Enumerable(Model)`, collection methods (`map`,
 # `select`, `reduce`, `each`, …) work directly on a chain without first calling
@@ -84,10 +95,114 @@ class Grant::Query::Builder(Model)
   getter? is_none : Bool = false
   getter? strict_loading : Bool = false
 
+  # Memoized result of `load`. Cleared by every mutation and by `reset`.
+  @records : Array(Model)?
+
+  # Memoized `cache_version`, cleared together with `@records`.
+  @cache_version : String?
+
+  # Copy-on-write bookkeeping: one bit per array ivar (see `own_*`). A set bit
+  # means the array may be referenced by another relation and must be copied
+  # before it is written to.
+  @shared_arrays : UInt16 = 0_u16
+
+  ALL_ARRAYS_SHARED = 0x3FF_u16
+
   def initialize(@db_type, @boolean_operator = :and)
   end
 
+  {% for pair in [{"where_fields", 1}, {"default_scope_where_fields", 2}, {"order_fields", 4}, {"group_fields", 8}, {"join_clauses", 16}, {"having_clauses", 32}, {"includes_associations", 64}, {"preload_associations", 128}, {"eager_load_associations", 256}, {"index_hints", 512}] %}
+    {% name = pair[0].id %}
+    {% bit = pair[1] %}
+    # Returns the writable `{{name}}` array, copying it first when another
+    # relation still shares it. Every in-place write goes through here.
+    #
+    # :nodoc:
+    def own_{{name}}
+      if (@shared_arrays & {{bit}}_u16) != 0_u16
+        # Room for the element the caller is about to add, so the write does
+        # not reallocate the buffer it was just given.
+        writable = @{{name}}.class.new(@{{name}}.size + 1)
+        writable.concat(@{{name}})
+        @{{name}} = writable
+        @shared_arrays &= ~{{bit}}_u16
+      end
+      reset_load_state
+      @{{name}}
+    end
+
+    # Replaces `{{name}}` with a fresh empty array.
+    #
+    # :nodoc:
+    def clear_{{name}} : Nil
+      @{{name}} = @{{name}}.class.new
+      @shared_arrays &= ~{{bit}}_u16
+      reset_load_state
+    end
+  {% end %}
+
+  # Drops memoized records so the next read runs a fresh query.
+  private def reset_load_state : Nil
+    @records = nil
+    @cache_version = nil
+  end
+
+  # Returns a copy of this relation that shares its clause arrays with the
+  # receiver until either side writes to one (copy-on-write). This is what
+  # every non-bang chain method starts from, so chaining allocates one small
+  # object plus a copy of only the arrays the step touches.
+  #
+  # The copy has the receiver's runtime class (named-scope relations, sharded
+  # builders). Builder's own state is a shallow memory copy; a subclass that
+  # adds instance variables carries them over in `copy_subclass_state_from`.
+  def dup : self
+    chain_copy
+  end
+
+  # Same as `dup`; the name states the intent at chain-method call sites.
+  protected def chain_copy : self
+    @shared_arrays = ALL_ARRAYS_SHARED
+    copy = self.class.allocate
+    copy.as(Void*).copy_from(self.as(Void*), instance_sizeof(Grant::Query::Builder(Model)))
+    copy.copy_subclass_state_from(self)
+    copy.forget_copied_state
+    copy
+  end
+
+  # Hook for subclasses that declare their own instance variables: copy them
+  # from *source* into the receiver, a fresh copy of the same class.
+  #
+  # :nodoc:
+  protected def copy_subclass_state_from(source : Grant::Query::Builder(Model)) : Nil
+  end
+
+  # :nodoc:
+  protected def forget_copied_state : Nil
+    @records = nil
+    @cache_version = nil
+    @_cached_assembler = nil
+  end
+
+  # Returns a copy whose WHERE clauses are recorded as default-scope clauses
+  # (the ones `unscope(:where)` leaves alone). Used when a model builds its
+  # `current_scope` from `default_scope` and STI filters.
+  #
+  # :nodoc:
+  def promote_where_to_default_scope : self
+    copy = chain_copy
+    copy.own_default_scope_where_fields.concat(copy.where_fields)
+    copy.clear_where_fields
+    copy
+  end
+
+  # Returns a copy with strict loading set (default `true`). Records loaded
+  # from the copy raise when an unloaded association is read.
   def strict_loading(value : Bool = true) : self
+    chain_copy.strict_loading!(value)
+  end
+
+  def strict_loading!(value : Bool = true) : self
+    reset_load_state
     @strict_loading = value
     self
   end
@@ -129,8 +244,8 @@ class Grant::Query::Builder(Model)
   # User.where(id: [1, 2, 3])                        # id IN (1, 2, 3)
   # User.where(id: 1..10)                            # id BETWEEN 1 AND 10
   # ```
-  def where(**matches) : self
-    where(matches)
+  def where!(**matches) : self
+    where!(matches)
   end
 
   # :ditto:
@@ -141,21 +256,21 @@ class Grant::Query::Builder(Model)
   # ```
   # User.where({active: true, email: "a@example.com"})
   # ```
-  def where(matches) : self
+  def where!(matches) : self
     matches.each do |field, value|
       if value.is_a?(Array)
         and_array(field.to_s, :in, value)
       elsif value.is_a?(Enum)
-        and(field: field.to_s, operator: :eq, value: value.to_s)
+        and!(field: field.to_s, operator: :eq, value: value.to_s)
       elsif value.is_a?(Range)
         # A range's upper comparison depends on whether its end is exclusive.
-        and(field: field.to_s, operator: :gteq, value: value.begin)
-        and(field: field.to_s, operator: value.exclusive? ? :lt : :lteq, value: value.end)
+        and!(field: field.to_s, operator: :gteq, value: value.begin)
+        and!(field: field.to_s, operator: value.exclusive? ? :lt : :lteq, value: value.end)
       elsif value.is_a?(Builder)
         # Handle subquery
         and_subquery(field: field.to_s, subquery: value)
       else
-        and(field: field.to_s, operator: :eq, value: value)
+        and!(field: field.to_s, operator: :eq, value: value)
       end
     end
 
@@ -175,8 +290,8 @@ class Grant::Query::Builder(Model)
   # User.where(:id, :gt, 100)
   # User.where(:email, :like, "%@example.com")
   # ```
-  def where(field : (Symbol | String), operator : Symbol, value : Grant::Columns::Type) : self
-    and(field: field.to_s, operator: operator, value: value)
+  def where!(field : (Symbol | String), operator : Symbol, value : Grant::Columns::Type) : self
+    and!(field: field.to_s, operator: operator, value: value)
   end
 
   # Adds a raw SQL condition *stmt*, ANDed onto the query.
@@ -187,27 +302,27 @@ class Grant::Query::Builder(Model)
   # User.where("LENGTH(email) > ?", 20)
   # User.where("active = true") # no bind value
   # ```
-  def where(stmt : String) : self
-    and(stmt)
+  def where!(stmt : String) : self
+    and!(stmt)
   end
 
-  def where(stmt : String, value : Nil) : self
-    and(stmt, value)
+  def where!(stmt : String, value : Nil) : self
+    and!(stmt, value)
   end
 
-  def where(stmt : String, values : Array) : self
-    and(stmt, values)
+  def where!(stmt : String, values : Array) : self
+    and!(stmt, values)
   end
 
-  def where(stmt : String, value : Grant::Columns::Type) : self
-    and(stmt, value)
+  def where!(stmt : String, value : Grant::Columns::Type) : self
+    and!(stmt, value)
   end
 
-  def where(stmt : String, first, second, *rest) : self
+  def where!(stmt : String, first, second, *rest) : self
     values = [] of Grant::Columns::Type
     values << first.as(Grant::Columns::Type) << second.as(Grant::Columns::Type)
     rest.each { |value| values << value.as(Grant::Columns::Type) }
-    and(stmt, values)
+    and!(stmt, values)
   end
 
   # Returns a WhereChain for advanced where methods.
@@ -229,8 +344,8 @@ class Grant::Query::Builder(Model)
   # ```
   # User.where(active: true).and(:id, :gt, 100)
   # ```
-  def and(field : (Symbol | String), operator : Symbol, value : Grant::Columns::Type) : self
-    @where_fields << {join: :and, field: field.to_s, operator: operator, value: value}
+  def and!(field : (Symbol | String), operator : Symbol, value : Grant::Columns::Type) : self
+    own_where_fields << {join: :and, field: field.to_s, operator: operator, value: value}
 
     self
   end
@@ -240,44 +355,44 @@ class Grant::Query::Builder(Model)
   # ```
   # User.where(active: true).and("LENGTH(email) > ?", 10)
   # ```
-  def and(stmt : String) : self
-    @where_fields << {join: :and, stmt: stmt, value: nil.as(Grant::Columns::Type)}
+  def and!(stmt : String) : self
+    own_where_fields << {join: :and, stmt: stmt, value: nil.as(Grant::Columns::Type)}
     self
   end
 
-  def and(stmt : String, value : Nil) : self
-    @where_fields << {join: :and, stmt: stmt, values: [value.as(Grant::Columns::Type)]}
+  def and!(stmt : String, value : Nil) : self
+    own_where_fields << {join: :and, stmt: stmt, values: [value.as(Grant::Columns::Type)]}
     self
   end
 
-  def and(stmt : String, value : Grant::Columns::Type) : self
+  def and!(stmt : String, value : Grant::Columns::Type) : self
     if values = raw_bind_values(value)
-      @where_fields << {join: :and, stmt: stmt, values: values}
+      own_where_fields << {join: :and, stmt: stmt, values: values}
     else
-      @where_fields << {join: :and, stmt: stmt, value: value}
+      own_where_fields << {join: :and, stmt: stmt, value: value}
     end
 
     self
   end
 
-  def and(stmt : String, values : Array) : self
+  def and!(stmt : String, values : Array) : self
     bind_values = [] of Grant::Columns::Type
     values.each { |item| bind_values << item.as(Grant::Columns::Type) }
-    @where_fields << {join: :and, stmt: stmt, values: bind_values}
+    own_where_fields << {join: :and, stmt: stmt, values: bind_values}
     self
   end
 
-  def and(stmt : String, first, second, *rest) : self
+  def and!(stmt : String, first, second, *rest) : self
     values = [] of Grant::Columns::Type
     values << first.as(Grant::Columns::Type) << second.as(Grant::Columns::Type)
     rest.each { |value| values << value.as(Grant::Columns::Type) }
-    and(stmt, values)
+    and!(stmt, values)
   end
 
   # Adds a structured `IN` or `NOT IN` predicate from a possibly nilable list.
   # This overload keeps nil inside the list semantics without passing an
   # unsupported Array(Union(...)) value through the DB driver.
-  def and_in(field : Symbol | String, values : Array, negated : Bool = false) : self
+  def and_in!(field : Symbol | String, values : Array, negated : Bool = false) : self
     and_array(field.to_s, negated ? :nin : :in, values)
   end
 
@@ -287,15 +402,15 @@ class Grant::Query::Builder(Model)
 
     if values_without_nil.empty?
       if has_nil
-        @where_fields << {join: :and, stmt: "#{structured_field_sql(field)} IS #{operator == :nin ? "NOT " : ""}NULL", value: nil.as(Grant::Columns::Type)}
+        own_where_fields << {join: :and, stmt: "#{structured_field_sql(field)} IS #{operator == :nin ? "NOT " : ""}NULL", value: nil.as(Grant::Columns::Type)}
       else
-        @where_fields << {join: :and, stmt: operator == :nin ? "1=1" : "1=0", value: nil.as(Grant::Columns::Type)}
+        own_where_fields << {join: :and, stmt: operator == :nin ? "1=1" : "1=0", value: nil.as(Grant::Columns::Type)}
       end
       return self
     end
 
     unless has_nil
-      @where_fields << {join: :and, field: field, operator: operator, value: values_without_nil.as(Grant::Columns::Type)}
+      own_where_fields << {join: :and, field: field, operator: operator, value: values_without_nil.as(Grant::Columns::Type)}
       return self
     end
 
@@ -308,7 +423,7 @@ class Grant::Query::Builder(Model)
                 else
                   "(#{safe_field} IN (#{placeholders}) OR #{safe_field} IS NULL)"
                 end
-    @where_fields << {join: :and, stmt: predicate, values: bind_values}
+    own_where_fields << {join: :and, stmt: predicate, values: bind_values}
     self
   end
 
@@ -325,25 +440,25 @@ class Grant::Query::Builder(Model)
   # ```
   # User.where(active: true).and(email: "a@example.com")
   # ```
-  def and(**matches) : self
-    and(matches)
+  def and!(**matches) : self
+    and!(matches)
   end
 
   # :ditto:
   #
   # Hash/NamedTuple form of `and(**matches)`.
-  def and(matches) : self
+  def and!(matches) : self
     matches.each do |field, value|
       if value.is_a?(Array)
         and_array(field.to_s, :in, value)
       elsif value.is_a?(Enum)
-        and(field: field.to_s, operator: :eq, value: value.to_s)
+        and!(field: field.to_s, operator: :eq, value: value.to_s)
       elsif value.is_a?(Range)
         # A range's upper comparison depends on whether its end is exclusive.
-        and(field: field.to_s, operator: :gteq, value: value.begin)
-        and(field: field.to_s, operator: value.exclusive? ? :lt : :lteq, value: value.end)
+        and!(field: field.to_s, operator: :gteq, value: value.begin)
+        and!(field: field.to_s, operator: value.exclusive? ? :lt : :lteq, value: value.end)
       else
-        and(field: field.to_s, operator: :eq, value: value)
+        and!(field: field.to_s, operator: :eq, value: value)
       end
     end
     self
@@ -360,30 +475,30 @@ class Grant::Query::Builder(Model)
   # ```
   #
   # For a parenthesized OR group, use the block form `or { |q| ... }`.
-  def or(**matches) : self
-    or(matches)
+  def or!(**matches) : self
+    or!(matches)
   end
 
   # :ditto:
   #
   # Hash/NamedTuple form of `or(**matches)`.
-  def or(matches) : self
+  def or!(matches) : self
     matches.each do |field, value|
       if value.is_a?(Array)
         or_array(field.to_s, :in, value)
       elsif value.is_a?(Enum)
-        or(field: field.to_s, operator: :eq, value: value.to_s)
+        or!(field: field.to_s, operator: :eq, value: value.to_s)
       elsif value.is_a?(Range)
         field_sql = structured_field_sql(field.to_s)
         upper_operator = value.exclusive? ? "<" : "<="
         bind_values = [value.begin.as(Grant::Columns::Type), value.end.as(Grant::Columns::Type)]
-        @where_fields << {
+        own_where_fields << {
           join:   :or,
           stmt:   "(#{field_sql} >= ? AND #{field_sql} #{upper_operator} ?)",
           values: bind_values,
         }
       else
-        or(field: field.to_s, operator: :eq, value: value)
+        or!(field: field.to_s, operator: :eq, value: value)
       end
     end
     self
@@ -395,8 +510,8 @@ class Grant::Query::Builder(Model)
   # User.where(active: true).or(:id, :lt, 10)
   # # => WHERE active = true OR id < 10
   # ```
-  def or(field : (Symbol | String), operator : Symbol, value : Grant::Columns::Type) : self
-    @where_fields << {join: :or, field: field.to_s, operator: operator, value: value}
+  def or!(field : (Symbol | String), operator : Symbol, value : Grant::Columns::Type) : self
+    own_where_fields << {join: :or, field: field.to_s, operator: operator, value: value}
 
     self
   end
@@ -406,28 +521,28 @@ class Grant::Query::Builder(Model)
   # ```
   # User.where(active: true).or("LENGTH(email) > ?", 30)
   # ```
-  def or(stmt : String) : self
-    @where_fields << {join: :or, stmt: stmt, value: nil.as(Grant::Columns::Type)}
+  def or!(stmt : String) : self
+    own_where_fields << {join: :or, stmt: stmt, value: nil.as(Grant::Columns::Type)}
     self
   end
 
-  def or(stmt : String, value : Nil) : self
-    @where_fields << {join: :or, stmt: stmt, values: [value.as(Grant::Columns::Type)]}
+  def or!(stmt : String, value : Nil) : self
+    own_where_fields << {join: :or, stmt: stmt, values: [value.as(Grant::Columns::Type)]}
     self
   end
 
-  def or(stmt : String, values : Array) : self
+  def or!(stmt : String, values : Array) : self
     bind_values = [] of Grant::Columns::Type
     values.each { |item| bind_values << item.as(Grant::Columns::Type) }
-    @where_fields << {join: :or, stmt: stmt, values: bind_values}
+    own_where_fields << {join: :or, stmt: stmt, values: bind_values}
     self
   end
 
-  def or(stmt : String, value : Grant::Columns::Type) : self
+  def or!(stmt : String, value : Grant::Columns::Type) : self
     if values = raw_bind_values(value)
-      @where_fields << {join: :or, stmt: stmt, values: values}
+      own_where_fields << {join: :or, stmt: stmt, values: values}
     else
-      @where_fields << {join: :or, stmt: stmt, value: value}
+      own_where_fields << {join: :or, stmt: stmt, value: value}
     end
 
     self
@@ -435,7 +550,7 @@ class Grant::Query::Builder(Model)
 
   # Adds an OR `IN`/`NOT IN` condition. A nullable array becomes one grouped
   # predicate, so a following condition cannot split its NULL branch.
-  def or_in(field : Symbol | String, values : Array, negated : Bool = false) : self
+  def or_in!(field : Symbol | String, values : Array, negated : Bool = false) : self
     or_array(field.to_s, negated ? :nin : :in, values)
   end
 
@@ -445,15 +560,15 @@ class Grant::Query::Builder(Model)
 
     if values_without_nil.empty?
       if has_nil
-        @where_fields << {join: :or, stmt: "#{structured_field_sql(field)} IS #{operator == :nin ? "NOT " : ""}NULL", value: nil.as(Grant::Columns::Type)}
+        own_where_fields << {join: :or, stmt: "#{structured_field_sql(field)} IS #{operator == :nin ? "NOT " : ""}NULL", value: nil.as(Grant::Columns::Type)}
       else
-        @where_fields << {join: :or, stmt: operator == :nin ? "1=1" : "1=0", value: nil.as(Grant::Columns::Type)}
+        own_where_fields << {join: :or, stmt: operator == :nin ? "1=1" : "1=0", value: nil.as(Grant::Columns::Type)}
       end
       return self
     end
 
     unless has_nil
-      @where_fields << {join: :or, field: field, operator: operator, value: values_without_nil.as(Grant::Columns::Type)}
+      own_where_fields << {join: :or, field: field, operator: operator, value: values_without_nil.as(Grant::Columns::Type)}
       return self
     end
 
@@ -466,7 +581,7 @@ class Grant::Query::Builder(Model)
                 else
                   "(#{safe_field} IN (#{placeholders}) OR #{safe_field} IS NULL)"
                 end
-    @where_fields << {join: :or, stmt: predicate, values: bind_values}
+    own_where_fields << {join: :or, stmt: predicate, values: bind_values}
     self
   end
 
@@ -500,8 +615,8 @@ class Grant::Query::Builder(Model)
   # ```
   # User.order(:email) # => ORDER BY email ASC
   # ```
-  def order(field : Symbol) : self
-    @order_fields << {field: field.to_s, direction: Sort::Ascending}
+  def order!(field : Symbol) : self
+    own_order_fields << {field: field.to_s, direction: Sort::Ascending}
 
     self
   end
@@ -511,9 +626,9 @@ class Grant::Query::Builder(Model)
   # ```
   # User.order([:active, :email]) # => ORDER BY active ASC, email ASC
   # ```
-  def order(fields : Array(Symbol)) : self
+  def order!(fields : Array(Symbol)) : self
     fields.each do |field|
-      order field
+      order! field
     end
 
     self
@@ -528,14 +643,14 @@ class Grant::Query::Builder(Model)
   # User.where(active: true).order(id: :desc)
   # User.order(active: :asc, email: :desc) # => ORDER BY active ASC, email DESC
   # ```
-  def order(**dsl) : self
-    order(dsl)
+  def order!(**dsl) : self
+    order!(dsl)
   end
 
   # :ditto:
   #
   # Hash/NamedTuple form of `order(**dsl)`.
-  def order(dsl) : self
+  def order!(dsl) : self
     dsl.each do |field, dsl_direction|
       direction = Sort::Ascending
 
@@ -543,7 +658,7 @@ class Grant::Query::Builder(Model)
         direction = Sort::Descending
       end
 
-      @order_fields << {field: field.to_s, direction: direction}
+      own_order_fields << {field: field.to_s, direction: direction}
     end
 
     self
@@ -556,8 +671,8 @@ class Grant::Query::Builder(Model)
   # ```
   # User.group_by(:active) # => GROUP BY active
   # ```
-  def group_by(field : Symbol) : self
-    @group_fields << {field: field.to_s}
+  def group_by!(field : Symbol) : self
+    own_group_fields << {field: field.to_s}
 
     self
   end
@@ -567,9 +682,9 @@ class Grant::Query::Builder(Model)
   # ```
   # User.group_by([:active, :email]) # => GROUP BY active, email
   # ```
-  def group_by(fields : Array(Symbol)) : self
+  def group_by!(fields : Array(Symbol)) : self
     fields.each do |field|
-      group_by field
+      group_by! field
     end
 
     self
@@ -580,16 +695,16 @@ class Grant::Query::Builder(Model)
   # ```
   # User.group_by(active: true) # => GROUP BY active
   # ```
-  def group_by(**dsl) : self
-    group_by(dsl)
+  def group_by!(**dsl) : self
+    group_by!(dsl)
   end
 
   # :ditto:
   #
   # Hash/NamedTuple form of `group_by(**dsl)`.
-  def group_by(dsl) : self
+  def group_by!(dsl) : self
     dsl.each do |field, _|
-      @group_fields << {field: field.to_s}
+      own_group_fields << {field: field.to_s}
     end
 
     self
@@ -607,7 +722,8 @@ class Grant::Query::Builder(Model)
   #   # row is FOR UPDATE-locked until the transaction commits
   # end
   # ```
-  def lock(mode : Grant::Locking::LockMode = Grant::Locking::LockMode::Update) : self
+  def lock!(mode : Grant::Locking::LockMode = Grant::Locking::LockMode::Update) : self
+    reset_load_state
     @lock_mode = mode
     self
   end
@@ -621,8 +737,8 @@ class Grant::Query::Builder(Model)
   #   .where(active: true)
   # # => SELECT ... FROM users INNER JOIN posts ON posts.user_id = users.id WHERE active = true
   # ```
-  def joins(table : String, *, on : String) : self
-    @join_clauses << {type: :inner, table: table, on: on}
+  def joins!(table : String, *, on : String) : self
+    own_join_clauses << {type: :inner, table: table, on: on}
     self
   end
 
@@ -641,14 +757,14 @@ class Grant::Query::Builder(Model)
   # Klass.joins(:teacher)
   # # => SELECT ... FROM klasses INNER JOIN teachers ON teachers.id = klasses.teacher_id
   # ```
-  def joins(association : Symbol) : self
-    @join_clauses.concat(resolve_association_join(association, :inner))
+  def joins!(association : Symbol) : self
+    own_join_clauses.concat(resolve_association_join(association, :inner))
     self
   end
 
   # Adds INNER JOINs for multiple association names at once.
-  def joins(*associations : Symbol) : self
-    associations.each { |assoc| joins(assoc) }
+  def joins!(*associations : Symbol) : self
+    associations.each { |assoc| joins!(assoc) }
     self
   end
 
@@ -662,8 +778,8 @@ class Grant::Query::Builder(Model)
   #   .where("posts.id IS NULL")
   # # => SELECT ... FROM users LEFT JOIN posts ON posts.user_id = users.id WHERE posts.id IS NULL
   # ```
-  def left_joins(table : String, *, on : String) : self
-    @join_clauses << {type: :left, table: table, on: on}
+  def left_joins!(table : String, *, on : String) : self
+    own_join_clauses << {type: :left, table: table, on: on}
     self
   end
 
@@ -676,14 +792,14 @@ class Grant::Query::Builder(Model)
   # Parent.left_joins(:students)
   # # => SELECT ... FROM parents LEFT JOIN students ON students.parent_id = parents.id
   # ```
-  def left_joins(association : Symbol) : self
-    @join_clauses.concat(resolve_association_join(association, :left))
+  def left_joins!(association : Symbol) : self
+    own_join_clauses.concat(resolve_association_join(association, :left))
     self
   end
 
   # Adds LEFT JOINs for multiple association names at once.
-  def left_joins(*associations : Symbol) : self
-    associations.each { |assoc| left_joins(assoc) }
+  def left_joins!(*associations : Symbol) : self
+    associations.each { |assoc| left_joins!(assoc) }
     self
   end
 
@@ -762,9 +878,9 @@ class Grant::Query::Builder(Model)
     if metadata[:through]
       raise ArgumentError.new("Cannot eager_load through association #{Model.name}##{association}: unresolved through/source metadata") unless add_through_eager_load_join(metadata)
     else
-      left_joins(association)
+      left_joins!(association)
     end
-    distinct
+    distinct!
   end
 
   private def add_through_eager_load_join(metadata : Grant::AssociationRegistry::AssociationMeta) : Bool
@@ -780,14 +896,14 @@ class Grant::Query::Builder(Model)
     through_model = through_metadata[:target_class]
     target_model = metadata[:target_class]
     owner_join = "#{through_model.quote(through_model.table_name)}.#{through_model.quote(through_metadata[:foreign_key])} = #{Model.quote(Model.table_name)}.#{Model.quote(through_metadata[:primary_key])}"
-    left_joins(through_model.table_name, on: owner_join)
+    left_joins!(through_model.table_name, on: owner_join)
 
     target_join = if source_metadata[:type] == :belongs_to
                     "#{target_model.quote(target_model.table_name)}.#{target_model.quote(source_metadata[:primary_key])} = #{through_model.quote(through_model.table_name)}.#{through_model.quote(source_metadata[:foreign_key])}"
                   else
                     "#{target_model.quote(target_model.table_name)}.#{target_model.quote(source_metadata[:foreign_key])} = #{through_model.quote(through_model.table_name)}.#{through_model.quote(source_metadata[:primary_key])}"
                   end
-    left_joins(target_model.table_name, on: target_join)
+    left_joins!(target_model.table_name, on: target_join)
     true
   end
 
@@ -799,7 +915,8 @@ class Grant::Query::Builder(Model)
   # User.where(active: true).distinct
   # # => SELECT DISTINCT ... FROM users WHERE active = true
   # ```
-  def distinct : self
+  def distinct! : self
+    reset_load_state
     @distinct = true
     self
   end
@@ -815,8 +932,8 @@ class Grant::Query::Builder(Model)
   #   .having("COUNT(*) > ?", 5)
   # # => SELECT ... FROM users GROUP BY department HAVING COUNT(*) > 5
   # ```
-  def having(stmt : String, value : Grant::Columns::Type = nil) : self
-    @having_clauses << {stmt: stmt, value: value}
+  def having!(stmt : String, value : Grant::Columns::Type = nil) : self
+    own_having_clauses << {stmt: stmt, value: value}
     self
   end
 
@@ -832,7 +949,8 @@ class Grant::Query::Builder(Model)
   # User.none.any?             # => false
   # User.none.where(name: "x") # => [] (still returns nothing)
   # ```
-  def none : self
+  def none! : self
+    reset_load_state
     @is_none = true
     self
   end
@@ -846,9 +964,9 @@ class Grant::Query::Builder(Model)
   # User.order(name: :asc).reorder(created_at: :desc)
   # # => SELECT ... FROM users ORDER BY created_at DESC
   # ```
-  def reorder(**dsl) : self
-    @order_fields.clear
-    order(**dsl)
+  def reorder!(**dsl) : self
+    clear_order_fields
+    order!(**dsl)
   end
 
   # Clears existing order and replaces with a single field ascending.
@@ -857,9 +975,9 @@ class Grant::Query::Builder(Model)
   # User.order(name: :desc).reorder(:created_at)
   # # => SELECT ... FROM users ORDER BY created_at ASC
   # ```
-  def reorder(field : Symbol) : self
-    @order_fields.clear
-    order(field)
+  def reorder!(field : Symbol) : self
+    clear_order_fields
+    order!(field)
   end
 
   # Reverses the direction of all existing order clauses.
@@ -871,11 +989,13 @@ class Grant::Query::Builder(Model)
   # User.order(name: :asc, created_at: :desc).reverse_order
   # # => SELECT ... FROM users ORDER BY name DESC, created_at ASC
   # ```
-  def reverse_order : self
+  def reverse_order! : self
+    reset_load_state
     @order_fields = @order_fields.map do |field|
       new_direction = field[:direction] == Sort::Ascending ? Sort::Descending : Sort::Ascending
       {field: field[:field], direction: new_direction}
     end
+    @shared_arrays &= ~4_u16
     self
   end
 
@@ -888,9 +1008,9 @@ class Grant::Query::Builder(Model)
   # User.where(active: true).rewhere(active: false)
   # # => SELECT ... FROM users WHERE active = false
   # ```
-  def rewhere(**matches) : self
-    @where_fields.clear
-    where(**matches)
+  def rewhere!(**matches) : self
+    clear_where_fields
+    where!(**matches)
   end
 
   # Clears existing column projection and replaces with new columns.
@@ -901,7 +1021,8 @@ class Grant::Query::Builder(Model)
   # User.where(active: true).select(:id, :name).reselect(:id, :email).select
   # # => SELECT id, email FROM users WHERE active = ?
   # ```
-  def reselect(*columns : Symbol) : self
+  def reselect!(*columns : Symbol) : self
+    reset_load_state
     @select_columns = columns.map(&.to_s).to_a
     self
   end
@@ -912,9 +1033,9 @@ class Grant::Query::Builder(Model)
   # User.group_by(:status).regroup(:department)
   # # => SELECT ... FROM users GROUP BY department
   # ```
-  def regroup(field : Symbol) : self
-    @group_fields.clear
-    group_by(field)
+  def regroup!(field : Symbol) : self
+    clear_group_fields
+    group_by!(field)
   end
 
   # Clears existing GROUP BY and replaces with new groupings.
@@ -923,9 +1044,9 @@ class Grant::Query::Builder(Model)
   # User.group_by(:status).regroup(:department, :role)
   # # => SELECT ... FROM users GROUP BY department, role
   # ```
-  def regroup(*fields : Symbol) : self
-    @group_fields.clear
-    fields.each { |f| group_by(f) }
+  def regroup!(*fields : Symbol) : self
+    clear_group_fields
+    fields.each { |f| group_by!(f) }
     self
   end
 
@@ -945,23 +1066,29 @@ class Grant::Query::Builder(Model)
   # ```
   #
   # Raises `ArgumentError` for an unrecognized component.
-  def unscope(*components : Symbol) : self
+  def unscope!(*components : Symbol) : self
+    unscope_components!(components.to_a)
+  end
+
+  # Applies `unscope!` for a list of components (shared with `only`).
+  protected def unscope_components!(components : Array(Symbol)) : self
+    reset_load_state
     components.each do |component|
       case component
       when :where
-        @where_fields.clear
+        clear_where_fields
       when :order
-        @order_fields.clear
+        clear_order_fields
       when :limit
         @limit = nil
       when :offset
         @offset = nil
       when :group, :group_by
-        @group_fields.clear
+        clear_group_fields
       when :having
-        @having_clauses.clear
+        clear_having_clauses
       when :joins
-        @join_clauses.clear
+        clear_join_clauses
       when :select
         @select_columns = nil
       when :distinct
@@ -983,7 +1110,8 @@ class Grant::Query::Builder(Model)
   # ```
   # User.order(id: :asc).limit(10).offset(20) # rows 21..30
   # ```
-  def offset(num) : self
+  def offset!(num) : self
+    reset_load_state
     @offset = num.nil? ? nil : num.to_i64
 
     self
@@ -996,7 +1124,8 @@ class Grant::Query::Builder(Model)
   # ```
   # User.where(active: true).order(id: :desc).limit(10)
   # ```
-  def limit(num) : self
+  def limit!(num) : self
+    reset_load_state
     @limit = num.nil? ? nil : num.to_i64
 
     self
@@ -1048,13 +1177,58 @@ class Grant::Query::Builder(Model)
     records
   end
 
-  # Executes the query and returns all matching records. Alias for `select`.
+  # Returns a lazy copy of this relation, like ActiveRecord's `relation.all`.
+  # Nothing is executed; chain further clauses or iterate to load it. Use
+  # `select` (or `to_a`/`records`) to get the matching rows as an `Array`.
   #
   # ```
-  # User.where(active: true).all # => [#<User ...>, ...]
+  # User.where(active: true).all.order(:email) # still a relation
+  # User.where(active: true).all.to_a          # => [#<User ...>, ...]
   # ```
-  def all : Array(Model)
-    self.select
+  def all : self
+    chain_copy
+  end
+
+  # Loads the relation once and memoizes the records. Later `each`, `size`,
+  # `empty?`, `first` and friends read the memoized records instead of running
+  # SQL. Any chain method returns a fresh, unloaded relation.
+  #
+  # ```
+  # users = User.where(active: true).load
+  # users.loaded? # => true
+  # users.empty?  # => false (no query)
+  # ```
+  def load : self
+    records
+    self
+  end
+
+  # Returns `true` once `load` (or an iteration) has memoized the records.
+  def loaded? : Bool
+    !@records.nil?
+  end
+
+  # Returns the memoized records, loading them first when needed.
+  def records : Array(Model)
+    if memoized = @records
+      return memoized
+    end
+
+    loaded = self.select
+    @records = loaded
+    loaded
+  end
+
+  # Forgets the memoized records; the next read runs SQL again. Returns `self`.
+  def reset : self
+    reset_load_state
+    self
+  end
+
+  # Discards the memoized records and loads the relation again.
+  def reload : self
+    reset
+    load
   end
 
   # Returns the SQL string this query would execute, without running it.
@@ -1067,6 +1241,110 @@ class Grant::Query::Builder(Model)
   # ```
   def raw_sql : String
     assembler.select.raw_sql
+  end
+
+  # ActiveRecord-style name for `raw_sql`.
+  def to_sql : String
+    raw_sql
+  end
+
+  # Clause components `only` and `except` understand; the same table `unscope`
+  # uses.
+  RELATION_COMPONENTS = [:where, :order, :limit, :offset, :group, :having, :joins, :select, :distinct, :lock]
+
+  # Returns a copy that keeps only the named clause *components* and drops the
+  # rest. Components are `:where`, `:order`, `:limit`, `:offset`, `:group`,
+  # `:having`, `:joins`, `:select`, `:distinct` and `:lock`. Default-scope
+  # clauses are left alone, as with `unscope`. Raises `ArgumentError` for an
+  # unknown component.
+  #
+  # ```
+  # User.where(active: true).order(:email).limit(5).only(:where)
+  # # => WHERE active = ? (no ORDER BY, no LIMIT)
+  # ```
+  def only(*components : Symbol) : self
+    normalized = components.map { |component| component == :group_by ? :group : component }
+    unknown = normalized.reject { |component| RELATION_COMPONENTS.includes?(component) }
+    raise ArgumentError.new("only: unknown component #{unknown.first.inspect}") unless unknown.empty?
+
+    dropped = RELATION_COMPONENTS.reject { |component| normalized.includes?(component) }
+    chain_copy.unscope_components!(dropped)
+  end
+
+  # Returns a copy without the named clause *components* (see `only` for the
+  # component list). Same as `unscope`, spelled like ActiveRecord.
+  #
+  # ```
+  # User.where(active: true).order(:email).except(:order)
+  # ```
+  def except(*components : Symbol) : self
+    chain_copy.unscope_components!(components.to_a)
+  end
+
+  # Returns a stable key for the query (table name plus a digest of its SQL and
+  # bind values). It does not run a query.
+  #
+  # ```
+  # User.where(active: true).cache_key # => "users/query-5f0e..."
+  # ```
+  def cache_key : String
+    query_assembler = assembler
+    sql = query_assembler.select.raw_sql
+    digest = Digest::MD5.hexdigest("#{sql}|#{query_assembler.numbered_parameters.inspect}")
+    "#{Model.table_name}/query-#{digest}"
+  end
+
+  # Returns a version string for the current contents of the relation:
+  # `"<row count>-<newest updated_at>"`, computed with a single aggregate query
+  # and memoized until the relation is reset. Models without an `updated_at`
+  # column get the count alone.
+  #
+  # ```
+  # User.where(active: true).cache_version # => "42-20260928120000000000"
+  # ```
+  def cache_version : String
+    if memoized = @cache_version
+      return memoized
+    end
+
+    return @cache_version = "0" if is_none?
+
+    inner = chain_copy
+    inner.clear_order_fields
+    version_assembler = inner.assembler
+    inner_sql = version_assembler.select.raw_sql
+    has_updated_at = Model.fields.includes?("updated_at")
+    newest = has_updated_at ? ", MAX(#{Model.quote("updated_at")})" : ""
+    sql = "SELECT COUNT(*)#{newest} FROM (#{inner_sql}) AS grant_cache_version"
+
+    count = 0_i64
+    newest_value : Grant::Columns::Type = nil
+    adapter = Model.adapter
+    started = Time.instant
+    adapter.open do |db|
+      db.query(sql, args: adapter.normalize_bind_values(version_assembler.numbered_parameters)) do |rs|
+        rs.each do
+          count = rs.read(Int64)
+          newest_value = rs.read(Grant::Columns::Type) if has_updated_at
+        end
+      end
+    end
+    elapsed_ms = (Time.instant - started).total_milliseconds
+    Grant::Logs::SQL.debug { "Query executed (#{elapsed_ms}ms) - #{sql} [#{Model.name}] [rows: 1]" }
+
+    @cache_version = cache_version_string(count, newest_value)
+  end
+
+  private def cache_version_string(count : Int64, newest : Grant::Columns::Type) : String
+    stamp = case newest
+            when Time
+              newest.to_utc.to_s("%Y%m%d%H%M%S%6N")
+            when String
+              newest.gsub(/[^0-9]/, "")
+            else
+              ""
+            end
+    stamp.empty? ? count.to_s : "#{count}-#{stamp}"
   end
 
   # Runs the query through the adapter's `EXPLAIN` and returns the plan text.
@@ -1084,18 +1362,20 @@ class Grant::Query::Builder(Model)
     assembler.explain(analyze)
   end
 
-  # Executes the query with `LIMIT 1` and returns the first record, or `nil`.
-  #
-  # Add an `order` for a deterministic result.
+  # Returns the first record ordered by the implicit order (see
+  # `implicit_order_column`; the primary key by default) unless the relation is
+  # already ordered. Runs `LIMIT 1` on a copy, so the receiver is unchanged; a
+  # loaded relation answers from its memoized records.
   #
   # ```
   # User.where(active: true).order(id: :asc).first # => #<User ...> or nil
   # ```
   def first : Model?
-    if order_fields.empty?
-      order_fields << {field: Model.primary_name, direction: Sort::Ascending}
+    if memoized = @records
+      return memoized.first?
     end
-    limit(1).select.first?
+
+    first_records_from(0, 1).first?
   end
 
   # Like `first` but raises `Grant::Querying::NotFound` when nothing matches.
@@ -1107,33 +1387,72 @@ class Grant::Query::Builder(Model)
     first || raise Grant::Querying::NotFound.new("No record found")
   end
 
-  # Executes the query with `LIMIT n` and returns up to *n* records as an Array.
+  # Returns up to *n* records from the start of the relation's order.
   #
   # ```
   # User.where(active: true).order(id: :desc).first(3) # => up to 3 users
   # ```
   def first(n : Int32) : Array(Model)
-    if order_fields.empty?
-      order_fields << {field: Model.primary_name, direction: Sort::Ascending}
+    if memoized = @records
+      return memoized.first(n)
     end
-    limit(n).select
+
+    first_records_from(0, n)
   end
 
-  # Executes the relation in reverse order and returns its last matching row.
-  def last : Model?
-    last_query = dup
-    last_query.order_fields.clear
-
-    if order_fields.empty?
-      last_query.order_fields << {field: Model.primary_name, direction: Sort::Descending}
-    else
-      order_fields.each do |field|
-        sort_direction = field[:direction] == Sort::Ascending ? Sort::Descending : Sort::Ascending
-        last_query.order_fields << {field: field[:field], direction: sort_direction}
-      end
+  # Returns one record with no ordering applied (`LIMIT 1`), or `nil`.
+  #
+  # Unlike `first`, `take` adds no `ORDER BY`, so the database may return any
+  # matching row.
+  def take : Model?
+    if memoized = @records
+      return memoized.first?
     end
 
-    last_query.limit(1).select.first?
+    chain_copy.limit!(1).select.first?
+  end
+
+  # Returns up to *n* records with no ordering applied.
+  def take(n : Int32) : Array(Model)
+    if memoized = @records
+      return memoized.first(n)
+    end
+
+    chain_copy.limit!(n).select
+  end
+
+  # Like `take`, but raises `Grant::Querying::NotFound` when nothing matches.
+  def take! : Model
+    take || raise Grant::Querying::NotFound.new("No record found")
+  end
+
+  # Returns the last matching row by running the relation in reverse order
+  # (`ORDER BY` flipped, or the implicit order descending) with `LIMIT 1`.
+  def last : Model?
+    if memoized = @records
+      return memoized.last?
+    end
+
+    # Reversing a LIMIT/OFFSET window would read the end of the whole table,
+    # so a windowed relation loads its window (at most its limit) instead.
+    return ordered_copy.select.last? if limit_or_offset?
+
+    ordered_copy(reverse: true).limit!(1).select.first?
+  end
+
+  # Returns the last *n* matching rows in the relation's own order.
+  #
+  # ```
+  # User.order(:id).last(2) # => [user_9, user_10]
+  # ```
+  def last(n : Int32) : Array(Model)
+    if memoized = @records
+      return memoized.last(n)
+    end
+
+    return ordered_copy.select.last(n) if limit_or_offset?
+
+    ordered_copy(reverse: true).limit!(n).select.reverse!
   end
 
   # Like `last`, but raises when the relation has no matching records.
@@ -1141,29 +1460,191 @@ class Grant::Query::Builder(Model)
     last || raise Grant::Querying::NotFound.new("No record found")
   end
 
-  # Returns `true` if the query matches at least one record, otherwise `false`.
+  {% for pair in [{"second", 1}, {"third", 2}, {"fourth", 3}, {"fifth", 4}, {"forty_two", 41}] %}
+    # Returns the {{pair[0].id}} record of the ordered relation (`LIMIT 1 OFFSET {{pair[1]}}`
+    # from the relation's own offset), or `nil` when there are fewer.
+    def {{pair[0].id}} : Model?
+      nth_record({{pair[1]}})
+    end
+
+    # Like `{{pair[0].id}}`, but raises `Grant::Querying::NotFound` when missing.
+    def {{pair[0].id}}! : Model
+      {{pair[0].id}} || raise Grant::Querying::NotFound.new("No record found")
+    end
+  {% end %}
+
+  {% for pair in [{"second_to_last", 1}, {"third_to_last", 2}] %}
+    # Returns the {{pair[0].id.gsub(/_/, " ")}} record of the ordered relation, counting from the
+    # end, or `nil` when there are fewer.
+    def {{pair[0].id}} : Model?
+      nth_record({{pair[1]}}, reverse: true)
+    end
+
+    # Like `{{pair[0].id}}`, but raises `Grant::Querying::NotFound` when missing.
+    def {{pair[0].id}}! : Model
+      {{pair[0].id}} || raise Grant::Querying::NotFound.new("No record found")
+    end
+  {% end %}
+
+  private def nth_record(index : Int32, reverse : Bool = false) : Model?
+    if reverse
+      nth_record_from_end(index)
+    elsif memoized = @records
+      memoized[index]?
+    else
+      first_records_from(index, 1).first?
+    end
+  end
+
+  # Counting from the end (0 = last). A negative Array index would wrap
+  # around, so a position before the first record answers `nil`.
+  private def nth_record_from_end(index : Int32) : Model?
+    if memoized = @records
+      position = memoized.size - 1 - index
+      return position >= 0 ? memoized[position] : nil
+    end
+
+    if limit_or_offset?
+      window = ordered_copy.select
+      position = window.size - 1 - index
+      return position >= 0 ? window[position] : nil
+    end
+
+    ordered_copy(reverse: true).offset!(index).limit!(1).select.first?
+  end
+
+  # Up to *count* records starting *index* rows into the ordered relation,
+  # staying inside the relation's own LIMIT/OFFSET window (as ActiveRecord's
+  # `find_nth_with_limit` does): `limit(3).first(10)` returns three rows and
+  # `limit(1).second` returns `nil`.
+  private def first_records_from(index : Int32, count : Int32) : Array(Model)
+    effective = count.to_i64
+    if window = @limit
+      effective = Math.min(window - index, effective)
+    end
+    return [] of Model if effective <= 0
+
+    copy = ordered_copy
+    copy.offset!((@offset || 0_i64) + index) unless index.zero?
+    copy.limit!(effective).select
+  end
+
+  private def limit_or_offset? : Bool
+    !@limit.nil? || !@offset.nil?
+  end
+
+  # Returns a copy ordered for `first`/`last`/ordinal finders: the relation's
+  # own `ORDER BY` when it has one (flipped for *reverse*), otherwise the
+  # implicit order. The receiver is never changed.
+  private def ordered_copy(reverse : Bool = false) : self
+    copy = chain_copy
+    copy.apply_ordered_finder_order(reverse)
+    copy
+  end
+
+  # :nodoc:
+  protected def apply_ordered_finder_order(reverse : Bool) : Nil
+    if @order_fields.empty?
+      direction = reverse ? Sort::Descending : Sort::Ascending
+      implicit_order_columns.each do |column|
+        own_order_fields << {field: column, direction: direction}
+      end
+    elsif reverse
+      reverse_order!
+    end
+  end
+
+  # Columns that order an otherwise unordered relation for `first`, `last`,
+  # the ordinal finders and `find_each`: the model's `implicit_order_column`s
+  # followed by its primary key column(s), without repeats.
+  def implicit_order_columns : Array(String)
+    columns = Model.implicit_order_columns.dup
+    key_columns.each { |column| columns << column unless columns.includes?(column) }
+    columns
+  end
+
+  private def key_columns : Array(String)
+    {% if Model.class.has_method?(:composite_primary_key_columns) %}
+      composite = Model.composite_primary_key_columns.map(&.to_s)
+      return composite unless composite.empty?
+    {% end %}
+
+    [Model.primary_name]
+  end
+
+  # Returns how many rows (at most *limit*) the relation matches, using a
+  # `SELECT <key> ... LIMIT n` probe on a copy. No rows are hydrated and the
+  # receiver keeps its own limit and offset.
+  private def probe_row_count(limit : Int32) : Int32
+    return 0 if is_none?
+
+    if memoized = @records
+      return Math.min(memoized.size, limit)
+    end
+
+    probe = chain_copy
+    probe.clear_order_fields
+    probe_limit = (@limit || limit.to_i64)
+    probe.limit!(Math.min(probe_limit, limit.to_i64))
+    probe.ids.size
+  end
+
+  # Returns `true` when the relation matches no rows. Runs `LIMIT 1` unless
+  # the relation is loaded.
   #
-  # A `none` relation is always `false`. Equivalent to `exists?`.
+  # ```
+  # User.where(active: true).empty? # => true/false, without loading rows
+  # ```
+  def empty? : Bool
+    probe_row_count(1) == 0
+  end
+
+  # Returns `true` if the relation matches at least one record. Same query as
+  # `empty?` (`LIMIT 1`); a `none` relation is always `false`. With a block it
+  # falls back to `Enumerable#any?`.
   #
   # ```
   # User.where(active: true).any? # => true/false
   # ```
   def any? : Bool
-    return false if is_none?
-    !first.nil?
+    probe_row_count(1) > 0
+  end
+
+  # Returns `true` if the relation matches no records. Opposite of `any?`.
+  def none? : Bool
+    empty?
+  end
+
+  # Returns `true` if the relation matches more than one record (`LIMIT 2`).
+  def many? : Bool
+    probe_row_count(2) > 1
+  end
+
+  # :ditto:
+  def many?(& : Model -> Bool) : Bool
+    records.count { |record| yield record } > 1
+  end
+
+  # Returns `true` if the relation matches exactly one record (`LIMIT 2`).
+  def one? : Bool
+    probe_row_count(2) == 1
   end
 
   # Returns the one record matching the query, asserting uniqueness.
   #
   # Raises `Grant::Querying::NotFound` if there are zero matches, and
-  # `Grant::Querying::NotUnique` if there is more than one. Use it when business
-  # logic guarantees exactly one row should match.
+  # `Grant::Querying::NotUnique` if there is more than one. Runs `LIMIT 2` on a
+  # copy, so it never loads more than two rows and never changes the receiver.
   #
   # ```
   # User.where(email: "a@example.com").sole # => #<User ...> or raises
   # ```
   def sole : Model
-    results = self.select
+    results = if memoized = @records
+                memoized
+              else
+                chain_copy.limit!(2).select
+              end
 
     if results.size == 0
       raise Grant::Querying::NotFound.new("No record found")
@@ -1337,6 +1818,10 @@ class Grant::Query::Builder(Model)
   # User.where(active: true).size # => 42
   # ```
   def size : Int64
+    if memoized = @records
+      return memoized.size.to_i64
+    end
+
     result = count
     if result.is_a?(Int64)
       result
@@ -1356,7 +1841,7 @@ class Grant::Query::Builder(Model)
   # User.where(active: true).map(&.email) # Enumerable, via each
   # ```
   def each(& : Model ->) : Nil
-    self.select.each do |record|
+    records.each do |record|
       yield record
     end
   end
@@ -1440,9 +1925,9 @@ class Grant::Query::Builder(Model)
   #   user.posts # already loaded, no extra query per user
   # end
   # ```
-  def includes(*associations) : self
+  def includes!(*associations) : self
     associations.each do |assoc|
-      @includes_associations << assoc
+      own_includes_associations << assoc
     end
     self
   end
@@ -1457,9 +1942,9 @@ class Grant::Query::Builder(Model)
   # User.all.includes(posts: :comments)
   # User.all.includes(posts: [:comments, :tags])
   # ```
-  def includes(**nested_associations) : self
+  def includes!(**nested_associations) : self
     nested_associations.each do |name, nested|
-      @includes_associations << {name => nested.is_a?(Array) ? nested : [nested]}
+      own_includes_associations << {name => nested.is_a?(Array) ? nested : [nested]}
     end
     self
   end
@@ -1472,9 +1957,9 @@ class Grant::Query::Builder(Model)
   # ```
   # User.where(active: true).preload(:posts)
   # ```
-  def preload(*associations) : self
+  def preload!(*associations) : self
     associations.each do |assoc|
-      @preload_associations << assoc
+      own_preload_associations << assoc
     end
     self
   end
@@ -1487,9 +1972,9 @@ class Grant::Query::Builder(Model)
   # ```
   # User.all.preload(posts: :comments)
   # ```
-  def preload(**nested_associations) : self
+  def preload!(**nested_associations) : self
     nested_associations.each do |name, nested|
-      @preload_associations << {name => nested.is_a?(Array) ? nested : [nested]}
+      own_preload_associations << {name => nested.is_a?(Array) ? nested : [nested]}
     end
     self
   end
@@ -1502,9 +1987,9 @@ class Grant::Query::Builder(Model)
   # ```
   # User.where(active: true).eager_load(:posts)
   # ```
-  def eager_load(*associations) : self
+  def eager_load!(*associations) : self
     associations.each do |assoc|
-      @eager_load_associations << assoc
+      own_eager_load_associations << assoc
       add_eager_load_join(assoc)
     end
     self
@@ -1518,9 +2003,9 @@ class Grant::Query::Builder(Model)
   # ```
   # User.all.eager_load(posts: :comments)
   # ```
-  def eager_load(**nested_associations) : self
+  def eager_load!(**nested_associations) : self
     nested_associations.each do |name, nested|
-      @eager_load_associations << {name => nested.is_a?(Array) ? nested : [nested]}
+      own_eager_load_associations << {name => nested.is_a?(Array) ? nested : [nested]}
       add_eager_load_join(name)
     end
     self
@@ -1536,10 +2021,18 @@ class Grant::Query::Builder(Model)
   # # SQL: WHERE active = true OR (role = 'admin') OR (level > 10)
   # ```
   #
-  # Returns `self`.
-  def or(&) : self
+  # Returns a new relation; the receiver is unchanged. The block may return
+  # the relation it built (`q.where(...)`); a block that only mutates its
+  # argument in place through bang methods is honored too.
+  def or(& : self ->) : self
+    chain_copy.or! { |q| yield q }
+  end
+
+  def or!(& : self ->) : self
+    reset_load_state
     or_builder = self.class.new(@db_type, :or)
-    yield or_builder
+    built = yield or_builder
+    or_builder = built if built.is_a?(Builder(Model))
 
     # Add the OR conditions as a group
     if or_builder.where_fields.any?
@@ -1577,7 +2070,7 @@ class Grant::Query::Builder(Model)
         end
       end.join(" ")
 
-      @where_fields << {
+      own_where_fields << {
         join:   :or,
         stmt:   "(#{or_clauses})",
         values: collect_group_values(or_builder.where_fields),
@@ -1595,10 +2088,16 @@ class Grant::Query::Builder(Model)
   # # SQL: WHERE NOT (status = 'banned' AND active = false)
   # ```
   #
-  # Returns `self`.
-  def not(&) : self
+  # Returns a new relation; the receiver is unchanged. See `or`.
+  def not(& : self ->) : self
+    chain_copy.not! { |q| yield q }
+  end
+
+  def not!(& : self ->) : self
+    reset_load_state
     not_builder = self.class.new(@db_type)
-    yield not_builder
+    built = yield not_builder
+    not_builder = built if built.is_a?(Builder(Model))
 
     # Add the NOT conditions as a negated group
     if not_builder.where_fields.any?
@@ -1636,7 +2135,7 @@ class Grant::Query::Builder(Model)
         end
       end.join(" ")
 
-      @where_fields << {
+      own_where_fields << {
         join:   :and,
         stmt:   "NOT (#{not_clauses})",
         values: collect_group_values(not_builder.where_fields),
@@ -1706,20 +2205,22 @@ class Grant::Query::Builder(Model)
   # active_admins = active.merge(admins)
   # # WHERE active = true AND role = 'admin'
   # ```
-  def merge(other : self) : self
+  def merge!(other : self) : self
+    reset_load_state
     # Merge where conditions
     other.where_fields.each do |field|
-      @where_fields << field
+      own_where_fields << field
     end
 
     # Merge order fields (other's order takes precedence if both have orders)
     if other.order_fields.any?
-      @order_fields = other.order_fields
+      @order_fields = other.order_fields.dup
+      @shared_arrays &= ~4_u16
     end
 
     # Merge group fields
     other.group_fields.each do |field|
-      @group_fields << field unless @group_fields.includes?(field)
+      own_group_fields << field unless @group_fields.includes?(field)
     end
 
     # Use other's limit/offset if set
@@ -1727,9 +2228,9 @@ class Grant::Query::Builder(Model)
     @offset = other.offset if other.offset
 
     # Merge associations
-    @eager_load_associations.concat(other.eager_load_associations).uniq!
-    @preload_associations.concat(other.preload_associations).uniq!
-    @includes_associations.concat(other.includes_associations).uniq!
+    own_eager_load_associations.concat(other.eager_load_associations).uniq!
+    own_preload_associations.concat(other.preload_associations).uniq!
+    own_includes_associations.concat(other.includes_associations).uniq!
     @strict_loading = true if other.strict_loading?
 
     # Use other's lock mode if set
@@ -1737,7 +2238,7 @@ class Grant::Query::Builder(Model)
 
     # Merge join clauses
     other.join_clauses.each do |jc|
-      @join_clauses << jc unless @join_clauses.includes?(jc)
+      own_join_clauses << jc unless @join_clauses.includes?(jc)
     end
 
     # Merge distinct flag
@@ -1745,7 +2246,7 @@ class Grant::Query::Builder(Model)
 
     # Merge having clauses
     other.having_clauses.each do |hc|
-      @having_clauses << hc
+      own_having_clauses << hc
     end
 
     # Merge none flag
@@ -1754,71 +2255,15 @@ class Grant::Query::Builder(Model)
     self
   end
 
-  # Create a copy of this query.
-  #
-  # Useful for creating query variations without modifying the original.
-  #
-  # Example:
-  # ```
-  # base_query = User.where(active: true).order(name: :asc)
-  # admins = base_query.dup.where(role: "admin")
-  # recent = base_query.dup.where.gteq(:created_at, 7.days.ago)
-  # ```
-  def dup : self
-    new_query = self.class.new(@db_type, @boolean_operator)
-
-    # Copy all fields
-    @default_scope_where_fields.each { |f| new_query.default_scope_where_fields << f }
-    @where_fields.each { |f| new_query.where_fields << f }
-    @order_fields.each { |f| new_query.order_fields << f }
-    @group_fields.each { |f| new_query.group_fields << f }
-
-    new_query.limit(@limit) if @limit
-    new_query.offset(@offset) if @offset
-
-    @eager_load_associations.each { |a| new_query.eager_load_associations << a }
-    @preload_associations.each { |a| new_query.preload_associations << a }
-    @includes_associations.each { |a| new_query.includes_associations << a }
-
-    if lock_mode = @lock_mode
-      new_query.lock(lock_mode)
-    end
-
-    # Copy join clauses
-    @join_clauses.each { |jc| new_query.join_clauses << jc }
-
-    # Copy distinct flag
-    new_query.distinct if @distinct
-
-    # Copy having clauses
-    @having_clauses.each { |hc| new_query.having_clauses << hc }
-
-    # Copy none flag
-    new_query.none if @is_none
-    new_query.strict_loading if strict_loading?
-
-    # Copy select columns
-    if sc = @select_columns
-      new_query.select_columns = sc.dup
-    end
-
-    # Copy large-table toolkit state: index hints, IN-chunk override, annotation.
-    @index_hints.each { |h| new_query.index_hints << h }
-    new_query.copy_scale_state_from(self)
-
-    new_query
-  end
-
-  # Add a subquery condition
   private def and_subquery(field : String, subquery : Builder)
     safe_field = structured_field_sql(field)
     subquery_assembler = subquery.assembler
     sql = subquery_assembler.select.raw_sql
     values = subquery_assembler.numbered_parameters
     if values.empty?
-      @where_fields << {join: :and, stmt: "#{safe_field} IN (#{sql})", value: nil.as(Grant::Columns::Type)}
+      own_where_fields << {join: :and, stmt: "#{safe_field} IN (#{sql})", value: nil.as(Grant::Columns::Type)}
     else
-      @where_fields << {join: :and, stmt: "#{safe_field} IN (#{sql})", values: values}
+      own_where_fields << {join: :and, stmt: "#{safe_field} IN (#{sql})", values: values}
     end
     self
   end
@@ -1842,8 +2287,27 @@ class Grant::Query::Builder(Model)
   # admin_ids = User.where(role: "admin").select(:id)
   # Post.where(user_id: admin_ids)
   # ```
-  def select(*columns : Symbol) : self
+  def select!(*columns : Symbol) : self
+    reset_load_state
     @select_columns = columns.map(&.to_s).to_a
     self
   end
+
+  # Public chain methods. Each `name!` above mutates the receiver; the method
+  # generated here has the same signature, runs `name!` on a copy-on-write copy
+  # and returns that copy, so the receiver is never changed (like
+  # ActiveRecord's `Relation`). Use the bang forms only on a relation you own,
+  # for instance one you just built in a loop.
+  {% begin %}
+  {% chain = %w(where and or and_in or_in order group_by lock joins left_joins distinct having none reorder reverse_order rewhere reselect regroup unscope offset limit merge includes preload eager_load select) %}
+  {% for m in @type.methods %}
+    {% n = m.name.stringify %}
+    {% if n.ends_with?("!") && chain.includes?(n[0...-1]) && !m.accepts_block? && m.visibility == :public %}
+      # :nodoc:
+      def {{n[0...-1].id}}({% for arg, i in m.args %}{% if m.splat_index == i %}*{% end %}{% if arg.name.stringify.size > 0 %}{{arg.name}}{% if arg.restriction %} : {{arg.restriction}}{% end %}{% unless arg.default_value.is_a?(Nop) %} = {{arg.default_value}}{% end %}{% end %}, {% end %}{% if m.double_splat %}**{{m.double_splat.name}}, {% end %}) : self
+        chain_copy.{{n.id}}({% for arg, i in m.args %}{% if arg.name.stringify.size > 0 %}{% if m.splat_index && i > m.splat_index %}{{arg.name}}: {{arg.name}}{% elsif m.splat_index == i %}*{{arg.name}}{% else %}{{arg.name}}{% end %}, {% end %}{% end %}{% if m.double_splat %}**{{m.double_splat.name}}{% end %})
+      end
+    {% end %}
+  {% end %}
+  {% end %}
 end

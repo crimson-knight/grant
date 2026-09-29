@@ -263,7 +263,7 @@ class Grant::AssociationCollection(Owner, Target)
     if @through
       delete_all
     else
-      all.each { |record| delete(record) }
+      all.dup.each { |record| delete(record) }
     end
     @loaded_records.try(&.clear)
     sync_loaded_association

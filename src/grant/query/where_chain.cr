@@ -82,8 +82,9 @@ module Grant::Query
     # # SQL: WHERE age >= 25 AND age <= 35
     # ```
     def between(field : Symbol | String, range : Range)
-      @query.and(field: field.to_s, operator: :gteq, value: range.begin)
-      @query.and(field: field.to_s, operator: range.exclusive? ? :lt : :lteq, value: range.end)
+      @query
+        .and(field: field.to_s, operator: :gteq, value: range.begin)
+        .and(field: field.to_s, operator: range.exclusive? ? :lt : :lteq, value: range.end)
     end
 
     # EXISTS subquery condition
@@ -127,8 +128,9 @@ module Grant::Query
     # #      WHERE posts.user_id IS NOT NULL
     # ```
     def has(association : Symbol, *, table : String, foreign_key : String, primary_key : String = "id")
-      @query.joins(table, on: "#{table}.#{foreign_key} = #{Model.table_name}.#{primary_key}")
-      @query.and("#{table}.#{foreign_key} IS NOT NULL")
+      @query
+        .joins(table, on: "#{table}.#{foreign_key} = #{Model.table_name}.#{primary_key}")
+        .and("#{table}.#{foreign_key} IS NOT NULL")
     end
 
     # Checks if associated records do NOT exist using a LEFT JOIN.
@@ -142,8 +144,9 @@ module Grant::Query
     # #      WHERE posts.user_id IS NULL
     # ```
     def missing(association : Symbol, *, table : String, foreign_key : String, primary_key : String = "id")
-      @query.left_joins(table, on: "#{table}.#{foreign_key} = #{Model.table_name}.#{primary_key}")
-      @query.and("#{table}.#{foreign_key} IS NULL")
+      @query
+        .left_joins(table, on: "#{table}.#{foreign_key} = #{Model.table_name}.#{primary_key}")
+        .and("#{table}.#{foreign_key} IS NULL")
     end
 
     # Allow chaining back to the query builder
