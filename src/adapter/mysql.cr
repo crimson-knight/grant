@@ -569,3 +569,5 @@ class Grant::Adapter::Mysql < Grant::Adapter::Base
     keys
   end
 end
+
+require "./mysql_test_helpers"

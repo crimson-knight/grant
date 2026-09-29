@@ -1342,7 +1342,7 @@ class Grant::Query::Builder(Model)
     newest_value : Grant::Columns::Type = nil
     adapter = Model.adapter
     started = Time.instant
-    adapter.open do |db|
+    adapter.open(sql, version_assembler.numbered_parameters, Model.name) do |db|
       db.query(sql, args: adapter.normalize_bind_values(version_assembler.numbered_parameters)) do |rs|
         rs.each do
           count = rs.read(Int64)

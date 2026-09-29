@@ -127,12 +127,13 @@ module Grant::STI
 
       type_col = inheritance_column
       type_value = base.read_attribute(type_col)
-      if type_value.nil? || type_value.to_s == sti_name
-        return base
-      end
-
-      klass = find_sti_class(type_value.to_s)
-      Grant::STI.rehome_to_subclass(base, klass).as(self)
+      record = if type_value.nil? || type_value.to_s == sti_name
+                 base
+               else
+                 Grant::STI.rehome_to_subclass(base, find_sti_class(type_value.to_s)).as(self)
+               end
+      Grant::STI.publish_instantiation(record)
+      record
     end
 
     # :nodoc: allocate a plain root instance (the root itself is concrete).
@@ -179,20 +180,17 @@ module Grant::STI
         model.after_find if model.responds_to?(:after_find)
 
         type_value = model.read_attribute(inheritance_column)
-        if type_value.nil? || type_value.to_s == sti_name
-          return model
+        record = model
+        unless type_value.nil? || type_value.to_s == sti_name
+          klass = find_sti_class(type_value.to_s)
+          # Only re-home to a *descendant* of this class. A row of an unrelated
+          # type can only appear here via `unscoped` (which drops the type
+          # filter); such a row is returned typed as the queried class with its
+          # shared columns, since the result collection is `Array(self)`.
+          record = Grant::STI.rehome_to_subclass(model, klass).as(self) if klass <= self
         end
-
-        klass = find_sti_class(type_value.to_s)
-        # Only re-home to a *descendant* of this class. A row of an unrelated
-        # type can only appear here via `unscoped` (which drops the type
-        # filter); such a row is returned typed as the queried class with its
-        # shared columns, since the result collection is `Array(self)`.
-        if klass <= self
-          Grant::STI.rehome_to_subclass(model, klass).as(self)
-        else
-          model
-        end
+        Grant::STI.publish_instantiation(record)
+        record
       end
 
     end
@@ -394,7 +392,7 @@ module Grant::STI
 
         self.class.mark_write_operation
         adapter = self.class.adapter
-        adapter.open do |db|
+        adapter.open(sql, params, self.class.name) do |db|
           db.exec(sql, args: adapter.normalize_bind_values(params))
         end
 
@@ -494,6 +492,15 @@ module Grant::STI
       {% end %}
       else
         [class_name]
+      end
+    end
+
+    # :nodoc:
+    # Publishes `Events::Instantiation` for a record an STI reader built, named
+    # after its final (possibly re-homed) class.
+    def self.publish_instantiation(record : Grant::Base) : Nil
+      Grant::Notifications.instrument(Grant::Events::Instantiation) do
+        Grant::Events::Instantiation.new(record.class.name)
       end
     end
 

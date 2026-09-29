@@ -70,7 +70,24 @@ abstract class Grant::Adapter::Base
   # taxonomy (see `#translate_exception`). Pass *sql* and *binds* so the
   # translated error can report the failing statement; both are only read on
   # the error path.
-  def open(sql : String? = nil, binds = nil, &)
+  #
+  # When a `Grant::Events::SQL` subscriber is registered and *sql* is given, the
+  # statement is timed and published once the block ends (also when it raised).
+  # *name* labels the event, usually with the model that issued the statement.
+  def open(sql : String? = nil, binds = nil, name : String? = nil, &)
+    if sql && Grant::Notifications.subscribed?(Grant::Events::SQL)
+      started = Time.instant
+      begin
+        return open_routed(sql, binds) { |conn| yield conn }
+      ensure
+        Grant::Notifications.publish_sql(self, sql, binds, Time.instant - started, name)
+      end
+    end
+
+    open_routed(sql, binds) { |conn| yield conn }
+  end
+
+  private def open_routed(sql : String?, binds, &)
     # A schema-tenant block owns one pool connection for its lifetime. Check it
     # before transaction routing so a model on another adapter cannot bypass
     # the tenant context merely because that adapter already has a transaction.
@@ -143,6 +160,102 @@ abstract class Grant::Adapter::Base
 
   # remove all rows from a table and reset the counter on the id.
   abstract def clear(table_name : String)
+
+  # ---------------------------------------------------------------------------
+  # Test-support helpers
+  #
+  # Reset and load data without tripping constraints. They are safe to call in
+  # production code but exist for suites and fixture loaders; the transactional
+  # spec wrapper in `Grant::Spec` is cheaper than truncating between examples.
+  # ---------------------------------------------------------------------------
+
+  # Runs *block* with foreign key checks switched off and returns its value.
+  #
+  # The block runs inside a transaction (joining the open one), because the
+  # setting must live on the connection the block's statements use. PostgreSQL
+  # skips the checks entirely (`session_replication_role = replica`, which needs
+  # superuser or a granted privilege). SQLite defers them to the commit, so rows
+  # may be inserted in any order as long as the set is consistent when the
+  # transaction ends. MySQL switches `FOREIGN_KEY_CHECKS` off for the session.
+  #
+  # ```
+  # adapter.disable_referential_integrity do
+  #   Post.create!(author_id: 99) # author 99 is loaded next, or not at all on PG/MySQL
+  # end
+  # ```
+  def disable_referential_integrity(& : -> T) : T? forall T
+    unless supports_disable_referential_integrity?
+      raise Grant::ErrorBase.new("#{adapter_name} cannot disable referential integrity")
+    end
+
+    Grant::Transaction.run(self, Grant::Transaction::Options.new) do
+      exec_control_statement(referential_integrity_off_sql)
+      value = begin
+        yield
+      rescue ex
+        begin
+          restore_referential_integrity
+        rescue restore_error
+          # The block's error is the one to report; an aborted transaction
+          # (PostgreSQL) rejects the restore and resets the setting anyway.
+          Grant::Log.warn(exception: restore_error) { "Could not restore referential integrity after a failed block" }
+        end
+        raise ex
+      end
+      restore_referential_integrity
+      value
+    end
+  end
+
+  # Empties every table in *names* in one call and restarts their id counters.
+  # Rows that other tables reference are handled per adapter: PostgreSQL uses
+  # `TRUNCATE ... RESTART IDENTITY CASCADE` (and so also empties tables that
+  # reference the listed ones); SQLite and MySQL switch foreign keys off first.
+  def truncate_tables(*names : String) : Nil
+    truncate_tables(names.to_a)
+  end
+
+  # :ditto:
+  def truncate_tables(names : Array(String)) : Nil
+    return if names.empty?
+
+    disable_referential_integrity do
+      truncate_statements(names).each { |statement| open(statement) { |conn| conn.exec(statement) } }
+    end
+  end
+
+  # Moves the id counter of *table_name* to one past the highest existing
+  # *primary_key*, so the next insert cannot collide with rows that were loaded
+  # with explicit ids. A table without a counter is left alone.
+  def reset_pk_sequence!(table_name : String, primary_key : String = "id") : Nil
+    raise Grant::ErrorBase.new("#{self.class} does not implement #reset_pk_sequence!")
+  end
+
+  # SQL that switches foreign key enforcement off for the current transaction.
+  protected def referential_integrity_off_sql : String
+    raise Grant::ErrorBase.new("#{self.class} does not implement #disable_referential_integrity")
+  end
+
+  # SQL that turns it back on, or `nil` when the transaction end does it.
+  protected def referential_integrity_on_sql : String?
+    nil
+  end
+
+  # Statements that empty *names*; the default deletes row by row.
+  protected def truncate_statements(names : Array(String)) : Array(String)
+    names.map { |name| "DELETE FROM #{quote(name)}" }
+  end
+
+  # Runs a session control statement (no rows, not reported as a query).
+  protected def exec_control_statement(statement : String) : Nil
+    open { |conn| conn.exec(statement) }
+  end
+
+  private def restore_referential_integrity : Nil
+    if statement = referential_integrity_on_sql
+      exec_control_statement(statement)
+    end
+  end
 
   # select performs a query against a table.  The query object contains table_name,
   # fields (configured using the sql_mapping directive in your model), and an optional

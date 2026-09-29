@@ -88,7 +88,7 @@ module Grant::Counters
       elapsed_time = Time.measure do
         # Pass the statement so a driver failure is translated with its SQL, and
         # let the adapter count the rows (SQLite reads `changes()`).
-        adapter.open(sql, values) do |db|
+        adapter.open(sql, values, name) do |db|
           result = db.exec(sql, args: adapter.normalize_bind_values(values))
           affected = adapter.rows_affected_after_write(db, result)
         end

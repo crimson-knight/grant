@@ -138,6 +138,10 @@ module Grant::EagerLoading
                  end
       return unless violated
 
+      Grant::Notifications.instrument(Grant::Events::StrictLoadingViolation) do
+        Grant::Events::StrictLoadingViolation.new(self.class.name, name)
+      end
+
       message = "#{self.class.name}##{name} was not preloaded and strict loading is enabled"
       if Grant.settings.strict_loading_violation.log?
         Grant::Logs::Association.warn { message }

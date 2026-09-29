@@ -238,7 +238,7 @@ module Grant::BulkOperations
         chunk.each { |row| columns.each { |column| binds << row[column] } }
         sql = adapter.bulk_insert_sql(table_name, columns, chunk.size, conflict, returning_columns)
         elapsed = Time.measure do
-          adapter.open(sql, binds) do |db|
+          adapter.open(sql, binds, name) do |db|
             if returning_columns
               db.query(sql, args: adapter.normalize_bind_values(binds)) do |rs|
                 rs.each { records << __bulk_returned_record(rs, returning_columns) }

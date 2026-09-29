@@ -647,3 +647,5 @@ class Grant::Adapter::Sqlite < Grant::Adapter::Base
     pieces.map(&.strip.sub(/\s+(?:ASC|DESC)\z/i, ""))
   end
 end
+
+require "./sqlite_test_helpers"
