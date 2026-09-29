@@ -390,3 +390,5 @@ class Grant::Adapter::Mysql < Grant::Adapter::Base
     "#{keyword} (#{index_names.map { |n| quote(n) }.join(", ")})"
   end
 end
+
+require "./mysql_test_helpers"

@@ -342,3 +342,5 @@ class Grant::Adapter::Pg < Grant::Adapter::Base
     result.rows_affected
   end
 end
+
+require "./pg_test_helpers"

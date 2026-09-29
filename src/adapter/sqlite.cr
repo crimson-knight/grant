@@ -431,3 +431,5 @@ class Grant::Adapter::Sqlite < Grant::Adapter::Base
     end
   end
 end
+
+require "./sqlite_test_helpers"
