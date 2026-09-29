@@ -24,9 +24,27 @@ class Grant::Settings
 end
 
 module Grant::EagerLoading
-  # Per-model `strict_loading_by_default` flags, keyed by class name. Written
-  # while models are configured at boot.
-  STRICT_LOADING_DEFAULTS = {} of String => Bool
+  # Per-model `strict_loading_by_default` flags, keyed by class name. Writes
+  # are serialized and publish a fresh copy, so readers never lock and never
+  # see a hash mid-update.
+  @@strict_loading_defaults = {} of String => Bool
+  @@strict_loading_defaults_mutex = Mutex.new
+
+  # :nodoc:
+  def self.strict_loading_default_for(model_name : String) : Bool
+    defaults = @@strict_loading_defaults
+    return false if defaults.empty?
+    defaults.fetch(model_name) { defaults.fetch(Grant::Base.name, false) }
+  end
+
+  # :nodoc:
+  def self.store_strict_loading_default(model_name : String, value : Bool) : Nil
+    @@strict_loading_defaults_mutex.synchronize do
+      updated = @@strict_loading_defaults.dup
+      updated[model_name] = value
+      @@strict_loading_defaults = updated
+    end
+  end
 
   macro included
     # Eager-loaded association cache.
@@ -326,13 +344,11 @@ module Grant::EagerLoading
     # User.strict_loading_by_default = true
     # ```
     def strict_loading_by_default=(value : Bool)
-      Grant::EagerLoading::STRICT_LOADING_DEFAULTS[self.name] = value
+      Grant::EagerLoading.store_strict_loading_default(self.name, value)
     end
 
     def strict_loading_by_default : Bool
-      defaults = Grant::EagerLoading::STRICT_LOADING_DEFAULTS
-      return false if defaults.empty?
-      defaults.fetch(self.name) { defaults.fetch(Grant::Base.name, false) }
+      Grant::EagerLoading.strict_loading_default_for(self.name)
     end
 
     # The class name stored in the type column of a polymorphic association that

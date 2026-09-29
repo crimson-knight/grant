@@ -21,11 +21,12 @@ module Grant
   # ActiveRecord's `AssociationReflection`.
   #
   # ```
-  # reflection = User.reflect_on_association(:posts).not_nil!
-  # reflection.macro       # => :has_many
-  # reflection.klass       # => Post
-  # reflection.foreign_key # => "user_id"
-  # reflection.collection? # => true
+  # if reflection = User.reflect_on_association(:posts)
+  #   reflection.macro       # => :has_many
+  #   reflection.klass       # => Post
+  #   reflection.foreign_key # => "user_id"
+  #   reflection.collection? # => true
+  # end
   # ```
   struct Reflection
     getter owner_name : String

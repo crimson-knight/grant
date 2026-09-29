@@ -19,7 +19,7 @@ module Grant
     @@writers = {} of String => Hash(String, AssociationWriter)
     @@reflections = {} of String => Hash(String, Grant::Reflection)
     @@models = {} of String => Grant::Base.class
-    @@inverses : Hash(String, String?)? = nil
+    @@inverses : Hash(Tuple(String, String), String)? = nil
     @@mutex = Mutex.new
 
     def self.register(model_class : String, association_name : String, metadata : AssociationMeta) : Nil
@@ -77,11 +77,19 @@ module Grant
     # later.
     def self.detected_inverse_name(reflection : Grant::Reflection) : String?
       index = @@inverses || build_inverse_index
-      index["#{reflection.owner_name}##{reflection.name}"]?
+      index[{reflection.owner_name, reflection.name}]?
     end
 
-    private def self.build_inverse_index : Hash(String, String?)
-      index = {} of String => String?
+    # Built under the write lock so a registration that lands meanwhile cannot
+    # be overwritten by an index computed from the older tables.
+    private def self.build_inverse_index : Hash(Tuple(String, String), String)
+      @@mutex.synchronize do
+        @@inverses || compute_inverse_index
+      end
+    end
+
+    private def self.compute_inverse_index : Hash(Tuple(String, String), String)
+      index = {} of Tuple(String, String) => String
       @@reflections.each_value do |per_model|
         per_model.each_value do |reflection|
           next unless reflection.automatic_inverse_candidate?
@@ -89,7 +97,7 @@ module Grant
           found = candidates.each_value.find do |candidate|
             candidate.automatic_inverse_candidate? && inverse_pair?(reflection, candidate)
           end
-          index["#{reflection.owner_name}##{reflection.name}"] = found.name if found
+          index[{reflection.owner_name, reflection.name}] = found.name if found
         end
       end
       @@inverses = index
