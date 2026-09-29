@@ -43,7 +43,7 @@ describe "Grant transaction lifecycle regressions T6" do
     T6PersistenceRecord.transaction do
       record.update!(name: "outer")
 
-      T6PersistenceRecord.transaction do
+      T6PersistenceRecord.transaction(requires_new: true) do
         record.update!(name: "inner")
         raise Grant::Transaction::Rollback.new
       end
