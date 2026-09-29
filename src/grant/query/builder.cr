@@ -2,6 +2,7 @@ require "digest/md5"
 require "../columns"
 require "../async"
 require "./where_chain"
+require "./batches"
 
 # Lazy, chainable SQL query builder returned by `Model.where`, `Model.order`, etc.
 #
@@ -53,6 +54,7 @@ end
 class Grant::Query::Builder(Model)
   include Grant::Async::QueryMethods(Model)
   include Enumerable(Model)
+  include Grant::Query::Batches(Model)
 
   enum DbType
     Mysql
@@ -1675,27 +1677,6 @@ class Grant::Query::Builder(Model)
     end
   end
 
-  # Loads every matching record and calls `destroy` on each, firing callbacks.
-  #
-  # Unlike `delete_all`/`delete`, this instantiates the records and runs their
-  # destroy callbacks (and dependent-association handling). Returns the number
-  # of records successfully destroyed (`Int32`).
-  #
-  # ```
-  # User.where(active: false).destroy_all # => 3
-  # ```
-  def destroy_all : Int32
-    Model.guard_writes!
-    records = self.select
-    count = 0
-    records.each do |record|
-      if record.destroy
-        count += 1
-      end
-    end
-    count
-  end
-
   # Issues a single `DELETE` for the current conditions, skipping callbacks.
   #
   # Low-level delete: it runs one DELETE statement and does NOT load records or
@@ -1896,41 +1877,6 @@ class Grant::Query::Builder(Model)
     pk_assembler = assembler
     sql = pk_assembler.pluck_sql(field_names)
     Grant::Query::Executor::Pluck(Model).new(sql, pk_assembler.numbered_parameters, field_names).run.map(&.first)
-  end
-
-  # Iterates over the relation in batches, yielding each record individually.
-  #
-  # Chainable version of the class-level `find_each` — runs against the
-  # relation's current WHERE/ORDER/etc. Built on top of `in_batches`, so it uses
-  # primary-key cursor pagination and is memory-friendly for large result sets.
-  #
-  # ```
-  # User.where(active: true).find_each(batch_size: 500) do |user|
-  #   process(user)
-  # end
-  # ```
-  def find_each(batch_size : Int32 = 1000, start : Int64? = nil, finish : Int64? = nil, order : Symbol = :asc, &block : Model ->) : Nil
-    return if is_none?
-    in_batches(of: batch_size, start: start, finish: finish, order: order) do |batch|
-      batch.each { |record| yield record }
-    end
-  end
-
-  # Iterates over the relation in batches, yielding each batch as an Array.
-  #
-  # Chainable version of the class-level `find_in_batches`. Thin alias over
-  # `in_batches` for ActiveRecord naming parity.
-  #
-  # ```
-  # User.where(active: true).find_in_batches(batch_size: 500) do |batch|
-  #   bulk_process(batch)
-  # end
-  # ```
-  def find_in_batches(batch_size : Int32 = 1000, start : Int64? = nil, finish : Int64? = nil, order : Symbol = :asc, &block : Array(Model) ->) : Nil
-    return if is_none?
-    in_batches(of: batch_size, start: start, finish: finish, order: order) do |batch|
-      yield batch
-    end
   end
 
   # Marks *associations* to be loaded with the query, avoiding N+1 queries. Returns `self`.
