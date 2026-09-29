@@ -13,22 +13,25 @@ require "./connection_handling"
 # `adapter`, etc.). Named connections themselves are established via
 # `Grant::ConnectionRegistry.establish_connection`.
 module Grant::ConnectionManagement
+  # Whether any class's innermost context in this fiber prevents writes. Raw
+  # connections that belong to no model (`Grant.connection`) use this, so a
+  # write-preventing block on one model is not hidden by a later, unrelated
+  # `connected_to` on another. An owner's own later context (for example an
+  # explicit writing role) still lifts that owner's prevention.
+  #
   # :nodoc:
   def self.preventing_writes? : Bool
     return false unless state = ConnectionState.current?
-    return false unless context = state.contexts.last?
 
-    context.prevent_writes
-  end
+    contexts = state.contexts
+    contexts.each_with_index do |context, index|
+      next unless context.prevent_writes
 
-  # The shard of the fiber's innermost `connected_to` context, if any.
-  #
-  # :nodoc:
-  def self.active_shard : Symbol?
-    return nil unless state = ConnectionState.current?
-    return nil unless context = state.contexts.last?
-
-    context.shard
+      owner = context.owner
+      superseded = (index + 1...contexts.size).any? { |later| contexts[later].owner == owner }
+      return true unless superseded
+    end
+    false
   end
 
   # :nodoc:
@@ -216,14 +219,16 @@ module Grant::ConnectionManagement
 
     # Sets (or with `nil`, clears) this class's own `ConnectionContext` in the
     # current fiber. Managed by `#connected_to` and `#connecting_to`; you rarely
-    # call it directly. Passing `nil` removes the contexts this class created.
+    # call it directly. Passing `nil` removes the contexts this class created
+    # at the current block level: contexts of enclosing `#connected_to` blocks
+    # stay until those blocks end.
     def self.connection_context=(ctx : ConnectionContext?)
       if ctx.nil?
         return unless state = ConnectionState.current?
-        state.contexts.reject! { |context| context.owner == self.name }
+        state.remove_block_level_contexts(self.name)
       else
         state = ConnectionState.current
-        state.contexts.reject! { |context| context.owner == self.name }
+        state.remove_block_level_contexts(self.name)
         state.contexts << ConnectionContext.new(
           ctx.database, ctx.role, ctx.shard, ctx.prevent_writes, self.name)
       end
@@ -301,7 +306,8 @@ module Grant::ConnectionManagement
     {% end %}
 
     {% if database %}
-      {% raise "connects_to: database name must not be empty" if database.id.stringify.empty? || database.id.stringify == "\"\"" %}
+      {% raise "connects_to: database name must be a String or Symbol literal, got #{database}" unless database.is_a?(StringLiteral) || database.is_a?(SymbolLiteral) %}
+      {% raise "connects_to: database name must not be empty" if database.id.stringify.empty? %}
       self.database_name = {{database.id.stringify}}
     {% end %}
 
@@ -309,7 +315,8 @@ module Grant::ConnectionManagement
       {% raise "connects_to: config must be a NamedTuple of role: \"connection\"" unless config.is_a?(NamedTupleLiteral) %}
       self.connection_config = {
         {% for role, db_name in config %}
-          {% raise "connects_to: connection name for #{role} must not be empty" if db_name.id.stringify == "\"\"" %}
+          {% raise "connects_to: connection name for #{role} must be a String or Symbol literal, got #{db_name}" unless db_name.is_a?(StringLiteral) || db_name.is_a?(SymbolLiteral) %}
+          {% raise "connects_to: connection name for #{role} must not be empty" if db_name.id.stringify.empty? %}
           {{role.id.symbolize}} => {{db_name.id.stringify}},
         {% end %}
       } of Symbol => String
@@ -322,6 +329,7 @@ module Grant::ConnectionManagement
           {% raise "connects_to: shard #{shard_name} must be a NamedTuple of role: \"connection\"" unless shard_settings.is_a?(NamedTupleLiteral) %}
           {{shard_name.id.symbolize}} => {
             {% for role, db_name in shard_settings %}
+              {% raise "connects_to: shard #{shard_name} connection for #{role} must be a non-empty String or Symbol literal, got #{db_name}" unless (db_name.is_a?(StringLiteral) || db_name.is_a?(SymbolLiteral)) && !db_name.id.stringify.empty? %}
               {{role.id.symbolize}} => {{db_name.id.stringify}},
             {% end %}
           } of Symbol => String,
@@ -475,9 +483,9 @@ module Grant::ConnectionManagement
     # the writing role.
     #
     # Passing *shard* raises `Grant::ShardSwappingProhibited` while
-    # `#prohibit_shard_swapping` is active. `Grant::ShardManager.current_shard`
-    # reports the shard of the innermost block, so `Grant::Sharding::Model`
-    # classes route to it too.
+    # `#prohibit_shard_swapping` is active. A `Grant::Sharding::Model` class
+    # routes to the block's shard when the block applies to it (the class or
+    # an ancestor entered it) and no `Grant::ShardManager.with_shard` is active.
     #
     # ```
     # # force reads through the replica for this block (writes raise)
@@ -498,12 +506,21 @@ module Grant::ConnectionManagement
     ) : T forall T
       context = build_connection_context(database, role, shard, prevent_writes)
       state = ConnectionState.current
+      depth = state.contexts.size
       state.contexts << context
+      outer_floor = state.block_floor
+      state.block_floor = depth + 1
 
       begin
         yield
       ensure
-        state.contexts.pop?
+        # Restore the stack to its depth on entry rather than popping one entry,
+        # so a `connecting_to` made inside the block ends with it. Contexts
+        # below the floor are never removed while the block runs, so this
+        # removes exactly the block's own entries.
+        contexts = state.contexts
+        contexts.pop(contexts.size - depth) if contexts.size > depth
+        state.block_floor = outer_floor
       end
     end
 

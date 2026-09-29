@@ -43,6 +43,25 @@ module Grant
     # Grant::ConnectionHandling.verify!("User", User.connection_names)
     # ```
     def self.verify!(model_name : String, names : Array({String, Symbol, Symbol?})) : Nil
+      return unless message = missing_connections_message(model_name, names)
+
+      raise Grant::UnestablishedConnectionError.new(
+        "#{message}. Establish them with Grant::ConnectionRegistry.establish_connection before verifying.")
+    end
+
+    # Verifies every model that called `connects_to` and raises one
+    # `Grant::UnestablishedConnectionError` listing every model with missing
+    # connections. Call it once after the application has established its
+    # connections.
+    def self.verify_all! : Nil
+      messages = @@declared.compact_map { |model_name, names| missing_connections_message(model_name, names.call) }
+      return if messages.empty?
+
+      raise Grant::UnestablishedConnectionError.new(
+        "#{messages.join("; ")}. Establish them with Grant::ConnectionRegistry.establish_connection before verifying.")
+    end
+
+    private def self.missing_connections_message(model_name : String, names : Array({String, Symbol, Symbol?})) : String?
       missing = names.reject do |(database, role, shard)|
         registry_role = Grant::ConnectionManagement.registry_role(role)
         Grant::ConnectionRegistry.connection_exists?(database, registry_role, shard) ||
@@ -54,15 +73,7 @@ module Grant
       described = missing.map do |(database, role, shard)|
         shard ? "#{database} (role: #{role}, shard: #{shard})" : "#{database} (role: #{role})"
       end
-      raise Grant::UnestablishedConnectionError.new(
-        "#{model_name} declares connections that are not established: #{described.join(", ")}. " \
-        "Establish them with Grant::ConnectionRegistry.establish_connection before verifying.")
-    end
-
-    # Verifies every model that called `connects_to`. Call it once after the
-    # application has established its connections.
-    def self.verify_all! : Nil
-      @@declared.each { |model_name, names| verify!(model_name, names.call) }
+      "#{model_name} declares connections that are not established: #{described.join(", ")}"
     end
   end
 

@@ -38,6 +38,17 @@ module Grant
   class ConnectionState
     getter contexts = [] of ConnectionManagement::ConnectionContext
     property? shard_swapping_prohibited : Bool = false
+    # Stack size just after the innermost active `connected_to` block pushed
+    # its context; entries below it belong to enclosing blocks.
+    property block_floor : Int32 = 0
+
+    # Removes the contexts *owner* added at the current block level (its
+    # `connecting_to` switches), leaving enclosing blocks' contexts in place.
+    def remove_block_level_contexts(owner : String) : Nil
+      floor = Math.min(block_floor, contexts.size)
+      level = contexts.pop(contexts.size - floor)
+      level.each { |context| contexts << context unless context.owner == owner }
+    end
 
     # The current fiber's state, or `nil` if it never entered a context.
     def self.current? : ConnectionState?
