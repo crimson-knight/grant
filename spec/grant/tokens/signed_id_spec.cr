@@ -3,6 +3,16 @@ require "../../spec_helper"
 {% begin %}
   {% adapter_literal = (env("CURRENT_ADAPTER") || "sqlite").id %}
 
+  class SignedIdOtherTestModel < Grant::Base
+    connection {{ adapter_literal }}
+    table signed_id_other_test_models
+
+    include Grant::SignedId
+
+    column id : Int64, primary: true
+    column name : String?
+  end
+
   class SignedIdTestModel < Grant::Base
     connection {{ adapter_literal }}
     table signed_id_test_models
@@ -18,14 +28,17 @@ require "../../spec_helper"
 describe Grant::SignedId do
   before_all do
     SignedIdTestModel.migrator.drop_and_create
+    SignedIdOtherTestModel.migrator.drop_and_create
   end
 
   before_each do
+    Grant::SignedId.configure { |c| c.secret = nil; c.previous_secrets = [] of String }
     ENV["GRANT_SIGNING_SECRET"] = "test_secret"
   end
 
   after_each do
     ENV.delete("GRANT_SIGNING_SECRET")
+    Grant::SignedId.configure { |c| c.secret = nil; c.previous_secrets = [] of String }
   end
 
   describe "signed_id" do
@@ -127,7 +140,7 @@ describe Grant::SignedId do
       expired = model.signed_id(purpose: :reset, expires_at: Time.utc - 1.minute)
       expect_raises(Grant::InvalidSignedId) { SignedIdTestModel.find_signed!(expired, purpose: :reset) }
 
-      ENV["GRANT_SIGNING_SECRET"] = "different_secret"
+      Grant::SignedId.configure { |c| c.secret = "different_secret" }
       expect_raises(Grant::InvalidSignedId) { SignedIdTestModel.find_signed!(token, purpose: :reset) }
       Grant::InvalidSignedId.new.should be_a(Grant::ErrorBase)
     end
@@ -144,6 +157,7 @@ describe Grant::SignedId do
       model = SignedIdTestModel.create(name: "T")
       token = model.signed_id(purpose: :x)
       ENV.delete("GRANT_SIGNING_SECRET")
+      Grant::SignedId.configure { |c| c.secret = nil }
       expect_raises(Grant::MissingSigningSecret) { SignedIdTestModel.find_signed(token, purpose: :x) }
       begin
         Grant::SignedId.configure { |c| c.secret = "configured" }
@@ -155,12 +169,30 @@ describe Grant::SignedId do
       end
     end
 
+    it "reads the GRANT_SIGNING_SECRET fallback once, not per token" do
+      model = SignedIdTestModel.create(name: "T")
+      token = model.signed_id(purpose: :x)
+      ENV["GRANT_SIGNING_SECRET"] = "changed_after_first_use"
+      SignedIdTestModel.find_signed(token, purpose: :x).should_not be_nil
+    end
+
+    it "does not redeem a token minted for another model with the same id and purpose" do
+      model = SignedIdTestModel.create(name: "T")
+      other = SignedIdOtherTestModel.create(id: model.id, name: "O")
+      other.id.should eq(model.id)
+
+      token = model.signed_id(purpose: :password_reset)
+      SignedIdOtherTestModel.find_signed(token, purpose: :password_reset).should be_nil
+      expect_raises(Grant::InvalidSignedId) { SignedIdOtherTestModel.find_signed!(token, purpose: :password_reset) }
+      SignedIdTestModel.find_signed(token, purpose: :password_reset).should_not be_nil
+    end
+
     it "returns nil when signing secret changes" do
       model = SignedIdTestModel.create(name: "Test User")
       signed_id = model.signed_id(purpose: :password_reset)
 
       # Change the secret
-      ENV["GRANT_SIGNING_SECRET"] = "different_secret"
+      Grant::SignedId.configure { |c| c.secret = "different_secret" }
 
       found = SignedIdTestModel.find_signed(signed_id, purpose: :password_reset)
       found.should be_nil

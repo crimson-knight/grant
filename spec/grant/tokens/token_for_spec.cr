@@ -31,11 +31,13 @@ describe Grant::TokenFor do
   end
 
   before_each do
+    Grant::TokenFor.configure { |c| c.secret = nil; c.previous_secrets = [] of String }
     ENV["GRANT_SIGNING_SECRET"] = "test_secret"
   end
 
   after_each do
     ENV.delete("GRANT_SIGNING_SECRET")
+    Grant::TokenFor.configure { |c| c.secret = nil; c.previous_secrets = [] of String }
   end
 
   describe "generates_token_for" do

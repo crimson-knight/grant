@@ -61,8 +61,8 @@ module Grant
 
   # Signing keys shared by `Grant::SignedId` and `Grant::TokenFor`.
   #
-  # Set the secret once at the app boundary; verification then never reads the
-  # environment. `previous_secrets` are accepted for verification only, so a key
+  # Set the secret once at the app boundary. When it is left unset, the
+  # `GRANT_SIGNING_SECRET` environment variable is read once, on first use. `previous_secrets` are accepted for verification only, so a key
   # can be rotated without invalidating tokens already handed out.
   class SigningConfig
     property secret : String?
@@ -102,46 +102,60 @@ module Grant
       @@config
     end
 
-    def self.sign(json : String) : String
-      Base64.urlsafe_encode(OpenSSL::HMAC.digest(:sha256, primary_secret, json), padding: false)
+    # Signs *json* for *context* with the primary secret. The context (token kind and
+    # model table) is part of the MAC input, so a token minted for one model or
+    # token kind never verifies for another, as ActiveRecord binds the model name
+    # into the purpose.
+    def self.sign(json : String, context : String) : String
+      mac(primary_secret, json, context)
     end
 
-    def self.envelope(json : String) : String
+    def self.envelope(json : String, context : String) : String
       wrapper = {
         "data"      => Base64.urlsafe_encode(json, padding: false),
-        "signature" => sign(json),
+        "signature" => sign(json, context),
       }
       Base64.urlsafe_encode(wrapper.to_json, padding: false)
     end
 
     # Returns the signed JSON body of *token*, or `nil` when it is malformed or
-    # the signature matches no configured secret. Only decode and parse errors
-    # are rescued.
-    def self.open(token : String) : String?
+    # the signature matches no configured secret for *context*. Only decode and
+    # parse errors are rescued.
+    def self.open(token : String, context : String) : String?
       envelope = Envelope.from_json(String.new(Base64.decode(token)))
       json = String.new(Base64.decode(envelope.data))
       signature = envelope.signature
       verified = false
       each_secret do |secret|
-        expected = Base64.urlsafe_encode(OpenSSL::HMAC.digest(:sha256, secret, json), padding: false)
         # Evaluate every candidate without short-circuiting on the first hit.
-        verified = true if Crypto::Subtle.constant_time_compare(signature, expected)
+        verified = true if Crypto::Subtle.constant_time_compare(signature, mac(secret, json, context))
       end
       verified ? json : nil
     rescue Base64::Error | JSON::ParseException
       nil
     end
 
-    def self.open_payload(token : String) : Payload?
-      json = open(token)
+    def self.open_payload(token : String, context : String) : Payload?
+      json = open(token, context)
       return nil unless json
       Payload.from_json(json)
     rescue JSON::ParseException
       nil
     end
 
+    private def self.mac(secret : String, json : String, context : String) : String
+      digest = OpenSSL::HMAC.digest(:sha256, secret, "#{context}\n#{json}")
+      Base64.urlsafe_encode(digest, padding: false)
+    end
+
+    # The configured secret. The `GRANT_SIGNING_SECRET` fallback is read from the
+    # environment once, on first use, and kept in the config; it is not re-read
+    # per token.
     private def self.primary_secret : String
-      config.secret || ENV["GRANT_SIGNING_SECRET"]? || raise MissingSigningSecret.new
+      if secret = config.secret
+        return secret
+      end
+      config.secret = ENV["GRANT_SIGNING_SECRET"]? || raise MissingSigningSecret.new
     end
 
     private def self.each_secret(& : String ->)
@@ -226,14 +240,14 @@ module Grant::SignedId
     # Base64-url-encoded `{data, signature}` envelope. Low-level building block for
     # `#signed_id`; prefer that method.
     def generate_signed_token(payload : Hash(String, String | Int64 | Nil)) : String
-      Grant::Signer.envelope(payload.to_json)
+      Grant::Signer.envelope(payload.to_json, signed_id_signing_context)
     end
 
     # Verifies a token produced by `generate_signed_token` and returns its decoded
     # payload as a `Hash(String, JSON::Any)`, or `nil` if the signature does not
     # verify or the token is malformed. Does not check purpose/expiry.
     def verify_signed_token(token : String) : Hash(String, JSON::Any)?
-      json = Grant::Signer.open(token)
+      json = Grant::Signer.open(token, signed_id_signing_context)
       return nil unless json
       JSON.parse(json).as_h?
     rescue JSON::ParseException
@@ -241,11 +255,15 @@ module Grant::SignedId
     end
 
     private def signed_id_payload(token : String, purpose : Symbol | String | Nil) : Grant::Signer::Payload?
-      payload = Grant::Signer.open_payload(token)
+      payload = Grant::Signer.open_payload(token, signed_id_signing_context)
       return nil unless payload
       return nil unless payload.purpose == (purpose || table_name).to_s
       return nil if payload.expired?
       payload
+    end
+
+    private def signed_id_signing_context : String
+      "signed_id/#{table_name}"
     end
   end
 end

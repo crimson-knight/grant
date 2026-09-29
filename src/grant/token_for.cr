@@ -172,7 +172,7 @@ module Grant::TokenFor
     # Base64-url-encoded envelope. Low-level building block for
     # `#generate_token_for`; prefer that.
     def generate_token_for_payload(payload : Hash(String, String | Int64 | Nil)) : String
-      Grant::Signer.envelope(payload.to_json)
+      Grant::Signer.envelope(payload.to_json, token_for_signing_context)
     end
 
     # Verifies a token produced by `generate_token_for_payload` and returns its
@@ -180,7 +180,7 @@ module Grant::TokenFor
     # malformed. Does not check purpose/expiry/data — `find_by_token_for` layers
     # those on top.
     def verify_token_for_payload(token : String) : Hash(String, JSON::Any)?
-      json = Grant::Signer.open(token)
+      json = Grant::Signer.open(token, token_for_signing_context)
       return nil unless json
       JSON.parse(json).as_h?
     rescue JSON::ParseException
@@ -188,7 +188,7 @@ module Grant::TokenFor
     end
 
     private def token_for_payload(purpose : Symbol, token : String) : Grant::Signer::Payload?
-      payload = Grant::Signer.open_payload(token)
+      payload = Grant::Signer.open_payload(token, token_for_signing_context)
       return nil unless payload
       return nil unless payload.purpose == purpose.to_s
       return nil if payload.expired?
@@ -205,6 +205,10 @@ module Grant::TokenFor
     private def token_data_current?(purpose : Symbol, record : self, payload : Grant::Signer::Payload) : Bool
       definition = token_for_definitions[purpose]
       definition.block.call(record) == payload.data
+    end
+
+    private def token_for_signing_context : String
+      "token_for/#{table_name}"
     end
 
     private def record_for_token(purpose : Symbol, token : String) : self?
