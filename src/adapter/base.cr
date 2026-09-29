@@ -443,7 +443,7 @@ abstract class Grant::Adapter::Base
   end
 
   def log(query : String, elapsed_time : Time::Span, params = [] of String) : Nil
-    Grant::Logs::SQL.debug { colorize query, params, elapsed_time.total_seconds }
+    Grant::Logs::SQL.debug { colorize query, Grant::Encryption::LogFilter.redact(query, params), elapsed_time.total_seconds }
   end
 
   # remove all rows from a table and reset the counter on the id.
