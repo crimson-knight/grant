@@ -182,14 +182,28 @@ module Grant::Sharding
       within_own_shard { super }
     end
 
-    def lock!(mode : Grant::Locking::LockMode = Grant::Locking::LockMode::Update) : self
+    # `lock!` delegates to `reload_with_lock`, so these two overloads route
+    # every row-lock read (with or without `force:`) to the record's shard.
+    def reload_with_lock(mode : Grant::Locking::LockMode = Grant::Locking::LockMode::Update, force : Bool = false) : self
+      within_own_shard { super }
+    end
+
+    # :ditto:
+    def reload_with_lock(clause : Grant::Locking::Clause, force : Bool = false) : self
       within_own_shard { super }
     end
 
     # The lock, its transaction and the block all run on the record's shard.
-    def with_lock(mode : Grant::Locking::LockMode = Grant::Locking::LockMode::Update, &block : self -> U) : U forall U
+    def with_lock(mode : Grant::Locking::LockMode = Grant::Locking::LockMode::Update, requires_new : Bool = false, isolation : Grant::Transaction::IsolationLevel? = nil, force : Bool = false, &block : self -> U) : U forall U
       within_own_shard do
-        super(mode) { block.call(self) }
+        super(mode, requires_new, isolation, force) { block.call(self) }
+      end
+    end
+
+    # :ditto:
+    def with_lock(clause : Grant::Locking::Clause, requires_new : Bool = false, isolation : Grant::Transaction::IsolationLevel? = nil, force : Bool = false, &block : self -> U) : U forall U
+      within_own_shard do
+        super(clause, requires_new, isolation, force) { block.call(self) }
       end
     end
 
