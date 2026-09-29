@@ -434,10 +434,11 @@ class Grant::Adapter::Sqlite < Grant::Adapter::Base
 
   # SQLite has no information_schema. Every catalog query joins `sqlite_master`
   # with the `pragma_*` table-valued functions, so all tables are answered by
-  # one statement per kind instead of one PRAGMA per table.
+  # one statement per kind instead of one PRAGMA per table. *namespace* is
+  # ignored: only the main database is inspected.
   private CATALOG_TABLE_FILTER = "m.type = 'table' AND m.name NOT LIKE 'sqlite\\_%' ESCAPE '\\'"
 
-  def catalog_tables : Array(String)
+  def catalog_tables(namespace : String? = nil) : Array(String)
     names = [] of String
     catalog_query("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite\\_%' ESCAPE '\\' ORDER BY name") do |rs|
       names << rs.read(String)
@@ -445,7 +446,7 @@ class Grant::Adapter::Sqlite < Grant::Adapter::Base
     names
   end
 
-  def catalog_columns(table : String? = nil) : Array(Grant::Schema::ColumnInfo)
+  def catalog_columns(table : String? = nil, namespace : String? = nil) : Array(Grant::Schema::ColumnInfo)
     sql = String.build do |io|
       io << "SELECT m.name, p.cid, p.name, p.type, p.\"notnull\", p.dflt_value, p.pk "
       io << "FROM sqlite_master m JOIN pragma_table_xinfo(m.name) p "
@@ -478,7 +479,7 @@ class Grant::Adapter::Sqlite < Grant::Adapter::Base
     end
   end
 
-  def catalog_indexes(table : String? = nil) : Array(Grant::Schema::IndexInfo)
+  def catalog_indexes(table : String? = nil, namespace : String? = nil) : Array(Grant::Schema::IndexInfo)
     sql = String.build do |io|
       io << "SELECT m.name, il.name, il.\"unique\", il.partial, ii.name, im.sql "
       io << "FROM sqlite_master m JOIN pragma_index_list(m.name) il "
@@ -515,7 +516,7 @@ class Grant::Adapter::Sqlite < Grant::Adapter::Base
     indexes
   end
 
-  def catalog_foreign_keys(table : String? = nil) : Array(Grant::Schema::ForeignKeyInfo)
+  def catalog_foreign_keys(table : String? = nil, namespace : String? = nil) : Array(Grant::Schema::ForeignKeyInfo)
     sql = String.build do |io|
       io << "SELECT m.name, fk.id, fk.\"table\", fk.\"from\", fk.\"to\", fk.on_update, fk.on_delete "
       io << "FROM sqlite_master m JOIN pragma_foreign_key_list(m.name) fk "

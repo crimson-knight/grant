@@ -116,8 +116,11 @@ module Grant::Schema
   # altogether. `Grant::Migrator` resets the affected table after it creates or
   # drops one; run `#reset!` yourself after other DDL.
   #
-  # Only the connection's current schema is inspected on PostgreSQL and the
-  # selected database on MySQL.
+  # One instance covers one namespace: a PostgreSQL schema or a MySQL database.
+  # `Adapter::Base#schema` keeps one per namespace, so each schema-tenant block
+  # reads its own tenant's catalog and `schema_tenant_excluded` models (whose
+  # `table_name` is `public.x`) read `public`. With no namespace, PostgreSQL
+  # inspects `current_schema()` and MySQL the selected database.
   #
   # ```
   # schema = Grant.schema(User.adapter)
@@ -129,6 +132,9 @@ module Grant::Schema
     FORMAT_VERSION = 1
 
     getter adapter : Grant::Adapter::Base
+    # The PostgreSQL schema or MySQL database inspected, or `nil` for the
+    # connection's current one.
+    getter namespace : String?
 
     @mutex = Mutex.new
     @tables : Array(String)? = nil
@@ -136,7 +142,7 @@ module Grant::Schema
     @indexes = Bucket(IndexInfo).new
     @foreign_keys = Bucket(ForeignKeyInfo).new
 
-    def initialize(@adapter : Grant::Adapter::Base)
+    def initialize(@adapter : Grant::Adapter::Base, @namespace : String? = nil)
     end
 
     def tables : Array(String)
@@ -154,7 +160,7 @@ module Grant::Schema
       name = table.to_s
       @mutex.synchronize do
         require_table!(name)
-        @columns.fetch(name) { |only| @adapter.catalog_columns(only) }
+        @columns.fetch(name) { |only| @adapter.catalog_columns(only, @namespace) }
       end
     end
 
@@ -177,7 +183,7 @@ module Grant::Schema
       name = table.to_s
       @mutex.synchronize do
         require_table!(name)
-        @indexes.fetch(name) { |only| @adapter.catalog_indexes(only) }
+        @indexes.fetch(name) { |only| @adapter.catalog_indexes(only, @namespace) }
       end
     end
 
@@ -199,7 +205,7 @@ module Grant::Schema
       name = table.to_s
       @mutex.synchronize do
         require_table!(name)
-        @foreign_keys.fetch(name) { |only| @adapter.catalog_foreign_keys(only) }
+        @foreign_keys.fetch(name) { |only| @adapter.catalog_foreign_keys(only, @namespace) }
       end
     end
 
@@ -279,7 +285,8 @@ module Grant::Schema
 
     # Compares the columns *model* declares with the table. See `Drift`.
     def verify(model : T.class, strict : Bool = false) : Array(Drift) forall T
-      Verifier.new(self, model.table_name, model.declared_schema_columns, strict).drift
+      table = model.table_name.rpartition('.').last
+      Verifier.new(self, table, model.declared_schema_columns, strict).drift
     end
 
     # Like `#verify`, raising `DriftError` when anything drifted.
@@ -289,7 +296,7 @@ module Grant::Schema
     end
 
     private def known_tables : Array(String)
-      @tables ||= @adapter.catalog_tables
+      @tables ||= @adapter.catalog_tables(@namespace)
     end
 
     private def require_table!(name : String) : Nil
@@ -298,40 +305,61 @@ module Grant::Schema
 
     private def warm : Nil
       known_tables
-      @columns.ensure_loaded { @adapter.catalog_columns }
-      @indexes.ensure_loaded { @adapter.catalog_indexes }
-      @foreign_keys.ensure_loaded { @adapter.catalog_foreign_keys }
+      @columns.ensure_loaded { @adapter.catalog_columns(nil, @namespace) }
+      @indexes.ensure_loaded { @adapter.catalog_indexes(nil, @namespace) }
+      @foreign_keys.ensure_loaded { @adapter.catalog_foreign_keys(nil, @namespace) }
     end
   end
 end
 
 abstract class Grant::Adapter::Base
-  @schema_introspection : Grant::Schema::Introspection? = nil
+  @schema_caches = Hash(String, Grant::Schema::Introspection).new
+  @schema_caches_mutex = Mutex.new
 
-  # The schema cache of this connection.
-  def schema : Grant::Schema::Introspection
-    @schema_introspection ||= Grant::Schema::Introspection.new(self)
+  # The schema cache of this connection for *namespace* (a PostgreSQL schema or
+  # MySQL database). Without *namespace* it is the active schema-tenant schema
+  # when this fiber is inside `Grant::SchemaTenant.with` on this adapter, and
+  # the connection's current schema otherwise, so tenants never share a cache.
+  def schema(namespace : String? = nil) : Grant::Schema::Introspection
+    key = namespace || Grant::SchemaTenant.current_schema_for?(self) || ""
+    @schema_caches_mutex.synchronize do
+      @schema_caches[key] ||= Grant::Schema::Introspection.new(self, key.presence)
+    end
   end
 
-  # Names of the tables in the connection's current schema, ordered by name.
-  def catalog_tables : Array(String)
+  # Forgets *table* in every namespace's schema cache of this connection, or
+  # everything when *table* is nil. `Grant::Migrator` calls it after DDL.
+  def reset_schema_caches!(table : String? = nil) : Nil
+    caches = @schema_caches_mutex.synchronize { @schema_caches.values }
+    caches.each(&.reset!(table))
+  end
+
+  # Drops the schema cache kept for *namespace*, e.g. after its schema is
+  # dropped, so per-tenant caches do not outlive their tenant.
+  def forget_schema_cache(namespace : String) : Nil
+    @schema_caches_mutex.synchronize { @schema_caches.delete(namespace) }
+  end
+
+  # Names of the tables in *namespace* (default: the connection's current
+  # schema), ordered by name.
+  def catalog_tables(namespace : String? = nil) : Array(String)
     raise Grant::Schema::IntrospectionNotSupported.new(adapter_name)
   end
 
   # Columns of *table*, or of every table when it is nil, in one query. Rows are
   # ordered by table then position.
-  def catalog_columns(table : String? = nil) : Array(Grant::Schema::ColumnInfo)
+  def catalog_columns(table : String? = nil, namespace : String? = nil) : Array(Grant::Schema::ColumnInfo)
     raise Grant::Schema::IntrospectionNotSupported.new(adapter_name)
   end
 
   # Non-primary-key indexes of *table*, or of every table when it is nil, in one
   # query.
-  def catalog_indexes(table : String? = nil) : Array(Grant::Schema::IndexInfo)
+  def catalog_indexes(table : String? = nil, namespace : String? = nil) : Array(Grant::Schema::IndexInfo)
     raise Grant::Schema::IntrospectionNotSupported.new(adapter_name)
   end
 
   # Foreign keys of *table*, or of every table when it is nil, in one query.
-  def catalog_foreign_keys(table : String? = nil) : Array(Grant::Schema::ForeignKeyInfo)
+  def catalog_foreign_keys(table : String? = nil, namespace : String? = nil) : Array(Grant::Schema::ForeignKeyInfo)
     raise Grant::Schema::IntrospectionNotSupported.new(adapter_name)
   end
 

@@ -53,12 +53,12 @@ module SchemaFixture
         FOREIGN KEY (author_id) REFERENCES m01_authors (id) ON UPDATE CASCADE ON DELETE SET NULL
       )
       SQL
-    adapter.schema.reset!
+    adapter.reset_schema_caches!
   end
 
   def self.drop! : Nil
     TABLES.each { |table| exec "DROP TABLE IF EXISTS #{table}" }
-    adapter.schema.reset!
+    adapter.reset_schema_caches!
   end
 end
 
@@ -124,22 +124,22 @@ end
   class M01CountingAdapter < Grant::Adapter::{{ {"pg" => "Pg", "mysql" => "Mysql", "sqlite" => "Sqlite"}[adapter_literal.stringify].id }}
     getter calls = [] of String
 
-    def catalog_tables : Array(String)
+    def catalog_tables(namespace : String? = nil) : Array(String)
       @calls << "tables"
       super
     end
 
-    def catalog_columns(table : String? = nil) : Array(Grant::Schema::ColumnInfo)
+    def catalog_columns(table : String? = nil, namespace : String? = nil) : Array(Grant::Schema::ColumnInfo)
       @calls << "columns:#{table}"
       super
     end
 
-    def catalog_indexes(table : String? = nil) : Array(Grant::Schema::IndexInfo)
+    def catalog_indexes(table : String? = nil, namespace : String? = nil) : Array(Grant::Schema::IndexInfo)
       @calls << "indexes:#{table}"
       super
     end
 
-    def catalog_foreign_keys(table : String? = nil) : Array(Grant::Schema::ForeignKeyInfo)
+    def catalog_foreign_keys(table : String? = nil, namespace : String? = nil) : Array(Grant::Schema::ForeignKeyInfo)
       @calls << "foreign_keys:#{table}"
       super
     end

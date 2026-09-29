@@ -52,7 +52,7 @@ module Grant::Migrator
 
     def drop
       Model.unscoped { |_scope| Model.exec drop_sql }
-      Model.adapter.schema.reset!(Model.table_name)
+      Model.adapter.reset_schema_caches!(Model.table_name.rpartition('.').last)
     end
 
     def create_sql
@@ -122,7 +122,7 @@ module Grant::Migrator
 
     def create
       Model.unscoped { |_scope| Model.exec create_sql }
-      Model.adapter.schema.reset!(Model.table_name)
+      Model.adapter.reset_schema_caches!(Model.table_name.rpartition('.').last)
     end
   end
 end

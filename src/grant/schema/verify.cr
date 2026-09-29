@@ -137,39 +137,52 @@ abstract class Grant::Base
     {% end %}
   end
 
+  # The schema cache and bare table name for this model. A qualified
+  # `table_name` (`public.accounts`) selects that namespace's cache.
+  # :nodoc:
+  def self.schema_catalog_target : {Grant::Schema::Introspection, String}
+    namespace, _, table = table_name.rpartition('.')
+    {adapter.schema(namespace.presence), table}
+  end
+
   # True when this model's table exists.
   def self.table_exists? : Bool
-    adapter.schema.table_exists?(table_name)
+    catalog, table = schema_catalog_target
+    catalog.table_exists?(table)
   end
 
   # True when this model's table has *name*.
   def self.column_exists?(name : String | Symbol) : Bool
-    adapter.schema.column_exists?(table_name, name)
+    catalog, table = schema_catalog_target
+    catalog.column_exists?(table, name)
   end
 
   # The database's columns for this model's table, from the schema cache.
   def self.database_columns : Array(Grant::Schema::ColumnInfo)
-    adapter.schema.columns(table_name)
+    catalog, table = schema_catalog_target
+    catalog.columns(table)
   end
 
   # The database's indexes for this model's table, from the schema cache.
   def self.database_indexes : Array(Grant::Schema::IndexInfo)
-    adapter.schema.indexes(table_name)
+    catalog, table = schema_catalog_target
+    catalog.indexes(table)
   end
 
   # The database's foreign keys for this model's table, from the schema cache.
   def self.database_foreign_keys : Array(Grant::Schema::ForeignKeyInfo)
-    adapter.schema.foreign_keys(table_name)
+    catalog, table = schema_catalog_target
+    catalog.foreign_keys(table)
   end
 
   # Differences between this model's columns and its table. *strict* also
   # reports undeclared columns and nullable columns declared non-nilable.
   def self.verify_schema(strict : Bool = false) : Array(Grant::Schema::Drift)
-    adapter.schema.verify(self, strict)
+    schema_catalog_target[0].verify(self, strict)
   end
 
   # Raises `Grant::Schema::DriftError` when the model and its table disagree.
   def self.verify_schema!(strict : Bool = false) : Nil
-    adapter.schema.verify!(self, strict)
+    schema_catalog_target[0].verify!(self, strict)
   end
 end

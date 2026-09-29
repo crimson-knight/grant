@@ -343,21 +343,27 @@ class Grant::Adapter::Pg < Grant::Adapter::Base
     result.rows_affected
   end
 
-  # The catalog queries read `pg_catalog` directly and only see the connection's
-  # current schema, so a schema-per-tenant search_path is honored.
-  def catalog_tables : Array(String)
+  # The catalog queries read `pg_catalog` directly and inspect one schema:
+  # *namespace* when given, otherwise the connection's `current_schema()`.
+  def catalog_tables(namespace : String? = nil) : Array(String)
     names = [] of String
-    catalog_query(<<-SQL) { |rs| names << rs.read(String) }
+    catalog_query(<<-SQL, [namespace.as(DB::Any)]) { |rs| names << rs.read(String) }
       SELECT c.relname::text FROM pg_class c
       JOIN pg_namespace n ON n.oid = c.relnamespace
-      WHERE n.nspname = current_schema() AND c.relkind IN ('r', 'p')
+      WHERE n.nspname = COALESCE($1::text, current_schema()) AND c.relkind IN ('r', 'p')
       ORDER BY c.relname
       SQL
     names
   end
 
-  def catalog_columns(table : String? = nil) : Array(Grant::Schema::ColumnInfo)
-    filter = table ? "AND c.relname = $1" : ""
+  private def pg_catalog_args(table : String?, namespace : String?) : Array(DB::Any)
+    args = [namespace.as(DB::Any)]
+    args << table if table
+    args
+  end
+
+  def catalog_columns(table : String? = nil, namespace : String? = nil) : Array(Grant::Schema::ColumnInfo)
+    filter = table ? "AND c.relname = $2" : ""
     sql = <<-SQL
       SELECT c.relname::text, a.attname::text, format_type(a.atttypid, a.atttypmod),
              NOT a.attnotnull, pg_get_expr(d.adbin, d.adrelid),
@@ -370,11 +376,11 @@ class Grant::Adapter::Pg < Grant::Adapter::Base
       JOIN pg_namespace n ON n.oid = c.relnamespace
       LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
       LEFT JOIN pg_index i ON i.indrelid = c.oid AND i.indisprimary
-      WHERE n.nspname = current_schema() AND c.relkind IN ('r', 'p')
+      WHERE n.nspname = COALESCE($1::text, current_schema()) AND c.relkind IN ('r', 'p')
         AND a.attnum > 0 AND NOT a.attisdropped #{filter}
       ORDER BY c.relname, a.attnum
       SQL
-    args = table ? [table.as(DB::Any)] : [] of DB::Any
+    args = pg_catalog_args(table, namespace)
 
     columns = [] of Grant::Schema::ColumnInfo
     catalog_query(sql, args) do |rs|
@@ -393,8 +399,8 @@ class Grant::Adapter::Pg < Grant::Adapter::Base
     columns
   end
 
-  def catalog_indexes(table : String? = nil) : Array(Grant::Schema::IndexInfo)
-    filter = table ? "AND t.relname = $1" : ""
+  def catalog_indexes(table : String? = nil, namespace : String? = nil) : Array(Grant::Schema::IndexInfo)
+    filter = table ? "AND t.relname = $2" : ""
     sql = <<-SQL
       SELECT t.relname::text, i.relname::text, ix.indisunique,
              pg_get_expr(ix.indpred, ix.indrelid),
@@ -406,11 +412,11 @@ class Grant::Adapter::Pg < Grant::Adapter::Base
       JOIN pg_namespace n ON n.oid = t.relnamespace
       CROSS JOIN LATERAL unnest(ix.indkey::int2[]) WITH ORDINALITY AS k(attnum, ord)
       LEFT JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum
-      WHERE n.nspname = current_schema() AND NOT ix.indisprimary
+      WHERE n.nspname = COALESCE($1::text, current_schema()) AND NOT ix.indisprimary
         AND k.ord <= ix.indnkeyatts #{filter}
       ORDER BY t.relname, i.relname, k.ord
       SQL
-    args = table ? [table.as(DB::Any)] : [] of DB::Any
+    args = pg_catalog_args(table, namespace)
 
     indexes = [] of Grant::Schema::IndexInfo
     current = nil.as({String, String, Bool, String?, Array(String), Bool}?)
@@ -438,8 +444,8 @@ class Grant::Adapter::Pg < Grant::Adapter::Base
     indexes
   end
 
-  def catalog_foreign_keys(table : String? = nil) : Array(Grant::Schema::ForeignKeyInfo)
-    filter = table ? "AND t.relname = $1" : ""
+  def catalog_foreign_keys(table : String? = nil, namespace : String? = nil) : Array(Grant::Schema::ForeignKeyInfo)
+    filter = table ? "AND t.relname = $2" : ""
     sql = <<-SQL
       SELECT t.relname::text, c.conname::text, ft.relname::text, a.attname::text, fa.attname::text,
              c.confupdtype::text, c.confdeltype::text
@@ -450,10 +456,10 @@ class Grant::Adapter::Pg < Grant::Adapter::Base
       CROSS JOIN LATERAL unnest(c.conkey, c.confkey) WITH ORDINALITY AS k(local_attnum, foreign_attnum, ord)
       JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.local_attnum
       JOIN pg_attribute fa ON fa.attrelid = c.confrelid AND fa.attnum = k.foreign_attnum
-      WHERE c.contype = 'f' AND n.nspname = current_schema() #{filter}
+      WHERE c.contype = 'f' AND n.nspname = COALESCE($1::text, current_schema()) #{filter}
       ORDER BY t.relname, c.conname, k.ord
       SQL
-    args = table ? [table.as(DB::Any)] : [] of DB::Any
+    args = pg_catalog_args(table, namespace)
 
     keys = [] of Grant::Schema::ForeignKeyInfo
     current = nil.as({String, String, String, Array(String), Array(String), String, String}?)
