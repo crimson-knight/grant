@@ -137,6 +137,15 @@ describe "find_each and find_in_batches" do
     end
   end
 
+  it "returns empty iterators for a none relation" do
+    seed_items(3)
+    statements = capture_sql do
+      FindEachItem.none.find_each.to_a.should be_empty
+      FindEachItem.none.find_in_batches.to_a.should be_empty
+    end
+    statements.should be_empty
+  end
+
   it "does not mutate the source relation" do
     seed_items
     relation = FindEachItem.where(:bucket, :gteq, 0_i64)

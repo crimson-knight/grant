@@ -44,22 +44,48 @@ class Grant::Query::BatchPosition
   end
 end
 
-# Lazy form of `find_in_batches` and `in_batches`: each call to `next` runs
-# one keyset query, so no batch is loaded before it is asked for.
-class Grant::Query::BatchIterator(Model, Item)
-  include Iterator(Item)
+# Lazy form of `find_in_batches`: each call to `next` runs one keyset query,
+# so no batch is loaded before it is asked for.
+#
+# :nodoc:
+class Grant::Query::RecordBatchIterator(Model)
+  include Iterator(Array(Model))
 
-  def initialize(@relation : Grant::Query::Builder(Model), @plan : Grant::Query::BatchPlan, @load : Bool, @relations : Bool)
+  def initialize(@relation : Grant::Query::Builder(Model), @plan : Grant::Query::BatchPlan)
     @position = Grant::Query::BatchPosition.new(@plan)
   end
 
   def next
-    fetched = if @relations
-                @relation.next_batch_relation(@plan, @position, @load)
-              else
-                @relation.next_batch_records(@plan, @position)
-              end
-    fetched.nil? ? stop : fetched.as(Item)
+    if records = @relation.next_batch_records(@plan, @position)
+      records
+    else
+      stop
+    end
+  end
+
+  def rewind
+    @position = Grant::Query::BatchPosition.new(@plan)
+    self
+  end
+end
+
+# Lazy form of `in_batches`: each call to `next` runs one keyset query and
+# returns the relation over that batch.
+#
+# :nodoc:
+class Grant::Query::RelationBatchIterator(Model)
+  include Iterator(Grant::Query::Builder(Model))
+
+  def initialize(@relation : Grant::Query::Builder(Model), @plan : Grant::Query::BatchPlan, @load : Bool)
+    @position = Grant::Query::BatchPosition.new(@plan)
+  end
+
+  def next
+    if batch = @relation.next_batch_relation(@plan, @position, @load)
+      batch
+    else
+      stop
+    end
   end
 
   def rewind
@@ -107,7 +133,7 @@ module Grant::Query::Batches(Model)
   # is consumed.
   def find_in_batches(batch_size : Int32 = DEFAULT_BATCH_SIZE, start : Grant::Columns::Type = nil, finish : Grant::Columns::Type = nil, cursor : Array(Symbol)? = nil, order : Symbol = :asc, error_on_ignore : Bool = false) : Iterator(Array(Model))
     plan = batch_plan(batch_size, start, finish, cursor, order, error_on_ignore)
-    Grant::Query::BatchIterator(Model, Array(Model)).new(self, plan, true, false)
+    Grant::Query::RecordBatchIterator(Model).new(self, plan)
   end
 
   # Yields every matching record, loading them in keyset-paged batches. Takes
@@ -159,7 +185,7 @@ module Grant::Query::Batches(Model)
   # Without a block, returns an iterator over the batch relations.
   def in_batches(of batch_size : Int32 = DEFAULT_BATCH_SIZE, start : Grant::Columns::Type = nil, finish : Grant::Columns::Type = nil, load : Bool = false, cursor : Array(Symbol)? = nil, order : Symbol = :asc, error_on_ignore : Bool = false) : Iterator(Grant::Query::Builder(Model))
     plan = batch_plan(batch_size, start, finish, cursor, order, error_on_ignore)
-    Grant::Query::BatchIterator(Model, Grant::Query::Builder(Model)).new(self, plan, load, true)
+    Grant::Query::RelationBatchIterator(Model).new(self, plan, load)
   end
 
   # Loads each matching record and calls `destroy` on it, so destroy
@@ -240,7 +266,7 @@ module Grant::Query::Batches(Model)
   private def update_each(attributes, bang : Bool) : Array(Model)
     Model.guard_writes!
     updated = [] of Model
-    find_in_batches(DEFAULT_BATCH_SIZE) do |batch|
+    each_batch_for_update do |batch|
       Model.transaction do
         batch.each do |record|
           bang ? record.update!(attributes) : record.update(attributes)
@@ -249,6 +275,34 @@ module Grant::Query::Batches(Model)
       end
     end
     updated
+  end
+
+  # Yields the relation's records in batches of `DEFAULT_BATCH_SIZE` for a
+  # per-record update. When the cursor is only the key columns, this is a
+  # keyset scan. When it includes other columns (an ORDER BY or an implicit
+  # order column), an update can move an already-updated row past the cursor,
+  # where a keyset scan would load and update it again; so the keys are
+  # snapshotted first (one query that plucks only the key columns, honoring
+  # the relation's order, limit and offset) and each batch is loaded by key.
+  private def each_batch_for_update(& : Array(Model) ->) : Nil
+    return if is_none?
+
+    plan = batch_plan(DEFAULT_BATCH_SIZE, nil, nil, nil, :asc, false)
+    identity_columns = key_columns
+    if plan.columns.all? { |column| identity_columns.includes?(column) }
+      find_in_batches(DEFAULT_BATCH_SIZE) { |batch| yield batch }
+      return
+    end
+
+    snapshot = dup
+    snapshot.clear_order_fields
+    apply_batch_order(snapshot, plan)
+    snapshot_assembler = snapshot.assembler
+    identities = Grant::Query::Executor::Pluck(Model).new(snapshot_assembler.pluck_sql(identity_columns), snapshot_assembler.numbered_parameters, identity_columns).run
+    identities.each_slice(DEFAULT_BATCH_SIZE) do |slice|
+      records = batch_relation(plan, slice).select
+      yield records unless records.empty?
+    end
   end
 
   # Resolves the cursor, bounds and paging options into a plan.
@@ -354,7 +408,9 @@ module Grant::Query::Batches(Model)
   end
 
   private def next_page_size(plan : Grant::Query::BatchPlan, position : Grant::Query::BatchPosition) : Int32?
-    return nil if position.finished?
+    # A `none` relation matches nothing, including through the lazy iterator
+    # forms, which do not pass through the block forms' early return.
+    return nil if position.finished? || is_none?
     remaining = position.remaining
     return nil if remaining && remaining <= 0
     remaining ? Math.min(plan.size.to_i64, remaining).to_i32 : plan.size

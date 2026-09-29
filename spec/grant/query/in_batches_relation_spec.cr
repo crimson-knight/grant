@@ -65,6 +65,14 @@ describe "in_batches yielding relations" do
     end
     plucked.flatten.should eq(ids)
 
+    counts = [] of Int64
+    InBatchesItem.all.in_batches(of: 3) do |batch|
+      batch.count.should eq(batch.size)
+      counts << batch.size
+    end
+    counts.should eq([3_i64, 3_i64, 1_i64])
+    InBatchesItem.order(:id).count.should eq(7)
+
     firsts = [] of String
     InBatchesItem.all.in_batches(of: 3, order: :desc) { |batch| firsts << batch.first!.label }
     firsts.first.should eq("item7")
@@ -126,6 +134,9 @@ describe "in_batches yielding relations" do
     InBatchesItem.where(label: "missing").in_batches { |_batch| called = true }
     InBatchesItem.none.in_batches { |_batch| called = true }
     called.should be_false
+
+    InBatchesItem.none.in_batches.to_a.should be_empty
+    InBatchesItem.none.in_batches(load: true).to_a.should be_empty
   end
 
   it "delegates Model.in_batches" do

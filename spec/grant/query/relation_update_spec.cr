@@ -22,6 +22,21 @@ require "../../spec_helper"
       self.touched_by_callback = true
     end
   end
+
+  class RelationUpdateRanked < Grant::Base
+    connection {{ adapter_literal }}
+    table relation_update_ranked
+
+    column id : Int64, primary: true
+    column rank : Int64
+    column saves : Int64 = 0_i64
+
+    before_update :count_save
+
+    def count_save
+      self.saves = saves + 1
+    end
+  end
 {% end %}
 
 private def seed_update_items : Array(RelationUpdateItem)
@@ -84,5 +99,27 @@ describe "Relation update and update!" do
     RelationUpdateItem.none.update(status: "live").should be_empty
     RelationUpdateItem.where(status: "live").count.should eq(0)
     items.size.should eq(4)
+  end
+
+  it "updates each row once when the update moves it along the relation's order" do
+    RelationUpdateRanked.migrator.drop_and_create
+    rows = (1..1005).map { |rank| {"rank" => rank.to_i64.as(Grant::Columns::Type)} of String | Symbol => Grant::Columns::Type }
+    RelationUpdateRanked.insert_all(rows, record_timestamps: false)
+
+    updated = RelationUpdateRanked.order(rank: :asc).update(rank: 5000_i64)
+
+    updated.size.should eq(1005)
+    updated.map(&.id!).uniq.size.should eq(1005)
+    RelationUpdateRanked.where(saves: 1_i64).count.should eq(1005)
+  end
+
+  it "updates only the rows an ordered, limited relation selects" do
+    RelationUpdateRanked.migrator.drop_and_create
+    (1..5).each { |rank| RelationUpdateRanked.create!(rank: rank.to_i64) }
+
+    updated = RelationUpdateRanked.order(rank: :desc).limit(2).update(rank: 0_i64)
+
+    updated.size.should eq(2)
+    RelationUpdateRanked.order(:id).pluck(:rank).map(&.first).should eq([1_i64, 2_i64, 3_i64, 0_i64, 0_i64])
   end
 end
