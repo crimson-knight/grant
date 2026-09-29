@@ -441,6 +441,21 @@ module Grant::Query::Assembler
           s << offset
         end
         sql = "SELECT COUNT(*) FROM (#{distinct_rows_sql}) AS grant_distinct_rows"
+      elsif (@query.limit || @query.offset) && @query.group_fields.empty?
+        # COUNT(*) yields one row, so a LIMIT/OFFSET on it would drop that row.
+        # Count the rows the limited relation returns instead.
+        limited_rows_sql = build_sql do |s|
+          s << "SELECT 1"
+          s << from_clause
+          s << joins
+          s << where
+          s << having
+          s << order(use_default_order: false)
+          # SQLite and MySQL reject OFFSET without LIMIT; Int64::MAX is unbounded.
+          s << (limit || "LIMIT #{Int64::MAX}")
+          s << offset
+        end
+        sql = "SELECT COUNT(*) FROM (#{limited_rows_sql}) AS grant_limited_rows"
       else
         sql = build_sql do |s|
           s << "SELECT COUNT(*)"

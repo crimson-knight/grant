@@ -84,6 +84,19 @@ describe "Relation load memoization" do
     relation.loaded?.should be_false
   end
 
+  it "counts the rows a limited or offset relation returns" do
+    seed_parents(%w(a b c d e))
+    relation = Parent.where("name != ?", "zzz")
+
+    relation.limit(2).size.should eq 2
+    relation.limit(2).offset(1).size.should eq 2
+    relation.limit(10).offset(3).size.should eq 2
+    relation.offset(4).size.should eq 1
+    relation.offset(9).size.should eq 0
+    relation.limit(2).count.should eq 2
+    relation.order(:name).limit(3).size.should eq 3
+  end
+
   it "resets and reloads to see new rows" do
     seed_parents(["a"])
     relation = Parent.where("name != ?", "zzz").load
