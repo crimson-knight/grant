@@ -2,6 +2,7 @@ require "digest/md5"
 require "../columns"
 require "../async"
 require "./where_chain"
+require "./finders"
 
 # Lazy, chainable SQL query builder returned by `Model.where`, `Model.order`, etc.
 #
@@ -53,6 +54,7 @@ end
 class Grant::Query::Builder(Model)
   include Grant::Async::QueryMethods(Model)
   include Enumerable(Model)
+  include Grant::Query::Finders(Model)
 
   enum DbType
     Mysql
