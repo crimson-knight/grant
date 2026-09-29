@@ -474,9 +474,9 @@ module Grant::Scoping
     # `Array`, and `all(clause, params)` for the raw-SQL form.
     #
     # ```
-    # Post.all                         # => relation, nothing executed yet
-    # Post.all.where(published: true)  # still lazy
-    # Post.all.to_a                    # => Array(Post), default scope applied
+    # Post.all                        # => relation, nothing executed yet
+    # Post.all.where(published: true) # still lazy
+    # Post.all.to_a                   # => Array(Post), default scope applied
     # ```
     def all : Grant::Query::Builder(self)
       current_scope

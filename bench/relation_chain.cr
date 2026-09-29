@@ -36,19 +36,19 @@ def sink(value) : Nil
 end
 
 chains = {
-  "where.order.limit"                       => {
+  "where.order.limit" => {
     mutating:  -> { Todo.where(tenant_id: 7_i64).order!(:created_at).limit!(50) },
     immutable: -> { Todo.where(tenant_id: 7_i64).order(:created_at).limit(50) },
   },
-  "where x3.order.limit.offset"             => {
+  "where x3.order.limit.offset" => {
     mutating:  -> { Todo.where(tenant_id: 7_i64).where!(done: false).where!("title != ?", "x").order!(:created_at).limit!(50).offset!(100) },
     immutable: -> { Todo.where(tenant_id: 7_i64).where(done: false).where("title != ?", "x").order(:created_at).limit(50).offset(100) },
   },
-  "where.order.group_by.having.limit"       => {
+  "where.order.group_by.having.limit" => {
     mutating:  -> { Todo.where(tenant_id: 7_i64).order!(:created_at).group_by!(:done).having!("COUNT(*) > ?", 1).limit!(10) },
     immutable: -> { Todo.where(tenant_id: 7_i64).order(:created_at).group_by(:done).having("COUNT(*) > ?", 1).limit(10) },
   },
-  "where.joins.order.distinct.limit"        => {
+  "where.joins.order.distinct.limit" => {
     mutating:  -> { Todo.where(tenant_id: 7_i64).joins!("users", on: "users.id = todos.tenant_id").order!(:created_at).distinct!.limit!(10) },
     immutable: -> { Todo.where(tenant_id: 7_i64).joins("users", on: "users.id = todos.tenant_id").order(:created_at).distinct.limit(10) },
   },
