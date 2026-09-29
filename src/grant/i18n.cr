@@ -75,15 +75,21 @@ module Grant::I18n
 
     def initialize
       @store = {} of String => String
+      # The translator is shared by every fiber; stores can happen while
+      # other fibers look messages up.
+      @store_mutex = Mutex.new
     end
 
     # Registers *template* under *key* for *locale*.
     def store(key : String, template : String, locale : String = "en") : Nil
-      @store["#{locale}.#{key}"] = template
+      stored_key = "#{locale}.#{key}"
+      @store_mutex.synchronize { @store[stored_key] = template }
     end
 
     def translate(locale : String, key : String) : String?
-      @store["#{locale}.#{key}"]? || (locale == "en" ? MESSAGES[key]? : nil)
+      stored_key = "#{locale}.#{key}"
+      stored = @store_mutex.synchronize { @store[stored_key]? }
+      stored || (locale == "en" ? MESSAGES[key]? : nil)
     end
   end
 
