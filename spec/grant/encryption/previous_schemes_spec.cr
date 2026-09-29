@@ -55,7 +55,7 @@ describe "Grant::Encryption previous: schemes" do
     PrevEncPerson.find!(middle.id.not_nil!).ssn.should eq("222-22-2222")
     PrevEncPerson.find!(current.id.not_nil!).ssn.should eq("333-33-3333")
 
-    raw = ->(id : Int64?) { PrevEncPerson.adapter.open { |db| db.query_one("SELECT ssn FROM prev_enc_people WHERE id = #{id}", &.read(String)) } }
+    raw = ->(id : Int64?) { PrevEncPerson.adapter.open { |db| db.query_one("SELECT ssn FROM prev_enc_people WHERE id = #{id}", as: String) } }
     attribute.open_with_index(raw.call(current.id)).should eq({"333-33-3333", 0})
     attribute.open_with_index(raw.call(middle.id)).should eq({"222-22-2222", 1})
     attribute.open_with_index(raw.call(older.id)).should eq({"111-11-1111", 2})

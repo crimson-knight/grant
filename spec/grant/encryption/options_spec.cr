@@ -25,7 +25,7 @@ OptionsEncBodyDoc.migrator.drop_and_create
 
 def options_enc_raw(table : String, column : String, id) : String?
   OptionsEncCaseUser.adapter.open do |db|
-    db.query_one("SELECT #{column} FROM #{table} WHERE id = #{id}", &.read(String?))
+    db.query_one("SELECT #{column} FROM #{table} WHERE id = #{id}", as: String?)
   end
 end
 

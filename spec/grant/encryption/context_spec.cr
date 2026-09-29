@@ -15,7 +15,7 @@ end
 CtxEncMember.migrator.drop_and_create
 
 def ctx_enc_raw(column : String, id) : String?
-  CtxEncMember.adapter.open { |db| db.query_one("SELECT #{column} FROM ctx_enc_members WHERE id = #{id}", &.read(String?)) }
+  CtxEncMember.adapter.open { |db| db.query_one("SELECT #{column} FROM ctx_enc_members WHERE id = #{id}", as: String?) }
 end
 
 describe "Grant::Encryption context and record helpers" do
