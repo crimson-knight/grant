@@ -402,9 +402,14 @@ class Grant::AssociationCollection(Owner, Target)
     stale_keys = current.reject { |key| wanted_texts.includes?(key.to_s) }
     added = targets.reject { |record| current_texts.includes?(record.primary_key_value.to_s) }
 
-    Owner.transaction do
+    if stale_keys.empty? || added.empty?
       remove_by_keys(stale_keys)
       attach_all(added)
+    else
+      Owner.transaction do
+        remove_by_keys(stale_keys)
+        attach_all(added)
+      end
     end
     new_ids
   end

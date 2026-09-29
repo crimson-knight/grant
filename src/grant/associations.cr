@@ -787,7 +787,9 @@ module Grant::Associations
     # Inserts the join rows of targets that were built or appended while the
     # owner was unsaved.
     after_save do
-      {{method_name.id}}.save_pending
+      if (waiting = @_{{method_name.id}}_pending_through) && !waiting.empty?
+        {{method_name.id}}.save_pending
+      end
     end
     {% end %}
 
