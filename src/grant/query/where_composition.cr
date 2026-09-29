@@ -86,7 +86,9 @@ class Grant::Query::Builder(Model)
     return add_association_condition(join, field, value) if association_condition?(field)
 
     field = resolve_column_alias(field)
-    value = Model.coerce_where_value(field, value)
+    {% if Model.class.has_method?(:coerce_where_value) %}
+      value = Model.coerce_where_value(field, value)
+    {% end %}
     if value.is_a?(Array)
       add_array_condition_per_type(join, field, value)
     elsif value.is_a?(Enum)
