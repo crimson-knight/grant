@@ -309,6 +309,7 @@ class Grant::Adapter::Sqlite < Grant::Adapter::Base
   # column name and cannot be an `ON CONFLICT` target, so they raise.
   def unique_index_columns(table_name : String, index_name : String) : Array(String)?
     unique = nil
+    partial = false
     open do |db|
       db.query("PRAGMA index_list(#{quote(table_name)})") do |rs|
         rs.each do
@@ -316,13 +317,17 @@ class Grant::Adapter::Sqlite < Grant::Adapter::Base
           name = rs.read(String)
           is_unique = rs.read(Int64) == 1
           rs.read(String)
-          rs.read(Int64)
-          unique = is_unique if name == index_name
+          is_partial = rs.read(Int64) == 1
+          if name == index_name
+            unique = is_unique
+            partial = is_partial
+          end
         end
       end
     end
     return nil if unique.nil?
     raise ArgumentError.new("Index #{index_name.inspect} is not unique") unless unique
+    raise ArgumentError.new("Index #{index_name.inspect} is partial; pass the column names to unique_by instead") if partial
 
     columns = [] of String
     open do |db|
