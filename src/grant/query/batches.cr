@@ -333,8 +333,14 @@ module Grant::Query::Batches(Model)
       end
     elsif !order_fields.empty?
       order_fields.each do |field|
+        direction = field[:direction]
+        if direction.raw?
+          raise ArgumentError.new("Cannot batch #{Model.name} by the raw ORDER BY term #{field[:field].inspect}; pass cursor: with column names")
+        end
         fields << field[:field]
-        ascending << (field[:direction] == Grant::Query::Builder::Sort::Ascending)
+        # A NULLS FIRST/LAST member still sorts one way; only the direction
+        # decides the keyset comparison.
+        ascending << !direction.sorts_descending?
       end
       key_columns.each do |column|
         next if fields.any? { |field| field.split('.').last == column }

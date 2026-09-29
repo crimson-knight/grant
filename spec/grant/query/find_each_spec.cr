@@ -39,6 +39,20 @@ describe "find_each and find_in_batches" do
     batches.map(&.size).should eq([4, 4, 2])
   end
 
+  it "keeps the direction of an order that carries a NULL placement" do
+    items = seed_items(5)
+    seen = [] of Int64
+    FindEachItem.order(:id, :asc, nulls: :first).find_each(batch_size: 2) { |item| seen << item.id! }
+    seen.should eq(items.map(&.id!))
+  end
+
+  it "refuses to batch by a raw ORDER BY expression" do
+    seed_items(3)
+    expect_raises(ArgumentError, /raw ORDER BY/) do
+      FindEachItem.order("lower(label)").find_each(batch_size: 2) { }
+    end
+  end
+
   it "honors start, finish and descending order on the primary key" do
     items = seed_items
     ids = items.map(&.id!)
