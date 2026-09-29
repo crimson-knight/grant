@@ -48,10 +48,31 @@ module Grant::Sharding
       # ```
       def find_each_shard(batch_size : Int32 = 1000, start : Grant::Columns::Type = nil, finish : Grant::Columns::Type = nil, order : Symbol = :asc, error_on_ignore : Bool = false, &) : Nil
         Grant::ShardManager.shards_for_model(name).each do |shard|
-          __builder.on_shard(shard).find_each(batch_size: batch_size, start: start, finish: finish, order: order, error_on_ignore: error_on_ignore) do |record|
-            yield record
+          Grant::ShardManager.with_shard(shard) do
+            __builder.on_shard(shard).find_each(batch_size: batch_size, start: start, finish: finish, order: order, error_on_ignore: error_on_ignore) do |record|
+              yield record
+            end
           end
         end
+      end
+
+      # The adapter that quotes identifiers while a query is built. It is the
+      # active shard's adapter, or, with no shard active, the first shard's:
+      # building SQL reads no data, so any shard's quoting will do. Every shard
+      # of one model is expected to speak the same SQL dialect.
+      def quoting_adapter : Grant::Adapter::Base
+        return adapter if Grant::ShardManager.current_shard || current_shard
+
+        shard = Grant::ShardManager.shards_for_model(name).first
+        Grant::ConnectionRegistry.get_adapter(database_name, current_role, shard)
+      end
+
+      def quoted_table_name : String
+        quoting_adapter.quote(table_name)
+      end
+
+      def quote(column_name) : String
+        quoting_adapter.quote(column_name)
       end
     end
 
@@ -108,14 +129,14 @@ module Grant::Sharding
 
     def update_columns(**args) : Bool
       within_own_shard do
-        ensure_shard_key_not_written!(args.keys.map(&.to_s))
+        ensure_shard_key_not_written!(args.keys.to_a.map(&.to_s))
         super
       end
     end
 
     def update_columns(args : Grant::ModelArgs) : Bool
       within_own_shard do
-        ensure_shard_key_not_written!(args.keys.map(&.to_s))
+        ensure_shard_key_not_written!(args.keys.to_a.map(&.to_s))
         super
       end
     end

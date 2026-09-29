@@ -66,7 +66,9 @@ module Grant::Testing
 
     # Runs *sql* directly against *shard*'s file, bypassing Grant's routing.
     def exec(shard : Symbol, sql : String, *args, reader : Bool = false) : Nil
-      DB.open("sqlite3:#{path_for(shard, reader)}") { |db| db.exec(sql, args: args.to_a) }
+      params = [] of DB::Any
+      args.each { |value| params << value }
+      DB.open("sqlite3:#{path_for(shard, reader)}") { |db| db.exec(sql, args: params) }
     end
 
     # Reads one Int64 column directly from *shard*'s file, bypassing Grant's routing.

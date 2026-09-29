@@ -136,7 +136,7 @@ module Grant::Sharding
         if sharding_config
           find_each_shard(batch_size: batch_size) { |record| yield record }
         else
-          super
+          current_scope.find_each(batch_size: batch_size) { |record| yield record }
         end
       end
     end
