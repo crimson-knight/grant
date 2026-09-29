@@ -39,17 +39,14 @@ module Grant
 
     DEFAULT_COST = 12
 
-    @@cost : Int32 = DEFAULT_COST
+    # The shape of a well-formed bcrypt hash: version, two-digit cost, then 22
+    # salt and 31 checksum characters in bcrypt's base64 alphabet.
+    DIGEST_FORMAT = /\A\$2[abxy]?\$\d{2}\$[.\/A-Za-z0-9]{53}\z/
 
-    # The bcrypt work factor used by `password=`. Set it once at boot; lower it
-    # only in test environments.
+    # The bcrypt work factor used by `password=`, read from
+    # `Grant.settings.secure_password_cost`.
     def self.cost : Int32
-      @@cost
-    end
-
-    def self.cost=(value : Int32) : Int32
-      raise ArgumentError.new("bcrypt cost must be within #{Crypto::Bcrypt::COST_RANGE}") unless Crypto::Bcrypt::COST_RANGE.includes?(value)
-      @@cost = value
+      Grant.settings.secure_password_cost
     end
 
     # Hashes *plain_text* with the configured cost. Raises `ArgumentError` when
@@ -61,7 +58,7 @@ module Grant
     # True when *plain_text* matches the bcrypt *digest* (constant-time). A
     # malformed digest or an out-of-range password never matches.
     def self.matches?(digest : String?, plain_text : String) : Bool
-      return false if digest.nil? || digest.empty?
+      return false unless digest && DIGEST_FORMAT.matches?(digest)
       return false unless (1..MAX_PASSWORD_BYTES).includes?(plain_text.bytesize)
       stored = Crypto::Bcrypt::Password.new(digest)
       salt_bytes = Crypto::Bcrypt::Base64.decode(stored.salt, Crypto::Bcrypt::SALT_SIZE)
@@ -90,6 +87,23 @@ module Grant
     # empty string. It changes whenever the password does.
     def self.salt(digest : String?) : String
       digest ? digest[0, 29] : ""
+    end
+  end
+
+  class Settings
+    # The bcrypt work factor `has_secure_password` hashes with (4..31, default
+    # 12). Set it once at boot; lower it only in test environments.
+    #
+    # ```
+    # Grant.settings.secure_password_cost = 4 # spec_helper only
+    # ```
+    getter secure_password_cost : Int32 = Grant::SecurePassword::DEFAULT_COST
+
+    def secure_password_cost=(value : Int32) : Int32
+      unless Crypto::Bcrypt::COST_RANGE.includes?(value)
+        raise ArgumentError.new("secure_password_cost must be within #{Crypto::Bcrypt::COST_RANGE} (got #{value})")
+      end
+      @secure_password_cost = value
     end
   end
 
@@ -137,16 +151,18 @@ module Grant
 
       # Hashes *plain_text* into `{{ attr }}_digest`. `nil` clears the digest;
       # an empty string is ignored. A value over 72 bytes is kept in memory so
-      # validation can reject it, but is not hashed.
+      # validation can reject it, and clears the digest so the previous
+      # password can never survive the change (with validations off, such a
+      # record saves with no digest and authenticates nothing).
       def {{ attr }}=(plain_text : String?) : String?
         if plain_text.nil?
           @{{ attr }} = nil
           self.{{ attr }}_digest = nil
         elsif !plain_text.empty?
           @{{ attr }} = plain_text
-          if plain_text.bytesize <= Grant::SecurePassword::MAX_PASSWORD_BYTES
-            self.{{ attr }}_digest = Grant::SecurePassword.digest(plain_text)
-          end
+          self.{{ attr }}_digest = if plain_text.bytesize <= Grant::SecurePassword::MAX_PASSWORD_BYTES
+                                     Grant::SecurePassword.digest(plain_text)
+                                   end
         end
         plain_text
       end
@@ -219,7 +235,9 @@ module Grant
 
         private def __{{ attr }}_confirmation_matches
           confirmation = @{{ attr }}_confirmation
-          return if confirmation.nil?
+          # Like ActiveModel's `allow_blank: true`, only a newly assigned
+          # password is checked against its confirmation.
+          return if confirmation.nil? || @{{ attr }}.nil?
           errors.add(:{{ attr }}_confirmation, "doesn't match {{ attr.stringify.capitalize.id }}", :confirmation) unless @{{ attr }} == confirmation
         end
 
