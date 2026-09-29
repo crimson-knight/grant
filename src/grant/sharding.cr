@@ -224,20 +224,6 @@ module Grant::Sharding
       end
     end
 
-    # Determine shard for a model instance
-    def determine_shard : Symbol
-      if shard = @current_shard
-        return shard
-      end
-
-      if config = self.class.sharding_config
-        @current_shard = config.resolver.resolve(self)
-        @current_shard.not_nil!
-      else
-        raise "Model #{self.class.name} is not configured for sharding"
-      end
-    end
-
     # Copy a persisted record to another shard, then remove the source copy.
     # Cross-database transactions are not available, so a failed source delete
     # triggers a compensating delete on the destination. If compensation also
