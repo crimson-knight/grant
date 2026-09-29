@@ -192,4 +192,31 @@ describe "where.not, and relation or / and" do
       titles(WfPost.where(published: true).and("score = ?", 1)).should eq(["a"])
     end
   end
+
+  describe "grouped conditions followed by joins" do
+    it "qualifies own columns so a later joins cannot make them ambiguous" do
+      ann = WfAuthor.create!(name: "ann", active: true)
+      first = WfPost.create!(title: "e", author_id: ann.id)
+      second = WfPost.create!(title: "f", author_id: ann.id)
+
+      titles(WfPost.where(id: first.id).or(WfPost.where(id: second.id)).joins(:author)).should eq(["e", "f"])
+      titles(WfPost.where(id: first.id).invert_where.joins(:author)).should eq(["f"])
+    end
+
+    it "accepts a joined table's columns before the joins call" do
+      ann = WfAuthor.create!(name: "ann", active: true)
+      bob = WfAuthor.create!(name: "bob", active: false)
+      WfPost.create!(title: "e", author_id: ann.id)
+      WfPost.create!(title: "f", author_id: bob.id)
+
+      titles(WfPost.where.not(wf_authors: {name: "bob"}).joins(:author)).should eq(["e"])
+      titles(WfPost.where(author: {name: "ann"}).or(WfPost.where(author: {name: "bob"})).joins(:author)).should eq(["e", "f"])
+    end
+
+    it "still rejects an unknown column on a joined table" do
+      expect_raises(ArgumentError, /Unknown query field/) do
+        WfPost.where.not(wf_authors: {secret: "x"}).joins(:author)
+      end
+    end
+  end
 end

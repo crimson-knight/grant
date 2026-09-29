@@ -221,6 +221,10 @@ module Grant::Query::Assembler
                        # The model behind the joined table decides; a raw joined
                        # table the registry does not know is identifier-checked only.
                        Grant::Query::JoinedColumns.known_column?(Model.name, qualifier, column) != false
+                     elsif @rendering_where_group
+                       # A grouped condition is rendered when it is added, so the
+                       # `joins` for a registry-known table may still follow.
+                       Grant::Query::JoinedColumns.known_column?(Model.name, qualifier, column) == true
                      else
                        false
                      end
@@ -233,7 +237,7 @@ module Grant::Query::Assembler
 
       if qualifier
         "#{Model.quote(qualifier)}.#{Model.quote(column_name)}"
-      elsif !@query.join_clauses.empty?
+      elsif !@query.join_clauses.empty? || @rendering_where_group
         "#{Model.quote(Model.table_name)}.#{Model.quote(column_name)}"
       else
         Model.quote(column_name)
