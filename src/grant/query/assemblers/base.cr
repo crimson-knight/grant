@@ -457,9 +457,7 @@ module Grant::Query::Assembler
     end
 
     def lock
-      @lock ||= if lock_mode = @query.lock_mode
-                  lock_mode.to_sql(Model.adapter)
-                end
+      @lock ||= @query.lock_sql(Model.adapter)
     end
 
     def log(*stuff)

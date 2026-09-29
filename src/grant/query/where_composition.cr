@@ -480,7 +480,7 @@ class Grant::Query::Builder(Model)
     differing << :joins if @join_clauses != other.join_clauses
     differing << :limit if @limit != other.limit
     differing << :offset if @offset != other.offset
-    differing << :lock if @lock_mode != other.lock_mode
+    differing << :lock if @lock_mode != other.lock_mode || @lock_clause != other.lock_clause
     differing << :select if @select_columns != other.select_columns
     differing << :distinct if @distinct != other.distinct?
     differing << :includes if @includes_associations != other.includes_associations
