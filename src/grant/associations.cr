@@ -736,7 +736,7 @@ module Grant::Associations
         pending = nil
       {% end %}
       Grant::AssociationCollection(self, {{class_name.id}}).new(
-        self, {{foreign_key}}, {{through}}, {{options[:primary_key] ? primary_key : nil}},
+        self, {{foreign_key_name}}, {{through}}, {{options[:primary_key] ? primary_key : nil}},
         {{inverse_of ? inverse_of : nil}}, scope_proc, {{method_name.stringify}}, loaded_records, through_delete_all,
         {{through ? source.id.stringify : nil}},
         strict_loading_option: {{options[:strict_loading]}},
