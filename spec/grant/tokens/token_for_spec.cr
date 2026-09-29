@@ -1,4 +1,4 @@
-require "../spec_helper"
+require "../../spec_helper"
 
 {% begin %}
   {% adapter_literal = (env("CURRENT_ADAPTER") || "sqlite").id %}
@@ -31,11 +31,13 @@ describe Grant::TokenFor do
   end
 
   before_each do
+    Grant::TokenFor.configure { |c| c.secret = nil; c.previous_secrets = [] of String }
     ENV["GRANT_SIGNING_SECRET"] = "test_secret"
   end
 
   after_each do
     ENV.delete("GRANT_SIGNING_SECRET")
+    Grant::TokenFor.configure { |c| c.secret = nil; c.previous_secrets = [] of String }
   end
 
   describe "generates_token_for" do
@@ -125,6 +127,77 @@ describe Grant::TokenFor do
 
       found = TokenForTestModel.find_by_token_for(:email_confirmation, token)
       found.should be_nil
+    end
+
+    it "find_by_token_for! returns the record for a valid token" do
+      model = TokenForTestModel.create(name: "T", email: "a@b.c", password_salt: "s1")
+      token = model.generate_token_for(:password_reset)
+      TokenForTestModel.find_by_token_for!(:password_reset, token).id.should eq(model.id)
+    end
+
+    it "find_by_token_for! raises Grant::InvalidToken for tampered, wrong purpose, expired and stale tokens" do
+      model = TokenForTestModel.create(name: "T", email: "a@b.c", password_salt: "s1")
+      token = model.generate_token_for(:password_reset)
+
+      expect_raises(Grant::InvalidToken) { TokenForTestModel.find_by_token_for!(:password_reset, token + "x") }
+      expect_raises(Grant::InvalidToken) { TokenForTestModel.find_by_token_for!(:password_reset, "garbage") }
+      expect_raises(Grant::InvalidToken) { TokenForTestModel.find_by_token_for!(:email_confirmation, token) }
+
+      expired = TokenForTestModel.generate_token_for_payload({
+        "id" => model.id.to_s, "purpose" => "password_reset", "data" => "s1",
+        "expires_at" => (Time.utc - 1.hour).to_unix,
+      })
+      expect_raises(Grant::InvalidToken) { TokenForTestModel.find_by_token_for!(:password_reset, expired) }
+
+      model.update!(password_salt: "s2")
+      expect_raises(Grant::InvalidToken) { TokenForTestModel.find_by_token_for!(:password_reset, token) }
+      Grant::InvalidToken.new.should be_a(Grant::ErrorBase)
+    end
+
+    it "find_by_token_for! raises RecordNotFound when the record is gone" do
+      model = TokenForTestModel.create(name: "T", email: "a@b.c", password_salt: "s1")
+      token = model.generate_token_for(:password_reset)
+      model.destroy
+      expect_raises(Grant::RecordNotFound) { TokenForTestModel.find_by_token_for!(:password_reset, token) }
+      TokenForTestModel.find_by_token_for(:password_reset, token).should be_nil
+    end
+
+    it "uses the secret from Grant::TokenFor.configure, ignoring ENV" do
+      ENV.delete("GRANT_SIGNING_SECRET")
+      begin
+        Grant::TokenFor.configure { |c| c.secret = "configured" }
+        model = TokenForTestModel.create(name: "T", email: "a@b.c", password_salt: "s1")
+        token = model.generate_token_for(:password_reset)
+        TokenForTestModel.find_by_token_for(:password_reset, token).should_not be_nil
+
+        Grant::TokenFor.configure { |c| c.secret = "other" }
+        TokenForTestModel.find_by_token_for(:password_reset, token).should be_nil
+      ensure
+        Grant::TokenFor.configure { |c| c.secret = nil; c.previous_secrets = [] of String }
+      end
+    end
+
+    it "accepts tokens signed with a previous secret after rotation" do
+      begin
+        Grant::TokenFor.configure { |c| c.secret = "old" }
+        model = TokenForTestModel.create(name: "T", email: "a@b.c", password_salt: "s1")
+        token = model.generate_token_for(:password_reset)
+
+        Grant::TokenFor.configure { |c| c.secret = "new"; c.previous_secrets = ["old"] }
+        TokenForTestModel.find_by_token_for(:password_reset, token).should_not be_nil
+        TokenForTestModel.find_by_token_for(:password_reset, model.generate_token_for(:password_reset)).should_not be_nil
+
+        Grant::TokenFor.configure { |c| c.previous_secrets = [] of String }
+        TokenForTestModel.find_by_token_for(:password_reset, token).should be_nil
+      ensure
+        Grant::TokenFor.configure { |c| c.secret = nil; c.previous_secrets = [] of String }
+      end
+    end
+
+    it "raises MissingSigningSecret instead of swallowing it" do
+      ENV.delete("GRANT_SIGNING_SECRET")
+      model = TokenForTestModel.create(name: "T", email: "a@b.c", password_salt: "s1")
+      expect_raises(Grant::MissingSigningSecret) { model.generate_token_for(:password_reset) }
     end
 
     it "raises error for undefined token purpose" do

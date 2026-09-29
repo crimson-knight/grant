@@ -89,8 +89,8 @@ abstract class Grant::Base
   include Transaction
 
   # Make secure token macros available
-  macro has_secure_token(name, length = 24, alphabet = :base58)
-    Grant::SecureToken.has_secure_token({{ name }}, {{ length }}, {{ alphabet }})
+  macro has_secure_token(name, length = 24, alphabet = :base58, on = :create)
+    Grant::SecureToken.has_secure_token({{ name }}, {{ length }}, {{ alphabet }}, {{ on }})
 
     # Token columns are credentials: `inspect` prints them as [FILTERED].
     {% if @type.has_constant?(:GRANT_SECURE_TOKEN_COLUMNS) %}

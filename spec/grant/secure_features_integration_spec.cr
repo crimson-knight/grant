@@ -39,11 +39,13 @@ describe "Secure Features Integration" do
   end
 
   before_each do
+    Grant::SignedId.configure { |c| c.secret = nil; c.previous_secrets = [] of String }
     ENV["GRANT_SIGNING_SECRET"] = "test_secret_key"
   end
 
   after_each do
     ENV.delete("GRANT_SIGNING_SECRET")
+    Grant::SignedId.configure { |c| c.secret = nil; c.previous_secrets = [] of String }
   end
 
   it "works with all security features together" do
@@ -80,6 +82,11 @@ describe "Secure Features Integration" do
     found_by_token.should_not be_nil
     found_by_token.not_nil!.id.should eq(user.id)
 
+    # A signed id and a token-for token are not interchangeable, even when the
+    # purpose names match.
+    SecureUser.find_by_token_for(:password_reset, reset_id).should be_nil
+    SecureUser.find_signed(password_token, purpose: :password_reset).should be_nil
+
     # Test token invalidation on data change
     user.password_salt = "new_salt"
     user.save
@@ -89,9 +96,9 @@ describe "Secure Features Integration" do
 
     # Test regenerating secure tokens
     old_auth_token = user.auth_token
-    user.regenerate_auth_token
-    user.save
+    user.regenerate_auth_token.should be_true
 
     user.auth_token.should_not eq(old_auth_token)
+    SecureUser.find!(user.id).auth_token.should eq(user.auth_token)
   end
 end

@@ -19,7 +19,7 @@ module Grant
   #
   # u = User.create
   # u.auth_token            # => e.g. "rX9kLm2pQvNbT7wYzA4cDeF8" (set on create)
-  # u.regenerate_auth_token # rotates to a fresh token
+  # u.regenerate_auth_token # rotates to a fresh token and saves it
   # ```
   module SecureToken
     # Declares *name* as an auto-generated secure-token column.
@@ -29,8 +29,13 @@ module Grant
     # * a `auth_token : String?` column;
     # * a `before_create` hook that fills the column with a fresh token **only if
     #   it is still `nil`** (an explicitly assigned value is preserved);
-    # * `#regenerate_auth_token` — assigns a new random token (call `save`
-    #   afterward to persist it).
+    # * `#regenerate_auth_token` / `#regenerate_auth_token!` — assign a new
+    #   random token and persist it (the bang form raises on failure);
+    # * `#assign_new_auth_token` — assigns a new token in memory only.
+    #
+    # *on* picks when the token is first generated: `:create` (default, in a
+    # `before_create` hook) or `:initialize` (as soon as `Model.new` builds a
+    # new record, so the token is readable before saving).
     #
     # *length* is the token length in characters (default `24`). *alphabet*
     # selects the character set: `:base58` (default, Bitcoin-style, omits
@@ -44,31 +49,52 @@ module Grant
     #
     # u = User.create # auth_token auto-filled
     # old = u.auth_token
-    # u.regenerate_auth_token
-    # u.auth_token == old # => false
-    # u.save
+    # u.regenerate_auth_token # persists
+    # u.auth_token == old     # => false
     # ```
-    macro has_secure_token(name, length = 24, alphabet = :base58)
+    macro has_secure_token(name, length = 24, alphabet = :base58, on = :create)
       column {{ name.id }} : String?
 
-      # Assigns a freshly generated secure token to `{{ name.id }}` (in memory).
-      # Call `save` afterward to persist the rotated value.
-      def regenerate_{{ name.id }}
-        self.{{ name.id }} = Grant::SecureToken.generate_secure_token(
+      # Assigns a freshly generated secure token to `{{ name.id }}` in memory
+      # only; nothing is written to the database. Returns the new token.
+      def assign_new_{{ name.id }} : String
+        token = Grant::SecureToken.generate_secure_token(
           length: {{ length }},
           alphabet: {{ alphabet }}
         )
+        self.{{ name.id }} = token
+        token
       end
-      
-      before_create :generate_{{ name.id }}_if_needed
-      
-      private def generate_{{ name.id }}_if_needed
-        if self.{{ name.id }}.nil?
-          self.{{ name.id }} = Grant::SecureToken.generate_secure_token(
-            length: {{ length }},
-            alphabet: {{ alphabet }}
-          )
+
+      # Rotates `{{ name.id }}` and persists it (validations skipped, callbacks
+      # run), like ActiveRecord's `regenerate_<name>`. Returns `false` when the
+      # save fails.
+      def regenerate_{{ name.id }} : Bool
+        assign_new_{{ name.id }}
+        save(validate: false)
+      end
+
+      # Like `regenerate_{{ name.id }}` but raises `Grant::RecordNotSaved` when the
+      # save fails.
+      def regenerate_{{ name.id }}! : Bool
+        assign_new_{{ name.id }}
+        save(validate: false) || raise save_failure_error
+      end
+
+      {% if on == :initialize %}
+        after_initialize :generate_{{ name.id }}_on_initialize
+
+        private def generate_{{ name.id }}_on_initialize
+          assign_new_{{ name.id }} if new_record? && self.{{ name.id }}.nil?
         end
+      {% elsif on == :create %}
+        before_create :generate_{{ name.id }}_if_needed
+      {% else %}
+        {% raise "has_secure_token on: must be :create or :initialize, got #{on}" %}
+      {% end %}
+
+      private def generate_{{ name.id }}_if_needed
+        assign_new_{{ name.id }} if self.{{ name.id }}.nil?
       end
     end
 
