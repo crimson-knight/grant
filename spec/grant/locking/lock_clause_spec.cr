@@ -149,6 +149,13 @@ describe "Relation#lock with a clause or false" do
       merged.unscope(:lock).lock_clause.should be_nil
     end
 
+    it "reports locked? for either kind of lock" do
+      LockClauseSpecItem.where(id: 1).locked?.should be_false
+      LockClauseSpecItem.lock.locked?.should be_true
+      LockClauseSpecItem.lock(LOCK_CLAUSE_SPEC_NO_KEY).locked?.should be_true
+      LockClauseSpecItem.lock.unlock.locked?.should be_false
+    end
+
     it "leaves a relation that was never locked untouched" do
       LockClauseSpecItem.where(id: 1).unlock.lock_mode.should be_nil
     end

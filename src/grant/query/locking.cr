@@ -46,6 +46,11 @@ class Grant::Query::Builder(Model)
     chain_copy.unlock!
   end
 
+  # True when the relation carries a row lock of either kind.
+  def locked? : Bool
+    !@lock_mode.nil? || !@lock_clause.nil?
+  end
+
   # The lock SQL for *adapter*: the mode's clause, or the custom clause. Adapters
   # without row locks (SQLite) render nothing for either.
   #
