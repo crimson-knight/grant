@@ -1011,7 +1011,9 @@ module Grant
 
     # Tears down all connection state: stops health monitors and reapers, clears
     # load balancers, closes every pool, and drops every adapter, specification,
-    # and the default database. Used between specs.
+    # and the default database. Used between specs. Settings declared with
+    # `#configure_database` (a model's strategy, retry count and health check
+    # interval) describe the application, not a connection, so they stay.
     #
     # ```
     # Grant::ConnectionRegistry.clear_all # reset the registry completely
@@ -1028,7 +1030,6 @@ module Grant
         @@specifications = {} of String => ConnectionSpec
         @@load_balancers = {} of String => ReplicaLoadBalancer
         @@reapers = {} of String => PoolReaper
-        @@database_options = {} of String => DatabaseOptions
         @@default_database = nil
       end
 

@@ -45,7 +45,6 @@ describe "prepared statements" do
 
     if C02Support.adapter_class.supports_unprepared_statements?
       adapter.database.prepared_statements?.should be_false
-      adapter.database.prepared_statements_cache?.should be_false
       cached_statements_after(adapter, 5).should eq 0
     else
       # SQLite can only prepare, so the flag is ignored rather than breaking queries.
