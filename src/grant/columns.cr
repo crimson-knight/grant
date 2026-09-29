@@ -230,6 +230,12 @@ module Grant::Columns
     @[Grant::Column(column_type: {{column_type}}, converter: {{converter}}, auto: {{auto}}, primary: {{primary}}, nilable: {{nilable}}, setter_type: {{not_nilable_type}})]
     @{{decl.var}} : {{decl.type}}? {% unless decl.value.is_a? Nop %} = {{decl.value}} {% end %}
 
+    # The value assigned by mass assignment before conversion, when it
+    # differed from the converted value; otherwise the current value.
+    def {{decl.var.id}}_before_type_cast : Grant::Columns::Type
+      attribute_before_type_cast({{decl.var.stringify}})
+    end
+
     def will_save_change_to_{{decl.var.id}}? : Bool
       will_save_change_to_attribute?({{decl.var.stringify}})
     end
@@ -313,6 +319,7 @@ module Grant::Columns
           end
         end
 
+        discard_before_type_cast({{decl.var.stringify}})
         @{{decl.var.id}} = value
       end
 
@@ -436,6 +443,7 @@ module Grant::Columns
           end
         end
 
+        discard_before_type_cast({{decl.var.stringify}})
         @{{decl.var.id}} = value
       end
 
@@ -555,6 +563,10 @@ module Grant::Columns
   end
 
   def set_attributes(hash : Hash(String | Symbol, T)) : self forall T
+    if self.class.has_attribute_aliases?
+      hash = hash.transform_keys { |key| self.class.resolve_attribute_alias(key.to_s).as(String | Symbol) }
+    end
+
     {% for column in @type.instance_vars.select { |ivar| (ann = ivar.annotation(Grant::Column)) && (!ann[:primary] || (ann[:primary] && ann[:auto] == false)) } %}
       {% ann = column.annotation(Grant::Column) %}
       {% if ann[:nilable] == true %}
@@ -573,6 +585,11 @@ module Grant::Columns
           error = Grant::ConversionError.new({{column.name.stringify}}, "Expected {{column.id}} to be {{setter_type}} but got #{typeof(val)}.")
         else
           self.{{column}} = val
+          # Keep the raw input only when conversion changed it.
+          raw_input = hash[{{column.stringify}}]
+          if raw_input.is_a?(Grant::Columns::Type) && raw_input != val
+            capture_before_type_cast({{column.stringify}}, raw_input)
+          end
         end
 
         errors << error if error
@@ -588,6 +605,7 @@ module Grant::Columns
   # assignment. Keeping this at the column boundary applies both the declared
   # conversion and the generated dirty-tracking setter.
   def assign_mass_assignment_column(attribute_name : String, value : Grant::Columns::Type) : Nil
+    attribute_name = self.class.resolve_attribute_alias(attribute_name)
     return if Grant::Columns::VirtualAttributeRegistry.assign(self, attribute_name, value)
 
     {% begin %}
@@ -604,6 +622,7 @@ module Grant::Columns
           converted_value = Grant::Type.convert_type(value, {{setter_type}})
           if converted_value.is_a?({{setter_type}})
             self.{{column.name.id}} = converted_value
+            capture_before_type_cast({{column.name.stringify}}, value) if value != converted_value
           else
             errors << Grant::ConversionError.new({{column.name.stringify}}, "Expected {{column.name.id}} to be {{setter_type}} but got #{typeof(converted_value)}.")
           end

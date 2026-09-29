@@ -47,6 +47,8 @@ require "./async"
 require "./aggregations"
 require "./value_objects"
 require "./encryption"
+require "./attributes"
+require "./integration"
 
 # Grant::Base is the base class for your model objects.
 abstract class Grant::Base
@@ -74,6 +76,8 @@ abstract class Grant::Base
   include NestedAttributes
   include ValueObjects
   include Encryption::Model
+  include Attributes
+  include Integration
   include Locking::Pessimistic
   include Transaction
 
@@ -100,6 +104,8 @@ abstract class Grant::Base
   extend Grant::Async::ClassMethods
   extend Grant::Aggregations::ClassMethods
   extend ValueObjects::ClassMethods
+  extend Attributes::ClassMethods
+  extend Integration::ClassMethods
 
   # Make normalization macro available
   macro normalizes(attribute, **options, &block)

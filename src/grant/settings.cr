@@ -61,6 +61,12 @@ module Grant
     # the newest-first default can opt back in.
     property implicit_order : Bool = false
 
+    # Attribute names (String, matched as a case-insensitive substring) and
+    # patterns (Regex) whose values `inspect` prints as `[FILTERED]`, for every
+    # model. Encrypted columns are always filtered. A model adds its own with
+    # `filter_attributes :token`.
+    property filter_attributes : Array(String | Regex) = [] of String | Regex
+
     def index_hint_mode=(mode : Symbol)
       unless {:warn, :strict, :ignore}.includes?(mode)
         raise ArgumentError.new("index_hint_mode must be :warn, :strict, or :ignore (got #{mode.inspect})")
