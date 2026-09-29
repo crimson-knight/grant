@@ -196,8 +196,11 @@ class Grant::Adapter::Mysql < Grant::Adapter::Base
     "MySQL"
   end
 
+  # Raises `Grant::ConnectionNotEstablished` when the connection URL selected
+  # no database, where MySQL's `DATABASE()` returns NULL.
   def current_database : String
-    open { |db| db.scalar("SELECT DATABASE()").as(String) }
+    selected = open { |db| db.scalar("SELECT DATABASE()").as?(String) }
+    selected || raise Grant::ConnectionNotEstablished.new("No database is selected on the #{name} MySQL connection")
   end
 
   # True when the server banner names MariaDB, whose version numbers and
