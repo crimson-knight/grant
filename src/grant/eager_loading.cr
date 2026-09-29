@@ -277,48 +277,48 @@ module Grant::EagerLoading
   module ClassMethods
     def strict_loading(value : Bool = true) : Grant::Query::Builder(self)
       query = get_query_builder
-      query.strict_loading(value)
+      query.strict_loading!(value)
       query
     end
 
     def includes(*associations)
       query = get_query_builder
-      query.includes(*associations)
+      query.includes!(*associations)
       query
     end
 
     def includes(**nested_associations)
       query = get_query_builder
       nested_associations.each do |name, nested|
-        query.includes({name => nested.is_a?(Array) ? nested : [nested]})
+        query.includes!({name => nested.is_a?(Array) ? nested : [nested]})
       end
       query
     end
 
     def preload(*associations)
       query = get_query_builder
-      query.preload(*associations)
+      query.preload!(*associations)
       query
     end
 
     def preload(**nested_associations)
       query = get_query_builder
       nested_associations.each do |name, nested|
-        query.preload({name => nested.is_a?(Array) ? nested : [nested]})
+        query.preload!({name => nested.is_a?(Array) ? nested : [nested]})
       end
       query
     end
 
     def eager_load(*associations)
       query = get_query_builder
-      query.eager_load(*associations)
+      query.eager_load!(*associations)
       query
     end
 
     def eager_load(**nested_associations)
       query = get_query_builder
       nested_associations.each do |name, nested|
-        query.eager_load({name => nested.is_a?(Array) ? nested : [nested]})
+        query.eager_load!({name => nested.is_a?(Array) ? nested : [nested]})
       end
       query
     end
