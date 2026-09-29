@@ -60,6 +60,10 @@ module Grant::Polymorphic
     # Grant::Polymorphic.load_polymorphic("Post", 1_i64) # => Post? with id 1
     # ```
     def self.load_polymorphic(type_name : String, id : Grant::Columns::Type) : Grant::Base?
+      # A stored key is never an array; narrowing keeps `find` on its
+      # single-key overload instead of the `find(ids : Array)` one.
+      return nil if id.is_a?(Array)
+
       case type_name
       {% for name, klass in REGISTERED_TYPES %}
       when {{name}}
