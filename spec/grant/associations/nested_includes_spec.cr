@@ -162,6 +162,22 @@ describe "nested includes" do
     countries.first.ni_cities.map(&.name).should eq(["Paris"])
   end
 
+  it "keeps every row of the association when the where has an OR" do
+    france = NiCountry.create!(name: "france")
+    NiCity.create!(name: "Paris", ni_country_id: france.id)
+    NiCity.create!(name: "Lyon", ni_country_id: france.id)
+    germany = NiCountry.create!(name: "germany")
+    NiCity.create!(name: "Berlin", ni_country_id: germany.id)
+
+    countries = NiCountry.includes(:ni_cities)
+      .where("ni_countries.name", :eq, "germany")
+      .or("ni_cities.name", :eq, "Paris")
+      .order(:id).select
+    countries.map(&.name).should eq(["france", "germany"])
+    countries.first.ni_cities.map(&.name).sort!.should eq(["Lyon", "Paris"])
+    countries.last.ni_cities.map(&.name).should eq(["Berlin"])
+  end
+
   it "matches the same restriction with an explicit eager_load" do
     country = NiCountry.create!(name: "france")
     NiCity.create!(name: "Paris", ni_country_id: country.id)

@@ -12,6 +12,10 @@ class Grant::Query::Builder(Model)
     return restrictions if @includes_associations.empty? && @eager_load_associations.empty?
 
     referenced = referenced_where_tables
+    # Conditions render flat (`a OR b AND c`), so a condition taken out of an
+    # OR chain would change meaning on the association query and drop rows the
+    # join matched. With an OR present the association loads all its rows.
+    replayable = @where_fields.each_with_index.none? { |field, index| index > 0 && field[:join] == :or }
     (@includes_associations + @eager_load_associations).each do |spec|
       names = case spec
               when Symbol then [spec]
@@ -28,7 +32,7 @@ class Grant::Query::Builder(Model)
         next unless joined || referenced.includes?(target_table)
 
         add_eager_load_join(name) unless @join_clauses.any? { |clause| clause[:table] == target_table }
-        restrictions[name] = where_fields_for_table(target_table)
+        restrictions[name] = replayable ? where_fields_for_table(target_table) : [] of WhereField
       end
     end
     restrictions
