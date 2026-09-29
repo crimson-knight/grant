@@ -288,6 +288,13 @@ module Grant::STI
       sti_root
     end
 
+    # The name stored in the type column of a polymorphic association pointing
+    # at this class: the STI root's name, so every member of the hierarchy is
+    # found through one association (ActiveRecord's `polymorphic_name`).
+    def polymorphic_name : String
+      sti_root.name
+    end
+
     # Resolves a `type` column value (*type_name*) to its registered subclass and
     # returns that class. Raises `Grant::STI::SubclassNotFound` when no class is
     # registered for the value (e.g. the class is not yet required).
