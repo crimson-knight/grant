@@ -24,6 +24,12 @@ require "../../spec_helper"
       rec.errors.add(name, "is too short") if val.to_s.size < 3
     end
 
+    validates_each :last_name do |record, attr, value|
+      next if value.nil?
+      next unless value.includes?(" ")
+      record.errors.add(attr, "must be one word", type: :one_word)
+    end
+
     def skip_names? : Bool
       !!skip_names
     end
@@ -90,6 +96,17 @@ describe "validates_each block form" do
 
     record.skip_names = true
     record.valid?.should be_true
+  end
+
+  it "lets a bare next skip the rest of the block" do
+    record = V01EachBlock.new
+    record.first_name = "Ada"
+    record.valid?.should be_true
+    record.last_name = "Byron"
+    record.valid?.should be_true
+    record.last_name = "Von Byron"
+    record.valid?.should be_false
+    record.errors.map(&.type).should eq([:one_word])
   end
 
   it "still supports with: naming an EachValidator subclass" do

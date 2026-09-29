@@ -838,7 +838,7 @@ module Grant::Validators
             %operand = {{operand}}
           {% end %}
           next false if %operand.nil?
-          next false unless value.not_nil! {{c[:op].id}} %operand.not_nil!
+          next false unless value {{c[:op].id}} %operand
         {% end %}
 
         true
@@ -882,7 +882,7 @@ module Grant::Validators
   # With a block (AR's `validates_each`): the block runs once per attribute
   # with the record, the attribute name as a Symbol and its value, and adds
   # its own errors. `allow_nil:` / `allow_blank:` skip the block for such
-  # values.
+  # values, and a bare `next` inside the block skips the rest of it.
   #
   # ```
   # validates_each :first_name, :last_name, allow_nil: true do |record, attr, value|
@@ -911,7 +911,13 @@ module Grant::Validators
           {% if block.args.size > 1 %}{{block.args[1].id}} = :{{attribute.id}}{% end %}
           {% if block.args.size > 2 && block.args[2].id.stringify != "value" %}{{block.args[2].id}} = value{% end %}
           %before = record.errors.size
-          {{block.body}}
+          # `1.times` gives the user's block body its own block scope, so a
+          # bare `next` (the Ruby idiom for skipping a value) ends the body
+          # instead of returning nil from the validator. It inlines at compile
+          # time and allocates nothing.
+          1.times do
+            {{block.body}}
+          end
           record.errors.size == %before
         end
       {% else %}
@@ -1147,7 +1153,7 @@ module Grant::Validators
   # as `#valid?`.
   #
   # ```
-  # post.validate!         # => post, or raises Grant::RecordInvalid
+  # post.validate! # => post, or raises Grant::RecordInvalid
   # post.validate!(:publish)
   # ```
   def validate!(context : Symbol | Array(Symbol) | Nil = nil) : self

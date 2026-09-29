@@ -143,8 +143,9 @@ describe "validation contexts" do
 
     it "accepts an Array of contexts and save!" do
       article = fresh_article(summary: nil, notes: nil)
-      article.save!(context: [:create, :update])
-    rescue ex : Grant::RecordInvalid
+      ex = expect_raises(Grant::RecordInvalid) do
+        article.save!(context: [:create, :update])
+      end
       ex.record.errors.map(&.field.to_s).should eq(["notes"])
     end
 

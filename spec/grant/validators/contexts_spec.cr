@@ -18,7 +18,7 @@ describe "Validation Contexts" do
       record = ContextUser.new
       record.username = "john"
       record.email = "john@example.com"
-      record.terms_accepted = false # would fail on create
+      record.terms_accepted = false        # would fail on create
       record.update_reason = "some reason" # required on update
       record.valid?(context: :update).should be_true
     end
