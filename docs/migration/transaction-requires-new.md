@@ -24,5 +24,12 @@
   when nothing is open) instead of `TransactionState?`.
 - `isolation:` on a nested (joined or savepoint) transaction raises
   `Grant::TransactionIsolationError` instead of being ignored.
-- The transaction always opens on the writer connection.
+- The transaction always opens on the writer connection, and automatic read/write
+  splitting keeps every statement inside an open transaction on the writer (reads
+  no longer route to a replica mid-transaction).
+- A model whose database already has an open transaction, used inside a transaction
+  on another database, now joins (or savepoints inside) its own open transaction
+  instead of opening a second transaction on a fresh connection.
+- `Grant::Transaction::SerializationError` and `ReadOnlyError` now descend from
+  `Grant::ErrorBase`.
 - Savepoint names are `sp_1`, `sp_2`, ... per transaction (no random suffix).
