@@ -1,4 +1,5 @@
 require "./base"
+require "../grant/schema/column_info"
 require "mysql"
 
 # crystal-mysql 0.17.0 does not register the protocol JSON type (245), so its
@@ -435,5 +436,136 @@ class Grant::Adapter::Mysql < Grant::Adapter::Base
                 return nil
               end
     "#{keyword} (#{index_names.map { |n| quote(n) }.join(", ")})"
+  end
+
+  # Catalog queries read `information_schema` for *namespace* (a database name)
+  # or, without one, the connection's selected database, one statement per kind
+  # of catalog data. CAST(... AS CHAR) keeps
+  # every text column a String regardless of the server's column collation.
+  def catalog_tables(namespace : String? = nil) : Array(String)
+    names = [] of String
+    catalog_query(<<-SQL, [namespace.as(DB::Any)]) { |rs| names << rs.read(String) }
+      SELECT CAST(TABLE_NAME AS CHAR) FROM information_schema.TABLES
+      WHERE TABLE_SCHEMA = COALESCE(?, DATABASE()) AND TABLE_TYPE = 'BASE TABLE'
+      ORDER BY TABLE_NAME
+      SQL
+    names
+  end
+
+  def catalog_columns(table : String? = nil, namespace : String? = nil) : Array(Grant::Schema::ColumnInfo)
+    filter = table ? "AND c.TABLE_NAME = ?" : ""
+    sql = <<-SQL
+      SELECT CAST(c.TABLE_NAME AS CHAR), CAST(c.COLUMN_NAME AS CHAR), CAST(c.COLUMN_TYPE AS CHAR),
+             c.IS_NULLABLE = 'YES', CAST(c.COLUMN_DEFAULT AS CHAR), COALESCE(s.SEQ_IN_INDEX, 0),
+             c.EXTRA LIKE '%auto_increment%', c.ORDINAL_POSITION, CAST(c.COLUMN_COMMENT AS CHAR)
+      FROM information_schema.COLUMNS c
+      LEFT JOIN information_schema.STATISTICS s
+        ON s.TABLE_SCHEMA = c.TABLE_SCHEMA AND s.TABLE_NAME = c.TABLE_NAME
+       AND s.COLUMN_NAME = c.COLUMN_NAME AND s.INDEX_NAME = 'PRIMARY'
+      WHERE c.TABLE_SCHEMA = COALESCE(?, DATABASE()) #{filter}
+      ORDER BY c.TABLE_NAME, c.ORDINAL_POSITION
+      SQL
+    args = [namespace.as(DB::Any)]
+    args << table if table
+
+    maria = mariadb?
+    columns = [] of Grant::Schema::ColumnInfo
+    catalog_query(sql, args) do |rs|
+      table_name = rs.read(String)
+      name = rs.read(String)
+      type = rs.read(String)
+      nullable = rs.read(Int64) != 0
+      default = rs.read(String?)
+      key_position = rs.read(Int64).to_i
+      auto = rs.read(Int64) != 0
+      position = rs.read(Int64).to_i
+      comment = rs.read(String?)
+      # MariaDB reports "no default" as the text NULL.
+      default = nil if maria && default == "NULL"
+      columns << Grant::Schema::ColumnInfo.new(table_name, name, type, nullable, default,
+        key_position, auto, position, comment.presence)
+    end
+    columns
+  end
+
+  def catalog_indexes(table : String? = nil, namespace : String? = nil) : Array(Grant::Schema::IndexInfo)
+    filter = table ? "AND TABLE_NAME = ?" : ""
+    sql = <<-SQL
+      SELECT CAST(TABLE_NAME AS CHAR), CAST(INDEX_NAME AS CHAR), NON_UNIQUE, CAST(COLUMN_NAME AS CHAR)
+      FROM information_schema.STATISTICS
+      WHERE TABLE_SCHEMA = COALESCE(?, DATABASE()) AND INDEX_NAME <> 'PRIMARY' #{filter}
+      ORDER BY TABLE_NAME, INDEX_NAME, SEQ_IN_INDEX
+      SQL
+    args = [namespace.as(DB::Any)]
+    args << table if table
+
+    indexes = [] of Grant::Schema::IndexInfo
+    current = nil.as({String, String, Bool, Array(String), Bool}?)
+    flush = -> {
+      if entry = current
+        indexes << Grant::Schema::IndexInfo.new(entry[0], entry[1], entry[3], entry[2], nil, entry[4])
+      end
+    }
+    catalog_query(sql, args) do |rs|
+      table_name = rs.read(String)
+      index_name = rs.read(String)
+      unique = rs.read(Int64) == 0
+      column = rs.read(String?)
+      # Functional key parts have no column name.
+      expression = column.nil?
+      if (entry = current) && entry[0] == table_name && entry[1] == index_name
+        entry[3] << (column || "(expression)")
+        current = {entry[0], entry[1], entry[2], entry[3], entry[4] || expression}
+      else
+        flush.call
+        current = {table_name, index_name, unique, [column || "(expression)"], expression}
+      end
+    end
+    flush.call
+    indexes
+  end
+
+  def catalog_foreign_keys(table : String? = nil, namespace : String? = nil) : Array(Grant::Schema::ForeignKeyInfo)
+    filter = table ? "AND k.TABLE_NAME = ?" : ""
+    sql = <<-SQL
+      SELECT CAST(k.TABLE_NAME AS CHAR), CAST(k.CONSTRAINT_NAME AS CHAR), CAST(k.REFERENCED_TABLE_NAME AS CHAR),
+             CAST(k.COLUMN_NAME AS CHAR), CAST(k.REFERENCED_COLUMN_NAME AS CHAR),
+             CAST(r.UPDATE_RULE AS CHAR), CAST(r.DELETE_RULE AS CHAR)
+      FROM information_schema.KEY_COLUMN_USAGE k
+      JOIN information_schema.REFERENTIAL_CONSTRAINTS r
+        ON r.CONSTRAINT_SCHEMA = k.CONSTRAINT_SCHEMA AND r.CONSTRAINT_NAME = k.CONSTRAINT_NAME
+       AND r.TABLE_NAME = k.TABLE_NAME
+      WHERE k.TABLE_SCHEMA = COALESCE(?, DATABASE()) AND k.REFERENCED_TABLE_NAME IS NOT NULL #{filter}
+      ORDER BY k.TABLE_NAME, k.CONSTRAINT_NAME, k.ORDINAL_POSITION
+      SQL
+    args = [namespace.as(DB::Any)]
+    args << table if table
+
+    keys = [] of Grant::Schema::ForeignKeyInfo
+    current = nil.as({String, String, String, Array(String), Array(String), String, String}?)
+    flush = -> {
+      if entry = current
+        keys << Grant::Schema::ForeignKeyInfo.new(entry[0], entry[1], entry[3], entry[2], entry[4],
+          Grant::Schema::ReferentialAction.parse(entry[5]), Grant::Schema::ReferentialAction.parse(entry[6]))
+      end
+    }
+    catalog_query(sql, args) do |rs|
+      table_name = rs.read(String)
+      name = rs.read(String)
+      to_table = rs.read(String)
+      from = rs.read(String)
+      to = rs.read(String)
+      on_update = rs.read(String)
+      on_delete = rs.read(String)
+      if (entry = current) && entry[0] == table_name && entry[1] == name
+        entry[3] << from
+        entry[4] << to
+      else
+        flush.call
+        current = {table_name, name, to_table, [from], [to], on_update, on_delete}
+      end
+    end
+    flush.call
+    keys
   end
 end

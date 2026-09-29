@@ -1,5 +1,6 @@
 require "pg"
 require "./base"
+require "../grant/schema/column_info"
 
 # PostgreSQL implementation of the Adapter
 class Grant::Adapter::Pg < Grant::Adapter::Base
@@ -377,5 +378,162 @@ class Grant::Adapter::Pg < Grant::Adapter::Base
   # PostgreSQL reports affected rows directly on the exec result.
   def rows_affected_for_optimistic_lock(db, result : DB::ExecResult) : Int64
     result.rows_affected
+  end
+
+  # The catalog queries read `pg_catalog` directly and inspect one schema:
+  # *namespace* when given, otherwise the connection's `current_schema()`.
+  def catalog_tables(namespace : String? = nil) : Array(String)
+    names = [] of String
+    catalog_query(<<-SQL, [namespace.as(DB::Any)]) { |rs| names << rs.read(String) }
+      SELECT c.relname::text FROM pg_class c
+      JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = COALESCE($1::text, current_schema()) AND c.relkind IN ('r', 'p')
+      ORDER BY c.relname
+      SQL
+    names
+  end
+
+  private def pg_catalog_args(table : String?, namespace : String?) : Array(DB::Any)
+    args = [namespace.as(DB::Any)]
+    args << table if table
+    args
+  end
+
+  def catalog_columns(table : String? = nil, namespace : String? = nil) : Array(Grant::Schema::ColumnInfo)
+    filter = table ? "AND c.relname = $2" : ""
+    sql = <<-SQL
+      SELECT c.relname::text, a.attname::text, format_type(a.atttypid, a.atttypmod),
+             NOT a.attnotnull, pg_get_expr(d.adbin, d.adrelid),
+             -- indkey is 0-based, so the array position is one behind the key position
+             COALESCE(array_position(i.indkey::int2[], a.attnum) + 1, 0)::int,
+             (a.attidentity IN ('a', 'd') OR COALESCE(pg_get_expr(d.adbin, d.adrelid) LIKE 'nextval(%', false)),
+             a.attnum::int, col_description(c.oid, a.attnum)
+      FROM pg_attribute a
+      JOIN pg_class c ON c.oid = a.attrelid
+      JOIN pg_namespace n ON n.oid = c.relnamespace
+      LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+      LEFT JOIN pg_index i ON i.indrelid = c.oid AND i.indisprimary
+      WHERE n.nspname = COALESCE($1::text, current_schema()) AND c.relkind IN ('r', 'p')
+        AND a.attnum > 0 AND NOT a.attisdropped #{filter}
+      ORDER BY c.relname, a.attnum
+      SQL
+    args = pg_catalog_args(table, namespace)
+
+    columns = [] of Grant::Schema::ColumnInfo
+    catalog_query(sql, args) do |rs|
+      table_name = rs.read(String)
+      name = rs.read(String)
+      type = rs.read(String)
+      nullable = rs.read(Bool)
+      default = rs.read(String?)
+      key_position = rs.read(Int32)
+      auto = rs.read(Bool)
+      position = rs.read(Int32)
+      comment = rs.read(String?)
+      columns << Grant::Schema::ColumnInfo.new(table_name, name, type, nullable, default,
+        key_position, auto, position, comment)
+    end
+    columns
+  end
+
+  def catalog_indexes(table : String? = nil, namespace : String? = nil) : Array(Grant::Schema::IndexInfo)
+    filter = table ? "AND t.relname = $2" : ""
+    sql = <<-SQL
+      SELECT t.relname::text, i.relname::text, ix.indisunique,
+             pg_get_expr(ix.indpred, ix.indrelid),
+             COALESCE(a.attname::text, pg_get_indexdef(ix.indexrelid, k.ord::int, true)),
+             (k.attnum = 0)
+      FROM pg_index ix
+      JOIN pg_class i ON i.oid = ix.indexrelid
+      JOIN pg_class t ON t.oid = ix.indrelid
+      JOIN pg_namespace n ON n.oid = t.relnamespace
+      CROSS JOIN LATERAL unnest(ix.indkey::int2[]) WITH ORDINALITY AS k(attnum, ord)
+      LEFT JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum
+      WHERE n.nspname = COALESCE($1::text, current_schema()) AND NOT ix.indisprimary
+        AND k.ord <= ix.indnkeyatts #{filter}
+      ORDER BY t.relname, i.relname, k.ord
+      SQL
+    args = pg_catalog_args(table, namespace)
+
+    indexes = [] of Grant::Schema::IndexInfo
+    current = nil.as({String, String, Bool, String?, Array(String), Bool}?)
+    flush = -> {
+      if entry = current
+        indexes << Grant::Schema::IndexInfo.new(entry[0], entry[1], entry[4], entry[2], entry[3], entry[5])
+      end
+    }
+    catalog_query(sql, args) do |rs|
+      table_name = rs.read(String)
+      index_name = rs.read(String)
+      unique = rs.read(Bool)
+      where = rs.read(String?)
+      column = rs.read(String)
+      expression = rs.read(Bool)
+      if (entry = current) && entry[0] == table_name && entry[1] == index_name
+        entry[4] << column
+        current = {entry[0], entry[1], entry[2], entry[3], entry[4], entry[5] || expression}
+      else
+        flush.call
+        current = {table_name, index_name, unique, where, [column], expression}
+      end
+    end
+    flush.call
+    indexes
+  end
+
+  def catalog_foreign_keys(table : String? = nil, namespace : String? = nil) : Array(Grant::Schema::ForeignKeyInfo)
+    filter = table ? "AND t.relname = $2" : ""
+    sql = <<-SQL
+      SELECT t.relname::text, c.conname::text, ft.relname::text, a.attname::text, fa.attname::text,
+             c.confupdtype::text, c.confdeltype::text
+      FROM pg_constraint c
+      JOIN pg_class t ON t.oid = c.conrelid
+      JOIN pg_class ft ON ft.oid = c.confrelid
+      JOIN pg_namespace n ON n.oid = t.relnamespace
+      CROSS JOIN LATERAL unnest(c.conkey, c.confkey) WITH ORDINALITY AS k(local_attnum, foreign_attnum, ord)
+      JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.local_attnum
+      JOIN pg_attribute fa ON fa.attrelid = c.confrelid AND fa.attnum = k.foreign_attnum
+      WHERE c.contype = 'f' AND n.nspname = COALESCE($1::text, current_schema()) #{filter}
+      ORDER BY t.relname, c.conname, k.ord
+      SQL
+    args = pg_catalog_args(table, namespace)
+
+    keys = [] of Grant::Schema::ForeignKeyInfo
+    current = nil.as({String, String, String, Array(String), Array(String), String, String}?)
+    flush = -> {
+      if entry = current
+        keys << Grant::Schema::ForeignKeyInfo.new(entry[0], entry[1], entry[3], entry[2], entry[4],
+          pg_referential_action(entry[5]), pg_referential_action(entry[6]))
+      end
+    }
+    catalog_query(sql, args) do |rs|
+      table_name = rs.read(String)
+      name = rs.read(String)
+      to_table = rs.read(String)
+      from = rs.read(String)
+      to = rs.read(String)
+      on_update = rs.read(String)
+      on_delete = rs.read(String)
+      if (entry = current) && entry[0] == table_name && entry[1] == name
+        entry[3] << from
+        entry[4] << to
+      else
+        flush.call
+        current = {table_name, name, to_table, [from], [to], on_update, on_delete}
+      end
+    end
+    flush.call
+    keys
+  end
+
+  # `pg_constraint` stores the action as one letter.
+  private def pg_referential_action(code : String) : Grant::Schema::ReferentialAction
+    case code
+    when "c" then Grant::Schema::ReferentialAction::Cascade
+    when "r" then Grant::Schema::ReferentialAction::Restrict
+    when "n" then Grant::Schema::ReferentialAction::SetNull
+    when "d" then Grant::Schema::ReferentialAction::SetDefault
+    else          Grant::Schema::ReferentialAction::NoAction
+    end
   end
 end
