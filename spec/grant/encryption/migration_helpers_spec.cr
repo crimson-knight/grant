@@ -81,6 +81,8 @@ describe Grant::Encryption::MigrationHelpers do
       selects.size.should eq(4) # 26 rows in batches of 7: 7 + 7 + 7 + 5
       entries.none?(&.includes?("OFFSET")).should be_true
       selects[1..].each { |entry| entry.should contain("> ") }
+      # One bulk UPDATE per batch, not one per row.
+      entries.count(&.starts_with?("UPDATE")).should eq(4)
     end
 
     it "is idempotent: a second run leaves ciphertext untouched" do

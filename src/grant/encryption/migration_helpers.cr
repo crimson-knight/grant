@@ -4,9 +4,9 @@ module Grant::Encryption
   # Every helper walks the table in keyset batches (`WHERE pk > last ORDER BY
   # pk LIMIT n`), so a batch costs the same at row one and row a million and a
   # row whose value changes cannot be skipped or visited twice. Values are read
-  # and written as raw column text, one bound `UPDATE` per changed row inside a
-  # per-batch transaction: no model instances, validations, callbacks or
-  # timestamps. All of them are idempotent, so an interrupted run can be
+  # and written as raw column text, one bound `UPDATE ... CASE` statement per
+  # batch inside a per-batch transaction: no model instances, validations,
+  # callbacks or timestamps. All of them are idempotent, so an interrupted run can be
   # restarted.
   module MigrationHelpers
     alias RawRow = Tuple(Grant::Columns::Type, String?, String?)
@@ -291,11 +291,32 @@ module Grant::Encryption
       end
     end
 
-    # One bound `UPDATE table SET column = ? WHERE pk = ?` per changed row.
+    # Rows written per statement. Each row binds three values, which keeps a
+    # statement under SQLite's historical 999-variable limit.
+    WRITE_CHUNK_SIZE = 300
+
+    # Writes a batch with one bound statement per `WRITE_CHUNK_SIZE` rows:
+    # `UPDATE t SET col = CASE pk WHEN ? THEN ? ... END WHERE pk IN (?, ...)`.
+    # The rows get different values, so a plain `update_all` cannot express it.
     private def self.write_batch(model_class : Grant::Base.class, column : String, changes : Array(Tuple(Grant::Columns::Type, String))) : Nil
-      key_column = model_class.primary_name
-      changes.each do |key, value|
-        model_class.where(key_column, :eq, key).update_all([{column, value.as(Grant::Columns::Type)}])
+      return if changes.empty?
+
+      model_class.guard_writes!
+      adapter = model_class.adapter
+      quoted_key = model_class.quote(model_class.primary_name)
+      quoted_column = model_class.quote(column)
+
+      changes.each_slice(WRITE_CHUNK_SIZE) do |chunk|
+        assembler = model_class.order({model_class.primary_name => :asc}).assembler
+        branches = chunk.map { |(key, value)| "WHEN #{assembler.add_parameter(key)} THEN #{assembler.add_parameter(value)}" }
+        keys = chunk.map { |(key, _)| assembler.add_parameter(key) }
+        sql = "UPDATE #{model_class.quoted_table_name} SET #{quoted_column} = CASE #{quoted_key} #{branches.join(" ")} END WHERE #{quoted_key} IN (#{keys.join(", ")})"
+        arguments = assembler.numbered_parameters
+
+        model_class.mark_write_operation
+        adapter.open(sql, arguments, model_class.name) do |db|
+          db.exec(sql, args: adapter.normalize_bind_values(arguments))
+        end
       end
     end
   end
