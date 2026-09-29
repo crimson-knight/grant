@@ -124,6 +124,41 @@ module Grant::Integrators
     find_by(**args) || new(**args) { |record| yield record }
   end
 
+  # Attributes-hash forms of `find_or_create_by`, `find_or_create_by!` and
+  # `find_or_initialize_by`; the block runs only when a record is built.
+  #
+  # ```
+  # User.find_or_create_by({"email" => "ada@example.com"})
+  # ```
+  def find_or_create_by(args : Grant::ModelArgs)
+    find_by(args) || create(args)
+  end
+
+  # :ditto:
+  def find_or_create_by(args : Grant::ModelArgs, &)
+    find_by(args) || create(args) { |record| yield record }
+  end
+
+  # :ditto:
+  def find_or_create_by!(args : Grant::ModelArgs)
+    find_by(args) || create!(args)
+  end
+
+  # :ditto:
+  def find_or_create_by!(args : Grant::ModelArgs, &)
+    find_by(args) || create!(args) { |record| yield record }
+  end
+
+  # :ditto:
+  def find_or_initialize_by(args : Grant::ModelArgs)
+    find_by(args) || new(args)
+  end
+
+  # :ditto:
+  def find_or_initialize_by(args : Grant::ModelArgs, &)
+    find_by(args) || new(args) { |record| yield record }
+  end
+
   # Class-level forms of the relation methods below start from `current_scope`,
   # so a default scope's equality predicates seed the new record.
   {% for name in %w(create_or_find_by create_or_find_by! first_or_create first_or_create! first_or_initialize) %}

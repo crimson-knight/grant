@@ -93,3 +93,30 @@ describe "find_or_create_by and find_or_initialize_by" do
     end
   end
 end
+
+describe "find_or_create_by with an attributes hash" do
+  before_all { ConvenienceSpecSupport.reset_items }
+  before_each { ConvItem.clear }
+
+  it "finds, creates and initializes at class level" do
+    args = {"name" => "h"} of Symbol | String => Grant::Columns::Type
+    created = ConvItem.find_or_create_by(args) { |record| record.kind = "blk" }
+    created.persisted?.should be_true
+    created.kind.should eq("blk")
+    ConvItem.find_or_create_by!(args).id.should eq(created.id)
+    ConvItem.find_or_initialize_by({"name" => "new"} of Symbol | String => Grant::Columns::Type).new_record?.should be_true
+    expect_raises(Grant::RecordInvalid) do
+      ConvItem.find_or_create_by!({"name" => ""} of Symbol | String => Grant::Columns::Type)
+    end
+  end
+end
+
+describe "relation build and after_initialize" do
+  before_all { ConvInitItem.migrator.drop_and_create }
+
+  it "runs after_initialize after the scope attributes and the block are applied" do
+    built = ConvInitItem.where(status: "live").build(name: "n") { |record| record.status = "blk" }
+    built.seen.should eq("n/blk")
+    ConvInitItem.where(status: "live").new(name: "m").seen.should eq("m/live")
+  end
+end
