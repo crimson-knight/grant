@@ -81,7 +81,7 @@ describe "Grant::QueryAnalysis" do
 
       analysis = Grant::QueryAnalysis::N1Detector.detect do
         # This is a single query, not N+1
-        teachers = Teacher.all
+        teachers = Teacher.all.to_a
         teachers.size.should eq(3)
       end
 
@@ -94,7 +94,7 @@ describe "Grant::QueryAnalysis" do
       Teacher.create(name: "Test Teacher")
 
       analysis = Grant::QueryAnalysis::N1Detector.detect do
-        Teacher.all
+        Teacher.all.to_a
         Teacher.first
       end
 
@@ -112,7 +112,7 @@ describe "Grant::QueryAnalysis" do
       Klass.create(name: "Klass 2", teacher_id: teacher.id)
 
       analysis = Grant::QueryAnalysis::N1Detector.detect do
-        teachers = Teacher.all
+        teachers = Teacher.all.to_a
         teachers.each do |t|
           t.klasses.all
         end
@@ -132,7 +132,7 @@ describe "Grant::QueryAnalysis" do
       detector = Grant::QueryAnalysis::N1Detector.instance
 
       detector.enable!
-      Teacher.all
+      Teacher.all.to_a
       detector.disable!
 
       # Clear should remove all recorded queries
@@ -203,7 +203,7 @@ describe "Grant::QueryAnalysis" do
 
       Teacher.clear
       Teacher.create(name: "Test Teacher")
-      Teacher.all
+      Teacher.all.to_a
 
       analysis = detector.analyze
       analysis.total_queries.should be > 0

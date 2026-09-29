@@ -47,7 +47,7 @@ describe "Grant::Logging" do
       teacher = Teacher.create(name: "Test Teacher")
 
       # Now perform a SELECT query which will go through the executor
-      Teacher.all
+      Teacher.all.to_a
 
       # Add a small delay to ensure log messages are processed
       sleep(100.milliseconds)

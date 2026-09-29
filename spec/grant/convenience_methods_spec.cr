@@ -227,7 +227,7 @@ describe "Grant::ConvenienceMethods" do
 
       ConvenienceUser.upsert_all(attributes, unique_by: [:email])
 
-      users = ConvenienceUser.all
+      users = ConvenienceUser.all.to_a
       users.size.should eq(2)
     end
 
@@ -240,7 +240,7 @@ describe "Grant::ConvenienceMethods" do
 
       ConvenienceUser.upsert_all(attributes, unique_by: [:email])
 
-      users = ConvenienceUser.all
+      users = ConvenienceUser.all.to_a
       users.size.should eq(1)
       users.first.name.should eq("John Doe")
       users.first.age.should eq(26)
@@ -343,7 +343,7 @@ describe "Grant::ConvenienceMethods" do
       count = ConvenienceUser.destroy_by(name: "John")
       count.should eq(2)
 
-      remaining = ConvenienceUser.all
+      remaining = ConvenienceUser.all.to_a
       remaining.size.should eq(1)
       remaining.first.name.should eq("Jane")
     end
