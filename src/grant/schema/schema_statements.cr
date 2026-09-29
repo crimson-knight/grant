@@ -157,16 +157,15 @@ module Grant::Schema
       if dialect.sqlite?
         raise UnsupportedOperation.new("SQLite cannot change the default of '#{table}.#{column}' in place; it needs a table rebuild")
       end
-      if default_sql.nil? && to.is_a?(Unset)
-        raise InvalidDefinition.new("change_column_default needs to: or default_sql:")
-      end
       head = "ALTER TABLE #{dialect.quote(table.to_s)} ALTER COLUMN #{dialect.quote(column.to_s)}"
       if expression = default_sql
         ["#{head} SET DEFAULT #{dialect.default_expression(expression)}"]
+      elsif to.is_a?(Unset)
+        raise InvalidDefinition.new("change_column_default needs to: or default_sql:")
       elsif to.nil?
         ["#{head} DROP DEFAULT"]
       else
-        ["#{head} SET DEFAULT #{dialect.quote_literal(to.as(DefaultLiteral))}"]
+        ["#{head} SET DEFAULT #{dialect.quote_literal(to)}"]
       end
     end
 
