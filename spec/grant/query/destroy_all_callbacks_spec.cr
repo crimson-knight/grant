@@ -106,6 +106,21 @@ describe "Relation destroy_all with callbacks" do
     DestroyAllOwner.transaction_flags.should eq(Array.new(12, true))
   end
 
+  it "destroys more than one batch, paging by keyset" do
+    reset_destroy_tables
+    rows = (1..1005).map { |index| {"label" => "bulk#{index}".as(Grant::Columns::Type)} of String | Symbol => Grant::Columns::Type }
+    DestroyAllOwner.insert_all(rows, record_timestamps: false)
+
+    statements = capture_sql { DestroyAllOwner.all.destroy_all.should eq(1005) }
+
+    pages = statements.select { |sql| sql.starts_with?("SELECT") && sql.includes?("destroy_all_owners") && sql.includes?("LIMIT") }
+    pages.size.should eq(2)
+    pages.each { |sql| sql.should_not contain("OFFSET") }
+    pages.last.should contain(">")
+    DestroyAllOwner.events.size.should eq(2010)
+    DestroyAllOwner.pluck(:id).should be_empty
+  end
+
   it "honors the relation's limit and leaves the rest" do
     reset_destroy_tables
     5.times { |index| DestroyAllOwner.create!(label: "o#{index}") }
