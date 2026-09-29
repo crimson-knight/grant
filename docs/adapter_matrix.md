@@ -127,7 +127,7 @@ end
 ```
 
 `binds` never holds the raw values. They are `[FILTERED]` unless
-`Grant::StatementInvalid.capture_bind_values = true`, and a captured value is
+`Grant.settings.capture_statement_bind_values = true`, and a captured value is
 cut to 64 characters with at most 20 kept, so an exception cannot pin a large
 payload in memory.
 

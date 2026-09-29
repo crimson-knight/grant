@@ -1,4 +1,5 @@
 require "./exceptions"
+require "./settings"
 
 module Grant
   # Raised when a persistence call fails validation. It is the validation
@@ -41,7 +42,7 @@ module Grant
   #
   # `#sql` is the failing statement text. `#binds` holds one entry per bound
   # parameter and never retains the raw values: they are redacted unless
-  # `Grant::StatementInvalid.capture_bind_values` is enabled, and even then
+  # `Grant.settings.capture_statement_bind_values` is enabled, and even then
   # each value is truncated and only the first `MAX_BINDS` are kept, so an
   # exception cannot pin a large payload in memory or leak a secret to a log.
   #
@@ -50,11 +51,6 @@ module Grant
     MAX_BINDS       = 20
     MAX_BIND_LENGTH = 64
     REDACTED        = "[FILTERED]"
-
-    # When true, `#binds` holds truncated bind values instead of a redaction
-    # marker. Set it once while configuring the application, for example only
-    # in development.
-    class_property? capture_bind_values : Bool = false
 
     getter sql : String?
     getter binds : Array(String)
@@ -70,9 +66,10 @@ module Grant
       described = [] of String
       return described unless binds
 
+      capture = Grant.settings.capture_statement_bind_values?
       binds.each do |value|
         break if described.size >= MAX_BINDS
-        described << (capture_bind_values? ? truncate(value.to_s) : REDACTED)
+        described << (capture ? truncate(value.to_s) : REDACTED)
       end
       described
     end

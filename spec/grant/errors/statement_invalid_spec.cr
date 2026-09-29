@@ -1,11 +1,13 @@
 require "../../spec_helper"
 
 private def with_bind_capture(enabled : Bool, &)
-  previous = Grant::StatementInvalid.capture_bind_values?
-  Grant::StatementInvalid.capture_bind_values = enabled
-  yield
-ensure
-  Grant::StatementInvalid.capture_bind_values = previous.nil? ? false : previous
+  previous = Grant.settings.capture_statement_bind_values?
+  Grant.settings.capture_statement_bind_values = enabled
+  begin
+    yield
+  ensure
+    Grant.settings.capture_statement_bind_values = previous
+  end
 end
 
 describe Grant::StatementInvalid do
