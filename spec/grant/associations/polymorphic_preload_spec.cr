@@ -152,6 +152,22 @@ describe "polymorphic association preloading" do
       AssociationQueryCounter.selects { PpPost.includes(:pp_comments).select.to_a }.should eq(2)
     end
 
+    it "eager_loads through a join on the key and the stored type" do
+      post = PpPost.create!(title: "post")
+      photo = PpPhoto.create!(caption: "photo")
+      PpComment.create!(body: "hit", commentable_id: post.id, commentable_type: "PpPost")
+      PpComment.create!(body: "miss", commentable_id: post.id, commentable_type: "PpPost")
+      PpComment.create!(body: "hit", commentable_id: photo.id, commentable_type: "PpPhoto")
+
+      relation = PpPost.eager_load(:pp_comments)
+      relation.to_sql.should contain("LEFT JOIN")
+      relation.distinct?.should be_true
+
+      posts = PpPost.eager_load(:pp_comments).where("pp_comments.body = ?", "hit").select
+      posts.map(&.id).should eq([post.id])
+      posts.first.pp_comments.map(&.body).should eq(["hit"])
+    end
+
     it "counts and filters in SQL without loading rows" do
       post = PpPost.create!(title: "post")
       PpComment.create!(body: "a", commentable_id: post.id, commentable_type: "PpPost")

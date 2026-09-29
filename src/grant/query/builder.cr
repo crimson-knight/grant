@@ -877,7 +877,8 @@ class Grant::Query::Builder(Model)
 
     if reflection.polymorphic_as
       add_polymorphic_as_eager_load_join(reflection)
-      return distinct
+      distinct!
+      return
     end
 
     metadata = Grant::AssociationRegistry.get(Model.name, association.to_s)
@@ -898,7 +899,7 @@ class Grant::Query::Builder(Model)
     type_name = Model.polymorphic_name.gsub("'", "''")
     on = "#{target_model.quote(target_model.table_name)}.#{target_model.quote(reflection.foreign_key)} = #{Model.quote(Model.table_name)}.#{Model.quote(reflection.primary_key)}" \
          " AND #{target_model.quote(target_model.table_name)}.#{target_model.quote(type_column)} = '#{type_name}'"
-    left_joins(target_model.table_name, on: on)
+    left_joins!(target_model.table_name, on: on)
   end
 
   private def add_through_eager_load_join(metadata : Grant::AssociationRegistry::AssociationMeta) : Bool
