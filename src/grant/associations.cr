@@ -583,13 +583,20 @@ module Grant::Associations
   #   association on the join model whose target is collected.
   # * `as:` — make this the `has_many` side of a polymorphic association.
   # * `dependent:` / `inverse_of:` / `autosave:` — see
-  #   `Grant::AssociationOptions`.
+  #   `Grant::AssociationOptions`. `dependent:` also picks how `delete`,
+  #   `delete_all` and `clear` remove records (`nullify` when absent).
+  # * `before_add:` / `after_add:` / `before_remove:` / `after_remove:` — a
+  #   method name called on the owner with the record, a typed proc
+  #   `->(owner : User, post : Post) { ... }`, or an array of them. A `before_`
+  #   hook that returns `false` (or raises) stops the operation. Hooks run per
+  #   record for `<<`, `build`, `create`, `delete`, `destroy` and `<singular>_ids=`,
+  #   never for `delete_all`.
   #
   # ```
   # class User < Grant::Base
   #   connection sqlite
   #   column id : Int64, primary: true
-  #   has_many :posts
+  #   has_many :posts, after_add: :log_post
   #   has_many :tags, through: :taggings # many-to-many via taggings
   # end
   #
@@ -706,12 +713,38 @@ module Grant::Associations
       unless association_loaded?({{method_name.stringify}})
         Grant::Logs::Association.debug { "Created has_many association collection - #{self.class.name}.#{{{method_name.stringify}}} [#{{{class_name.id.stringify}}}] [fk: #{{{foreign_key.id.stringify}}}]#{{{through ? " [through: " + through.id.stringify + "]" : ""}}}" }
       end
+      {% if options[:before_add] || options[:after_add] || options[:before_remove] || options[:after_remove] %}
+        callbacks = Grant::AssociationCallbacks({{class_name.id}}).new(
+          {% if options[:before_add] %}before_add: _grant_association_hook({{options[:before_add]}}, {{class_name}}),{% end %}
+          {% if options[:after_add] %}after_add: _grant_association_hook({{options[:after_add]}}, {{class_name}}),{% end %}
+          {% if options[:before_remove] %}before_remove: _grant_association_hook({{options[:before_remove]}}, {{class_name}}),{% end %}
+          {% if options[:after_remove] %}after_remove: _grant_association_hook({{options[:after_remove]}}, {{class_name}}),{% end %}
+        )
+      {% else %}
+        callbacks = nil
+      {% end %}
+      {% if through %}
+        through_writer = -> { self.{{through.id}}.through_writer({{source.id.stringify}}) }
+      {% else %}
+        through_writer = nil
+      {% end %}
+      {% if through %}
+        # Targets built or appended before the owner is saved wait here; the
+        # owner's `after_save` inserts their join rows.
+        pending = (@_{{method_name.id}}_pending_through ||= [] of {{class_name.id}})
+      {% else %}
+        pending = nil
+      {% end %}
       Grant::AssociationCollection(self, {{class_name.id}}).new(
         self, {{foreign_key}}, {{through}}, {{options[:primary_key] ? primary_key : nil}},
         {{inverse_of ? inverse_of : nil}}, scope_proc, {{method_name.stringify}}, loaded_records, through_delete_all,
         {{through ? source.id.stringify : nil}},
         strict_loading_option: {{options[:strict_loading]}},
-        automatic_inverse: {{options[:inverse_of] != false && !through}}
+        automatic_inverse: {{options[:inverse_of] != false && !through}},
+        dependent: {{options[:dependent].is_a?(SymbolLiteral) ? options[:dependent] : nil}},
+        through_writer: through_writer,
+        callbacks: callbacks,
+        pending: pending
       )
     end
 
@@ -730,31 +763,33 @@ module Grant::Associations
     end
 
     # Assigns the collection by primary keys, e.g. `user.post_ids = [1, 2, 3]`.
-    # Records whose IDs are listed have their foreign key pointed at this owner;
-    # records previously in the collection but absent from *ids* are nullified.
-    {% unless through %}
+    # Raises `Grant::RecordNotFound` when an id has no row. The difference to the
+    # current members is applied set-based in one transaction: removed records
+    # follow the association's `dependent:` strategy (`nullify` by default),
+    # added records are pointed at this owner (or given a join row for
+    # `through:`) with one write.
     def {{singular_name.id}}_ids=(ids : Array)
-      string_ids = ids.map(&.to_s)
-      {% if options[:primary_key] %}
-        owner_key = self.read_attribute({{primary_key_name}})
-      {% else %}
-        owner_key = self.read_attribute(self.class.primary_name)
+      collection = {{method_name.id}}
+      {% unless through %}
+      unless persisted?
+        # Stage the records on the owner; the autosave callback links them on save.
+        self.{{method_name.id}} = collection.records_for_ids!(collection.normalize_ids(ids))
+        return ids
+      end
       {% end %}
-      # Nullify records no longer in the set
-      {{class_name.id}}.where({{foreign_key_name}}, :eq, owner_key).each do |record|
-        unless string_ids.includes?(record.primary_key_value.to_s)
-          record.set_attributes({ {{foreign_key_name}} => nil })
-          record.save
-        end
-      end
-      # Point listed records at this owner
-      ids.each do |pk|
-        if record = {{class_name.id}}.find(pk)
-          record.set_attributes({ {{foreign_key_name}} => owner_key })
-          record.save
-        end
-      end
+      collection.ids = ids
       ids
+    end
+
+    {% if through %}
+    @_{{method_name.id}}_pending_through : Array({{class_name.id}})? = nil
+
+    # Inserts the join rows of targets that were built or appended while the
+    # owner was unsaved.
+    after_save do
+      if (waiting = @_{{method_name.id}}_pending_through) && !waiting.empty?
+        {{method_name.id}}.save_pending
+      end
     end
     {% end %}
 
@@ -806,6 +841,25 @@ module Grant::Associations
       end
     {% end %}
     {% end %}
+  end
+
+  # Builds the `Proc(Target, Bool)` for one `before_add`/`after_add`/
+  # `before_remove`/`after_remove` option. *value* is a method name (a `Symbol`
+  # called on the owner with the record), a typed proc `->(owner : User, post : Post) { }`,
+  # or an `Array` of those. The proc returns `false` when any hook did, which
+  # makes a `before_` hook veto the operation.
+  macro _grant_association_hook(value, target_class)
+    {% hooks = value.is_a?(ArrayLiteral) ? value : [value] %}
+    ->(record : {{target_class.id}}) : Bool {
+      {% for hook in hooks %}
+        {% if hook.is_a?(SymbolLiteral) %}
+          return false if self.{{hook.id}}(record) == false
+        {% else %}
+          return false if ({{hook}}).call(self, record) == false
+        {% end %}
+      {% end %}
+      true
+    }
   end
 
   # Returns the compile-time metadata `NamedTuple` recorded for the association
@@ -894,3 +948,5 @@ module Grant::Associations
     {% end %}
   end
 end
+
+require "./associations/habtm"

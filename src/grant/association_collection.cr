@@ -1,3 +1,6 @@
+require "./associations/through"
+require "./association_callbacks"
+
 # Lazy, owner-scoped collection returned by a has_many association.
 class Grant::AssociationCollection(Owner, Target)
   include Enumerable(Target)
@@ -10,12 +13,17 @@ class Grant::AssociationCollection(Owner, Target)
                  @scope : (Grant::Query::Builder(Target) -> Grant::Query::Builder(Target))? = nil,
                  @association_name : String? = nil,
                  @loaded_records : Array(Target)? = nil,
-                 @through_delete_all : Proc(Int64)? = nil,
+                 _through_delete_all : Proc(Int64)? = nil,
                  @through_source : String? = nil,
                  @strict_loading_option : Bool? = nil,
                  @automatic_inverse : Bool = true,
                  @type_column : String? = nil,
-                 @type_value : String? = nil)
+                 @type_value : String? = nil,
+                 @dependent : Symbol? = nil,
+                 @through_writer : Proc(Grant::Associations::ThroughWriter)? = nil,
+                 @callbacks : Grant::AssociationCallbacks(Target)? = nil,
+                 @pending : Array(Target)? = nil)
+    @writer = nil.as(Grant::Associations::ThroughWriter?)
   end
 
   # True when the records of this association are cached on the owner.
@@ -192,101 +200,285 @@ class Grant::AssociationCollection(Owner, Target)
     find_by(**args) || raise Grant::Querying::NotFound.new("No #{Target.name} found where #{args.map { |key, value| "#{key} = #{value}" }.join(" and ")}")
   end
 
+  # Builds a new target from named attributes, wired to this owner. The record
+  # is not saved. For a `:through` collection the join row is written when the
+  # owner is saved.
+  #
+  # ```
+  # post.comments.build(body: "Hi")
+  # post.comments.build(body: "Hi") { |comment| comment.author = "sam" }
+  # ```
   def build(**attrs) : Target
-    record = Target.new
-    record.set_attributes(attrs.to_h.transform_keys(&.to_s))
-    record.set_attributes({@foreign_key.to_s => owner_key}) if !@through && !owner_key.nil?
-    if (type_column = @type_column) && (type_value = @type_value)
-      record.set_attributes({type_column => type_value})
-    end
-    @loaded_records.try do |records|
-      records << record unless records.includes?(record)
-      sync_loaded_association
-    end
-    record
+    build_record(model_args(attrs)) { }[0]
   end
 
+  # :ditto:
+  def build(**attrs, &block : Target ->) : Target
+    build_record(model_args(attrs), &block)[0]
+  end
+
+  # Builds a new target from an attribute `Hash`.
+  def build(attrs : Hash) : Target
+    build_record(model_args(attrs)) { }[0]
+  end
+
+  # :ditto:
+  def build(attrs : Hash, &block : Target ->) : Target
+    build_record(model_args(attrs), &block)[0]
+  end
+
+  # Builds one target per `Hash` or `NamedTuple` of attributes.
+  def build(records : Array) : Array(Target)
+    records.map { |attrs| build_record(model_args(attrs)) { }[0] }
+  end
+
+  # :ditto:
+  def build(records : Array, &block : Target ->) : Array(Target)
+    records.map { |attrs| build_record(model_args(attrs), &block)[0] }
+  end
+
+  # Builds a target from a `NamedTuple` of attributes.
+  def build(attrs : NamedTuple) : Target
+    build(**attrs)
+  end
+
+  # Builds and saves a target. Raises `Grant::Associations::OwnerNotSaved` when
+  # the owner is not persisted; returns the (possibly invalid) record otherwise.
   def create(**attrs) : Target
-    record = build(**attrs)
-    record.save
-    record
+    create_record(model_args(attrs), false) { }
   end
 
+  # :ditto:
+  def create(**attrs, &block : Target ->) : Target
+    create_record(model_args(attrs), false, &block)
+  end
+
+  # :ditto:
+  def create(attrs : Hash) : Target
+    create_record(model_args(attrs), false) { }
+  end
+
+  # :ditto:
+  def create(attrs : Hash, &block : Target ->) : Target
+    create_record(model_args(attrs), false, &block)
+  end
+
+  # Creates one target per `Hash` or `NamedTuple` of attributes inside a single
+  # transaction.
+  def create(records : Array) : Array(Target)
+    created = [] of Target
+    Owner.transaction { records.each { |attrs| created << create_record(model_args(attrs), false) { } } }
+    created
+  end
+
+  # :ditto:
+  def create(attrs : NamedTuple) : Target
+    create(**attrs)
+  end
+
+  # Like `create` but raises `Grant::RecordNotSaved` (or `Grant::RecordInvalid`)
+  # when the target cannot be saved.
   def create!(**attrs) : Target
-    record = build(**attrs)
-    record.save!
-    record
+    create_record(model_args(attrs), true) { }
+  end
+
+  # :ditto:
+  def create!(**attrs, &block : Target ->) : Target
+    create_record(model_args(attrs), true, &block)
+  end
+
+  # :ditto:
+  def create!(attrs : Hash) : Target
+    create_record(model_args(attrs), true) { }
+  end
+
+  # :ditto:
+  def create!(attrs : Hash, &block : Target ->) : Target
+    create_record(model_args(attrs), true, &block)
+  end
+
+  # :ditto:
+  def create!(records : Array) : Array(Target)
+    created = [] of Target
+    Owner.transaction { records.each { |attrs| created << create_record(model_args(attrs), true) { } } }
+    created
+  end
+
+  # :ditto:
+  def create!(attrs : NamedTuple) : Target
+    create!(**attrs)
   end
 
   # Associates *record* with this owner and persists it when the owner already
   # exists. Repeated appends of the same record do not issue another save.
+  # For a `:through` collection this inserts the join row. A `before_add` hook
+  # that returns `false` skips the append.
   def <<(record : Target) : self
-    raise ArgumentError.new("Cannot append to a has_many :through collection") if @through
-
-    key_changed = record.read_attribute(@foreign_key.to_s) != owner_key
-    if key_changed && !owner_key.nil?
-      record.write_attribute(@foreign_key.to_s, owner_key)
-    end
-    if (type_column = @type_column) && (type_value = @type_value)
-      if record.read_attribute(type_column) != type_value
-        record.write_attribute(type_column, type_value)
-        key_changed = true
-      end
-    end
-    record.save! if owner.persisted? && (key_changed || !record.persisted?)
-    @loaded_records.try { |records| records << record unless records.includes?(record) }
-    sync_loaded_association
-    self
+    concat([record])
   end
 
   def append(*records : Target) : self
-    records.each { |record| self << record }
-    self
+    concat(records.to_a)
   end
 
   def push(*records : Target) : self
     append(*records)
   end
 
-  # Disassociates matching records by nullifying their foreign key.
+  # Associates every record in *records*. A `:through` collection inserts all
+  # join rows with one INSERT inside a transaction. When any `before_add` hook
+  # returns `false` nothing is added.
+  def concat(records : Array(Target)) : self
+    return self if records.empty?
+    return self unless run_hooks(:before_add, records)
+
+    if @through
+      concat_through(records, true)
+    elsif records.size > 1 && owner.persisted?
+      Owner.transaction { records.each { |record| attach_direct(record) } }
+    else
+      records.each { |record| attach_direct(record) }
+    end
+    run_hooks(:after_add, records)
+    self
+  end
+
+  # Removes *records* from the collection following the association's
+  # `dependent:` strategy: `nullify` (the default) clears the foreign key with
+  # one UPDATE, `delete_all` deletes the target rows and `destroy` destroys them
+  # with callbacks. A `:through` collection deletes the join rows and keeps the
+  # targets. Returns the records that were part of the collection.
   def delete(*records : Target) : Array(Target)
-    raise ArgumentError.new("Cannot delete targets through a has_many :through collection") if @through
-
-    removed = [] of Target
-    records.each do |record|
-      associated_record = find(record.primary_key_value)
-      next unless associated_record
-
-      associated_record.write_attribute(@foreign_key.to_s, nil)
-      if type_column = @type_column
-        associated_record.write_attribute(type_column, nil)
-      end
-      associated_record.save!
-      removed << associated_record
-      @loaded_records.try(&.delete(associated_record))
-      sync_loaded_association
-    end
-    removed
+    delete_records(records.to_a, resolve_strategy(nil))
   end
 
-  # Destroys matching records and runs their callbacks.
+  # Destroys matching records and runs their callbacks. For a `:through`
+  # collection the join rows are destroyed instead and the targets are kept,
+  # as in ActiveRecord.
   def destroy(*records : Target) : Array(Target)
-    removed = [] of Target
-    records.each do |record|
-      associated_record = find(record.primary_key_value)
-      next unless associated_record
-      delete(associated_record) if @through
-      if associated_record.destroy!
-        removed << associated_record
-        @loaded_records.try(&.delete(associated_record))
-        sync_loaded_association
-      end
-    end
-    removed
+    destroy_records(records.to_a)
   end
 
+  # The primary keys of the associated records. Reads the loaded records when
+  # present; otherwise plucks only the key column.
   def ids : Array(Grant::Columns::Type)
-    all.map(&.primary_key_value.as(Grant::Columns::Type))
+    if records = @loaded_records
+      records.map(&.primary_key_value.as(Grant::Columns::Type))
+    else
+      ensure_lazy_loading_allowed
+      association_relation.ids
+    end
+  end
+
+  # Replaces the collection with the records whose primary keys are *new_ids*.
+  # Blank ids are ignored. Every id is checked with one `WHERE pk IN (...)`
+  # query and `Grant::RecordNotFound` is raised when one is missing. The
+  # difference is then applied set-based inside one transaction: one write for
+  # the removed keys and one for the added keys.
+  def ids=(new_ids : Array) : Array
+    wanted = normalize_ids(new_ids)
+    targets = records_for_ids!(wanted)
+    unless owner.persisted?
+      # A `:through` collection keeps the targets until the owner is saved.
+      concat(targets) if @through
+      return new_ids
+    end
+
+    current = ids
+    current_texts = current.map(&.to_s)
+    wanted_texts = wanted.map(&.to_s)
+
+    stale_keys = current.reject { |key| wanted_texts.includes?(key.to_s) }
+    added = targets.reject { |record| current_texts.includes?(record.primary_key_value.to_s) }
+
+    if stale_keys.empty? || added.empty?
+      remove_by_keys(stale_keys)
+      attach_all(added)
+    else
+      Owner.transaction do
+        remove_by_keys(stale_keys)
+        attach_all(added)
+      end
+    end
+    new_ids
+  end
+
+  # Drops blank and duplicate ids, keeping the first spelling of each.
+  def normalize_ids(list : Array) : Array(Grant::Columns::Type)
+    seen = Set(String).new
+    result = [] of Grant::Columns::Type
+    list.each do |id|
+      next if id.nil?
+      next if id.is_a?(String) && id.blank?
+      result << id.as(Grant::Columns::Type) if seen.add?(id.to_s)
+    end
+    result
+  end
+
+  # The records for *keys*, found with one `IN` query. Raises
+  # `Grant::RecordNotFound` when any key has no row.
+  def records_for_ids!(keys : Array(Grant::Columns::Type)) : Array(Target)
+    return [] of Target if keys.empty?
+
+    found = in_keys(Target.current_scope, Target.primary_name, keys).select
+    if found.size != keys.size
+      known = found.map { |record| record.primary_key_value.to_s }
+      missing = keys.reject { |key| known.includes?(key.to_s) }
+      raise Grant::RecordNotFound.new("Couldn't find all #{Target.name} with '#{Target.primary_name}': (#{keys.join(", ")}) (found #{found.size} results, but was looking for #{keys.size}). Couldn't find #{Target.name} with #{Target.primary_name} #{missing.join(", ")}")
+    end
+    found
+  end
+
+  # For a collection of *join* rows (the `through:` association of another
+  # collection): the writer that inserts and deletes join rows for that other
+  # collection, whose source association on the join model is *source_name*.
+  #
+  # :nodoc:
+  def through_writer(source_name : String) : Grant::Associations::ThroughWriter
+    source = Grant::AssociationRegistry.get(Target.name, source_name) ||
+             raise Grant::Associations::ThroughWriteError.new("Cannot resolve source association #{Target.name}##{source_name}")
+    unless source[:type] == :belongs_to
+      raise Grant::Associations::ThroughWriteError.new("Cannot write through #{Target.name}##{source_name}: the source must be a belongs_to")
+    end
+
+    owner_column = @foreign_key.to_s
+    target_column = source[:foreign_key]
+    insert = ->(owner_key : Grant::Columns::Type, keys : Array(Grant::Columns::Type)) : Nil do
+      rows = keys.map do |key|
+        row = {} of (String | Symbol) => Grant::Columns::Type
+        row[owner_column] = owner_key
+        row[target_column] = key
+        row
+      end
+      Target.insert_all(rows)
+      nil
+    end
+    remove = ->(owner_key : Grant::Columns::Type, keys : Array(Grant::Columns::Type)?, destroy : Bool) : Int64 do
+      rows = Target.where({owner_column => owner_key})
+      rows = Grant::AssociationLoader.where_in(rows, target_column, keys) if keys
+      if destroy
+        destroyed = 0_i64
+        rows.select.each { |row| destroyed += 1 if row.destroy }
+        destroyed
+      else
+        rows.delete_all
+      end
+    end
+    Grant::Associations::ThroughWriter.new(source[:primary_key], insert, remove)
+  end
+
+  # Saves the targets that were built or appended while the owner was unsaved
+  # and inserts their join rows. Called by the owner's `after_save`.
+  #
+  # :nodoc:
+  def save_pending : self
+    if (pending = @pending) && !pending.empty?
+      staged = pending.dup
+      pending.clear
+      persist_through(staged, true)
+      staged.each { |record| track_loaded(record) }
+    end
+    self
   end
 
   def exists? : Bool
@@ -305,36 +497,44 @@ class Grant::AssociationCollection(Owner, Target)
     !find(value).nil?
   end
 
-  # Clears this association by disassociating its rows. Target records remain.
+  # Clears this association by disassociating its rows using the association's
+  # `dependent:` strategy. Target records remain unless the strategy deletes or
+  # destroys them.
   def clear : self
-    if @through
-      delete_all
-    else
-      all.dup.each { |record| delete(record) }
-    end
-    @loaded_records.try(&.clear)
-    sync_loaded_association
+    delete_all
     self
   end
 
-  def destroy_all : Int32
-    records = all
-    records.count do |record|
-      destroyed = record.destroy
-      @loaded_records.try(&.delete(record)) if destroyed
-      destroyed
-    end
+  # Destroys every associated record, running callbacks, and returns them.
+  # For a `:through` collection only the join rows are destroyed.
+  def destroy_all : Array(Target)
+    destroy_records(all.dup)
   end
 
-  # Removes associated rows without callbacks. For a through association only
-  # the join rows are deleted; the target records remain.
-  def delete_all : Int64
-    count = if callback = @through_delete_all
-              callback.call
-            elsif @through
-              raise ArgumentError.new("Deleting this through association requires join metadata")
-            else
+  # Removes every associated row without loading it, following *dependent*, or
+  # the association's own `dependent:` option when omitted:
+  #
+  # * `:nullify` (default) clears the foreign key with one UPDATE.
+  # * `:delete_all` deletes the target rows with one DELETE. An association
+  #   declared `dependent: :destroy` uses this strategy too, as in
+  #   ActiveRecord: `delete_all` never loads records or runs callbacks (use
+  #   `destroy_all` for that).
+  #
+  # A `:through` collection deletes the join rows and keeps the targets. No
+  # `before_remove` or `after_remove` hook runs, as in ActiveRecord. Returns the
+  # number of affected rows. Raises `ArgumentError` for any other *dependent*.
+  def delete_all(dependent : Symbol? = nil) : Int64
+    if dependent && dependent != :nullify && dependent != :delete_all
+      raise ArgumentError.new("Unknown dependent strategy #{dependent.inspect} for delete_all; use :nullify or :delete_all")
+    end
+    strategy = resolve_strategy(dependent)
+    strategy = :delete_all if strategy == :destroy
+    count = if @through
+              delete_all_through(strategy)
+            elsif strategy == :delete_all
               association_relation.delete_all
+            else
+              association_relation.update_all(nullify_assignments)
             end
     @loaded_records.try(&.clear)
     sync_loaded_association
@@ -342,6 +542,305 @@ class Grant::AssociationCollection(Owner, Target)
   end
 
   private getter owner
+
+  private def in_keys(relation : Grant::Query::Builder(Target), column : String, keys : Array(Grant::Columns::Type)) : Grant::Query::Builder(Target)
+    Grant::AssociationLoader.where_in(relation, column, keys)
+  end
+
+  private def model_args(attrs : NamedTuple | Hash) : Grant::ModelArgs
+    args = Grant::ModelArgs.new
+    attrs.each { |key, value| args[key.to_s] = value.as(Grant::Columns::Type) }
+    args
+  end
+
+  # Instantiates the target with *args*, the owner's key and the polymorphic
+  # type, yields it, and runs the `before_add`/`after_add` hooks. The flag is
+  # false when a `before_add` hook vetoed the record.
+  # *defer_after_add* leaves the `after_add` hook to the caller, which `create`
+  # runs after the insert so the hook sees the saved record, as in ActiveRecord.
+  private def build_record(args : Grant::ModelArgs, defer_after_add : Bool = false, & : Target ->) : Tuple(Target, Bool)
+    record = Target.new
+    record.set_attributes(args)
+    record.set_attributes({@foreign_key.to_s => owner_key}) if !@through && !owner_key.nil?
+    if (type_column = @type_column) && (type_value = @type_value)
+      record.set_attributes({type_column => type_value})
+    end
+    yield record
+    set_inverse(record)
+
+    built = [record]
+    return {record, false} unless run_hooks(:before_add, built)
+
+    @pending.try { |list| list << record }
+    track_loaded(record)
+    run_hooks(:after_add, built) unless defer_after_add
+    {record, true}
+  end
+
+  private def create_record(args : Grant::ModelArgs, bang : Bool, & : Target ->) : Target
+    unless owner.persisted?
+      raise Grant::Associations::OwnerNotSaved.new(owner, @association_name || Target.name, bang ? "create!" : "create")
+    end
+
+    record, added = build_record(args, defer_after_add: true) { |built| yield built }
+    return record unless added
+
+    if @through
+      persist_through([record], bang)
+    elsif bang
+      record.save!
+    else
+      record.save
+    end
+    run_hooks(:after_add, [record])
+    record
+  end
+
+  # Points a single record at the owner and saves it when needed.
+  private def attach_direct(record : Target) : Nil
+    key_changed = record.read_attribute(@foreign_key.to_s) != owner_key
+    if key_changed && !owner_key.nil?
+      record.write_attribute(@foreign_key.to_s, owner_key)
+    end
+    if (type_column = @type_column) && (type_value = @type_value)
+      if record.read_attribute(type_column) != type_value
+        record.write_attribute(type_column, type_value)
+        key_changed = true
+      end
+    end
+    record.save! if owner.persisted? && (key_changed || !record.persisted?)
+    set_inverse(record)
+    track_loaded(record)
+  end
+
+  # Appends to a `:through` collection. With a saved owner the targets are
+  # saved and every join row is inserted by one statement; otherwise they wait
+  # on the owner until it is saved.
+  private def concat_through(records : Array(Target), bang : Bool) : Nil
+    if owner.persisted?
+      fresh = records.reject { |record| record.persisted? && @loaded_records.try(&.includes?(record)) }
+      persist_through(fresh, bang)
+      records.each { |record| track_loaded(record) }
+    else
+      records.each do |record|
+        @pending.try { |list| list << record unless list.includes?(record) }
+        track_loaded(record)
+      end
+    end
+  end
+
+  # Saves unsaved targets and inserts the join rows, in one transaction.
+  private def persist_through(records : Array(Target), bang : Bool) : Nil
+    writer = through_writer
+    keys = [] of Grant::Columns::Type
+    Owner.transaction do
+      records.each do |record|
+        unless record.persisted?
+          saved = bang ? record.save! : record.save
+          next unless saved
+        end
+        keys << record.read_attribute(writer.target_key)
+        @pending.try(&.delete(record))
+      end
+      writer.insert(owner_key, keys)
+    end
+  end
+
+  # Adds already persisted *records* with set-based writes: one UPDATE that
+  # points them at the owner, or one multi-row join INSERT.
+  private def attach_all(records : Array(Target)) : Nil
+    return if records.empty?
+    return unless run_hooks(:before_add, records)
+
+    if @through
+      writer = through_writer
+      writer.insert(owner_key, records.map { |record| record.read_attribute(writer.target_key) })
+    else
+      keys = records.map { |record| record.primary_key_value.as(Grant::Columns::Type) }
+      assignments = [{@foreign_key.to_s, owner_key}] of Tuple(String, Grant::Columns::Type)
+      if (type_column = @type_column) && (type_value = @type_value)
+        assignments << {type_column, type_value.as(Grant::Columns::Type)}
+      end
+      in_keys(Target.current_scope, Target.primary_name, keys).update_all(assignments)
+    end
+    records.each do |record|
+      set_inverse(record)
+      track_loaded(record)
+    end
+    run_hooks(:after_add, records)
+  end
+
+  # Removes the records with primary keys *keys* without loading them, unless a
+  # remove hook is declared and needs the records.
+  private def remove_by_keys(keys : Array(Grant::Columns::Type)) : Nil
+    return if keys.empty?
+
+    strategy = resolve_strategy(nil)
+    writer = @through ? through_writer : nil
+    if has_remove_hooks? || strategy == :destroy || (writer && writer.target_key != Target.primary_name)
+      delete_records(records_for_ids!(keys), strategy)
+      return
+    end
+
+    if writer
+      remove_join_rows(keys, strategy)
+    else
+      relation = in_keys(association_relation, Target.primary_name, keys)
+      if strategy == :delete_all
+        relation.delete_all
+      else
+        relation.update_all(nullify_assignments)
+      end
+    end
+    @loaded_records.try(&.reject! { |record| keys.any? { |key| key.to_s == record.primary_key_value.to_s } })
+    sync_loaded_association
+  end
+
+  private def delete_records(records : Array(Target), strategy : Symbol) : Array(Target)
+    members = records.select { |record| record.persisted? && (@through || member?(record)) }
+    return members if members.empty?
+    return [] of Target unless run_hooks(:before_remove, members)
+
+    if @through
+      writer = through_writer
+      remove_join_rows(members.map { |record| record.read_attribute(writer.target_key) }, strategy)
+    else
+      keys = members.map { |record| record.primary_key_value.as(Grant::Columns::Type) }
+      relation = in_keys(association_relation, Target.primary_name, keys)
+      case strategy
+      when :delete_all
+        relation.delete_all
+      when :destroy
+        Owner.transaction { members.each(&.destroy!) }
+      else
+        relation.update_all(nullify_assignments)
+        members.each do |record|
+          record.write_attribute(@foreign_key.to_s, nil)
+          @type_column.try { |column| record.write_attribute(column, nil) }
+        end
+      end
+    end
+    forget(members)
+    run_hooks(:after_remove, members)
+    members
+  end
+
+  private def destroy_records(records : Array(Target)) : Array(Target)
+    members = records.select { |record| record.persisted? && (@through || member?(record)) }
+    return members if members.empty?
+    return [] of Target unless run_hooks(:before_remove, members)
+
+    removed = [] of Target
+    if @through
+      # As in ActiveRecord, destroying through a `:through` collection destroys
+      # the join rows (with their callbacks) and keeps the targets, which other
+      # owners may still link to.
+      writer = through_writer
+      remove_join_rows(members.map { |record| record.read_attribute(writer.target_key) }, :destroy)
+      removed.concat(members)
+    else
+      Owner.transaction { members.each { |record| removed << record if record.destroy! } }
+    end
+    forget(removed)
+    run_hooks(:after_remove, removed)
+    removed
+  end
+
+  private def delete_all_through(strategy : Symbol) : Int64
+    writer = through_writer
+    keys = if @scope
+             association_relation.select.map { |record| record.read_attribute(writer.target_key) }
+           end
+    remove_join_rows(keys, strategy)
+  end
+
+  private def remove_join_rows(keys : Array(Grant::Columns::Type)?, strategy : Symbol) : Int64
+    return 0_i64 if keys && keys.empty?
+
+    through_writer.remove(owner_key, keys, strategy == :destroy)
+  end
+
+  # The strategy for removing records: *dependent* when given, else the
+  # association's `dependent:` option, else `:nullify`.
+  private def resolve_strategy(dependent : Symbol?) : Symbol
+    if dependent
+      unless dependent == :nullify || dependent == :delete_all || dependent == :destroy
+        raise ArgumentError.new("Unknown dependent strategy #{dependent.inspect}; use :nullify, :delete_all or :destroy")
+      end
+      return dependent
+    end
+    configured = @dependent
+    if configured == :destroy
+      :destroy
+    elsif configured == :delete_all
+      :delete_all
+    else
+      :nullify
+    end
+  end
+
+  private def nullify_assignments : Array(Tuple(String, Grant::Columns::Type))
+    assignments = [{@foreign_key.to_s, nil.as(Grant::Columns::Type)}]
+    if type_column = @type_column
+      assignments << {type_column, nil.as(Grant::Columns::Type)}
+    end
+    assignments
+  end
+
+  private def member?(record : Target) : Bool
+    return true if @loaded_records.try(&.includes?(record))
+    return false unless record.read_attribute(@foreign_key.to_s) == owner_key
+    if (type_column = @type_column) && (type_value = @type_value)
+      return false unless record.read_attribute(type_column) == type_value
+    end
+    true
+  end
+
+  private def track_loaded(record : Target) : Nil
+    if records = @loaded_records
+      records << record unless records.includes?(record)
+      sync_loaded_association
+    end
+  end
+
+  private def forget(records : Array(Target)) : Nil
+    @loaded_records.try { |list| records.each { |record| list.delete(record) } }
+    sync_loaded_association
+  end
+
+  private def has_remove_hooks? : Bool
+    if callbacks = @callbacks
+      !(callbacks.before_remove.nil? && callbacks.after_remove.nil?)
+    else
+      false
+    end
+  end
+
+  # Runs the hook for *kind* on every record. A `before_` hook that returns
+  # `false` vetoes the whole operation, reported as a false result.
+  private def run_hooks(kind : Symbol, records : Array(Target)) : Bool
+    callbacks = @callbacks
+    return true unless callbacks
+
+    hook = case kind
+           when :before_add    then callbacks.before_add
+           when :after_add     then callbacks.after_add
+           when :before_remove then callbacks.before_remove
+           else                     callbacks.after_remove
+           end
+    return true unless hook
+
+    if kind == :before_add || kind == :before_remove
+      records.all? { |record| hook.call(record) }
+    else
+      records.each { |record| hook.call(record) }
+      true
+    end
+  end
+
+  private def through_writer : Grant::Associations::ThroughWriter
+    @writer ||= (@through_writer || raise Grant::Associations::ThroughWriteError.new("#{Owner.name}##{@association_name} is not a through association")).call
+  end
 
   private def set_inverse(record : Target) : Target
     if inverse = inverse_name
