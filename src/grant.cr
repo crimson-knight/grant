@@ -38,4 +38,5 @@ require "./grant/schema/introspection"
 # tenant scoping). Required after Grant::Base is fully defined so the toolkit
 # can reopen the builder and include the tenant-scoping macros into Base.
 require "./grant/scale"
+require "./grant/database_configurations"
 require "./grant/parity"
