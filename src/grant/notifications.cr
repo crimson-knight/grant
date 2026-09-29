@@ -163,20 +163,30 @@ module Grant
       Rollback
     end
 
-    # A transaction was opened (`BEGIN`).
+    # A transaction was opened (`BEGIN`), or a savepoint inside one
+    # (`SAVEPOINT`). *options* are those of the enclosing real transaction;
+    # *savepoint_name* is `nil` for a real transaction.
     struct TransactionStart
       include Grant::Notifications::Publishable
 
       getter connection : String
       getter options : Grant::Transaction::Options
+      getter savepoint_name : String?
 
-      def initialize(@connection, @options)
+      def initialize(@connection, @options, @savepoint_name = nil)
+      end
+
+      # Whether this opened a savepoint rather than a real transaction.
+      def savepoint? : Bool
+        !@savepoint_name.nil?
       end
     end
 
-    # A transaction ended. *duration* runs from `BEGIN` to the end of the
-    # `COMMIT` or `ROLLBACK`, so it is the figure to alert on for slow
-    # transactions.
+    # A transaction or savepoint ended. *duration* runs from `BEGIN` (or
+    # `SAVEPOINT`) to the end of the `COMMIT`, `ROLLBACK`, `RELEASE SAVEPOINT`
+    # or `ROLLBACK TO SAVEPOINT`, so it is the figure to alert on for slow
+    # transactions. A released savepoint reports `Commit`, although only the
+    # enclosing transaction's commit makes its work durable.
     struct Transaction
       include Grant::Notifications::Publishable
 
@@ -184,8 +194,14 @@ module Grant
       getter outcome : TransactionOutcome
       getter duration : Time::Span
       getter options : Grant::Transaction::Options
+      getter savepoint_name : String?
 
-      def initialize(@connection, @outcome, @duration, @options)
+      def initialize(@connection, @outcome, @duration, @options, @savepoint_name = nil)
+      end
+
+      # Whether this closed a savepoint rather than a real transaction.
+      def savepoint? : Bool
+        !@savepoint_name.nil?
       end
 
       def committed? : Bool

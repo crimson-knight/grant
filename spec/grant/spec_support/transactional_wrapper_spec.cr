@@ -58,6 +58,46 @@ describe "Grant::Spec.transactional" do
     end
   end
 
+  it "runs after_commit when a save's savepoint is released, as ActiveRecord test transactions do" do
+    log = [] of String
+
+    Grant::Spec.within_transaction do
+      Parent.transaction do
+        Parent.current_transaction.after_commit { log << "commit" }
+        Parent.current_transaction.after_rollback { log << "rollback" }
+        Parent.create!(name: "committed")
+      end
+      log.should eq(["commit"])
+    end
+
+    log.should eq(["commit"])
+  end
+
+  it "runs after_rollback, not after_commit, for a savepoint that rolls back" do
+    log = [] of String
+
+    Grant::Spec.within_transaction do
+      Parent.transaction do
+        Parent.current_transaction.after_commit { log << "commit" }
+        Parent.current_transaction.after_rollback { log << "rollback" }
+        raise Grant::Transaction::Rollback.new
+      end
+    end
+
+    log.should eq(["rollback"])
+  end
+
+  it "runs after_commit when a manual savepoint under the wrapper commits" do
+    log = [] of String
+
+    Grant::Spec.within_transaction(only: [Parent.adapter.name]) do
+      handle = Parent.connection.begin_transaction
+      Parent.current_transaction.after_commit { log << "commit" }
+      handle.commit
+      log.should eq(["commit"])
+    end
+  end
+
   it "rolls back writes made through every registered connection" do
     writers = registered_writers
     insert = "INSERT INTO parents (name, created_at, updated_at) VALUES ('via_adapter', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"

@@ -199,7 +199,8 @@ module Grant::Transaction
   # queues when it was opened, so rolling back to it can undo only its work.
   record SavepointMarker,
     name : String,
-    marks : NamedTuple(callbacks: Int32, records: Int32, after_all: Int32)
+    marks : NamedTuple(callbacks: Int32, records: Int32, after_all: Int32),
+    started_at : Time::Instant = Time.instant
 
   # Public view of a transaction: what `Model.current_transaction` returns and
   # what `Connection#begin_transaction` hands back. When no transaction is open
@@ -469,28 +470,57 @@ module Grant::Transaction
     nil
   end
 
+  # A savepoint opened directly under a non-joinable level (for example the
+  # `Grant::Spec` wrapper) settles its own after_commit callbacks when it is
+  # released, as ActiveRecord does (`run_commit_callbacks: !joinable`). Those
+  # callbacks run after the release, outside the database-error rescue.
   private def self.run_savepoint(state : TransactionState, joinable : Bool, name : String?, & : -> T) : T? forall T
+    outcome = run_savepoint_body(state, joinable, name) { yield }
+    if callbacks = outcome[0]
+      callbacks.each(&.call)
+    end
+    outcome[1]
+  end
+
+  private def self.run_savepoint_body(state : TransactionState, joinable : Bool, name : String?, & : -> T) : {Array(Proc(Nil))?, T?} forall T
     savepoint_name = name || state.next_savepoint_name
     marks = savepoint_marks(state)
     previous_joinable = state.joinable?
     state.joinable = joinable
+    started_at = Time.instant
 
     begin
       execute_control(state.connection, state.adapter, "SAVEPOINT #{savepoint_name}")
+      publish_transaction_start(state, savepoint_name)
       value = yield
       execute_control(state.connection, state.adapter, "RELEASE SAVEPOINT #{savepoint_name}")
-      value
+      publish_transaction_end(state, Grant::Events::TransactionOutcome::Commit, started_at, savepoint_name)
+      {previous_joinable ? nil : take_released_savepoint_callbacks(state, marks), value}
     rescue ex : Rollback
       rollback_to_savepoint(state, savepoint_name, marks)
-      nil
+      publish_transaction_end(state, Grant::Events::TransactionOutcome::Rollback, started_at, savepoint_name)
+      {nil, nil}
     rescue ex
       rollback_to_savepoint(state, savepoint_name, marks)
+      publish_transaction_end(state, Grant::Events::TransactionOutcome::Rollback, started_at, savepoint_name)
       raise ex
     ensure
       state.joinable = previous_joinable
     end
   rescue ex : DB::Error
     handle_transaction_error(state.adapter, ex)
+  end
+
+  # Treats the release of a savepoint under a non-joinable level as that
+  # work's commit: its record snapshots are discarded and the after_commit
+  # closures enqueued since *marks* are returned for the caller to run.
+  private def self.take_released_savepoint_callbacks(state : TransactionState, marks : NamedTuple(callbacks: Int32, records: Int32, after_all: Int32)) : Array(Proc(Nil))
+    released_records = state.list_of_record_rollback_actions.size - marks[:records]
+    state.list_of_record_rollback_actions.pop(released_records) if released_records > 0
+
+    released_callbacks = state.pending_callbacks.size - marks[:callbacks]
+    return [] of Proc(Nil) if released_callbacks <= 0
+    state.pending_callbacks.pop(released_callbacks).map(&.[:on_commit])
   end
 
   private def self.savepoint_marks(state : TransactionState) : NamedTuple(callbacks: Int32, records: Int32, after_all: Int32)
@@ -566,7 +596,7 @@ module Grant::Transaction
     execute_begin(conn, adapter, options)
     state = TransactionState.new(conn, options, adapter)
     fiber_stack.push(state)
-    publish_transaction_start(state)
+    publish_transaction_start(state, nil)
     value : T? = nil
 
     begin
@@ -605,15 +635,16 @@ module Grant::Transaction
     state.close
   end
 
-  private def self.publish_transaction_start(state : TransactionState) : Nil
+  # *savepoint_name* is `nil` for a real transaction.
+  private def self.publish_transaction_start(state : TransactionState, savepoint_name : String?) : Nil
     Grant::Notifications.instrument(Grant::Events::TransactionStart) do
-      Grant::Events::TransactionStart.new(state.adapter.name, state.options)
+      Grant::Events::TransactionStart.new(state.adapter.name, state.options, savepoint_name)
     end
   end
 
-  private def self.publish_transaction_end(state : TransactionState, outcome : Grant::Events::TransactionOutcome) : Nil
+  private def self.publish_transaction_end(state : TransactionState, outcome : Grant::Events::TransactionOutcome, started_at : Time::Instant = state.started_at, savepoint_name : String? = nil) : Nil
     Grant::Notifications.instrument(Grant::Events::Transaction) do
-      Grant::Events::Transaction.new(state.adapter.name, outcome, Time.instant - state.started_at, state.options)
+      Grant::Events::Transaction.new(state.adapter.name, outcome, Time.instant - started_at, state.options, savepoint_name)
     end
   end
 
@@ -708,6 +739,7 @@ module Grant::Transaction
       name = state.next_savepoint_name
       marks = savepoint_marks(state)
       execute_control(state.connection, adapter, "SAVEPOINT #{name}")
+      publish_transaction_start(state, name)
       handle = Handle.new(state, SavepointMarker.new(name, marks))
       state.manual_savepoints << handle
       return handle
@@ -731,7 +763,7 @@ module Grant::Transaction
     new_state.manual = true
     new_state.owns_connection = owned
     fiber_stack.push(new_state)
-    publish_transaction_start(new_state)
+    publish_transaction_start(new_state, nil)
     new_state.handle
   end
 
@@ -744,6 +776,8 @@ module Grant::Transaction
       execute_control(state.connection, state.adapter, "RELEASE SAVEPOINT #{savepoint.name}")
       handle.settle
       state.manual_savepoints.delete(handle)
+      publish_transaction_end(state, Grant::Events::TransactionOutcome::Commit, savepoint.started_at, savepoint.name)
+      take_released_savepoint_callbacks(state, savepoint.marks).each(&.call) unless state.joinable?
       return
     end
 
@@ -769,6 +803,7 @@ module Grant::Transaction
       rollback_to_savepoint(state, savepoint.name, savepoint.marks)
       handle.settle
       state.manual_savepoints.delete(handle)
+      publish_transaction_end(state, Grant::Events::TransactionOutcome::Rollback, savepoint.started_at, savepoint.name)
       return
     end
 
