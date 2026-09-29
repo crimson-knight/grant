@@ -82,15 +82,27 @@ describe "Validation Contexts" do
       record.valid?(context: :update).should be_true
     end
 
-    it "running without context runs all validators" do
+    it "defaults to :create for a new record, so on: :update validators do not run" do
       record = ContextUser.new
       record.username = "john"
       record.email = "john@example.com"
       record.terms_accepted = false # create-only fails
-      record.update_reason = nil    # update-only fails
+      record.update_reason = nil    # update-only would fail
 
-      # Without context, all validators run
       record.valid?.should be_false
+      error_fields = record.errors.map(&.field.to_s)
+      error_fields.should contain("terms_accepted")
+      error_fields.should_not contain("update_reason")
+    end
+
+    it "runs every validator for an explicit :save context" do
+      record = ContextUser.new
+      record.username = "john"
+      record.email = "john@example.com"
+      record.terms_accepted = false
+      record.update_reason = nil
+
+      record.valid?(context: :save).should be_false
       error_fields = record.errors.map(&.field.to_s)
       error_fields.should contain("terms_accepted")
       error_fields.should contain("update_reason")
