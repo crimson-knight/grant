@@ -55,8 +55,9 @@ module Grant::Testing
       @@shard_queries[@shard] ||= [] of String
     end
 
-    # Override open to not actually open a database connection
-    def open(&)
+    # Override open to not actually open a database connection. Grant passes
+    # the statement, binds and model name, so match the full signature.
+    def open(sql : String? = nil, binds = nil, name : String? = nil, &)
       # Virtual adapter doesn't need real connections
       yield self
     end
