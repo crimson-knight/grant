@@ -69,7 +69,14 @@ module Grant::Query::Assembler
     # select_keyword # => "SELECT" or "SELECT DISTINCT"
     # ```
     def select_keyword : String
-      @query.distinct? ? "SELECT DISTINCT" : "SELECT"
+      @query.distinct? ? "#{select_prefix} DISTINCT" : select_prefix
+    end
+
+    # `SELECT`, followed by the relation's optimizer hints as one
+    # `/*+ ... */` comment when it has any.
+    def select_prefix : String
+      hints = @query.optimizer_hint_list
+      hints.empty? ? "SELECT" : "SELECT /*+ #{hints.join(" ")} */"
     end
 
     # Generates JOIN clauses from the query builder's join_clauses array.
@@ -86,6 +93,9 @@ module Grant::Query::Assembler
       return nil if join_clauses.empty?
 
       parts = join_clauses.map do |jc|
+        # A raw join carries its whole fragment in `on`.
+        next jc[:on] if jc[:type] == :raw
+
         join_type = case jc[:type]
                     when :inner then "INNER JOIN"
                     when :left  then "LEFT JOIN"
@@ -217,11 +227,13 @@ module Grant::Query::Assembler
                             end
       valid_column = if qualifier.nil? || qualifier == Model.table_name
                        Model.fields.includes?(column) || !encrypted_attribute.nil?
-                     elsif @query.join_clauses.any? { |join| join[:table] == qualifier }
+                     elsif @query.join_clauses.any? { |join| Grant::Query::JoinSupport.qualifier(join[:table]) == qualifier }
                        if association = Grant::AssociationRegistry.get(Model.name, qualifier)
                          association[:target_class].fields.includes?(column)
                        else
-                         Model.fields.includes?(column)
+                         # A nested join, a through table or an alias: the name is
+                         # a validated identifier and is quoted below.
+                         true
                        end
                      else
                        false
@@ -379,20 +391,49 @@ module Grant::Query::Assembler
         end
       end
 
-      order_clauses = order_fields.map do |expression|
-        field = qualify_join_field(expression[:field], Model.quote(Model.table_name))
-        next unless field
-
-        add_aggregate_field field
-
-        if expression[:direction] == Builder::Sort::Ascending
-          "#{field} ASC"
-        else
-          "#{field} DESC"
-        end
-      end.compact
+      order_clauses = order_fields.map { |expression| render_order_term(expression) }
 
       @order = "ORDER BY #{order_clauses.join ", "}"
+    end
+
+    # Renders one ORDER BY term. A raw term is emitted as written; a column term
+    # is qualified when joins are present and gets its direction and NULL
+    # placement.
+    protected def render_order_term(expression : NamedTuple(field: String, direction: Builder::Sort)) : String
+      direction = expression[:direction]
+      return expression[:field] if direction.raw?
+
+      field = order_field_sql(expression[:field])
+      add_aggregate_field field
+      keyword = direction.sorts_descending? ? "DESC" : "ASC"
+      case direction.nulls_placement
+      when :first then nulls_ordering_sql(field, keyword, first: true)
+      when :last  then nulls_ordering_sql(field, keyword, first: false)
+      else             "#{field} #{keyword}"
+      end
+    end
+
+    # `table.column` is checked against the model's table and the joined tables,
+    # then quoted; anything else follows the ordinary join qualification.
+    private def order_field_sql(field : String) : String
+      parts = field.split('.')
+      return qualify_join_field(field, Model.quote(Model.table_name)) unless parts.size == 2 && Grant::Query::SqlExpression.identifier?(field)
+
+      unless parts[0] == Model.table_name || @query.join_clauses.any? { |join| Grant::Query::JoinSupport.qualifier(join[:table]) == parts[0] }
+        raise ArgumentError.new("Unknown query table #{parts[0].inspect} in ORDER BY for #{Model.name}")
+      end
+      "#{Model.quote(parts[0])}.#{Model.quote(parts[1])}"
+    end
+
+    # PostgreSQL and SQLite order NULLs natively. MySQL has no NULLS FIRST/LAST,
+    # so an `ISNULL(column)` term goes first (1 for NULL): descending puts NULLs
+    # first, ascending puts them last.
+    protected def nulls_ordering_sql(field : String, keyword : String, first : Bool) : String
+      if Model.adapter.mysql?
+        "ISNULL(#{field}) #{first ? "DESC" : "ASC"}, #{field} #{keyword}"
+      else
+        "#{field} #{keyword} NULLS #{first ? "FIRST" : "LAST"}"
+      end
     end
 
     def group_by

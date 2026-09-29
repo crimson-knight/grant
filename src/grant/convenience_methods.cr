@@ -69,6 +69,9 @@ module Grant::ConvenienceMethods(Model)
     return [] of Array(Grant::Columns::Type) if is_none?
 
     field_names = fields.to_a.map(&.to_s)
+    field_names.each do |name|
+      Grant::Query::SqlExpression.validate!(name, "pluck expression") unless Grant::Query::SqlExpression.identifier?(name)
+    end
 
     if should_chunk_in?
       return chunked_pluck(field_names)

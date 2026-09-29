@@ -138,6 +138,56 @@ class Grant::Query::Builder(Model)
   end
 end
 
+module Grant::Query::OptimizerHint
+  # Removes comment markers from *hint* until none remain, so text such as
+  # `"**//"` cannot re-form a terminator once the inner `*/` is gone.
+  def self.sanitize(hint : String) : String
+    cleaned = hint
+    loop do
+      stripped = cleaned.gsub("*/", "").gsub("/*", "")
+      break if stripped == cleaned
+      cleaned = stripped
+    end
+    cleaned.strip
+  end
+end
+
+class Grant::Query::Builder(Model)
+  # Optimizer hints placed in a `/*+ ... */` comment right after `SELECT`. Kept
+  # as an array that is replaced, never mutated, so copies share it safely.
+  @optimizer_hints : Array(String) = [] of String
+
+  # The hints in the order they were added.
+  def optimizer_hint_list : Array(String)
+    @optimizer_hints
+  end
+
+  # Adds optimizer hints, rendered as `SELECT /*+ hint hint */ ...`. MySQL reads
+  # them as optimizer hints (`MAX_EXECUTION_TIME(1000)`), PostgreSQL with
+  # `pg_hint_plan` reads them as plan hints, and SQLite ignores the comment.
+  #
+  # Comment markers are stripped from each hint so a hint cannot end the comment
+  # early and inject SQL. Blank hints are dropped. `unscope(:optimizer_hints)`
+  # removes them. Returns `self`.
+  #
+  # ```
+  # Post.optimizer_hints("MAX_EXECUTION_TIME(1000)").select
+  # # => SELECT /*+ MAX_EXECUTION_TIME(1000) */ ... FROM posts
+  # ```
+  def optimizer_hints!(*hints : String) : self
+    cleaned = hints.map { |hint| Grant::Query::OptimizerHint.sanitize(hint) }.reject(&.empty?)
+    return self if cleaned.empty?
+
+    reset_load_state
+    @optimizer_hints = @optimizer_hints + cleaned
+    self
+  end
+
+  def optimizer_hints(*hints : String) : self
+    chain_copy.optimizer_hints!(*hints)
+  end
+end
+
 # Assembler-side rendering of the FROM clause with any index hint, via virtual
 # dispatch on the adapter (no hard-coded adapter constants).
 module Grant::Query::Assembler
