@@ -52,6 +52,17 @@ module Grant::Autosave
     @_marked_for_destruction = false
   end
 
+  # Forgets the state that `reload` discards, as in ActiveRecord: the
+  # destruction mark, `destroyed_by_association`, and the records built or
+  # appended but not saved.
+  #
+  # :nodoc:
+  def _autosave_reset_for_reload : Nil
+    @_marked_for_destruction = false
+    @_autosave_staged = nil
+    self.destroyed_by_association = nil
+  end
+
   # True when saving this record through an association would write something:
   # it is new, has unsaved changes or is marked for destruction.
   def changed_for_autosave? : Bool
@@ -182,15 +193,17 @@ module Grant::AssociationOptions
         # the ones built or appended on it.
         private def _autosave_records_{{association_name.id}} : Array({{target_class.id}})
           records = [] of {{target_class.id}}
+          # Identity set, so a large loaded target is deduplicated in linear time.
+          seen = Set(UInt64).new
           if association_loaded?({{name}}) && (loaded = get_loaded_association({{name}}).as?(Array(Grant::Base)))
             loaded.each do |candidate|
               record = candidate.as?({{target_class.id}})
-              records << record if record && !records.any?(&.same?(record))
+              records << record if record && seen.add?(record.object_id)
             end
           end
           _autosave_staged({{name}}).each do |candidate|
             record = candidate.as?({{target_class.id}})
-            records << record if record && !records.any?(&.same?(record))
+            records << record if record && seen.add?(record.object_id)
           end
           records
         end
@@ -296,13 +309,12 @@ module Grant::AssociationOptions
           validated = _autosave_validating_{{association_name.id}}?
           owner_key = {{owner_key_read}}
           saved_any = false
+          destroyed_ids = Set(UInt64).new
           _autosave_records_{{association_name.id}}.each do |record|
             next if record.destroyed?
             if autosaving && record.marked_for_destruction?
               record.destroy if record.persisted?
-              if association_loaded?({{name}}) && (loaded = get_loaded_association({{name}}).as?(Array(Grant::Base)))
-                loaded.reject! { |candidate| candidate.same?(record) }
-              end
+              destroyed_ids << record.object_id
             else
               key_changed = record.read_attribute({{foreign_key}}) != owner_key
               record.set_attributes({ {{foreign_key}} => owner_key }) if key_changed
@@ -310,6 +322,11 @@ module Grant::AssociationOptions
                 record.save!(validate: !(validated && (record.new_record? || record.changed?)))
                 saved_any = true
               end
+            end
+          end
+          unless destroyed_ids.empty?
+            if association_loaded?({{name}}) && (loaded = get_loaded_association({{name}}).as?(Array(Grant::Base)))
+              loaded.reject! { |candidate| destroyed_ids.includes?(candidate.object_id) }
             end
           end
           _autosave_unstage_saved({{name}}) if saved_any
