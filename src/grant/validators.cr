@@ -339,7 +339,24 @@ module Grant::Validators
       info_pairs = [] of String
       options.each do |key, value|
         unless skipped.includes?(key.stringify) || value.is_a?(ProcLiteral) || value.is_a?(ProcNotation)
-          info_pairs << "#{key.id}: #{value}"
+          # Reflection data is built at class load, so only plain literals and
+          # constants are evaluated there. Any other expression (a method
+          # call such as `in: Category.names`) is recorded as its source
+          # text: evaluating it at boot could query the database before a
+          # connection exists, and the rule itself still evaluates it on
+          # every validation.
+          plain = value.is_a?(NumberLiteral) || value.is_a?(StringLiteral) || value.is_a?(SymbolLiteral) ||
+                  value.is_a?(BoolLiteral) || value.is_a?(NilLiteral) || value.is_a?(RegexLiteral) || value.is_a?(Path)
+          if value.is_a?(RangeLiteral)
+            plain = value.begin.is_a?(NumberLiteral) && value.end.is_a?(NumberLiteral)
+          elsif value.is_a?(ArrayLiteral)
+            plain = value.all? { |item| item.is_a?(NumberLiteral) || item.is_a?(StringLiteral) || item.is_a?(SymbolLiteral) || item.is_a?(BoolLiteral) }
+          end
+          if plain
+            info_pairs << "#{key.id}: #{value}"
+          else
+            info_pairs << "#{key.id}: #{value.stringify}"
+          end
         end
       end
     %}
