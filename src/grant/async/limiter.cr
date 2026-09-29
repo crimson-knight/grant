@@ -16,13 +16,18 @@ module Grant
       # starts a new limiter; queries already running finish on the old one.
       def self.current : Limiter
         size = Grant.settings.async_pool_size
-        limiter = @@current
-        return limiter if limiter && limiter.size == size
+        # The mutex keeps two threads (under -Dpreview_mt) from each installing
+        # their own limiter, which would let twice the cap run at once.
+        @@current_mutex.synchronize do
+          limiter = @@current
+          return limiter if limiter && limiter.size == size
 
-        @@current = new(size)
+          @@current = new(size)
+        end
       end
 
       @@current : Limiter?
+      @@current_mutex = Mutex.new
 
       # Blocks until a slot is free, runs *block*, and frees the slot.
       def run(& : -> T) : T forall T
