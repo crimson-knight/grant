@@ -25,6 +25,21 @@ describe "merge" do
     titles(merged).should eq(["c"])
   end
 
+  it "replaces nil-aware lists and record lists on the same column" do
+    titles(WfPost.where(score: [1, nil]).merge(WfPost.where(score: 3))).should eq(["c"])
+
+    ann = WfAuthor.create!(name: "ann")
+    bob = WfAuthor.create!(name: "bob")
+    cy = WfAuthor.create!(name: "cy")
+    WfPost.create!(title: "by cy", author_id: cy.id)
+    titles(WfPost.where(author: [ann, bob]).merge(WfPost.where(author: cy))).should eq(["by cy"])
+  end
+
+  it "lets a later rewhere replace a list merged in from the other relation" do
+    merged = WfPost.where(published: true).merge(WfPost.where(score: [1, nil]))
+    titles(merged.rewhere(score: 3)).should eq(["c"])
+  end
+
   it "keeps conditions on other columns" do
     merged = WfPost.where(published: true, score: 3).merge(WfPost.where(published: false))
     titles(merged).should eq([] of String)

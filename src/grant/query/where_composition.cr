@@ -41,9 +41,39 @@ end
 class Grant::Query::Builder(Model)
   alias FieldClause = NamedTuple(join: Symbol, field: String, operator: Symbol, value: Grant::Columns::Type)
 
-  # Relation components `or` and `and` require to match on both sides. Where
-  # and having clauses are what those methods combine, so they are not here.
-  STRUCTURAL_COMPONENTS = [:order, :group, :joins, :limit, :offset, :lock, :select, :distinct, :includes, :preload, :eager_load]
+  # Raw WHERE statements this relation generated for a single column (a
+  # nil-aware `IN`, an array holding ranges, a record list under an
+  # association), keyed by their SQL text and mapped to that column, so
+  # `rewhere`, `merge` and `unscope(where:)` remove them with the column's
+  # structured conditions. The flag is true for a plain `IN` list, which
+  # `merge` treats like an equality. A chain copy gets its own copy of the
+  # map (`forget_copied_state`); nothing is shared between relations.
+  @raw_where_columns : Hash(String, Tuple(String, Bool))? = nil
+
+  # Records that the raw *stmt* constrains *field* only; *equality* marks a
+  # plain `IN` list.
+  protected def register_raw_where_column(stmt : String, field : String, equality : Bool = false) : Nil
+    raw_columns = @raw_where_columns ||= {} of String => Tuple(String, Bool)
+    raw_columns[stmt] = {where_column_key(field), equality}
+  end
+
+  # The column a raw clause was registered for and whether it is a plain `IN`
+  # list; nil for a user-written or multi-column statement.
+  protected def raw_where_column(stmt : String) : Tuple(String, Bool)?
+    if raw_columns = @raw_where_columns
+      raw_columns[stmt]?
+    end
+  end
+
+  # Column a WHERE clause constrains when it is tied to exactly one column:
+  # a structured field clause, or a raw clause registered for one column.
+  private def where_clause_column(clause : WhereField) : String?
+    if clause.is_a?(FieldClause)
+      where_column_key(clause[:field])
+    elsif registered = raw_where_column(clause[:stmt])
+      registered[0]
+    end
+  end
 
   # Adds one `field => value` condition joined by *join* (`:and` or `:or`).
   # Shared by `where`, `and` and `or`, so every value shape behaves the same
@@ -112,7 +142,9 @@ class Grant::Query::Builder(Model)
     parts.concat(spans)
 
     bound = scalars + span_values
-    own_where_fields << {join: join, stmt: parts.empty? ? "1=0" : "(#{parts.join(" OR ")})", values: bound}
+    predicate = parts.empty? ? "1=0" : "(#{parts.join(" OR ")})"
+    own_where_fields << {join: join, stmt: predicate, values: bound}
+    register_raw_where_column(predicate, field) unless parts.empty?
   end
 
   # SQL for one range over an already-quoted column: the bounds it has, ANDed
@@ -153,6 +185,7 @@ class Grant::Query::Builder(Model)
 
     predicate, values = range_predicate(structured_field_sql(field), range)
     own_where_fields << {join: :or, stmt: predicate, values: values}
+    register_raw_where_column(predicate, field) unless values.empty?
   end
 
   # `where(posts: {published: true})`: conditions on a joined table. The table
@@ -199,8 +232,10 @@ class Grant::Query::Builder(Model)
       if entries.size == 1
         add_field_condition(join, foreign_key, :eq, entries.first[0])
       else
-        predicate, values = key_list_predicate(structured_field_sql(foreign_key), entries.map(&.[0]))
+        keys = entries.map(&.[0])
+        predicate, values = key_list_predicate(structured_field_sql(foreign_key), keys)
         own_where_fields << {join: join, stmt: predicate, values: values}
+        register_raw_where_column(predicate, foreign_key, equality: keys.none?(&.nil?))
       end
       return
     end
@@ -235,7 +270,9 @@ class Grant::Query::Builder(Model)
       values << type_name
     end
     parts << "#{key_sql} IS NULL" if null_key
-    own_where_fields << {join: join, stmt: "(#{parts.join(" OR ")})", values: values}
+    predicate = "(#{parts.join(" OR ")})"
+    own_where_fields << {join: join, stmt: predicate, values: values}
+    register_raw_where_column(predicate, foreign_key)
   end
 
   # Foreign key and polymorphic type name for each value passed under an
@@ -398,6 +435,7 @@ class Grant::Query::Builder(Model)
     if other.where_fields.all? { |clause| clause[:join] == :and }
       collapse_or_fields!
       own_where_fields.concat(other.where_fields)
+      adopt_raw_where_columns(other, other.where_fields)
       self
     else
       append_where_group(other)
@@ -475,12 +513,15 @@ class Grant::Query::Builder(Model)
     if incoming_flat && own_flat
       replaced = Set(String).new
       incoming.each do |clause|
-        if clause.is_a?(FieldClause) && (clause[:operator] == :eq || clause[:operator] == :in)
-          replaced << where_column_key(clause[:field])
+        if clause.is_a?(FieldClause)
+          replaced << where_column_key(clause[:field]) if clause[:operator] == :eq || clause[:operator] == :in
+        elsif (registered = other.raw_where_column(clause[:stmt])) && registered[1]
+          replaced << registered[0]
         end
       end
       remove_where_columns!(replaced) unless replaced.empty?
       own_where_fields.concat(incoming)
+      adopt_raw_where_columns(other, incoming)
     else
       append_where_group(other)
     end
@@ -492,11 +533,32 @@ class Grant::Query::Builder(Model)
     field.starts_with?(prefix) ? field[prefix.size..] : field
   end
 
+  # Drops every condition tied to one of *columns*: structured clauses on it
+  # and the raw clauses this relation generated for it.
   private def remove_where_columns!(columns : Set(String)) : Nil
-    return unless @where_fields.any? { |clause| clause.is_a?(FieldClause) && columns.includes?(where_column_key(clause[:field])) }
+    return unless @where_fields.any? { |clause| where_clause_on?(clause, columns) }
 
-    own_where_fields.reject! do |clause|
-      clause.is_a?(FieldClause) && columns.includes?(where_column_key(clause[:field]))
+    own_where_fields.reject! { |clause| where_clause_on?(clause, columns) }
+  end
+
+  private def where_clause_on?(clause : WhereField, columns : Set(String)) : Bool
+    if column = where_clause_column(clause)
+      columns.includes?(column)
+    else
+      false
+    end
+  end
+
+  # Carries *other*'s column registrations for the raw clauses merged in, so
+  # a later rewhere or merge can still replace them.
+  private def adopt_raw_where_columns(other : Builder(Model), clauses : Array(WhereField)) : Nil
+    clauses.each do |clause|
+      next if clause.is_a?(FieldClause)
+
+      stmt = clause[:stmt]
+      if registered = other.raw_where_column(stmt)
+        (@raw_where_columns ||= {} of String => Tuple(String, Bool))[stmt] = registered
+      end
     end
   end
 
@@ -698,6 +760,11 @@ class Grant::Query::Builder(Model)
     source_name = reflection.source || target.name.split("::").last.underscore
     source_reflection = Grant::AssociationRegistry.reflection(through_class.name, source_name)
     raise ArgumentError.new("Cannot resolve source #{source_name.inspect} for #{Model.name}##{name}") unless source_reflection
+    if source_reflection.polymorphic? || source_reflection.through?
+      # A polymorphic or nested source would need a type match or another hop
+      # this subquery does not build; refuse rather than match the wrong rows.
+      raise ArgumentError.new("Cannot use where.associated or where.missing with #{Model.name}##{name}: its source #{source_name.inspect} is polymorphic or itself a through association")
+    end
 
     through_alias = Model.quote("assoc_through")
     # The source hop comes first in the SQL text, so its bind values do too.

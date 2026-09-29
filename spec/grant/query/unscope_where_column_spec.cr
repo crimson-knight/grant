@@ -31,6 +31,11 @@ describe "unscope(where: column)" do
     titles(relation).should eq(["b"])
   end
 
+  it "drops nil-aware lists and arrays holding ranges on the column" do
+    titles(WfPost.where(score: [1, nil]).where(published: true).unscope(where: :score)).should eq(["a", "c"])
+    titles(WfPost.where(score: [1, 5..9]).unscope(where: :score)).should eq(["a", "b", "c"])
+  end
+
   it "combines with plain components" do
     relation = WfPost.where(published: true).order(score: :desc).unscope(:order, where: :published)
     relation.to_sql.should_not contain("ORDER BY")

@@ -27,6 +27,26 @@ describe "rewhere, reorder and reverse_order" do
       titles(WfPost.where(score: [1, 2]).rewhere(score: 3)).should eq(["c"])
     end
 
+    it "replaces nil-aware lists, arrays holding ranges and record lists" do
+      titles(WfPost.where(score: [1, nil]).rewhere(score: 3)).should eq(["c"])
+      titles(WfPost.where(score: [1, 3..4]).rewhere(score: 2)).should eq(["b"])
+
+      ann = WfAuthor.create!(name: "ann")
+      bob = WfAuthor.create!(name: "bob")
+      cy = WfAuthor.create!(name: "cy")
+      WfPost.create!(title: "by cy", author_id: cy.id)
+      titles(WfPost.where(author: [ann, bob]).rewhere(author: cy)).should eq(["by cy"])
+      titles(WfPost.where(author: [ann, nil]).rewhere(author: cy)).should eq(["by cy"])
+    end
+
+    it "keeps a copied relation's list conditions apart from the receiver's" do
+      base = WfPost.where(published: true)
+      with_list = base.where(score: [3, nil])
+      base.where(score: [1, nil]).rewhere(score: 2)
+      titles(with_list.rewhere(score: 1)).should eq(["a"])
+      titles(base).sort.should eq(["a", "c"])
+    end
+
     it "behaves like where for a column with no condition yet" do
       titles(WfPost.where(published: true).rewhere(score: 3)).should eq(["c"])
     end

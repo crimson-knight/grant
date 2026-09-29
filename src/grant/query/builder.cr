@@ -181,6 +181,10 @@ class Grant::Query::Builder(Model)
     @records = nil
     @cache_version = nil
     @_cached_assembler = nil
+    # The copy records its own column-keyed raw clauses from here on.
+    if raw_columns = @raw_where_columns
+      @raw_where_columns = raw_columns.dup
+    end
   end
 
   # Returns a copy whose WHERE clauses are recorded as default-scope clauses
@@ -391,7 +395,9 @@ class Grant::Query::Builder(Model)
 
     if values_without_nil.empty?
       if has_nil
-        own_where_fields << {join: :and, stmt: "#{structured_field_sql(field)} IS #{operator == :nin ? "NOT " : ""}NULL", value: nil.as(Grant::Columns::Type)}
+        null_predicate = "#{structured_field_sql(field)} IS #{operator == :nin ? "NOT " : ""}NULL"
+        own_where_fields << {join: :and, stmt: null_predicate, value: nil.as(Grant::Columns::Type)}
+        register_raw_where_column(null_predicate, field)
       else
         own_where_fields << {join: :and, stmt: operator == :nin ? "1=1" : "1=0", value: nil.as(Grant::Columns::Type)}
       end
@@ -413,6 +419,7 @@ class Grant::Query::Builder(Model)
                   "(#{safe_field} IN (#{placeholders}) OR #{safe_field} IS NULL)"
                 end
     own_where_fields << {join: :and, stmt: predicate, values: bind_values}
+    register_raw_where_column(predicate, field)
     self
   end
 
@@ -520,7 +527,9 @@ class Grant::Query::Builder(Model)
 
     if values_without_nil.empty?
       if has_nil
-        own_where_fields << {join: :or, stmt: "#{structured_field_sql(field)} IS #{operator == :nin ? "NOT " : ""}NULL", value: nil.as(Grant::Columns::Type)}
+        null_predicate = "#{structured_field_sql(field)} IS #{operator == :nin ? "NOT " : ""}NULL"
+        own_where_fields << {join: :or, stmt: null_predicate, value: nil.as(Grant::Columns::Type)}
+        register_raw_where_column(null_predicate, field)
       else
         own_where_fields << {join: :or, stmt: operator == :nin ? "1=1" : "1=0", value: nil.as(Grant::Columns::Type)}
       end
@@ -542,6 +551,7 @@ class Grant::Query::Builder(Model)
                   "(#{safe_field} IN (#{placeholders}) OR #{safe_field} IS NULL)"
                 end
     own_where_fields << {join: :or, stmt: predicate, values: bind_values}
+    register_raw_where_column(predicate, field)
     self
   end
 

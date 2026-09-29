@@ -1,6 +1,29 @@
 require "../../spec_helper"
 require "../../support/where_family_models"
 
+class WfRegionLine < Grant::Base
+  include Grant::CompositePrimaryKey
+
+  connection {{(env("CURRENT_ADAPTER") || "sqlite").id}}
+  table wf_region_lines
+
+  column region_id : Int64, primary: true
+  column line_id : Int64, primary: true
+  column label : String?
+
+  composite_primary_key region_id, line_id
+end
+
+private def seed_region_lines : Nil
+  WfRegionLine.adapter.open do |db|
+    db.exec "DROP TABLE IF EXISTS wf_region_lines"
+    db.exec "CREATE TABLE wf_region_lines (region_id BIGINT NOT NULL, line_id BIGINT NOT NULL, label VARCHAR(20), PRIMARY KEY (region_id, line_id))"
+    [{1, 1, "r1l1"}, {1, 2, "r1l2"}, {2, 1, "r2l1"}].each do |region, line, label|
+      db.exec "INSERT INTO wf_region_lines (region_id, line_id, label) VALUES (#{region}, #{line}, '#{label}')"
+    end
+  end
+end
+
 private def titles(relation : Grant::Query::Builder(WfPost)) : Array(String)
   relation.order(:id).select.map { |post| post.title.to_s }
 end
@@ -50,6 +73,15 @@ describe "excluding, without and invert_where" do
       a = WfPost.find_by!(title: "a")
       b = WfPost.find_by!(title: "b")
       WfPost.excluding(a, b).to_sql.should contain("NOT IN")
+    end
+
+    it "excludes each key combination of a composite primary key" do
+      seed_region_lines
+      r1l2 = WfRegionLine.where(region_id: 1_i64, line_id: 2_i64).first!
+      r2l1 = WfRegionLine.where(region_id: 2_i64, line_id: 1_i64).first!
+      labels = WfRegionLine.excluding(r1l2, r2l1).order([:region_id, :line_id]).select.map(&.label)
+      labels.should eq(["r1l1"])
+      WfRegionLine.excluding(r1l2).to_sql.should contain("NOT (")
     end
 
     it "spells without the same way" do
