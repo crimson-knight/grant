@@ -48,6 +48,22 @@ describe Grant::Notifications do
       events.select(&.sql.includes?("parents")).all?(&.async?).should be_true
     end
 
+    it "reports aggregate and typed pluck statements with their binds and model" do
+      Parent.create!(name: "summed")
+
+      events = collect(Grant::Events::SQL) do
+        Parent.where(name: "summed").sum(:id)
+        Parent.where(name: "summed").pluck_as(name: String)
+      end
+
+      aggregate = events.find! { |candidate| candidate.sql.includes?("SUM(") }
+      aggregate.binds.should eq(["summed"] of Grant::Columns::Type)
+      aggregate.name.should eq("Parent")
+      plucked = events.find! { |candidate| candidate.sql.includes?("parents") && !candidate.sql.includes?("SUM(") }
+      plucked.binds.should eq(["summed"] of Grant::Columns::Type)
+      plucked.name.should eq("Parent")
+    end
+
     it "publishes a statement that fails" do
       events = collect(Grant::Events::SQL) do
         expect_raises(Exception) { Parent.query("SELECT * FROM missing_table_for_notifications") { } }
