@@ -33,6 +33,7 @@ require "./grant/target"
 require "./grant/base"
 require "./grant/sti"
 require "./grant/schema/introspection"
+require "./grant/schema/schema_statements"
 
 # Large-table / high-scale query toolkit (index hints, IN chunking, streaming,
 # tenant scoping). Required after Grant::Base is fully defined so the toolkit
