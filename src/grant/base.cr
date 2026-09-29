@@ -214,12 +214,12 @@ abstract class Grant::Base
   #
   # :nodoc:
   def __identity_key : Grant::Columns::Type | Array(Grant::Columns::Type)
-    if self.class.composite_primary_key?
+    {% if @type.instance_vars.select { |ivar| (ann = ivar.annotation(Grant::Column)) && ann[:primary] }.size > 1 %}
       parts = primary_key_values.values
       parts.any?(&.nil?) ? nil : parts
-    else
+    {% else %}
       primary_key_value.as(Grant::Columns::Type)
-    end
+    {% end %}
   end
 
   # The class that scopes identity: the STI root for single table inheritance
@@ -227,11 +227,11 @@ abstract class Grant::Base
   #
   # :nodoc:
   def __identity_class_name : String
-    if self.class.responds_to?(:sti_root)
+    {% if @type.ancestors.any? { |ancestor| ancestor.stringify == "Grant::STI" } %}
       self.class.sti_root.name
-    else
+    {% else %}
       self.class.name
-    end
+    {% end %}
   end
 
   # Two records are equal when they are the same object, or when they belong to

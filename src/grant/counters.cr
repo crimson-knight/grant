@@ -9,11 +9,14 @@ require "./timestamps"
 # Post.update_counters([1, 2, 3], {:views_count => 1}, touch: true)
 # ```
 module Grant::Counters
+  MAX_IDS_PER_STATEMENT = 10_000
+
   module ClassMethods
     # Adjusts counter columns on the row with primary key *id*. See the array
     # overload for *counters* and *touch*. Returns the number of rows changed.
     def update_counters(id : Grant::Querying::IdValue, counters : Hash(K, T), touch : Bool | Symbol | Array(Symbol) = false) : Int64 forall K, T
-      update_counters([id] of Grant::Querying::IdValue, counters, touch)
+      guard_writes!
+      __apply_counter_update(current_scope.where(primary_name, :eq, id.as(Grant::Columns::Type)), counters, touch)
     end
 
     # Adjusts counter columns on every row whose primary key is in *ids* with one
@@ -33,13 +36,13 @@ module Grant::Counters
       guard_writes!
       return 0_i64 if ids.empty?
 
-      id_values = ids.map { |id| id.as(Grant::Columns::Type) }
-      query = if id_values.size == 1
-                current_scope.where(primary_name, :eq, id_values.first)
-              else
-                current_scope.where(primary_name, :in, id_values)
-              end
-      __apply_counter_update(query, counters, touch)
+      # One statement per slice keeps very long lists under the bind-parameter
+      # limit of every adapter; ordinary lists are a single statement.
+      affected = 0_i64
+      ids.each_slice(MAX_IDS_PER_STATEMENT) do |slice|
+        affected += __apply_counter_update(current_scope.where(primary_name, :in, slice), counters, touch)
+      end
+      affected
     end
 
     # Runs the counter `UPDATE` against the rows *query* selects. Shared by
@@ -81,9 +84,14 @@ module Grant::Counters
                end
 
       mark_write_operation
-      adapter.open do |db|
-        db.exec(sql, args: adapter.normalize_bind_values(values)).rows_affected
+      affected = 0_i64
+      elapsed_time = Time.measure do
+        adapter.open do |db|
+          affected = db.exec(sql, args: adapter.normalize_bind_values(values)).rows_affected
+        end
       end
+      adapter.log(sql, elapsed_time, values)
+      affected
     end
 
     # The timestamp columns a counter update refreshes for a `touch:` argument.

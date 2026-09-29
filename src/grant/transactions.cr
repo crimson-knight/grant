@@ -40,6 +40,24 @@ module Grant::Transactions
       true
     end
 
+    # False when the model has an `Array` column that in-place mutation
+    # detection does not watch: `post.tags << "x"` never reaches dirty
+    # tracking, so a partial update could silently drop it. Such models keep
+    # writing every column until they declare `detect_mutation`.
+    #
+    # :nodoc:
+    def __partial_update_safe? : Bool
+      {% begin %}
+        {% array_columns = @type.instance_vars.select { |ivar| ivar.annotation(Grant::Column) && ivar.type.union_types.any? { |column_type| column_type.name.starts_with?("Array(") } }.map(&.name.stringify) %}
+        {% if array_columns.empty? %}
+          true
+        {% else %}
+          watched = mutation_detected_attributes
+          {{ array_columns }}.all? { |column_name| watched.includes?(column_name) }
+        {% end %}
+      {% end %}
+    end
+
     # Deletes **every** row from the model's table with a single `DELETE FROM`.
     #
     # This bypasses callbacks and validations entirely — it issues one SQL
@@ -381,7 +399,7 @@ module Grant::Transactions
     fields = self.class.content_fields.dup
     params = content_values + [@{{primary_key.name.id}}]
 
-    if self.class.partial_updates?
+    if self.class.partial_updates? && self.class.__partial_update_safe?
       changed_columns = __changed_column_names
       if changed_columns.empty?
         Grant::Logs::Model.debug { "Skipping update, nothing changed - #{self.class.name} [id: #{@{{primary_key.name.id}}}]" }

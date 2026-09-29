@@ -12,7 +12,7 @@ require "./settings"
 #   record_timestamps false # opt this model out of automatic stamping
 # end
 #
-# Post.no_touching { post.touch }    # touch becomes a no-op inside the block
+# Post.no_touching { post.touch }     # touch becomes a no-op inside the block
 # Post.suppress { Post.create!(...) } # save becomes a no-op inside the block
 # ```
 module Grant::Timestamps
