@@ -17,7 +17,12 @@ describe "Grant error taxonomy" do
         Grant::NoDatabaseError, Grant::ConnectionNotEstablished,
         Grant::ConnectionTimeoutError, Grant::ConnectionFailed,
         Grant::AdapterNotAvailableError, Grant::Transaction::ReadOnlyError,
-        Grant::ReadOnlyRecordError,
+        Grant::ReadOnlyRecordError, Grant::Querying::NotUnique,
+        Grant::Locking::Optimistic::StaleObjectError, Grant::STI::SubclassNotFound,
+        Grant::STI::ImmutableTypeError, Grant::STI::TypeCastingError,
+        Grant::ValueObjects::ValueObjectError, Grant::UnsupportedIndexHintError,
+        Grant::Encryption::KeyProvider::KeyError, Grant::Encryption::Cipher::EncryptionError,
+        Grant::Encryption::Cipher::DecryptionError, Grant::Async::AsyncError,
       ].each do |error_class|
         (error_class <= Grant::ErrorBase).should be_true
       end

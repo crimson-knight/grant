@@ -1,7 +1,7 @@
 require "../locking"
 
 module Grant::Locking::Optimistic
-  class StaleObjectError < Exception
+  class StaleObjectError < Grant::ErrorBase
     getter record_class : String
     getter record_id : String?
 

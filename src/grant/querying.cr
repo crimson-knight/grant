@@ -4,7 +4,7 @@ module Grant::Querying
   class NotFound < Grant::RecordNotFound
   end
 
-  class NotUnique < Exception
+  class NotUnique < Grant::ErrorBase
   end
 
   class ScopedRawSqlError < Grant::ErrorBase
