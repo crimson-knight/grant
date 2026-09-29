@@ -52,97 +52,6 @@ module Grant::Sharding
     end
   end
 
-  # Built-in hash sharding resolver
-  class HashResolver < ShardResolver
-    getter shard_count : Int32
-    getter shard_prefix : String
-
-    @shards : Array(Symbol)
-
-    def initialize(@key_columns : Array(Symbol), @shard_count : Int32, @shard_prefix : String = "shard")
-      # Crystal doesn't support dynamic symbol creation, so we need to handle known shard counts
-      @shards = case @shard_count
-                when 1
-                  [:shard_0]
-                when 2
-                  [:shard_0, :shard_1]
-                when 3
-                  [:shard_0, :shard_1, :shard_2]
-                when 4
-                  [:shard_0, :shard_1, :shard_2, :shard_3]
-                when 8
-                  [:shard_0, :shard_1, :shard_2, :shard_3, :shard_4, :shard_5, :shard_6, :shard_7]
-                when 16
-                  [:shard_0, :shard_1, :shard_2, :shard_3, :shard_4, :shard_5, :shard_6, :shard_7,
-                   :shard_8, :shard_9, :shard_10, :shard_11, :shard_12, :shard_13, :shard_14, :shard_15]
-                else
-                  raise "Unsupported shard count: #{@shard_count}. Supported counts are: 1, 2, 3, 4, 8, 16"
-                end
-    end
-
-    def resolve(model : Grant::Base) : Symbol
-      values = @key_columns.map { |col| model.read_attribute(col.to_s) }
-      resolve_for_values(values)
-    end
-
-    def resolve_for_keys(**keys) : Symbol
-      values = @key_columns.map { |col| keys[col]? || raise "Missing shard key: #{col}" }
-      resolve_for_values(values)
-    end
-
-    def all_shards : Array(Symbol)
-      @shards
-    end
-
-    def resolve_for_values(values : Array) : Symbol
-      # Create composite key string
-      key = values.map(&.to_s).join(":")
-
-      # Use hash function for even distribution
-      hash_value = key.hash
-
-      # Determine shard number
-      shard_num = hash_value.abs % @shard_count
-
-      # Return the shard symbol from our pre-defined array
-      @shards[shard_num]
-    end
-  end
-
-  # Range-based sharding resolver - TODO: implement with proper type handling
-
-  # Lookup-based sharding resolver (for geographic, etc)
-  class LookupResolver < ShardResolver
-    getter lookup_table : Hash(String, Symbol)
-    getter default_shard : Symbol?
-
-    def initialize(@key_column : Symbol, @lookup_table : Hash(String, Symbol), @default_shard : Symbol? = nil)
-    end
-
-    def resolve(model : Grant::Base) : Symbol
-      value = model.read_attribute(@key_column.to_s).to_s
-      @lookup_table[value]? || @default_shard || raise "No shard found for value: #{value}"
-    end
-
-    def resolve_for_keys(**keys) : Symbol
-      value = keys[@key_column]?.try(&.to_s) || raise "Missing shard key: #{@key_column}"
-      @lookup_table[value]? || @default_shard || raise "No shard found for value: #{value}"
-    end
-
-    def resolve_for_values(values : Array) : Symbol
-      value = values.first?.try(&.to_s) || raise "Missing shard key: #{@key_column}"
-      @lookup_table[value]? || @default_shard || raise "No shard found for value: #{value}"
-    end
-
-    def all_shards : Array(Symbol)
-      shards = @lookup_table.values.uniq
-      if default = @default_shard
-        shards << default
-      end
-      shards
-    end
-  end
-
   # Module to include in models for sharding support
   module Model
     macro included
@@ -253,8 +162,24 @@ module Grant::Sharding
           key_columns: [{% for col in columns %} {{col.id.symbolize}}, {% end %}],
           resolver: Grant::Sharding::HashResolver.new(
             [{% for col in columns %} {{col.id.symbolize}}, {% end %}],
-            {{options[:count] || 4}},
-            {{options[:prefix] || "shard"}}.to_s
+            {% if options[:shards] %}
+              {{options[:shards]}}
+            {% else %}
+              {{options[:count] || 4}},
+              {{options[:prefix] || "shard"}}.to_s
+            {% end %}
+          )
+        )
+      {% elsif strategy == :lookup %}
+        {% unless options[:lookup] %}
+          {% raise "Lookup sharding requires :lookup option" %}
+        {% end %}
+        self.sharding_config = Grant::Sharding::ShardConfig.new(
+          key_columns: [{% for col in columns %} {{col.id.symbolize}}, {% end %}],
+          resolver: Grant::Sharding::LookupResolver.new(
+            [{% for col in columns %} {{col.id.symbolize}}, {% end %}],
+            {{options[:lookup]}}.to_h,
+            {{options[:default_shard]}}.as(Symbol?)
           )
         )
       {% elsif strategy == :range %}
@@ -454,4 +379,7 @@ require "./sharding/shard_manager"
 require "./sharding/query_router"
 require "./sharding/sharded_query_builder"
 require "./sharding/range_resolver"
+require "./sharding/resolvers/hash_resolver"
+require "./sharding/resolvers/lookup_resolver"
+require "./sharding/resolvers/time_range_resolver"
 require "./sharding/geo_resolver"

@@ -59,7 +59,7 @@ module Grant
       end
 
       config || raise "No shard configuration for #{model_name}"
-      config.resolver.all_shards
+      config.resolver.all_shards.uniq
     end
 
     # Check if a model is sharded
