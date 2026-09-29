@@ -197,7 +197,7 @@ module Grant::Schema
 
     private def primary_key_columns(table : TableDefinition, primary_key : ColumnNames?) : Array(::String)
       keys = case primary_key
-             in Array then primary_key.map(&.to_s)
+             in Array                 then primary_key.map(&.to_s)
              in ::String, Symbol, Nil then [] of ::String
              end
       flagged = table.columns.select(&.primary_key?).map(&.name)

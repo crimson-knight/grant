@@ -55,10 +55,10 @@ module Grant::Schema
     # Quotes a value as a SQL literal.
     def quote_literal(value : DefaultLiteral) : String
       case value
-      in Nil    then "NULL"
-      in Bool   then value ? "TRUE" : "FALSE"
+      in Nil                                                     then "NULL"
+      in Bool                                                    then value ? "TRUE" : "FALSE"
       in Int8, Int16, Int32, Int64, Float32, Float64, BigDecimal then value.to_s
-      in Time   then "'#{value.to_utc.to_s("%F %T.%6N")}'"
+      in Time                                                    then "'#{value.to_utc.to_s("%F %T.%6N")}'"
       in String
         escaped = value.gsub("'", "''")
         escaped = escaped.gsub("\\", "\\\\") if mysql?

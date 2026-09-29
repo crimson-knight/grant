@@ -106,7 +106,7 @@ module Grant::Schema
         end
       in .text?
         dialect.mysql? ? mysql_sized("TEXT", {255 => "TINYTEXT", 65_535 => "TEXT", 16_777_215 => "MEDIUMTEXT"}, "LONGTEXT") : "TEXT"
-      in .integer?  then integer_type(dialect, @limit || 4)
+      in .integer?   then integer_type(dialect, @limit || 4)
       in .small_int? then integer_type(dialect, 2)
       in .tiny_int?  then integer_type(dialect, 1)
       in .big_int?   then integer_type(dialect, 8)
