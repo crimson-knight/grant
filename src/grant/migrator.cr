@@ -52,6 +52,7 @@ module Grant::Migrator
 
     def drop
       Model.unscoped { |_scope| Model.exec drop_sql }
+      Model.adapter.schema.reset!(Model.table_name)
     end
 
     def create_sql
@@ -121,6 +122,7 @@ module Grant::Migrator
 
     def create
       Model.unscoped { |_scope| Model.exec create_sql }
+      Model.adapter.schema.reset!(Model.table_name)
     end
   end
 end
