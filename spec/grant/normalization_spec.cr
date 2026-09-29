@@ -238,6 +238,15 @@ describe Grant::Normalization do
       user.email.should eq("john@example.com")
     end
 
+    it "skips conditional (if:) normalizers when skip_normalization is true" do
+      user = NormalizedUser.new
+      user.website = "example.com"
+      user.valid?(skip_normalization: true)
+      user.website.should eq("example.com")
+      user.valid?
+      user.website.should eq("https://example.com")
+    end
+
     it "does not normalize values loaded from the database" do
       NormalizedUser.exec("INSERT INTO normalized_users (email) VALUES ('  RAW@EXAMPLE.COM  ')")
       loaded = NormalizedUser.where("email LIKE ?", "%RAW@EXAMPLE.COM%").first!

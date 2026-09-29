@@ -39,6 +39,15 @@ describe "normalized query conditions" do
     NrmQueryUser.where(note: " Keep ").find_by(email: "A@B.COM").should_not be_nil
   end
 
+  it "where normalizes each element of an IN list" do
+    NrmQueryUser.where(email: [" A@B.COM ", "missing@x.com"]).count.should eq(1)
+    NrmQueryUser.where.not(email: [" A@B.COM "]).count.should eq(0)
+  end
+
+  it "where.not normalizes equality values" do
+    NrmQueryUser.where.not(email: " A@B.COM ").count.should eq(0)
+  end
+
   it "leaves other columns untouched" do
     NrmQueryUser.where(note: "keep").count.should eq(0)
     NrmQueryUser.where(note: " Keep ").count.should eq(1)

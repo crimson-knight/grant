@@ -27,9 +27,9 @@
 # end
 #
 # u = User.new(email: "  Alice@Example.COM ")
-# u.email                                     # => "alice@example.com"
-# User.normalize_value_for(:email, " A@X ")   # => "a@x"
-# User.find_by(email: " ALICE@EXAMPLE.COM ")  # matches the stored row
+# u.email                                    # => "alice@example.com"
+# User.normalize_value_for(:email, " A@X ")  # => "a@x"
+# User.find_by(email: " ALICE@EXAMPLE.COM ") # matches the stored row
 # ```
 #
 # Performance: each normalized column contributes one generated class method
@@ -77,8 +77,13 @@ module Grant::Normalization
           {% column = method.name.gsub(/^__normalize_/, "") %}
           {% ivar = @type.instance_vars.find { |v| v.name.stringify == column } %}
           {% if ivar %}
-            if field == {{ column.stringify }} && value.is_a?({{ ivar.annotation(Grant::Column)[:setter_type] }})
-              return {{ method.name.id }}(value)
+            if field == {{ column.stringify }}
+              if value.is_a?({{ ivar.annotation(Grant::Column)[:setter_type] }})
+                return {{ method.name.id }}(value)
+              elsif value.is_a?(Array)
+                # `where(email: [...])` (IN): normalize each element of the column's type.
+                return value.map { |item| item.is_a?({{ ivar.annotation(Grant::Column)[:setter_type] }}) ? {{ method.name.id }}(item) : item }
+              end
             end
           {% end %}
         {% end %}
@@ -99,7 +104,8 @@ module Grant::Normalization
   #   then receives a nilable value). The default skips `nil`.
   # * `if:` (Grant-specific) names a predicate method; such a normalizer runs in
   #   `before_validation` instead of the setter, because the predicate needs the
-  #   record, and is not applied to query conditions.
+  #   record, and is not applied to query conditions. Only these conditional
+  #   normalizers honor `valid?(skip_normalization: true)`.
   #
   # The columns must be declared in the same class. The typed methods are
   # generated once the class body is complete, so declaration order does not
@@ -135,6 +141,7 @@ module Grant::Normalization
         before_validation :_normalize_{{ attribute.id }}
 
         private def _normalize_{{ attribute.id }}
+          return if @_skip_normalization
           return unless {{ options[:if].id }}
           if current = self.{{ attribute.id }}
             self.{{ attribute.id }} = self.class.__conditional_normalize_{{ attribute.id }}(current)
