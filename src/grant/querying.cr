@@ -616,6 +616,8 @@ module Grant::Querying
       {% end %}
     {% end %}
 
+    # The reloaded values supersede any raw mass-assignment input.
+    clear_before_type_cast
     self.new_record = false
     clear_loaded_associations
     ensure_dirty_tracking_initialized

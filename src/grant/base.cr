@@ -51,6 +51,8 @@ require "./async"
 require "./aggregations"
 require "./value_objects"
 require "./encryption"
+require "./attributes"
+require "./integration"
 
 # Grant::Base is the base class for your model objects.
 abstract class Grant::Base
@@ -81,12 +83,34 @@ abstract class Grant::Base
   include NestedAttributes
   include ValueObjects
   include Encryption::Model
+  include Attributes
+  include Integration
   include Locking::Pessimistic
   include Transaction
 
   # Make secure token macros available
   macro has_secure_token(name, length = 24, alphabet = :base58)
     Grant::SecureToken.has_secure_token({{ name }}, {{ length }}, {{ alphabet }})
+
+    # Token columns are credentials: `inspect` prints them as [FILTERED].
+    {% if @type.has_constant?(:GRANT_SECURE_TOKEN_COLUMNS) %}
+      {% token_columns = @type.constant(:GRANT_SECURE_TOKEN_COLUMNS) %}
+      {% token_columns << name.id.stringify %}
+    {% else %}
+      {% token_columns = [name.id.stringify] %}
+      GRANT_SECURE_TOKEN_COLUMNS = {{ token_columns }}
+    {% end %}
+
+    def self.secure_token_column?(name : String) : Bool
+      case name
+      {% for token_column in token_columns %}
+      when {{ token_column }}
+        true
+      {% end %}
+      else
+        false
+      end
+    end
   end
 
   # Auto-register class for polymorphic associations will be handled in the main inherited macro
@@ -110,6 +134,8 @@ abstract class Grant::Base
   extend Grant::Async::ClassMethods
   extend Grant::Aggregations::ClassMethods
   extend ValueObjects::ClassMethods
+  extend Attributes::ClassMethods
+  extend Integration::ClassMethods
 
   # Make normalization macro available
   macro normalizes(attribute, **options, &block)

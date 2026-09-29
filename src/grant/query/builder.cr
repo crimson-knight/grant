@@ -257,7 +257,8 @@ class Grant::Query::Builder(Model)
   # User.where({active: true, email: "a@example.com"})
   # ```
   def where!(matches) : self
-    matches.each do |field, value|
+    matches.each do |key, value|
+      field = resolve_column_alias(key.to_s)
       if value.is_a?(Array)
         and_array(field.to_s, :in, value)
       elsif value.is_a?(Enum)
