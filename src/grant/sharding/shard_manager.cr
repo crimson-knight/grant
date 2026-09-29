@@ -14,8 +14,12 @@ module Grant
 
     # Execute within shard context
     def self.with_shard(shard : Symbol, &block)
-      previous = @@current_shard[Fiber.current]?
-      @@current_shard[Fiber.current] = shard
+      fiber = Fiber.current
+      previous = @@mutex.synchronize do
+        was = @@current_shard[fiber]?
+        @@current_shard[fiber] = shard
+        was
+      end
 
       # Set connection context using Fiber-local storage
       # This replaces the Thread.current usage
@@ -24,22 +28,26 @@ module Grant
       ensure
         # Delete the entry when restoring to nil to avoid a memory leak
         # where long-lived fibers accumulate dead entries in the hash.
-        if prev = previous
-          @@current_shard[Fiber.current] = prev
-        else
-          @@current_shard.delete(Fiber.current)
+        @@mutex.synchronize do
+          if prev = previous
+            @@current_shard[fiber] = prev
+          else
+            @@current_shard.delete(fiber)
+          end
         end
       end
     end
 
     # Get current shard for fiber
     def self.current_shard : Symbol?
-      @@current_shard[Fiber.current]?
+      fiber = Fiber.current
+      @@mutex.synchronize { @@current_shard[fiber]? }
     end
 
     # Set current shard (used internally)
     def self.set_current_shard(shard : Symbol?)
-      @@current_shard[Fiber.current] = shard
+      fiber = Fiber.current
+      @@mutex.synchronize { @@current_shard[fiber] = shard }
     end
 
     # Resolve shard for given keys

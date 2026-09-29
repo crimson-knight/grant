@@ -19,14 +19,23 @@ module Grant::Sharding
     # equality condition, we fall back to scatter-gather rather than risk
     # misrouting.
     def route(query : Query::Builder(Model)) : QueryExecution
-      shard_keys = extract_shard_keys(query)
+      shards = shards_for(query)
 
-      if single_shard = resolve_single_shard(shard_keys)
+      if shards.size == 1 && resolve_single_shard(extract_shard_keys(query))
         # All shard keys present and resolvable -> target one shard.
-        SingleShardExecution(Model).new(@model, query, single_shard)
+        SingleShardExecution(Model).new(@model, query, shards.first)
       else
-        shards = resolve_range_shards(query) || Grant::ShardManager.shards_for_model(@model.name)
         ScatterGatherExecution(Model).new(@model, query, shards)
+      end
+    end
+
+    # The shards *query* has to visit: the one its shard key pins, the ones a
+    # range predicate on the key intersects, or every shard of the model.
+    def shards_for(query : Query::Builder(Model)) : Array(Symbol)
+      if single_shard = resolve_single_shard(extract_shard_keys(query))
+        [single_shard]
+      else
+        resolve_range_shards(query) || Grant::ShardManager.shards_for_model(@model.name)
       end
     end
 
@@ -160,153 +169,6 @@ module Grant::Sharding
         # Always use the non-routing method to avoid infinite recursion
         @query.as(Grant::Sharding::ShardedQueryBuilder(Model)).pluck_without_routing(column)
       end
-    end
-  end
-
-  # Execute query across all shards (scatter-gather)
-  class ScatterGatherExecution(Model) < QueryExecution(Model)
-    @query : Grant::Query::Builder(Model)
-    @shards : Array(Symbol)
-
-    def initialize(@model : Model.class, query : Grant::Query::Builder(Model), @shards : Array(Symbol))
-      @query = query
-    end
-
-    def execute : Array(Model)
-      # Use async executor for parallel execution
-      results = Grant::Async::ShardedExecutor.execute_and_wait(@shards) do |shard|
-        Grant::Async::AsyncResult.new do
-          Grant::ShardManager.with_shard(shard) do
-            # Always use the non-routing method to avoid infinite recursion
-            @query.as(Grant::Sharding::ShardedQueryBuilder(Model)).select_without_routing
-          end
-        end
-      end
-
-      # Merge and sort results
-      merge_results(results.values)
-    end
-
-    def count : Grant::Query::Builder::CountResult
-      results = Grant::Async::ShardedExecutor.execute_and_wait(@shards) do |shard|
-        Grant::Async::AsyncResult.new do
-          Grant::ShardManager.with_shard(shard) do
-            # Always use the non-routing method to avoid infinite recursion
-            @query.as(Grant::Sharding::ShardedQueryBuilder(Model)).count_without_routing
-          end
-        end
-      end
-
-      merge_count_results(results.values)
-    end
-
-    private def merge_count_results(results : Array(Grant::Query::Builder::CountResult)) : Grant::Query::Builder::CountResult
-      case @query.group_fields.size
-      when 0
-        results.sum(0_i64) { |result| result.as(Int64) }
-      when 1
-        counts = {} of Grant::Columns::Type => Int64
-        results.each do |result|
-          result.as(Hash(Grant::Columns::Type, Int64)).each do |key, count|
-            counts[key] = counts.fetch(key, 0_i64) + count
-          end
-        end
-        counts
-      else
-        counts = {} of Array(Grant::Columns::Type) => Int64
-        results.each do |result|
-          result.as(Hash(Array(Grant::Columns::Type), Int64)).each do |key, count|
-            counts[key] = counts.fetch(key, 0_i64) + count
-          end
-        end
-        counts
-      end
-    end
-
-    def exists? : Bool
-      # Short-circuit on first true result
-      @shards.each do |shard|
-        Grant::ShardManager.with_shard(shard) do
-          # Always use the non-routing method to avoid infinite recursion
-          return true if @query.as(Grant::Sharding::ShardedQueryBuilder(Model)).exists_without_routing
-        end
-      end
-      false
-    end
-
-    def pluck(column : String | Symbol) : Array(Grant::Columns::Type)
-      results = Grant::Async::ShardedExecutor.execute_and_wait(@shards) do |shard|
-        Grant::Async::AsyncResult.new do
-          Grant::ShardManager.with_shard(shard) do
-            # Always use the non-routing method to avoid infinite recursion
-            @query.as(Grant::Sharding::ShardedQueryBuilder(Model)).pluck_without_routing(column)
-          end
-        end
-      end
-
-      # Flatten all plucked values
-      results.values.flatten
-    end
-
-    private def merge_results(shard_results : Array(Array(Model))) : Array(Model)
-      merged = shard_results.flatten
-
-      # Apply any ORDER BY from original query
-      if !@query.order_fields.empty?
-        order_fields = @query.order_fields
-        merged.sort! do |a, b|
-          compare_by_order_fields(a, b, order_fields)
-        end
-      end
-
-      # Apply LIMIT if present
-      if limit = @query.limit
-        merged = merged.first(limit)
-      end
-
-      merged
-    end
-
-    private def compare_by_order_fields(a : Model, b : Model, order_fields : Array(NamedTuple(field: String, direction: Grant::Query::Builder::Sort))) : Int32
-      order_fields.each do |order|
-        field = order[:field]
-        direction = order[:direction]
-
-        val_a = a.read_attribute(field)
-        val_b = b.read_attribute(field)
-
-        # Handle nil values
-        if val_a.nil? && val_b.nil?
-          next
-        elsif val_a.nil?
-          return direction.sorts_descending? ? 1 : -1
-        elsif val_b.nil?
-          return direction.sorts_descending? ? -1 : 1
-        end
-
-        # Compare values
-        comparison = if val_a.is_a?(Number) && val_b.is_a?(Number)
-                       val_a <=> val_b
-                     elsif val_a.is_a?(String) && val_b.is_a?(String)
-                       val_a <=> val_b
-                     elsif val_a.is_a?(Time) && val_b.is_a?(Time)
-                       val_a <=> val_b
-                     else
-                       val_a.to_s <=> val_b.to_s
-                     end
-
-        # The spaceship operator always returns Int32 when comparing non-nil values
-        comparison = comparison.as(Int32)
-
-        # Apply direction
-        if direction.sorts_descending?
-          comparison = -comparison
-        end
-
-        return comparison if comparison != 0
-      end
-
-      0 # Equal
     end
   end
 

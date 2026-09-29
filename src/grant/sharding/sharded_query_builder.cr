@@ -6,10 +6,13 @@ module Grant::Sharding
   class ShardedQueryBuilder(Model) < Query::Builder(Model)
     @router : QueryRouter(Model)
     @force_shard : Symbol?
+    # Set on the copy each shard runs, so its methods skip routing and run
+    # the plain query against the shard that is active.
+    @local_execution : Bool = false
 
     def initialize(db_type : DbType, boolean_operator = :and, shard_config : ShardConfig? = nil)
       super(db_type, boolean_operator)
-      config = shard_config || raise "ShardedQueryBuilder requires a shard config"
+      config = shard_config || Model.sharding_config || raise "ShardedQueryBuilder requires a shard config"
       @router = QueryRouter(Model).new(Model, config)
       @force_shard = nil
     end
@@ -21,6 +24,32 @@ module Grant::Sharding
 
       @router = sharded.@router
       @force_shard = sharded.@force_shard
+      @local_execution = sharded.@local_execution
+    end
+
+    # The database type of an adapter, which picks the SQL assembler.
+    def self.db_type_for(adapter : Grant::Adapter::Base) : DbType
+      if adapter.postgres?
+        DbType::Pg
+      elsif adapter.mysql?
+        DbType::Mysql
+      else
+        DbType::Sqlite
+      end
+    end
+
+    # SQL is assembled for the adapter of the shard that is active, so a
+    # PostgreSQL or MySQL shard gets its own dialect. With no shard active (a
+    # bare `to_sql`, say) the first shard's adapter decides, the same one that
+    # quotes the identifiers (`Model.quoting_adapter`).
+    def assembler : Grant::Query::Assembler::Base(Model)
+      db_type = self.class.db_type_for(Model.quoting_adapter)
+
+      case db_type
+      when DbType::Pg    then Grant::Query::Assembler::Pg(Model).new self
+      when DbType::Mysql then Grant::Query::Assembler::Mysql(Model).new self
+      else                    Grant::Query::Assembler::Sqlite(Model).new self
+      end
     end
 
     # Force query to run on specific shard
@@ -35,25 +64,29 @@ module Grant::Sharding
       self
     end
 
-    # Override select to use routing
-    def select : Array(Model)
-      if force_shard = @force_shard
-        if force_shard == :all
-          # All shards requested
-          all_shards = Grant::ShardManager.shards_for_model(Model.name)
-          ScatterGatherExecution(Model).new(Model, self, all_shards).execute
-        else
-          # Single shard specified
-          SingleShardExecution(Model).new(Model, self, force_shard).execute
-        end
-      else
-        # Let router decide
-        execution = @router.route(self)
-        execution.execute
-      end
+    # A copy that runs on whichever shard is active, with no routing. The
+    # scatter-gather execution calls it once per shard.
+    # :nodoc:
+    def local_execution : self
+      copy = chain_copy
+      copy.mark_local_execution
+      copy
     end
 
-    # Internal method to select without routing (avoids infinite recursion)
+    # :nodoc:
+    protected def mark_local_execution : Nil
+      @local_execution = true
+    end
+
+    # Runs the query on the shards it targets and merges the rows.
+    def select : Array(Model)
+      return select_without_routing if @local_execution
+
+      execution.execute
+    end
+
+    # Internal method to select without routing (avoids infinite recursion).
+    # Each record remembers the shard it was read from.
     def select_without_routing : Array(Model)
       records = assembler.select.run
 
@@ -61,6 +94,10 @@ module Grant::Sharding
       all_associations = @includes_associations + @preload_associations + @eager_load_associations
       unless all_associations.empty?
         Grant::AssociationLoader.load_associations(records, all_associations)
+      end
+
+      if shard = active_shard
+        records.each { |record| record.current_shard = shard }
       end
 
       records
@@ -88,49 +125,92 @@ module Grant::Sharding
       assembler.pluck(column)
     end
 
+    # Plucks several columns per row on the active shard, without routing.
+    # The scatter-gather pluck uses it to fetch the ORDER BY values it merges on.
+    # :nodoc:
+    def pluck_rows_without_routing(field_names : Array(String)) : Array(Array(Grant::Columns::Type))
+      field_names.each do |name|
+        Grant::Query::SqlExpression.validate!(name, "pluck expression") unless Grant::Query::SqlExpression.identifier?(name)
+      end
+
+      rows_assembler = assembler
+      sql = rows_assembler.pluck_sql(field_names)
+      Grant::Query::Executor::Pluck(Model).new(sql, rows_assembler.numbered_parameters, field_names).run
+    end
+
     # Override count to use routing
     def count : Query::Builder::CountResult
-      if force_shard = @force_shard
-        if force_shard == :all
-          all_shards = Grant::ShardManager.shards_for_model(Model.name)
-          ScatterGatherExecution(Model).new(Model, self, all_shards).count
-        else
-          SingleShardExecution(Model).new(Model, self, force_shard).count
-        end
-      else
-        execution = @router.route(self)
-        execution.count
-      end
+      return count_without_routing if @local_execution
+
+      execution.count
+    end
+
+    # COUNT(column) across the targeted shards.
+    def count(column : Symbol | String, distinct : Bool = false) : Query::Builder::CountResult
+      return super if @local_execution
+
+      name = column.to_s
+      return count if (name == "all" || name == "*") && !distinct
+
+      execution.count(column, distinct || distinct?)
+    end
+
+    # The sum over the targeted shards: the shards' sums added up.
+    def sum(column : Symbol | String) : SumResult
+      return super if @local_execution
+
+      execution.sum(column)
+    end
+
+    def sum(column : Symbol | String, as type : T.class) : T forall T
+      return super if @local_execution
+
+      execution.sum(column, type)
+    end
+
+    # The average over the targeted shards, from their sums and counts.
+    def avg(column : Symbol | String) : AverageResult
+      return super if @local_execution
+
+      execution.average(column)
+    end
+
+    # The smallest value over the targeted shards.
+    def min(column : Symbol | String) : ExtremumResult
+      return super if @local_execution
+
+      execution.extremum("MIN", column)
+    end
+
+    # The largest value over the targeted shards.
+    def max(column : Symbol | String) : ExtremumResult
+      return super if @local_execution
+
+      execution.extremum("MAX", column)
     end
 
     # Override exists? to use routing
     def exists? : Bool
-      if force_shard = @force_shard
-        if force_shard == :all
-          all_shards = Grant::ShardManager.shards_for_model(Model.name)
-          ScatterGatherExecution(Model).new(Model, self, all_shards).exists?
-        else
-          SingleShardExecution(Model).new(Model, self, force_shard).exists?
-        end
-      else
-        execution = @router.route(self)
-        execution.exists?
-      end
+      return exists_without_routing if @local_execution
+
+      execution.exists?
     end
 
     # Override pluck to use routing
     def pluck(column : String | Symbol) : Array(Grant::Columns::Type)
-      if force_shard = @force_shard
-        if force_shard == :all
-          all_shards = Grant::ShardManager.shards_for_model(Model.name)
-          ScatterGatherExecution(Model).new(Model, self, all_shards).pluck(column)
-        else
-          SingleShardExecution(Model).new(Model, self, force_shard).pluck(column)
-        end
-      else
-        execution = @router.route(self)
-        execution.pluck(column)
-      end
+      return pluck_without_routing(column) if @local_execution
+
+      execution.pluck(column)
+    end
+
+    # Several columns per row across the targeted shards, ordered and paged
+    # over the merged rows. `pick` goes through here too.
+    def pluck(*fields : Symbol | String) : Array(Array(Grant::Columns::Type))
+      field_names = fields.to_a.map(&.to_s)
+      return pluck_rows_without_routing(field_names) if @local_execution
+      return [] of Array(Grant::Columns::Type) if is_none?
+
+      execution.pluck_rows(field_names)
     end
 
     # Override first to use routing
@@ -138,27 +218,10 @@ module Grant::Sharding
       limit(1).select.first?
     end
 
-    # Override last to use routing
+    # The last record: the first of the reversed order, taken across the
+    # targeted shards. With no ORDER BY the primary key decides.
     def last : Model?
-      # For sharded queries, we need to get last from each shard
-      # and then determine the actual last record
-      if force_shard = @force_shard
-        if force_shard == :all
-          # Multi-shard - need custom logic
-          # Get last from each shard and compare
-          all_shards = Grant::ShardManager.shards_for_model(Model.name)
-          results = ScatterGatherExecution(Model).new(Model, reverse_order.limit(1), all_shards).execute
-          results.last?
-        else
-          # Single shard - standard behavior
-          reverse_order.limit(1).select.first?
-        end
-      else
-        # Let router decide
-        execution = @router.route(reverse_order.limit(1))
-        results = execution.execute
-        results.last?
-      end
+      reverse_order.limit(1).select.first?
     end
 
     # Override find to use routing with shard key optimization
@@ -191,6 +254,9 @@ module Grant::Sharding
       @order_fields.each do |order|
         new_builder.order_fields << Grant::Query::OrderSupport.reverse(order)
       end
+      if new_builder.order_fields.empty?
+        new_builder.order_fields << {field: Model.primary_name, direction: Grant::Query::Builder::Sort::Descending}
+      end
 
       # Preserve shard settings
       new_builder.force_shard = @force_shard
@@ -201,6 +267,28 @@ module Grant::Sharding
     # Allow access to force_shard for reverse_order
     protected def force_shard=(shard : Symbol?)
       @force_shard = shard
+    end
+
+    # The shard a query runs on because the caller chose it: a
+    # `ShardManager.with_shard` block or a `connected_to(shard:)` block.
+    private def active_shard : Symbol?
+      Grant::ShardManager.current_shard || Model.current_shard
+    end
+
+    # The shards this query visits. A shard named with `on_shard` or
+    # `on_all_shards` wins, then the active shard, then the shard key.
+    private def target_shards : Array(Symbol)
+      if forced = @force_shard
+        forced == :all ? Grant::ShardManager.shards_for_model(Model.name) : [forced]
+      elsif shard = active_shard
+        [shard]
+      else
+        @router.shards_for(self)
+      end
+    end
+
+    private def execution : ScatterGatherExecution(Model)
+      ScatterGatherExecution(Model).new(Model, self, target_shards)
     end
   end
 
