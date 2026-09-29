@@ -198,7 +198,7 @@ module Grant::Columns
     {% end %}
 
     {% if emit %}
-    @[Grant::Column(column_type: {{column_type}}, converter: {{converter}}, auto: {{auto}}, primary: {{primary}}, nilable: {{nilable}}, setter_type: {{not_nilable_type}})]
+    @[Grant::Column(column_type: {{column_type}}, converter: {{converter}}, auto: {{auto}}, primary: {{primary}}, nilable: {{nilable}}, setter_type: {{not_nilable_type}}, null: {{options[:null]}}, limit: {{options[:limit]}}, precision: {{options[:precision]}}, scale: {{options[:scale]}}, comment: {{options[:comment]}}, collation: {{options[:collation]}}, default_sql: {{options[:default_sql]}})]
     @{{decl.var}} : {{decl.type}}? {% unless decl.value.is_a? Nop %} = {{decl.value}} {% end %}
 
     # The value assigned by mass assignment before conversion, when it

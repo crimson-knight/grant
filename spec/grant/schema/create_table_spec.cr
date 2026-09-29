@@ -113,8 +113,13 @@ describe Grant::Schema::SchemaStatements do
     end
 
     it "creates a temporary table" do
-      statements.create_table(:m02a_live_tmp, temporary: true) { |t| t.integer :n }
-      SchemaFixture.adapter.open { |db| db.exec "INSERT INTO m02a_live_tmp (n) VALUES (1)" }
+      # A temporary table lives on one connection, so create and use it on one.
+      sql = Grant::Schema::RecordingStatements.new(statements.dialect).create_table_statements(:m02a_live_tmp, temporary: true) { |t| t.integer :n }
+      SchemaFixture.adapter.open do |db|
+        sql.each { |statement| db.exec statement }
+        db.exec "INSERT INTO m02a_live_tmp (n) VALUES (1)"
+        db.scalar("SELECT COUNT(*) FROM m02a_live_tmp").should eq 1
+      end
     end
   end
 end
