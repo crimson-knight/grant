@@ -49,13 +49,15 @@ module Grant
       # connections) and the driver default for SQLite.
       property max_idle_pool_size : Int32? = nil
 
-      # Reaper configuration. With neither `idle_timeout` nor `keepalive` set no
-      # reaper runs. `idle_timeout` closes idle connections (keeping
-      # `min_connections`) once nothing was checked out for that long;
-      # `keepalive` pings idle connections at that interval; the reaper wakes
-      # every `reaping_frequency`.
+      # Reaper configuration. With none of `idle_timeout`, `keepalive` and
+      # `max_age` set no reaper runs. `idle_timeout` closes idle connections
+      # (keeping `min_connections`) once nothing was checked out for that long;
+      # `keepalive` pings idle connections at that interval; `max_age` retires
+      # connections open longer than that; the reaper wakes every
+      # `reaping_frequency`.
       property idle_timeout : Time::Span? = nil
       property keepalive : Time::Span? = nil
+      property max_age : Time::Span? = nil
       property reaping_frequency : Time::Span = 1.minute
       property min_connections : Int32 = 0
 
@@ -80,7 +82,7 @@ module Grant
                      @retry_delay = 0.2.seconds, @health_check_interval = 30.seconds,
                      @health_check_timeout = 5.seconds, *,
                      @max_idle_pool_size = nil, @idle_timeout = nil, @keepalive = nil,
-                     @reaping_frequency = 1.minute, @min_connections = 0,
+                     @reaping_frequency = 1.minute, @min_connections = 0, @max_age = nil,
                      @prepared_statements = true, @statement_limit = 1000,
                      @replica_index = 0, @replica_weight = 1)
         @url = url
@@ -95,7 +97,7 @@ module Grant
                      @retry_delay = 0.2.seconds, @health_check_interval = 30.seconds,
                      @health_check_timeout = 5.seconds,
                      @max_idle_pool_size = nil, @idle_timeout = nil, @keepalive = nil,
-                     @reaping_frequency = 1.minute, @min_connections = 0,
+                     @reaping_frequency = 1.minute, @min_connections = 0, @max_age = nil,
                      @prepared_statements = true, @statement_limit = 1000,
                      @replica_index = 0, @replica_weight = 1)
         @url = nil
@@ -235,8 +237,8 @@ module Grant
     #   *retry_attempts* and *retry_delay* govern retrying a refused connection
     #   and a lost read, with capped exponential backoff; a lost write is never
     #   retried.
-    # * *idle_timeout*, *keepalive*, *reaping_frequency*, *min_connections* —
-    #   opt-in idle reaping (see `PoolReaper`).
+    # * *idle_timeout*, *keepalive*, *max_age*, *reaping_frequency*,
+    #   *min_connections* — opt-in idle reaping (see `PoolReaper`).
     # * *prepared_statements*, *statement_limit* — prepared statement behavior.
     # * *health_check_interval* / *health_check_timeout* — the health monitor.
     #
@@ -266,6 +268,7 @@ module Grant
       max_idle_pool_size : Int32? = nil,
       idle_timeout : Time::Span? = nil,
       keepalive : Time::Span? = nil,
+      max_age : Time::Span? = nil,
       reaping_frequency : Time::Span = 1.minute,
       min_connections : Int32 = 0,
       prepared_statements : Bool = true,
@@ -279,7 +282,7 @@ module Grant
         retry_attempts, retry_delay, health_check_interval,
         health_check_timeout,
         max_idle_pool_size: max_idle_pool_size, idle_timeout: idle_timeout,
-        keepalive: keepalive, reaping_frequency: reaping_frequency,
+        keepalive: keepalive, max_age: max_age, reaping_frequency: reaping_frequency,
         min_connections: min_connections, prepared_statements: prepared_statements,
         statement_limit: statement_limit, replica_index: replica_index,
         replica_weight: replica_weight
@@ -316,6 +319,7 @@ module Grant
       max_idle_pool_size : Int32? = nil,
       idle_timeout : Time::Span? = nil,
       keepalive : Time::Span? = nil,
+      max_age : Time::Span? = nil,
       reaping_frequency : Time::Span = 1.minute,
       min_connections : Int32 = 0,
       prepared_statements : Bool = true,
@@ -330,7 +334,7 @@ module Grant
         retry_delay: retry_delay, health_check_interval: health_check_interval,
         health_check_timeout: health_check_timeout,
         max_idle_pool_size: max_idle_pool_size, idle_timeout: idle_timeout,
-        keepalive: keepalive, reaping_frequency: reaping_frequency,
+        keepalive: keepalive, max_age: max_age, reaping_frequency: reaping_frequency,
         min_connections: min_connections, prepared_statements: prepared_statements,
         statement_limit: statement_limit, replica_index: replica_index,
         replica_weight: replica_weight
@@ -435,6 +439,7 @@ module Grant
       adapter_instance.idle_timeout = spec.idle_timeout
       adapter_instance.min_connections = spec.min_connections
       adapter_instance.keepalive = spec.keepalive
+      adapter_instance.max_age = spec.max_age
 
       adapters = @@adapters.dup
       adapters[key] = adapter_instance
@@ -457,7 +462,7 @@ module Grant
     private def self.start_reaper(key : String, adapter : Grant::Adapter::Base, spec : ConnectionSpec) : Nil
       reapers = @@reapers.dup
       reapers.delete(key).try(&.stop)
-      if (spec.idle_timeout || spec.keepalive) && !HealthMonitor.test_mode
+      if (spec.idle_timeout || spec.keepalive || spec.max_age) && !HealthMonitor.test_mode
         reaper = PoolReaper.new(adapter, spec.reaping_frequency)
         reaper.start
         reapers[key] = reaper

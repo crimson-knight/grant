@@ -6,7 +6,8 @@ module Grant
   # Every `reaping_frequency` it runs `#sweep`, which
   #
   # * closes idle connections, down to `min_connections`, once nothing has been
-  #   checked out for `idle_timeout`, and
+  #   checked out for `idle_timeout`,
+  # * closes idle connections that have been open longer than `max_age`, and
   # * runs `SELECT 1` on the idle connections every `keepalive`, so a server or
   #   proxy that drops idle sockets is noticed before a request needs one.
   #
@@ -65,6 +66,8 @@ module Grant
           Log.debug { "Closed #{closed} idle connection(s) on #{@adapter.name}" } if closed > 0
         end
       end
+
+      closed += @adapter.close_aged_connections
 
       if keepalive = @adapter.keepalive
         if now - @last_keepalive_ticks >= keepalive.total_milliseconds

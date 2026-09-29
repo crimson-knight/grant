@@ -104,6 +104,10 @@ class DB::StringKeyCache(T)
 end
 
 abstract class DB::Connection
+  # When this connection was opened, on `Grant::Adapter::PoolSupport.ticks`.
+  # :nodoc:
+  getter grant_opened_ticks : Int64 = Grant::Adapter::PoolSupport.ticks
+
   # Bounds this connection's prepared statement cache; 0 means unbounded.
   def statement_cache_limit=(limit : Int32) : Int32
     @statements_cache.limit = limit

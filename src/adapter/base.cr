@@ -25,6 +25,7 @@ abstract class Grant::Adapter::Base
   property idle_timeout : Time::Span? = nil
   property min_connections : Int32 = 0
   property keepalive : Time::Span? = nil
+  property max_age : Time::Span? = nil
 
   # Checkouts in progress and fibers blocked waiting for one. Plain atomics, so
   # reading pool statistics or picking a replica never takes a lock.
@@ -145,7 +146,7 @@ abstract class Grant::Adapter::Base
     return if stats.max_connections > 0 && stats.idle_connections == 0 &&
               stats.open_connections >= stats.max_connections
 
-    database.using_connection { |conn| conn.scalar("SELECT 1") }
+    checked_out { |conn| conn.scalar("SELECT 1") }
   end
 
   # Raises `Grant::ConnectionFailed` unless the server answers `SELECT 1`.
@@ -209,6 +210,31 @@ abstract class Grant::Adapter::Base
       connection.close
       connection.release
       closed += 1
+    end
+    closed
+  end
+
+  # Closes idle connections that have been open longer than `max_age`, so the
+  # pool turns its connections over (for example ahead of a proxy that drops
+  # old ones). A connection checked out when it passes `max_age` is closed as
+  # it is returned. Returns how many idle connections it closed.
+  def close_aged_connections : Int32
+    return 0 unless opened = @_database
+    return 0 unless @max_age
+
+    held = [] of DB::Connection
+    opened.pool.stats.idle_connections.times do
+      break if opened.pool.stats.idle_connections == 0
+      held << opened.checkout
+    end
+
+    closed = 0
+    held.each do |connection|
+      if aged?(connection)
+        connection.close
+        closed += 1
+      end
+      connection.release
     end
     closed
   end
@@ -356,8 +382,16 @@ abstract class Grant::Adapter::Base
       end
     ensure
       @active_checkouts.sub(1)
+      connection.close if aged?(connection)
       connection.release
     end
+  end
+
+  # True when *connection* has been open longer than `max_age`.
+  private def aged?(connection : DB::Connection) : Bool
+    return false unless limit = @max_age
+
+    Grant::Adapter::PoolSupport.ticks - connection.grant_opened_ticks >= limit.total_milliseconds
   end
 
   # Takes a connection from the pool, counting the fiber as waiting while it

@@ -166,6 +166,33 @@ describe "reconnection and retries" do
     end
   end
 
+  describe "a server that drops connections" do
+    it "recovers a read and refuses to replay a write after the backend is killed" do
+      pending!("needs a server to kill a backend on; PostgreSQL only") unless CURRENT_ADAPTER == "pg"
+
+      adapter = pooled_adapter(pool_size: 3, initial_pool_size: 1, retry_delay: 1.millisecond)
+      kill_backend = -> do
+        pid = adapter.open("SELECT 1") { |connection| connection.scalar("SELECT pg_backend_pid()").as(Int32) }
+        DB.open(ADAPTER_URL) { |killer| killer.scalar("SELECT pg_terminate_backend(#{pid})") }
+        sleep 100.milliseconds
+      end
+
+      kill_backend.call
+      attempts = 0
+      adapter.open("SELECT 1") { |connection| attempts += 1; connection.scalar("SELECT 1") }.should eq 1
+      attempts.should eq 2
+
+      kill_backend.call
+      attempts = 0
+      expect_raises(Grant::ConnectionFailed) do
+        adapter.open("UPDATE c02_never_written SET a = 1") { |connection| attempts += 1; connection.exec("SELECT 1") }
+      end
+      attempts.should eq 1
+
+      adapter.active?.should be_true
+    end
+  end
+
   describe "liveness" do
     it "answers active? and verify! for a reachable database" do
       adapter = pooled_adapter
