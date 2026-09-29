@@ -445,9 +445,10 @@ module Grant::Transaction
 
   private def self.run_nested(state : TransactionState, adapter : Grant::Adapter::Base, options : Options, & : -> T) : T? forall T
     if options.independent
-      if Grant::SchemaTenant.current_connection?(adapter)
-        # A schema-tenant block owns one physical connection; a second one
-        # would lose its search_path, so nest with a savepoint instead.
+      if Grant::SchemaTenant.current_connection?(adapter) || adapter.pinned_connection?
+        # A schema-tenant or pinned-connection block owns one physical
+        # connection; a second one would lose its session state, so nest with
+        # a savepoint instead.
         return run_savepoint(state, options.joinable, nil) { yield }
       end
       return run_real(adapter, options) { yield }
@@ -570,7 +571,7 @@ module Grant::Transaction
 
   private def self.run_real(adapter : Grant::Adapter::Base, options : Options, & : -> T) : T? forall T
     outcome = begin
-      if conn = Grant::SchemaTenant.current_connection?(adapter)
+      if conn = Grant::SchemaTenant.current_connection?(adapter) || adapter.pinned_connection?
         run_real_on(conn, adapter, options) { yield }
       else
         # Use a dedicated pool checkout outside schema tenancy. Inside a schema
@@ -746,7 +747,7 @@ module Grant::Transaction
     end
 
     owned = false
-    conn = Grant::SchemaTenant.current_connection?(adapter)
+    conn = Grant::SchemaTenant.current_connection?(adapter) || adapter.pinned_connection?
     unless conn
       conn = adapter.database.checkout
       owned = true
@@ -872,7 +873,7 @@ module Grant::Transaction
     #
     # :nodoc:
     def transaction_adapter : Grant::Adapter::Base
-      resolve_adapter_for_role(:writing)
+      resolve_adapter_for_role(Grant.settings.writing_role)
     end
 
     # Runs *block* inside a transaction, building the options from the given

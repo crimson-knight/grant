@@ -1,6 +1,7 @@
 require "./connection_registry"
 require "./connection_context"
 require "./connection_handling"
+require "./connection_pooling"
 
 # Multi-database connection management, mixed into every `Grant::Base` model.
 #
@@ -249,8 +250,67 @@ module Grant::ConnectionManagement
 
     # Connection behavior configuration
     class_property replica_lag_threshold : Time::Span = 2.seconds
-    class_property failover_retry_attempts : Int32 = 3
-    class_property health_check_interval : Time::Span = 30.seconds
+
+    # Values declared through the setters below. Only a declared value is
+    # pushed to the connection registry, so the defaults never override what
+    # `establish_connection` was given.
+    @@declared_failover_retry_attempts : Int32? = nil
+    @@declared_health_check_interval : Time::Span? = nil
+    @@declared_load_balancing_strategy : Grant::LoadBalancingStrategy? = nil
+
+    # How many times a refused connection, or a read that lost its connection,
+    # is retried (after which the error is raised). Setting it applies to every
+    # connection of the databases this class connects to.
+    def self.failover_retry_attempts : Int32
+      @@declared_failover_retry_attempts || 3
+    end
+
+    def self.failover_retry_attempts=(value : Int32) : Int32
+      @@declared_failover_retry_attempts = value
+      __apply_connection_options
+      value
+    end
+
+    # How often the health monitors of the databases this class connects to
+    # probe their connection. Setting it restarts their monitors.
+    def self.health_check_interval : Time::Span
+      @@declared_health_check_interval || 30.seconds
+    end
+
+    def self.health_check_interval=(value : Time::Span) : Time::Span
+      @@declared_health_check_interval = value
+      __apply_connection_options
+      value
+    end
+
+    # How reads spread across this class's read replicas; `nil` until one is
+    # chosen, in which case the registry's round-robin applies.
+    def self.load_balancing_strategy : Grant::LoadBalancingStrategy?
+      @@declared_load_balancing_strategy
+    end
+
+    def self.load_balancing_strategy=(strategy : Grant::LoadBalancingStrategy) : Grant::LoadBalancingStrategy
+      @@declared_load_balancing_strategy = strategy
+      __apply_connection_options
+      strategy
+    end
+
+    # Pushes the declared connection options to every database this class
+    # connects to. `connects_to` calls it again, since a class can declare its
+    # options before it names its databases.
+    #
+    # :nodoc:
+    def self.__apply_connection_options : Nil
+      names = connection_names.map { |(database, _, _)| database }.uniq
+      names.each do |database|
+        Grant::ConnectionRegistry.configure_database(
+          database,
+          retry_attempts: @@declared_failover_retry_attempts,
+          health_check_interval: @@declared_health_check_interval,
+          load_balancing_strategy: @@declared_load_balancing_strategy
+        )
+      end
+    end
   end
 
   # Declares which database(s), roles, and shards a model connects to.
@@ -338,6 +398,7 @@ module Grant::ConnectionManagement
     {% end %}
 
     Grant::ConnectionHandling.declare({{@type.name.stringify}}, -> { {{@type}}.connection_names })
+    {{@type}}.__apply_connection_options
   end
 
   # Marks the class as an abstract connection holder (see `.abstract_class?`).
@@ -366,12 +427,14 @@ module Grant::ConnectionManagement
   #
   # * `replica_lag_threshold : Time::Span` — how stale a replica may be before
   #   reads are forced back to the primary.
-  # * `failover_retry_attempts : Int32` — retry count before giving up on a
-  #   connection.
+  # * `failover_retry_attempts : Int32` — how many times a refused connection,
+  #   or a read that lost its connection, is retried before the error is raised.
   # * `health_check_interval : Time::Span` — how often health checks run.
   # * `connection_switch_wait_period` — quiet period after a write before reads
   #   may use a replica.
-  # * `load_balancing_strategy` — replica selection strategy.
+  # * `load_balancing_strategy` — a `Grant::LoadBalancingStrategy`
+  #   (`RoundRobinStrategy`, `RandomStrategy`, `LeastConnectionsStrategy`,
+  #   `WeightedStrategy`) choosing among read replicas.
   #
   # Any other key is a compile-time error.
   #
@@ -801,7 +864,7 @@ module Grant::ConnectionManagement
     def connection : Grant::Connection
       Grant::Connection.new(
         ->(role : Symbol) do
-          role == :writing ? connection_adapter(:writing) : adapter
+          Grant::ConnectionManagement.writing_role?(role) ? connection_adapter(Grant.settings.writing_role) : adapter
         end,
         -> do
           guard_writes!
@@ -906,5 +969,6 @@ module Grant::ConnectionManagement
 
   macro included
     extend ClassMethods
+    extend PoolClassMethods
   end
 end

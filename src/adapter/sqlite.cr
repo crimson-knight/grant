@@ -48,6 +48,23 @@ class Grant::Adapter::Sqlite < Grant::Adapter::Base
     true
   end
 
+  # SQLite runs in the application's process, so there is no server to keep
+  # connections warm for.
+  def self.server_adapter? : Bool
+    false
+  end
+
+  # Each connection to `:memory:` is its own empty database, so a pool of
+  # more than one would silently split the data.
+  def self.single_connection_url?(url : String) : Bool
+    memory_url?(url)
+  end
+
+  # The SQLite driver only prepares statements.
+  def self.supports_unprepared_statements? : Bool
+    false
+  end
+
   # SQLite stores Grant timestamps as text and UUID columns as CHAR(36).
   def normalize_bind_value(value : Time) : String
     value.in(SQLite3::TIME_ZONE).to_s("%F %H:%M:%S.%6N")

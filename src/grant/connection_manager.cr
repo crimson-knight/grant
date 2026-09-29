@@ -12,7 +12,7 @@ module Grant
     # end
     # ```
     def transaction(options : Grant::Transaction::Options, & : -> T) : T? forall T
-      Grant::Transaction.run(adapter(:writing), options) { yield }
+      Grant::Transaction.run(adapter(Grant.settings.writing_role), options) { yield }
     end
 
     # Keyword form of `#transaction`; accepts the same options as `Model.transaction`.
@@ -41,7 +41,7 @@ module Grant
     # ```
     def begin_transaction(isolation : Grant::Transaction::IsolationLevel? = nil, readonly : Bool = false) : Grant::Transaction::Handle
       options = Grant::Transaction::Options.new(isolation: isolation, readonly: readonly)
-      Grant::Transaction.begin_manual(adapter(:writing), options)
+      Grant::Transaction.begin_manual(adapter(Grant.settings.writing_role), options)
     end
 
     # Commits the innermost manually opened transaction (or savepoint).
@@ -59,11 +59,11 @@ module Grant
     # plain SQL identifier; it defaults to a per-transaction counter name. A
     # `Rollback` (or exception) rolls back to the savepoint only.
     def savepoint(name : String? = nil, & : -> T) : T? forall T
-      Grant::Transaction.with_savepoint(adapter(:writing), name) { yield }
+      Grant::Transaction.with_savepoint(adapter(Grant.settings.writing_role), name) { yield }
     end
 
     private def innermost_manual_handle : Grant::Transaction::Handle
-      state = Grant::Transaction.current_state_for?(adapter(:writing))
+      state = Grant::Transaction.current_state_for?(adapter(Grant.settings.writing_role))
       raise Grant::Transaction::NotOpenError.new unless state
       if nested = state.manual_savepoints.last?
         return nested
