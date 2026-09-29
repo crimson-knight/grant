@@ -60,7 +60,15 @@ module Grant::Sharding
       merge_results(results, limit, offset)
     end
 
+    # COUNT(*) over the targeted shards. A LIMIT or OFFSET applies to the
+    # merged rows: each shard counts at most `limit + offset` rows with no
+    # OFFSET, and the offset and limit are applied to the total.
     def count : CountResult
+      if paged_across_shards?
+        guard_page_mergeable!("count")
+        return page_count(@query.limit, @query.offset || 0_i64)
+      end
+
       results = gather { |_| local(@query).count_without_routing }
       merge_count_results(results)
     end
@@ -73,6 +81,15 @@ module Grant::Sharding
     end
 
     def exists? : Bool
+      # An OFFSET skips rows of the merged result, so no single shard can
+      # answer alone: count the first row past the offset instead.
+      offset = @query.offset || 0_i64
+      if @shards.size > 1 && offset > 0
+        guard_page_mergeable!("exists?")
+        limit = @query.limit
+        return page_count(limit ? Math.min(limit, 1_i64) : 1_i64, offset) > 0
+      end
+
       # A shard that answers yes ends the search.
       @shards.each do |shard|
         found = Grant::ShardManager.with_shard(shard) do
@@ -83,11 +100,20 @@ module Grant::Sharding
       false
     end
 
+    # The values of *column* over the targeted shards. With an ORDER BY,
+    # LIMIT or OFFSET, each shard returns *column* plus the ORDER BY columns
+    # for `limit + offset` rows; the rows are merge-sorted, the page is cut
+    # once, and NULL values are dropped afterward, as a single database does.
     def pluck(column : String | Symbol) : Array(Grant::Columns::Type)
+      if @shards.size > 1 && (paged_across_shards? || !@query.order_fields.empty?)
+        guard_page_mergeable!("pluck")
+        return paged_pluck(column.to_s)
+      end
+
       results = gather { |_| local(@query).pluck_without_routing(column) }
       values = [] of Grant::Columns::Type
       results.each { |shard_values| values.concat(shard_values) }
-      values
+      @query.distinct? ? values.uniq : values
     end
 
     def sum(column : Symbol | String) : SumResult
@@ -146,6 +172,88 @@ module Grant::Sharding
       end
     end
 
+    # Whether the relation pages its rows (LIMIT or OFFSET) across more than
+    # one shard, so the page has to be cut over the merged rows.
+    private def paged_across_shards? : Bool
+      @shards.size > 1 && !!(@query.limit || @query.offset)
+    end
+
+    # A page of grouped or DISTINCT rows cannot be rebuilt from per-shard
+    # pages: a group or a value can span shards.
+    private def guard_page_mergeable!(operation : String) : Nil
+      return unless @query.distinct? || !@query.group_fields.empty?
+
+      raise ScatterAggregateError.new("#{Model.name}: #{operation} over a grouped or DISTINCT relation with LIMIT, OFFSET or ORDER BY across #{@shards.size} shards cannot be merged")
+    end
+
+    # The number of rows in the global page `OFFSET offset LIMIT limit`.
+    private def page_count(limit : Int64?, offset : Int64) : Int64
+      fetch = shard_fetch_query(limit, offset)
+      total = 0_i64
+      gather { |_| local(fetch).count_without_routing }.each do |result|
+        total += result if result.is_a?(Int64)
+      end
+
+      remaining = Math.max(total - offset, 0_i64)
+      limit ? Math.min(remaining, limit) : remaining
+    end
+
+    private def paged_pluck(column : String) : Array(Grant::Columns::Type)
+      order_fields = @query.order_fields
+      field_names = [column] + order_fields.map(&.[:field])
+      limit = @query.limit
+      offset = @query.offset || 0_i64
+      fetch = shard_fetch_query(limit, offset)
+
+      rows = [] of Array(Grant::Columns::Type)
+      gather { |_| local(fetch).pluck_rows_without_routing(field_names) }.each { |shard_rows| rows.concat(shard_rows) }
+
+      unless order_fields.empty?
+        indexed = rows.map_with_index { |row, index| {row, index} }
+        indexed.sort! do |a, b|
+          comparison = compare_rows(a[0], b[0], order_fields)
+          comparison == 0 ? a[1] <=> b[1] : comparison
+        end
+        rows = indexed.map(&.[0])
+      end
+
+      values = [] of Grant::Columns::Type
+      start = offset.to_i
+      return values if start >= rows.size
+
+      last = limit ? Math.min(start + limit.to_i, rows.size) : rows.size
+      rows[start...last].each do |row|
+        value = row[0]
+        values << value unless value.nil?
+      end
+      values
+    end
+
+    # Orders two plucked rows by their ORDER BY values, which follow the
+    # plucked column.
+    private def compare_rows(a : Array(Grant::Columns::Type), b : Array(Grant::Columns::Type), order_fields : Array(NamedTuple(field: String, direction: Grant::Query::Builder::Sort))) : Int32
+      order_fields.each_with_index do |order, index|
+        comparison = compare_nullable(a[index + 1], b[index + 1], order[:direction])
+        return comparison if comparison != 0
+      end
+      0
+    end
+
+    # NULL sorts first ascending and last descending (the SQLite and MySQL
+    # convention), matching the row merge.
+    private def compare_nullable(val_a : Grant::Columns::Type, val_b : Grant::Columns::Type, direction : Grant::Query::Builder::Sort) : Int32
+      if val_a.nil? && val_b.nil?
+        0
+      elsif val_a.nil?
+        direction.sorts_descending? ? 1 : -1
+      elsif val_b.nil?
+        direction.sorts_descending? ? -1 : 1
+      else
+        comparison = Grant::Sharding.compare_column_values(val_a, val_b)
+        direction.sorts_descending? ? -comparison : comparison
+      end
+    end
+
     # Runs *block* on every shard and returns the results in shard order. The
     # calling fiber's role and write prevention carry into the shard fibers.
     private def gather(&block : Symbol -> T) : Array(T) forall T
@@ -198,20 +306,7 @@ module Grant::Sharding
         field = order[:field]
         direction = order[:direction]
 
-        val_a = a.read_attribute(field)
-        val_b = b.read_attribute(field)
-
-        # Handle nil values
-        if val_a.nil? && val_b.nil?
-          next
-        elsif val_a.nil?
-          return direction.sorts_descending? ? 1 : -1
-        elsif val_b.nil?
-          return direction.sorts_descending? ? -1 : 1
-        end
-
-        comparison = Grant::Sharding.compare_column_values(val_a, val_b)
-        comparison = -comparison if direction.sorts_descending?
+        comparison = compare_nullable(a.read_attribute(field), b.read_attribute(field), direction)
         return comparison if comparison != 0
       end
 

@@ -40,9 +40,10 @@ module Grant::Sharding
 
     # SQL is assembled for the adapter of the shard that is active, so a
     # PostgreSQL or MySQL shard gets its own dialect. With no shard active (a
-    # bare `to_sql`, say) the type the builder was made with applies.
+    # bare `to_sql`, say) the first shard's adapter decides, the same one that
+    # quotes the identifiers (`Model.quoting_adapter`).
     def assembler : Grant::Query::Assembler::Base(Model)
-      db_type = active_shard ? self.class.db_type_for(Model.adapter) : @db_type
+      db_type = self.class.db_type_for(Model.quoting_adapter)
 
       case db_type
       when DbType::Pg    then Grant::Query::Assembler::Pg(Model).new self
@@ -122,6 +123,19 @@ module Grant::Sharding
     # — no routing, hence no recursion.
     def pluck_without_routing(column : String | Symbol) : Array(Grant::Columns::Type)
       assembler.pluck(column)
+    end
+
+    # Plucks several columns per row on the active shard, without routing.
+    # The scatter-gather pluck uses it to fetch the ORDER BY values it merges on.
+    # :nodoc:
+    def pluck_rows_without_routing(field_names : Array(String)) : Array(Array(Grant::Columns::Type))
+      field_names.each do |name|
+        Grant::Query::SqlExpression.validate!(name, "pluck expression") unless Grant::Query::SqlExpression.identifier?(name)
+      end
+
+      rows_assembler = assembler
+      sql = rows_assembler.pluck_sql(field_names)
+      Grant::Query::Executor::Pluck(Model).new(sql, rows_assembler.numbered_parameters, field_names).run
     end
 
     # Override count to use routing
