@@ -139,6 +139,40 @@ describe "Ordinal finders" do
     end
   end
 
+  describe "on a relation with LIMIT or OFFSET" do
+    it "keeps first, first(n) and the ordinals inside the limit" do
+      seed_parents(%w(a b c d e))
+      window = Parent.order(:name).limit(2)
+
+      window.first(10).compact_map(&.name).should eq ["a", "b"]
+      window.second.try(&.name).should eq "b"
+      window.third.should be_nil
+      Parent.order(:name).limit(1).second.should be_nil
+      Parent.order(:name).limit(0).first.should be_nil
+      Parent.order(:name).offset(1).limit(2).first(5).compact_map(&.name).should eq ["b", "c"]
+    end
+
+    it "reads last and the from-the-end ordinals from the window, not the table" do
+      seed_parents(%w(a b c d e))
+
+      Parent.order(:name).limit(3).last.try(&.name).should eq "c"
+      Parent.order(:name).limit(3).last(2).compact_map(&.name).should eq ["b", "c"]
+      Parent.order(:name).limit(3).second_to_last.try(&.name).should eq "b"
+      Parent.order(:name).offset(1).limit(2).last.try(&.name).should eq "c"
+      Parent.order(:name).offset(1).limit(3).second_to_last.try(&.name).should eq "c"
+      Parent.order(:name).limit(2).third_to_last.should be_nil
+    end
+
+    it "answers nil from a loaded relation that is too short to count back" do
+      seed_parents(["a"])
+      loaded = Parent.order(:name).load
+
+      loaded.second_to_last.should be_nil
+      loaded.third_to_last.should be_nil
+      loaded.last.try(&.name).should eq "a"
+    end
+  end
+
   describe "composite primary keys" do
     before_all do
       adapter = OrdinalCompositeLine.adapter

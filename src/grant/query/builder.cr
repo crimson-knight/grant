@@ -1195,8 +1195,8 @@ class Grant::Query::Builder(Model)
   #
   # ```
   # users = User.where(active: true).load
-  # users.loaded?  # => true
-  # users.empty?   # => false (no query)
+  # users.loaded? # => true
+  # users.empty?  # => false (no query)
   # ```
   def load : self
     records
@@ -1375,7 +1375,7 @@ class Grant::Query::Builder(Model)
       return memoized.first?
     end
 
-    ordered_copy.limit!(1).select.first?
+    first_records_from(0, 1).first?
   end
 
   # Like `first` but raises `Grant::Querying::NotFound` when nothing matches.
@@ -1397,7 +1397,7 @@ class Grant::Query::Builder(Model)
       return memoized.first(n)
     end
 
-    ordered_copy.limit!(n).select
+    first_records_from(0, n)
   end
 
   # Returns one record with no ordering applied (`LIMIT 1`), or `nil`.
@@ -1433,6 +1433,10 @@ class Grant::Query::Builder(Model)
       return memoized.last?
     end
 
+    # Reversing a LIMIT/OFFSET window would read the end of the whole table,
+    # so a windowed relation loads its window (at most its limit) instead.
+    return ordered_copy.select.last? if limit_or_offset?
+
     ordered_copy(reverse: true).limit!(1).select.first?
   end
 
@@ -1445,6 +1449,8 @@ class Grant::Query::Builder(Model)
     if memoized = @records
       return memoized.last(n)
     end
+
+    return ordered_copy.select.last(n) if limit_or_offset?
 
     ordered_copy(reverse: true).limit!(n).select.reverse!
   end
@@ -1481,13 +1487,50 @@ class Grant::Query::Builder(Model)
   {% end %}
 
   private def nth_record(index : Int32, reverse : Bool = false) : Model?
+    if reverse
+      nth_record_from_end(index)
+    elsif memoized = @records
+      memoized[index]?
+    else
+      first_records_from(index, 1).first?
+    end
+  end
+
+  # Counting from the end (0 = last). A negative Array index would wrap
+  # around, so a position before the first record answers `nil`.
+  private def nth_record_from_end(index : Int32) : Model?
     if memoized = @records
-      return reverse ? memoized[memoized.size - 1 - index]? : memoized[index]?
+      position = memoized.size - 1 - index
+      return position >= 0 ? memoized[position] : nil
     end
 
-    copy = ordered_copy(reverse: reverse)
-    copy.offset!((@offset || 0_i64) + index)
-    copy.limit!(1).select.first?
+    if limit_or_offset?
+      window = ordered_copy.select
+      position = window.size - 1 - index
+      return position >= 0 ? window[position] : nil
+    end
+
+    ordered_copy(reverse: true).offset!(index).limit!(1).select.first?
+  end
+
+  # Up to *count* records starting *index* rows into the ordered relation,
+  # staying inside the relation's own LIMIT/OFFSET window (as ActiveRecord's
+  # `find_nth_with_limit` does): `limit(3).first(10)` returns three rows and
+  # `limit(1).second` returns `nil`.
+  private def first_records_from(index : Int32, count : Int32) : Array(Model)
+    effective = count.to_i64
+    if window = @limit
+      effective = Math.min(window - index, effective)
+    end
+    return [] of Model if effective <= 0
+
+    copy = ordered_copy
+    copy.offset!((@offset || 0_i64) + index) unless index.zero?
+    copy.limit!(effective).select
+  end
+
+  private def limit_or_offset? : Bool
+    !@limit.nil? || !@offset.nil?
   end
 
   # Returns a copy ordered for `first`/`last`/ordinal finders: the relation's
