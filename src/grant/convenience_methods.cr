@@ -263,7 +263,7 @@ module Grant::BulkOperations
   def insert_all(attributes : Array(Hash(String | Symbol, Grant::Columns::Type)),
                  returning : Array(Symbol)? = nil,
                  unique_by : Array(Symbol)? = nil,
-                 record_timestamps : Bool = true) : Array(self)
+                 record_timestamps : Bool? = nil) : Array(self)
     guard_writes!
     builder = __builder
 
@@ -276,13 +276,19 @@ module Grant::BulkOperations
     return [] of self if string_attributes.empty?
 
     # Add timestamps if needed
-    if record_timestamps
-      now = Time.utc.as(Grant::Columns::Type)
-      timestamp_columns = self.fields
+    # `nil` follows the model's `record_timestamps` setting, as in ActiveRecord.
+    if record_timestamps.nil? ? record_timestamps? : record_timestamps
+      now = Grant::Timestamps.current_time.as(Grant::Columns::Type)
+      timestamp_columns = timestamped_attributes
       string_attributes = string_attributes.map do |attrs|
         new_attrs = attrs.dup
-        new_attrs["created_at"] ||= now if timestamp_columns.includes?("created_at")
-        new_attrs["updated_at"] ||= now if timestamp_columns.includes?("updated_at")
+        timestamp_columns.each do |column_name|
+          if Grant::Timestamps::CREATED_COLUMNS.includes?(column_name)
+            new_attrs[column_name] ||= now
+          else
+            new_attrs[column_name] ||= now
+          end
+        end
         new_attrs
       end
     end
@@ -327,7 +333,7 @@ module Grant::BulkOperations
                  returning : Array(Symbol)? = nil,
                  unique_by : Array(Symbol)? = nil,
                  update_only : Array(Symbol)? = nil,
-                 record_timestamps : Bool = true) : Array(self)
+                 record_timestamps : Bool? = nil) : Array(self)
     guard_writes!
     builder = __builder
 
@@ -340,13 +346,19 @@ module Grant::BulkOperations
     return [] of self if string_attributes.empty?
 
     # Add timestamps if needed
-    if record_timestamps
-      now = Time.utc.as(Grant::Columns::Type)
-      timestamp_columns = self.fields
+    # `nil` follows the model's `record_timestamps` setting, as in ActiveRecord.
+    if record_timestamps.nil? ? record_timestamps? : record_timestamps
+      now = Grant::Timestamps.current_time.as(Grant::Columns::Type)
+      timestamp_columns = timestamped_attributes
       string_attributes = string_attributes.map do |attrs|
         new_attrs = attrs.dup
-        new_attrs["created_at"] ||= now if timestamp_columns.includes?("created_at")
-        new_attrs["updated_at"] = now if timestamp_columns.includes?("updated_at")
+        timestamp_columns.each do |column_name|
+          if Grant::Timestamps::CREATED_COLUMNS.includes?(column_name)
+            new_attrs[column_name] ||= now
+          else
+            new_attrs[column_name] = now
+          end
+        end
         new_attrs
       end
     end

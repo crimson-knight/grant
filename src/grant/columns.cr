@@ -61,38 +61,6 @@ module Grant::Columns
     end
   end
 
-  # Marks one or more columns as read-only. Read-only columns are writable when
-  # a record is first created, but are excluded from subsequent normal `UPDATE`
-  # statements. Direct writes via `update_columns` raise for read-only columns.
-  # Mirrors ActiveRecord's `attr_readonly`.
-  #
-  # ```
-  # class User < Grant::Base
-  #   column login : String
-  #   attr_readonly :login
-  # end
-  # ```
-  macro attr_readonly(*fields)
-    # Accumulate declared read-only columns in a per-class constant so multiple
-    # `attr_readonly` calls (and inheritance) compose correctly. Each call
-    # redefines `self.readonly_attributes` to return the full, deduplicated set.
-    {% if @type.has_constant?(:GRANT_READONLY_ATTRIBUTES) %}
-      {% for field in fields %}
-        {% GRANT_READONLY_ATTRIBUTES << field.id.stringify %}
-      {% end %}
-    {% else %}
-      GRANT_READONLY_ATTRIBUTES = [
-        {% for field in fields %}
-          {{ field.id.stringify }},
-        {% end %}
-      ] of String
-    {% end %}
-
-    def self.readonly_attributes : Array(String)
-      GRANT_READONLY_ATTRIBUTES.uniq
-    end
-  end
-
   def content_values : Array(Grant::Columns::Type)
     parsed_params = [] of Type
     {% for column in @type.instance_vars.select { |ivar| (ann = ivar.annotation(Grant::Column)) && !ann[:primary] } %}
@@ -281,6 +249,7 @@ module Grant::Columns
 
     {% if nilable || primary %}
       def {{decl.var.id}}=(value : {{not_nilable_type}}?)
+        __guard_readonly_attribute!({{decl.var.stringify}})
         # Dirty tracking compares assignments against the initialized baseline.
         ensure_dirty_tracking_initialized
 
@@ -404,6 +373,7 @@ module Grant::Columns
       end
     {% else %}
       def {{decl.var.id}}=(value : {{type.id}})
+        __guard_readonly_attribute!({{decl.var.stringify}})
         # Dirty tracking compares assignments against the initialized baseline.
         ensure_dirty_tracking_initialized
 

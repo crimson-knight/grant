@@ -39,9 +39,12 @@ describe "#update" do
       created_at = parent.created_at!
 
       # Simulating instantiating a new object with same ID
-      new_parent = Parent.new(name: "New New Parent")
+      # Attributes assigned after the record is flagged persisted count as
+      # changes, so the partial update writes them.
+      new_parent = Parent.new
       new_parent.id = parent.id
       new_parent.new_record = false
+      new_parent.name = "New New Parent"
       new_parent.updated_at = parent.updated_at
       new_parent.save!
 

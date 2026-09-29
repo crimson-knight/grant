@@ -513,10 +513,13 @@ module Grant::STI
         instance.new_record = false
         instance._sti_type_mutable = true
         # Copy every field the subclass shares with the loaded base instance,
-        # preserving nil and false.
-        {{kl}}.fields.each do |f|
-          if base.class.fields.includes?(f)
-            instance.write_attribute(f, base.read_attribute(f))
+        # preserving nil and false. These are loaded values, so an
+        # `attr_readonly` column must not trip the assignment guard.
+        instance.__assigning_loaded_attributes do
+          {{kl}}.fields.each do |f|
+            if base.class.fields.includes?(f)
+              instance.write_attribute(f, base.read_attribute(f))
+            end
           end
         end
         instance._sti_type_mutable = false

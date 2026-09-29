@@ -82,14 +82,16 @@ module Grant::Locking::Optimistic
   protected def __update_with_optimistic_lock(skip_timestamps : Bool = false) : Bool
     raise Grant::ReadOnlyRecordError.new("#{self.class.name} is marked as read only") if readonly?
 
-    set_timestamps(mode: :update) unless skip_timestamps
+    set_timestamps(mode: :update) unless skip_timestamps || !self.class.record_timestamps?
 
     fields = self.class.content_fields.dup
     params = content_values
 
-    if created_at_index = fields.index("created_at")
-      fields.delete_at(created_at_index)
-      params.delete_at(created_at_index)
+    Grant::Timestamps::CREATED_COLUMNS.each do |created_column|
+      if created_index = fields.index(created_column)
+        fields.delete_at(created_index)
+        params.delete_at(created_index)
+      end
     end
 
     self.class.readonly_attributes.each do |readonly_field|

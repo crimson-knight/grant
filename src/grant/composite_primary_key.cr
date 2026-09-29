@@ -150,8 +150,10 @@ module Grant::CompositePrimaryKey
     # Find using composite key
     if found = self.class.find(**key_values)
       # Copy attributes from found instance
-      found.to_h.each do |key, value|
-        write_attribute(key, value)
+      __assigning_loaded_attributes do
+        found.to_h.each do |key, value|
+          write_attribute(key, value)
+        end
       end
       @new_record = false
       clear_loaded_associations

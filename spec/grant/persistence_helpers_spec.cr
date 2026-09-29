@@ -208,9 +208,9 @@ describe "Grant persistence helpers" do
       ReadonlyWidget.find!(w.id).slug.should eq("original-slug")
     end
 
-    it "ignores the readonly column on update" do
+    it "rejects assigning the readonly column on a persisted record" do
       w = ReadonlyWidget.create!(slug: "original-slug", name: "First")
-      w.slug = "changed-slug"
+      expect_raises(Grant::ReadonlyAttributeError, /slug/) { w.slug = "changed-slug" }
       w.name = "Second"
       w.save!
 
