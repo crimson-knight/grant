@@ -169,6 +169,43 @@ class Grant::Adapter::Pg < Grant::Adapter::Base
     value ? "TRUE" : "FALSE"
   end
 
+  # The server accepts 65,535 parameters, but crystal-pg writes the Bind
+  # message's parameter count as a signed 16-bit integer and raises halfway
+  # through the message above 32,767, which leaves the connection unusable.
+  def bulk_bind_limit : Int32
+    32_767
+  end
+
+  # Reads the key columns of a plain unique index. Partial and expression
+  # indexes cannot be named by `ON CONFLICT (columns)`, so they raise.
+  def unique_index_columns(table_name : String, index_name : String) : Array(String)?
+    sql = <<-SQL
+      SELECT i.indisunique, i.indpred IS NOT NULL, i.indexprs IS NOT NULL,
+             ARRAY(SELECT a.attname::text
+                     FROM unnest(i.indkey::int2[]) WITH ORDINALITY k(attnum, ord)
+                     JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = k.attnum
+                    ORDER BY k.ord)
+        FROM pg_index i
+        JOIN pg_class c ON c.oid = i.indexrelid
+       WHERE c.relname = $1 AND i.indrelid = $2::regclass
+      SQL
+    found = nil
+    open(sql) do |db|
+      db.query(sql, index_name, quote(table_name)) do |rs|
+        rs.each do
+          unique = rs.read(Bool)
+          partial = rs.read(Bool)
+          expression = rs.read(Bool)
+          columns = rs.read(Array(String))
+          raise ArgumentError.new("Index #{index_name.inspect} is not unique") unless unique
+          raise ArgumentError.new("Index #{index_name.inspect} is partial or an expression index; pass the column names to unique_by instead") if partial || expression
+          found = columns
+        end
+      end
+    end
+    found
+  end
+
   def ensure_clause_template(clause : String, starting_index : Int32 = 0) : String
     Grant::Adapter::PlaceholderScanner.rewrite(clause, starting_index, numbered: true)
   end

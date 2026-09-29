@@ -77,6 +77,53 @@ class Grant::Adapter::Mysql < Grant::Adapter::Base
     last_id
   end
 
+  # MySQL resolves duplicates through whichever unique key the row violates, so
+  # the columns only serve validation and the default update list.
+  def unique_index_columns(table_name : String, index_name : String) : Array(String)?
+    columns = [] of String
+    sql = "SELECT column_name FROM information_schema.statistics " \
+          "WHERE table_schema = DATABASE() AND table_name = ? AND index_name = ? AND non_unique = 0 " \
+          "ORDER BY seq_in_index"
+    open(sql) do |db|
+      db.query(sql, table_name, index_name) do |rs|
+        rs.each { columns << rs.read(String) }
+      end
+    end
+    columns.empty? ? nil : columns
+  end
+
+  protected def bulk_conflict_sql(table_name : String, conflict : Grant::Bulk::Conflict, columns : Array(String)) : String
+    case conflict.mode
+    in .raise?
+      ""
+    in .skip?
+      # A no-op update skips only key conflicts; INSERT IGNORE would also
+      # swallow truncation and NOT NULL errors.
+      column = quote(columns.first)
+      " ON DUPLICATE KEY UPDATE #{column} = #{column}"
+    in .update?
+      assignments = if guard = conflict.guard_column
+                      # ON DUPLICATE KEY has no WHERE, so each assignment keeps
+                      # the existing value unless the guard column matches.
+                      if conflict.update_sql
+                        raise ArgumentError.new("on_duplicate cannot be tenant-guarded on MySQL; use update_only or run inside unscoped")
+                      end
+                      matches = "#{quote(guard)} = VALUES(#{quote(guard)})"
+                      conflict.update_columns.map do |name|
+                        "#{quote(name)} = IF(#{matches}, VALUES(#{quote(name)}), #{quote(name)})"
+                      end.join(", ")
+                    else
+                      bulk_update_assignments(conflict) { |name| "VALUES(#{quote(name)})" }
+                    end
+      if assignments.empty?
+        column = quote(columns.first)
+        " ON DUPLICATE KEY UPDATE #{column} = #{column}"
+      else
+        " ON DUPLICATE KEY UPDATE #{assignments}"
+      end
+    end
+  end
+
   def import(table_name : String, primary_name : String, auto : Bool, fields, model_array, **options)
     params = [] of Grant::Columns::Type
 

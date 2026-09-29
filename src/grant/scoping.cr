@@ -243,6 +243,14 @@ module Grant::Scoping
       attributes
     end
 
+    # The column an upsert must match before it may update an existing row, so
+    # a conflicting row that belongs to another tenant is left alone. Nil for
+    # models without tenancy.
+    # :nodoc:
+    def __bulk_tenant_guard_column : String?
+      nil
+    end
+
     # Fallback for Grant::Base itself. Concrete model classes generate their
     # own version in Grant::Base's inherited hook so default scopes and STI
     # filters use a builder specialized for that model.

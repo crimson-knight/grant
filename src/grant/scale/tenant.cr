@@ -132,6 +132,13 @@ module Grant::Scale::MultiTenancy
       end
     end
 
+    # Upserts only update a conflicting row of the current tenant; outside
+    # `unscoped` a collision with another tenant's row writes nothing.
+    # :nodoc:
+    def self.__bulk_tenant_guard_column : String?
+      _unscoped? ? nil : multitenant_column
+    end
+
     # :nodoc:
     def self.__apply_tenant_to_bulk_attributes(attributes : Array(Hash(String | Symbol, Grant::Columns::Type)))
       return attributes if _unscoped?

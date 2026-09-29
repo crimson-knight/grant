@@ -94,7 +94,7 @@ def seed_table(model, rows : Int64, tenants : Int64, batch_size : Int32, done_pc
 
     # insert_all is the bulk path from convenience_methods.cr. We let it set
     # timestamps off (we provide created_at; there's no updated_at column).
-    model.insert_all(attrs, record_timestamps: false)
+    model.insert_all(attrs, returning: [] of Symbol, record_timestamps: false)
 
     inserted += this_batch
     progress.advance(this_batch.to_i64)
