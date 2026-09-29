@@ -29,6 +29,68 @@ Post.where(:created_at, :gt, Time.local - 7.days)
 
 This is useful for building more sophisticated queries, including queries dependent on database specific features not supported by the operators above. However, **clauses built with this method are not validated.**
 
+## Relations
+
+Every chain method (`where`, `order`, `limit`, `joins`, `group_by`, `merge`, ...)
+returns a new relation and leaves the receiver alone, so a stored relation is
+safe to reuse. Clause arrays are shared copy-on-write, so a chain step costs one
+small object plus a copy of only the arrays it changes. The bang variants
+(`where!`, `order!`, `limit!`, ...) mutate in place for code that owns the
+relation.
+
+```crystal
+active = Post.where(published: true)
+recent = active.order(created_at: :desc).limit(10) # `active` is unchanged
+```
+
+`Model.all` returns a lazy relation. Use `to_a` (or `select`) for an `Array`, or
+`Model.all("WHERE ...", params)` for the raw-SQL form, which still returns an
+`Array`.
+
+A relation memoizes its records once it is iterated or `load`ed. `loaded?`,
+`records`, `reset`, and `reload` manage that memo; `empty?`, `size`, `first`,
+and `last` answer from it without SQL. On an unloaded relation `size` runs
+`COUNT(*)` and the existence predicates run a bounded query.
+
+```crystal
+posts = Post.where(published: true).load
+posts.loaded? # => true
+posts.empty?  # no SQL
+posts.reload  # runs the query again
+```
+
+Finders: `take`/`take(n)` (no ordering), `first`/`first(n)`, `last`/`last(n)`,
+`second` through `fifth`, `forty_two`, `second_to_last`, `third_to_last`, and
+their bang forms (`LIMIT 1 OFFSET n`). `many?`, `one?`, `none?`, `empty?`, and
+`any?` use `LIMIT 1` or `LIMIT 2`; `sole` uses `LIMIT 2`. None of them change the
+receiver.
+
+`only(*components)` and `except(*components)` keep or drop clause components
+(`:where`, `:order`, `:limit`, `:offset`, `:group`, `:having`, `:joins`,
+`:select`, `:distinct`, `:lock`). `to_sql` returns the SQL, `cache_key` a digest
+of the query, and `cache_version` `"<count>-<newest updated_at>"` from one
+aggregate query.
+
+### Ordering
+
+An unordered relation carries no `ORDER BY`. `first`, `last`, the ordinal
+finders, and `find_each` order by the model's `implicit_order_column`s and then
+its primary key (every column of a composite key):
+
+```crystal
+class Event < Grant::Base
+  column id : Int64, primary: true
+  column created_at : Time
+  implicit_order_column :created_at
+end
+
+Event.first # ORDER BY created_at ASC, id ASC LIMIT 1
+```
+
+Earlier releases appended `ORDER BY <primary key> DESC` to every unordered
+SELECT. Set `Grant.settings.implicit_order = true` to keep that behavior; the
+flag is temporary and will be removed.
+
 ## Raw SQL
 
 Use model-level raw SQL methods when the statement should still return hydrated
