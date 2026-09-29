@@ -283,10 +283,17 @@ abstract class Grant::Adapter::Base
         return open_routed(sql, binds) { |conn| yield conn }
       ensure
         Grant::Notifications.publish_sql(self, sql, binds, Time.instant - started, name)
+        Grant::QueryCache.invalidate! unless Grant::Adapter::PoolSupport.idempotent_read?(sql)
       end
     end
 
-    open_routed(sql, binds) { |conn| yield conn }
+    begin
+      open_routed(sql, binds) { |conn| yield conn }
+    ensure
+      # Anything but a plain read may have changed data, so query caches drop
+      # their entries (also for a write made on another connection).
+      Grant::QueryCache.invalidate! unless Grant::Adapter::PoolSupport.idempotent_read?(sql)
+    end
   end
 
   private def open_routed(sql : String?, binds, &)

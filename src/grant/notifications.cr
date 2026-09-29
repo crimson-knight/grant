@@ -106,7 +106,7 @@ module Grant
 
     # Publishes a `Events::SQL` for a statement that took *duration*. Called by
     # the adapter around every statement that reports its SQL.
-    def self.publish_sql(adapter : Grant::Adapter::Base, sql : String, binds, duration : Time::Span, name : String? = nil) : Nil
+    def self.publish_sql(adapter : Grant::Adapter::Base, sql : String, binds, duration : Time::Span, name : String? = nil, cached : Bool = false) : Nil
       instrument(Events::SQL) do
         Events::SQL.new(
           sql,
@@ -114,7 +114,7 @@ module Grant
           name || "SQL",
           duration,
           adapter.name,
-          false,
+          cached,
           !Fiber.current.grant_async_origin.nil?
         )
       end
