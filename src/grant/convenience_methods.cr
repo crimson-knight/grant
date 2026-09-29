@@ -159,7 +159,7 @@ module Grant::ConvenienceMethods(Model)
 
     primary_order = base_relation.order_fields.find { |field| field[:field] == primary_key }
     ascending = if primary_order
-                  primary_order[:direction] == Grant::Query::Builder::Sort::Ascending
+                  !primary_order[:direction].sorts_descending?
                 else
                   order != :desc
                 end

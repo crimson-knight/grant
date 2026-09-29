@@ -35,6 +35,18 @@ describe "readonly relations" do
     RoNote.readonly.to_a.each(&.readonly?.should(be_true))
   end
 
+  it "marks records from streamed and batched loads" do
+    streamed = [] of RoNote
+    RoNote.readonly.each_streamed { |note| streamed << note }
+    streamed.size.should eq(2)
+    streamed.each(&.readonly?.should(be_true))
+
+    batched = [] of RoNote
+    RoNote.readonly.find_each(batch_size: 1) { |note| batched << note }
+    batched.size.should eq(2)
+    batched.each(&.readonly?.should(be_true))
+  end
+
   it "leaves records from a plain relation writable" do
     RoNote.all.first!.readonly?.should be_false
   end

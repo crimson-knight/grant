@@ -71,11 +71,14 @@ class Grant::Query::Builder(Model)
 
     Grant::Logs::SQL.debug { "Streaming query - #{sql} [#{Model.name}]" }
 
+    mark_readonly = readonly?
     adapter = Model.adapter
     adapter.open do |db|
       db.query(sql, args: adapter.normalize_bind_values(params)) do |rs|
         rs.each do
-          yield Model.from_rs(rs)
+          record = Model.from_rs(rs)
+          record.readonly! if mark_readonly
+          yield record
         end
       end
     end
