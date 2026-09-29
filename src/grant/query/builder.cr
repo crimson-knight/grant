@@ -258,7 +258,7 @@ class Grant::Query::Builder(Model)
   # ```
   def where!(matches) : self
     matches.each do |key, value|
-      field = Model.resolve_attribute_alias(key.to_s)
+      field = resolve_column_alias(key.to_s)
       if value.is_a?(Array)
         and_array(field.to_s, :in, value)
       elsif value.is_a?(Enum)

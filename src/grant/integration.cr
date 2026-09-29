@@ -96,3 +96,15 @@ class Grant::Query::Builder(Model)
     "#{cache_key}-#{cache_version}"
   end
 end
+
+class Grant::Query::Builder(Model)
+  # The column *name* stands for once the model's `alias_attribute`s are
+  # applied. Query-builder specs use plain stand-in models without aliases.
+  private def resolve_column_alias(name : String) : String
+    {% if Model.class.has_method?(:resolve_attribute_alias) %}
+      Model.resolve_attribute_alias(name)
+    {% else %}
+      name
+    {% end %}
+  end
+end
