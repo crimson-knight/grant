@@ -57,9 +57,8 @@ module Grant::Sharding
     macro included
       class_property sharding_config : Grant::Sharding::ShardConfig?
       
-      # Track which shard this instance came from/belongs to
-      property current_shard : Symbol?
-      
+      extend Grant::Sharding::Model::ClassMethods
+
       # Override adapter to use sharded connection
       def self.adapter : Grant::Adapter::Base
         if config = sharding_config
@@ -131,36 +130,13 @@ module Grant::Sharding
         end
       end
       
-      # Iterate through all records across all shards in batches
+      # Iterate through all records across all shards in batches, one shard
+      # after another, in keyset batches (see `find_each_shard`).
       def self.find_each(batch_size : Int32 = 1000, &block : {{@type}} ->)
-        if config = sharding_config
-          shards = Grant::ShardManager.shards_for_model(self.name)
-          shards.each do |shard|
-            Grant::ShardManager.with_shard(shard) do
-              offset = 0_i64
-              loop do
-                batch = order({primary_name => :asc}).limit(batch_size).offset(offset).select
-                break if batch.empty?
-                
-                batch.each do |record|
-                  record.current_shard = shard
-                  yield record
-                end
-                
-                offset += batch_size
-              end
-            end
-          end
+        if sharding_config
+          find_each_shard(batch_size: batch_size) { |record| yield record }
         else
-          # Not sharded - use regular batch processing
-          offset = 0_i64
-          loop do
-            batch = order({primary_name => :asc}).limit(batch_size).offset(offset).select
-            break if batch.empty?
-            
-            batch.each { |record| yield record }
-            offset += batch_size
-          end
+          super
         end
       end
     end
@@ -286,6 +262,7 @@ module Grant::Sharding
       end
       destination_record.write_attribute(self.class.primary_name, read_attribute(self.class.primary_name))
       destination_record.current_shard = target_shard
+      self.current_shard = source_shard
 
       Grant::ShardManager.with_shard(target_shard) do
         destination_record.save!
@@ -311,20 +288,6 @@ module Grant::Sharding
       end
 
       destination_record
-    end
-
-    # Ensure we're on the correct shard before operations
-    macro before_save
-      if self.class.sharding_config
-        determine_shard
-        Grant::ShardManager.set_current_shard(@current_shard)
-      end
-    end
-
-    macro after_save
-      if self.class.sharding_config
-        Grant::ShardManager.set_current_shard(nil)
-      end
     end
   end
 
@@ -388,6 +351,8 @@ end
 require "./sharding/shard_manager"
 require "./sharding/query_router"
 require "./sharding/sharded_query_builder"
+require "./sharding/scatter_gather"
+require "./sharding/model"
 require "./sharding/range_resolver"
 require "./sharding/resolvers/hash_resolver"
 require "./sharding/resolvers/lookup_resolver"
