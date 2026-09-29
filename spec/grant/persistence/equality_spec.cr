@@ -64,8 +64,8 @@ describe "Record equality and hashing" do
   end
 
   it "does not equate different classes that share a primary key value" do
-    person = EqualityPerson.create!(name: "Ada")
-    pet = EqualityPet.create!(name: "Ada")
+    person = EqualityPerson.create!(id: 4242_i64, name: "Ada")
+    pet = EqualityPet.create!(id: 4242_i64, name: "Ada")
     person.id.should eq(pet.id)
     (person == pet).should be_false
   end
