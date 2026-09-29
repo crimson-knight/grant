@@ -607,7 +607,11 @@ module Grant::Querying
 
     private def build_find_by_clause(criteria : Grant::ModelArgs)
       keys = criteria.keys
-      criteria_hash = criteria.dup
+      criteria_hash = Hash(Symbol | String, Grant::Columns::Type).new
+
+      criteria.each do |name, value|
+        criteria_hash[name] = coerce_where_value(name.to_s, value).as(Grant::Columns::Type)
+      end
 
       clauses = keys.map do |name|
         if criteria_hash.has_key?(name) && !criteria_hash[name].nil?

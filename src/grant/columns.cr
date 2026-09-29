@@ -256,9 +256,16 @@ module Grant::Columns
       attribute_will_change!({{decl.var.stringify}})
     end
 
+    # Assignment hook applied by the setter (see `normalizes`).
+    private def __assign_hook_{{decl.var.id}}(value)
+      value
+    end
+
     {% if nilable || primary %}
       def {{decl.var.id}}=(value : {{not_nilable_type}}?)
         __guard_readonly_attribute!({{decl.var.stringify}})
+        # `normalizes` overrides this hook; unaffected columns pay an inlined identity call.
+        value = __assign_hook_{{decl.var.id}}(value)
         # Dirty tracking compares assignments against the initialized baseline.
         ensure_dirty_tracking_initialized
 
@@ -384,6 +391,8 @@ module Grant::Columns
     {% else %}
       def {{decl.var.id}}=(value : {{type.id}})
         __guard_readonly_attribute!({{decl.var.stringify}})
+        # `normalizes` overrides this hook; unaffected columns pay an inlined identity call.
+        value = __assign_hook_{{decl.var.id}}(value)
         # Dirty tracking compares assignments against the initialized baseline.
         ensure_dirty_tracking_initialized
 

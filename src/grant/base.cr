@@ -46,6 +46,7 @@ require "./secure_token"
 require "./signed_id"
 require "./token_for"
 require "./serialized_column"
+require "./store_accessor"
 require "./normalization"
 require "./nested_attributes"
 require "./async"
@@ -137,11 +138,6 @@ abstract class Grant::Base
   extend ValueObjects::ClassMethods
   extend Attributes::ClassMethods
   extend Integration::ClassMethods
-
-  # Make normalization macro available
-  macro normalizes(attribute, **options, &block)
-    Grant::Normalization.normalizes({{attribute}}, {{**options}}) {{block}}
-  end
 
   # Serialization support is included on the abstract base itself (not only on
   # concrete subclasses via `inherited`) so that the abstract `Grant::Base` type
