@@ -187,11 +187,12 @@ describe Grant::Normalization do
     it "does not mark as changed if normalization returns to original value" do
       user = NormalizedUser.create(email: "test@example.com")
       user.email = "  TEST@EXAMPLE.COM  "
-      user.email_changed?.should be_true
+      # Normalized on assignment, so the value is already back to the original.
+      user.email.should eq("test@example.com")
+      user.email_changed?.should be_false
 
       user.valid?
-      user.email.should eq("test@example.com")
-      user.email_changed?.should be_false # Back to original value
+      user.email_changed?.should be_false
     end
 
     it "marks as changed when normalization actually changes the value" do
@@ -209,19 +210,22 @@ describe Grant::Normalization do
   end
 
   describe "opt-out of normalization" do
+    # Normalization now happens in the setter (as in Rails), so
+    # `valid?(skip_normalization:)` no longer defers it; loading rows and writing
+    # instance state directly are the paths that skip normalizers.
     it "skips normalization when skip_normalization is true" do
       user = NormalizedUser.new
       user.email = "  JOHN@EXAMPLE.COM  "
       user.valid?(skip_normalization: true)
-      user.email.should eq("  JOHN@EXAMPLE.COM  ") # Unchanged
+      user.email.should eq("john@example.com") # already normalized on assignment
     end
 
     it "preserves changed status when skipping normalization" do
       user = NormalizedUser.create(email: "test@example.com")
-      user.email = "  TEST@EXAMPLE.COM  "
+      user.email = "  OTHER@EXAMPLE.COM  "
 
       user.valid?(skip_normalization: true)
-      user.email.should eq("  TEST@EXAMPLE.COM  ")
+      user.email.should eq("other@example.com")
       user.email_changed?.should be_true
     end
 
@@ -229,13 +233,15 @@ describe Grant::Normalization do
       user = NormalizedUser.new
       user.email = "  JOHN@EXAMPLE.COM  "
 
-      # First validation with skip
       user.valid?(skip_normalization: true)
-      user.email.should eq("  JOHN@EXAMPLE.COM  ")
-
-      # Second validation without skip
       user.valid?
       user.email.should eq("john@example.com")
+    end
+
+    it "does not normalize values loaded from the database" do
+      NormalizedUser.exec("INSERT INTO normalized_users (email) VALUES ('  RAW@EXAMPLE.COM  ')")
+      loaded = NormalizedUser.where("email LIKE ?", "%RAW@EXAMPLE.COM%").first!
+      loaded.email.should eq("  RAW@EXAMPLE.COM  ")
     end
   end
 end

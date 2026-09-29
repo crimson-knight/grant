@@ -138,10 +138,6 @@ abstract class Grant::Base
   extend Attributes::ClassMethods
   extend Integration::ClassMethods
 
-  # Make normalization macro available
-  macro normalizes(attribute, **options, &block)
-    Grant::Normalization.normalizes({{attribute}}, {{**options}}) {{block}}
-  end
 
   # Serialization support is included on the abstract base itself (not only on
   # concrete subclasses via `inherited`) so that the abstract `Grant::Base` type
