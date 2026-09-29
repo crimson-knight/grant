@@ -51,14 +51,14 @@ module Grant::STI
 
   # Raised when a `type` value in the database does not map to a registered
   # STI subclass.
-  class SubclassNotFound < Exception; end
+  class SubclassNotFound < Grant::ErrorBase; end
 
   # Raised when code attempts to write the inheritance column directly on a
   # persisted record. Use `becomes!` to change a record's type.
-  class ImmutableTypeError < Exception; end
+  class ImmutableTypeError < Grant::ErrorBase; end
 
   # Raised when an STI type cast / conversion fails.
-  class TypeCastingError < Exception; end
+  class TypeCastingError < Grant::ErrorBase; end
 
   # Hook invoked when a root model does `include Grant::STI`.
   #

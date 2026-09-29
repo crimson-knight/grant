@@ -4,7 +4,7 @@ module Grant
   #
   # In the default `:warn` mode this is never raised — the query is re-run
   # without the hint instead (hints change the query plan, never the results).
-  class UnsupportedIndexHintError < Exception
+  class UnsupportedIndexHintError < Grant::ErrorBase
   end
 end
 

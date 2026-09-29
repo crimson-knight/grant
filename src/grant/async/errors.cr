@@ -1,7 +1,7 @@
 module Grant
   module Async
     # Base async error
-    class AsyncError < Exception
+    class AsyncError < Grant::ErrorBase
     end
 
     # Error for async execution failures

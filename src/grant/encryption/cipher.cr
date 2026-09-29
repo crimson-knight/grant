@@ -26,10 +26,10 @@ module Grant::Encryption
       DETERMINISTIC = 0x80_u8
     end
 
-    class EncryptionError < Exception
+    class EncryptionError < Grant::ErrorBase
     end
 
-    class DecryptionError < Exception
+    class DecryptionError < Grant::ErrorBase
     end
 
     # Encrypt data with the given key using AES-256-CBC and HMAC-SHA256

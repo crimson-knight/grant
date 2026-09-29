@@ -311,6 +311,11 @@ module Grant::Query::Assembler
             output << chars[index]
             break if chars[index - 1] == '*' && chars[index] == '/'
           end
+        elsif char == '?' && index + 1 < chars.size && chars[index + 1] == '?'
+          # `??` is the escape for a literal `?` (PostgreSQL's JSONB `?`, `?|`
+          # and `?&` operators), matching `Adapter::Base#ensure_clause_template`.
+          output << '?'
+          index += 1
         elsif char == '?'
           raise ArgumentError.new("Do not mix ? and numbered placeholders in one query clause") if dollar_style
           raise ArgumentError.new("Raw query placeholder count does not match bind values") if question_count >= values.size

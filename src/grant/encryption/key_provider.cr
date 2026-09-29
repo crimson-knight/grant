@@ -17,7 +17,7 @@ module Grant::Encryption
     @@derived_keys = {} of String => Bytes
     @@derived_keys_mutex = Mutex.new
 
-    class KeyError < Exception
+    class KeyError < Grant::ErrorBase
     end
 
     # Primary encryption key

@@ -1,10 +1,10 @@
 module Grant::Querying
   alias IdValue = Int32 | Int64 | Float32 | Float64 | String
 
-  class NotFound < Exception
+  class NotFound < Grant::RecordNotFound
   end
 
-  class NotUnique < Exception
+  class NotUnique < Grant::ErrorBase
   end
 
   class ScopedRawSqlError < Grant::ErrorBase

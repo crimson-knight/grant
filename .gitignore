@@ -5,6 +5,8 @@
 /.crystal-cache/
 /doc/
 *.db
+*.db-wal
+*.db-shm
 
 /.deps.lock
 

@@ -7,6 +7,9 @@ require "mysql"
 # adapter-local decoder hook.
 # Mysql implementation of the Adapter
 class Grant::Adapter::Mysql < Grant::Adapter::Base
+  # :nodoc:
+  alias Kind = Grant::Adapter::ErrorTranslator::Kind
+
   QUOTING_CHAR = '`'
 
   def mysql? : Bool
@@ -44,7 +47,7 @@ class Grant::Adapter::Mysql < Grant::Adapter::Base
     statement = "TRUNCATE #{quote(table_name)}"
 
     elapsed_time = Time.measure do
-      open do |db|
+      open(statement) do |db|
         db.exec statement
       end
     end
@@ -63,7 +66,7 @@ class Grant::Adapter::Mysql < Grant::Adapter::Base
 
     last_id = -1_i64
     elapsed_time = Time.measure do
-      open do |conn|
+      open(statement, params) do |conn|
         conn.exec statement, args: normalize_bind_values(params)
         last_id = conn.scalar(last_val()).as(Int64) if lastval
       end
@@ -105,7 +108,7 @@ class Grant::Adapter::Mysql < Grant::Adapter::Base
     end
 
     elapsed_time = Time.measure do
-      open do |db|
+      open(statement, params) do |db|
         db.exec statement, args: normalize_bind_values(params)
       end
     end
@@ -126,7 +129,7 @@ class Grant::Adapter::Mysql < Grant::Adapter::Base
     end
 
     elapsed_time = Time.measure do
-      open do |db|
+      open(statement, params) do |db|
         db.exec statement, args: normalize_bind_values(params)
       end
     end
@@ -139,7 +142,7 @@ class Grant::Adapter::Mysql < Grant::Adapter::Base
     statement = "DELETE FROM #{quote(table_name)} WHERE #{quote(primary_name)}=?"
 
     elapsed_time = Time.measure do
-      open do |db|
+      open(statement, [value]) do |db|
         db.exec statement, normalize_bind_value(value)
       end
     end
@@ -187,6 +190,181 @@ class Grant::Adapter::Mysql < Grant::Adapter::Base
     else
       raise Grant::Locking::LockNotAvailableError.new("Lock mode #{mode} not supported in MySQL")
     end
+  end
+
+  def adapter_name : String
+    "MySQL"
+  end
+
+  # Raises `Grant::ConnectionNotEstablished` when the connection URL selected
+  # no database, where MySQL's `DATABASE()` returns NULL.
+  def current_database : String
+    selected = open { |db| db.scalar("SELECT DATABASE()").as?(String) }
+    selected || raise Grant::ConnectionNotEstablished.new("No database is selected on the #{name} MySQL connection")
+  end
+
+  # True when the server banner names MariaDB, whose version numbers and
+  # feature set differ from MySQL's.
+  def mariadb? : Bool
+    database_version
+    @mariadb
+  end
+
+  # Records whether the server is MariaDB without querying it, for tooling
+  # that pins `#database_version` offline.
+  def mariadb=(value : Bool) : Bool
+    @mariadb = value
+  end
+
+  @mariadb = false
+
+  protected def fetch_database_version : Grant::ServerVersion
+    banner = open { |db| db.scalar("SELECT VERSION()").as(String) }
+    @mariadb = banner.includes?("MariaDB")
+    Grant::ServerVersion.parse(banner)
+  end
+
+  def supports_insert_returning? : Bool
+    mariadb? && database_version.at_least?(10, 5)
+  end
+
+  def supports_insert_on_duplicate_skip? : Bool
+    true
+  end
+
+  def supports_insert_on_duplicate_update? : Bool
+    true
+  end
+
+  def supports_foreign_keys? : Bool
+    true
+  end
+
+  def supports_views? : Bool
+    true
+  end
+
+  # MySQL 8.0.13 added functional key parts; MariaDB has no expression indexes.
+  def supports_expression_index? : Bool
+    !mariadb? && database_version.at_least?(8, 0, 13)
+  end
+
+  # Enforced from MySQL 8.0.16 and MariaDB 10.2.1.
+  def supports_check_constraints? : Bool
+    mariadb? ? database_version.at_least?(10, 2, 1) : database_version.at_least?(8, 0, 16)
+  end
+
+  def supports_datetime_with_precision? : Bool
+    mariadb? ? database_version.at_least?(5, 3) : database_version.at_least?(5, 6, 4)
+  end
+
+  def supports_json? : Bool
+    mariadb? ? database_version.at_least?(10, 2, 7) : database_version.at_least?(5, 7, 8)
+  end
+
+  def supports_common_table_expressions? : Bool
+    mariadb? ? database_version.at_least?(10, 2, 1) : database_version.at_least?(8, 0, 1)
+  end
+
+  def supports_virtual_columns? : Bool
+    mariadb? ? database_version.at_least?(10, 2) : database_version.at_least?(5, 7, 6)
+  end
+
+  def supports_comments? : Bool
+    true
+  end
+
+  def supports_explain? : Bool
+    true
+  end
+
+  # Optimizer hint comments (`/*+ ... */`) are MySQL only, from 5.7.7.
+  def supports_optimizer_hints? : Bool
+    !mariadb? && database_version.at_least?(5, 7, 7)
+  end
+
+  def supports_advisory_locks? : Bool
+    true
+  end
+
+  def supports_bulk_alter? : Bool
+    true
+  end
+
+  def supports_concurrent_connections? : Bool
+    true
+  end
+
+  def supports_restart_db_transaction? : Bool
+    true
+  end
+
+  def supports_disable_referential_integrity? : Bool
+    true
+  end
+
+  # crystal-mysql reports a server error as a `PacketError` that keeps the
+  # server's message but drops the numeric error code. The server's English
+  # message prefixes are fixed per error, so they stand in for the code until
+  # the driver exposes it. Returns nil for messages Grant does not translate.
+  def self.errno_for_message(message : String?) : Int32?
+    return nil unless message
+
+    if message.starts_with?("Duplicate entry")
+      1062
+    elsif message.starts_with?("Cannot add or update a child row")
+      1452
+    elsif message.starts_with?("Cannot delete or update a parent row")
+      1451
+    elsif message.starts_with?("Column '") && message.includes?("' cannot be null")
+      1048
+    elsif message.starts_with?("Field '") && message.includes?("' doesn't have a default value")
+      1364
+    elsif message.starts_with?("Data too long for column")
+      1406
+    elsif message.starts_with?("Deadlock found when trying to get lock")
+      1213
+    elsif message.starts_with?("Lock wait timeout exceeded")
+      1205
+    elsif message.starts_with?("Statement aborted because lock(s) could not be acquired immediately")
+      3572
+    elsif message.starts_with?("Query execution was interrupted, maximum statement execution time exceeded")
+      3024
+    elsif message.starts_with?("Query execution was interrupted")
+      1317
+    elsif message.starts_with?("Cannot execute statement in a READ ONLY transaction")
+      1792
+    elsif message.starts_with?("Unknown database")
+      1049
+    end
+  end
+
+  # Classifies a MySQL server error number, or returns nil for numbers Grant
+  # does not translate.
+  def self.error_kind(errno : Int32?) : Kind?
+    case errno
+    when 1062, 1586 then Kind::Unique
+    when 1451, 1452 then Kind::ForeignKey
+    when 1048, 1364 then Kind::NotNull
+    when 1406       then Kind::ValueTooLong
+    when 1213       then Kind::Deadlock
+    when 1205, 3572 then Kind::LockWaitTimeout
+    when 3024       then Kind::StatementTimeout
+    when 1317       then Kind::QueryCanceled
+    when 1290, 1792 then Kind::ReadOnly
+    when 1049       then Kind::NoDatabase
+    end
+  end
+
+  def translate_exception(ex : ::Exception, sql : String? = nil, binds = nil) : ::Exception
+    if ex.is_a?(MySql::Connection::PacketError)
+      if kind = Mysql.error_kind(Mysql.errno_for_message(ex.message))
+        return Grant::Adapter::ErrorTranslator.build(kind, ex.message, sql, binds, ex)
+      end
+      return Grant::StatementInvalid.new(ex.message, sql, binds, ex)
+    end
+
+    super
   end
 
   # MySQL reports affected rows directly on the exec result.

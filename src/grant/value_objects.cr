@@ -54,7 +54,7 @@ module Grant::ValueObjects
   end
 
   # Raised when a value object cannot be built or is invalid.
-  class ValueObjectError < Exception
+  class ValueObjectError < Grant::ErrorBase
   end
 
   # Declares an aggregation named *name* that composes the mapped columns into a

@@ -38,6 +38,9 @@ end
 
 # Sqlite implementation of the Adapter
 class Grant::Adapter::Sqlite < Grant::Adapter::Base
+  # :nodoc:
+  alias Kind = Grant::Adapter::ErrorTranslator::Kind
+
   QUOTING_CHAR = '"'
 
   def sqlite? : Bool
@@ -67,10 +70,186 @@ class Grant::Adapter::Sqlite < Grant::Adapter::Base
     Time.parse(text, format, location: SQLite3::TIME_ZONE)
   end
 
-  def initialize(@name : String, @url : String)
-    super
+  # PRAGMAs applied to every connection unless the URL or `pragmas` says
+  # otherwise. Foreign keys are enforced (SQLite leaves them off), a busy
+  # connection waits five seconds instead of failing at once, and WAL with
+  # `synchronous=normal` is the fast, still crash-safe journal mode. WAL needs
+  # a local filesystem with shared memory (not a network mount) and writes
+  # `-wal` and `-shm` files next to the database that backups must include, so
+  # everything except `foreign_keys` is applied only to file databases.
+  DEFAULT_PRAGMAS = {
+    "foreign_keys" => "1",
+    "journal_mode" => "wal",
+    "busy_timeout" => "5000",
+    "synchronous"  => "normal",
+  }
+
+  # Builds the adapter. *pragmas* overrides the defaults for this connection,
+  # for example `pragmas: {journal_mode: "delete"}`; a value written in the URL
+  # query still wins over both.
+  def initialize(name : String, url : String, pragmas : NamedTuple? = nil)
+    overrides = {} of String => String
+    pragmas.try(&.to_h.each { |key, value| overrides[key.to_s] = value.to_s })
+    super(name, Sqlite.url_with_pragmas(url, overrides))
     # Check SQLite version on first connection
     Grant::SQLiteVersionCheck.ensure_supported!
+  end
+
+  # Returns *url* with the default PRAGMA parameters and *overrides* appended
+  # for every key the URL query does not already set.
+  def self.url_with_pragmas(url : String, overrides : Hash(String, String) = {} of String => String) : String
+    base, _, query = url.partition('?')
+    present = Set(String).new
+    query.split('&') do |pair|
+      key = pair.partition('=')[0]
+      present << key unless key.empty?
+    end
+
+    memory = memory_url?(url)
+    additions = [] of String
+    DEFAULT_PRAGMAS.each do |key, default|
+      next if present.includes?(key)
+      value = overrides[key]? || ((memory && key != "foreign_keys") ? nil : default)
+      additions << "#{key}=#{value}" if value
+    end
+    overrides.each do |key, value|
+      next if present.includes?(key) || DEFAULT_PRAGMAS.has_key?(key)
+      additions << "#{key}=#{value}"
+    end
+    return url if additions.empty?
+
+    query.empty? ? "#{base}?#{additions.join('&')}" : "#{base}?#{query}&#{additions.join('&')}"
+  end
+
+  # True for `:memory:` and `mode=memory` databases, which have no file to
+  # journal and live only as long as one connection.
+  def self.memory_url?(url : String) : Bool
+    url.includes?(":memory:") || url.includes?("mode=memory")
+  end
+
+  def adapter_name : String
+    "SQLite"
+  end
+
+  # The database file, or `:memory:`.
+  def current_database : String
+    file = open { |db| db.scalar("SELECT file FROM pragma_database_list WHERE name = 'main'").as(String) }
+    file.empty? ? ":memory:" : file
+  end
+
+  # SQLite's version is that of the linked library, so no query is needed.
+  protected def fetch_database_version : Grant::ServerVersion
+    Grant::ServerVersion.parse(Grant::SQLiteVersionCheck.version_string)
+  end
+
+  # `RETURNING` arrived in SQLite 3.35.
+  def supports_insert_returning? : Bool
+    database_version.at_least?(3, 35)
+  end
+
+  def supports_insert_on_duplicate_skip? : Bool
+    true
+  end
+
+  def supports_insert_on_duplicate_update? : Bool
+    true
+  end
+
+  def supports_ddl_transactions? : Bool
+    true
+  end
+
+  def supports_partial_index? : Bool
+    true
+  end
+
+  def supports_expression_index? : Bool
+    true
+  end
+
+  def supports_check_constraints? : Bool
+    true
+  end
+
+  def supports_foreign_keys? : Bool
+    true
+  end
+
+  def supports_views? : Bool
+    true
+  end
+
+  def supports_datetime_with_precision? : Bool
+    true
+  end
+
+  # The JSON functions are built in from SQLite 3.38.
+  def supports_json? : Bool
+    database_version.at_least?(3, 38)
+  end
+
+  def supports_common_table_expressions? : Bool
+    true
+  end
+
+  # Generated columns arrived in SQLite 3.31.
+  def supports_virtual_columns? : Bool
+    database_version.at_least?(3, 31)
+  end
+
+  def supports_explain? : Bool
+    true
+  end
+
+  # An in-memory database belongs to a single connection.
+  def supports_concurrent_connections? : Bool
+    !Sqlite.memory_url?(url)
+  end
+
+  def supports_disable_referential_integrity? : Bool
+    true
+  end
+
+  # SQLite reports the primary result code plus, for constraints, a message
+  # that names the constraint type (extended codes are not enabled by the
+  # driver). The message prefixes are SQLite's own fixed, untranslated text.
+  def self.error_kind(code : Int32?, message : String? = nil) : Kind?
+    return nil unless code
+
+    case code
+    when 2067, 1555 then return Kind::Unique
+    when 787        then return Kind::ForeignKey
+    when 1299       then return Kind::NotNull
+    end
+
+    case code & 0xFF
+    when 5, 6 then Kind::LockWaitTimeout
+    when 8    then Kind::ReadOnly
+    when 9    then Kind::QueryCanceled
+    when 14   then Kind::NoDatabase
+    when 18   then Kind::ValueTooLong
+    when 19
+      if message.nil?
+        nil
+      elsif message.starts_with?("UNIQUE constraint failed") || message.starts_with?("PRIMARY KEY must be unique")
+        Kind::Unique
+      elsif message.starts_with?("FOREIGN KEY constraint failed")
+        Kind::ForeignKey
+      elsif message.starts_with?("NOT NULL constraint failed")
+        Kind::NotNull
+      end
+    end
+  end
+
+  def translate_exception(ex : ::Exception, sql : String? = nil, binds = nil) : ::Exception
+    if ex.is_a?(SQLite3::Exception)
+      if kind = Sqlite.error_kind(ex.code, ex.message)
+        return Grant::Adapter::ErrorTranslator.build(kind, ex.message, sql, binds, ex)
+      end
+      return Grant::StatementInvalid.new(ex.message, sql, binds, ex)
+    end
+
+    super
   end
 
   module Schema
@@ -91,7 +270,7 @@ class Grant::Adapter::Sqlite < Grant::Adapter::Base
     statement = "DELETE FROM #{quote(table_name)}"
 
     elapsed_time = Time.measure do
-      open do |db|
+      open(statement) do |db|
         db.exec statement
       end
     end
@@ -110,7 +289,7 @@ class Grant::Adapter::Sqlite < Grant::Adapter::Base
 
     last_id = -1_i64
     elapsed_time = Time.measure do
-      open do |db|
+      open(statement, params) do |db|
         db.exec statement, args: normalize_bind_values(params)
         last_id = db.scalar(last_val()).as(Int64) if lastval
       end
@@ -157,7 +336,7 @@ class Grant::Adapter::Sqlite < Grant::Adapter::Base
     end
 
     elapsed_time = Time.measure do
-      open do |db|
+      open(statement, params) do |db|
         db.exec statement, args: normalize_bind_values(params)
       end
     end
@@ -178,7 +357,7 @@ class Grant::Adapter::Sqlite < Grant::Adapter::Base
     end
 
     elapsed_time = Time.measure do
-      open do |db|
+      open(statement, params) do |db|
         db.exec statement, args: normalize_bind_values(params)
       end
     end
@@ -191,7 +370,7 @@ class Grant::Adapter::Sqlite < Grant::Adapter::Base
     statement = "DELETE FROM #{quote(table_name)} WHERE #{quote(primary_name)}=?"
 
     elapsed_time = Time.measure do
-      open do |db|
+      open(statement, [value]) do |db|
         db.exec statement, normalize_bind_value(value)
       end
     end

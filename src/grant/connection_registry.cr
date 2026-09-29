@@ -11,7 +11,7 @@ module Grant
   # that *were* compiled in (`Grant.compiled_adapters`) so the fix is obvious:
   # either establish the connection for this target, or `require` the missing
   # adapter.
-  class AdapterNotAvailableError < Exception
+  class AdapterNotAvailableError < ConnectionNotEstablished
   end
 
   # Central registry for managing database connections

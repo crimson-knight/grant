@@ -28,6 +28,12 @@ module Grant
     # Per-query override: `.in_chunks(of: n)`. See `docs/large_tables.md`.
     property in_clause_limit : Int32 = 1000
 
+    # When true, `Grant::StatementInvalid#binds` holds each bind value (cut to
+    # 64 characters, at most 20 kept) instead of `[FILTERED]`. Leave it off in
+    # production so an exception message or log line cannot leak a secret;
+    # turn it on while configuring a development environment.
+    property? capture_statement_bind_values : Bool = false
+
     def index_hint_mode=(mode : Symbol)
       unless {:warn, :strict, :ignore}.includes?(mode)
         raise ArgumentError.new("index_hint_mode must be :warn, :strict, or :ignore (got #{mode.inspect})")

@@ -1,6 +1,10 @@
 require "../grant"
 require "db"
 require "colorize"
+require "../grant/error_taxonomy"
+require "./error_translator"
+require "./placeholder_scanner"
+require "./server_version"
 
 # The Base Adapter specifies the interface that will be used by the model
 # objects to perform actions against a specific database.  Each adapter needs
@@ -9,6 +13,7 @@ abstract class Grant::Adapter::Base
   getter name : String
   getter url : String
   private property _database : DB::Database?
+  @database_version : Grant::ServerVersion?
 
   private SQL_KEYWORDS = Set(String).new(%w(
     ALTER AND ANY AS ASC COLUMN CONSTRAINT COUNT CREATE DEFAULT DELETE DESC
@@ -59,12 +64,22 @@ abstract class Grant::Adapter::Base
     @_database ||= DB.open(@url)
   end
 
-  def open(&)
+  # Yields a raw connection for the current context.
+  #
+  # Failures raised by the driver are translated into the `Grant::ErrorBase`
+  # taxonomy (see `#translate_exception`). Pass *sql* and *binds* so the
+  # translated error can report the failing statement; both are only read on
+  # the error path.
+  def open(sql : String? = nil, binds = nil, &)
     # A schema-tenant block owns one pool connection for its lifetime. Check it
     # before transaction routing so a model on another adapter cannot bypass
     # the tenant context merely because that adapter already has a transaction.
     if schema_conn = Grant::SchemaTenant.current_connection?(self)
-      return yield schema_conn
+      begin
+        return yield schema_conn
+      rescue ex : ::Exception
+        raise translate_exception(ex, sql, binds)
+      end
     end
 
     # If the current fiber has an open transaction THAT THIS ADAPTER started,
@@ -73,17 +88,27 @@ abstract class Grant::Adapter::Base
     # atomic.  DML through a different adapter (multi-database setups) is not
     # part of this transaction and checks out from its own pool.
     if tx_conn = Grant::Transaction.current_connection?(self)
-      return yield tx_conn
+      begin
+        return yield tx_conn
+      rescue ex : ::Exception
+        raise translate_exception(ex, sql, binds)
+      end
     end
 
-    open_pool_connection { |conn| yield conn }
+    open_pool_connection(sql, binds) { |conn| yield conn }
+  end
+
+  # Yields the raw driver connection for the current context, the supported
+  # way to reach driver features Grant does not wrap.
+  def with_connection(&)
+    open { |conn| yield conn }
   end
 
   # Always checks out a fresh connection from the pool, bypassing the
   # transaction-routing logic in #open.  Used by execute_transaction so that
   # requires_new: true transactions get their own independent connection rather
   # than inheriting an enclosing transaction's connection.
-  def open_pool_connection(&)
+  def open_pool_connection(sql : String? = nil, binds = nil, &)
     database.retry do
       database.using_connection do |conn|
         yield conn
@@ -97,6 +122,19 @@ abstract class Grant::Adapter::Base
         end
       end
     end
+  rescue ex : ::Exception
+    raise translate_exception(ex, sql, binds)
+  end
+
+  # Maps a driver failure to the matching `Grant::ErrorBase` subclass and
+  # returns it. An exception Grant does not recognize is returned unchanged, so
+  # control-flow exceptions and unknown driver errors keep propagating as they
+  # were. Adapters override this to classify their driver's errors and call
+  # `super` for the rest.
+  #
+  # Only called from a `rescue`, so it costs nothing when statements succeed.
+  def translate_exception(ex : ::Exception, sql : String? = nil, binds = nil) : ::Exception
+    Grant::Adapter::ErrorTranslator.translate_pool_error(ex) || ex
   end
 
   def log(query : String, elapsed_time : Time::Span, params = [] of String) : Nil
@@ -119,7 +157,7 @@ abstract class Grant::Adapter::Base
     end
 
     elapsed_time = Time.measure do
-      open do |db|
+      open(statement, params) do |db|
         db.query statement, args: normalize_bind_values(params) do |rs|
           yield rs
         end
@@ -135,7 +173,7 @@ abstract class Grant::Adapter::Base
 
     exists = false
     elapsed_time = Time.measure do
-      open do |db|
+      open(statement, params) do |db|
         exists = db.query_one?(statement, args: normalize_bind_values(params), as: Bool) || exists
       end
     end
@@ -146,11 +184,14 @@ abstract class Grant::Adapter::Base
   end
 
   # Converts placeholder characters in a SQL clause to the adapter's
-  # native parameter syntax. The base implementation is a no-op since
-  # SQLite and MySQL use `?` natively. The PG adapter overrides this
-  # to convert `?` to `$1`, `$2`, etc.
+  # native parameter syntax. SQLite and MySQL use `?` natively, so the base
+  # implementation only collapses the `??` escape. The PG adapter overrides
+  # this to convert `?` to `$1`, `$2`, etc.
+  #
+  # `??` is the escape for a literal `?` on every adapter, and a `?` inside a
+  # quoted literal or comment is never treated as a placeholder.
   def ensure_clause_template(clause : String, starting_index : Int32 = 0) : String
-    clause
+    Grant::Adapter::PlaceholderScanner.rewrite(clause, starting_index, numbered: false)
   end
 
   # Returns the placeholder for the *index*th bound parameter. Adapters with
@@ -189,7 +230,7 @@ abstract class Grant::Adapter::Base
     statement = ensure_clause_template(statement)
 
     elapsed_time = Time.measure do
-      open do |db|
+      open(statement, params) do |db|
         db.exec statement, args: normalize_bind_values(params)
       end
     end
@@ -216,7 +257,7 @@ abstract class Grant::Adapter::Base
 
     affected = 0_i64
     elapsed_time = Time.measure do
-      open do |db|
+      open(statement, parameters) do |db|
         result = db.exec(statement, args: normalize_bind_values(parameters))
         affected = rows_affected_after_write(db, result)
       end
@@ -241,7 +282,7 @@ abstract class Grant::Adapter::Base
     statement = ensure_clause_template(statement)
     affected = 0_i64
     elapsed_time = Time.measure do
-      open do |db|
+      open(statement, [value]) do |db|
         result = db.exec(statement, args: normalize_bind_values([value]))
         affected = rows_affected_after_write(db, result)
       end
@@ -262,7 +303,7 @@ abstract class Grant::Adapter::Base
     statement = "DELETE FROM #{quote(table_name)} WHERE #{ensure_clause_template(where_clause)}"
 
     elapsed_time = Time.measure do
-      open do |db|
+      open(statement, params) do |db|
         db.exec statement, args: normalize_bind_values(params)
       end
     end
@@ -335,6 +376,154 @@ abstract class Grant::Adapter::Base
     else
       "<1ns".colorize.green
     end
+  end
+
+  # Human readable name of the database product, for example "PostgreSQL".
+  def adapter_name : String
+    self.class.name
+  end
+
+  # Server release, fetched on first use and cached for the adapter's life so
+  # version gated capability predicates never query per call.
+  def database_version : Grant::ServerVersion
+    @database_version ||= fetch_database_version
+  end
+
+  # Pins the server version without connecting. Use it for tooling that
+  # inspects capabilities offline, or when the server is upgraded in place and
+  # the cache must be refreshed.
+  def database_version=(version : Grant::ServerVersion) : Grant::ServerVersion
+    @database_version = version
+  end
+
+  # Name of the database the connection is using.
+  def current_database : String
+    raise Grant::ErrorBase.new("#{self.class} does not implement #current_database")
+  end
+
+  # Asks the server for its version. Adapters override this.
+  protected def fetch_database_version : Grant::ServerVersion
+    raise Grant::ErrorBase.new("#{self.class} does not implement #fetch_database_version")
+  end
+
+  # ---------------------------------------------------------------------------
+  # Capability predicates
+  #
+  # Each predicate answers "can this database do X?" so callers branch on a
+  # capability instead of on the adapter class. The base answers `false`;
+  # adapters override with a constant, or with a check against the cached
+  # `#database_version` when the answer depends on the server release.
+  # `docs/adapter_matrix.md` lists every answer.
+  # ---------------------------------------------------------------------------
+
+  # `INSERT ... RETURNING` (or an equivalent that yields written columns).
+  def supports_insert_returning? : Bool
+    false
+  end
+
+  # Skipping rows that hit a unique key: `ON CONFLICT DO NOTHING`, `INSERT IGNORE`.
+  def supports_insert_on_duplicate_skip? : Bool
+    false
+  end
+
+  # Updating the existing row on a unique-key conflict (upsert).
+  def supports_insert_on_duplicate_update? : Bool
+    false
+  end
+
+  # DDL statements roll back with the surrounding transaction.
+  def supports_ddl_transactions? : Bool
+    false
+  end
+
+  # `CREATE INDEX ... WHERE condition`.
+  def supports_partial_index? : Bool
+    false
+  end
+
+  # Indexes over expressions such as `lower(email)`.
+  def supports_expression_index? : Bool
+    false
+  end
+
+  # `CHECK` constraints that the server enforces.
+  def supports_check_constraints? : Bool
+    false
+  end
+
+  # Foreign key constraints that the server can enforce.
+  def supports_foreign_keys? : Bool
+    false
+  end
+
+  def supports_views? : Bool
+    false
+  end
+
+  # `datetime` columns with sub-second precision.
+  def supports_datetime_with_precision? : Bool
+    false
+  end
+
+  # A native JSON column type and JSON functions.
+  def supports_json? : Bool
+    false
+  end
+
+  # `WITH ... AS (...)` common table expressions.
+  def supports_common_table_expressions? : Bool
+    false
+  end
+
+  # Generated (computed) columns.
+  def supports_virtual_columns? : Bool
+    false
+  end
+
+  # `COMMENT` on tables and columns stored in the catalog.
+  def supports_comments? : Bool
+    false
+  end
+
+  # `EXPLAIN` of a statement.
+  def supports_explain? : Bool
+    false
+  end
+
+  # Inline optimizer hints such as `/*+ ... */`.
+  def supports_optimizer_hints? : Bool
+    false
+  end
+
+  # Server side advisory (application defined) locks.
+  def supports_advisory_locks? : Bool
+    false
+  end
+
+  # Several `ALTER TABLE` changes in one statement.
+  def supports_bulk_alter? : Bool
+    false
+  end
+
+  # More than one connection can use the database at once.
+  def supports_concurrent_connections? : Bool
+    false
+  end
+
+  # A transaction aborted by a deadlock or serialization failure can simply be
+  # run again on a fresh transaction.
+  def supports_restart_db_transaction? : Bool
+    false
+  end
+
+  # Foreign key checks can be switched off temporarily, for fixtures and bulk loads.
+  def supports_disable_referential_integrity? : Bool
+    false
+  end
+
+  # `UNIQUE NULLS NOT DISTINCT`.
+  def supports_nulls_not_distinct? : Bool
+    false
   end
 
   # Methods for checking database capabilities
