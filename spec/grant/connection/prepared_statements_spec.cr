@@ -32,6 +32,21 @@ describe "prepared statements" do
     adapter.open { |connection| connection.statement_cache_size }.should be <= 3
   end
 
+  it "evicts the least recently used statement, so one still in use stays cached" do
+    cache = DB::StringKeyCache(String).new
+    cache.limit = 3
+    cache.fetch("a") { "A" }
+    cache.fetch("b") { "B" }
+    cache.fetch("c") { "C" }
+    cache.fetch("a") { "rebuilt A" }.should eq "A"
+
+    cache.fetch("d") { "D" }
+
+    cache.size.should eq 3
+    cache.fetch("a") { "rebuilt A" }.should eq "A"
+    cache.fetch("b") { "rebuilt B" }.should eq "rebuilt B"
+  end
+
   it "stops caching when statement_limit is 0" do
     adapter = C02Support.establish("c02_prepared", pool_size: 1, initial_pool_size: 1, statement_limit: 0)
 

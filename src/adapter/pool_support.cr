@@ -73,8 +73,14 @@ end
 
 # crystal-db keeps every prepared statement of a connection in an unbounded
 # hash. Grant bounds it with `statement_limit`: once the cache holds that many
-# statements the oldest one is closed and dropped. A limit of 0 (the default
-# for a bare crystal-db connection) leaves the cache unbounded.
+# statements the least recently used one is closed and dropped. A limit of 0
+# (the default for a bare crystal-db connection) leaves the cache unbounded.
+#
+# Eviction is least recently used, not oldest inserted, because a statement
+# can still be stepping a result set while its connection prepares others (a
+# query issued per row inside a transaction). Closing that statement would
+# finalize it under the open result set; recency keeps the statement in use
+# at the young end of the cache.
 #
 # This reopens two crystal-db types on purpose; when the db shard is upgraded,
 # compare `DB::StringKeyCache` and `DB::Connection#fetch_or_build_prepared_statement`.
@@ -88,12 +94,21 @@ class DB::StringKeyCache(T)
   end
 
   def fetch(key : String, &) : T
+    limit = @limit
     value = @cache.fetch(key, nil)
-    return value if value
+    if value
+      # A bounded cache keeps insertion order as recency order: move a hit to
+      # the young end so eviction takes the least recently used statement.
+      if limit > 0
+        @cache.delete(key)
+        @cache[key] = value
+      end
+      return value
+    end
 
     value = yield
-    if @limit > 0
-      while @cache.size >= @limit
+    if limit > 0
+      while @cache.size >= limit
         oldest_key = @cache.first_key
         evicted = @cache.delete(oldest_key)
         evicted.close if evicted.responds_to?(:close)

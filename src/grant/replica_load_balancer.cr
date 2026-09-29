@@ -58,7 +58,7 @@ module Grant
 
     def next_index(total : Int32) : Int32
       return 0 if total == 1
-      (@current_index.add(1) + 1) % total
+      (@current_index.add(1) &+ 1) % total
     end
 
     def reset
@@ -92,7 +92,7 @@ module Grant
       size = entries.size
       return nil if size == 0
 
-      start = (@tie_breaker.add(1) + 1) % size
+      start = (@tie_breaker.add(1) &+ 1) % size
       best = nil
       best_count = Int32::MAX
       size.times do |step|
@@ -150,7 +150,7 @@ module Grant
     @cursor : Atomic(Int64) = Atomic(Int64).new(-1)
 
     def next_index(total : Int32) : Int32
-      (@cursor.add(1) + 1).to_i32.abs % total
+      ((@cursor.add(1) &+ 1) % total).to_i32
     end
 
     def pick(entries : Array(ReplicaEntry)) : ReplicaEntry?
@@ -158,7 +158,7 @@ module Grant
       entries.each { |entry| total_weight += entry.weight if entry.healthy? }
       return nil if total_weight == 0
 
-      slot = ((@cursor.add(1) + 1) % total_weight).to_i32
+      slot = ((@cursor.add(1) &+ 1) % total_weight).to_i32
       entries.each do |entry|
         next unless entry.healthy?
         return entry if slot < entry.weight

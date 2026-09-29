@@ -177,6 +177,24 @@ describe "read replica routing" do
     end
   end
 
+  describe "counters" do
+    it "keeps rotating when the round-robin and weighted cursors wrap around" do
+      round_robin = Grant::RoundRobinStrategy.new
+      round_robin.@current_index.set(Int32::MAX - 1)
+      picks = Array.new(4) { round_robin.next_index(3) }
+      picks.each { |index| (0...3).should contain index }
+
+      weighted = Grant::WeightedStrategy.new
+      weighted.@cursor.set(Int32::MAX.to_i64 + 5)
+      4.times { (0...3).should contain weighted.next_index(3) }
+
+      least = Grant::LeastConnectionsStrategy.new
+      least.@tie_breaker.set(Int32::MAX)
+      entries = [Grant::ReplicaEntry.new(Grant::ConnectionRegistry.get_adapter("c02_rr_writer", :writing))]
+      least.pick(entries).should_not be_nil
+    end
+  end
+
   describe "weighted" do
     it "gives each replica reads in proportion to its weight" do
       Grant::ConnectionRegistry.establish_connection(
