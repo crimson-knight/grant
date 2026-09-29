@@ -1,4 +1,5 @@
 require "./error"
+require "./i18n"
 
 # A rich errors collection that wraps model validation errors.
 #
@@ -22,15 +23,44 @@ class Grant::Errors
 
   @errors = [] of Error
 
+  # Errors by attribute name, built the first time an attribute is looked up
+  # and kept in step by `add`; every other mutation drops it.
+  @index : Hash(String, Array(Error))?
+
+  # The record the errors belong to. Errors added here remember it so their
+  # messages can use the model's translations.
+  property base : Grant::Base?
+
+  def initialize(@base : Grant::Base? = nil)
+  end
+
   # Adds an error for the given field with the given message.
   #
   # ```
   # errors.add(:name, "can't be blank")
   # errors.add(:base, "Record is invalid")
   # errors.add("email", "is already taken")
+  # errors.add(:age, "is too low", type: :greater_than, count: 18)
   # ```
-  def add(field : (String | Symbol | JSON::Any), message : String? = "", type : Symbol? = nil)
-    @errors << Error.new(field, message, type)
+  def add(field : (String | Symbol | JSON::Any), message : String? = "", type : Symbol? = nil, **options)
+    error = Error.new(field, message, type, options: Error.options_from(options), base: @base)
+    push(error)
+    error
+  end
+
+  # Adds an error generated from a type. The message is built from the
+  # model's translations when it is first read, interpolating *options*.
+  #
+  # ```
+  # errors.add(:name, :too_short, count: 3)
+  # errors[:name] # => ["is too short (minimum is 3 characters)"]
+  # errors.add(:name, :invalid, message: :must_be_unique) # message from a translation key
+  # errors.add(:name, :invalid, message: ->(record : Grant::Base, data : Grant::Error::Options) { "..." })
+  # ```
+  def add(field : (String | Symbol | JSON::Any), type : Symbol, message : Error::Message = nil, **options)
+    error = Error.new(field, type, message: message, options: Error.options_from(options), base: @base)
+    push(error)
+    error
   end
 
   # Appends an Error object to the collection.
@@ -41,7 +71,8 @@ class Grant::Errors
   # errors << Grant::Error.new(:name, "can't be blank")
   # ```
   def <<(error : Error)
-    @errors << error
+    push(error)
+    self
   end
 
   # Returns an array of error messages for the given field.
@@ -55,14 +86,31 @@ class Grant::Errors
   # errors[:email] # => [] of String
   # ```
   def [](field : (String | Symbol)) : Array(String)
-    field_str = field.to_s
-    @errors.select { |e| e.field.to_s == field_str }.compact_map(&.message)
+    messages_for(field)
+  end
+
+  # Access error by index.
+  #
+  # ```
+  # errors[0]         # => first Error object
+  # errors[0].message # => "can't be blank"
+  # ```
+  def [](index : Int32) : Error
+    @errors[index]
+  end
+
+  # The messages of the errors on *field* (`errors[:name]`).
+  def messages_for(field : (String | Symbol)) : Array(String)
+    list = by_attribute[field.to_s]?
+    return [] of String unless list
+    list.compact_map(&.message)
   end
 
   # Returns an array of full error messages.
   #
-  # Each message is formatted as "Field message" (e.g., "Name can't be blank").
-  # For `:base` errors, only the message is returned without a field prefix.
+  # Each message is the humanized attribute name followed by the message
+  # (e.g., "First name can't be blank"). For `:base` errors, only the message
+  # is returned without a field prefix.
   #
   # ```
   # errors.add(:name, "can't be blank")
@@ -70,7 +118,7 @@ class Grant::Errors
   # errors.full_messages # => ["Name can't be blank", "Record is invalid"]
   # ```
   def full_messages : Array(String)
-    @errors.map(&.to_s)
+    @errors.map(&.full_message)
   end
 
   # Returns full error messages for a specific field.
@@ -81,32 +129,94 @@ class Grant::Errors
   # errors.full_messages_for(:name) # => ["Name can't be blank", "Name is too short"]
   # ```
   def full_messages_for(field : (String | Symbol)) : Array(String)
-    field_str = field.to_s
-    @errors.select { |e| e.field.to_s == field_str }.map(&.to_s)
+    list = by_attribute[field.to_s]?
+    return [] of String unless list
+    list.map(&.full_message)
   end
 
-  # Returns all Error objects for a specific field.
-  #
-  # ```
-  # errors.add(:name, "can't be blank")
-  # errors.add(:name, "is too short")
-  # errors.where(:name).size # => 2
-  # ```
-  def where(field : (String | Symbol)) : Array(Error)
-    field_str = field.to_s
-    @errors.select { |e| e.field.to_s == field_str }
+  # Formats *message* as a full message for *field*, the way `full_messages`
+  # does (`errors.full_message(:name, "is bad") # => "Name is bad"`).
+  def full_message(field : (String | Symbol), message : String) : String
+    return message if field.to_s == "base"
+    base = @base
+    human = base ? base.class.human_attribute_name(field) : Grant::I18n.humanize(field.to_s)
+    Grant::I18n.full_message(human, message)
   end
 
-  # Checks if an error with the given message exists for the field.
+  # Builds the message an error of *type* on *field* would have, without
+  # adding it.
   #
   # ```
-  # errors.add(:name, "can't be blank")
-  # errors.of_type(:name, "can't be blank") # => true
-  # errors.of_type(:name, "is too short")   # => false
+  # errors.generate_message(:name, :too_short, count: 3) # => "is too short (minimum is 3 characters)"
   # ```
+  def generate_message(field : (String | Symbol), type : Symbol = :invalid, **options) : String
+    Grant::I18n.generate_message(@base, field.to_s, type, Error.options_from(options))
+  end
+
+  # Returns the errors on *field* that match the optional *type* (a Symbol, or
+  # a String message) and *options*.
+  #
+  # ```
+  # errors.add(:name, :too_short, count: 3)
+  # errors.where(:name).size                     # => 1
+  # errors.where(:name, :too_short, count: 3)    # => [Error]
+  # errors.where(:name, :blank)                  # => []
+  # ```
+  def where(field : (String | Symbol), type : Symbol | String | Nil = nil, **options) : Array(Error)
+    list = by_attribute[field.to_s]?
+    return [] of Error unless list
+    return list.dup if type.nil? && options.size == 0
+    list.select { |error| error.match?(field, type, **options) }
+  end
+
+  # True when *field* has an error of *type* carrying all of *options*.
+  #
+  # ```
+  # errors.add(:name, :too_short, count: 3)
+  # errors.of_type(:name, :too_short)           # => true
+  # errors.of_type(:name, :too_short, count: 3) # => true
+  # errors.of_type(:name, :blank)               # => false
+  # ```
+  def of_type(field : (String | Symbol), type : Symbol, **options) : Bool
+    list = by_attribute[field.to_s]?
+    return false unless list
+    list.any? { |error| error.match?(field, type, **options) }
+  end
+
+  # True when *field* has an error with exactly the message *message* (the
+  # type of an error added with a plain String is that String).
   def of_type(field : (String | Symbol), message : String) : Bool
-    field_str = field.to_s
-    @errors.any? { |e| e.field.to_s == field_str && e.message == message }
+    has_message?(field, message)
+  end
+
+  # :ditto:
+  def of_type?(field : (String | Symbol), type : Symbol, **options) : Bool
+    of_type(field, type, **options)
+  end
+
+  # True when *field* has an error with exactly the message *message*.
+  #
+  # ```
+  # errors.add(:name, "can't be blank")
+  # errors.has_message?(:name, "can't be blank") # => true
+  # ```
+  def has_message?(field : (String | Symbol), message : String) : Bool
+    list = by_attribute[field.to_s]?
+    return false unless list
+    list.any? { |error| error.message == message }
+  end
+
+  # True when the exact error was added: *field* has an error of *type* whose
+  # options are exactly *options*. A String *type* matches by message.
+  def added?(field : (String | Symbol), type : Symbol = :invalid, **options) : Bool
+    list = by_attribute[field.to_s]?
+    return false unless list
+    list.any? { |error| error.strict_match?(field, type, **options) }
+  end
+
+  # :ditto:
+  def added?(field : (String | Symbol), message : String) : Bool
+    has_message?(field, message)
   end
 
   # Checks if a specific field has any errors.
@@ -117,8 +227,23 @@ class Grant::Errors
   # errors.include?(:email) # => false
   # ```
   def include?(field : (String | Symbol)) : Bool
-    field_str = field.to_s
-    @errors.any? { |e| e.field.to_s == field_str }
+    by_attribute.has_key?(field.to_s)
+  end
+
+  # Removes the errors on *field* that match the optional *type* and
+  # *options*, and returns their messages.
+  #
+  # ```
+  # errors.delete(:name)                # removes every error on name
+  # errors.delete(:name, :too_short)    # removes one type
+  # ```
+  def delete(field : (String | Symbol), type : Symbol | String | Nil = nil, **options) : Array(String)
+    removed = where(field, type, **options)
+    return [] of String if removed.empty?
+    messages = removed.compact_map(&.message)
+    @errors.reject! { |error| removed.any?(&.same?(error)) }
+    @index = nil
+    messages
   end
 
   # Returns unique field names that have errors.
@@ -129,7 +254,7 @@ class Grant::Errors
   # errors.attribute_names # => ["name", "email"]
   # ```
   def attribute_names : Array(String)
-    @errors.map { |e| e.field.to_s }.uniq
+    by_attribute.keys
   end
 
   # Returns error details grouped by field name.
@@ -141,11 +266,7 @@ class Grant::Errors
   # ```
   def group_by_attribute : Hash(String, Array(Error))
     result = {} of String => Array(Error)
-    @errors.each do |error|
-      key = error.field.to_s
-      result[key] ||= [] of Error
-      result[key] << error
-    end
+    by_attribute.each { |key, list| result[key] = list.dup }
     result
   end
 
@@ -162,6 +283,13 @@ class Grant::Errors
   # Implements `Iterable(Error)`.
   def each : Iterator(Error)
     @errors.each
+  end
+
+  # The error objects, in the order they were added. This is the collection's
+  # own array, not a copy: read it, do not mutate it (use `delete`, `clear`
+  # or `uniq!`).
+  def objects : Array(Error)
+    @errors
   end
 
   # Returns true if there are any errors.
@@ -196,6 +324,11 @@ class Grant::Errors
     @errors.size
   end
 
+  # The number of errors on *field*.
+  def count(field : (String | Symbol)) : Int32
+    by_attribute[field.to_s]?.try(&.size) || 0
+  end
+
   # Returns the first error in the collection.
   #
   # Raises `Enumerable::EmptyError` if there are no errors.
@@ -221,54 +354,72 @@ class Grant::Errors
   # Clears all errors.
   def clear
     @errors.clear
+    @index = nil
   end
 
-  # Access error by index.
-  #
-  # ```
-  # errors[0]         # => first Error object
-  # errors[0].message # => "can't be blank"
-  # ```
-  def [](index : Int32) : Error
-    @errors[index]
+  # Removes duplicate errors: the same attribute, type, options and message.
+  # Keeps the first of each.
+  def uniq! : self
+    seen = Set(String).new
+    kept = @errors.select do |error|
+      seen.add?("#{error.attribute}\0#{error.type}\0#{error.message}\0#{error.options? ? error.options.inspect : ""}")
+    end
+    if kept.size != @errors.size
+      @errors = kept
+      @index = nil
+    end
+    self
   end
 
-  # Returns a hash of field names to arrays of error messages.
+  # Returns a hash of field names to arrays of error messages. With
+  # `full_messages: true` the messages are the full messages
+  # (`"Name can't be blank"`).
   #
   # ```
   # errors.add(:name, "can't be blank")
   # errors.add(:name, "is too short")
   # errors.add(:email, "is invalid")
-  # errors.to_hash # => {"name" => ["can't be blank", "is too short"], "email" => ["is invalid"]}
+  # errors.to_hash                     # => {"name" => ["can't be blank", "is too short"], "email" => ["is invalid"]}
+  # errors.to_hash(full_messages: true) # => {"name" => ["Name can't be blank", ...], ...}
   # ```
-  def to_hash : Hash(String, Array(String))
+  def to_hash(full_messages : Bool = false) : Hash(String, Array(String))
     result = {} of String => Array(String)
     @errors.each do |error|
-      key = error.field.to_s
-      result[key] ||= [] of String
-      result[key] << (error.message || "")
+      key = error.attribute
+      (result[key] ||= [] of String) << (full_messages ? error.full_message : (error.message || ""))
     end
     result
+  end
+
+  # The messages by attribute (`to_hash`).
+  def messages : Hash(String, Array(String))
+    to_hash
+  end
+
+  # The shape ActiveRecord serializes: `{"name" => ["can't be blank"]}`;
+  # `full_messages: true` for the full messages.
+  def as_json(full_messages : Bool = false) : Hash(String, Array(String))
+    to_hash(full_messages)
   end
 
   # Returns machine-readable error details grouped by field name.
   #
   # Each field maps to an array of detail hashes. Every detail hash carries an
   # `:error` key holding the error's type code (e.g. `:blank`, `:too_short`,
-  # `:taken`). Errors added without an explicit type fall back to `:invalid`.
-  # This mirrors ActiveRecord's `errors.details` and lets clients branch on a
-  # stable code rather than parsing the human-readable message.
+  # `:taken`) and the options the error carries (`count:`, `value:`). Errors
+  # added without an explicit type fall back to `:invalid`. This mirrors
+  # ActiveRecord's `errors.details` and lets clients branch on a stable code
+  # rather than parsing the human-readable message. The hashes are built when
+  # asked for.
   #
   # ```
-  # errors.add(:name, "can't be blank", type: :blank)
-  # errors.details # => {"name" => [{:error => :blank}]}
+  # errors.add(:name, :too_short, count: 3)
+  # errors.details # => {"name" => [{:error => :too_short, :count => 3}]}
   # ```
-  def details : Hash(String, Array(Hash(Symbol, Symbol)))
-    result = {} of String => Array(Hash(Symbol, Symbol))
+  def details : Hash(String, Array(Error::Options))
+    result = {} of String => Array(Error::Options)
     @errors.each do |error|
-      key = error.field.to_s
-      result[key] ||= [] of Hash(Symbol, Symbol)
-      result[key] << {:error => (error.type || :invalid)}
+      (result[error.attribute] ||= [] of Error::Options) << error.detail
     end
     result
   end
@@ -278,6 +429,8 @@ class Grant::Errors
   # ```
   # errors.to_json # => [{"field":"name","message":"can't be blank"}]
   # ```
+  #
+  # ActiveRecord's `{"name":["can't be blank"]}` shape is `as_json.to_json`.
   def to_json(builder : JSON::Builder)
     builder.array do
       @errors.each do |error|
@@ -299,13 +452,30 @@ class Grant::Errors
     io << ">"
   end
 
-  # Merge errors from another Errors collection into this one.
+  # Adds a copy of *error*, optionally moved to another *attribute*, so the
+  # two collections do not share error objects.
+  def import(error : Error, attribute : (String | Symbol)? = nil) : Error
+    copy = error.copy(attribute)
+    copy.base ||= @base
+    push(copy)
+    copy
+  end
+
+  # Merge errors from another Errors collection into this one, as copies.
   #
   # ```
   # user.errors.merge!(other_record.errors)
   # ```
   def merge!(other : Errors)
-    other.each { |error| @errors << error }
+    other.to_a.each { |error| import(error) }
+  end
+
+  # Replaces this collection's errors with copies of *other*'s.
+  def copy!(other : Errors) : self
+    copies = other.to_a.map(&.copy)
+    clear
+    copies.each { |error| import(error) }
+    self
   end
 
   # Returns a copy of the internal errors array.
@@ -330,6 +500,22 @@ class Grant::Errors
       builder.document do
         to_json(builder)
       end
+    end
+  end
+
+  private def push(error : Error) : Nil
+    error.base ||= @base
+    @errors << error
+    @index.try do |index|
+      (index[error.attribute] ||= [] of Error) << error
+    end
+  end
+
+  private def by_attribute : Hash(String, Array(Error))
+    @index ||= begin
+      index = {} of String => Array(Error)
+      @errors.each { |error| (index[error.attribute] ||= [] of Error) << error }
+      index
     end
   end
 end

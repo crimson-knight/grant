@@ -1,3 +1,4 @@
+require "./validator_info"
 require "./error"
 require "./errors"
 require "./validation"
@@ -130,7 +131,7 @@ module Grant::Validators
   # record.errors.add(:base, "Something went wrong")
   # ```
   def errors : Errors
-    @errors ||= Errors.new
+    @errors ||= Errors.new(self)
   end
 
   @[JSON::Field(ignore: true)]
@@ -153,7 +154,7 @@ module Grant::Validators
       #
       # Macro control flow nested in `macro included` is escaped with a leading
       # backslash so it evaluates at each subclass's `inherited` expansion.
-      @@validators = Array({field: String, message: String, block: Proc(Grant::Base, Bool), contexts: Array(Symbol), code: Symbol?, strict: Proc(String, Exception) | Nil}).new
+      @@validators = Array({field: String, message: Grant::Error::Message, block: Proc(Grant::Base, Bool), contexts: Array(Symbol), code: Symbol?, strict: Proc(String, Exception) | Nil, details: Grant::Error::Options?, info: Grant::ValidatorInfo}).new
 
       \{% if @type.superclass.id == "Grant::Base" %}
       disable_grant_docs? def self.__validators_for_validation
@@ -169,10 +170,27 @@ module Grant::Validators
       # inherited class method would specialize `self` to a child model while
       # still appending to its parent's class variable, producing incompatible
       # Proc types and registering the validator on the wrong class.
-      disable_grant_docs? def self.__add_validator(field : (Symbol | String), message : String, block : self -> Bool, context : Symbol | Array(Symbol) = :save, code : Symbol? = nil, strict : Proc(String, Exception) | Nil = nil)
+      disable_grant_docs? def self.__add_validator(field : (Symbol | String), message : String | Symbol | Proc(self, Grant::Error::Options, String) | Nil, block : self -> Bool, context : Symbol | Array(Symbol) = :save, code : Symbol? = nil, strict : Proc(String, Exception) | Nil = nil, kind : Symbol = :custom, details : Grant::Error::Options? = nil, info_options : Grant::Error::Options? = nil, conditional : Bool = false)
         wrapped_block = ->(record : Grant::Base) { block.call(record.as(\{{@type}})) }
         contexts = context.is_a?(Array) ? context : [context]
-        @@validators << {field: field.to_s, message: message, block: wrapped_block, contexts: contexts, code: code, strict: strict}
+        info = Grant::ValidatorInfo.new(kind, field.to_s, info_options || Grant::Error::Options.new, contexts, conditional)
+        @@validators << {field: field.to_s, message: Grant::Error.wrap_message(message), block: wrapped_block, contexts: contexts, code: code, strict: strict, details: details, info: info}
+      end
+
+      # The validators declared on this model and its ancestors, as
+      # `Grant::ValidatorInfo` (kind, attribute, options, contexts).
+      #
+      # ```
+      # User.validators_on(:email).map(&.kind) # => [:presence, :format]
+      # ```
+      disable_grant_docs? def self.validators : Array(Grant::ValidatorInfo)
+        __validators_for_validation.map { |entry| entry[:info] }
+      end
+
+      # The validators that apply to any of *attributes*.
+      disable_grant_docs? def self.validators_on(*attributes : Symbol | String) : Array(Grant::ValidatorInfo)
+        names = attributes.map(&.to_s)
+        validators.select { |info| names.includes?(info.attribute) }
       end
 
       # Block-based validate (no context)
@@ -203,8 +221,8 @@ module Grant::Validators
       # Block-based validate with context keyword (a Symbol or an Array of
       # them), optional error code, and optional `strict` factory that builds
       # the exception raised instead of adding an error.
-      disable_grant_docs? def self.validate(field : (Symbol | String), message : String, *, context : Symbol | Array(Symbol) = :save, code : Symbol? = nil, strict : Proc(String, Exception) | Nil = nil, &block : self -> Bool)
-        __add_validator(field, message, block, context, code, strict)
+      disable_grant_docs? def self.validate(field : (Symbol | String), message : String | Symbol | Proc(self, Grant::Error::Options, String) | Nil, *, context : Symbol | Array(Symbol) = :save, code : Symbol? = nil, strict : Proc(String, Exception) | Nil = nil, kind : Symbol = :custom, details : Grant::Error::Options? = nil, info_options : Grant::Error::Options? = nil, conditional : Bool = false, &block : self -> Bool)
+        __add_validator(field, message, block, context, code, strict, kind, details, info_options, conditional)
       end
 
       \{% if @type.superclass.id == "Grant::Base" %}
@@ -245,7 +263,7 @@ module Grant::Validators
         # "fails" (driving valid? false) only if the method added errors. The
         # placeholder entry carries a blank `:base` message that is never shown
         # because the validator block returns true on success.
-        validate(:base, "", context: \\{{context}}) do |record|
+        validate(:base, "", context: \\{{context}}, kind: :method, conditional: \\{{(options[:if] || options[:unless]) ? true : false}}) do |record|
           next true unless Grant::Conditions.met?(record, \\{{options[:if]}}, \\{{options[:unless]}}, nil, true)
 
           %before = record.errors.size
@@ -317,8 +335,15 @@ module Grant::Validators
       elsif !strict.is_a?(NilLiteral)
         strict_class = strict
       end
+      skipped = %w(if unless on strict kind error_options)
+      info_pairs = [] of String
+      options.each do |key, value|
+        unless skipped.includes?(key.stringify) || value.is_a?(ProcLiteral) || value.is_a?(ProcNotation)
+          info_pairs << "#{key.id}: #{value}"
+        end
+      end
     %}
-    validate({{rule_field}}, {{rule_message}}, context: {{context}}, code: {{rule_code}}{% if strict_class %}, strict: ->(strict_message : String) { {{strict_class}}.new(strict_message).as(Exception) }{% end %}) do |record|
+    validate({{rule_field}}, {{rule_message}}, context: {{context}}, code: {{rule_code}}, kind: {{options[:kind] || :custom}}, details: {% if options[:error_options] %}Grant::Error.options_from({{options[:error_options]}}){% else %}nil{% end %}, info_options: {% if info_pairs.empty? %}nil{% else %}Grant::Error.options_from({ {{info_pairs.join(", ").id}} }){% end %}, conditional: {{(options[:if] || options[:unless]) ? true : false}}{% if strict_class %}, strict: ->(strict_message : String) { {{strict_class}}.new(strict_message).as(Exception) }{% end %}) do |record|
       next true unless Grant::Conditions.met?(record, {{options[:if]}}, {{options[:unless]}}, nil, true)
       {% if rule_read_value %}
         value = record.{{rule_field.id}}
@@ -353,9 +378,9 @@ module Grant::Validators
   # validates_presence_of :reason, on: [:update, :publish], if: :requires_reason?
   # ```
   macro validates_presence_of(*fields, **options)
-    {% message = options[:message] || "can't be blank" %}
+    {% message = options[:message] %}
     {% for field in fields %}
-      __rule({{field}}, {{message}}, :blank, {{options.double_splat}}) do
+      __rule({{field}}, {{message}}, :blank, kind: :presence, {{options.double_splat}}) do
         !Grant::Validators.blank?(value)
       end
     {% end %}
@@ -370,182 +395,10 @@ module Grant::Validators
   # validates_absence_of :legacy_token, :deprecated_flag # validates both
   # ```
   macro validates_absence_of(*fields, **options)
-    {% message = options[:message] || "must be blank" %}
+    {% message = options[:message] %}
     {% for field in fields %}
-      __rule({{field}}, {{message}}, :present, {{options.double_splat}}) do
+      __rule({{field}}, {{message}}, :present, kind: :absence, {{options.double_splat}}) do
         Grant::Validators.blank?(value)
-      end
-    {% end %}
-  end
-
-  # Validates that a field value is unique in the database.
-  #
-  # Queries the database to check that no other record has the same value
-  # for the specified field. When updating an existing record, excludes
-  # the current record from the check.
-  #
-  # Options:
-  # - `message:` — custom error message (default: `"has already been taken"`)
-  # - `scope:` — additional fields that must also match for the record to
-  #   be considered a duplicate. Accepts an array of symbols.
-  # - `case_sensitive:` — whether the comparison is case-sensitive
-  #   (default: `true`). When `false`, uses SQL `LOWER()` function.
-  # - `allow_nil:` / `allow_blank:`, `if:` / `unless:`, `on:`, `strict:`
-  #
-  # ```
-  # validates_uniqueness_of :email
-  # validates_uniqueness_of :username, case_sensitive: false
-  # validates_uniqueness_of :slug, scope: [:category_id]
-  # validates_uniqueness_of :email, :username # validates both fields
-  # ```
-  macro validates_uniqueness_of(*fields, **options)
-    {% message = options[:message] || "has already been taken" %}
-    {% for field in fields %}
-      __rule({{field}}, {{message}}, :taken, {{options.double_splat}}) do
-        next true if value.nil?
-
-        # Build the base query
-        {% if options[:case_sensitive] == false %}
-          _field_name = {{field.id.stringify}}
-          query = self.where("LOWER(#{_field_name}) = LOWER(?)", value)
-        {% else %}
-          if self.adapter.mysql?
-            _field_name = self.quote({{field.id.stringify}})
-            query = self.where("BINARY #{_field_name} = BINARY ?", value)
-          else
-            query = self.where({{field.id}}: value)
-          end
-        {% end %}
-
-        # Add scope conditions
-        {% if options[:scope] %}
-          {% for scope_field in options[:scope] %}
-            scope_value = record.{{scope_field.id}}
-            query = query.where({{scope_field.id}}: scope_value)
-          {% end %}
-        {% end %}
-
-        # Exclude self if persisted (updating)
-        if record.persisted?
-          pk = record.to_h[self.primary_name]?
-          if pk
-            query = query.where("#{self.primary_name} != ?", pk)
-          end
-        end
-
-        !query.exists?
-      end
-    {% end %}
-  end
-
-  # Validates that a numeric field meets specified criteria.
-  #
-  # Constraints: `greater_than:`, `greater_than_or_equal_to:`, `less_than:`,
-  # `less_than_or_equal_to:`, `equal_to:`, `other_than:`, `odd:`, `even:`,
-  # `only_integer:`, `in:`. Plus `message:`, `allow_nil:` / `allow_blank:`,
-  # `if:` / `unless:`, `on:`, `strict:`.
-  #
-  # ```
-  # validates_numericality_of :price, greater_than: 0
-  # validates_numericality_of :price, :cost, greater_than_or_equal_to: 0
-  # validates_numericality_of :score, in: 1..10
-  # ```
-  macro validates_numericality_of(*fields, **options)
-    {%
-      message_base = options[:message] || "is not a number"
-      conditions = [] of String
-
-      if gt = options[:greater_than]
-        conditions << "greater than " + gt.stringify
-      end
-      if gte = options[:greater_than_or_equal_to]
-        conditions << "greater than or equal to " + gte.stringify
-      end
-      if lt = options[:less_than]
-        conditions << "less than " + lt.stringify
-      end
-      if lte = options[:less_than_or_equal_to]
-        conditions << "less than or equal to " + lte.stringify
-      end
-      if eq = options[:equal_to]
-        conditions << "equal to " + eq.stringify
-      end
-      if other = options[:other_than]
-        conditions << "other than " + other.stringify
-      end
-      if options[:odd]
-        conditions << "odd"
-      end
-      if options[:even]
-        conditions << "even"
-      end
-      if options[:only_integer]
-        conditions << "an integer"
-      end
-
-      full_message = conditions.empty? ? message_base : ("must be " + conditions.join(" and "))
-
-      # Pick the most specific AR-style code: a single constraint maps to
-      # its own code; multiple (or none) fall back to :not_a_number.
-      num_code = :not_a_number
-      if options[:greater_than]
-        num_code = :greater_than
-      elsif options[:greater_than_or_equal_to]
-        num_code = :greater_than_or_equal_to
-      elsif options[:less_than]
-        num_code = :less_than
-      elsif options[:less_than_or_equal_to]
-        num_code = :less_than_or_equal_to
-      elsif options[:equal_to]
-        num_code = :equal_to
-      elsif options[:other_than]
-        num_code = :other_than
-      elsif options[:odd]
-        num_code = :odd
-      elsif options[:even]
-        num_code = :even
-      elsif options[:only_integer]
-        num_code = :not_an_integer
-      end
-    %}
-
-    {% for field in fields %}
-      __rule({{field}}, {{full_message}}, {{num_code}}, {{options.double_splat}}) do
-        # Ensure it's numeric
-        next false unless value.is_a?(Number)
-
-        {% if options[:greater_than] %}
-          next false unless value > {{options[:greater_than]}}
-        {% end %}
-        {% if options[:greater_than_or_equal_to] %}
-          next false unless value >= {{options[:greater_than_or_equal_to]}}
-        {% end %}
-        {% if options[:less_than] %}
-          next false unless value < {{options[:less_than]}}
-        {% end %}
-        {% if options[:less_than_or_equal_to] %}
-          next false unless value <= {{options[:less_than_or_equal_to]}}
-        {% end %}
-        {% if options[:equal_to] %}
-          next false unless value == {{options[:equal_to]}}
-        {% end %}
-        {% if options[:other_than] %}
-          next false unless value != {{options[:other_than]}}
-        {% end %}
-        {% if options[:odd] %}
-          next false unless value.to_i.odd?
-        {% end %}
-        {% if options[:even] %}
-          next false unless value.to_i.even?
-        {% end %}
-        {% if options[:in] %}
-          next false unless ({{options[:in]}}).includes?(value)
-        {% end %}
-        {% if options[:only_integer] %}
-          next false unless value == value.to_i
-        {% end %}
-
-        true
       end
     {% end %}
   end
@@ -565,11 +418,11 @@ module Grant::Validators
     {%
       with_pattern = options[:with]
       without_pattern = options[:without]
-      message = options[:message] || "is invalid"
+      message = options[:message]
     %}
 
     {% for field in fields %}
-      __rule({{field}}, {{message}}, :invalid, {{options.double_splat}}) do
+      __rule({{field}}, {{message}}, :invalid, kind: :format, {{options.double_splat}}) do
         string_value = value.to_s
 
         {% if with_pattern %}
@@ -631,7 +484,7 @@ module Grant::Validators
     %}
 
     {% for field in fields %}
-      __rule({{field}}, {{message}}, {{len_code}}, {{options.double_splat}}) do
+      __rule({{field}}, {{message}}, {{len_code}}, kind: :length, {% if len_code == :too_short %}error_options: {count: {{minimum}}}, {% elsif len_code == :too_long %}error_options: {count: {{maximum}}}, {% elsif exact && !minimum && !maximum && !range %}error_options: {count: {{exact}}}, {% end %}{{options.double_splat}}) do
         length = if value.responds_to?(:size)
                    value.size
                  else
@@ -671,13 +524,13 @@ module Grant::Validators
   # validates_confirmation_of :password, message: "passwords don't match"
   # ```
   macro validates_confirmation_of(*fields, **options)
-    {% message = options[:message] || "doesn't match confirmation" %}
+    {% message = options[:message] %}
 
     {% for field in fields %}
       # Create virtual attribute for confirmation
       property {{field.id}}_confirmation : String?
 
-      __rule({{field}}, {{message}}, :confirmation, false, {{options.double_splat}}) do
+      __rule({{field}}, {{message}}, :confirmation, false, kind: :confirmation, {{options.double_splat}}) do
         confirmation_value = record.{{field.id}}_confirmation
         next true if confirmation_value.nil?
 
@@ -697,7 +550,7 @@ module Grant::Validators
   # ```
   macro validates_acceptance_of(*fields, **options)
     {%
-      message = options[:message] || "must be accepted"
+      message = options[:message]
       accept_values = options[:accept] || ["1", "true", "yes", "on"]
     %}
 
@@ -705,7 +558,7 @@ module Grant::Validators
       # Acceptance values are virtual unless a model declares its own column.
       property {{field.id}} : String?
 
-      __rule({{field}}, {{message}}, :accepted, false, {{options.double_splat}}) do
+      __rule({{field}}, {{message}}, :accepted, false, kind: :acceptance, {{options.double_splat}}) do
         value = record.{{field.id}}
 
         case value
@@ -727,9 +580,9 @@ module Grant::Validators
   # validates_associated :profile, :address
   # ```
   macro validates_associated(*associations, **options)
-    {% message = options[:message] || "is invalid" %}
+    {% message = options[:message] %}
     {% for association in associations %}
-      __rule({{association}}, {{message}}, :invalid, false, {{options.double_splat}}) do
+      __rule({{association}}, {{message}}, :invalid, false, kind: :associated, {{options.double_splat}}) do
         associated = record.{{association.id}}
 
         case associated
@@ -757,11 +610,11 @@ module Grant::Validators
   macro validates_inclusion_of(*fields, **options)
     {%
       in_values = options[:in] || options[:within]
-      message = options[:message] || "is not included in the list"
+      message = options[:message]
     %}
 
     {% for field in fields %}
-      __rule({{field}}, {{message}}, :inclusion, {{options.double_splat}}) do
+      __rule({{field}}, {{message}}, :inclusion, kind: :inclusion, {{options.double_splat}}) do
         ({{in_values}}).includes?(value)
       end
     {% end %}
@@ -775,11 +628,11 @@ module Grant::Validators
   macro validates_exclusion_of(*fields, **options)
     {%
       in_values = options[:in] || options[:within]
-      message = options[:message] || "is reserved"
+      message = options[:message]
     %}
 
     {% for field in fields %}
-      __rule({{field}}, {{message}}, :exclusion, {{options.double_splat}}) do
+      __rule({{field}}, {{message}}, :exclusion, kind: :exclusion, {{options.double_splat}}) do
         !({{in_values}}).includes?(value)
       end
     {% end %}
@@ -824,7 +677,7 @@ module Grant::Validators
     %}
 
     {% for field in fields %}
-      __rule({{field}}, {{message}}, :comparison, {{options.double_splat}}) do
+      __rule({{field}}, {{message}}, :comparison, kind: :comparison, {{options.double_splat}}) do
         # nil cannot be meaningfully compared; AR treats it as a failure.
         next false if value.nil?
 
@@ -869,7 +722,7 @@ module Grant::Validators
   # end
   # ```
   macro validates_with(validator_class, *args, **options)
-    __rule(:base, "", nil, false, {{options.double_splat}}) do
+    __rule(:base, "", nil, false, kind: :with, {{options.double_splat}}) do
       %before = record.errors.size
       %validator = {{validator_class}}.new({% for a in args %}{{a}}, {% end %}{% for k, v in options %}{% unless %w(on if unless strict).includes?(k.stringify) %}{{k.id}}: {{v}}, {% end %}{% end %})
       %validator.validate(record)
@@ -906,7 +759,7 @@ module Grant::Validators
     {% end %}
     {% for attribute in attributes %}
       {% if block.is_a?(Block) %}
-        __rule({{attribute}}, "", nil, {{options.double_splat}}) do
+        __rule({{attribute}}, "", nil, kind: :each, {{options.double_splat}}) do
           {% if block.args.size > 0 && block.args[0].id.stringify != "record" %}{{block.args[0].id}} = record{% end %}
           {% if block.args.size > 1 %}{{block.args[1].id}} = :{{attribute.id}}{% end %}
           {% if block.args.size > 2 && block.args[2].id.stringify != "value" %}{{block.args[2].id}} = value{% end %}
@@ -921,7 +774,7 @@ module Grant::Validators
           record.errors.size == %before
         end
       {% else %}
-        __rule({{attribute}}, "", nil, {{options.double_splat}}) do
+        __rule({{attribute}}, "", nil, kind: :each, {{options.double_splat}}) do
           %before = record.errors.size
           %validator = {{validator_class}}.new({% if options[:args] %}{{options[:args].double_splat}}{% end %})
           %validator.validate_each(record, {{attribute.id.stringify}}, value)
@@ -1093,18 +946,18 @@ module Grant::Validators
 
           errors_before = errors.size
           unless validator[:block].call(self)
-            failure = Error.new(validator[:field], validator[:message], validator[:code])
+            message = validator[:message]
+            failure = Error.new(validator[:field], message, validator[:code], options: validator[:details], base: self)
+            # Validators that add their own errors (`validates_with`,
+            # `validates_each`, `validate :method`) carry an empty message.
+            own_errors = message.is_a?(String) && message.empty?
             strict_factory = validator[:strict]
             if strict_factory
-              # Validators that add their own errors carry an empty message;
-              # report the last error they added instead.
               added = errors.last?
-              raise strict_factory.call(validator[:message].empty? && added ? added.to_s : failure.to_s)
+              raise strict_factory.call(own_errors && added ? added.to_s : failure.to_s)
             end
-            # Validators that add their own errors (`validates_with`,
-            # `validates_each`, `validate :method`) carry an empty message and
-            # need no placeholder next to the errors they already recorded.
-            errors << failure unless validator[:message].empty? && errors.size > errors_before
+            # They need no placeholder next to the errors they already recorded.
+            errors << failure unless own_errors && errors.size > errors_before
           end
         end
 
