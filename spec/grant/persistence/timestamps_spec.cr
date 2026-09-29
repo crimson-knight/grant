@@ -135,5 +135,24 @@ describe "Automatic timestamps" do
       loaded.created_at.not_nil!.to_utc.should be > before
       loaded.created_at.should eq(loaded.updated_at)
     end
+
+    it "follows the model's record_timestamps false" do
+      UnstampedRow.insert_all([{"name" => "bulk"}])
+      loaded = UnstampedRow.find_by!(name: "bulk")
+      loaded.created_at.should be_nil
+      loaded.updated_at.should be_nil
+    end
+
+    it "lets an explicit record_timestamps: true override the model" do
+      UnstampedRow.insert_all([{"name" => "forced"}], record_timestamps: true)
+      UnstampedRow.find_by!(name: "forced").created_at.should_not be_nil
+    end
+
+    it "stamps created_on and updated_on" do
+      OnColumnRow.insert_all([{"name" => "bulk"}])
+      loaded = OnColumnRow.find_by!(name: "bulk")
+      loaded.created_on.should_not be_nil
+      loaded.created_on.should eq(loaded.updated_on)
+    end
   end
 end
