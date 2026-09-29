@@ -90,6 +90,19 @@ describe "Model.scoping { }" do
     end
   end
 
+  it "is hidden inside the block form of unscoped, as ActiveRecord's" do
+    ScopingBlockWidget.scoping(ScopingBlockWidget.where(color: "red")) do
+      ScopingBlockWidget.unscoped { |_| ScopingBlockWidget.count }.should eq 3
+      ScopingBlockWidget.unscoped do |_|
+        ScopingBlockWidget.scoping(ScopingBlockWidget.unscoped.where(color: "blue")) do
+          ScopingBlockWidget.count.should eq 1
+        end
+      end
+      ScopingBlockWidget.count.should eq 2
+    end
+    Fiber.current.grant_scoping_stacks.should be_nil
+  end
+
   it "keeps the default scope of a relation built from the model" do
     ScopingBlockGadget.scoping(ScopingBlockGadget.where(color: "red")) do
       ScopingBlockGadget.count.should eq 1

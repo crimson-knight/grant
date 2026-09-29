@@ -81,6 +81,12 @@ module Grant::Scoping
     end
   end
 
+  # Marks an `unscoped { }` block: it hides every outer `scoping { }` relation
+  # of the model until the block ends, as ActiveRecord's `unscoped` does.
+  # :nodoc:
+  class UnscopedEntry < ScopeEntry
+  end
+
   # A copy of the relation the innermost `Model.scoping { }` block of the
   # current fiber made the current scope for *model*, or `nil` outside such a
   # block. It is a copy because class-level query methods change the scope they
@@ -98,15 +104,31 @@ module Grant::Scoping
   # Runs *block* with *relation* as the current scope of *model*, restoring the
   # previous scope afterwards, also when the block raises.
   def self.with_relation(model : Model.class, relation : Grant::Query::Builder(Model), & : -> T) : T forall Model, T
+    push_entry(model.name, RelationEntry(Model).new(relation)) { yield }
+  end
+
+  # Runs *block* with no `scoping { }` relation in effect for the model named
+  # *model_name*; used by the block form of `unscoped`.
+  #
+  # :nodoc:
+  def self.without_relation(model_name : String, & : -> T) : T forall T
+    stacks = Fiber.current.grant_scoping_stacks
+    # Nothing to hide: skip the allocation on the common path.
+    return yield unless stacks && stacks.has_key?(model_name)
+
+    push_entry(model_name, UnscopedEntry.new) { yield }
+  end
+
+  private def self.push_entry(model_name : String, entry : ScopeEntry, & : -> T) : T forall T
     stacks = (Fiber.current.grant_scoping_stacks ||= {} of String => Array(ScopeEntry))
-    stack = (stacks[model.name] ||= [] of ScopeEntry)
-    stack << RelationEntry(Model).new(relation)
+    stack = (stacks[model_name] ||= [] of ScopeEntry)
+    stack << entry
     begin
       yield
     ensure
       stack.pop
       if stack.empty?
-        stacks.delete(model.name)
+        stacks.delete(model_name)
         Fiber.current.grant_scoping_stacks = nil if stacks.empty?
       end
     end
@@ -358,7 +380,7 @@ module Grant::Scoping
       query = Grant::Query::Builder(self).new(db_type)
 
       begin
-        yield query
+        Grant::Scoping.without_relation(name) { yield query }
       ensure
         self._unscoped = old_unscoped
       end
