@@ -181,6 +181,10 @@ class Grant::Query::Builder(Model)
     @records = nil
     @cache_version = nil
     @_cached_assembler = nil
+    # The copy records its own column-keyed raw clauses from here on.
+    if raw_columns = @raw_where_columns
+      @raw_where_columns = raw_columns.dup
+    end
   end
 
   # Returns a copy whose WHERE clauses are recorded as default-scope clauses
@@ -226,7 +230,11 @@ class Grant::Query::Builder(Model)
   # inferred from the value type:
   # - scalar → `column = value`
   # - `Array` → `column IN (...)` (a nil member also matches NULL)
-  # - `Range` → `column BETWEEN begin AND end`
+  # - `Range` → `column >= begin AND column <= end` (`<` for an exclusive end);
+  #   a beginless or endless range keeps only its one bound
+  # - a nested `NamedTuple`/`Hash` → conditions on a joined table (`posts: {published: true}`)
+  # - a record (or array of records) under a `belongs_to` name → its foreign key
+  #   (and type column when polymorphic)
   # - `Enum` → compared by its `to_s`
   # - another `Builder` → `column IN (subquery)`
   #
@@ -242,7 +250,8 @@ class Grant::Query::Builder(Model)
   # User.where(active: true)
   # User.where(active: true, email: "a@example.com") # ANDed
   # User.where(id: [1, 2, 3])                        # id IN (1, 2, 3)
-  # User.where(id: 1..10)                            # id BETWEEN 1 AND 10
+  # User.where(id: 1..10)                            # id >= 1 AND id <= 10
+  # User.where(id: ..10)                             # id <= 10
   # ```
   def where!(**matches) : self
     where!(matches)
@@ -257,24 +266,7 @@ class Grant::Query::Builder(Model)
   # User.where({active: true, email: "a@example.com"})
   # ```
   def where!(matches) : self
-    matches.each do |key, value|
-      field = resolve_column_alias(key.to_s)
-      if value.is_a?(Array)
-        and_array(field.to_s, :in, value)
-      elsif value.is_a?(Enum)
-        and!(field: field.to_s, operator: :eq, value: value.to_s)
-      elsif value.is_a?(Range)
-        # A range's upper comparison depends on whether its end is exclusive.
-        and!(field: field.to_s, operator: :gteq, value: value.begin)
-        and!(field: field.to_s, operator: value.exclusive? ? :lt : :lteq, value: value.end)
-      elsif value.is_a?(Builder)
-        # Handle subquery
-        and_subquery(field: field.to_s, subquery: value)
-      else
-        and!(field: field.to_s, operator: :eq, value: value)
-      end
-    end
-
+    matches.each { |field, value| add_condition(:and, field.to_s, value) }
     self
   end
 
@@ -403,7 +395,9 @@ class Grant::Query::Builder(Model)
 
     if values_without_nil.empty?
       if has_nil
-        own_where_fields << {join: :and, stmt: "#{structured_field_sql(field)} IS #{operator == :nin ? "NOT " : ""}NULL", value: nil.as(Grant::Columns::Type)}
+        null_predicate = "#{structured_field_sql(field)} IS #{operator == :nin ? "NOT " : ""}NULL"
+        own_where_fields << {join: :and, stmt: null_predicate, value: nil.as(Grant::Columns::Type)}
+        register_raw_where_column(null_predicate, field)
       else
         own_where_fields << {join: :and, stmt: operator == :nin ? "1=1" : "1=0", value: nil.as(Grant::Columns::Type)}
       end
@@ -425,6 +419,7 @@ class Grant::Query::Builder(Model)
                   "(#{safe_field} IN (#{placeholders}) OR #{safe_field} IS NULL)"
                 end
     own_where_fields << {join: :and, stmt: predicate, values: bind_values}
+    register_raw_where_column(predicate, field)
     self
   end
 
@@ -449,19 +444,7 @@ class Grant::Query::Builder(Model)
   #
   # Hash/NamedTuple form of `and(**matches)`.
   def and!(matches) : self
-    matches.each do |field, value|
-      if value.is_a?(Array)
-        and_array(field.to_s, :in, value)
-      elsif value.is_a?(Enum)
-        and!(field: field.to_s, operator: :eq, value: value.to_s)
-      elsif value.is_a?(Range)
-        # A range's upper comparison depends on whether its end is exclusive.
-        and!(field: field.to_s, operator: :gteq, value: value.begin)
-        and!(field: field.to_s, operator: value.exclusive? ? :lt : :lteq, value: value.end)
-      else
-        and!(field: field.to_s, operator: :eq, value: value)
-      end
-    end
+    matches.each { |field, value| add_condition(:and, field.to_s, value) }
     self
   end
 
@@ -484,24 +467,7 @@ class Grant::Query::Builder(Model)
   #
   # Hash/NamedTuple form of `or(**matches)`.
   def or!(matches) : self
-    matches.each do |field, value|
-      if value.is_a?(Array)
-        or_array(field.to_s, :in, value)
-      elsif value.is_a?(Enum)
-        or!(field: field.to_s, operator: :eq, value: value.to_s)
-      elsif value.is_a?(Range)
-        field_sql = structured_field_sql(field.to_s)
-        upper_operator = value.exclusive? ? "<" : "<="
-        bind_values = [value.begin.as(Grant::Columns::Type), value.end.as(Grant::Columns::Type)]
-        own_where_fields << {
-          join:   :or,
-          stmt:   "(#{field_sql} >= ? AND #{field_sql} #{upper_operator} ?)",
-          values: bind_values,
-        }
-      else
-        or!(field: field.to_s, operator: :eq, value: value)
-      end
-    end
+    matches.each { |field, value| add_condition(:or, field.to_s, value) }
     self
   end
 
@@ -561,7 +527,9 @@ class Grant::Query::Builder(Model)
 
     if values_without_nil.empty?
       if has_nil
-        own_where_fields << {join: :or, stmt: "#{structured_field_sql(field)} IS #{operator == :nin ? "NOT " : ""}NULL", value: nil.as(Grant::Columns::Type)}
+        null_predicate = "#{structured_field_sql(field)} IS #{operator == :nin ? "NOT " : ""}NULL"
+        own_where_fields << {join: :or, stmt: null_predicate, value: nil.as(Grant::Columns::Type)}
+        register_raw_where_column(null_predicate, field)
       else
         own_where_fields << {join: :or, stmt: operator == :nin ? "1=1" : "1=0", value: nil.as(Grant::Columns::Type)}
       end
@@ -583,6 +551,7 @@ class Grant::Query::Builder(Model)
                   "(#{safe_field} IN (#{placeholders}) OR #{safe_field} IS NULL)"
                 end
     own_where_fields << {join: :or, stmt: predicate, values: bind_values}
+    register_raw_where_column(predicate, field)
     self
   end
 
@@ -593,12 +562,21 @@ class Grant::Query::Builder(Model)
     end
 
     column = parts.last
-    unless Model.fields.includes?(column)
-      raise ArgumentError.new("Unknown query field #{column.inspect} for #{Model.name}")
+    qualifier = parts.size == 2 ? parts.first : nil
+    if qualifier && qualifier != Model.table_name
+      # A joined table: check the column against the model behind it when the
+      # registry knows one; a raw joined table is only identifier-checked.
+      joined = Grant::Query::JoinedColumns.known_column?(Model.name, qualifier, column)
+      if joined == false
+        raise ArgumentError.new("Unknown query field #{column.inspect} for #{Model.name}")
+      end
+    else
+      unless Model.fields.includes?(column)
+        raise ArgumentError.new("Unknown query field #{column.inspect} for #{Model.name}")
+      end
     end
 
-    if parts.size == 2
-      qualifier = parts.first
+    if qualifier
       allowed_qualifiers = [Model.table_name] + @join_clauses.map(&.[:table])
       unless allowed_qualifiers.includes?(qualifier)
         raise ArgumentError.new("Unknown query table #{qualifier.inspect} for #{Model.name}")
@@ -1000,17 +978,54 @@ class Grant::Query::Builder(Model)
     order!(field)
   end
 
+  # Clears existing order and replaces it with several ascending fields.
+  #
+  # ```
+  # User.order(name: :desc).reorder(:created_at, :id)
+  # # => ORDER BY created_at ASC, id ASC
+  # ```
+  def reorder!(*fields : Symbol) : self
+    clear_order_fields
+    fields.each { |field| order!(field) }
+    self
+  end
+
+  # Clears existing order and replaces it with an array of ascending fields.
+  def reorder!(fields : Array(Symbol)) : self
+    clear_order_fields
+    order!(fields)
+  end
+
+  # `reorder(nil)` drops the ordering altogether, like ActiveRecord's
+  # `reorder(nil)`.
+  #
+  # ```
+  # User.order(:name).reorder(nil) # => no ORDER BY
+  # ```
+  def reorder!(none : Nil) : self
+    clear_order_fields
+    self
+  end
+
   # Reverses the direction of all existing order clauses.
   #
-  # Ascending becomes Descending and vice versa. If no order is set,
-  # this is a no-op.
+  # Ascending becomes Descending and vice versa. On an unordered relation the
+  # implicit order (the primary key) is reversed, as in ActiveRecord.
   #
   # ```
   # User.order(name: :asc, created_at: :desc).reverse_order
   # # => SELECT ... FROM users ORDER BY name DESC, created_at ASC
+  # User.reverse_order # => ORDER BY id DESC
   # ```
   def reverse_order! : self
     reset_load_state
+    if @order_fields.empty?
+      implicit_order_columns.each do |column|
+        own_order_fields << {field: column, direction: Sort::Descending}
+      end
+      return self
+    end
+
     @order_fields = @order_fields.map do |field|
       new_direction = field[:direction] == Sort::Ascending ? Sort::Descending : Sort::Ascending
       {field: field[:field], direction: new_direction}
@@ -1019,18 +1034,23 @@ class Grant::Query::Builder(Model)
     self
   end
 
-  # Clears existing WHERE conditions and replaces with new ones.
-  #
-  # Useful when you inherit a scope with conditions you want to
-  # completely replace rather than append to.
+  # Replaces the WHERE conditions on the columns named in *matches* and keeps
+  # every other condition, like ActiveRecord's `rewhere`.
   #
   # ```
-  # User.where(active: true).rewhere(active: false)
-  # # => SELECT ... FROM users WHERE active = false
+  # User.where(active: true, role: "admin").rewhere(active: false)
+  # # => WHERE role = 'admin' AND active = false
   # ```
   def rewhere!(**matches) : self
-    clear_where_fields
-    where!(**matches)
+    rewhere!(matches)
+  end
+
+  # :ditto:
+  #
+  # Hash/NamedTuple form of `rewhere(**matches)`.
+  def rewhere!(matches) : self
+    unscope_where_columns!(matches.keys.map(&.to_s).to_a)
+    where!(matches)
   end
 
   # Clears existing column projection and replaces with new columns.
@@ -1116,7 +1136,7 @@ class Grant::Query::Builder(Model)
       when :lock
         @lock_mode = nil
       else
-        raise ArgumentError.new("unscope: unknown component #{component.inspect}")
+        raise ArgumentError.new("unscope: unknown component #{component.inspect}") unless unscope_extra_component!(component)
       end
     end
     self
@@ -2181,7 +2201,9 @@ class Grant::Query::Builder(Model)
 
   # Merge another query's conditions into this one.
   #
-  # Combines WHERE conditions with AND, and takes the merged query's
+  # Combines WHERE conditions with AND, except that an equality (or `IN`) on a
+  # column the merged query also constrains replaces the receiver's conditions
+  # on that column, like ActiveRecord (last wins). Takes the merged query's
   # ORDER BY, LIMIT, and OFFSET if they are set.
   #
   # Example:
@@ -2190,13 +2212,15 @@ class Grant::Query::Builder(Model)
   # admins = User.where(role: "admin")
   # active_admins = active.merge(admins)
   # # WHERE active = true AND role = 'admin'
+  #
+  # User.where(role: "user").merge(User.where(role: "admin"))
+  # # WHERE role = 'admin'
   # ```
   def merge!(other : self) : self
     reset_load_state
-    # Merge where conditions
-    other.where_fields.each do |field|
-      own_where_fields << field
-    end
+    # Merge where conditions: an equality on a column the other relation also
+    # constrains is replaced, not ANDed (see `merge_where_fields!`).
+    merge_where_fields!(other)
 
     # Merge order fields (other's order takes precedence if both have orders)
     if other.order_fields.any?
@@ -2207,6 +2231,12 @@ class Grant::Query::Builder(Model)
     # Merge group fields
     other.group_fields.each do |field|
       own_group_fields << field unless @group_fields.includes?(field)
+    end
+
+    # Merge the column projection
+    if other_columns = other.select_columns
+      current_columns = @select_columns
+      @select_columns = current_columns ? (current_columns + other_columns).uniq : other_columns.dup
     end
 
     # Use other's limit/offset if set
@@ -2241,15 +2271,15 @@ class Grant::Query::Builder(Model)
     self
   end
 
-  private def and_subquery(field : String, subquery : Builder)
+  private def and_subquery(field : String, subquery : Builder, join : Symbol = :and)
     safe_field = structured_field_sql(field)
     subquery_assembler = subquery.assembler
     sql = subquery_assembler.select.raw_sql
     values = subquery_assembler.numbered_parameters
     if values.empty?
-      own_where_fields << {join: :and, stmt: "#{safe_field} IN (#{sql})", value: nil.as(Grant::Columns::Type)}
+      own_where_fields << {join: join, stmt: "#{safe_field} IN (#{sql})", value: nil.as(Grant::Columns::Type)}
     else
-      own_where_fields << {join: :and, stmt: "#{safe_field} IN (#{sql})", values: values}
+      own_where_fields << {join: join, stmt: "#{safe_field} IN (#{sql})", values: values}
     end
     self
   end
@@ -2297,3 +2327,5 @@ class Grant::Query::Builder(Model)
   {% end %}
   {% end %}
 end
+
+require "./where_composition"

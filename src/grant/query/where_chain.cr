@@ -66,6 +66,17 @@ module Grant::Query
       @query.and(field: field.to_s, operator: :neq, value: value)
     end
 
+    # NOT over several conditions: `where.not(a: 1, b: 2)` is
+    # `NOT (a = 1 AND b = 2)`. Values follow `where`, so an array becomes
+    # `NOT IN`, nil `IS NOT NULL` and a range a negated span.
+    # ```
+    # User.where.not(role: "admin", active: false)
+    # # SQL: WHERE NOT (role = 'admin' AND active = false)
+    # ```
+    def not(**matches)
+      @query.where_not(matches)
+    end
+
     # IS NULL
     def is_null(field : Symbol | String)
       @query.and(field, :eq, nil)
@@ -147,6 +158,30 @@ module Grant::Query
       @query
         .left_joins(table, on: "#{table}.#{foreign_key} = #{Model.table_name}.#{primary_key}")
         .and("#{table}.#{foreign_key} IS NULL")
+    end
+
+    # Keeps records that have a matching record in each named association,
+    # using one `EXISTS` subquery per name (no duplicate parent rows).
+    # ```
+    # User.where.associated(:posts)
+    # # SQL: WHERE EXISTS (SELECT 1 FROM posts AS assoc_target WHERE assoc_target.user_id = users.id)
+    # ```
+    def associated(*names : Symbol)
+      @query.where_associated(names.to_a)
+    end
+
+    # Keeps records that have no matching record in any named association
+    # (`NOT EXISTS`). `through`, `has_many ..., as:` and `belongs_to` work.
+    # ```
+    # User.where.missing(:posts)
+    # ```
+    def missing(*names : Symbol)
+      @query.where_missing(names.to_a)
+    end
+
+    # Older name for `associated`, kept for compatibility.
+    def has(*names : Symbol)
+      associated(*names)
     end
 
     # Allow chaining back to the query builder
