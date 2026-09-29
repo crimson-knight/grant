@@ -114,6 +114,37 @@ users = User.insert_all(
 # => Returns array of User objects with id and name populated
 ```
 
+### insert_all!, unique_by and single rows
+
+`insert_all` skips rows that collide with a unique key (ActiveRecord's default).
+`insert_all!` raises `Grant::RecordNotUnique` instead. `unique_by:` takes column
+names or the name of a unique index, and limits the skip to that constraint.
+Every row must have the same keys (`ArgumentError` otherwise), and values run
+through the column's converter.
+
+Rows are sent in multi-row `INSERT` statements chunked under the adapter's bind
+cap; the chunks of one call run in one transaction. By default the call returns
+lightweight records carrying the primary key (`RETURNING`); pass
+`returning: [] of Symbol` to skip that. MySQL has no `RETURNING`.
+
+```crystal
+User.insert_all!(rows)
+User.insert_all(rows, unique_by: "index_users_on_email")
+
+user = User.insert({"email" => "a@example.com"})   # User? (nil when skipped)
+User.insert!({"email" => "a@example.com"})         # User, raises on a duplicate
+User.upsert({"email" => "a@example.com", "name" => "A"}, unique_by: [:email])
+```
+
+`upsert_all` also takes `on_duplicate:`, a `Grant::Sql::Fragment` that replaces
+the generated `SET` list. Build it with `Grant::Sql.fragment`, which accepts
+only a string literal:
+
+```crystal
+Product.upsert_all(rows, unique_by: [:sku],
+  on_duplicate: Grant::Sql.fragment("stock = products.stock + EXCLUDED.stock"))
+```
+
 ### upsert_all
 
 Insert records or update them if they already exist (based on unique constraints).
