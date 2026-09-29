@@ -415,52 +415,6 @@ module Grant::Querying
       current_scope.touch_all(*fields, time: time)
     end
 
-    # Updates counter columns for all records
-    def update_counters(id : IdValue, counters : Hash(Symbol, Int32)) : Int64
-      guard_writes!
-      query = current_scope.where(primary_name, :eq, id)
-      assembler = query.assembler
-      where_clause = assembler.where
-      where_parameters = assembler.numbered_parameters
-      set_clause = [] of String
-      set_values = [] of Grant::Columns::Type
-      placeholder_index = where_parameters.size
-
-      counters.each do |column, value|
-        column_name = quote(column.to_s)
-        placeholder_index += 1
-        placeholder = adapter.parameter_placeholder(placeholder_index)
-        if value > 0
-          set_clause << "#{column_name} = #{column_name} + #{placeholder}"
-        else
-          set_clause << "#{column_name} = #{column_name} - #{placeholder}"
-        end
-        set_values << value.abs
-      end
-
-      # Also update the updated_at timestamp
-      {% if @type.instance_vars.select { |ivar| ivar.annotation(Grant::Column) && ivar.name == "updated_at" }.size > 0 %}
-        placeholder_index += 1
-        placeholder = adapter.parameter_placeholder(placeholder_index)
-        set_clause << "#{quote("updated_at")} = #{placeholder}"
-        set_values << Time.local(Grant.settings.default_timezone)
-      {% end %}
-
-      return 0_i64 if set_clause.empty?
-
-      sql = "UPDATE #{quoted_table_name} SET #{set_clause.join(", ")} #{where_clause}"
-      values = if adapter.postgres?
-                 where_parameters + set_values
-               else
-                 set_values + where_parameters
-               end
-
-      mark_write_operation
-      adapter.open do |db|
-        db.exec(sql, args: adapter.normalize_bind_values(values)).rows_affected
-      end
-    end
-
     # Iterates over every matching record one at a time, loading them in batches.
     #
     # Memory-friendly for large tables: instead of loading the whole result set,

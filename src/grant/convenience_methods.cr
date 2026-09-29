@@ -277,7 +277,7 @@ module Grant::BulkOperations
 
     # Add timestamps if needed
     if record_timestamps
-      now = Time.utc.as(Grant::Columns::Type)
+      now = Grant::Timestamps.current_time.as(Grant::Columns::Type)
       timestamp_columns = self.fields
       string_attributes = string_attributes.map do |attrs|
         new_attrs = attrs.dup
@@ -341,7 +341,7 @@ module Grant::BulkOperations
 
     # Add timestamps if needed
     if record_timestamps
-      now = Time.utc.as(Grant::Columns::Type)
+      now = Grant::Timestamps.current_time.as(Grant::Columns::Type)
       timestamp_columns = self.fields
       string_attributes = string_attributes.map do |attrs|
         new_attrs = attrs.dup
