@@ -182,6 +182,17 @@ module Grant::Sharding
       within_own_shard { super }
     end
 
+    def lock!(mode : Grant::Locking::LockMode = Grant::Locking::LockMode::Update) : self
+      within_own_shard { super }
+    end
+
+    # The lock, its transaction and the block all run on the record's shard.
+    def with_lock(mode : Grant::Locking::LockMode = Grant::Locking::LockMode::Update, &block : self -> U) : U forall U
+      within_own_shard do
+        super(mode) { block.call(self) }
+      end
+    end
+
     # Runs the block with this record's shard active, so its statements reach
     # the shard the row lives on without the caller wrapping them in
     # `ShardManager.with_shard`. A record with no shard-key value yet uses the

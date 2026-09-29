@@ -112,6 +112,29 @@ describe "Instance writes on a sharded model" do
     record.reload.label.should eq "changed elsewhere"
   end
 
+  it "locks a loaded record on its own shard, outside with_shard" do
+    S02InstanceThing.create!(tenant_id: 2_i64, label: "before")
+    record = S02InstanceThing.where(tenant_id: 2_i64).first!
+    S02_INSTANCE_FIXTURE.exec(:two, "UPDATE s02_instance_things SET label = 'locked value'")
+
+    record.lock!.label.should eq "locked value"
+  end
+
+  it "runs with_lock and its block on the record's own shard" do
+    S02InstanceThing.create!(tenant_id: 2_i64, label: "before")
+    record = S02InstanceThing.where(tenant_id: 2_i64).first!
+
+    shard_in_block = record.with_lock do |locked|
+      locked.label = "inside lock"
+      locked.save!
+      Grant::ShardManager.current_shard
+    end
+
+    shard_in_block.should eq :two
+    Grant::ShardManager.current_shard.should be_nil
+    S02InstanceThing.where(tenant_id: 2_i64).first!.label.should eq "inside lock"
+  end
+
   it "destroys a loaded record outside with_shard" do
     keep = S02InstanceThing.create!(tenant_id: 1_i64, label: "keep")
     S02InstanceThing.create!(tenant_id: 2_i64, label: "drop")
