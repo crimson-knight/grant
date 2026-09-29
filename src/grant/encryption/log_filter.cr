@@ -42,8 +42,11 @@ module Grant::Encryption
 
     # Returns *params* with the values bound to filtered columns replaced by
     # `[FILTERED]`. Anything that is not a list of binds is returned as given.
-    def self.redact(query : String, params)
-      return params unless params.is_a?(Array)
+    #
+    # The `Array(T)` restriction makes a union of array types (the executor
+    # logs several) dispatch per concrete array, so each call maps one element
+    # type.
+    def self.redact(query : String, params : Array(T)) forall T
       return params if params.empty?
 
       bound = bound_columns(query)
@@ -53,6 +56,11 @@ module Grant::Encryption
         column = bound[index]?
         column && filtered_column?(column) ? REDACTED : value
       end
+    end
+
+    # :ditto:
+    def self.redact(query : String, params)
+      params
     end
 
     # Forgets every tracked model. For specs.
