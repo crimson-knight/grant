@@ -71,4 +71,17 @@ describe "create_with" do
   it "is available on the class" do
     ConvItem.create_with(kind: "k").create(name: "a").kind.should eq("k")
   end
+
+  it "ignores equality predicates on other tables and unknown columns" do
+    qualified = {"conv_items.status" => "own", "authors.id" => 5_i64, "other.kind" => "k", "not_a_column" => "x"} of Symbol | String => Grant::Columns::Type
+    ConvItem.where(qualified).scope_attributes.should eq({"status" => "own"})
+  end
+
+  it "keeps create_with defaults set inside a named scope body" do
+    item = ConvItem.drafts.kinded.create(name: "r")
+    item.kind.should eq("k")
+    item.qty.should eq(1)
+    item.status.should eq("draft")
+    ConvItem.kinded.build(name: "s").kind.should eq("k")
+  end
 end

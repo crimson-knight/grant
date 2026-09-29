@@ -93,12 +93,39 @@ module Grant::Query::Finders(Model)
       value = condition[:value]
       next if value.nil?
 
-      column = condition[:field]
-      if dot = column.rindex('.')
-        column = column[(dot + 1)..]
+      if column = own_column_name(condition[:field])
+        attrs[column] = value
       end
-      attrs[column.delete('"').delete('`')] = value
     end
+  end
+
+  # The unquoted column name of *field* when it names a column of `Model`,
+  # or `nil` when it is qualified with another table (a joined association's
+  # `authors.id` must not seed the model's own `id`) or is not a model column.
+  private def own_column_name(field : String) : String?
+    unquoted = field.delete('"').delete('`')
+    column = unquoted
+    if dot = unquoted.rindex('.')
+      return nil unless unquoted[0, dot] == Model.table_name
+      column = unquoted[(dot + 1)..]
+    end
+    Model.fields.includes?(column) ? column : nil
+  end
+
+  # Merges *defaults* over this relation's `create_with` defaults in place.
+  # Named-scope conversion (`copy_state_to`, `merge_builder`) uses it so a
+  # relation rebuilt from another keeps its defaults.
+  #
+  # :nodoc:
+  def adopt_create_with_defaults(defaults : Hash(String, Grant::Columns::Type)) : Nil
+    return if defaults.empty?
+
+    merged = Hash(String, Grant::Columns::Type).new
+    if existing = @create_with_defaults
+      merged.merge!(existing)
+    end
+    merged.merge!(defaults)
+    @create_with_defaults = merged
   end
 
   # Scope attributes overlaid with `create_with` defaults.
@@ -157,10 +184,13 @@ module Grant::Query::Finders(Model)
     attributes_for_new_record.each { |key, value| merged[key] = value }
     attrs.each { |key, value| merged[key.to_s] = value }
 
-    record = Model.new
-    record.set_attributes(merged)
-    block.try(&.call(record))
-    record
+    # Model.new(hash) assigns the attributes, then yields, then runs
+    # after_initialize, so that callback sees the scope attributes too.
+    if callback = block
+      Model.new(merged) { |record| callback.call(record) }
+    else
+      Model.new(merged)
+    end
   end
 
   private def run_create(attrs : Grant::ModelArgs, block : Proc(Model, Nil)?) : Model

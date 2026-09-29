@@ -28,6 +28,7 @@ class Grant::Query::Builder(Model)
     target.select_columns = select_columns.try(&.dup)
     target.own_index_hints.concat(index_hints)
     target.copy_in_chunk_size_from(self)
+    target.adopt_create_with_defaults(create_with_attributes)
   end
 
   # Merge a plain Builder returned by a scope without requiring the caller's
@@ -67,6 +68,7 @@ class Grant::Query::Builder(Model)
     distinct! if other.distinct?
     own_having_clauses.concat(other.having_clauses)
     none! if other.is_none?
+    adopt_create_with_defaults(other.create_with_attributes)
     self
   end
 
