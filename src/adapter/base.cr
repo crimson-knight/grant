@@ -211,6 +211,93 @@ abstract class Grant::Adapter::Base
     value ? "1" : "0"
   end
 
+  # ---------------------------------------------------------------------------
+  # Multi-row insert clause builders, used by `insert_all` and `upsert_all`.
+  # ---------------------------------------------------------------------------
+
+  # The most bind parameters one statement may carry. Bulk writes split their
+  # rows into chunks that stay under this cap.
+  def bulk_bind_limit : Int32
+    65_535
+  end
+
+  # How many rows of *column_count* columns fit in one statement.
+  def bulk_chunk_rows(column_count : Int32) : Int32
+    raise ArgumentError.new("A bulk write needs at least one column") if column_count < 1
+    if column_count > bulk_bind_limit
+      raise ArgumentError.new("A bulk write of #{column_count} columns exceeds the #{bulk_bind_limit} bind parameter limit of one row")
+    end
+    bulk_bind_limit // column_count
+  end
+
+  # One `INSERT` for *row_count* rows: a single multi-row `VALUES` list, the
+  # adapter's conflict clause, and `RETURNING` when *returning* names columns.
+  def bulk_insert_sql(table_name : String, columns : Array(String), row_count : Int32,
+                      conflict : Grant::Bulk::Conflict, returning : Array(String)?) : String
+    String.build do |sql|
+      sql << "INSERT INTO " << quote(table_name) << " ("
+      columns.each_with_index do |column, index|
+        sql << ", " unless index == 0
+        sql << quote(column)
+      end
+      sql << ") VALUES "
+      position = 0
+      row_count.times do |row|
+        sql << ", " unless row == 0
+        sql << '('
+        columns.size.times do |column|
+          sql << ", " unless column == 0
+          position += 1
+          sql << parameter_placeholder(position)
+        end
+        sql << ')'
+      end
+      sql << bulk_conflict_sql(conflict, columns)
+      sql << bulk_returning_sql(returning) if returning && !returning.empty?
+    end
+  end
+
+  # The `ON CONFLICT` form shared by PostgreSQL and SQLite. MySQL overrides it.
+  protected def bulk_conflict_sql(conflict : Grant::Bulk::Conflict, columns : Array(String)) : String
+    case conflict.mode
+    in .raise?
+      ""
+    in .skip?
+      " ON CONFLICT#{bulk_conflict_target(conflict)} DO NOTHING"
+    in .update?
+      assignments = bulk_update_assignments(conflict) { |column| "EXCLUDED.#{quote(column)}" }
+      if assignments.empty?
+        " ON CONFLICT#{bulk_conflict_target(conflict)} DO NOTHING"
+      else
+        " ON CONFLICT#{bulk_conflict_target(conflict)} DO UPDATE SET #{assignments}"
+      end
+    end
+  end
+
+  protected def bulk_conflict_target(conflict : Grant::Bulk::Conflict) : String
+    return "" if conflict.target.empty?
+    " (#{conflict.target.map { |column| quote(column) }.join(", ")})"
+  end
+
+  # The `SET` list of an upsert: the caller's fragment, or one assignment per
+  # updatable column built from the block's incoming-value expression.
+  protected def bulk_update_assignments(conflict : Grant::Bulk::Conflict, & : String -> String) : String
+    if fragment = conflict.update_sql
+      return fragment.sql
+    end
+    conflict.update_columns.map { |column| "#{quote(column)} = #{yield column}" }.join(", ")
+  end
+
+  protected def bulk_returning_sql(returning : Array(String)) : String
+    " RETURNING #{returning.map { |column| quote(column) }.join(", ")}"
+  end
+
+  # Column names of the unique index *index_name* on *table_name*, in index
+  # order, or nil when no such index exists.
+  def unique_index_columns(table_name : String, index_name : String) : Array(String)?
+    raise ArgumentError.new("#{self.class} cannot resolve the index #{index_name.inspect}; pass the column names to unique_by instead")
+  end
+
   # This will insert a row in the database and return the id generated.
   abstract def insert(table_name : String, fields, params, lastval) : Int64
 
