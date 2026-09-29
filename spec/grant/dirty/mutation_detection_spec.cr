@@ -125,5 +125,15 @@ describe "Opt-in in-place mutation detection" do
       record.saved_change_to_tags.should eq({["a"], ["a", "b"]})
       F01Watched.find!(record.id).tags.should eq(["a", "b"])
     end
+
+    it "still detects an in-place edit after update_columns" do
+      record = F01Watched.create!(title: "t", tags: ["a"])
+      record.update_columns(tags: ["a", "b"])
+      record.changed?.should be_false
+
+      record.tags.not_nil! << "c"
+      record.changed?.should be_true
+      record.tags_change.should eq({["a", "b"], ["a", "b", "c"]})
+    end
   end
 end

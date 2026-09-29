@@ -779,7 +779,10 @@ abstract class Grant::Base
       ensure_dirty_tracking_initialized
       attribute_names.each do |attribute_name|
         dirty_tracking_hashes[1].delete(attribute_name)
-        dirty_tracking_hashes[0][attribute_name] = read_attribute(attribute_name).as(DirtyValue)
+        @forced_changes.try &.delete(attribute_name)
+        # A watched column keeps a copy, so a later in-place edit of the live
+        # value is still detected.
+        dirty_tracking_hashes[0][attribute_name] = baseline_dirty_value(attribute_name, read_attribute(attribute_name).as(DirtyValue))
       end
     end
     
