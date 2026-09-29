@@ -105,6 +105,11 @@ module Grant::Testing
       # Virtual adapter doesn't yield any results
     end
 
+    # Positional binds, as DB::Connection#query takes them.
+    def query(query : String, *args, &)
+      track_query(query)
+    end
+
     # Exec support for non-select queries
     def exec(query : String) : DB::ExecResult
       track_query(query)
@@ -115,6 +120,12 @@ module Grant::Testing
     def exec(query : String, args : Enumerable) : DB::ExecResult
       track_query(query)
       # Return mock result
+      DB::ExecResult.new(0_i64, 0_i64)
+    end
+
+    # Positional binds, as DB::Connection#exec takes them.
+    def exec(query : String, *args) : DB::ExecResult
+      track_query(query)
       DB::ExecResult.new(0_i64, 0_i64)
     end
 
