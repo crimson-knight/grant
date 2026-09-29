@@ -20,8 +20,9 @@ require "./validation"
 # - `before_update` / `after_update` — only when updating an existing row
 # - `before_destroy` / `after_destroy` — wrap `destroy`
 # - `after_touch` — after `touch`
-# - `after_commit` / `after_rollback` and the per-operation
-#   `after_create_commit` / `after_update_commit` / `after_destroy_commit` —
+# - `after_commit` / `after_rollback` (both take `on: [:create, :update,
+#   :destroy]`) and the per-operation `after_create_commit` /
+#   `after_update_commit` / `after_destroy_commit` / `after_save_commit` —
 #   fire once the surrounding transaction durably commits or rolls back (see
 #   `Grant::CommitCallbacks`)
 #
@@ -86,6 +87,17 @@ require "./validation"
 # before_validation :normalize_slug, on: [:create, :publish]
 # ```
 #
+# ## `prepend: true`
+#
+# Every callback macro (around callbacks included) takes `prepend: true` to
+# put its entries at the front of the class's own chain instead of the end,
+# keeping their given order. Callbacks inherited from a parent class still run
+# before the subclass's own chain.
+#
+# ```
+# before_destroy :check_children, prepend: true
+# ```
+#
 # ## Halting
 #
 # Call `abort!` inside a persistence callback to raise
@@ -121,8 +133,12 @@ module Grant::Callbacks
     before_destroy after_destroy
     after_touch
     after_commit after_rollback
-    after_create_commit after_update_commit after_destroy_commit
+    after_create_commit after_update_commit after_destroy_commit after_save_commit
   )
+
+  # Events `run_callbacks` accepts (each has a `before_`/`after_` chain and,
+  # for some, an `around_` chain).
+  CALLBACK_EVENTS = %w(initialize find validation save create update destroy touch)
 
   AROUND_CALLBACK_NAMES = %w(
     around_validation
@@ -163,22 +179,42 @@ module Grant::Callbacks
   end
 
   {% for name in CALLBACK_NAMES %}
-    macro {{name.id}}(*callbacks, if condition = nil, unless unless_condition = nil, on on_context = nil, &block)
-      {% unless name.includes?("validation") %}
-        \{% on_context.raise "`on:` is only supported on before_validation, after_validation and around_validation" if on_context %}
+    {% commit_on = (name == "after_commit" || name == "after_rollback") %}
+    macro {{name.id}}(*callbacks, if condition = nil, unless unless_condition = nil, on on_context = nil, prepend prepend_first = false, &block)
+      {% if name == "after_commit" || name == "after_rollback" %}
+        \{% if on_context %}
+          \{% for action in (on_context.is_a?(ArrayLiteral) ? on_context : [on_context]) %}
+            \{% action.raise "`on:` accepts :create, :update or :destroy" unless action.is_a?(SymbolLiteral) && [:create, :update, :destroy].includes?(action) %}
+          \{% end %}
+        \{% end %}
+      {% elsif !name.includes?("validation") %}
+        \{% on_context.raise "`on:` is only supported on before_validation, after_validation, around_validation, after_commit and after_rollback" if on_context %}
       {% end %}
+      \{% entries = [] of ASTNode %}
       \{% for callback in callbacks %}
         \{% if condition || unless_condition || on_context %}
-          \{% CALLBACKS[{{name}}] << {callback: callback, if: condition, unless: unless_condition, on: on_context} %}
+          \{% entries << {callback: callback, if: condition, unless: unless_condition, on: on_context} %}
         \{% else %}
-          \{% CALLBACKS[{{name}}] << callback %}
+          \{% entries << callback %}
         \{% end %}
       \{% end %}
       \{% if block.is_a? Block %}
         \{% if condition || unless_condition || on_context %}
-          \{% CALLBACKS[{{name}}] << {callback: block, if: condition, unless: unless_condition, on: on_context} %}
+          \{% entries << {callback: block, if: condition, unless: unless_condition, on: on_context} %}
         \{% else %}
-          \{% CALLBACKS[{{name}}] << block %}
+          \{% entries << block %}
+        \{% end %}
+      \{% end %}
+      # `prepend: true` puts the entries at the front of this class's chain,
+      # keeping their given order; otherwise they are appended.
+      \{% if prepend_first %}
+        \{% for entry_index in (0...entries.size) %}
+          \{% entry = entries[entries.size - 1 - entry_index] %}
+          \{% CALLBACKS[{{name}}].unshift(entry) %}
+        \{% end %}
+      \{% else %}
+        \{% for entry in entries %}
+          \{% CALLBACKS[{{name}}] << entry %}
         \{% end %}
       \{% end %}
     end
@@ -205,7 +241,13 @@ module Grant::Callbacks
           # `if:` terms must hold, no `unless:` term may). `on:` restricts a
           # validation callback to the running validation context(s). See
           # `Grant::Conditions.met?`.
+          {% if commit_on %}
+          # `on:` here names the operations (`:create`, `:update`, `:destroy`)
+          # the commit/rollback belongs to; see `Grant::CommitCallbacks`.
+          if Grant::Conditions.met?(nil, \{{condition}}, \{{unless_condition}}, nil) && \{% if on_context %}__commit_on?(\{{(on_context.is_a?(ArrayLiteral) ? on_context : [on_context]).splat}})\{% else %}true\{% end %}
+          {% else %}
           if Grant::Conditions.met?(nil, \{{condition}}, \{{unless_condition}}, \{{on_context}})
+          {% end %}
             \{% if callback.is_a? Block %}
               begin
                 \{{callback.body}}
@@ -249,22 +291,33 @@ module Grant::Callbacks
   # end
   # ```
   {% for name in AROUND_CALLBACK_NAMES %}
-    macro {{name.id}}(*callbacks, if condition = nil, unless unless_condition = nil, on on_context = nil, &block)
+    macro {{name.id}}(*callbacks, if condition = nil, unless unless_condition = nil, on on_context = nil, prepend prepend_first = false, &block)
       {% unless name.includes?("validation") %}
         \{% on_context.raise "`on:` is only supported on before_validation, after_validation and around_validation" if on_context %}
       {% end %}
+      \{% entries = [] of ASTNode %}
       \{% for callback in callbacks %}
         \{% if condition || unless_condition || on_context %}
-          \{% AROUND_CALLBACKS[{{name}}] << {callback: callback, if: condition, unless: unless_condition, on: on_context} %}
+          \{% entries << {callback: callback, if: condition, unless: unless_condition, on: on_context} %}
         \{% else %}
-          \{% AROUND_CALLBACKS[{{name}}] << callback %}
+          \{% entries << callback %}
         \{% end %}
       \{% end %}
       \{% if block.is_a? Block %}
         \{% if condition || unless_condition || on_context %}
-          \{% AROUND_CALLBACKS[{{name}}] << {callback: block, if: condition, unless: unless_condition, on: on_context} %}
+          \{% entries << {callback: block, if: condition, unless: unless_condition, on: on_context} %}
         \{% else %}
-          \{% AROUND_CALLBACKS[{{name}}] << block %}
+          \{% entries << block %}
+        \{% end %}
+      \{% end %}
+      \{% if prepend_first %}
+        \{% for entry_index in (0...entries.size) %}
+          \{% entry = entries[entries.size - 1 - entry_index] %}
+          \{% AROUND_CALLBACKS[{{name}}].unshift(entry) %}
+        \{% end %}
+      \{% else %}
+        \{% for entry in entries %}
+          \{% AROUND_CALLBACKS[{{name}}] << entry %}
         \{% end %}
       \{% end %}
     end
@@ -388,6 +441,64 @@ module Grant::Callbacks
       \{% end %}
     end
   {% end %}
+
+  # Runs the callbacks of *event* (`:save`, `:create`, `:update`, `:destroy`,
+  # `:validation`, `:touch`, `:initialize` or `:find`) around an optional
+  # block, exactly as the persistence machinery does: `before_*` callbacks, the
+  # block, then `after_*` callbacks, all wrapped in the `around_*` chain when
+  # the event has one. It expands at compile time.
+  #
+  # Returns the block's value, or `nil` when an `around_*` callback halted by
+  # not yielding (the block and the `after_*` callbacks then do not run). An
+  # `abort!` raises `Grant::Callbacks::Abort` to the caller.
+  #
+  # ```
+  # order.run_callbacks(:save) { order.write_audit_row } # => audit row or nil
+  # ```
+  #
+  # With no block it just runs the chains and returns `true` (or `false` if
+  # halted). When *event* is not a literal (a variable), it dispatches at
+  # runtime through a `case` over the known events:
+  #
+  # ```
+  # order.run_callbacks(event_name) # => Bool
+  # ```
+  macro run_callbacks(event, &block)
+    {% if event.is_a?(SymbolLiteral) || event.is_a?(StringLiteral) %}
+      {% ev = event.id.stringify %}
+      {% has_before = Grant::Callbacks::CALLBACK_NAMES.includes?("before_" + ev) %}
+      {% has_after = Grant::Callbacks::CALLBACK_NAMES.includes?("after_" + ev) %}
+      {% has_around = Grant::Callbacks::AROUND_CALLBACK_NAMES.includes?("around_" + ev) %}
+      {% event.raise "unknown callback event #{ev}; use one of #{Grant::Callbacks::CALLBACK_EVENTS.join(", ").id}" unless has_before || has_after || has_around %}
+      {% if has_around %}
+        %result = nil
+        __run_around_{{ev.id}} do
+          {% if has_before %}__before_{{ev.id}}{% end %}
+          %result = {% if block %}{{block.body}}{% else %}true{% end %}
+          {% if has_after %}__after_{{ev.id}} unless around_halted?{% end %}
+        end
+        around_halted? ? nil : %result
+      {% else %}
+        {% if has_before %}__before_{{ev.id}}{% end %}
+        %result = {% if block %}{{block.body}}{% else %}true{% end %}
+        {% if has_after %}__after_{{ev.id}}{% end %}
+        %result
+      {% end %}
+    {% else %}
+      {% block.raise "run_callbacks with a non-literal event does not take a block" if block %}
+      run_callbacks_for({{event}})
+    {% end %}
+  end
+
+  # Runtime form of `run_callbacks` for an event held in a variable. Returns
+  # `false` when an `around_*` callback halted, `true` otherwise. Dispatch is
+  # a compile-time expanded chain of Symbol comparisons, so nothing is allocated.
+  def run_callbacks_for(event : Symbol) : Bool
+    {% for ev in CALLBACK_EVENTS %}
+      return !!run_callbacks(:{{ev.id}}) { true } if event == :{{ev.id}}
+    {% end %}
+    raise ArgumentError.new("Unknown callback event #{event.inspect}; use one of #{CALLBACK_EVENTS.join(", ")}")
+  end
 
   # Returns `true` if the most recent `around_*` callback halted the operation
   # by failing to call its continuation; `false` otherwise.
