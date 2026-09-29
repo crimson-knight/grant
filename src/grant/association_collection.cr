@@ -1,18 +1,5 @@
 require "./associations/through"
-
-# The `before_add`, `after_add`, `before_remove` and `after_remove` hooks of one
-# `has_many` association. A `before_` hook that returns `false` vetoes the
-# operation; the `has_many` macro builds these from the association options.
-struct Grant::AssociationCallbacks(Target)
-  getter before_add : Proc(Target, Bool)?
-  getter after_add : Proc(Target, Bool)?
-  getter before_remove : Proc(Target, Bool)?
-  getter after_remove : Proc(Target, Bool)?
-
-  def initialize(@before_add : Proc(Target, Bool)? = nil, @after_add : Proc(Target, Bool)? = nil,
-                 @before_remove : Proc(Target, Bool)? = nil, @after_remove : Proc(Target, Bool)? = nil)
-  end
-end
+require "./association_callbacks"
 
 # Lazy, owner-scoped collection returned by a has_many association.
 class Grant::AssociationCollection(Owner, Target)
@@ -365,7 +352,9 @@ class Grant::AssociationCollection(Owner, Target)
     delete_records(records.to_a, resolve_strategy(nil))
   end
 
-  # Destroys matching records and runs their callbacks.
+  # Destroys matching records and runs their callbacks. For a `:through`
+  # collection the join rows are destroyed instead and the targets are kept,
+  # as in ActiveRecord.
   def destroy(*records : Target) : Array(Target)
     destroy_records(records.to_a)
   end
@@ -517,6 +506,7 @@ class Grant::AssociationCollection(Owner, Target)
   end
 
   # Destroys every associated record, running callbacks, and returns them.
+  # For a `:through` collection only the join rows are destroyed.
   def destroy_all : Array(Target)
     destroy_records(all.dup)
   end
@@ -525,27 +515,26 @@ class Grant::AssociationCollection(Owner, Target)
   # the association's own `dependent:` option when omitted:
   #
   # * `:nullify` (default) clears the foreign key with one UPDATE.
-  # * `:delete_all` deletes the target rows with one DELETE.
-  # * `:destroy` loads and destroys each record with callbacks.
+  # * `:delete_all` deletes the target rows with one DELETE. An association
+  #   declared `dependent: :destroy` uses this strategy too, as in
+  #   ActiveRecord: `delete_all` never loads records or runs callbacks (use
+  #   `destroy_all` for that).
   #
-  # A `:through` collection deletes (or destroys) the join rows and keeps the
-  # targets. No `before_remove` or `after_remove` hook runs, as in ActiveRecord.
-  # Returns the number of affected rows.
+  # A `:through` collection deletes the join rows and keeps the targets. No
+  # `before_remove` or `after_remove` hook runs, as in ActiveRecord. Returns the
+  # number of affected rows. Raises `ArgumentError` for any other *dependent*.
   def delete_all(dependent : Symbol? = nil) : Int64
+    if dependent && dependent != :nullify && dependent != :delete_all
+      raise ArgumentError.new("Unknown dependent strategy #{dependent.inspect} for delete_all; use :nullify or :delete_all")
+    end
     strategy = resolve_strategy(dependent)
+    strategy = :delete_all if strategy == :destroy
     count = if @through
               delete_all_through(strategy)
+            elsif strategy == :delete_all
+              association_relation.delete_all
             else
-              case strategy
-              when :delete_all
-                association_relation.delete_all
-              when :destroy
-                destroyed = 0_i64
-                all.dup.each { |record| destroyed += 1 if record.destroy }
-                destroyed
-              else
-                association_relation.update_all(nullify_assignments)
-              end
+              association_relation.update_all(nullify_assignments)
             end
     @loaded_records.try(&.clear)
     sync_loaded_association
@@ -567,7 +556,9 @@ class Grant::AssociationCollection(Owner, Target)
   # Instantiates the target with *args*, the owner's key and the polymorphic
   # type, yields it, and runs the `before_add`/`after_add` hooks. The flag is
   # false when a `before_add` hook vetoed the record.
-  private def build_record(args : Grant::ModelArgs, & : Target ->) : Tuple(Target, Bool)
+  # *defer_after_add* leaves the `after_add` hook to the caller, which `create`
+  # runs after the insert so the hook sees the saved record, as in ActiveRecord.
+  private def build_record(args : Grant::ModelArgs, defer_after_add : Bool = false, & : Target ->) : Tuple(Target, Bool)
     record = Target.new
     record.set_attributes(args)
     record.set_attributes({@foreign_key.to_s => owner_key}) if !@through && !owner_key.nil?
@@ -582,7 +573,7 @@ class Grant::AssociationCollection(Owner, Target)
 
     @pending.try { |list| list << record }
     track_loaded(record)
-    run_hooks(:after_add, built)
+    run_hooks(:after_add, built) unless defer_after_add
     {record, true}
   end
 
@@ -591,7 +582,7 @@ class Grant::AssociationCollection(Owner, Target)
       raise Grant::Associations::OwnerNotSaved.new(owner, @association_name || Target.name, bang ? "create!" : "create")
     end
 
-    record, added = build_record(args) { |built| yield built }
+    record, added = build_record(args, defer_after_add: true) { |built| yield built }
     return record unless added
 
     if @through
@@ -601,6 +592,7 @@ class Grant::AssociationCollection(Owner, Target)
     else
       record.save
     end
+    run_hooks(:after_add, [record])
     record
   end
 
@@ -739,12 +731,15 @@ class Grant::AssociationCollection(Owner, Target)
     return [] of Target unless run_hooks(:before_remove, members)
 
     removed = [] of Target
-    Owner.transaction do
-      if @through
-        writer = through_writer
-        remove_join_rows(members.map { |record| record.read_attribute(writer.target_key) }, resolve_strategy(nil))
-      end
-      members.each { |record| removed << record if record.destroy! }
+    if @through
+      # As in ActiveRecord, destroying through a `:through` collection destroys
+      # the join rows (with their callbacks) and keeps the targets, which other
+      # owners may still link to.
+      writer = through_writer
+      remove_join_rows(members.map { |record| record.read_attribute(writer.target_key) }, :destroy)
+      removed.concat(members)
+    else
+      Owner.transaction { members.each { |record| removed << record if record.destroy! } }
     end
     forget(removed)
     run_hooks(:after_remove, removed)

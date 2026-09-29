@@ -157,15 +157,28 @@ describe "has_many :through writers" do
       TwTag.count.should eq(2)
     end
 
-    it "destroy removes the join rows and destroys the target" do
+    it "destroy destroys the join rows and keeps the target, as in ActiveRecord" do
       post = TwPost.create!(title: "p")
-      tag = TwTag.create!(label: "gone")
+      other = TwPost.create!(title: "o")
+      tag = TwTag.create!(label: "shared")
       post.tw_tags << tag
+      other.tw_tags << tag
 
-      post.tw_tags.destroy(tag)
+      post.tw_tags.destroy(tag).map(&.id).should eq([tag.id])
+
+      TwTagging.where(tw_post_id: post.id).count.should eq(0)
+      TwTag.find(tag.id).should_not be_nil
+      other.tw_tags.map(&.id).should eq([tag.id])
+    end
+
+    it "destroy_all destroys every join row of the owner and keeps the targets" do
+      post = TwPost.create!(title: "p")
+      2.times { |i| post.tw_tags << TwTag.create!(label: "t#{i}") }
+
+      post.tw_tags.destroy_all.size.should eq(2)
 
       TwTagging.count.should eq(0)
-      TwTag.find(tag.id).should be_nil
+      TwTag.count.should eq(2)
     end
   end
 

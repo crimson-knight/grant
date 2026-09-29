@@ -125,6 +125,20 @@ describe "has_and_belongs_to_many" do
       HbTag.find(tag.id).should_not be_nil
     end
 
+    it "destroy removes only the link and keeps a tag other posts share" do
+      post = HbPost.create!(title: "p")
+      other = HbPost.create!(title: "o")
+      tag = HbTag.create!(label: "shared")
+      post.hb_tags << tag
+      other.hb_tags << tag
+
+      post.hb_tags.destroy(tag)
+
+      post.hb_tags.to_a.should be_empty
+      other.hb_tags.map(&.id).should eq([tag.id])
+      HbTag.find(tag.id).should_not be_nil
+    end
+
     it "clear removes every link of the owner and keeps the tags" do
       post = HbPost.create!(title: "p")
       2.times { |i| post.hb_tags << HbTag.create!(label: "t#{i}") }
