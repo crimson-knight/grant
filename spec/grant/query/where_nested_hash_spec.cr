@@ -178,4 +178,13 @@ describe "where with a nested table hash and record values" do
       expect_raises(ArgumentError, /not an association/) { WfPost.where(nonsense: ann) }
     end
   end
+
+  describe "attributes hash typed as Grant::Columns::Type" do
+    it "reads an array value as an IN list, as where(**args) does" do
+      scores = [1, 3].as(Grant::Columns::Type)
+      matches = {"score" => scores} of String => Grant::Columns::Type
+      post_titles(WfPost.where(matches)).should eq(["by ann", "by cy"])
+      post_titles(WfPost.where(title: "by bob").or(matches)).should eq(["by ann", "by bob", "by cy"])
+    end
+  end
 end

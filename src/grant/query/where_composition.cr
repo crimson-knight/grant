@@ -87,7 +87,7 @@ class Grant::Query::Builder(Model)
 
     field = resolve_column_alias(field)
     if value.is_a?(Array)
-      add_array_condition(join, field, value)
+      add_array_condition_per_type(join, field, value)
     elsif value.is_a?(Enum)
       add_field_condition(join, field, :eq, value.to_s)
     elsif value.is_a?(Range)
@@ -99,6 +99,29 @@ class Grant::Query::Builder(Model)
     else
       add_field_condition(join, field, :eq, value)
     end
+  end
+
+  # A value typed as a union of array types (a `Grant::Columns::Type` from an
+  # attributes hash) cannot bind `Array(T)` in `add_array_condition`. When no
+  # member holds records or ranges it is a plain `IN` list, as before; any
+  # other union is handed over one member type at a time.
+  private def add_array_condition_per_type(join : Symbol, field : String, values : V) : Nil forall V
+    {% if V.union? %}
+      {% plain = V.union_types.all? { |type| !type.type_vars.first.union_types.any? { |element| element <= Range || element <= Grant::Base } } %}
+      {% if plain %}
+        if join == :or
+          or_array(field, :in, values)
+        else
+          and_array(field, :in, values)
+        end
+      {% else %}
+        {% for type in V.union_types %}
+          return add_array_condition(join, field, values) if values.is_a?({{ type }})
+        {% end %}
+      {% end %}
+    {% else %}
+      add_array_condition(join, field, values)
+    {% end %}
   end
 
   # An array under a column becomes `IN`. An array of records only makes sense
