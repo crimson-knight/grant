@@ -71,11 +71,11 @@ module Grant::Transactions
     # User.create({"email" => "ada@example.com"})
     # User.create({"email" => "seed@example.com"}, skip_timestamps: true)
     # ```
-    def create(args, skip_timestamps : Bool = false)
+    def create(args, skip_timestamps : Bool = false, context : Symbol | Array(Symbol) | Nil = nil)
       guard_writes!
       instance = new
       instance.set_attributes(args.to_h.transform_keys(&.to_s))
-      instance.save(skip_timestamps: skip_timestamps)
+      instance.save(skip_timestamps: skip_timestamps, context: context)
       instance
     end
 
@@ -108,12 +108,12 @@ module Grant::Transactions
     # ```
     # User.create!({"email" => "ada@example.com"})
     # ```
-    def create!(args, skip_timestamps : Bool = false)
+    def create!(args, skip_timestamps : Bool = false, context : Symbol | Array(Symbol) | Nil = nil)
       guard_writes!
       instance = new
       instance.set_attributes(args.to_h.transform_keys(&.to_s))
 
-      unless instance.save(skip_timestamps: skip_timestamps)
+      unless instance.save(skip_timestamps: skip_timestamps, context: context)
         if instance.errors.empty?
           instance.errors << Grant::Error.new(:base, "Save was halted before the record was persisted.")
         end
@@ -462,6 +462,10 @@ module Grant::Transactions
   # - `validate: false` skips validations (the record is written even if
   #   invalid). Callbacks still run.
   # - `skip_timestamps: true` leaves `created_at`/`updated_at` untouched.
+  # - `context:` (a Symbol or an Array of Symbols) selects the validation
+  #   context; it defaults to `:create` for a new record and `:update`
+  #   otherwise. Validators declared `on: :publish` run for
+  #   `save(context: :publish)`, alongside those with no `on:`.
   #
   # ```
   # class User < Grant::Base
@@ -475,7 +479,7 @@ module Grant::Transactions
   # user.save                  # => true; UPDATEs the existing row
   # user.save(validate: false) # write regardless of validation state
   # ```
-  def save(*, validate : Bool = true, skip_timestamps : Bool = false) : Bool
+  def save(*, validate : Bool = true, skip_timestamps : Bool = false, context : Symbol | Array(Symbol) | Nil = nil) : Bool
     guard_writes!
     {% begin %}
     {% primary_key = @type.instance_vars.find { |ivar| (ann = ivar.annotation(Grant::Column)) && ann[:primary] } %}
@@ -496,8 +500,8 @@ module Grant::Transactions
 
       begin
         if validate
-          validation_context = (@{{primary_key.name.id}} && !new_record?) ? :update : :create
-          unless valid?(context: validation_context)
+          save_context = context || ((@{{primary_key.name.id}} && !new_record?) ? :update : :create)
+          unless valid?(context: save_context)
             @last_save_failed_validation = true
             save_succeeded = false
             next
@@ -568,8 +572,8 @@ module Grant::Transactions
   # user = User.new(email: "ada@example.com")
   # user.save! # => true, or raises Grant::RecordNotSaved
   # ```
-  def save!(*, validate : Bool = true, skip_timestamps : Bool = false) : Bool
-    save(validate: validate, skip_timestamps: skip_timestamps) || raise save_failure_error
+  def save!(*, validate : Bool = true, skip_timestamps : Bool = false, context : Symbol | Array(Symbol) | Nil = nil) : Bool
+    save(validate: validate, skip_timestamps: skip_timestamps, context: context) || raise save_failure_error
   end
 
   # True while the most recent `#save` on this record stopped at validation, so
@@ -627,11 +631,11 @@ module Grant::Transactions
   # user.update({"email" => "new@example.com"})
   # user.update({"email" => "seed@example.com"}, skip_timestamps: true)
   # ```
-  def update(args, skip_timestamps : Bool = false) : Bool
+  def update(args, skip_timestamps : Bool = false, context : Symbol | Array(Symbol) | Nil = nil) : Bool
     enlist_transaction_record
     set_attributes(args.to_h.transform_keys(&.to_s))
 
-    save(skip_timestamps: skip_timestamps)
+    save(skip_timestamps: skip_timestamps, context: context)
   end
 
   # Assigns the given keyword attributes and saves the record, **raising**
@@ -654,11 +658,11 @@ module Grant::Transactions
   # ```
   # user.update!({"email" => "new@example.com"})
   # ```
-  def update!(args, skip_timestamps : Bool = false) : Bool
+  def update!(args, skip_timestamps : Bool = false, context : Symbol | Array(Symbol) | Nil = nil) : Bool
     enlist_transaction_record
     set_attributes(args.to_h.transform_keys(&.to_s))
 
-    save!(skip_timestamps: skip_timestamps)
+    save!(skip_timestamps: skip_timestamps, context: context)
   end
 
   # Updates a single attribute and persists the record, **skipping validations**

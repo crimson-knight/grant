@@ -41,7 +41,7 @@ module Grant::Locking::Optimistic
 
     # Capture lock_version before saving an existing record so __check_lock_version
     # can compare against it in the before_update callback.
-    def save(*, validate : Bool = true, skip_timestamps : Bool = false)
+    def save(*, validate : Bool = true, skip_timestamps : Bool = false, context : Symbol | Array(Symbol) | Nil = nil)
       @lock_version_was = lock_version unless new_record?
       super
     end
