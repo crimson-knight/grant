@@ -86,8 +86,11 @@ module Grant::Counters
       mark_write_operation
       affected = 0_i64
       elapsed_time = Time.measure do
-        adapter.open do |db|
-          affected = db.exec(sql, args: adapter.normalize_bind_values(values)).rows_affected
+        # Pass the statement so a driver failure is translated with its SQL, and
+        # let the adapter count the rows (SQLite reads `changes()`).
+        adapter.open(sql, values) do |db|
+          result = db.exec(sql, args: adapter.normalize_bind_values(values))
+          affected = adapter.rows_affected_after_write(db, result)
         end
       end
       adapter.log(sql, elapsed_time, values)
