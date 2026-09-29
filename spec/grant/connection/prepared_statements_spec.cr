@@ -51,7 +51,8 @@ describe "prepared statements" do
       adapter.database.prepared_statements?.should be_true
     end
 
-    adapter.open { |connection| connection.query_one("SELECT ? + 1", 41, as: Int64) }.should eq 42
+    sql = adapter.ensure_clause_template("SELECT CAST(? AS BIGINT) + 1")
+    adapter.open { |connection| connection.query_one(sql, 41, as: Int64) }.should eq 42
   end
 
   it "forwards the options as URL parameters only when they differ from the defaults" do
