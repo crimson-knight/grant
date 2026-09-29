@@ -53,23 +53,45 @@ class Grant::Query::Builder(Model)
 
   # Appends ORDER BY terms written as SQL. Each comma-separated term of the form
   # `column [ASC|DESC] [NULLS FIRST|LAST]` (column may be `table.column`) becomes
-  # a structured term. Any other term, such as `lower(name) DESC`, is a raw
-  # expression: it must be a single balanced expression and is emitted as
-  # written. Returns `self`.
+  # a structured term. A function of columns, such as `lower(name) DESC` or
+  # `coalesce(name, nickname)`, is emitted as written. Anything else (a
+  # literal, an operator, a subquery) raises `ArgumentError`, as ActiveRecord
+  # does, because sort strings often come from request parameters; wrap SQL you
+  # wrote yourself in `Grant.sql`. Returns `self`.
   #
   # ```
   # User.order("name DESC, id")
   # User.order("lower(email) DESC")
+  # User.order(Grant.sql("CASE WHEN admin THEN 0 ELSE 1 END"))
   # ```
   def order!(sql : String) : self
+    append_order_terms(sql, trusted: false)
+  end
+
+  # :ditto:
+  def order!(sql : Grant::Query::SqlExpression::Trusted) : self
+    append_order_terms(sql.sql, trusted: true)
+  end
+
+  private def append_order_terms(sql : String, trusted : Bool) : self
     Grant::Query::SqlExpression.split_terms(sql).each do |term|
       if match = ORDER_TERM.match(term)
         own_order_fields << {field: match[1], direction: Grant::Query::OrderSupport.sort_for(match[2]?, match[3]?)}
       else
-        own_order_fields << {field: Grant::Query::SqlExpression.validate!(term, "ORDER BY expression"), direction: Sort::Raw}
+        own_order_fields << {field: raw_order_term(term, trusted), direction: Sort::Raw}
       end
     end
     self
+  end
+
+  # Validates a raw ORDER BY *term*: always a single expression, and, unless
+  # *trusted*, a function of columns only.
+  private def raw_order_term(term : String, trusted : Bool) : String
+    expression = Grant::Query::SqlExpression.validate!(term, "ORDER BY expression")
+    unless trusted || Grant::Query::SqlExpression.column_function?(expression)
+      raise ArgumentError.new("ORDER BY #{expression.inspect} is not a column or a function of columns; wrap SQL you wrote in Grant.sql(...)")
+    end
+    expression
   end
 
   # Appends an ORDER BY on *field* with an explicit *direction* (`:asc` or
@@ -90,8 +112,8 @@ class Grant::Query::Builder(Model)
     name = field.to_s
     unless Grant::Query::SqlExpression.identifier?(name)
       raise ArgumentError.new("order with a direction takes a column name; write the direction inside the SQL for #{name.inspect}") if nulls
-      Grant::Query::SqlExpression.validate!(name, "ORDER BY expression")
-      own_order_fields << {field: "#{name} #{direction == :desc ? "DESC" : "ASC"}", direction: Sort::Raw}
+      expression = raw_order_term(name, trusted: false)
+      own_order_fields << {field: "#{expression} #{direction == :desc ? "DESC" : "ASC"}", direction: Sort::Raw}
       return self
     end
     own_order_fields << {field: name, direction: Grant::Query::OrderSupport.sort_for(direction == :desc ? "desc" : "asc", nulls.try(&.to_s))}
@@ -149,7 +171,7 @@ class Grant::Query::Builder(Model)
     chain_copy.in_order_of!(column, values, filter)
   end
 
-  def order(sql : String) : self
+  def order(sql : String | Grant::Query::SqlExpression::Trusted) : self
     chain_copy.order!(sql)
   end
 
@@ -175,8 +197,15 @@ class Grant::Query::Builder(Model)
     case value
     when String
       escaped = value.gsub('\0', "").gsub("'", "''")
-      escaped = escaped.gsub("\\", "\\\\") if Model.adapter.mysql?
-      "'#{escaped}'"
+      if Model.adapter.mysql?
+        "'#{escaped.gsub("\\", "\\\\")}'"
+      elsif Model.adapter.postgres?
+        # An E'' literal reads backslashes as escapes whatever the server's
+        # standard_conforming_strings setting, so doubling them is always exact.
+        "E'#{escaped.gsub("\\", "\\\\")}'"
+      else
+        "'#{escaped}'"
+      end
     when UUID
       "'#{value}'"
     when Int, Float, Bool, Time, Symbol

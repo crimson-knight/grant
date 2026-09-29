@@ -85,7 +85,42 @@ module Grant::Query::SqlExpression
   end
 
   # `true` when *text* is a column name or a `table.column` pair.
+  #
+  # See also `.column_function?`.
   def self.identifier?(text : String) : Bool
     text.matches?(/\A[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?\z/)
+  end
+end
+
+module Grant::Query::SqlExpression
+  # A SQL fragment the developer vouches for, as ActiveRecord's `Arel.sql`
+  # does. Build one with `Grant.sql`. Methods that otherwise accept only
+  # column-shaped strings, such as `order`, accept it as written (after the
+  # single-expression check in `SqlExpression.validate!`).
+  record Trusted, sql : String
+
+  COLUMN_REFERENCE = /[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?/
+  COLUMN_FUNCTION  = /\A\s*[A-Za-z_][A-Za-z0-9_]*\(\s*(?:#{COLUMN_REFERENCE}(?:\s*,\s*#{COLUMN_REFERENCE})*)?\s*\)(?:\s+(?:asc|desc))?(?:\s+nulls\s+(?:first|last))?\s*\z/i
+
+  # `true` when *text* is a function applied to column references only, with an
+  # optional direction and NULL placement, such as `lower(name) DESC` or
+  # `coalesce(name, nickname)`. This is the raw ORDER BY shape ActiveRecord
+  # accepts without `Arel.sql`: it can carry no literal, operator or subquery,
+  # so a sort parameter from a request cannot smuggle SQL through it.
+  def self.column_function?(text : String) : Bool
+    text.matches?(COLUMN_FUNCTION)
+  end
+end
+
+module Grant
+  # Marks *fragment* as trusted SQL for relation methods that otherwise accept
+  # only column-shaped strings, like ActiveRecord's `Arel.sql`. Never pass
+  # request input through it.
+  #
+  # ```
+  # Post.order(Grant.sql("CASE WHEN pinned THEN 0 ELSE 1 END, created_at DESC"))
+  # ```
+  def self.sql(fragment : String) : Grant::Query::SqlExpression::Trusted
+    Grant::Query::SqlExpression::Trusted.new(fragment)
   end
 end

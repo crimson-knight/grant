@@ -73,6 +73,20 @@ describe "in_order_of" do
     IoTicket.in_order_of(:status, ["back\\slash"]).select.map(&.priority).should eq([7_i64])
   end
 
+  it "matches a backslash and quote value in the ORDER BY literal itself" do
+    IoTicket.create!(status: "a\\'b", priority: 8_i64)
+    ordered = IoTicket.in_order_of(:status, ["a\\'b"], filter: false).order(:priority).select
+    ordered.first.priority.should eq(8_i64)
+  end
+
+  it "writes PostgreSQL string literals as E'' so backslashes never depend on server settings" do
+    {% if env("CURRENT_ADAPTER") == "pg" %}
+      IoTicket.in_order_of(:status, ["x\\y"]).raw_sql.should contain("E'x\\\\y'")
+    {% else %}
+      IoTicket.in_order_of(:status, ["x\\y"]).raw_sql.should_not contain("E'")
+    {% end %}
+  end
+
   it "caps the list size" do
     values = Array.new(Grant::Query::OrderSupport::IN_ORDER_OF_LIMIT + 1) { |index| "v#{index}" }
     expect_raises(ArgumentError, /at most 1000 values/) { IoTicket.in_order_of(:status, values) }

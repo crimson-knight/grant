@@ -130,6 +130,20 @@ describe "select and order expressions" do
       expect_raises(ArgumentError, /comment marker/) { SoPlayer.order("id /* x */") }
     end
 
+    it "rejects raw SQL that is not a function of columns, like ActiveRecord" do
+      expect_raises(ArgumentError, /not a column or a function of columns/) { SoPlayer.order("(SELECT 1) DESC") }
+      expect_raises(ArgumentError, /not a column or a function of columns/) { SoPlayer.order("CASE WHEN score > 5 THEN 0 ELSE 1 END") }
+      expect_raises(ArgumentError, /not a column or a function of columns/) { SoPlayer.order("pg_sleep(1)") }
+      expect_raises(ArgumentError, /not a column or a function of columns/) { SoPlayer.order("lower('x')") }
+      expect_raises(ArgumentError, /not a column or a function of columns/) { SoPlayer.order("score + 1", :desc) }
+    end
+
+    it "accepts SQL wrapped in Grant.sql" do
+      relation = SoPlayer.order(Grant.sql("CASE WHEN score > 5 THEN 0 ELSE 1 END, score"))
+      relation.select.map(&.score).should eq([7_i64, 9_i64, 2_i64, 5_i64])
+      expect_raises(ArgumentError, /statement separator/) { SoPlayer.order(Grant.sql("id; DROP TABLE so_players")) }
+    end
+
     it "reverses raw and structured terms" do
       SoPlayer.order("lower(position) DESC, score").reverse_order.raw_sql.should contain("lower(position) ASC, score DESC")
       SoPlayer.order(:position, :asc, nulls: :last).reverse_order.order_fields.first[:direction]
@@ -173,6 +187,13 @@ describe "select and order expressions" do
     it "qualifies the emulation when joins are present" do
       sql = Grant::Query::Assembler::Mysql(SoPlayer).new(SoPlayer.joins(:so_team).order(:name, nulls: :last)).order.not_nil!
       sql.should contain("ISNULL(#{SoPlayer.quote("so_players")}.#{SoPlayer.quote("name")})")
+    end
+
+    it "batches ascending when the primary key order carries a NULL placement" do
+      ids = SoPlayer.order(:id).select.map(&.id.not_nil!)
+      seen = [] of Int64
+      SoPlayer.order(:id, :asc, nulls: :last).in_batches(of: 1, start: ids[1]) { |batch| batch.each { |player| seen << player.id.not_nil! } }
+      seen.should eq(ids[1..])
     end
 
     it "validates the placement and direction" do
