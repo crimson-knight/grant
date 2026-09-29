@@ -32,7 +32,7 @@ module Grant
       @url : String?
 
       # Lazy URL provider. Invoked at most once, on first pool build, then its
-      # result is memoised into `@url`. Device targets that compute their DB
+      # result is memoized into `@url`. Device targets that compute their DB
       # path at runtime (e.g. an app-support directory only known after boot)
       # register with this instead of an eager URL.
       @url_provider : (-> String)?
@@ -110,7 +110,7 @@ module Grant
         @url.nil? && !@url_provider.nil?
       end
 
-      # Resolves the connection URL, invoking (and memoising) the lazy provider
+      # Resolves the connection URL, invoking (and memoizing) the lazy provider
       # on first call. Subsequent calls return the cached URL — the provider
       # runs at most once.
       def resolved_url : String
@@ -340,7 +340,7 @@ module Grant
         replica_weight: replica_weight
       )
       # eager: false → the adapter instance (and therefore the URL provider) is
-      # not materialised until first use.
+      # not materialized until first use.
       register_spec(spec, eager: false)
     end
 
@@ -366,7 +366,7 @@ module Grant
     end
 
     # Stores a spec and, when *eager* is true (or the spec carries an eager URL),
-    # immediately materialises the adapter instance. Lazy specs defer adapter
+    # immediately materializes the adapter instance. Lazy specs defer adapter
     # creation — and thus URL-provider invocation — to the first `get_adapter`.
     # Registering over an existing key closes the adapter it replaces, after
     # the registry lock is released.
@@ -377,7 +377,7 @@ module Grant
       @@mutex.synchronize do
         spec = with_database_options(spec)
 
-        # A replaced connection that was never materialised has no pool; one
+        # A replaced connection that was never materialized has no pool; one
         # that was must be closed.
         if previous = @@adapters[key]?
           retired << previous
@@ -390,7 +390,7 @@ module Grant
         # Set as default if first database
         @@default_database ||= spec.database
 
-        # Materialise eagerly only for eager specs. Lazy specs are built on the
+        # Materialize eagerly only for eager specs. Lazy specs are built on the
         # first checkout via #ensure_materialized (called from get_adapter).
         if eager && !spec.lazy?
           materialize_adapter(spec)
@@ -470,7 +470,7 @@ module Grant
       @@reapers = reapers
     end
 
-    # Adds a materialised reading connection to its database's balancer,
+    # Adds a materialized reading connection to its database's balancer,
     # replacing the entry a previous registration under the same key left.
     private def self.link_replica(spec : ConnectionSpec, key : String, adapter : Grant::Adapter::Base) : Nil
       lb_key = balancer_key(spec.database, spec.shard)
@@ -498,7 +498,7 @@ module Grant
       end
     end
 
-    # Returns the materialised adapter for *key*, building it lazily from its
+    # Returns the materialized adapter for *key*, building it lazily from its
     # stored spec on first access. Takes the registry lock only when a lazy
     # connection has to be built.
     private def self.ensure_materialized(key : String) : Grant::Adapter::Base?
@@ -593,7 +593,7 @@ module Grant
     # Resolves and returns the `Grant::Adapter::Base` for *database* / *role* /
     # *shard*, applying load balancing and failover.
     #
-    # Lazily materialises a `url_provider:` connection on first use. For the
+    # Lazily materializes a `url_provider:` connection on first use. For the
     # `:reading` role it draws a healthy replica from the load balancer. Every
     # role is health checked: an unhealthy connection is skipped in favor of
     # the next one in its fallback chain (reading -> writing -> primary, any
@@ -612,7 +612,7 @@ module Grant
     def self.get_adapter(database : String, role : Symbol = :primary, shard : Symbol? = nil) : Grant::Adapter::Base
       key = key_for(database, role, shard)
 
-      # Materialise this connection lazily if it was registered with a URL
+      # Materialize this connection lazily if it was registered with a URL
       # provider and has not been built yet. This is the "first pool build"
       # at which a lazy URL provider is invoked.
       requested = ensure_materialized(key)
@@ -703,7 +703,7 @@ module Grant
       yield adapter
     end
 
-    # Returns every materialised `Grant::Adapter::Base` belonging to *database*
+    # Returns every materialized `Grant::Adapter::Base` belonging to *database*
     # (all roles and shards), as an `Array`.
     #
     # ```
@@ -714,7 +714,7 @@ module Grant
       @@adapters.compact_map { |key, adapter| adapter if key.starts_with?(prefix) }
     end
 
-    # Returns the `Array(String)` of connection keys for every materialised
+    # Returns the `Array(String)` of connection keys for every materialized
     # adapter (e.g. `["primary:writing", "primary:reading"]`).
     #
     # ```
@@ -745,7 +745,7 @@ module Grant
 
     # Returns `true` when a connection for *database* / *role* / *shard* has been
     # established. Lazily-registered connections count as existing even before
-    # their `url_provider` has run (an un-materialised spec is still
+    # their `url_provider` has run (an un-materialized spec is still
     # established), so the guard rail does not false-fire on a device target that
     # has registered but not yet queried.
     #
