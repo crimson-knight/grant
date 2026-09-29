@@ -13,7 +13,7 @@ module Grant::Query::Executor
 
       begin
         adapter = Model.adapter
-        adapter.open do |db|
+        adapter.open(@sql, @args, Model.name) do |db|
           db.query @sql, args: adapter.normalize_bind_values(@args) do |rs|
             rs.each do
               row = [] of Grant::Columns::Type

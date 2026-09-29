@@ -138,6 +138,9 @@ module Grant::Transaction
     getter adapter : Grant::Adapter::Base
     getter savepoint_counter : Int32 = 0
 
+    # When the transaction began, for the duration of `Events::Transaction`.
+    getter started_at : Time::Instant = Time.instant
+
     # after_commit/after_rollback closure pairs enqueued by saves/destroys
     # that ran inside THIS transaction (including inside its savepoints).
     # They fire when this transaction's real COMMIT or ROLLBACK executes.
@@ -563,6 +566,7 @@ module Grant::Transaction
     execute_begin(conn, adapter, options)
     state = TransactionState.new(conn, options, adapter)
     fiber_stack.push(state)
+    publish_transaction_start(state)
     value : T? = nil
 
     begin
@@ -601,8 +605,21 @@ module Grant::Transaction
     state.close
   end
 
+  private def self.publish_transaction_start(state : TransactionState) : Nil
+    Grant::Notifications.instrument(Grant::Events::TransactionStart) do
+      Grant::Events::TransactionStart.new(state.adapter.name, state.options)
+    end
+  end
+
+  private def self.publish_transaction_end(state : TransactionState, outcome : Grant::Events::TransactionOutcome) : Nil
+    Grant::Notifications.instrument(Grant::Events::Transaction) do
+      Grant::Events::Transaction.new(state.adapter.name, outcome, Time.instant - state.started_at, state.options)
+    end
+  end
+
   private def self.finalize_rollback(state : TransactionState) : Array(Proc(Nil))
     leave_stack(state)
+    publish_transaction_end(state, Grant::Events::TransactionOutcome::Rollback)
     restore_transaction_records(state)
     state.pending_callbacks.map(&.[:on_rollback])
   end
@@ -612,6 +629,7 @@ module Grant::Transaction
   # callbacks fire now. after_all blocks wait for the outermost commit.
   private def self.finalize_commit(state : TransactionState) : Array(Proc(Nil))
     leave_stack(state)
+    publish_transaction_end(state, Grant::Events::TransactionOutcome::Commit)
     state.list_of_record_rollback_actions.clear
     callbacks = state.pending_callbacks.map(&.[:on_commit])
     if parent = current_state?
@@ -713,6 +731,7 @@ module Grant::Transaction
     new_state.manual = true
     new_state.owns_connection = owned
     fiber_stack.push(new_state)
+    publish_transaction_start(new_state)
     new_state.handle
   end
 

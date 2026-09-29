@@ -47,6 +47,9 @@ module Grant::Querying
       model.new_record = false
       model.from_rs result
       model.after_find if model.responds_to?(:after_find)
+      Grant::Notifications.instrument(Grant::Events::Instantiation) do
+        Grant::Events::Instantiation.new(name)
+      end
       model
     end
 
@@ -456,7 +459,7 @@ module Grant::Querying
                end
 
       mark_write_operation
-      adapter.open do |db|
+      adapter.open(sql, values, name) do |db|
         db.exec(sql, args: adapter.normalize_bind_values(values)).rows_affected
       end
     end
@@ -588,7 +591,7 @@ module Grant::Querying
       ensure_raw_sql_unscoped!
       mark_write_operation
       clause = adapter.ensure_clause_template(clause)
-      adapter.open { |db| db.query(clause, args: adapter.normalize_bind_values(params)) { |rs| yield rs } }
+      adapter.open(clause, params, name) { |db| db.query(clause, args: adapter.normalize_bind_values(params)) { |rs| yield rs } }
     end
 
     def scalar(clause : String = "", binds : Array(Grant::Columns::Type) = [] of Grant::Columns::Type)
@@ -596,7 +599,7 @@ module Grant::Querying
       mark_write_operation
       selected_adapter = adapter
       statement = selected_adapter.ensure_clause_template(clause)
-      selected_adapter.open do |database|
+      selected_adapter.open(statement, binds, name) do |database|
         database.scalar(statement, args: selected_adapter.normalize_bind_values(binds))
       end
     end

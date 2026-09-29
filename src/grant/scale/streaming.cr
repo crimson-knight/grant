@@ -72,7 +72,7 @@ class Grant::Query::Builder(Model)
     Grant::Logs::SQL.debug { "Streaming query - #{sql} [#{Model.name}]" }
 
     adapter = Model.adapter
-    adapter.open do |db|
+    adapter.open(sql, params, Model.name) do |db|
       db.query(sql, args: adapter.normalize_bind_values(params)) do |rs|
         rs.each do
           yield Model.from_rs(rs)

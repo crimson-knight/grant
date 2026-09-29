@@ -10,7 +10,7 @@ module Grant::Query::Executor
       results = {} of Array(Grant::Columns::Type) => Int64
 
       adapter = Model.adapter
-      adapter.open do |db|
+      adapter.open(@sql, @args, Model.name) do |db|
         db.query @sql, args: adapter.normalize_bind_values(@args) do |rows|
           rows.each do
             key = [] of Grant::Columns::Type

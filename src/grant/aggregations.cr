@@ -80,7 +80,7 @@ module Grant::Aggregations
 
       result = 0.0
       adapter = Model.adapter
-      adapter.open do |db|
+      adapter.open(sql, numbered_parameters, Model.name) do |db|
         value = db.scalar(sql, args: adapter.normalize_bind_values(numbered_parameters))
         result = value.to_s.to_f64 unless value.nil?
       end
@@ -98,7 +98,7 @@ module Grant::Aggregations
 
       result = nil
       adapter = Model.adapter
-      adapter.open do |db|
+      adapter.open(sql, numbered_parameters, Model.name) do |db|
         value = db.scalar(sql, args: adapter.normalize_bind_values(numbered_parameters))
         str_value = value.to_s
         result = str_value.nil? || str_value == "NULL" ? nil : str_value.to_f64 unless value.nil?
@@ -117,7 +117,7 @@ module Grant::Aggregations
 
       result = nil
       adapter = Model.adapter
-      adapter.open do |db|
+      adapter.open(sql, numbered_parameters, Model.name) do |db|
         db.query(sql, args: adapter.normalize_bind_values(numbered_parameters)) do |rs|
           if rs.move_next
             result = rs.read(Grant::Columns::Type)
@@ -138,7 +138,7 @@ module Grant::Aggregations
 
       result = nil
       adapter = Model.adapter
-      adapter.open do |db|
+      adapter.open(sql, numbered_parameters, Model.name) do |db|
         db.query(sql, args: adapter.normalize_bind_values(numbered_parameters)) do |rs|
           if rs.move_next
             result = rs.read(Grant::Columns::Type)
@@ -162,7 +162,7 @@ module Grant::Aggregations
       end
 
       adapter = Model.adapter
-      adapter.open do |db|
+      adapter.open(sql, numbered_parameters, Model.name) do |db|
         db.query(sql, args: adapter.normalize_bind_values(numbered_parameters)) do |rs|
           rs.each do
             value = rs.read(Grant::Columns::Type)
@@ -187,7 +187,7 @@ module Grant::Aggregations
 
       result = nil
       adapter = Model.adapter
-      adapter.open do |db|
+      adapter.open(sql, numbered_parameters, Model.name) do |db|
         db.query(sql, args: adapter.normalize_bind_values(numbered_parameters)) do |rs|
           if rs.move_next
             result = rs.read(Grant::Columns::Type)
@@ -256,7 +256,7 @@ module Grant::Aggregations
       values.concat(numbered_parameters)
 
       adapter = Model.adapter
-      adapter.open do |db|
+      adapter.open(sql, values, Model.name) do |db|
         db.exec(sql, args: adapter.normalize_bind_values(values)).rows_affected
       end
     end

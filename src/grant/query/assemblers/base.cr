@@ -532,7 +532,7 @@ module Grant::Query::Assembler
       start_time = Time.instant
       begin
         adapter = Model.adapter
-        result = adapter.open do |db|
+        result = adapter.open(sql, numbered_parameters, Model.name) do |db|
           db.exec sql, args: adapter.normalize_bind_values(numbered_parameters)
         end
 
@@ -642,7 +642,7 @@ module Grant::Query::Assembler
       begin
         rows = [] of String
         adapter = Model.adapter
-        adapter.open do |db|
+        adapter.open(sql, params, Model.name) do |db|
           db.query(sql, args: adapter.normalize_bind_values(params)) do |rs|
             rs.each do
               cells = [] of String
@@ -696,7 +696,7 @@ module Grant::Query::Assembler
       start_time = Time.instant
       begin
         adapter = Model.adapter
-        rows_affected = adapter.open do |db|
+        rows_affected = adapter.open(sql, numbered_parameters, Model.name) do |db|
           db.exec(sql, args: adapter.normalize_bind_values(numbered_parameters)).rows_affected
         end
 

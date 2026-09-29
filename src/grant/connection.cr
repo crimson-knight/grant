@@ -36,7 +36,7 @@ module Grant
       @before_write.call
       selected_adapter = adapter(:writing)
       statement = selected_adapter.ensure_clause_template(sql)
-      selected_adapter.open do |database|
+      selected_adapter.open(statement, binds) do |database|
         database.exec(statement, args: selected_adapter.normalize_bind_values(binds))
       end
     end
@@ -45,7 +45,7 @@ module Grant
     def exec_query(sql : String, binds : Array(Grant::Columns::Type) = [] of Grant::Columns::Type) : Grant::Result
       selected_adapter = adapter(:reading)
       statement = selected_adapter.ensure_clause_template(sql)
-      selected_adapter.open do |database|
+      selected_adapter.open(statement, binds) do |database|
         database.query(statement, args: selected_adapter.normalize_bind_values(binds)) do |result_set|
           return Grant::Result.from(result_set, selected_adapter)
         end
@@ -86,7 +86,7 @@ module Grant
     def with_result_set(sql : String, binds : Array(Grant::Columns::Type) = [] of Grant::Columns::Type, & : DB::ResultSet -> T) : T forall T
       selected_adapter = adapter(:reading)
       statement = selected_adapter.ensure_clause_template(sql)
-      selected_adapter.open do |database|
+      selected_adapter.open(statement, binds) do |database|
         database.query(statement, args: selected_adapter.normalize_bind_values(binds)) do |result_set|
           return yield result_set
         end

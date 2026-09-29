@@ -394,7 +394,7 @@ module Grant::STI
 
         self.class.mark_write_operation
         adapter = self.class.adapter
-        adapter.open do |db|
+        adapter.open(sql, params, self.class.name) do |db|
           db.exec(sql, args: adapter.normalize_bind_values(params))
         end
 

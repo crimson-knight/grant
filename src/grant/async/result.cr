@@ -14,10 +14,11 @@ module Grant
         @completed = Atomic(Bool).new(false)
         @promise = Promise(T).new
         @started_at = Time.instant
+        origin = Fiber.current
         @fiber = spawn do
           begin
             Async::Metrics.track_operation do
-              result = block.call
+              result = Grant::Notifications.async_from(origin) { block.call }
               @promise.resolve(result)
             end
           rescue e

@@ -22,6 +22,7 @@ module Grant
   annotation Table; end
 end
 
+require "./grant/notifications"
 require "./adapter/base"
 require "./grant/sanitization"
 require "./grant/connection_registry"
