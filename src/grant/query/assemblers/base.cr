@@ -69,7 +69,14 @@ module Grant::Query::Assembler
     # select_keyword # => "SELECT" or "SELECT DISTINCT"
     # ```
     def select_keyword : String
-      @query.distinct? ? "SELECT DISTINCT" : "SELECT"
+      @query.distinct? ? "#{select_prefix} DISTINCT" : select_prefix
+    end
+
+    # `SELECT`, followed by the relation's optimizer hints as one
+    # `/*+ ... */` comment when it has any.
+    def select_prefix : String
+      hints = @query.optimizer_hint_list
+      hints.empty? ? "SELECT" : "SELECT /*+ #{hints.join(" ")} */"
     end
 
     # Generates JOIN clauses from the query builder's join_clauses array.
@@ -86,6 +93,9 @@ module Grant::Query::Assembler
       return nil if join_clauses.empty?
 
       parts = join_clauses.map do |jc|
+        # A raw join carries its whole fragment in `on`.
+        next jc[:on] if jc[:type] == :raw
+
         join_type = case jc[:type]
                     when :inner then "INNER JOIN"
                     when :left  then "LEFT JOIN"
@@ -217,9 +227,11 @@ module Grant::Query::Assembler
                             end
       valid_column = if qualifier.nil? || qualifier == Model.table_name
                        Model.fields.includes?(column) || !encrypted_attribute.nil?
-                     elsif @query.join_clauses.any? { |join| join[:table] == qualifier }
-                       # The model behind the joined table decides; a raw joined
-                       # table the registry does not know is identifier-checked only.
+                     elsif Grant::Query::JoinSupport.joins?(@query.join_clauses, qualifier)
+                       # The model behind the joined table decides. A nested join,
+                       # a through table, an alias or a raw joined table the
+                       # registry does not know is a validated identifier, quoted
+                       # below.
                        Grant::Query::JoinedColumns.known_column?(Model.name, qualifier, column) != false
                      elsif @rendering_where_group
                        # A grouped condition is rendered when it is added, so the
@@ -381,20 +393,44 @@ module Grant::Query::Assembler
         end
       end
 
-      order_clauses = order_fields.map do |expression|
-        field = qualify_join_field(expression[:field], Model.quote(Model.table_name))
-        next unless field
-
-        add_aggregate_field field
-
-        if expression[:direction] == Builder::Sort::Ascending
-          "#{field} ASC"
-        else
-          "#{field} DESC"
-        end
-      end.compact
+      order_clauses = order_fields.map { |expression| render_order_term(expression) }
 
       @order = "ORDER BY #{order_clauses.join ", "}"
+    end
+
+    # Renders one ORDER BY term. A raw term is emitted as written; a column term
+    # is qualified when joins are present and gets its direction and NULL
+    # placement.
+    protected def render_order_term(expression : NamedTuple(field: String, direction: Builder::Sort)) : String
+      direction = expression[:direction]
+      return expression[:field] if direction.raw?
+
+      field = order_field_sql(expression[:field])
+      add_aggregate_field field
+      keyword = direction.sorts_descending? ? "DESC" : "ASC"
+      case direction.nulls_placement
+      when :first then nulls_ordering_sql(field, keyword, first: true)
+      when :last  then nulls_ordering_sql(field, keyword, first: false)
+      else             "#{field} #{keyword}"
+      end
+    end
+
+    # `table.column` is checked against the model's table and the joined tables,
+    # then quoted; anything else follows the ordinary join qualification.
+    private def order_field_sql(field : String) : String
+      parts = field.split('.')
+      return qualify_join_field(field, Model.quote(Model.table_name)) unless parts.size == 2 && Grant::Query::SqlExpression.identifier?(field)
+
+      unless parts[0] == Model.table_name || Grant::Query::JoinSupport.joins?(@query.join_clauses, parts[0])
+        raise ArgumentError.new("Unknown query table #{parts[0].inspect} in ORDER BY for #{Model.name}")
+      end
+      "#{Model.quote(parts[0])}.#{Model.quote(parts[1])}"
+    end
+
+    # PostgreSQL and SQLite order NULLs natively; the MySQL assembler overrides
+    # this because MySQL has no NULLS FIRST/LAST.
+    protected def nulls_ordering_sql(field : String, keyword : String, first : Bool) : String
+      "#{field} #{keyword} NULLS #{first ? "FIRST" : "LAST"}"
     end
 
     def group_by
@@ -447,7 +483,7 @@ module Grant::Query::Assembler
           s << limit
           s << offset
         end
-        sql = "SELECT COUNT(*) FROM (#{distinct_rows_sql}) AS grant_distinct_rows"
+        sql = "#{select_prefix} COUNT(*) FROM (#{distinct_rows_sql}) AS grant_distinct_rows"
       elsif (@query.limit || @query.offset) && @query.group_fields.empty?
         # COUNT(*) yields one row, so a LIMIT/OFFSET on it would drop that row.
         # Count the rows the limited relation returns instead.
@@ -462,10 +498,10 @@ module Grant::Query::Assembler
           s << (limit || "LIMIT #{Int64::MAX}")
           s << offset
         end
-        sql = "SELECT COUNT(*) FROM (#{limited_rows_sql}) AS grant_limited_rows"
+        sql = "#{select_prefix} COUNT(*) FROM (#{limited_rows_sql}) AS grant_limited_rows"
       else
         sql = build_sql do |s|
-          s << "SELECT COUNT(*)"
+          s << "#{select_prefix} COUNT(*)"
           s << from_clause
           s << joins
           s << where
@@ -487,7 +523,7 @@ module Grant::Query::Assembler
       end
 
       sql = build_sql do |s|
-        s << "SELECT #{group_expressions.join(", ")}, COUNT(*)"
+        s << "#{select_prefix} #{group_expressions.join(", ")}, COUNT(*)"
         s << from_clause
         s << joins
         s << where

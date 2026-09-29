@@ -60,9 +60,45 @@ class Grant::Query::Builder(Model)
     Pg
   end
 
+  # Direction of one ORDER BY term. `Raw` marks a term whose `field` is a
+  # complete SQL expression (direction included) that is emitted as written.
   enum Sort
     Ascending
     Descending
+    AscendingNullsFirst
+    AscendingNullsLast
+    DescendingNullsFirst
+    DescendingNullsLast
+    Raw
+
+    # `true` for every descending member, whatever its NULL placement.
+    def sorts_descending? : Bool
+      descending? || descending_nulls_first? || descending_nulls_last?
+    end
+
+    # Where NULLs sort, `:first` or `:last`, or `nil` for the adapter default.
+    def nulls_placement : Symbol?
+      if ascending_nulls_first? || descending_nulls_first?
+        :first
+      elsif ascending_nulls_last? || descending_nulls_last?
+        :last
+      end
+    end
+
+    # The opposite direction, with NULL placement flipped the way
+    # ActiveRecord's `reverse_order` does. A `Raw` term stays `Raw`; its SQL is
+    # reversed by `Grant::Query::OrderSupport.reverse_raw`.
+    def reverse : Sort
+      case self
+      when Ascending            then Descending
+      when Descending           then Ascending
+      when AscendingNullsFirst  then DescendingNullsLast
+      when AscendingNullsLast   then DescendingNullsFirst
+      when DescendingNullsFirst then AscendingNullsLast
+      when DescendingNullsLast  then AscendingNullsFirst
+      else                           self
+      end
+    end
   end
 
   alias WhereField = Grant::Query::WhereField
@@ -577,7 +613,7 @@ class Grant::Query::Builder(Model)
     end
 
     if qualifier
-      allowed_qualifiers = [Model.table_name] + @join_clauses.map(&.[:table])
+      allowed_qualifiers = [Model.table_name] + @join_clauses.flat_map { |join| Grant::Query::JoinSupport.qualifiers(join) }
       unless allowed_qualifiers.includes?(qualifier)
         raise ArgumentError.new("Unknown query table #{qualifier.inspect} for #{Model.name}")
       end
@@ -717,7 +753,7 @@ class Grant::Query::Builder(Model)
   # # => SELECT ... FROM users INNER JOIN posts ON posts.user_id = users.id WHERE active = true
   # ```
   def joins!(table : String, *, on : String) : self
-    own_join_clauses << {type: :inner, table: table, on: on}
+    add_join_clause({type: :inner, table: table, on: on})
     self
   end
 
@@ -737,7 +773,7 @@ class Grant::Query::Builder(Model)
   # # => SELECT ... FROM klasses INNER JOIN teachers ON teachers.id = klasses.teacher_id
   # ```
   def joins!(association : Symbol) : self
-    own_join_clauses.concat(resolve_association_join(association, :inner))
+    add_join_clauses(resolve_association_join(association, :inner))
     self
   end
 
@@ -758,7 +794,7 @@ class Grant::Query::Builder(Model)
   # # => SELECT ... FROM users LEFT JOIN posts ON posts.user_id = users.id WHERE posts.id IS NULL
   # ```
   def left_joins!(table : String, *, on : String) : self
-    own_join_clauses << {type: :left, table: table, on: on}
+    add_join_clause({type: :left, table: table, on: on})
     self
   end
 
@@ -772,7 +808,7 @@ class Grant::Query::Builder(Model)
   # # => SELECT ... FROM parents LEFT JOIN students ON students.parent_id = parents.id
   # ```
   def left_joins!(association : Symbol) : self
-    own_join_clauses.concat(resolve_association_join(association, :left))
+    add_join_clauses(resolve_association_join(association, :left))
     self
   end
 
@@ -794,57 +830,7 @@ class Grant::Query::Builder(Model)
   #
   # Raises `ArgumentError` if the association is unknown.
   private def resolve_association_join(association : Symbol, type : Symbol) : Array(NamedTuple(type: Symbol, table: String, on: String))
-    meta = Grant::AssociationRegistry.get(Model.name, association.to_s)
-    raise ArgumentError.new("Unknown association #{association.inspect} for #{Model.name}") unless meta
-
-    target_table = meta[:target_class].table_name
-    current_table = Model.table_name
-    foreign_key = meta[:foreign_key]
-    primary_key = meta[:primary_key]
-
-    if through_name = meta[:through]
-      through_meta = Grant::AssociationRegistry.get(Model.name, through_name)
-      raise ArgumentError.new("Unknown through association #{through_name.inspect} for #{Model.name}") unless through_meta
-
-      through_class = through_meta[:target_class]
-      through_table = through_class.table_name
-      first_on = "#{through_table}.#{through_meta[:foreign_key]} = #{current_table}.#{through_meta[:primary_key]}"
-
-      source_name = meta[:source] || meta[:target_class].name.split("::").last.underscore
-      source_meta = Grant::AssociationRegistry.get(through_class.name, source_name)
-      source_foreign_key = if source = source_meta
-                             source[:foreign_key]
-                           else
-                             "#{source_name}_id"
-                           end
-      source_primary_key = if source = source_meta
-                             source[:primary_key]
-                           else
-                             meta[:target_class].primary_name
-                           end
-
-      second_on = if source_meta && source_meta[:type] == :belongs_to
-                    "#{target_table}.#{source_primary_key} = #{through_table}.#{source_foreign_key}"
-                  else
-                    "#{target_table}.#{source_foreign_key} = #{through_table}.#{source_primary_key}"
-                  end
-
-      return [
-        {type: type, table: through_table, on: first_on},
-        {type: type, table: target_table, on: second_on},
-      ]
-    end
-
-    on = case meta[:type]
-         when :belongs_to
-           # FK lives on the current model's table.
-           "#{target_table}.#{primary_key} = #{current_table}.#{foreign_key}"
-         else
-           # has_many / has_one: FK lives on the target table.
-           "#{target_table}.#{foreign_key} = #{current_table}.#{primary_key}"
-         end
-
-    [{type: type, table: target_table, on: on}]
+    Grant::Query::JoinSupport.resolve(Model, association, type)
   end
 
   private def add_eager_load_join(association : Symbol) : Nil
@@ -1026,10 +1012,7 @@ class Grant::Query::Builder(Model)
       return self
     end
 
-    @order_fields = @order_fields.map do |field|
-      new_direction = field[:direction] == Sort::Ascending ? Sort::Descending : Sort::Ascending
-      {field: field[:field], direction: new_direction}
-    end
+    @order_fields = @order_fields.map { |field| Grant::Query::OrderSupport.reverse(field) }
     @shared_arrays &= ~4_u16
     self
   end
@@ -1135,6 +1118,10 @@ class Grant::Query::Builder(Model)
         @distinct = false
       when :lock
         @lock_mode = nil
+      when :readonly
+        @readonly = false
+      when :optimizer_hints
+        @optimizer_hints = [] of String
       else
         raise ArgumentError.new("unscope: unknown component #{component.inspect}") unless unscope_extra_component!(component)
       end
@@ -1208,6 +1195,7 @@ class Grant::Query::Builder(Model)
     restrictions = association_restrictions
     records = assembler.select.run
     records.each(&.strict_loading!) if strict_loading?
+    records.each(&.readonly!) if readonly?
 
     # Apply eager loading if any associations are specified
     all_associations = @includes_associations + @preload_associations + @eager_load_associations
@@ -2268,6 +2256,9 @@ class Grant::Query::Builder(Model)
     # Merge none flag
     @is_none = true if other.is_none?
 
+    @readonly = true if other.readonly?
+    @optimizer_hints = @optimizer_hints | other.optimizer_hint_list
+
     self
   end
 
@@ -2329,3 +2320,12 @@ class Grant::Query::Builder(Model)
 end
 
 require "./where_composition"
+require "./sql_expression"
+require "./ordering"
+require "./joins"
+require "./grouping"
+require "./readonly"
+require "./select_expressions"
+require "./aggregations"
+require "./pluck"
+require "./extract_associated"

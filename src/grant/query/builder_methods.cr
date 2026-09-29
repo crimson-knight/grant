@@ -36,4 +36,6 @@ module Grant::Query::BuilderMethods
   delegate includes, preload, eager_load, in_chunks, to: __builder
   delegate use_index, force_index, ignore_index, to: __builder
   delegate ids, explain, unscope, to: __builder
+  delegate group, left_outer_joins, in_order_of, readonly, optimizer_hints, to: __builder
+  delegate extract_associated, pluck_as, pick_as, to: __builder
 end

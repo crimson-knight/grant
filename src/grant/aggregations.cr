@@ -1,13 +1,26 @@
 module Grant::Aggregations
   module ClassMethods
-    # Sum the values of a specific column
-    def sum(column : Symbol | String) : Float64
-      current_scope.sum(column)
+    # Sum the values of a specific column. Integer columns sum to `Int64`, float
+    # columns to `Float64`, anything else (an expression, a joined column) to
+    # `Int64` or `BigDecimal`. Raises `ArgumentError` on a grouped scope; use
+    # `group(...).sum(...)` on a relation for the per-group `Hash`.
+    def sum(column : Symbol | String) : Grant::Query::Builder::SumValue
+      result = current_scope.sum(column)
+      raise ArgumentError.new("sum on a grouped scope returns a Hash per group; call it on the relation") if result.is_a?(Hash)
+      result
     end
 
     # Calculate average of a specific column
     def avg(column : Symbol | String) : Float64?
-      current_scope.avg(column)
+      result = current_scope.avg(column)
+      raise ArgumentError.new("avg on a grouped scope returns a Hash per group; call it on the relation") if result.is_a?(Hash)
+      result
+    end
+
+    # Generic aggregate, like ActiveRecord's `calculate`. See
+    # `Grant::Query::Builder#calculate`.
+    def calculate(operation : Grant::Calculation | Symbol, column : Symbol | String | Nil = nil)
+      current_scope.calculate(operation, column)
     end
 
     # ActiveRecord-compatible name for `avg`.
@@ -17,7 +30,9 @@ module Grant::Aggregations
 
     # Find minimum value of a specific column
     def min(column : Symbol | String) : Grant::Columns::Type
-      current_scope.min(column)
+      result = current_scope.min(column)
+      raise ArgumentError.new("min on a grouped scope returns a Hash per group; call it on the relation") if result.is_a?(Hash)
+      result
     end
 
     def minimum(column : Symbol | String) : Grant::Columns::Type
@@ -26,7 +41,9 @@ module Grant::Aggregations
 
     # Find maximum value of a specific column
     def max(column : Symbol | String) : Grant::Columns::Type
-      current_scope.max(column)
+      result = current_scope.max(column)
+      raise ArgumentError.new("max on a grouped scope returns a Hash per group; call it on the relation") if result.is_a?(Hash)
+      result
     end
 
     def maximum(column : Symbol | String) : Grant::Columns::Type
@@ -69,83 +86,104 @@ module Grant::Aggregations
       end
     end
 
-    # Sum with query conditions
-    def sum(column : Symbol | String) : Float64
-      sql = build_sql do |s|
-        s << "SELECT COALESCE(SUM(#{aggregate_field(column)}), 0)"
-        s << "FROM #{table_name}"
-        s << joins
-        s << where
-      end
+    # Builds the aggregate statement for *function* (`SUM`, `AVG`, `MIN`, `MAX`
+    # or `COUNT`) over *column*, honoring the relation's joins, WHERE, GROUP BY,
+    # HAVING, ORDER, LIMIT and OFFSET.
+    #
+    # - Grouped relations select the group keys ahead of the aggregate, so one
+    #   GROUP BY statement answers every group.
+    # - A limited or offset ungrouped relation aggregates over the rows it
+    #   returns, by wrapping them in a derived table (an aggregate is one row, so
+    #   a LIMIT on it would change nothing).
+    # - *cast* `:text` returns the aggregate as text, so exact integers and
+    #   decimals reach Crystal without a lossy driver conversion; `:double`
+    #   returns a double precision number; `:none` leaves the driver type.
+    # - *distinct* aggregates over distinct values (`SUM(DISTINCT x)`,
+    #   `COUNT(DISTINCT x)`), never over a subquery of full rows.
+    def aggregate_sql(function : String, column : String, cast : Symbol = :none, distinct : Bool = false) : String
+      keyword = distinct ? "DISTINCT " : ""
 
-      result = 0.0
-      adapter = Model.adapter
-      adapter.open(sql, numbered_parameters, Model.name) do |db|
-        value = db.scalar(sql, args: adapter.normalize_bind_values(numbered_parameters))
-        result = value.to_s.to_f64 unless value.nil?
-      end
-      result
-    end
-
-    # Average with query conditions
-    def avg(column : Symbol | String) : Float64?
-      sql = build_sql do |s|
-        s << "SELECT AVG(#{aggregate_field(column)})"
-        s << "FROM #{table_name}"
-        s << joins
-        s << where
-      end
-
-      result = nil
-      adapter = Model.adapter
-      adapter.open(sql, numbered_parameters, Model.name) do |db|
-        value = db.scalar(sql, args: adapter.normalize_bind_values(numbered_parameters))
-        str_value = value.to_s
-        result = str_value.nil? || str_value == "NULL" ? nil : str_value.to_f64 unless value.nil?
-      end
-      result
-    end
-
-    # Min with query conditions
-    def min(column : Symbol | String) : Grant::Columns::Type
-      sql = build_sql do |s|
-        s << "SELECT MIN(#{aggregate_field(column)})"
-        s << "FROM #{table_name}"
-        s << joins
-        s << where
-      end
-
-      result = nil
-      adapter = Model.adapter
-      adapter.open(sql, numbered_parameters, Model.name) do |db|
-        db.query(sql, args: adapter.normalize_bind_values(numbered_parameters)) do |rs|
-          if rs.move_next
-            result = rs.read(Grant::Columns::Type)
-          end
+      if @query.group_fields.any?
+        group_keys = @query.group_fields.map do |expression|
+          qualify_join_field(expression[:field], Model.quote(Model.table_name))
+        end
+        value = aggregate_expression(function, "#{keyword}#{aggregate_column_sql(column)}", cast)
+        return build_sql do |s|
+          s << "#{select_prefix} #{group_keys.join(", ")}, #{value}"
+          s << from_clause
+          s << joins
+          s << where
+          s << group_by
+          s << having
+          s << order(use_default_order: false)
+          s << limit
+          s << offset
         end
       end
-      result
-    end
 
-    # Max with query conditions
-    def max(column : Symbol | String) : Grant::Columns::Type
-      sql = build_sql do |s|
-        s << "SELECT MAX(#{aggregate_field(column)})"
-        s << "FROM #{table_name}"
+      if @query.limit || @query.offset
+        value = aggregate_expression(function, "#{keyword}grant_value", cast)
+        inner = build_sql do |s|
+          s << "SELECT #{aggregate_column_sql(column)} AS grant_value"
+          s << from_clause
+          s << joins
+          s << where
+          s << having
+          s << order(use_default_order: false)
+          # SQLite and MySQL reject OFFSET without LIMIT; Int64::MAX is unbounded.
+          s << (limit || "LIMIT #{Int64::MAX}")
+          s << offset
+        end
+        return "#{select_prefix} #{value} FROM (#{inner}) AS grant_limited_rows"
+      end
+
+      value = aggregate_expression(function, "#{keyword}#{aggregate_column_sql(column)}", cast)
+      build_sql do |s|
+        s << "#{select_prefix} #{value}"
+        s << from_clause
         s << joins
         s << where
+        s << having
       end
+    end
 
-      result = nil
-      adapter = Model.adapter
-      adapter.open(sql, numbered_parameters, Model.name) do |db|
-        db.query(sql, args: adapter.normalize_bind_values(numbered_parameters)) do |rs|
-          if rs.move_next
-            result = rs.read(Grant::Columns::Type)
-          end
-        end
+    private def aggregate_expression(function : String, argument : String, cast : Symbol) : String
+      expression = "#{function}(#{argument})"
+      case cast
+      when :text   then "CAST(#{expression} AS #{text_cast_type})"
+      when :double then double_cast_sql(expression)
+      else              expression
       end
-      result
+    end
+
+    # The type name `CAST(... AS type)` uses to return text. Adapters override.
+    protected def text_cast_type : String
+      "TEXT"
+    end
+
+    # *expression* as a double precision number. Adapters override.
+    protected def double_cast_sql(expression : String) : String
+      "CAST(#{expression} AS DOUBLE PRECISION)"
+    end
+
+    # A column name, `table.column` of the model or a joined table, or a trusted
+    # SQL expression such as `price * quantity`. `*` stays as written.
+    private def aggregate_column_sql(column : String) : String
+      return "*" if column == "*"
+
+      if Grant::Query::SqlExpression.identifier?(column)
+        parts = column.split('.')
+        if parts.size == 2
+          unless parts[0] == Model.table_name || Grant::Query::JoinSupport.joins?(@query.join_clauses, parts[0])
+            raise ArgumentError.new("Unknown query table #{parts[0].inspect} for #{Model.name}")
+          end
+          "#{Model.quote(parts[0])}.#{Model.quote(parts[1])}"
+        else
+          aggregate_field(column)
+        end
+      else
+        Grant::Query::SqlExpression.validate!(column, "aggregate expression")
+      end
     end
 
     # Pluck with query conditions
@@ -201,10 +239,7 @@ module Grant::Aggregations
     # Last with query conditions
     def last : Model?
       # Reverse the order for last
-      reverse_order = @order_fields.map do |field|
-        new_direction = field[:direction] == Sort::Ascending ? Sort::Descending : Sort::Ascending
-        {field: field[:field], direction: new_direction}
-      end
+      reverse_order = @order_fields.map { |field| Grant::Query::OrderSupport.reverse(field) }
 
       # If no order specified, order by primary key DESC
       if reverse_order.empty?
@@ -260,35 +295,5 @@ module Grant::Aggregations
         db.exec(sql, args: adapter.normalize_bind_values(values)).rows_affected
       end
     end
-  end
-end
-
-class Grant::Query::Builder(Model)
-  def sum(column : Symbol | String) : Float64
-    assembler.sum(column)
-  end
-
-  def avg(column : Symbol | String) : Float64?
-    assembler.avg(column)
-  end
-
-  def average(column : Symbol | String) : Float64?
-    avg(column)
-  end
-
-  def min(column : Symbol | String) : Grant::Columns::Type
-    assembler.min(column)
-  end
-
-  def minimum(column : Symbol | String) : Grant::Columns::Type
-    min(column)
-  end
-
-  def max(column : Symbol | String) : Grant::Columns::Type
-    assembler.max(column)
-  end
-
-  def maximum(column : Symbol | String) : Grant::Columns::Type
-    max(column)
   end
 end

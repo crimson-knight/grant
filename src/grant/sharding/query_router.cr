@@ -279,9 +279,9 @@ module Grant::Sharding
         if val_a.nil? && val_b.nil?
           next
         elsif val_a.nil?
-          return direction == Grant::Query::Builder::Sort::Ascending ? -1 : 1
+          return direction.sorts_descending? ? 1 : -1
         elsif val_b.nil?
-          return direction == Grant::Query::Builder::Sort::Ascending ? 1 : -1
+          return direction.sorts_descending? ? -1 : 1
         end
 
         # Compare values
@@ -299,7 +299,7 @@ module Grant::Sharding
         comparison = comparison.as(Int32)
 
         # Apply direction
-        if direction == Grant::Query::Builder::Sort::Descending
+        if direction.sorts_descending?
           comparison = -comparison
         end
 

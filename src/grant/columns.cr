@@ -110,7 +110,10 @@ module Grant::Columns
             {% end %}
         {% end %}
         else
-          # Skip
+          # Not a mapped column: a computed `select` expression. Read it so the
+          # columns after it stay aligned, and keep it as an extra attribute.
+          value = result.read
+          store_extra_attribute(col, value.is_a?(Grant::Columns::Type) ? value : value.to_s)
         end
       end
     {% end %}

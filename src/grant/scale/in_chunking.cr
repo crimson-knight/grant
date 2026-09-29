@@ -134,6 +134,9 @@ class Grant::Query::Builder(Model)
   protected def chunked_select : Array(Model)
     requested_limit = @limit
     has_order = !@order_fields.empty?
+    if @order_fields.any? { |term| term[:direction].raw? }
+      raise ArgumentError.new("Raw ORDER BY expressions cannot be merged across chunked IN queries")
+    end
 
     collected = [] of Model
     seen = Set(Grant::Columns::Type).new
@@ -273,7 +276,7 @@ class Grant::Query::Builder(Model)
         va = a.read_attribute(of[:field])
         vb = b.read_attribute(of[:field])
         c = compare_values(va, vb)
-        c = -c if of[:direction] == Grant::Query::Builder::Sort::Descending
+        c = -c if of[:direction].sorts_descending?
         if c != 0
           cmp = c
           break

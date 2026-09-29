@@ -449,8 +449,9 @@ class Grant::AssociationCollection(Owner, Target)
     unless builder.order_fields.empty?
       order_fields = builder.order_fields.map do |order|
         field = order[:field]
+        next field if order[:direction].raw?
         quoted = field.includes?(".") ? field.split(".").map { |part| Target.quote(part) }.join(".") : Target.quote(field)
-        direction = order[:direction] == Grant::Query::Builder::Sort::Descending ? "DESC" : "ASC"
+        direction = order[:direction].sorts_descending? ? "DESC" : "ASC"
         "#{quoted} #{direction}"
       end
       modifiers << "ORDER BY #{order_fields.join(", ")}"
