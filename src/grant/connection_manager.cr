@@ -63,10 +63,8 @@ module Grant
     end
 
     private def innermost_manual_handle : Grant::Transaction::Handle
-      state = Grant::Transaction.current_state?
-      unless state && state.adapter.same?(adapter(:writing))
-        raise Grant::Transaction::NotOpenError.new
-      end
+      state = Grant::Transaction.current_state_for?(adapter(:writing))
+      raise Grant::Transaction::NotOpenError.new unless state
       if nested = state.manual_savepoints.last?
         return nested
       end
@@ -85,9 +83,14 @@ module Grant
   # end
   # Grant.transaction("analytics", isolation: :serializable) { ... }
   # ```
-  def self.transaction(database : String? = nil, **options, & : -> T) : T? forall T
-    transaction_options = Grant::Transaction::Options.new(**options)
-    Grant.connection(database).transaction(transaction_options) { yield }
+  def self.transaction(database : String? = nil, isolation : Grant::Transaction::IsolationLevel? = nil, readonly : Bool = false, requires_new : Bool = false, joinable : Bool = true, independent : Bool = false, & : -> T) : T? forall T
+    Grant.connection(database).transaction(
+      isolation: isolation,
+      readonly: readonly,
+      requires_new: requires_new,
+      joinable: joinable,
+      independent: independent
+    ) { yield }
   end
 
   # Runs *block* after the outermost open transaction on this fiber commits, or

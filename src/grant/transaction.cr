@@ -36,7 +36,7 @@ module Grant::Transaction
   # Raised when the database aborts a transaction due to a serialization /
   # concurrency conflict (e.g. a `Serializable` isolation failure or a
   # `could not serialize` error). Retrying the transaction is the usual remedy.
-  class SerializationError < Exception
+  class SerializationError < Grant::ErrorBase
     def initialize(message = "Transaction serialization failure")
       super(message)
     end
@@ -44,7 +44,7 @@ module Grant::Transaction
 
   # Raised when a write is attempted inside a `readonly: true` transaction (or
   # when the database reports a "read-only transaction" error).
-  class ReadOnlyError < Exception
+  class ReadOnlyError < Grant::ErrorBase
     def initialize(message = "Cannot modify data in read-only transaction")
       super(message)
     end
@@ -195,6 +195,13 @@ module Grant::Transaction
     end
   end
 
+  # :nodoc:
+  # The name of a manually opened savepoint and the sizes of the transaction's
+  # queues when it was opened, so rolling back to it can undo only its work.
+  record SavepointMarker,
+    name : String,
+    marks : NamedTuple(callbacks: Int32, records: Int32, after_all: Int32)
+
   # Public view of a transaction: what `Model.current_transaction` returns and
   # what `Connection#begin_transaction` hands back. When no transaction is open
   # it is a null handle: `open?` is `false` and `after_commit` runs its block
@@ -208,8 +215,7 @@ module Grant::Transaction
   # ```
   class Handle
     getter state : TransactionState?
-    @savepoint : String?
-    @savepoint_marks : NamedTuple(callbacks: Int32, records: Int32, after_all: Int32)?
+    @savepoint : SavepointMarker?
     @settled : Bool = false
 
     # :nodoc:
@@ -217,7 +223,7 @@ module Grant::Transaction
     end
 
     # :nodoc:
-    def initialize(@state : TransactionState, @savepoint : String, @savepoint_marks : NamedTuple(callbacks: Int32, records: Int32, after_all: Int32))
+    def initialize(@state : TransactionState, @savepoint : SavepointMarker)
     end
 
     # Whether the transaction (or manual savepoint) is still open.
@@ -275,13 +281,8 @@ module Grant::Transaction
     end
 
     # :nodoc:
-    def savepoint_name? : String?
+    def savepoint? : SavepointMarker?
       @savepoint
-    end
-
-    # :nodoc:
-    def savepoint_marks? : NamedTuple(callbacks: Int32, records: Int32, after_all: Int32)?
-      @savepoint_marks
     end
 
     # :nodoc:
@@ -322,6 +323,18 @@ module Grant::Transaction
   # Returns the innermost open state for the current fiber, or `nil`.
   def self.current_state? : TransactionState?
     @@transaction_stacks[Fiber.current]?.try(&.last?)
+  end
+
+  # Returns the innermost open state on *adapter* for the current fiber, or
+  # `nil`. A transaction on another database may be nested inside it, so this
+  # searches the whole stack rather than only its top.
+  def self.current_state_for?(adapter : Grant::Adapter::Base) : TransactionState?
+    stack = @@transaction_stacks[Fiber.current]?
+    return nil unless stack
+    stack.reverse_each do |state|
+      return state if state.adapter.same?(adapter)
+    end
+    nil
   end
 
   # Returns the `Handle` of the innermost open transaction, or a null handle.
@@ -386,9 +399,7 @@ module Grant::Transaction
   # must NOT be routed onto the transaction connection — it belongs to a
   # different database entirely and gets its own pool connection instead.
   def self.current_connection?(adapter : Grant::Adapter::Base) : DB::Connection?
-    state = current_state?
-    return nil unless state
-    state.adapter.same?(adapter) ? state.connection : nil
+    current_state_for?(adapter).try(&.connection)
   end
 
   # Runs *block* in a transaction on *adapter* (which must be the writer).
@@ -402,12 +413,27 @@ module Grant::Transaction
   # - Otherwise the block joins the enclosing transaction (a `Rollback` is
   #   swallowed without undoing anything, as in ActiveRecord).
   def self.run(adapter : Grant::Adapter::Base, options : Options, & : -> T) : T? forall T
-    state = current_state?
+    state = current_state_for?(adapter)
+    return run_real(adapter, options) { yield } unless state
 
-    if state.nil? || !state.adapter.same?(adapter)
-      return run_real(adapter, options) { yield }
+    stack = fiber_stack
+    if state.same?(stack.last?)
+      run_nested(state, adapter, options) { yield }
+    else
+      # The open transaction on *adapter* has a transaction on another database
+      # nested inside it. Make it the innermost level for the block so saves
+      # enlist their callbacks and record snapshots with it, not with the
+      # other database's transaction.
+      stack.push(state)
+      begin
+        run_nested(state, adapter, options) { yield }
+      ensure
+        stack.pop if stack.last?.same?(state)
+      end
     end
+  end
 
+  private def self.run_nested(state : TransactionState, adapter : Grant::Adapter::Base, options : Options, & : -> T) : T? forall T
     if options.independent
       if Grant::SchemaTenant.current_connection?(adapter)
         # A schema-tenant block owns one physical connection; a second one
@@ -660,13 +686,12 @@ module Grant::Transaction
   # checked-out pool connection (held until settled); when one is already open
   # on the adapter it opens a savepoint and returns a nested handle.
   def self.begin_manual(adapter : Grant::Adapter::Base, options : Options) : Handle
-    state = current_state?
-    if state && state.adapter.same?(adapter)
+    if state = current_state_for?(adapter)
       raise Grant::TransactionIsolationError.new if options.isolation
       name = state.next_savepoint_name
       marks = savepoint_marks(state)
       execute_control(state.connection, adapter, "SAVEPOINT #{name}")
-      handle = Handle.new(state, name, marks)
+      handle = Handle.new(state, SavepointMarker.new(name, marks))
       state.manual_savepoints << handle
       return handle
     end
@@ -697,8 +722,8 @@ module Grant::Transaction
     state = handle.state
     raise NotOpenError.new unless state && handle.open?
 
-    if name = handle.savepoint_name?
-      execute_control(state.connection, state.adapter, "RELEASE SAVEPOINT #{name}")
+    if savepoint = handle.savepoint?
+      execute_control(state.connection, state.adapter, "RELEASE SAVEPOINT #{savepoint.name}")
       handle.settle
       state.manual_savepoints.delete(handle)
       return
@@ -722,9 +747,8 @@ module Grant::Transaction
     state = handle.state
     raise NotOpenError.new unless state && handle.open?
 
-    if name = handle.savepoint_name?
-      marks = handle.savepoint_marks?.not_nil!
-      rollback_to_savepoint(state, name, marks)
+    if savepoint = handle.savepoint?
+      rollback_to_savepoint(state, savepoint.name, savepoint.marks)
       handle.settle
       state.manual_savepoints.delete(handle)
       return
@@ -748,10 +772,8 @@ module Grant::Transaction
   # Runs *block* inside a named savepoint of the open transaction on *adapter*.
   # Raises `NotOpenError` when none is open.
   def self.with_savepoint(adapter : Grant::Adapter::Base, name : String?, & : -> T) : T? forall T
-    state = current_state?
-    unless state && state.adapter.same?(adapter)
-      raise NotOpenError.new("Savepoints require an open transaction")
-    end
+    state = current_state_for?(adapter)
+    raise NotOpenError.new("Savepoints require an open transaction") unless state
     if name && !(name =~ SAVEPOINT_NAME_PATTERN)
       raise InvalidSavepointNameError.new("Invalid savepoint name: #{name.inspect}")
     end
@@ -787,9 +809,9 @@ module Grant::Transaction
     # User.transaction(opts) { User.find!(1) }
     # ```
     def transaction(options : Transaction::Options, & : -> T) : T? forall T
+      # Always the writer: the read/write splitter keeps every statement in an
+      # open transaction on it (see `should_use_reader?`).
       writer = resolve_adapter_for_role(:writing)
-      # A new real transaction is a write intent: keep reads on the primary.
-      mark_write_operation if !options.readonly && !Grant::Transaction.in_explicit_transaction?
       Grant::Transaction.run(writer, options) { yield }
     end
 

@@ -599,6 +599,10 @@ module Grant::ConnectionManagement
       # 4. Read replicas are healthy
       return false unless connection_config.has_key?(:reading)
       return false if connection_context.try(&.role)
+      # Every statement inside an open transaction must reach the transaction's
+      # writer connection; a replica read would miss its uncommitted rows and a
+      # write would escape the transaction entirely.
+      return false if Grant::Transaction.in_explicit_transaction?
 
       # Check replica health
       if lb = ConnectionRegistry.get_load_balancer(current_database, current_shard)
