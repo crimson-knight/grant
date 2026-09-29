@@ -295,7 +295,7 @@ describe "Grant Luna association regressions" do
     active = T3ScopeChild.create!(t3_scope_owner_id: owner.id, active: true)
     inactive = T3ScopeChild.create!(t3_scope_owner_id: owner.id, active: false)
 
-    owner.active_children.delete_all.should eq(1)
+    owner.active_children.delete_all(:delete_all).should eq(1)
     T3ScopeChild.find(active.id).should be_nil
     T3ScopeChild.find(inactive.id).should_not be_nil
   end

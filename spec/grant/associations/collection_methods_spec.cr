@@ -98,7 +98,7 @@ describe "AssociationCollection methods" do
   end
 
   describe "#delete_all" do
-    it "deletes all associated records via SQL" do
+    it "deletes all associated records via SQL when asked to with :delete_all" do
       author = CollectionAuthor.new
       author.name = "Frank"
       author.save.should be_true
@@ -109,7 +109,7 @@ describe "AssociationCollection methods" do
 
       CollectionPost.where(collection_author_id: author.id).count.should eq(3)
 
-      deleted = author.posts.delete_all
+      deleted = author.posts.delete_all(:delete_all)
       deleted.should eq(3)
 
       CollectionPost.where(collection_author_id: author.id).count.should eq(0)
@@ -134,8 +134,8 @@ describe "AssociationCollection methods" do
         author.posts.create(title: "Post #{i}", body: "Body #{i}")
       end
 
-      count = author.posts.destroy_all
-      count.should eq(3)
+      destroyed = author.posts.destroy_all
+      destroyed.size.should eq(3)
 
       CollectionPost.where(collection_author_id: author.id).count.should eq(0)
     end
