@@ -646,6 +646,7 @@ module Grant::Querying
     clear_before_type_cast
     self.new_record = false
     clear_loaded_associations
+    _autosave_reset_for_reload
     ensure_dirty_tracking_initialized
     original_attributes, changed_attributes, previous_changes = dirty_tracking_hashes
     original_attributes.clear

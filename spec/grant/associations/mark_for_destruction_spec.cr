@@ -93,6 +93,23 @@ describe "mark_for_destruction" do
     item.changed_for_autosave?.should be_true
   end
 
+  it "is cleared by reload" do
+    item = MfdItem.create!(label: "a")
+    item.mark_for_destruction
+
+    item.reload
+    item.marked_for_destruction?.should be_false
+  end
+
+  it "reload drops records built on the owner but not saved" do
+    owner = MfdOwner.create!(name: "o")
+    owner.mfd_plain_items.build(label: "staged")
+
+    owner.reload
+    owner.save.should be_true
+    MfdPlainItem.where(mfd_owner_id: owner.id).count.should eq(0)
+  end
+
   describe "has_many autosave: true" do
     it "destroys the marked children when the owner is saved and drops them from the target" do
       owner = MfdOwner.create!(name: "o")
