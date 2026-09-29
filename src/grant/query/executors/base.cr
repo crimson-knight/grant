@@ -5,7 +5,11 @@ module Grant::Query::Executor
     end
 
     def log(*messages)
-      messages.each { |message| Grant::Logs::SQL.debug { message } }
+      statement = messages.first?
+      messages.each do |message|
+        # Bound values of encrypted and filtered columns never reach the log.
+        Grant::Logs::SQL.debug { message.is_a?(Array) && statement.is_a?(String) ? Grant::Encryption::LogFilter.redact(statement, message) : message }
+      end
     end
 
     # Enhanced logging with timing and structured data
