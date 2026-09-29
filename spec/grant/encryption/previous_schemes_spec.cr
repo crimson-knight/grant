@@ -37,6 +37,9 @@ describe "Grant::Encryption previous: schemes" do
   after_all do
     Grant::Encryption::KeyProvider.previous_primary_keys = [] of Bytes
     Grant::Encryption::KeyProvider.previous_deterministic_keys = [] of Bytes
+    Grant::Encryption::KeyProvider.primary_key = nil
+    Grant::Encryption::KeyProvider.deterministic_key = nil
+    Grant::Encryption::KeyProvider.key_derivation_salt = Grant::Encryption::KeyProvider::DEFAULT_SALT
   end
 
   before_each { PrevEncPerson.clear }

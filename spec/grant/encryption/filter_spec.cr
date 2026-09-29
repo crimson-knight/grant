@@ -26,6 +26,12 @@ def filter_enc_capture(& : ->) : String
 end
 
 describe "Grant::Encryption SQL log and inspect filtering" do
+  after_all do
+    Grant::Encryption::KeyProvider.primary_key = nil
+    Grant::Encryption::KeyProvider.deterministic_key = nil
+    Grant::Encryption::KeyProvider.key_derivation_salt = Grant::Encryption::KeyProvider::DEFAULT_SALT
+  end
+
   before_all do
     Grant::Encryption.configure do |config|
       config.primary_key = Base64.strict_encode("test_primary_key_32_bytes_long!!".to_slice)

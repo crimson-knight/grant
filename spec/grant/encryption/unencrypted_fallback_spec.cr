@@ -22,6 +22,12 @@ def unenc_insert(column : String, value : String) : Int64
 end
 
 describe "Grant::Encryption support_unencrypted_data" do
+  after_all do
+    Grant::Encryption::KeyProvider.primary_key = nil
+    Grant::Encryption::KeyProvider.deterministic_key = nil
+    Grant::Encryption::KeyProvider.key_derivation_salt = Grant::Encryption::KeyProvider::DEFAULT_SALT
+  end
+
   before_all do
     Grant::Encryption.configure do |config|
       config.primary_key = Base64.strict_encode("test_primary_key_32_bytes_long!!".to_slice)

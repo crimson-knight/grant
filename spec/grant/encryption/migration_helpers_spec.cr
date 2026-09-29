@@ -46,6 +46,12 @@ def mig_enc_capture(& : ->) : Array(String)
 end
 
 describe Grant::Encryption::MigrationHelpers do
+  after_all do
+    Grant::Encryption::KeyProvider.primary_key = nil
+    Grant::Encryption::KeyProvider.deterministic_key = nil
+    Grant::Encryption::KeyProvider.key_derivation_salt = Grant::Encryption::KeyProvider::DEFAULT_SALT
+  end
+
   helpers = Grant::Encryption::MigrationHelpers
 
   before_all do
