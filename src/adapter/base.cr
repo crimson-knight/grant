@@ -252,13 +252,13 @@ abstract class Grant::Adapter::Base
         end
         sql << ')'
       end
-      sql << bulk_conflict_sql(conflict, columns)
+      sql << bulk_conflict_sql(table_name, conflict, columns)
       sql << bulk_returning_sql(returning) if returning && !returning.empty?
     end
   end
 
   # The `ON CONFLICT` form shared by PostgreSQL and SQLite. MySQL overrides it.
-  protected def bulk_conflict_sql(conflict : Grant::Bulk::Conflict, columns : Array(String)) : String
+  protected def bulk_conflict_sql(table_name : String, conflict : Grant::Bulk::Conflict, columns : Array(String)) : String
     case conflict.mode
     in .raise?
       ""
@@ -269,9 +269,17 @@ abstract class Grant::Adapter::Base
       if assignments.empty?
         " ON CONFLICT#{bulk_conflict_target(conflict)} DO NOTHING"
       else
-        " ON CONFLICT#{bulk_conflict_target(conflict)} DO UPDATE SET #{assignments}"
+        " ON CONFLICT#{bulk_conflict_target(conflict)} DO UPDATE SET #{assignments}#{bulk_update_guard(table_name, conflict)}"
       end
     end
+  end
+
+  # Restricts `DO UPDATE` to existing rows whose guard column (the tenant
+  # column) matches the incoming row.
+  protected def bulk_update_guard(table_name : String, conflict : Grant::Bulk::Conflict) : String
+    column = conflict.guard_column
+    return "" unless column
+    " WHERE #{quote(table_name)}.#{quote(column)} = EXCLUDED.#{quote(column)}"
   end
 
   protected def bulk_conflict_target(conflict : Grant::Bulk::Conflict) : String

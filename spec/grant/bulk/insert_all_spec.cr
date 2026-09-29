@@ -30,6 +30,14 @@ describe "insert_all / insert_all!" do
     BulkItem.count.should eq(1)
   end
 
+  it "still raises for a collision on a key other than unique_by" do
+    existing = BulkItem.create!(sku: "a", name: "Original", stock: 1, status: BulkStatus::Draft)
+    row = {"id" => existing.id, "sku" => "other", "name" => "Clash", "stock" => 1, "status" => 0}
+
+    expect_raises(Grant::RecordNotUnique) { BulkItem.insert_all([row], unique_by: [:sku]) }
+    BulkItem.count.should eq(1)
+  end
+
   it "raises Grant::RecordNotUnique from insert_all! on a duplicate" do
     BulkItem.create!(sku: "a", name: "Original", stock: 1, status: BulkStatus::Draft)
 

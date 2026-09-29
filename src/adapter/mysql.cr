@@ -92,7 +92,7 @@ class Grant::Adapter::Mysql < Grant::Adapter::Base
     columns.empty? ? nil : columns
   end
 
-  protected def bulk_conflict_sql(conflict : Grant::Bulk::Conflict, columns : Array(String)) : String
+  protected def bulk_conflict_sql(table_name : String, conflict : Grant::Bulk::Conflict, columns : Array(String)) : String
     case conflict.mode
     in .raise?
       ""
@@ -102,7 +102,19 @@ class Grant::Adapter::Mysql < Grant::Adapter::Base
       column = quote(columns.first)
       " ON DUPLICATE KEY UPDATE #{column} = #{column}"
     in .update?
-      assignments = bulk_update_assignments(conflict) { |name| "VALUES(#{quote(name)})" }
+      assignments = if guard = conflict.guard_column
+                      # ON DUPLICATE KEY has no WHERE, so each assignment keeps
+                      # the existing value unless the guard column matches.
+                      if conflict.update_sql
+                        raise ArgumentError.new("on_duplicate cannot be tenant-guarded on MySQL; use update_only or run inside unscoped")
+                      end
+                      matches = "#{quote(guard)} = VALUES(#{quote(guard)})"
+                      conflict.update_columns.map do |name|
+                        "#{quote(name)} = IF(#{matches}, VALUES(#{quote(name)}), #{quote(name)})"
+                      end.join(", ")
+                    else
+                      bulk_update_assignments(conflict) { |name| "VALUES(#{quote(name)})" }
+                    end
       if assignments.empty?
         column = quote(columns.first)
         " ON DUPLICATE KEY UPDATE #{column} = #{column}"

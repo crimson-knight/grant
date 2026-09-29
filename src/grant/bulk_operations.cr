@@ -21,10 +21,15 @@ module Grant::Bulk
     getter update_columns : Array(String)
     # Replaces the generated assignment list when present.
     getter update_sql : Grant::Sql::Fragment?
+    # When set, an update applies only if the existing row holds the same value
+    # in this column as the incoming row (the tenant column of a multitenant
+    # model), so an upsert never rewrites another tenant's row.
+    getter guard_column : String?
 
     def initialize(@mode : Mode, @target : Array(String) = [] of String,
                    @update_columns : Array(String) = [] of String,
-                   @update_sql : Grant::Sql::Fragment? = nil)
+                   @update_sql : Grant::Sql::Fragment? = nil,
+                   @guard_column : String? = nil)
     end
   end
 end
@@ -271,7 +276,8 @@ module Grant::BulkOperations
     return Grant::Bulk::Conflict.new(mode, target) if mode.skip?
 
     target = [primary_name] if target.empty? && !adapter.mysql?
-    return Grant::Bulk::Conflict.new(mode, target, update_sql: on_duplicate) if on_duplicate
+    guard = __bulk_tenant_guard_column
+    return Grant::Bulk::Conflict.new(mode, target, update_sql: on_duplicate, guard_column: guard) if on_duplicate
 
     update_columns = if update_only
                        update_only.map(&.to_s).tap do |list|
@@ -285,7 +291,7 @@ module Grant::BulkOperations
                        skipped << "created_at" if auto_created_at
                        columns.reject { |column| skipped.includes?(column) }
                      end
-    Grant::Bulk::Conflict.new(mode, target, update_columns)
+    Grant::Bulk::Conflict.new(mode, target, update_columns, guard_column: guard)
   end
 
   # nil means "no RETURNING clause".
