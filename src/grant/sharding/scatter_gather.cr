@@ -105,15 +105,32 @@ module Grant::Sharding
     # for `limit + offset` rows; the rows are merge-sorted, the page is cut
     # once, and NULL values are dropped afterward, as a single database does.
     def pluck(column : String | Symbol) : Array(Grant::Columns::Type)
-      if @shards.size > 1 && (paged_across_shards? || !@query.order_fields.empty?)
-        guard_page_mergeable!("pluck")
-        return paged_pluck(column.to_s)
+      if merges_plucked_rows?
+        values = [] of Grant::Columns::Type
+        pluck_rows([column.to_s]).each do |row|
+          value = row[0]
+          values << value unless value.nil?
+        end
+        return values
       end
 
       results = gather { |_| local(@query).pluck_without_routing(column) }
       values = [] of Grant::Columns::Type
       results.each { |shard_values| values.concat(shard_values) }
       @query.distinct? ? values.uniq : values
+    end
+
+    # Rows of *field_names* over the targeted shards, ordered and paged like
+    # `pluck(column)`.
+    def pluck_rows(field_names : Array(String)) : Array(Array(Grant::Columns::Type))
+      unless merges_plucked_rows?
+        rows = [] of Array(Grant::Columns::Type)
+        gather { |_| local(@query).pluck_rows_without_routing(field_names) }.each { |shard_rows| rows.concat(shard_rows) }
+        return @query.distinct? ? rows.uniq : rows
+      end
+
+      guard_page_mergeable!("pluck")
+      paged_pluck_rows(field_names)
     end
 
     def sum(column : Symbol | String) : SumResult
@@ -198,9 +215,18 @@ module Grant::Sharding
       limit ? Math.min(remaining, limit) : remaining
     end
 
-    private def paged_pluck(column : String) : Array(Grant::Columns::Type)
+    # Whether plucked rows need a merge-sort and a global page cut.
+    private def merges_plucked_rows? : Bool
+      @shards.size > 1 && (paged_across_shards? || !@query.order_fields.empty?)
+    end
+
+    # Each shard plucks *plucked* plus the ORDER BY columns for
+    # `limit + offset` rows; the rows are merge-sorted, the page is cut once,
+    # and the ORDER BY columns are dropped again.
+    private def paged_pluck_rows(plucked : Array(String)) : Array(Array(Grant::Columns::Type))
       order_fields = @query.order_fields
-      field_names = [column] + order_fields.map(&.[:field])
+      width = plucked.size
+      field_names = plucked + order_fields.map(&.[:field])
       limit = @query.limit
       offset = @query.offset || 0_i64
       fetch = shard_fetch_query(limit, offset)
@@ -211,29 +237,24 @@ module Grant::Sharding
       unless order_fields.empty?
         indexed = rows.map_with_index { |row, index| {row, index} }
         indexed.sort! do |a, b|
-          comparison = compare_rows(a[0], b[0], order_fields)
+          comparison = compare_rows(a[0], b[0], order_fields, width)
           comparison == 0 ? a[1] <=> b[1] : comparison
         end
         rows = indexed.map(&.[0])
       end
 
-      values = [] of Grant::Columns::Type
       start = offset.to_i
-      return values if start >= rows.size
+      return [] of Array(Grant::Columns::Type) if start >= rows.size
 
       last = limit ? Math.min(start + limit.to_i, rows.size) : rows.size
-      rows[start...last].each do |row|
-        value = row[0]
-        values << value unless value.nil?
-      end
-      values
+      rows[start...last].map { |row| row[0, width] }
     end
 
     # Orders two plucked rows by their ORDER BY values, which follow the
-    # plucked column.
-    private def compare_rows(a : Array(Grant::Columns::Type), b : Array(Grant::Columns::Type), order_fields : Array(NamedTuple(field: String, direction: Grant::Query::Builder::Sort))) : Int32
+    # *width* plucked columns.
+    private def compare_rows(a : Array(Grant::Columns::Type), b : Array(Grant::Columns::Type), order_fields : Array(NamedTuple(field: String, direction: Grant::Query::Builder::Sort)), width : Int32) : Int32
       order_fields.each_with_index do |order, index|
-        comparison = compare_nullable(a[index + 1], b[index + 1], order[:direction])
+        comparison = compare_nullable(a[index + width], b[index + width], order[:direction])
         return comparison if comparison != 0
       end
       0

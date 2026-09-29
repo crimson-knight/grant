@@ -203,6 +203,16 @@ module Grant::Sharding
       execution.pluck(column)
     end
 
+    # Several columns per row across the targeted shards, ordered and paged
+    # over the merged rows. `pick` goes through here too.
+    def pluck(*fields : Symbol | String) : Array(Array(Grant::Columns::Type))
+      field_names = fields.to_a.map(&.to_s)
+      return pluck_rows_without_routing(field_names) if @local_execution
+      return [] of Array(Grant::Columns::Type) if is_none?
+
+      execution.pluck_rows(field_names)
+    end
+
     # Override first to use routing
     def first : Model?
       limit(1).select.first?

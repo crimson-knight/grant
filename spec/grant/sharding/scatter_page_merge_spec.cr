@@ -72,6 +72,25 @@ describe "Scatter-gather pages for count, pluck and exists?" do
     end
   end
 
+  describe "#pluck with several columns" do
+    it "merges, orders and pages the rows across shards" do
+      S02PageMergeThing.order(id: :desc).limit(3).offset(1).pluck(:id, :tenant_id).should eq [
+        [9_i64, 1_i64].map(&.as(Grant::Columns::Type)),
+        [8_i64, 2_i64].map(&.as(Grant::Columns::Type)),
+        [7_i64, 1_i64].map(&.as(Grant::Columns::Type)),
+      ]
+    end
+
+    it "picks the first row of the merged order" do
+      S02PageMergeThing.order(id: :asc).pick(:id, :label).should eq [1_i64, "row 1"].map(&.as(Grant::Columns::Type))
+      S02PageMergeThing.order(id: :asc).offset(1).pick(:id, :label).should eq [2_i64, "row 2"].map(&.as(Grant::Columns::Type))
+    end
+
+    it "keeps NULL values in multi-column rows" do
+      S02PageMergeThing.order(id: :asc).limit(1).offset(3).pluck(:id, :label).should eq [[4_i64, nil].map(&.as(Grant::Columns::Type))]
+    end
+  end
+
   describe "#exists?" do
     it "honors a global offset" do
       S02PageMergeThing.order(id: :asc).offset(9).exists?.should be_true
