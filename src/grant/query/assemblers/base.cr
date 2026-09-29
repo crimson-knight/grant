@@ -469,7 +469,9 @@ module Grant::Query::Assembler
           s << where
           s << group_by
           s << having
-          s << order(use_default_order: false)
+          # An ungrouped COUNT(*) returns one row, so ORDER BY is meaningless,
+          # and PostgreSQL rejects an ORDER BY column outside any GROUP BY.
+          s << order(use_default_order: false) unless @query.group_fields.empty?
           s << limit
           s << offset
         end
