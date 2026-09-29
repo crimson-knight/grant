@@ -154,23 +154,23 @@ module Grant::Aggregations
       end
     end
 
-    # `COUNT(*)` when *column* is `*`.
     private def aggregate_expression(function : String, argument : String, cast : Symbol) : String
       expression = "#{function}(#{argument})"
       case cast
-      when :text   then "CAST(#{expression} AS #{Model.adapter.mysql? ? "CHAR" : "TEXT"})"
+      when :text   then "CAST(#{expression} AS #{text_cast_type})"
       when :double then double_cast_sql(expression)
       else              expression
       end
     end
 
-    private def double_cast_sql(expression : String) : String
-      if Model.adapter.mysql?
-        # Adding a double makes the DECIMAL result a DOUBLE on every MySQL version.
-        "(#{expression} + 0e0)"
-      else
-        "CAST(#{expression} AS #{Model.adapter.sqlite? ? "REAL" : "DOUBLE PRECISION"})"
-      end
+    # The type name `CAST(... AS type)` uses to return text. Adapters override.
+    protected def text_cast_type : String
+      "TEXT"
+    end
+
+    # *expression* as a double precision number. Adapters override.
+    protected def double_cast_sql(expression : String) : String
+      "CAST(#{expression} AS DOUBLE PRECISION)"
     end
 
     # A column name, `table.column` of the model or a joined table, or a trusted

@@ -7,6 +7,10 @@ module Grant::Query::Assembler
       "?"
     end
 
+    protected def double_cast_sql(expression : String) : String
+      "CAST(#{expression} AS REAL)"
+    end
+
     # SQLite exposes the human-readable plan via `EXPLAIN QUERY PLAN`. The bare
     # `EXPLAIN` form emits VDBE bytecode, which is rarely useful; SQLite has no
     # PG-style `ANALYZE`, so the keyword is the same regardless of *analyze*.

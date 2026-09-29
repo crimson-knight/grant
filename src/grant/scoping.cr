@@ -492,7 +492,7 @@ module Grant::Scoping
       current_scope.select
     end
 
-    def select(*columns : Symbol)
+    def select(*columns : Symbol | String)
       current_scope.select(*columns)
     end
 

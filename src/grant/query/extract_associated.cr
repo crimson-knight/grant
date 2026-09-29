@@ -21,7 +21,10 @@ class Grant::Query::Builder(Model)
                 else                         [] of Grant::Base
                 end
       members.each do |member|
-        key = {member.class.name, member.read_attribute(member.class.primary_name)}
+        primary_name = member.class.primary_name
+        # A record without a primary key cannot be de-duplicated; keep each one.
+        identity = primary_name ? member.read_attribute(primary_name) : member.object_id.to_i64
+        key = {member.class.name, identity}
         next if seen.includes?(key)
         seen << key
         extracted << member

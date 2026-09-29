@@ -10,6 +10,21 @@ module Grant::Query::Assembler
       "?"
     end
 
+    # MySQL has no NULLS FIRST/LAST, so an `ISNULL(column)` term goes first (1
+    # for NULL): descending puts NULLs first, ascending puts them last.
+    protected def nulls_ordering_sql(field : String, keyword : String, first : Bool) : String
+      "ISNULL(#{field}) #{first ? "DESC" : "ASC"}, #{field} #{keyword}"
+    end
+
+    protected def text_cast_type : String
+      "CHAR"
+    end
+
+    # Adding a double turns the DECIMAL result into a DOUBLE on every version.
+    protected def double_cast_sql(expression : String) : String
+      "(#{expression} + 0e0)"
+    end
+
     # MySQL supports `EXPLAIN`; `EXPLAIN ANALYZE` is available on 8.0.18+. If the
     # server is older, `explain(analyze: true)` degrades gracefully (the base
     # `explain` rescues the error and returns its message).

@@ -425,15 +425,10 @@ module Grant::Query::Assembler
       "#{Model.quote(parts[0])}.#{Model.quote(parts[1])}"
     end
 
-    # PostgreSQL and SQLite order NULLs natively. MySQL has no NULLS FIRST/LAST,
-    # so an `ISNULL(column)` term goes first (1 for NULL): descending puts NULLs
-    # first, ascending puts them last.
+    # PostgreSQL and SQLite order NULLs natively; the MySQL assembler overrides
+    # this because MySQL has no NULLS FIRST/LAST.
     protected def nulls_ordering_sql(field : String, keyword : String, first : Bool) : String
-      if Model.adapter.mysql?
-        "ISNULL(#{field}) #{first ? "DESC" : "ASC"}, #{field} #{keyword}"
-      else
-        "#{field} #{keyword} NULLS #{first ? "FIRST" : "LAST"}"
-      end
+      "#{field} #{keyword} NULLS #{first ? "FIRST" : "LAST"}"
     end
 
     def group_by
@@ -486,7 +481,7 @@ module Grant::Query::Assembler
           s << limit
           s << offset
         end
-        sql = "SELECT COUNT(*) FROM (#{distinct_rows_sql}) AS grant_distinct_rows"
+        sql = "#{select_prefix} COUNT(*) FROM (#{distinct_rows_sql}) AS grant_distinct_rows"
       elsif (@query.limit || @query.offset) && @query.group_fields.empty?
         # COUNT(*) yields one row, so a LIMIT/OFFSET on it would drop that row.
         # Count the rows the limited relation returns instead.
@@ -501,10 +496,10 @@ module Grant::Query::Assembler
           s << (limit || "LIMIT #{Int64::MAX}")
           s << offset
         end
-        sql = "SELECT COUNT(*) FROM (#{limited_rows_sql}) AS grant_limited_rows"
+        sql = "#{select_prefix} COUNT(*) FROM (#{limited_rows_sql}) AS grant_limited_rows"
       else
         sql = build_sql do |s|
-          s << "SELECT COUNT(*)"
+          s << "#{select_prefix} COUNT(*)"
           s << from_clause
           s << joins
           s << where
@@ -526,7 +521,7 @@ module Grant::Query::Assembler
       end
 
       sql = build_sql do |s|
-        s << "SELECT #{group_expressions.join(", ")}, COUNT(*)"
+        s << "#{select_prefix} #{group_expressions.join(", ")}, COUNT(*)"
         s << from_clause
         s << joins
         s << where
