@@ -1,6 +1,8 @@
 require "./spec_helper"
 
 describe "Grant::Query::Builder - Joins" do
+  around_each { |example| with_legacy_implicit_order(example) }
+
   describe "#joins" do
     it "adds an inner join clause" do
       query = builder.joins("posts", on: "posts.user_id = table.id")

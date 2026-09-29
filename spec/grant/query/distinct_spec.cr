@@ -1,6 +1,8 @@
 require "./spec_helper"
 
 describe "Grant::Query::Builder - Distinct" do
+  around_each { |example| with_legacy_implicit_order(example) }
+
   describe "#distinct" do
     it "sets the distinct flag" do
       query = builder.distinct

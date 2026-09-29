@@ -1,6 +1,8 @@
 require "./spec_helper"
 
 describe "Grant::Query::Builder - Modifiers" do
+  around_each { |example| with_legacy_implicit_order(example) }
+
   describe "#reorder" do
     it "clears existing order and replaces" do
       query = builder.order(name: :asc).reorder(age: :desc)

@@ -1,6 +1,8 @@
 require "./spec_helper"
 
 describe "Grant::Query::Builder - Having" do
+  around_each { |example| with_legacy_implicit_order(example) }
+
   describe "#having" do
     it "stores having clauses" do
       query = builder.having("COUNT(*) > ?", 5)
