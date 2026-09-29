@@ -80,9 +80,14 @@ module Grant::Normalization
             if field == {{ column.stringify }}
               if value.is_a?({{ ivar.annotation(Grant::Column)[:setter_type] }})
                 return {{ method.name.id }}(value)
-              elsif value.is_a?(Array)
-                # `where(email: [...])` (IN): normalize each element of the column's type.
-                return value.map { |item| item.is_a?({{ ivar.annotation(Grant::Column)[:setter_type] }}) ? {{ method.name.id }}(item) : item }
+              {% element_type = ivar.type.union_types.reject { |type| type == Nil }.first %}
+              elsif value.is_a?(Array({{ element_type }}))
+                # `where(email: [...])` (IN): normalize each element, keeping the
+                # array's element type so it still binds as a column value.
+                return value.map do |element|
+                  normalized = {{ method.name.id }}(element)
+                  normalized.is_a?({{ element_type }}) ? normalized : element
+                end
               end
             end
           {% end %}
