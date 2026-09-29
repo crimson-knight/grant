@@ -87,14 +87,21 @@ module Grant::Autosave
 
   # :nodoc:
   def _autosave_staged(name : String) : Array(Grant::Base)
-    @_autosave_staged.try(&.[name]?) || [] of Grant::Base
+    staged = @_autosave_staged
+    return [] of Grant::Base unless staged
+
+    staged[name]? || [] of Grant::Base
   end
 
   # Drops the staged records of *name* that are persisted now.
   #
   # :nodoc:
   def _autosave_unstage_saved(name : String) : Nil
-    @_autosave_staged.try(&.[name]?).try(&.reject! { |record| record.persisted? })
+    staged = @_autosave_staged
+    return unless staged
+
+    list = staged[name]?
+    list.reject!(&.persisted?) if list
   end
 
   # Copies the errors of the invalid associated *record* onto this record, keyed

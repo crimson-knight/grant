@@ -134,8 +134,9 @@ module Grant::CounterCache
         end
         column = __counter_column_for(reflection) ||
                  raise ArgumentError.new("#{name}##{association} has no counter cache; declare `counter_cache:` on the child's belongs_to")
-        child_table = Grant::AssociationRegistry.model_class(reflection.class_name).try(&.table_name) ||
+        child_class = Grant::AssociationRegistry.model_class(reflection.class_name) ||
                       raise Grant::AssociationNotFoundError.new(name, association.to_s)
+        child_table = child_class.table_name
         subquery = "(SELECT COUNT(*) FROM #{quote(child_table)} WHERE #{quote(child_table)}.#{adapter.quote(reflection.foreign_key)} = #{quoted_table_name}.#{quote(reflection.primary_key)})"
         relation = __counter_write_scope.where(primary_name, :eq, id.as(Grant::Columns::Type))
         mark_write_operation
@@ -175,7 +176,8 @@ module Grant::CounterCache
         option = option.strip(':').strip('"')
         return option == "true" ? "#{reflection.name}_count" : option
       end
-      Grant::CounterCache.find(name, reflection.class_name, reflection.foreign_key).try(&.column)
+      entry = Grant::CounterCache.find(name, reflection.class_name, reflection.foreign_key)
+      entry.column if entry
     end
   end
 end
