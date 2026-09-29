@@ -466,7 +466,24 @@ module Grant::Scoping
     override_query_method delete_all
     override_query_method destroy_all
     override_query_method delete
+
     override_query_method touch_all
+
+    # Deletes the row with primary key *id* with one `DELETE`, skipping callbacks.
+    # Returns the number of rows deleted.
+    def delete(id : Grant::Querying::IdValue) : Int64
+      delete([id])
+    end
+
+    # Deletes the rows with the given primary keys with one `DELETE ... IN`,
+    # skipping callbacks. Returns the number of rows deleted.
+    def delete(ids : Array) : Int64
+      guard_writes!
+      return 0_i64 if ids.empty?
+
+      mark_write_operation
+      current_scope.where({primary_name => ids}).delete_all
+    end
 
     # Returns a lazy relation over this model, honoring the `default_scope`.
     # No SQL runs until the relation is iterated or a terminal method is
@@ -553,6 +570,34 @@ module Grant::Scoping
     # ```
     def find!(id)
       find(id) || raise Grant::Querying::NotFound.new("No #{self.name} found where #{primary_name} = #{id}")
+    end
+
+    # Returns the records with the given primary keys in the order of *ids*,
+    # using one `SELECT ... WHERE pk IN (...)` within the `default_scope`. Keys
+    # with no record are skipped; use `find!` to raise instead.
+    #
+    # ```
+    # Post.find([3, 1, 2]) # => [post3, post1, post2]
+    # Post.find(3, 1)      # => [post3, post1]
+    # ```
+    def find(ids : Array)
+      current_scope.find(ids)
+    end
+
+    # :ditto:
+    def find(first, second, *rest)
+      current_scope.find([first, second, *rest])
+    end
+
+    # Like `find(ids)`, but raises `Grant::Querying::NotFound` naming every key
+    # with no record.
+    def find!(ids : Array)
+      current_scope.find!(ids)
+    end
+
+    # :ditto:
+    def find!(first, second, *rest)
+      current_scope.find!([first, second, *rest])
     end
   end
 end
