@@ -20,15 +20,20 @@ module Grant
     # ```
     module Registry
       @@adapters = {} of String => Grant::Adapter::Base.class
+      # Guards `@@adapters`: `register` is public, so a custom adapter can be
+      # registered while other fibers resolve URLs.
+      @@adapters_mutex = Mutex.new
 
       # Registers *adapter* under one or more scheme/name aliases.
       def self.register(adapter : Grant::Adapter::Base.class, *names : String) : Nil
-        names.each { |name| @@adapters[name.downcase] = adapter }
+        @@adapters_mutex.synchronize do
+          names.each { |name| @@adapters[name.downcase] = adapter }
+        end
       end
 
       # The adapter registered for *name* or `nil`.
       def self.for_scheme?(name : String) : Grant::Adapter::Base.class | Nil
-        @@adapters[name.downcase]?
+        @@adapters_mutex.synchronize { @@adapters[name.downcase]? }
       end
 
       # The adapter registered for *name*; raises `UnknownAdapterError`.
@@ -55,12 +60,14 @@ module Grant
 
       # Every registered scheme/name, sorted.
       def self.names : Array(String)
-        @@adapters.keys.sort!
+        @@adapters_mutex.synchronize { @@adapters.keys }.sort!
       end
 
       # Removes credentials from a URL before it goes into a message.
       def self.redact(url : String) : String
-        url.sub(/\A([A-Za-z][A-Za-z0-9+.\-]*:\/\/)[^@\/]*@/, "\\1***@")
+        # Greedy up to the last "@" before any query or fragment, so a password
+        # holding "/" or "@" is still hidden.
+        url.sub(/\A([A-Za-z][A-Za-z0-9+.\-]*:\/\/)[^?#]*@/, "\\1***@")
       end
     end
   end

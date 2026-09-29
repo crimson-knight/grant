@@ -12,7 +12,8 @@ module Grant
   struct DatabaseConfig
     getter name : String
     getter env : String
-    getter adapter : Grant::Adapter::Base.class
+    # The `adapter:` key, or the URL scheme when the entry has none.
+    getter adapter_name : String
     getter url : String
     getter pool_size : Int32
     getter? replica : Bool
@@ -20,9 +21,22 @@ module Grant
     # The logical database a replica reads for; `name` for a primary.
     getter database : String
 
-    def initialize(@name, @env, @adapter, @url, @pool_size = 25, @replica = false,
+    def initialize(@name, @env, @adapter_name, @url, @pool_size = 25, @replica = false,
                    @database_tasks = true, database : String? = nil)
       @database = database || @name
+    end
+
+    # The adapter class for `adapter_name`. Resolved on use, so a file can
+    # describe environments whose adapter this build does not require (a
+    # SQLite-only test build loading a PostgreSQL production entry); raises
+    # `Grant::UnknownAdapterError` when the adapter is not required.
+    def adapter : Grant::Adapter::Base.class
+      Grant::Adapter::Registry.for_scheme(adapter_name)
+    end
+
+    # The adapter class, or `nil` when it is not required in this build.
+    def adapter? : Grant::Adapter::Base.class | Nil
+      Grant::Adapter::Registry.for_scheme?(adapter_name)
     end
 
     # The connection role this entry registers under.
@@ -180,8 +194,11 @@ module Grant
         next if url.empty?
 
         existing = merged[name]?
+        # The override's scheme picks the adapter, as with DATABASE_URL in
+        # ActiveRecord; the file's `adapter:` key only survives a scheme-less URL.
+        adapter_name = Grant::Adapter::Registry.scheme_of(url) ? nil : existing.try(&.adapter)
         merged[name] = if existing
-                         Entry.new(url, existing.adapter, existing.pool, existing.replica,
+                         Entry.new(url, adapter_name, existing.pool, existing.replica,
                            existing.database_tasks, existing.replica_of)
                        else
                          Entry.new(url: url)
@@ -193,17 +210,18 @@ module Grant
     private def build(env_name : String, name : String, entry : Entry) : DatabaseConfig
       url = entry.url || raise DatabaseConfigurationError.new(
         "Database #{name.inspect} in #{env_name.inspect} has no url")
-      adapter = if adapter_name = entry.adapter
-                  Grant::Adapter::Registry.for_scheme(adapter_name)
-                else
-                  Grant::Adapter::Registry.for_url(url)
-                end
+      adapter_name = entry.adapter || Grant::Adapter::Registry.scheme_of(url) || raise Grant::UnknownAdapterError.new(
+        "Database #{name.inspect} in #{env_name.inspect} has no adapter key and " \
+        "#{Grant::Adapter::Registry.redact(url).inspect} has no URL scheme")
+      # Only the current environment must be connectable in this build; other
+      # environments may name adapters that were never required.
+      Grant::Adapter::Registry.for_scheme(adapter_name) if env_name == @env
       database = if entry.replica
                    entry.replica_of || name.chomp("_replica")
                  else
                    name
                  end
-      DatabaseConfig.new(name, env_name, adapter, url, entry.pool, entry.replica,
+      DatabaseConfig.new(name, env_name, adapter_name.downcase, url, entry.pool, entry.replica,
         entry.database_tasks, database)
     end
   end
