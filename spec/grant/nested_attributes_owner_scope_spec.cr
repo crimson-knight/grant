@@ -41,14 +41,17 @@ describe "Grant::NestedAttributes owner scoping" do
       update_target = NestedAttributesOwnerScopeChild.create!(parent_id: parent_b.id, label: "private")
       destroy_target = NestedAttributesOwnerScopeChild.create!(parent_id: parent_b.id, label: "also private")
 
-      parent_a.children_attributes = [{id: update_target.id, label: "changed by A"}]
+      expect_raises(Grant::RecordNotFound, /NestedAttributesOwnerScopeChild/) do
+        parent_a.children_attributes = [{id: update_target.id, label: "changed by A"}]
+      end
       parent_a.save.should be_true
       NestedAttributesOwnerScopeChild.find!(update_target.id).label.should eq("private")
 
-      parent_a.children_attributes = [{id: destroy_target.id, _destroy: true}]
+      expect_raises(Grant::RecordNotFound, /NestedAttributesOwnerScopeChild/) do
+        parent_a.children_attributes = [{id: destroy_target.id, _destroy: true}]
+      end
       parent_a.save.should be_true
       NestedAttributesOwnerScopeChild.find(destroy_target.id).should_not be_nil
-      parent_a.errors.any? { |error| error.field.to_s == "children" }.should be_true
     end
   end
 
@@ -63,7 +66,9 @@ describe "Grant::NestedAttributes owner scoping" do
         target_id = target.id
       end
 
-      parent.children_attributes = [{id: target_id.not_nil!, label: "changed across tenants"}]
+      expect_raises(Grant::RecordNotFound) do
+        parent.children_attributes = [{id: target_id.not_nil!, label: "changed across tenants"}]
+      end
       parent.save.should be_true
     end
 
