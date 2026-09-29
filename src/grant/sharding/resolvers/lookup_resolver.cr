@@ -28,7 +28,7 @@ module Grant::Sharding
     end
 
     def resolve(model : Grant::Base) : Symbol
-      shard_for(model.read_attribute(@key_column.to_s).to_s)
+      resolve_for_values([model.read_attribute(@key_column.to_s)])
     end
 
     def resolve_for_keys(**keys) : Symbol

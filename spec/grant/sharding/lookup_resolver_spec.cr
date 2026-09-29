@@ -32,6 +32,12 @@ describe Grant::Sharding::LookupResolver do
     LookupShardedAccount.sharding_config.not_nil!.resolver.resolve(LookupShardedAccount.new(country: "CA")).should eq(:shard_us)
   end
 
+  it "does not route a record with no key value to the default shard" do
+    expect_raises(Grant::Sharding::ShardKeyMissingError) do
+      LookupShardedAccount.sharding_config.not_nil!.resolver.resolve(LookupShardedAccount.new)
+    end
+  end
+
   it "raises a Grant error without a default" do
     resolver = Grant::Sharding::LookupResolver.new(:country, {"US" => :shard_us})
     expect_raises(Grant::Sharding::ShardNotFoundError, /JP/) { resolver.resolve_for_values(["JP"]) }
