@@ -9,8 +9,9 @@
 module Grant::RecordCopy
   # Returns a new record with the same attributes but no identity, as
   # ActiveRecord's `dup` does: the primary key and creation/update timestamps
-  # are cleared, `new_record?` is true, and cached associations and dirty
-  # history are not carried over. The read-only flag is kept. Saving it inserts a new row.
+  # are cleared, `new_record?` is true, cached associations and dirty history
+  # are not carried over, and `after_initialize` callbacks run. The read-only
+  # flag is kept. Saving it inserts a new row.
   def dup
     __copy(fresh_identity: true)
   end
@@ -64,9 +65,16 @@ module Grant::RecordCopy
         {% end %}
       {% end %}
       @loaded_associations = nil
+      # Commit callbacks and save results belong to the original's writes.
+      @_pending_commit_callbacks = nil
+      @last_save_failed_validation = false
+      @last_save_statement_error = nil
       self.new_record = true
       restore_destroyed_state(false)
       establish_initial_dirty_baseline
+      # A dup is a newly built record, so its `after_initialize` callbacks run,
+      # as ActiveRecord's do.
+      __after_initialize
     else
       @loaded_associations = @loaded_associations.try(&.dup)
     end

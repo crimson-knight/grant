@@ -13,6 +13,13 @@ require "../../support/write_sql_capture"
     column body : String?
     column views : Int32?
     timestamps
+
+    property initialize_runs : Int32 = 0
+    after_initialize :count_initialize
+
+    private def count_initialize
+      @initialize_runs += 1
+    end
   end
 {% end %}
 
@@ -33,6 +40,13 @@ describe "dup and clone" do
       copy.title.should eq("Hello")
       copy.body.should eq("World")
       copy.views.should eq(3)
+    end
+
+    it "runs after_initialize callbacks on the copy" do
+      original = CopyArticle.create!(title: "Init")
+      runs = original.initialize_runs
+      original.dup.initialize_runs.should eq(runs + 1)
+      original.clone.initialize_runs.should eq(runs)
     end
 
     it "clears the creation and update timestamps" do
