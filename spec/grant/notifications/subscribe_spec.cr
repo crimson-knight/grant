@@ -1,4 +1,5 @@
 require "../../spec_helper"
+require "../sti/sti_behavior_models"
 
 private def collect(event_type : T.class, & : ->) : Array(T) forall T
   events = [] of T
@@ -96,6 +97,18 @@ describe Grant::Notifications do
       events.size.should eq(2)
       events.map(&.class_name).uniq!.should eq(["Parent"])
       events.sum(&.record_count).should eq(2)
+    end
+
+    it "publishes STI records under their final class, from root and subclass queries" do
+      setup_behavior_sti_tables
+      BehaviorPersona.create!(name: "plain")
+      BehaviorAdminPersona.create!(name: "admin")
+
+      from_root = collect(Grant::Events::Instantiation) { BehaviorPersona.all.to_a }
+      from_root.map(&.class_name).sort.should eq(["BehaviorAdminPersona", "BehaviorPersona"])
+
+      from_subclass = collect(Grant::Events::Instantiation) { BehaviorAdminPersona.all.to_a }
+      from_subclass.map(&.class_name).should eq(["BehaviorAdminPersona"])
     end
   end
 
