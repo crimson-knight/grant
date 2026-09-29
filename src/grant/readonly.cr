@@ -88,12 +88,32 @@ module Grant::Readonly
     {% end %}
   end
 
+  # Set while Grant itself copies loaded values into a persisted record (for
+  # example a reload), which must not trip the readonly-assignment guard.
+  @[JSON::Field(ignore: true)]
+  @[YAML::Field(ignore: true)]
+  @_loading_readonly_attributes : Bool = false
+
+  # Runs the block with the readonly-assignment guard off, for internal paths
+  # that write database values into a persisted record through its writers.
+  #
+  # :nodoc:
+  def __assigning_loaded_attributes(& : -> T) : T forall T
+    previous = @_loading_readonly_attributes
+    @_loading_readonly_attributes = true
+    begin
+      yield
+    ensure
+      @_loading_readonly_attributes = previous
+    end
+  end
+
   # Called by every generated column writer. New records may assign anything;
   # a persisted record raises for a readonly column.
   #
   # :nodoc:
   def __guard_readonly_attribute!(attribute_name : String) : Nil
-    return if new_record?
+    return if new_record? || @_loading_readonly_attributes
     return unless self.class.readonly_attribute?(attribute_name)
     return unless self.class.raise_on_readonly_assign?
     raise Grant::ReadonlyAttributeError.new(self.class.name, attribute_name)

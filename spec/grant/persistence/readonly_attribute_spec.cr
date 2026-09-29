@@ -24,15 +24,32 @@ require "../../spec_helper"
 
     attr_readonly :login, raise_on_assign: false
   end
+
+  class ReadonlyStiAccount < Grant::Base
+    include Grant::STI
+    connection {{ adapter_literal }}
+    table readonly_sti_accounts
+
+    column id : Int64, primary: true
+    column type : String
+    column login : String?
+
+    attr_readonly :login
+  end
+
+  class ReadonlyStiAdmin < ReadonlyStiAccount
+  end
 {% end %}
 
 ReadonlyAccount.migrator.drop_and_create
 ReadonlyLegacyAccount.migrator.drop_and_create
+ReadonlyStiAccount.migrator.drop_and_create
 
 describe "Readonly attributes" do
   before_each do
     ReadonlyAccount.clear
     ReadonlyLegacyAccount.clear
+    ReadonlyStiAccount.clear
   end
 
   it "lists the readonly attributes" do
@@ -110,5 +127,13 @@ describe "Readonly attributes" do
     reloaded.login.should eq("ada")
     reloaded.nickname.should eq("B")
     ReadonlyLegacyAccount.readonly_attribute?("login").should be_true
+  end
+
+  it "loads an STI subclass through a base-class query without raising" do
+    ReadonlyStiAdmin.create!(login: "root")
+    loaded = ReadonlyStiAccount.first!
+    loaded.should be_a(ReadonlyStiAdmin)
+    loaded.login.should eq("root")
+    expect_raises(Grant::ReadonlyAttributeError) { loaded.login = "other" }
   end
 end
