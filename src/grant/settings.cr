@@ -67,6 +67,27 @@ module Grant
     # `filter_attributes :token`.
     property filter_attributes : Array(String | Regex) = [] of String | Regex
 
+    # The most `load_async`/`async_*` queries that run at once, across the
+    # process. Each one holds a pool connection while it runs, so keep this at
+    # or below the connection pool size; later queries wait for a free slot
+    # instead of starving the pool. Like ActiveRecord's async executor, the
+    # default is 4.
+    getter async_pool_size : Int32 = 4
+
+    def async_pool_size=(size : Int32)
+      raise ArgumentError.new("async_pool_size must be at least 1 (got #{size})") if size < 1
+      @async_pool_size = size
+    end
+
+    # The most statements one query cache (`Grant.cache { }`) keeps; the least
+    # recently used entry is dropped first. `0` turns caching off.
+    getter query_cache_max_entries : Int32 = 100
+
+    def query_cache_max_entries=(size : Int32)
+      raise ArgumentError.new("query_cache_max_entries must not be negative (got #{size})") if size < 0
+      @query_cache_max_entries = size
+    end
+
     def index_hint_mode=(mode : Symbol)
       unless {:warn, :strict, :ignore}.includes?(mode)
         raise ArgumentError.new("index_hint_mode must be :warn, :strict, or :ignore (got #{mode.inspect})")
