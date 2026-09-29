@@ -65,6 +65,8 @@ module Grant::Polymorphic
       when {{name}}
         {% if name == "Grant::Base" || name.starts_with?("Validators::") || name.starts_with?("Spec::") %}
           nil
+        {% elsif (resolved = klass.resolve?) && resolved.abstract? %}
+          nil
         {% else %}
           {{klass}}.find(id)
         {% end %}
@@ -82,6 +84,8 @@ module Grant::Polymorphic
       {% for name, klass in REGISTERED_TYPES %}
       when {{name}}
         {% if name == "Grant::Base" || name.starts_with?("Validators::") || name.starts_with?("Spec::") %}
+          nil
+        {% elsif (resolved = klass.resolve?) && resolved.abstract? %}
           nil
         {% else %}
           quoted_column = {{klass}}.quote(column_name)
@@ -103,6 +107,8 @@ module Grant::Polymorphic
       {% for name, klass in REGISTERED_TYPES %}
       when {{name}}
         {% if name == "Grant::Base" || name.starts_with?("Validators::") || name.starts_with?("Spec::") %}
+          nil
+        {% elsif (resolved = klass.resolve?) && resolved.abstract? %}
           nil
         {% else %}
           if {{klass}}.fields.includes?("updated_at")
@@ -133,6 +139,8 @@ module Grant::Polymorphic
       when {{name}}
         {% if name == "Grant::Base" || name.starts_with?("Validators::") || name.starts_with?("Spec::") %}
           [] of Grant::Base
+        {% elsif (resolved = klass.resolve?) && resolved.abstract? %}
+          [] of Grant::Base
         {% else %}
           return [] of Grant::Base if ids.empty?
           key_column = primary_key || {{klass}}.primary_name || raise Grant::Querying::MissingPrimaryKeyError.new("#{{{klass}}.name} has no primary key")
@@ -151,6 +159,8 @@ module Grant::Polymorphic
       {% for name, klass in REGISTERED_TYPES %}
       when {{name}}
         {% if name == "Grant::Base" || name.starts_with?("Validators::") || name.starts_with?("Spec::") %}
+          nil
+        {% elsif (resolved = klass.resolve?) && resolved.abstract? %}
           nil
         {% else %}
           quoted_column = {{klass}}.quote(column)
@@ -171,6 +181,8 @@ module Grant::Polymorphic
       {% for name, klass in REGISTERED_TYPES %}
       when {{name}}
         {% if name == "Grant::Base" || name.starts_with?("Validators::") || name.starts_with?("Spec::") %}
+          false
+        {% elsif (resolved = klass.resolve?) && resolved.abstract? %}
           false
         {% else %}
           if {{klass}}.fields.includes?("updated_at")
@@ -211,6 +223,8 @@ module Grant::Polymorphic
       {% for name, klass in REGISTERED_TYPES %}
       when {{name}}
         {% if name == "Grant::Base" || name.starts_with?("Validators::") || name.starts_with?("Spec::") %}
+          false
+        {% elsif (resolved = klass.resolve?) && resolved.abstract? %}
           false
         {% else %}
           true
