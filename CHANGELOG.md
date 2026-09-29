@@ -2,6 +2,73 @@
 
 ## Unreleased
 
+### ActiveRecord parity, wave 2
+
+Parity moves from 137 to 227 complete features (33.3% to 55.1% of applicable).
+
+- **Validations:** a unified `validates :a, presence: true, length: {min: 2}`
+  macro, validation contexts (`on: :publish`, `valid?(:custom)`,
+  `save(context:)`), `strict:`, `validate!`, multi-attribute macros,
+  `validates_each` blocks, and condition arrays.
+- **Persistence:** partial updates (a clean `save` issues no SQL),
+  primary-key `==`/`hash`, `dup`, `attr_readonly`, destroyed-record guards,
+  `touch(time:)`, `no_touching`, `record_timestamps`, and set-based
+  `update_counters`.
+- **Finders and creators:** `find(ids)` in one query, `find_or_create_by!`,
+  `create_or_find_by` on a savepoint, relation-level `find_by`/`find_sole_by`,
+  `create_with`, and block and array `create`.
+- **Bulk writes:** `insert_all`/`insert_all!`/`upsert_all` with `unique_by`,
+  `update_only`, `returning`, and chunking under each adapter's bind limit.
+- **Queries:** endless and beginless ranges, `merge` replacement, `rewhere`,
+  `unscope`, `where.associated`/`where.missing`, nested hash conditions,
+  relation `or`/`and`, typed and grouped aggregates, `count(:col)`, typed
+  `pluck`, nested and raw joins, `left_outer_joins`, NULLS FIRST/LAST,
+  `in_order_of`, readonly relations, and keyset batching (`find_each` with
+  `cursor:`, `in_batches` yielding relations).
+- **Schema and attributes:** schema introspection with a schema cache,
+  `verify_schema`, attribute introspection (`attributes`, `[]`, `slice`,
+  `alias_attribute`, `*_before_type_cast`), cache keys, and a filtered
+  `inspect`.
+- **Instrumentation:** typed notifications for SQL, transactions and
+  instantiation, plus spec helpers (`assert_queries`, a transactional wrapper,
+  truncation helpers).
+- **Connections:** pool stats, pool exhaustion errors, health recovery,
+  replica routing and failover, read-only reconnection retries, and
+  `with_connection` pinning.
+- **Associations:** has_many :through writers, `has_and_belongs_to_many`,
+  `<name>_ids`/`<name>_ids=`, collection `build`/`create` with inverses, and
+  dependent-aware `delete`/`delete_all`.
+
+**Breaking changes (migration notes):**
+
+- Bare `valid?` uses the `:create` context for new records and `:update` for
+  persisted ones. `valid?(context: :save)` runs every validator.
+- `save` writes only changed columns; opt out with `partial_updates false`.
+  `update_counters` no longer bumps `updated_at` unless `touch: true`.
+- `dup` returns a new, unsaved record. Assigning an `attr_readonly` column on
+  a persisted record raises `ReadonlyAttributeError`.
+- `insert_all` skips duplicates by default and returns records with primary
+  keys (RETURNING) where supported. Rows with mismatched keys raise
+  `ArgumentError`.
+- `sum`, `avg`, `min` and `max` return typed results (Int64 for integer
+  columns) and a Hash for grouped relations instead of a wrong scalar.
+- `in_batches` yields a relation. `find_each` pages by keyset (default batch
+  size 1000) and never by OFFSET.
+- `rewhere` keeps conditions on other columns; `merge` replaces conflicting
+  equality conditions; `reverse_order` on an unordered relation sorts by
+  primary key descending.
+- Collection `delete_all` follows the association's `dependent:` strategy
+  (nullify by default). `destroy_all` returns the destroyed records.
+  `<name>_ids=` raises `RecordNotFound` for unknown ids. `create` on an unsaved
+  owner raises `OwnerNotSaved`.
+- `regenerate_<token>` persists the new token; `assign_new_<token>` keeps the
+  old in-memory behavior. A missing signing secret raises
+  `MissingSigningSecret` instead of returning nil.
+- `Model#inspect` prints only column values and filters encrypted and
+  configured attributes.
+- Connection pools keep idle connections up to `pool_size`, and lost
+  connections during writes raise instead of silently retrying.
+
 ### ActiveRecord parity, wave 1
 
 Parity moves from 98 to 137 complete features (23.8% to 33.3% of applicable).
