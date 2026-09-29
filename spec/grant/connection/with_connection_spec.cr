@@ -61,11 +61,11 @@ describe "with_connection" do
 
   it "pins only the calling fiber" do
     adapter = Grant::ConnectionRegistry.get_adapter("c02_pin", :writing)
-    other_fiber_connection = Channel(DB::Connection).new
+    other_fiber_saw_pin = Channel(Bool).new
 
     adapter.with_connection do |raw|
-      spawn { adapter.open { |connection| other_fiber_connection.send(connection) } }
-      other_fiber_connection.receive.same?(raw).should be_false
+      spawn { adapter.open { |connection| other_fiber_saw_pin.send(connection.same?(raw)) } }
+      other_fiber_saw_pin.receive.should be_false
     end
   end
 

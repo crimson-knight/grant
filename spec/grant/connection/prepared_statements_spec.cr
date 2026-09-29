@@ -3,8 +3,8 @@ require "./pool_spec_support"
 # Runs *count* distinct statements and reports how many prepared statements
 # the (single) pooled connection is caching afterwards.
 private def cached_statements_after(adapter : Grant::Adapter::Base, count : Int32) : Int32
-  count.times { |i| adapter.open { |connection| connection.scalar("SELECT #{i + 1}") } }
-  adapter.open { |connection| connection.statement_cache_size }
+  count.times { |i| adapter.with_connection { |connection| connection.scalar("SELECT #{i + 1}") } }
+  adapter.with_connection(&.statement_cache_size)
 end
 
 describe "prepared statements" do
@@ -29,7 +29,7 @@ describe "prepared statements" do
 
     # An evicted statement is simply prepared again.
     adapter.open { |connection| connection.scalar("SELECT 1") }.should eq 1
-    adapter.open { |connection| connection.statement_cache_size }.should be <= 3
+    adapter.with_connection(&.statement_cache_size).should be <= 3
   end
 
   it "evicts the least recently used statement, so one still in use stays cached" do
