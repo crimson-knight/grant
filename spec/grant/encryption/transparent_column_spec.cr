@@ -14,6 +14,7 @@ class TransparentEncUser < Grant::Base
   encrypts prefs : JSON::Any
   encrypts ratio : Float64
   encrypts active : Bool
+  encrypts big_count : UInt64
   # The original storage form keeps working next to the new one.
   encrypts :legacy_note, deterministic: true
 end
@@ -22,7 +23,7 @@ TransparentEncUser.migrator.drop_and_create
 
 def transparent_raw_column(user : TransparentEncUser, column : String) : String?
   TransparentEncUser.adapter.open do |db|
-    db.query_one("SELECT #{column} FROM transparent_enc_users WHERE id = #{user.id}", &.read(String?))
+    db.query_one("SELECT #{column} FROM transparent_enc_users WHERE id = #{user.id}", as: String?)
   end
 end
 
@@ -65,6 +66,11 @@ describe "Grant::Encryption transparent same-name columns" do
     transparent_raw_column(user, "email").not_nil!.should_not contain("ada")
   end
 
+  it "round-trips integers outside the Int64 range" do
+    user = TransparentEncUser.create!(big_count: UInt64::MAX)
+    TransparentEncUser.find!(user.id.not_nil!).big_count.should eq(UInt64::MAX)
+  end
+
   it "keeps nil as NULL" do
     user = TransparentEncUser.create!(name: "Nobody")
     transparent_raw_column(user, "email").should be_nil
@@ -98,6 +104,12 @@ describe "Grant::Encryption transparent same-name columns" do
 
   it "refuses to match non-deterministic encrypted attributes by value" do
     expect_raises(ArgumentError) { TransparentEncUser.where(balance: 5_i64).count }
+  end
+
+  it "refuses range and LIKE comparisons on deterministic encrypted attributes" do
+    expect_raises(ArgumentError, /only equality/) { TransparentEncUser.where(:email, :like, "%ada%").count }
+    expect_raises(ArgumentError, /only equality/) { TransparentEncUser.where(:email, :gt, "a").count }
+    TransparentEncUser.where(:email, :neq, "ada@example.com").count.should eq(0)
   end
 
   it "still reads and queries the <attr>_encrypted form" do

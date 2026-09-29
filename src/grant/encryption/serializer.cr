@@ -24,9 +24,9 @@ module Grant::Encryption
       {% if T == String %}
         raw
       {% elsif T <= Int %}
-        T.new(raw.to_i64)
+        T.new(raw)
       {% elsif T <= Float %}
-        T.new(raw.to_f64)
+        T.new(raw)
       {% elsif T == Bool %}
         raw == "true"
       {% elsif T == Time %}

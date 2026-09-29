@@ -72,7 +72,7 @@ describe "Grant::Encryption support_unencrypted_data" do
 
       created = UnencNote.create!(note: "written after")
       UnencNote.find!(created.id.not_nil!).note.should eq("written after")
-      raw = UnencNote.adapter.open { |db| db.query_one("SELECT note FROM unenc_notes WHERE id = #{created.id}", &.read(String)) }
+      raw = UnencNote.adapter.open { |db| db.query_one("SELECT note FROM unenc_notes WHERE id = #{created.id}", as: String) }
       raw.should_not eq("written after")
     end
 
@@ -83,7 +83,7 @@ describe "Grant::Encryption support_unencrypted_data" do
 
     it "still rejects tampered ciphertext when the flag is on" do
       created = UnencNote.create!(note: "sealed")
-      bytes = Base64.decode(UnencNote.adapter.open { |db| db.query_one("SELECT note FROM unenc_notes WHERE id = #{created.id}", &.read(String)) })
+      bytes = Base64.decode(UnencNote.adapter.open { |db| db.query_one("SELECT note FROM unenc_notes WHERE id = #{created.id}", as: String) })
       bytes[bytes.size - 1] ^= 0x01_u8
       expect_raises(Grant::Encryption::Cipher::DecryptionError) { UnencNote.note_encrypted_attribute.open(Base64.strict_encode(bytes)) }
     end
@@ -113,6 +113,15 @@ describe "Grant::Encryption support_unencrypted_data" do
       UnencNote.where(tag: "vip").select.map(&.id).compact.sort!.should eq([plain_id, sealed.id.not_nil!].sort)
       UnencNote.where(tag: ["vip", "regular"]).count.should eq(3)
       UnencNote.where(tag: "vip").to_sql.should contain("IN")
+    end
+
+    it "excludes both forms with a negated comparison" do
+      unenc_insert("tag", "vip")
+      UnencNote.create!(tag: "vip")
+      regular = UnencNote.create!(tag: "regular")
+
+      UnencNote.where(:tag, :neq, "vip").select.map(&.id).should eq([regular.id])
+      UnencNote.where(:tag, :neq, "vip").to_sql.should contain("NOT IN")
     end
   end
 end

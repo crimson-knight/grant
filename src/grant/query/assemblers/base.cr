@@ -186,11 +186,14 @@ module Grant::Query::Assembler
             field = structured_field_sql(expr[:field])
             add_aggregate_field(field)
 
-            value = encrypted_query_value(expr[:field], expr[:value])
             operator = expr[:operator]
+            value = encrypted_query_value(expr[:field], operator, expr[:value])
             # A single value that matches its ciphertext and its plaintext (while
-            # unencrypted data is still supported) becomes an IN list.
-            operator = :in if operator == :eq && value.is_a?(Array) && !expr[:value].is_a?(Array)
+            # unencrypted data is still supported) becomes an IN / NOT IN list.
+            if value.is_a?(Array) && !expr[:value].is_a?(Array)
+              operator = :in if operator == :eq
+              operator = :nin if operator.in?(:neq, :ltgt)
+            end
             if value.nil?
               case operator
               when :eq
@@ -227,7 +230,7 @@ module Grant::Query::Assembler
       column = parts.last
       qualifier = parts.first if parts.size == 2
       encrypted_attribute = if qualifier.nil? || qualifier == Model.table_name
-                              Grant::Encryption::EncryptedAttributeRegistry.for(Model.name)[column]?
+                              Grant::Encryption::EncryptedAttributeRegistry.lookup(Model.name, column)
                             end
       valid_column = if qualifier.nil? || qualifier == Model.table_name
                        Model.fields.includes?(column) || !encrypted_attribute.nil?
@@ -260,15 +263,23 @@ module Grant::Query::Assembler
       end
     end
 
-    private def encrypted_query_value(field : String, value : Grant::Columns::Type) : Grant::Columns::Type
+    # Equality-style operators are the only ones that mean anything on
+    # ciphertext; a range or LIKE would compare encrypted bytes and silently
+    # match the wrong rows.
+    ENCRYPTED_QUERY_OPERATORS = {:eq, :neq, :ltgt, :in, :nin}
+
+    private def encrypted_query_value(field : String, operator : Symbol, value : Grant::Columns::Type) : Grant::Columns::Type
       parts = field.split('.')
       return value unless parts.size == 1 || parts.first == Model.table_name
 
       attribute_name = parts.last
-      encrypted_attribute = Grant::Encryption::EncryptedAttributeRegistry.for(Model.name)[attribute_name]?
+      encrypted_attribute = Grant::Encryption::EncryptedAttributeRegistry.lookup(Model.name, attribute_name)
       return value unless encrypted_attribute
       unless encrypted_attribute.deterministic
         raise ArgumentError.new("Cannot query non-deterministic encrypted field: #{attribute_name}")
+      end
+      unless ENCRYPTED_QUERY_OPERATORS.includes?(operator)
+        raise ArgumentError.new("Encrypted field #{attribute_name.inspect} supports only equality and IN comparisons, not #{operator.inspect}")
       end
 
       Grant::Encryption::QueryValue.rewrite(encrypted_attribute, value)
