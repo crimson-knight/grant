@@ -5,6 +5,7 @@ require "../grant/error_taxonomy"
 require "./error_translator"
 require "./placeholder_scanner"
 require "./server_version"
+require "./pool_support"
 
 # The Base Adapter specifies the interface that will be used by the model
 # objects to perform actions against a specific database.  Each adapter needs
@@ -14,6 +15,22 @@ abstract class Grant::Adapter::Base
   getter url : String
   private property _database : DB::Database?
   @database_version : Grant::ServerVersion?
+  @database_mutex = Mutex.new
+
+  # Pool behavior the registry copies from the connection's spec. A bare
+  # adapter built by hand keeps these defaults.
+  property retry_attempts : Int32 = 1
+  property retry_delay : Time::Span = 0.2.seconds
+  property statement_limit : Int32 = 1000
+  property idle_timeout : Time::Span? = nil
+  property min_connections : Int32 = 0
+  property keepalive : Time::Span? = nil
+
+  # Checkouts in progress and fibers blocked waiting for one. Plain atomics, so
+  # reading pool statistics or picking a replica never takes a lock.
+  @active_checkouts = Atomic(Int32).new(0)
+  @waiting_checkouts = Atomic(Int32).new(0)
+  @last_used_ticks = Atomic(Int64).new(Grant::Adapter::PoolSupport.ticks)
 
   private SQL_KEYWORDS = Set(String).new(%w(
     ALTER AND ANY AS ASC COLUMN CONSTRAINT COUNT CREATE DEFAULT DELETE DESC
@@ -60,8 +77,167 @@ abstract class Grant::Adapter::Base
     false
   end
 
+  # True when the adapter talks to a database server over the network. Such
+  # adapters keep as many idle connections as the pool allows. SQLite
+  # overrides this.
+  def self.server_adapter? : Bool
+    true
+  end
+
+  # True when *url* names a database that lives only inside one connection, so
+  # the pool must hold exactly one. SQLite overrides this for `:memory:`.
+  def self.single_connection_url?(url : String) : Bool
+    false
+  end
+
+  # True when the driver can run statements without preparing them. SQLite
+  # cannot, and ignores `prepared_statements: false`.
+  def self.supports_unprepared_statements? : Bool
+    true
+  end
+
+  # The connection pool, opened on first use.
   def database : DB::Database
-    @_database ||= DB.open(@url)
+    @_database || open_database
+  end
+
+  private def open_database : DB::Database
+    @database_mutex.synchronize do
+      @_database ||= begin
+        opened = DB.open(@url)
+        limit = @statement_limit
+        opened.setup_connection { |conn| conn.statement_cache_limit = limit } if limit > 0
+        opened
+      end
+    end
+  end
+
+  # True once the pool has been opened and not since closed by `#disconnect!`.
+  def connected? : Bool
+    !@_database.nil?
+  end
+
+  # Closes the pool and every connection in it. The adapter opens a fresh pool
+  # the next time something needs a connection, so a reference that outlives
+  # this call keeps working instead of failing.
+  def disconnect! : Nil
+    closing = @database_mutex.synchronize do
+      current = @_database
+      @_database = nil
+      current
+    end
+    closing.try(&.close)
+  end
+
+  # Drops the pool and opens a new one, then checks it can reach the server.
+  # Raises `Grant::ConnectionFailed` when it cannot.
+  def reconnect! : Nil
+    disconnect!
+    verify!
+  end
+
+  # Runs `SELECT 1` on a pooled connection, raising the driver's error when it
+  # fails. It skips retries, transactions and pinned connections so it reports
+  # on the pool itself. A pool whose every connection is checked out counts as
+  # alive: waiting for a free connection is not an outage.
+  def ping : Nil
+    stats = database.pool.stats
+    return if stats.max_connections > 0 && stats.idle_connections == 0 &&
+              stats.open_connections >= stats.max_connections
+
+    database.using_connection { |conn| conn.scalar("SELECT 1") }
+  end
+
+  # Raises `Grant::ConnectionFailed` unless the server answers `SELECT 1`.
+  def verify! : Nil
+    ping
+  rescue ex : ::Exception
+    translated = translate_exception(ex)
+    raise translated if translated.is_a?(Grant::ConnectionNotEstablished)
+    raise Grant::ConnectionFailed.new("Could not reach #{name}: #{ex.message}", cause: ex)
+  end
+
+  # True when the server answers `SELECT 1`.
+  def active? : Bool
+    verify!
+    true
+  rescue Grant::ConnectionNotEstablished
+    false
+  end
+
+  # Pool statistics, read without a lock. An adapter whose pool is not open
+  # reports zeros.
+  def pool_stat : Grant::PoolStat
+    waiting = @waiting_checkouts.get
+    if opened = @_database
+      stats = opened.pool.stats
+      Grant::PoolStat.new(
+        size: stats.max_connections,
+        connections: stats.open_connections,
+        busy: stats.open_connections - stats.idle_connections,
+        idle: stats.idle_connections,
+        waiting: waiting,
+        in_flight: stats.in_flight_connections)
+    else
+      Grant::PoolStat.new(size: 0, connections: 0, busy: 0, idle: 0, waiting: waiting, in_flight: 0)
+    end
+  end
+
+  # Checkouts currently held, which the least-connections replica strategy
+  # compares.
+  def active_checkouts : Int32
+    @active_checkouts.get
+  end
+
+  # Milliseconds on the monotonic clock at the last checkout.
+  def last_used_ticks : Int64
+    @last_used_ticks.get
+  end
+
+  # Closes idle connections, keeping at least *keep* open. Returns how many it
+  # closed. Each connection is taken from the pool and closed on its own, so
+  # the pool is never locked across network I/O.
+  def close_idle_connections(keep : Int32 = 0) : Int32
+    return 0 unless opened = @_database
+
+    closed = 0
+    loop do
+      stats = opened.pool.stats
+      break if stats.idle_connections == 0 || stats.open_connections <= keep
+
+      connection = opened.checkout
+      connection.close
+      connection.release
+      closed += 1
+    end
+    closed
+  end
+
+  # Runs `SELECT 1` on every idle connection so a server or proxy that drops
+  # idle sockets is noticed before a request needs one. Returns the number of
+  # connections that answered.
+  def keepalive_idle_connections : Int32
+    return 0 unless opened = @_database
+
+    idle = opened.pool.stats.idle_connections
+    held = [] of DB::Connection
+    idle.times do
+      break if opened.pool.stats.idle_connections == 0
+      held << opened.checkout
+    end
+
+    alive = 0
+    held.each do |connection|
+      begin
+        connection.scalar("SELECT 1")
+        alive += 1
+      rescue ::Exception
+        connection.close
+      ensure
+        connection.release
+      end
+    end
+    alive
   end
 
   # Yields a raw connection for the current context.
@@ -95,35 +271,113 @@ abstract class Grant::Adapter::Base
       end
     end
 
+    # A connection pinned by `#with_connection` serves every statement of its
+    # block, so session state such as temp tables or advisory locks survives
+    # from one statement to the next.
+    if pinned = pinned_connection?
+      begin
+        return yield pinned
+      rescue ex : ::Exception
+        raise translate_exception(ex, sql, binds)
+      end
+    end
+
     open_pool_connection(sql, binds) { |conn| yield conn }
   end
 
-  # Yields the raw driver connection for the current context, the supported
-  # way to reach driver features Grant does not wrap.
-  def with_connection(&)
-    open { |conn| yield conn }
+  # Yields one raw driver connection and keeps every Grant statement this fiber
+  # issues on this adapter on it until the block ends. Inside a transaction or
+  # schema-tenant block the connection they already own is yielded instead.
+  #
+  # The connection is held for the whole block, so keep slow non-database work
+  # out of it: a fiber that idles while holding a connection starves the pool.
+  def with_connection(& : DB::Connection -> T) : T forall T
+    owned = Grant::SchemaTenant.current_connection?(self) ||
+            Grant::Transaction.current_connection?(self) ||
+            pinned_connection?
+    return yield owned if owned
+
+    open_pool_connection do |conn|
+      pins = (Fiber.current.grant_pinned_connections ||= {} of UInt64 => DB::Connection)
+      pins[object_id] = conn
+      begin
+        yield conn
+      ensure
+        pins.delete(object_id)
+      end
+    end
+  end
+
+  # The connection `#with_connection` pinned for this fiber, if any.
+  def pinned_connection? : DB::Connection?
+    Fiber.current.grant_pinned_connections.try(&.[object_id]?)
   end
 
   # Always checks out a fresh connection from the pool, bypassing the
   # transaction-routing logic in #open.  Used by execute_transaction so that
   # requires_new: true transactions get their own independent connection rather
   # than inheriting an enclosing transaction's connection.
+  #
+  # A failure to connect is retried up to `retry_attempts` times with capped
+  # exponential backoff, since nothing was sent. A connection that drops while
+  # the block runs is retried once only when *sql* is a plain read; anything
+  # else could already have taken effect, so it raises
+  # `Grant::ConnectionFailed` instead.
   def open_pool_connection(sql : String? = nil, binds = nil, &)
-    database.retry do
-      database.using_connection do |conn|
-        yield conn
-      rescue ex : IO::Error
-        raise ::DB::ConnectionLost.new(conn)
-      rescue ex : Exception
-        if ex.message =~ /client was disconnected/
-          raise ::DB::ConnectionLost.new(conn)
-        else
-          raise ex
-        end
+    lost_retries = Grant::Adapter::PoolSupport.idempotent_read?(sql) ? Math.min(@retry_attempts, 1) : 0
+    attempt = 0
+    loop do
+      begin
+        return checked_out { |conn| yield conn }
+      rescue ex : ::DB::ConnectionLost
+        raise ex if lost_retries == 0
+        lost_retries -= 1
+        sleep Grant::Adapter::PoolSupport.backoff(@retry_delay, attempt)
+        attempt += 1
       end
     end
   rescue ex : ::Exception
     raise translate_exception(ex, sql, binds)
+  end
+
+  private def checked_out(&)
+    connection = checkout_connection
+    @active_checkouts.add(1)
+    @last_used_ticks.set(Grant::Adapter::PoolSupport.ticks)
+    begin
+      yield connection
+    rescue ex : IO::Error
+      raise ::DB::ConnectionLost.new(connection)
+    rescue ex : ::Exception
+      if ex.message =~ /client was disconnected/
+        raise ::DB::ConnectionLost.new(connection)
+      else
+        raise ex
+      end
+    ensure
+      @active_checkouts.sub(1)
+      connection.release
+    end
+  end
+
+  # Takes a connection from the pool, counting the fiber as waiting while it
+  # blocks and retrying a refused connection with backoff.
+  private def checkout_connection : DB::Connection
+    attempt = 0
+    @waiting_checkouts.add(1)
+    begin
+      loop do
+        begin
+          return database.checkout
+        rescue ex : ::DB::PoolResourceRefused
+          raise ex if attempt >= @retry_attempts
+          sleep Grant::Adapter::PoolSupport.backoff(@retry_delay, attempt)
+          attempt += 1
+        end
+      end
+    ensure
+      @waiting_checkouts.sub(1)
+    end
   end
 
   # Maps a driver failure to the matching `Grant::ErrorBase` subclass and
