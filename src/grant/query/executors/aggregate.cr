@@ -19,14 +19,19 @@ module Grant::Query::Executor
 
       begin
         adapter = Model.adapter
-        adapter.open(@sql, @args, Model.name) do |db|
-          db.query @sql, args: adapter.normalize_bind_values(@args) do |rs|
-            rs.each do
-              key = Array(Grant::Columns::Type).new(@group_count)
-              @group_count.times { key << rs.read(Grant::Columns::Type) }
-              rows << {key, rs.read(Grant::Columns::Type)}
+        copy = ->(cached : Array(AggregateRow)) { cached.map { |row| {row[0].dup, row[1]} } }
+        rows = Grant::QueryCache.fetch(adapter, @sql, @args, Model.name, copy) do
+          fresh = [] of AggregateRow
+          adapter.open(@sql, @args, Model.name) do |db|
+            db.query @sql, args: adapter.normalize_bind_values(@args) do |rs|
+              rs.each do
+                key = Array(Grant::Columns::Type).new(@group_count)
+                @group_count.times { key << rs.read(Grant::Columns::Type) }
+                fresh << {key, rs.read(Grant::Columns::Type)}
+              end
             end
           end
+          fresh
         end
 
         log_query_with_timing(@sql, @args, Time.instant - start_time, rows.size, Model.name)
