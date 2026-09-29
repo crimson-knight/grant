@@ -42,7 +42,11 @@ module Grant::Spec
     begin
       test_adapters(only).each { |adapter| handles << Grant::Transaction.begin_manual(adapter, options) }
     rescue ex
-      rollback_test_transactions(handles) rescue nil
+      begin
+        rollback_test_transactions(handles)
+      rescue rollback_error
+        Grant::Log.warn(exception: rollback_error) { "Could not roll back a test transaction after a failed begin" }
+      end
       raise ex
     end
     handles

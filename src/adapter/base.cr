@@ -193,7 +193,13 @@ abstract class Grant::Adapter::Base
       value = begin
         yield
       rescue ex
-        restore_referential_integrity rescue nil
+        begin
+          restore_referential_integrity
+        rescue restore_error
+          # The block's error is the one to report; an aborted transaction
+          # (PostgreSQL) rejects the restore and resets the setting anyway.
+          Grant::Log.warn(exception: restore_error) { "Could not restore referential integrity after a failed block" }
+        end
         raise ex
       end
       restore_referential_integrity
