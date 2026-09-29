@@ -42,6 +42,25 @@ class EnoStrict < Grant::Base
   enum_attribute mode : EnoStrict::Mode?, validate: true
 end
 
+class EnoGuarded < Grant::Base
+  connection {{ (env("CURRENT_ADAPTER") || "sqlite").id }}
+  table eno_guardeds
+
+  column id : Int64, primary: true
+  column title : String
+
+  enum Stage
+    Open
+    Closed
+  end
+
+  enum_attribute stage : EnoGuarded::Stage = :open
+
+  validate "title must not be blank" do |model|
+    !model.title.blank?
+  end
+end
+
 describe "enum_attribute options" do
   before_all do
     id_column = case CURRENT_ADAPTER
@@ -53,11 +72,14 @@ describe "enum_attribute options" do
     EnoPost.exec("CREATE TABLE eno_posts (id #{id_column}, title VARCHAR(255) NOT NULL, status VARCHAR(255), visibility VARCHAR(255), level INTEGER)")
     EnoStrict.exec("DROP TABLE IF EXISTS eno_stricts")
     EnoStrict.exec("CREATE TABLE eno_stricts (id #{id_column}, mode VARCHAR(255))")
+    EnoGuarded.exec("DROP TABLE IF EXISTS eno_guardeds")
+    EnoGuarded.exec("CREATE TABLE eno_guardeds (id #{id_column}, title VARCHAR(255) NOT NULL, stage VARCHAR(255))")
   end
 
   before_each do
     EnoPost.clear
     EnoStrict.clear
+    EnoGuarded.clear
   end
 
   it "prefixes predicates and scopes so shared member names do not collide" do
@@ -94,6 +116,13 @@ describe "enum_attribute options" do
     strict = EnoStrict.create!(mode: :on)
     strict.mode = nil
     expect_raises(Grant::RecordInvalid) { strict.save! }
+  end
+
+  it "raises from the persisting bang setter when validation fails" do
+    guarded = EnoGuarded.create!(title: "ok")
+    guarded.title = ""
+    expect_raises(Grant::RecordInvalid) { guarded.closed! }
+    EnoGuarded.find!(guarded.id).stage.should eq(EnoGuarded::Stage::Open)
   end
 
   it "only assigns in memory for a new record" do
@@ -134,7 +163,7 @@ describe "enum_attribute options" do
 
   it "raises for an unknown name without validate:" do
     post = EnoPost.new(title: "t")
-    expect_raises(ArgumentError) { post.status = "bogus" }
+    expect_raises(Grant::UnknownEnumValueError) { post.status = "bogus" }
   end
 
   it "reports an unknown name as a validation error with validate:" do
@@ -143,6 +172,14 @@ describe "enum_attribute options" do
     strict.valid?.should be_false
     strict.errors.map(&.message).join.should contain("mode is not included in the list")
     strict.mode = "on"
+    strict.valid?.should be_true
+  end
+
+  it "forgets an unknown name once a member is assigned directly" do
+    strict = EnoStrict.new
+    strict.mode = "bogus"
+    strict.valid?.should be_false
+    strict.mode = EnoStrict::Mode::Off
     strict.valid?.should be_true
   end
 

@@ -43,11 +43,21 @@ module Grant::EnumAttributes
   # * **predicates** `#draft? : Bool`, `#published? : Bool`, `#archived? : Bool`
   #   — true when `status` equals that member;
   # * **bang-setters** `#draft!`, `#published!`, `#archived!` — assign that member
-  #   to `status` and return it;
-  # * **scopes** `.draft`, `.published`, `.archived` — class methods returning a
-  #   query filtered to that member;
+  #   and, on a persisted record, `save!` it (one UPDATE; validations and
+  #   callbacks run; raises `Grant::RecordInvalid` on failure). A new record is
+  #   only assigned;
+  # * **in-memory setters** `#assign_draft`, `#assign_published`, ... — assign
+  #   without saving;
+  # * **scopes** `.draft`, `.published`, `.archived` and negated
+  #   `.not_draft`, ... — class methods returning a query filtered to that member;
+  # * `#status=(String | Symbol)` — assigns by member name;
   # * `.statuses` — all enum values (`Array(Status)`);
   # * `.status_mapping` — a `Hash` of underscored member name ⇒ enum value.
+  #
+  # Options: `prefix:` / `suffix:` (true, a Symbol or a String) rename the
+  # generated methods, `scopes: false` skips the scopes, and `validate: true`
+  # (or `validate: {allow_nil: true}`) reports unknown names and nil through
+  # validation instead of raising `Grant::UnknownEnumValueError`.
   #
   # A default given as a symbol (`= :draft`) or an enum literal is applied via an
   # `after_initialize` hook to new records only.
@@ -210,11 +220,18 @@ module Grant::EnumAttributes
       end
     end
 
-    # Assigns by name. An unknown name raises `ArgumentError`, or, with
-    # `validate:`, is remembered and reported by validation.
+    # Assigns by name. An unknown name raises `Grant::UnknownEnumValueError`,
+    # or, with `validate:`, is remembered and reported by validation.
     @[JSON::Field(ignore: true)]
     @[YAML::Field(ignore: true)]
     @_invalid_enum_{{name.id}} : String? = nil
+
+    # Any assignment through the column setter (a member or nil) replaces a
+    # previously remembered unknown name, so validation reflects the latest value.
+    private def __assign_hook_{{name.id}}(value)
+      @_invalid_enum_{{name.id}} = nil
+      value
+    end
 
     def {{name.id}}=(value : String | Symbol)
       if member = self.class.__enum_lookup_{{name.id}}(value)
@@ -224,7 +241,7 @@ module Grant::EnumAttributes
         {% if options[:validate] %}
           @_invalid_enum_{{name.id}} = value.to_s
         {% else %}
-          raise ArgumentError.new("'#{value}' is not a valid {{name.id}}")
+          raise Grant::UnknownEnumValueError.new("'#{value}' is not a valid {{name.id}}")
         {% end %}
       end
     end
@@ -321,4 +338,10 @@ end
 abstract class Grant::Base
   include Grant::EnumAttributes
   extend Grant::EnumAttributes::Validations
+end
+
+# Raised when an enum attribute is assigned a name that is not a member of its
+# enum (for example `post.status = "bogus"`) and the attribute was declared
+# without `validate:`.
+class Grant::UnknownEnumValueError < Grant::ErrorBase
 end
