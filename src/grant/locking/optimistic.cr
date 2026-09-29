@@ -141,7 +141,7 @@ module Grant::Locking::Optimistic
     end
 
     true
-  rescue ex : StaleObjectError | Grant::TenantMismatchError | Grant::NoTenantError | Grant::ReadOnlyRecordError
+  rescue ex : StaleObjectError | Grant::TenantMismatchError | Grant::NoTenantError | Grant::ReadOnlyRecordError | Grant::StatementInvalid
     raise ex
   rescue err
     raise DB::Error.new(err.message, cause: err)

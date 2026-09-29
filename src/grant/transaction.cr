@@ -24,15 +24,11 @@ module Grant::Transaction
   # Raised when the database aborts a transaction due to a serialization /
   # concurrency conflict (e.g. a `Serializable` isolation failure or a
   # `could not serialize` error). Retrying the transaction is the usual remedy.
-  class SerializationError < Exception
-    def initialize(message = "Transaction serialization failure")
-      super(message)
-    end
-  end
+  alias SerializationError = Grant::SerializationFailure
 
   # Raised when a write is attempted inside a `readonly: true` transaction (or
   # when the database reports a "read-only transaction" error).
-  class ReadOnlyError < Exception
+  class ReadOnlyError < Grant::ErrorBase
     def initialize(message = "Cannot modify data in read-only transaction")
       super(message)
     end
@@ -405,6 +401,8 @@ module Grant::Transaction
       else
         conn.exec(statement)
       end
+    rescue ex : ::Exception
+      raise adapter.translate_exception(ex, statement)
     end
 
     private def fire_savepoint_rollback_callbacks(state : TransactionState, mark : Int32)
@@ -486,19 +484,10 @@ module Grant::Transaction
       end
     end
 
+    # Re-raises *ex* as the matching `Grant::ErrorBase` when the adapter
+    # recognizes it, and unchanged otherwise.
     private def handle_transaction_error(ex : DB::Error)
-      message = ex.message || ""
-
-      case message
-      when /deadlock/i
-        raise Grant::Locking::DeadlockError.new(message)
-      when /serialization failure/i, /could not serialize/i
-        raise Transaction::SerializationError.new(message)
-      when /read-only transaction/i
-        raise Transaction::ReadOnlyError.new(message)
-      else
-        raise ex
-      end
+      raise adapter.translate_exception(ex)
     end
   end
 
