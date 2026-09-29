@@ -25,48 +25,42 @@ module Grant::Timestamps
     Time.local(Grant.settings.default_timezone)
   end
 
-  # Tracks, per fiber, how many blocks are open for each model name. A `spawn`ed
-  # fiber starts with nothing suppressed, so a scope never leaks across fibers.
-  class FiberScope
-    def initialize
-      @mutex = Mutex.new
-      @scopes = {} of Fiber => Hash(String, Int32)
-    end
-
-    # Runs the block with *name* active on the current fiber.
-    def within(name : String, & : -> T) : T forall T
-      fiber = Fiber.current
-      @mutex.synchronize do
-        counts = (@scopes[fiber] ||= {} of String => Int32)
-        counts[name] = (counts[name]? || 0) + 1
-      end
-      begin
-        yield
-      ensure
-        @mutex.synchronize do
-          if counts = @scopes[fiber]?
-            remaining = (counts[name]? || 1) - 1
-            if remaining > 0
-              counts[name] = remaining
-            else
-              counts.delete(name)
-              @scopes.delete(fiber) if counts.empty?
-            end
-          end
-        end
-      end
-    end
-
-    # True when the current fiber has a block open for any of *lineage*.
-    def active?(lineage : Array(String)) : Bool
-      counts = @mutex.synchronize { @scopes[Fiber.current]? }
-      return false unless counts
-      lineage.any? { |name| counts.has_key?(name) }
-    end
+  # Counts of the `no_touching` / `suppress` blocks open on one fiber, keyed by
+  # model name. It lives in a fiber-local slot, so a `spawn`ed fiber starts with
+  # nothing suppressed, a scope never leaks across fibers, and checking it takes
+  # no lock.
+  #
+  # :nodoc:
+  class BlockScopes
+    getter no_touching = {} of String => Int32
+    getter suppressed = {} of String => Int32
   end
 
-  NO_TOUCHING = FiberScope.new
-  SUPPRESSED  = FiberScope.new
+  # The current fiber's block counts, created on first use.
+  #
+  # :nodoc:
+  def self.block_scopes : BlockScopes
+    fiber = Fiber.current
+    fiber.grant_block_scopes || (fiber.grant_block_scopes = BlockScopes.new)
+  end
+
+  # Runs the block with *name* counted as open in *counts*, unwinding the count
+  # even when the block raises.
+  #
+  # :nodoc:
+  def self.within(counts : Hash(String, Int32), name : String, & : -> T) : T forall T
+    counts[name] = (counts[name]? || 0) + 1
+    begin
+      yield
+    ensure
+      remaining = (counts[name]? || 1) - 1
+      if remaining > 0
+        counts[name] = remaining
+      else
+        counts.delete(name)
+      end
+    end
+  end
 
   module ClassMethods
     # True unless the model declared `record_timestamps false`.
@@ -97,13 +91,19 @@ module Grant::Timestamps
     # User.no_touching { user.touch } # returns true, writes nothing
     # ```
     def no_touching(& : -> T) : T forall T
-      Grant::Timestamps::NO_TOUCHING.within(name) { yield }
+      Grant::Timestamps.within(Grant::Timestamps.block_scopes.no_touching, name) { yield }
     end
 
     # True while a `no_touching` block for this model (or a superclass) is open
     # on the current fiber.
     def no_touching? : Bool
-      Grant::Timestamps::NO_TOUCHING.active?(__lineage_names)
+      # Every save and touch asks, so the common case (no block open on this
+      # fiber) returns before building the class lineage.
+      scopes = Fiber.current.grant_block_scopes
+      return false unless scopes
+      counts = scopes.no_touching
+      return false if counts.empty?
+      __lineage_names.any? { |model_name| counts.has_key?(model_name) }
     end
 
     # Runs the block with `save` (and so `create`, `update`) turned into a
@@ -113,13 +113,17 @@ module Grant::Timestamps
     # Notification.suppress { Notification.create!(user_id: 1) } # writes nothing
     # ```
     def suppress(& : -> T) : T forall T
-      Grant::Timestamps::SUPPRESSED.within(name) { yield }
+      Grant::Timestamps.within(Grant::Timestamps.block_scopes.suppressed, name) { yield }
     end
 
     # True while a `suppress` block for this model (or a superclass) is open on
     # the current fiber.
     def suppressed? : Bool
-      Grant::Timestamps::SUPPRESSED.active?(__lineage_names)
+      scopes = Fiber.current.grant_block_scopes
+      return false unless scopes
+      counts = scopes.suppressed
+      return false if counts.empty?
+      __lineage_names.any? { |model_name| counts.has_key?(model_name) }
     end
   end
 
@@ -167,4 +171,10 @@ module Grant::Timestamps
   def no_touching? : Bool
     self.class.no_touching?
   end
+end
+
+class Fiber
+  # Fiber-local slot for `Grant::Timestamps::BlockScopes`.
+  # :nodoc:
+  property grant_block_scopes : Grant::Timestamps::BlockScopes?
 end
