@@ -356,7 +356,7 @@ module Grant::Query::Assembler
       order_fields = @query.order_fields
 
       if order_fields.none?
-        if use_default_order
+        if use_default_order && Grant.settings.implicit_order
           if @query.group_fields.any? && @query.group_fields.none? { |expression| expression[:field] == Model.primary_name }
             return nil
           end
