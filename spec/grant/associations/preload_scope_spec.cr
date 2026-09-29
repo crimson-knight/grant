@@ -89,6 +89,16 @@ describe "association scopes when preloading" do
     PsAuthor.find!(author.id).top_post.try(&.id).should eq(published.id)
   end
 
+  it "picks the same has_one row as the lazy reader when several match" do
+    author = PsAuthor.create!(name: "many")
+    first = PsPost.create!(title: "first", published: true, ps_author_id: author.id)
+    PsPost.create!(title: "second", published: true, ps_author_id: author.id)
+
+    lazy = PsAuthor.find!(author.id).top_post.try(&.id)
+    lazy.should eq(first.id)
+    PsAuthor.includes(:top_post).where(id: author.id).select.first.top_post.try(&.id).should eq(lazy)
+  end
+
   it "applies a belongs_to scope" do
     authors = seed_authors(2)
     vip = authors.first

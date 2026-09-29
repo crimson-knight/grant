@@ -311,6 +311,13 @@ module Grant::EagerLoading
                 \{% if ann[:polymorphic_as] %}
                   relation = relation.where(\{{ann[:type_column].id.stringify}}, :eq, \{{@type}}.polymorphic_name)
                 \{% end %}
+                \{% if ann[:type] == :has_one %}
+                  # The lazy reader takes `first` (lowest key); keep the same row
+                  # when several match instead of the implicit newest-first order.
+                  if relation.order_fields.empty? && (target_key = \{{target}}.primary_name)
+                    relation.order_fields << {field: target_key, direction: Grant::Query::Builder::Sort::Ascending}
+                  end
+                \{% end %}
                 restriction.try(&.each { |condition| relation.where_fields << condition })
                 Grant::AssociationLoader.where_in(relation, \{{ann[:foreign_key].id.stringify}}, values).select.map(&.as(Grant::Base))
               }
