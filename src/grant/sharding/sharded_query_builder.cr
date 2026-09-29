@@ -45,9 +45,9 @@ module Grant::Sharding
       db_type = active_shard ? self.class.db_type_for(Model.adapter) : @db_type
 
       case db_type
-      when DbType::Pg     then Grant::Query::Assembler::Pg(Model).new self
-      when DbType::Mysql  then Grant::Query::Assembler::Mysql(Model).new self
-      else                     Grant::Query::Assembler::Sqlite(Model).new self
+      when DbType::Pg    then Grant::Query::Assembler::Pg(Model).new self
+      when DbType::Mysql then Grant::Query::Assembler::Mysql(Model).new self
+      else                    Grant::Query::Assembler::Sqlite(Model).new self
       end
     end
 
