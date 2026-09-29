@@ -583,8 +583,8 @@ module Grant::Querying
     # relation's `count(column)` returns a `Hash` per group.
     #
     # ```
-    # User.count(:deleted_at)              # => 3
-    # User.count(:email, distinct: true)   # => 40
+    # User.count(:deleted_at)            # => 3
+    # User.count(:email, distinct: true) # => 40
     # ```
     def count(column : Symbol | String, distinct : Bool = false) : Int64
       result = current_scope.count(column, distinct)
