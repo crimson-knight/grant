@@ -218,11 +218,9 @@ module Grant::Query::Assembler
       valid_column = if qualifier.nil? || qualifier == Model.table_name
                        Model.fields.includes?(column) || !encrypted_attribute.nil?
                      elsif @query.join_clauses.any? { |join| join[:table] == qualifier }
-                       if association = Grant::AssociationRegistry.get(Model.name, qualifier)
-                         association[:target_class].fields.includes?(column)
-                       else
-                         Model.fields.includes?(column)
-                       end
+                       # The model behind the joined table decides; a raw joined
+                       # table the registry does not know is identifier-checked only.
+                       Grant::Query::JoinedColumns.known_column?(Model.name, qualifier, column) != false
                      else
                        false
                      end
