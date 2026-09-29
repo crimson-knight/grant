@@ -30,6 +30,7 @@ class Grant::Query::Builder(Model)
     target.readonly! if readonly?
     target.add_optimizer_hints(optimizer_hint_list)
     target.copy_in_chunk_size_from(self)
+    target.adopt_create_with_defaults(create_with_attributes)
   end
 
   # Merge a plain Builder returned by a scope without requiring the caller's
@@ -71,6 +72,7 @@ class Grant::Query::Builder(Model)
     none! if other.is_none?
     readonly! if other.readonly?
     add_optimizer_hints(other.optimizer_hint_list)
+    adopt_create_with_defaults(other.create_with_attributes)
     self
   end
 

@@ -3,6 +3,7 @@ require "../columns"
 require "../async"
 require "./where_chain"
 require "./batches"
+require "./finders"
 
 # Lazy, chainable SQL query builder returned by `Model.where`, `Model.order`, etc.
 #
@@ -55,6 +56,7 @@ class Grant::Query::Builder(Model)
   include Grant::Async::QueryMethods(Model)
   include Enumerable(Model)
   include Grant::Query::Batches(Model)
+  include Grant::Query::Finders(Model)
 
   enum DbType
     Mysql
