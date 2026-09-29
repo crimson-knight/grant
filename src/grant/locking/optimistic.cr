@@ -67,6 +67,12 @@ module Grant::Locking::Optimistic
       {{locking_name}}
     end
 
+    # Reached only by a `locking_column :name` written after the include (the
+    # macro of that name is shadowed by the reader above once the module is in).
+    def self.locking_column(name) : NoReturn
+      \{% raise "locking_column must be declared before `include Grant::Locking::Optimistic` in #{@type.name}" %}
+    end
+
     # Set to false to stop checking and bumping the version (ActiveRecord's
     # `lock_optimistically`); the column then behaves like any other.
     class_property lock_optimistically : Bool = true
