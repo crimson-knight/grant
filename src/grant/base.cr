@@ -214,7 +214,9 @@ abstract class Grant::Base
   #
   # :nodoc:
   def __identity_key : Grant::Columns::Type | Array(Grant::Columns::Type)
-    {% if @type.instance_vars.select { |ivar| (ann = ivar.annotation(Grant::Column)) && ann[:primary] }.size > 1 %}
+    {% if @type.abstract? %}
+      nil
+    {% elsif @type.instance_vars.select { |ivar| (ann = ivar.annotation(Grant::Column)) && ann[:primary] }.size > 1 %}
       parts = primary_key_values.values
       parts.any?(&.nil?) ? nil : parts
     {% else %}
@@ -227,7 +229,9 @@ abstract class Grant::Base
   #
   # :nodoc:
   def __identity_class_name : String
-    {% if @type.ancestors.any? { |ancestor| ancestor.stringify == "Grant::STI" } %}
+    {% if @type.abstract? %}
+      self.class.name
+    {% elsif @type.ancestors.any? { |ancestor| ancestor.stringify == "Grant::STI" } %}
       self.class.sti_root.name
     {% else %}
       self.class.name
