@@ -120,7 +120,7 @@ describe "Grant::Query::Builder - Modifiers" do
     it "merges none flag from other builder" do
       b1 = builder
       b2 = builder.none
-      b1.merge(b2)
+      b1 = b1.merge(b2)
       b1.is_none?.should be_true
     end
   end

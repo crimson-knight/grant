@@ -39,7 +39,17 @@ class Model
   def self.custom_select_statement : String?
     nil
   end
+
+  def self.implicit_order_columns : Array(String)
+    [] of String
+  end
 end
+
+# These specs pin the exact SQL of the legacy unordered-SELECT shape, which ends
+# in ORDER BY id DESC. Grant.settings.implicit_order = true selects that shape;
+# spec/grant/query/implicit_order_spec.cr covers the default (no ORDER BY).
+Spec.before_each { Grant.settings.implicit_order = true }
+Spec.after_each { Grant.settings.implicit_order = false }
 
 def query_fields
   Model.fields.join ", "

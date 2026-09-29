@@ -50,7 +50,7 @@ describe "Grant::Query::Builder - Having" do
     it "dup creates independent copy" do
       original = builder.having("COUNT(*) > ?", 5)
       copy = original.dup
-      copy.having("SUM(age) > ?", 100)
+      copy = copy.having("SUM(age) > ?", 100)
       original.having_clauses.size.should eq 1
       copy.having_clauses.size.should eq 2
     end
@@ -60,7 +60,7 @@ describe "Grant::Query::Builder - Having" do
     it "merges having clauses from another builder" do
       b1 = builder.having("COUNT(*) > ?", 5)
       b2 = builder.having("SUM(age) > ?", 100)
-      b1.merge(b2)
+      b1 = b1.merge(b2)
       b1.having_clauses.size.should eq 2
     end
   end

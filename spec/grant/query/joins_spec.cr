@@ -62,7 +62,7 @@ describe "Grant::Query::Builder - Joins" do
     it "dup creates independent copy" do
       original = builder.joins("posts", on: "posts.user_id = table.id")
       copy = original.dup
-      copy.joins("comments", on: "comments.post_id = posts.id")
+      copy = copy.joins("comments", on: "comments.post_id = posts.id")
       original.join_clauses.size.should eq 1
       copy.join_clauses.size.should eq 2
     end
@@ -72,14 +72,14 @@ describe "Grant::Query::Builder - Joins" do
     it "merges join clauses from another builder" do
       b1 = builder.joins("posts", on: "posts.user_id = table.id")
       b2 = builder.joins("comments", on: "comments.user_id = table.id")
-      b1.merge(b2)
+      b1 = b1.merge(b2)
       b1.join_clauses.size.should eq 2
     end
 
     it "does not duplicate join clauses on merge" do
       b1 = builder.joins("posts", on: "posts.user_id = table.id")
       b2 = builder.joins("posts", on: "posts.user_id = table.id")
-      b1.merge(b2)
+      b1 = b1.merge(b2)
       b1.join_clauses.size.should eq 1
     end
   end

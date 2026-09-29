@@ -2264,7 +2264,7 @@ class Grant::Query::Builder(Model)
     {% n = m.name.stringify %}
     {% if n.ends_with?("!") && chain.includes?(n[0...-1]) && !m.accepts_block? && m.visibility == :public %}
       # :nodoc:
-      def {{n[0...-1].id}}({% for arg, i in m.args %}{% if m.splat_index == i %}*{% end %}{% if arg.name.stringify.size > 0 %}{{arg.name}}{% if arg.restriction %} : {{arg.restriction}}{% end %}{% if arg.default_value %} = {{arg.default_value}}{% end %}{% end %}, {% end %}{% if m.double_splat %}**{{m.double_splat.name}}, {% end %}) : self
+      def {{n[0...-1].id}}({% for arg, i in m.args %}{% if m.splat_index == i %}*{% end %}{% if arg.name.stringify.size > 0 %}{{arg.name}}{% if arg.restriction %} : {{arg.restriction}}{% end %}{% unless arg.default_value.is_a?(Nop) %} = {{arg.default_value}}{% end %}{% end %}, {% end %}{% if m.double_splat %}**{{m.double_splat.name}}, {% end %}) : self
         chain_copy.{{n.id}}({% for arg, i in m.args %}{% if arg.name.stringify.size > 0 %}{% if m.splat_index && i > m.splat_index %}{{arg.name}}: {{arg.name}}{% elsif m.splat_index == i %}*{{arg.name}}{% else %}{{arg.name}}{% end %}, {% end %}{% end %}{% if m.double_splat %}**{{m.double_splat.name}}{% end %})
       end
     {% end %}
