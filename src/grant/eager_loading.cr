@@ -236,7 +236,7 @@ module Grant::EagerLoading
                       relation = \{{scope}}.call(relation)
                     \{% end %}
                   \{% end %}
-                  restriction.try(&.each { |condition| relation.where_fields << condition })
+                  restriction.try(&.each { |condition| relation.own_where_fields << condition })
                   Grant::AssociationLoader.where_in(relation, \{{ann[:primary_key].id.stringify}}, values).select.map(&.as(Grant::Base))
                 }
                 Grant::AssociationLoader.preload_belongs_to(
@@ -315,10 +315,10 @@ module Grant::EagerLoading
                   # The lazy reader takes `first` (lowest key); keep the same row
                   # when several match instead of the implicit newest-first order.
                   if relation.order_fields.empty? && (target_key = \{{target}}.primary_name)
-                    relation.order_fields << {field: target_key, direction: Grant::Query::Builder::Sort::Ascending}
+                    relation.own_order_fields << {field: target_key, direction: Grant::Query::Builder::Sort::Ascending}
                   end
                 \{% end %}
-                restriction.try(&.each { |condition| relation.where_fields << condition })
+                restriction.try(&.each { |condition| relation.own_where_fields << condition })
                 Grant::AssociationLoader.where_in(relation, \{{ann[:foreign_key].id.stringify}}, values).select.map(&.as(Grant::Base))
               }
               Grant::AssociationLoader.preload_has(
