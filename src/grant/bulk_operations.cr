@@ -124,7 +124,7 @@ module Grant::BulkOperations
       case column
       {% for ivar in @type.instance_vars.select(&.annotation(Grant::Column)) %}
         {% ann = ivar.annotation(Grant::Column) %}
-        {% app_type = ann[:nilable] ? ivar.type.union_types.reject { |type| type == Nil }.first : ivar.type.union_types.reject { |type| type == Nil }.first %}
+        {% app_type = ivar.type.union_types.reject { |type| type == Nil }.first %}
       when {{ ivar.name.stringify }}
         {% if ann[:converter] %}
           if value.is_a?({{ app_type }})
