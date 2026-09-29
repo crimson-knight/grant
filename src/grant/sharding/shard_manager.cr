@@ -34,7 +34,7 @@ module Grant
 
     # Get current shard for fiber
     def self.current_shard : Symbol?
-      @@current_shard[Fiber.current]?
+      @@current_shard[Fiber.current]? || Grant::ConnectionManagement.active_shard
     end
 
     # Set current shard (used internally)

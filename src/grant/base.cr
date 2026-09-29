@@ -189,16 +189,28 @@ abstract class Grant::Base
   end
 
   macro inherited
-    # Connection settings belong to each model class. Copy the parent values
-    # when a subclass is declared so a later `connects_to` on another model
-    # cannot change this class's database, role map, or shard map.
-    self.database_name = {{@type.superclass}}.database_name
-    self.connection_config = {{@type.superclass}}.connection_config.dup
-    inherited_shard_config = {} of Symbol => Hash(Symbol, String)
-    {{@type.superclass}}.shard_config.each do |shard, config|
-      inherited_shard_config[shard] = config.dup
+    # Connection settings belong to each model class and resolve through the
+    # superclass chain when read, so a `connects_to` on a parent (usually an
+    # abstract class) reaches subclasses declared before and after it.
+    # :nodoc:
+    def self.default_database_name : String
+      @@own_default_database_name || {{@type.superclass}}.default_database_name
     end
-    self.shard_config = inherited_shard_config
+
+    # :nodoc:
+    def self.connection_config : Hash(Symbol, String)
+      @@own_connection_config || {{@type.superclass}}.connection_config
+    end
+
+    # :nodoc:
+    def self.shard_config : Hash(Symbol, Hash(Symbol, String))
+      @@own_shard_config || {{@type.superclass}}.shard_config
+    end
+
+    # :nodoc:
+    def self.__connection_owned_by?(owner : String) : Bool
+      owner == {{@type.name.stringify}} || {{@type.superclass}}.__connection_owned_by?(owner)
+    end
 
     # Keep this method concrete per model. A shared class method invoked through
     # `Grant::Base.class` gives `self` a union of model classes; dispatching a
