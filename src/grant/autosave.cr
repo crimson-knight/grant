@@ -131,8 +131,8 @@ module Grant::AssociationOptions
         validating = validate.is_a?(NilLiteral) ? (autosave_on || association_type == :has_many) : (validate ? true : false)
         indexed = index_errors == true
         name = association_name.id.stringify
-        owner_key_read = primary_key ? "self.read_attribute(#{primary_key.stringify})".id : "self.read_attribute(self.class.primary_name)".id
-        record_key_read = primary_key ? "record.read_attribute(#{primary_key.stringify})".id : "record.read_attribute(record.class.primary_name)".id
+        owner_key_read = primary_key ? "self.read_attribute(#{primary_key.id.stringify})".id : "self.read_attribute(self.class.primary_name)".id
+        record_key_read = primary_key ? "record.read_attribute(#{primary_key.id.stringify})".id : "record.read_attribute(record.class.primary_name)".id
       %}
 
       # The association's options, as methods so `accepts_nested_attributes_for`

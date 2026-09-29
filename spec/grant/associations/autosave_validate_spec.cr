@@ -29,6 +29,31 @@ require "../../support/statement_recorder"
     has_many :asv_comments, class_name: AsvComment, foreign_key: :asv_post_id, autosave: true
   end
 
+  class AsvKeyed < Grant::Base
+    connection {{ adapter_literal }}
+    table asv_keyeds
+    column id : Int64, primary: true
+    column external_ref : Int64
+    has_many :asv_key_items, class_name: AsvKeyItem, foreign_key: :keyed_ref, primary_key: :external_ref, autosave: true
+    has_one :asv_key_detail, class_name: AsvKeyDetail, foreign_key: :keyed_ref, primary_key: :external_ref, autosave: true
+  end
+
+  class AsvKeyItem < Grant::Base
+    connection {{ adapter_literal }}
+    table asv_key_items
+    column id : Int64, primary: true
+    column keyed_ref : Int64?
+    column title : String?
+  end
+
+  class AsvKeyDetail < Grant::Base
+    connection {{ adapter_literal }}
+    table asv_key_details
+    column id : Int64, primary: true
+    column keyed_ref : Int64?
+    column note : String?
+  end
+
   class AsvComment < Grant::Base
     connection {{ adapter_literal }}
     table asv_comments
@@ -88,6 +113,9 @@ describe "association autosave and validate:" do
     AsvPost.migrator.drop_and_create
     AsvNote.migrator.drop_and_create
     AsvComment.migrator.drop_and_create
+    AsvKeyed.migrator.drop_and_create
+    AsvKeyItem.migrator.drop_and_create
+    AsvKeyDetail.migrator.drop_and_create
     AsvPlainPost.migrator.drop_and_create
     AsvLaxPost.migrator.drop_and_create
     AsvFrozenPost.migrator.drop_and_create
@@ -97,6 +125,9 @@ describe "association autosave and validate:" do
   before_each do
     AsvPost.clear
     AsvComment.clear
+    AsvKeyItem.clear
+    AsvKeyDetail.clear
+    AsvKeyed.clear
     AsvNote.clear
     AsvPlainPost.clear
     AsvLaxPost.clear
@@ -188,6 +219,19 @@ describe "association autosave and validate:" do
       author.asv_profile = AsvProfile.new(bio: "Hi")
       author.save.should be_true
       AsvProfile.find_by(asv_author_id: author.id).not_nil!.bio.should eq("Hi")
+    end
+  end
+
+  describe "a configured owner key" do
+    it "points saved children at the configured key, not the primary key" do
+      owner = AsvKeyed.new(external_ref: 777_i64)
+      owner.asv_key_items.build(title: "item")
+      owner.asv_key_detail = AsvKeyDetail.new(note: "detail")
+
+      owner.save.should be_true
+
+      AsvKeyItem.where(keyed_ref: 777_i64).count.should eq(1)
+      AsvKeyDetail.where(keyed_ref: 777_i64).count.should eq(1)
     end
   end
 
