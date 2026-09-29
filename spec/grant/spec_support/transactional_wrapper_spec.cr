@@ -99,11 +99,14 @@ describe "Grant::Spec.transactional" do
   end
 
   it "rolls back writes made through every registered connection" do
-    writers = registered_writers
+    # Only the spec_helper connections share the parents table; other spec
+    # files register databases of their own, which the wrapper still covers.
+    replica_writer = Grant::ConnectionRegistry.get_adapter("#{CURRENT_ADAPTER}_with_replica", :writing)
+    writers = [Parent.adapter, replica_writer]
     insert = "INSERT INTO parents (name, created_at, updated_at) VALUES ('via_adapter', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
 
     Grant::Spec.within_transaction do
-      writers.first.open { |db| db.exec(insert) }
+      replica_writer.open { |db| db.exec(insert) }
     end
 
     writers.each do |writer|
