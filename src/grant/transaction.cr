@@ -808,10 +808,17 @@ module Grant::Transaction
     # User.transaction(opts) { User.find!(1) }
     # ```
     def transaction(options : Transaction::Options, & : -> T) : T? forall T
-      # Always the writer: the read/write splitter keeps every statement in an
-      # open transaction on it (see `should_use_reader?`).
-      writer = resolve_adapter_for_role(:writing)
-      Grant::Transaction.run(writer, options) { yield }
+      Grant::Transaction.run(transaction_adapter, options) { yield }
+    end
+
+    # The adapter a transaction on this model opens on. Always the writer: the
+    # read/write splitter keeps every statement in an open transaction on it
+    # (see `should_use_reader?`). `Grant::Sharding::Model` overrides it to use
+    # the active shard's connection.
+    #
+    # :nodoc:
+    def transaction_adapter : Grant::Adapter::Base
+      resolve_adapter_for_role(:writing)
     end
 
     # Runs *block* inside a transaction, building the options from the given

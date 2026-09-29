@@ -79,6 +79,14 @@ module Grant::Sharding
         end
       end
       
+      # A transaction on a sharded model runs on the active shard's connection,
+      # the one `adapter` resolves, so its statements join the transaction.
+      #
+      # :nodoc:
+      def self.transaction_adapter : Grant::Adapter::Base
+        sharding_config ? adapter : super
+      end
+
       # Bare class-level count for sharded models.
       #
       # The default Grant::Querying#count hits `adapter` directly, which raises
