@@ -68,7 +68,44 @@ module Grant::NestedAttributes
     end
   end
 
-  # Improved macro that validates association exists and requires explicit types
+  # Lets `<association>_attributes=` create, update and destroy the associated
+  # records together with this one, in the shape web forms submit.
+  #
+  # Declare the association first, then:
+  #
+  # ```
+  # class Author < Grant::Base
+  #   has_many :posts
+  #   has_one :profile
+  #   belongs_to :publisher
+  #
+  #   accepts_nested_attributes_for posts : Post, allow_destroy: true, reject_if: :all_blank, limit: 5
+  #   accepts_nested_attributes_for profile : Profile, update_only: true
+  #   accepts_nested_attributes_for publisher : Publisher,
+  #     reject_if: ->(attrs : Hash(String, Grant::Columns::Type)) { attrs["name"]?.nil? }
+  #   enable_nested_saves
+  # end
+  #
+  # author.posts_attributes = [{id: 1, title: "Edited"}, {id: 2, _destroy: true}, {title: "New"}]
+  # author.save
+  # ```
+  #
+  # Options:
+  #
+  # * `allow_destroy:` honors `_destroy` keys.
+  # * `update_only:` updates the existing record of a one-to-one association
+  #   instead of replacing it.
+  # * `limit:` raises `ArgumentError` for more records than that.
+  # * `reject_if:` skips attribute hashes that are `:all_blank`, that a proc
+  #   `->(attrs : Hash(String, Grant::Columns::Type)) { ... }` answers `true` for,
+  #   or that the named instance method answers `true` for.
+  #
+  # Submitted ids are checked against the association when the setter runs, with
+  # one `WHERE id IN (...)` query, and `Grant::RecordNotFound` is raised for an id
+  # that is not part of it. Errors of an invalid nested record land on the owner
+  # as `posts.title`, or `posts[0].title` when the association has `index_errors:
+  # true`. A `belongs_to` parent is built or updated in memory and saved before
+  # this record, through the association's autosave.
   macro accepts_nested_attributes_for(association, **options)
     {%
       # Extract association name and class from the declaration
@@ -79,15 +116,40 @@ module Grant::NestedAttributes
         # Require explicit type declaration for compile-time safety
         raise "accepts_nested_attributes_for requires explicit type declaration. Use: accepts_nested_attributes_for #{association} : ClassName"
       end
+
+      # The association macro records its kind on the reader it generates.
+      assoc_type = nil
+      @type.methods.each do |candidate|
+        if candidate.name.stringify == assoc_name.stringify
+          relationship = candidate.annotation(Grant::Relationship)
+          assoc_type = relationship[:type] if relationship
+        end
+      end
+      reject = options[:reject_if]
     %}
-    
+
     # Flag that this model has nested attributes
     @_has_nested_attributes = true
 
     @[JSON::Field(ignore: true)]
     @[YAML::Field(ignore: true)]
     @_{{assoc_name.id}}_nested_owner_was_new : Bool? = nil
-    
+
+    # The records the submitted ids resolved to, kept for the save.
+    @[JSON::Field(ignore: true)]
+    @[YAML::Field(ignore: true)]
+    @_{{assoc_name.id}}_nested_existing : Hash(String, {{target_class.id}})?
+
+    private def _{{assoc_name.id}}_nested_rejector : Proc(Hash(String, Grant::Columns::Type), Bool)?
+      {% if reject.is_a?(SymbolLiteral) && reject != :all_blank %}
+        ->(attrs : Hash(String, Grant::Columns::Type)) { {{reject.id}}(attrs) }
+      {% elsif reject.is_a?(ProcLiteral) || reject.is_a?(Call) || reject.is_a?(Var) %}
+        {{reject}}
+      {% else %}
+        nil
+      {% end %}
+    end
+
     # Generate the attributes setter method
     def {{assoc_name.id}}_attributes=(attributes)
       @_has_nested_attributes = true
@@ -97,9 +159,10 @@ module Grant::NestedAttributes
         allow_destroy: {{ options[:allow_destroy] || false }},
         update_only: {{ options[:update_only] || false }},
         limit: {{ options[:limit] }},
-        reject_if: {% if options[:reject_if] == :all_blank %} :all_blank {% else %} nil {% end %}
+        reject_if: {% if reject == :all_blank %} :all_blank {% else %} nil {% end %}
       }
-      
+      rejector = _{{assoc_name.id}}_nested_rejector
+
       processed_attrs = case attributes
       when Array
         # Check limit
@@ -108,13 +171,13 @@ module Grant::NestedAttributes
             raise ArgumentError.new("Maximum #{limit} records are allowed. Got #{attributes.size} records instead.")
           end
         end
-        
+
         attributes.compact_map do |a|
           next unless a.is_a?(Hash) || a.is_a?(NamedTuple)
-          process_single_nested_attributes(a, config)
+          process_single_nested_attributes(a, config, rejector)
         end
       when Hash, NamedTuple
-        result = process_single_nested_attributes(attributes, config)
+        result = process_single_nested_attributes(attributes, config, rejector)
         result ? [result] : [] of Hash(String, Grant::Columns::Type)
       else
         raise ArgumentError.new("Nested attributes must be an Array, Hash, or NamedTuple")
@@ -122,14 +185,90 @@ module Grant::NestedAttributes
 
       @_{{assoc_name.id}}_nested_owner_was_new = self.new_record?
       _nested_attributes_data[{{ assoc_name.stringify }}] = processed_attrs
+
+      {% if assoc_type == :belongs_to %}
+        assign_nested_{{assoc_name.id}}_parent(processed_attrs.first?)
+      {% elsif assoc_type == :has_many || assoc_type == :has_one %}
+        load_nested_{{assoc_name.id}}_records(processed_attrs)
+      {% end %}
     end
+
+    {% if assoc_type == :belongs_to %}
+      # A parent is built or updated in memory; the association's autosave
+      # validates and saves it before this record.
+      private def _autosave_on_{{assoc_name.id}}? : Bool
+        true
+      end
+
+      private def _autosave_validating_{{assoc_name.id}}? : Bool
+        true
+      end
+
+      private def assign_nested_{{assoc_name.id}}_parent(attrs : Hash(String, Grant::Columns::Type)?) : Nil
+        return unless attrs
+        update_only = {{ options[:update_only] || false }}
+        destroy_requested = {{ options[:allow_destroy] || false }} && should_destroy?(attrs)
+        id = attrs["id"]?
+        id = nil if id.nil? || (id.is_a?(String) && id.blank?)
+        assignable = {} of String => Grant::Columns::Type
+        attrs.each { |key, value| assignable[key] = value unless key == "id" || key == "_destroy" }
+
+        current = self.{{assoc_name.id}}
+        if current && (update_only || (id && current.primary_key_value.to_s == id.to_s))
+          self.{{assoc_name.id}} = current
+          if destroy_requested
+            current.mark_for_destruction
+          else
+            current.set_attributes(assignable)
+          end
+        elsif id
+          raise Grant::RecordNotFound.new("Couldn't find {{target_class.id}} with #{{{target_class.id}}.primary_name}=#{id} for #{self.class.name} with #{self.class.primary_name}=#{primary_key_value}")
+        elsif !destroy_requested && !(update_only && persisted?)
+          parent = {{target_class.id}}.new
+          parent.set_attributes(assignable)
+          self.{{assoc_name.id}} = parent
+        end
+      end
+    {% elsif assoc_type == :has_many || assoc_type == :has_one %}
+      # Resolves the submitted ids with one IN query (or the loaded records) and
+      # raises `Grant::RecordNotFound` for an id outside this association.
+      private def load_nested_{{assoc_name.id}}_records(list : Array(Hash(String, Grant::Columns::Type))) : Nil
+        keys = [] of Grant::Columns::Type
+        list.each do |attrs|
+          id = attrs["id"]?
+          keys << id unless id.nil? || (id.is_a?(String) && id.blank?)
+        end
+        @_{{assoc_name.id}}_nested_existing = nil
+        return if keys.empty?
+
+        {% if assoc_type == :has_many %}
+          found = self.{{assoc_name.id}}.records_for_ids(keys)
+        {% else %}
+          foreign_key = self.class._{{assoc_name.id}}_association_meta[:foreign_key]
+          found = if key = read_attribute(self.class.primary_name)
+                    Grant::AssociationLoader.where_in({{target_class.id}}.where(foreign_key, :eq, key), {{target_class.id}}.primary_name, keys).select
+                  else
+                    [] of {{target_class.id}}
+                  end
+        {% end %}
+        by_id = {} of String => {{target_class.id}}
+        found.each { |record| by_id[record.primary_key_value.to_s] = record }
+        missing = keys.reject { |key| by_id.has_key?(key.to_s) }
+        unless missing.empty? || {{ options[:update_only] || false }}
+          raise Grant::RecordNotFound.new("Couldn't find {{target_class.id}} with #{{{target_class.id}}.primary_name}=#{missing.join(", ")} for #{self.class.name} with #{self.class.primary_name}=#{primary_key_value}")
+        end
+        @_{{assoc_name.id}}_nested_existing = by_id
+      end
+    {% end %}
 
     # Validate the child records before the owner is saved and carry their
     # errors onto the owner, matching the nested-save validation contract.
+    {% if assoc_type != :belongs_to %}
     validate "nested {{assoc_name.id}} attributes are valid" do |owner|
       nested_valid = true
       if nested_records = owner._nested_attributes_data[{{ assoc_name.stringify }}]?
-        nested_records.each do |attrs|
+        indexed = Grant::AssociationRegistry.reflection(owner.class.name, {{ assoc_name.stringify }}).try(&.options["index_errors"]?) == "true"
+        nested_records.each_with_index do |attrs, position|
           destroy_value = attrs["_destroy"]?
           destroy_requested = case destroy_value
                               when Bool         then destroy_value
@@ -137,14 +276,20 @@ module Grant::NestedAttributes
                               when Int32, Int64 then destroy_value == 1
                               else                   false
                               end
-          next if {{ options[:allow_destroy] || false }} && destroy_requested
+          next if {{options[:allow_destroy] || false}} && destroy_requested
 
-          nested_record = {{target_class}}.new
           validation_attributes = {} of String => Grant::Columns::Type
           attrs.each do |key, value|
             next if key == "id" || key == "_destroy"
             validation_attributes[key] = value
           end
+
+          submitted_id = attrs["id"]?
+          nested_record = if submitted_id && (existing = owner.@_{{assoc_name.id}}_nested_existing.try(&.[submitted_id.to_s]?))
+                            existing
+                          else
+                            {{target_class}}.new
+                          end
           nested_record.set_attributes(validation_attributes)
 
           if owner.new_record? && owner._grant_nested_saves_enabled?
@@ -156,8 +301,9 @@ module Grant::NestedAttributes
           end
 
           unless nested_record.valid?
+            prefix = indexed ? "{{assoc_name.id}}[#{position}]" : "{{assoc_name.id}}"
             nested_record.errors.each do |error|
-              owner.errors << Grant::Error.new("{{assoc_name.id}}.#{error.field}", error.message)
+              owner.errors << Grant::Error.new("#{prefix}.#{error.field}", error.message, error.type)
             end
             nested_valid = false
           end
@@ -165,6 +311,7 @@ module Grant::NestedAttributes
       end
       nested_valid
     end
+    {% end %}
 
     # Get nested attributes (for testing)
     def {{assoc_name.id}}_nested_attributes
@@ -173,7 +320,12 @@ module Grant::NestedAttributes
 
     # Resolve IDs through this owner's association so another parent's
     # records cannot be updated or destroyed by submitting their primary key.
+    # The records were resolved when the attributes were assigned; only an
+    # association that was not known then falls back to loading it.
     private def find_nested_{{assoc_name.id}}_by_id(id : Grant::Columns::Type) : {{target_class.id}}?
+      if resolved = @_{{assoc_name.id}}_nested_existing
+        return resolved[id.to_s]?
+      end
       association = self.{{assoc_name.id}}
       if association.responds_to?(:all)
         association.all.to_a.find do |record|
@@ -202,19 +354,22 @@ module Grant::NestedAttributes
       attrs_array = _nested_attributes_data[{{ assoc_name.stringify }}]
       return true unless attrs_array
       return true if attrs_array.empty?
-      
+
       config = {
         allow_destroy: {{ options[:allow_destroy] || false }},
         update_only: {{ options[:update_only] || false }}
       }
-      
+
       # Get foreign key from association metadata
       foreign_key_name = self.class._{{assoc_name.id}}_association_meta[:foreign_key]
       assoc_type = self.class._{{assoc_name.id}}_association_meta[:type]
-      
+      indexed = Grant::AssociationRegistry.reflection(self.class.name, {{ assoc_name.stringify }}).try(&.options["index_errors"]?) == "true"
+
       success = true
-      
-      attrs_array.each do |attr_hash|
+      changed_association = false
+
+      attrs_array.each_with_index do |attr_hash, position|
+        prefix = indexed ? "{{ assoc_name.id }}[#{position}]" : "{{ assoc_name.id }}"
         begin
           if config[:allow_destroy] && should_destroy?(attr_hash)
             # Handle destroy
@@ -225,9 +380,12 @@ module Grant::NestedAttributes
                      end
 
             if record
-                unless record.destroy
+                record.mark_for_destruction
+                if record.destroy
+                  changed_association = true
+                else
                   record.errors.each do |error|
-                    self.errors << Grant::Error.new("{{ assoc_name.id }}.#{error.field}", error.message)
+                    self.errors << Grant::Error.new("#{prefix}.#{error.field}", error.message)
                   end
                   success = false
                 end
@@ -244,14 +402,18 @@ module Grant::NestedAttributes
                 next if key == "id" || key == "_destroy"
                 update_attrs[key] = value.to_s
               end
-              
+
               record.set_attributes(update_attrs)
-              
-              unless record.save
-                record.errors.each do |error|
-                  self.errors << Grant::Error.new("{{ assoc_name.id }}.#{error.field}", error.message)
+
+              if record.changed?
+                if record.save
+                  changed_association = true
+                else
+                  record.errors.each do |error|
+                    self.errors << Grant::Error.new("#{prefix}.#{error.field}", error.message)
+                  end
+                  success = false
                 end
-                success = false
               end
             else
               self.errors << Grant::Error.new("{{ assoc_name.id }}", "Record with id #{id} is not associated with this record")
@@ -267,11 +429,15 @@ module Grant::NestedAttributes
 
               record.set_attributes(update_attrs)
 
-              unless record.save
-                record.errors.each do |error|
-                  self.errors << Grant::Error.new("{{ assoc_name.id }}.#{error.field}", error.message)
+              if record.changed?
+                if record.save
+                  changed_association = true
+                else
+                  record.errors.each do |error|
+                    self.errors << Grant::Error.new("#{prefix}.#{error.field}", error.message)
+                  end
+                  success = false
                 end
-                success = false
               end
             else
               self.errors << Grant::Error.new("{{ assoc_name.id }}", "Associated record not found for update_only nested attributes")
@@ -280,41 +446,49 @@ module Grant::NestedAttributes
           else
             # Handle create
             record = {{target_class}}.new
-            
+
             # Set attributes
             create_attrs = {} of String => String
             attr_hash.each do |key, value|
               next if key == "id" || key == "_destroy"
               create_attrs[key] = value.to_s
             end
-            
+
             record.set_attributes(create_attrs)
-            
+
             # Set foreign key for has_many/has_one associations
             if (assoc_type == :has_many || assoc_type == :has_one) && self.id
               record.set_attributes({foreign_key_name => self.id.to_s})
             end
-            
-            unless record.save
+
+            if record.save
+              changed_association = true
+            else
               record.errors.each do |error|
-                self.errors << Grant::Error.new("{{ assoc_name.id }}.#{error.field}", error.message)
+                self.errors << Grant::Error.new("#{prefix}.#{error.field}", error.message)
               end
               success = false
             end
           end
+        rescue ex : Grant::RecordNotFound
+          raise ex
         rescue ex
           Log.error { "Error processing nested attributes for {{ assoc_name.id }}: #{ex.message}" }
           self.errors << Grant::Error.new("{{ assoc_name.id }}", ex.message.to_s)
           success = false
         end
       end
-      
+
+      @_{{assoc_name.id}}_nested_existing = nil
+      # The cached target no longer matches what was created or destroyed.
+      reset_association({{ assoc_name.stringify }}) if changed_association
+
       success
     end
   end
 
   # Process single set of attributes with config
-  private def process_single_nested_attributes(attrs, config : NamedTuple) : Hash(String, Grant::Columns::Type)?
+  private def process_single_nested_attributes(attrs, config : NamedTuple, rejector : Proc(Hash(String, Grant::Columns::Type), Bool)? = nil) : Hash(String, Grant::Columns::Type)?
     hash_attrs = case attrs
                  when Hash
                    result = {} of String => Grant::Columns::Type
@@ -331,6 +505,10 @@ module Grant::NestedAttributes
     # Check reject_if
     if config[:reject_if] == :all_blank
       return nil if hash_attrs.all? { |k, v| k == "_destroy" || blank_value?(v) }
+    end
+
+    if rejector && rejector.call(hash_attrs)
+      return nil
     end
 
     if config[:update_only] && !hash_attrs.has_key?("id") && !_grant_nested_saves_enabled?

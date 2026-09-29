@@ -157,6 +157,7 @@ module Grant::CompositePrimaryKey
       end
       @new_record = false
       clear_loaded_associations
+      _autosave_reset_for_reload
     end
 
     self

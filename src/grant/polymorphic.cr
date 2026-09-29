@@ -357,13 +357,20 @@ module Grant::Polymorphic
     {% primary_key_name = primary_key ? primary_key.id.stringify : nil %}
 
     {% if options[:counter_cache] %}
-      {% if options[:counter_cache].is_a?(SymbolLiteral) %}
-        {% counter_column = options[:counter_cache].id.stringify %}
-      {% elsif options[:counter_cache].is_a?(StringLiteral) %}
-        {% counter_column = options[:counter_cache].id.stringify %}
-      {% else %}
-        {% counter_column = @type.stringify.split("::").last.underscore + "s_count" %}
+      {% counter_option = options[:counter_cache] %}
+      {% counter_active = true %}
+      {% if counter_option.is_a?(NamedTupleLiteral) %}
+        {% counter_active = counter_option[:active] == false ? false : true %}
+        {% counter_option = counter_option[:column] || true %}
       {% end %}
+      {% if counter_option.is_a?(SymbolLiteral) %}
+        {% counter_column = counter_option.id.stringify %}
+      {% elsif counter_option.is_a?(StringLiteral) %}
+        {% counter_column = counter_option.id.stringify %}
+      {% else %}
+        {% counter_column = "Grant::CounterCache.default_column(#{@type.name.stringify})".id %}
+      {% end %}
+      {% if counter_active %}
       after_create do
         foreign_id = self.read_attribute({{foreign_key.id.stringify}})
         type_name = self.read_attribute({{type_column.id.stringify}})
@@ -395,6 +402,7 @@ module Grant::Polymorphic
           Grant::Polymorphic.adjust_polymorphic_counter_cache(type_name, foreign_id, {{counter_column}}, -1)
         end
       end
+      {% end %}
     {% end %}
 
     {% if options[:touch] %}
