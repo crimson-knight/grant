@@ -13,9 +13,10 @@
 # ```
 #
 # The cache lives on the fiber that opened the block, so reading it takes no
-# lock. Entries are keyed on the SQL text, its bind values and the connection
+# lock. Entries are keyed on the SQL text, its bind values, the connection
 # the statement would run on (a transaction or pinned connection keeps its own
-# entries, since it sees its own uncommitted writes). It holds at most
+# entries, since it sees its own uncommitted writes) and the active
+# `Grant::SchemaTenant` schema. It holds at most
 # `Grant.settings.query_cache_max_entries` statements and evicts the least
 # recently used.
 #
@@ -32,7 +33,11 @@ module Grant::QueryCache
   # Reads that hold row locks must reach the database every time.
   LOCKING_READ = /\bfor\s+(update|share|no\s+key\s+update|key\s+share)\b/i
 
-  alias Key = {UInt64, UInt64, String, Array(Grant::Columns::Type)}
+  # Adapter, connection, schema-tenant schema, SQL and binds. The schema is
+  # part of the key because `Grant::SchemaTenant.with` switches `search_path`
+  # on one connection without a write, so the same SQL on the same connection
+  # reads another tenant's rows.
+  alias Key = {UInt64, UInt64, String?, String, Array(Grant::Columns::Type)}
 
   # :nodoc:
   abstract class Slot
@@ -155,7 +160,7 @@ module Grant::QueryCache
       state.generation = started
     end
 
-    key = {adapter.object_id, connection_id(adapter), sql, binds}
+    key = {adapter.object_id, connection_id(adapter), Grant::SchemaTenant.current_schema_for?(adapter), sql, binds}
     if slot = state.entries.delete(key)
       if typed = slot.as?(ValueSlot(T))
         state.entries[key] = slot
@@ -175,7 +180,7 @@ module Grant::QueryCache
         while state.entries.size >= max
           state.entries.shift?
         end
-        state.entries[{key[0], key[1], key[2], key[3].dup}] = ValueSlot(T).new(copy ? copy.call(result) : result)
+        state.entries[{key[0], key[1], key[2], key[3], key[4].dup}] = ValueSlot(T).new(copy ? copy.call(result) : result)
       end
     end
     result
