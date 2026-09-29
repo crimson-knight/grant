@@ -124,6 +124,13 @@ module Grant::Callbacks
   class Abort < Exception
   end
 
+  # Raised by `run_callbacks` for an event that has no callback chain.
+  class UnknownEventError < Grant::ErrorBase
+    def initialize(event : Symbol)
+      super("Unknown callback event #{event.inspect}; use one of #{CALLBACK_EVENTS.join(", ")}")
+    end
+  end
+
   CALLBACK_NAMES = %w(
     after_initialize after_find
     before_validation after_validation
@@ -244,7 +251,15 @@ module Grant::Callbacks
           {% if commit_on %}
           # `on:` here names the operations (`:create`, `:update`, `:destroy`)
           # the commit/rollback belongs to; see `Grant::CommitCallbacks`.
-          if Grant::Conditions.met?(nil, \{{condition}}, \{{unless_condition}}, nil) && \{% if on_context %}__commit_on?(\{{(on_context.is_a?(ArrayLiteral) ? on_context : [on_context]).splat}})\{% else %}true\{% end %}
+          # The operations are folded into a `Grant::CommitCallbacks::ACTION_*`
+          # bit mask at compile time.
+          \{% action_mask = 0 %}
+          \{% if on_context %}
+            \{% for action in (on_context.is_a?(ArrayLiteral) ? on_context : [on_context]) %}
+              \{% action_mask = action_mask | (action == :create ? 1 : (action == :update ? 2 : 4)) %}
+            \{% end %}
+          \{% end %}
+          if Grant::Conditions.met?(nil, \{{condition}}, \{{unless_condition}}, nil) && \{% if on_context %}__commit_on?(\{{action_mask}}_u8)\{% else %}true\{% end %}
           {% else %}
           if Grant::Conditions.met?(nil, \{{condition}}, \{{unless_condition}}, \{{on_context}})
           {% end %}
@@ -446,23 +461,25 @@ module Grant::Callbacks
   # `:validation`, `:touch`, `:initialize` or `:find`) around an optional
   # block, exactly as the persistence machinery does: `before_*` callbacks, the
   # block, then `after_*` callbacks, all wrapped in the `around_*` chain when
-  # the event has one. It expands at compile time.
+  # the event has one. Called without a receiver inside a model with a literal
+  # event, it expands at compile time.
   #
   # Returns the block's value, or `nil` when an `around_*` callback halted by
-  # not yielding (the block and the `after_*` callbacks then do not run). An
-  # `abort!` raises `Grant::Callbacks::Abort` to the caller.
+  # not yielding (the block and the `after_*` callbacks then do not run). With
+  # no block it returns `true`, or `false` when halted. An `abort!` raises
+  # `Grant::Callbacks::Abort` to the caller.
   #
   # ```
-  # order.run_callbacks(:save) { order.write_audit_row } # => audit row or nil
+  # class Order < Grant::Base
+  #   def archive
+  #     run_callbacks(:save) { write_audit_row } # => audit row, or nil if halted
+  #   end
+  # end
   # ```
   #
-  # With no block it just runs the chains and returns `true` (or `false` if
-  # halted). When *event* is not a literal (a variable), it dispatches at
-  # runtime through a `case` over the known events:
-  #
-  # ```
-  # order.run_callbacks(event_name) # => Bool
-  # ```
+  # With a receiver (`order.run_callbacks(:save) { ... }`) or a non-literal
+  # event, the call goes to the `run_callbacks` method, which dispatches at
+  # runtime through a `case` over the known events.
   macro run_callbacks(event, &block)
     {% if event.is_a?(SymbolLiteral) || event.is_a?(StringLiteral) %}
       {% ev = event.id.stringify %}
@@ -477,27 +494,61 @@ module Grant::Callbacks
           %result = {% if block %}{{block.body}}{% else %}true{% end %}
           {% if has_after %}__after_{{ev.id}} unless around_halted?{% end %}
         end
-        around_halted? ? nil : %result
+        {% if block %}around_halted? ? nil : %result{% else %}!around_halted?{% end %}
       {% else %}
         {% if has_before %}__before_{{ev.id}}{% end %}
         %result = {% if block %}{{block.body}}{% else %}true{% end %}
         {% if has_after %}__after_{{ev.id}}{% end %}
         %result
       {% end %}
+    {% elsif block %}
+      self.run_callbacks({{event}}) {{block}}
     {% else %}
-      {% block.raise "run_callbacks with a non-literal event does not take a block" if block %}
-      run_callbacks_for({{event}})
+      self.run_callbacks({{event}})
     {% end %}
   end
 
-  # Runtime form of `run_callbacks` for an event held in a variable. Returns
-  # `false` when an `around_*` callback halted, `true` otherwise. Dispatch is
-  # a compile-time expanded chain of Symbol comparisons, so nothing is allocated.
-  def run_callbacks_for(event : Symbol) : Bool
-    {% for ev in CALLBACK_EVENTS %}
-      return !!run_callbacks(:{{ev.id}}) { true } if event == :{{ev.id}}
+  # Runs the callbacks of *event* around the block, as the `run_callbacks`
+  # macro does, for a receiver call or an event held in a variable. Returns
+  # the block's value, or `nil` when an `around_*` callback halted. Raises
+  # `Grant::Callbacks::UnknownEventError` for an event outside
+  # `CALLBACK_EVENTS`.
+  #
+  # ```
+  # order.run_callbacks(:save) { order.write_audit_row } # => audit row or nil
+  # ```
+  def run_callbacks(event : Symbol, &action : -> T) : T? forall T
+    # A block parameter is not visible inside a macro expansion, so hand the
+    # macro a plain local.
+    inner_action = action
+    {% begin %}
+      case event
+      {% for ev in CALLBACK_EVENTS %}
+      when :{{ev.id}} then run_callbacks(:{{ev.id}}) { inner_action.call }
+      {% end %}
+      else
+        raise UnknownEventError.new(event)
+      end
     {% end %}
-    raise ArgumentError.new("Unknown callback event #{event.inspect}; use one of #{CALLBACK_EVENTS.join(", ")}")
+  end
+
+  # Runs the callbacks of *event* with no block. Returns `false` when an
+  # `around_*` callback halted, `true` otherwise.
+  #
+  # ```
+  # event = :save
+  # order.run_callbacks(event) # => true
+  # ```
+  def run_callbacks(event : Symbol) : Bool
+    {% begin %}
+      case event
+      {% for ev in CALLBACK_EVENTS %}
+      when :{{ev.id}} then run_callbacks(:{{ev.id}})
+      {% end %}
+      else
+        raise UnknownEventError.new(event)
+      end
+    {% end %}
   end
 
   # Returns `true` if the most recent `around_*` callback halted the operation

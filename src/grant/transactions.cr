@@ -571,6 +571,9 @@ module Grant::Transactions
     # only its own partial writes.
     save_transaction = Grant::Transaction::Options.new(requires_new: true)
 
+    # Which operation a failed save's after_rollback belongs to, for `on:`.
+    save_rollback_action = (@{{primary_key.name.id}} && !new_record?) ? Grant::CommitCallbacks::ACTION_UPDATE : Grant::CommitCallbacks::ACTION_CREATE
+
     self.class.transaction(save_transaction) do
       enlist_transaction_record
 
@@ -616,7 +619,7 @@ module Grant::Transactions
         clear_commit_callbacks if responds_to?(:clear_commit_callbacks)
         Grant::Transaction.enqueue_pending_callback(
           Proc(Nil).new { },
-          Proc(Nil).new { after_rollback if responds_to?(:after_rollback) }
+          Proc(Nil).new { dispatch_rollback_callbacks(save_rollback_action) }
         )
         raise Grant::Transaction::Rollback.new
       end

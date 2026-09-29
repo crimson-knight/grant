@@ -33,6 +33,14 @@ require "../../spec_helper"
       run_callbacks(:touch)
     end
 
+    def bare_save : Bool
+      run_callbacks(:save)
+    end
+
+    def wrap_event(event : Symbol, &block : -> String) : String?
+      run_callbacks(event) { block.call }
+    end
+
     private def maybe_gate(block : Proc(Nil))
       log << "around_in"
       block.call if gate
@@ -94,15 +102,44 @@ describe "run_callbacks" do
   it "dispatches a runtime symbol through a case statement" do
     record = RunCallbacksModel.new(name: "a")
     event = :save
-    record.run_callbacks_for(event).should be_true
+    record.run_callbacks(event).should be_true
     record.log.should eq(["around_in", "before_save", "after_save", "around_out"])
 
     record.log.clear
     record.gate = false
-    record.run_callbacks_for(event).should be_false
+    record.run_callbacks(event).should be_false
 
-    expect_raises(ArgumentError, /Unknown callback event/) do
-      record.run_callbacks_for(:bogus)
+    expect_raises(Grant::Callbacks::UnknownEventError, /Unknown callback event :bogus/) do
+      record.run_callbacks(:bogus)
     end
+  end
+
+  it "runs a block through the receiver form" do
+    record = RunCallbacksModel.new(name: "a")
+    result = record.run_callbacks(:save) do
+      record.log << "block"
+      "done"
+    end
+
+    result.should eq("done")
+    record.log.should eq(["around_in", "before_save", "block", "after_save", "around_out"])
+  end
+
+  it "returns nil from the receiver form when an around callback halts" do
+    record = RunCallbacksModel.new(name: "a")
+    record.gate = false
+    record.run_callbacks(:save) { "done" }.should be_nil
+  end
+
+  it "returns false from the literal form with no block when an around callback halts" do
+    record = RunCallbacksModel.new(name: "a")
+    record.gate = false
+    record.bare_save.should be_false
+  end
+
+  it "dispatches a variable event with a block from inside the model" do
+    record = RunCallbacksModel.new(name: "a")
+    record.wrap_event(:destroy) { record.log << "block"; "done" }.should eq("done")
+    record.log.should eq(["before_destroy", "block", "after_destroy"])
   end
 end

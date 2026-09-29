@@ -78,9 +78,8 @@ describe "after_save_commit" do
       record.save
       SaveCommitBothModel.event_log.should be_empty
     end
-    SaveCommitBothModel.event_log.count("save_commit").should eq(1)
-    SaveCommitBothModel.event_log.count("create_commit").should eq(1)
-    SaveCommitBothModel.event_log.count("update_commit").should eq(1)
+    # ActiveRecord resolves create-then-update to a create.
+    SaveCommitBothModel.event_log.should eq(["create_commit", "save_commit"])
   end
 
   it "does not fire when the transaction rolls back" do
