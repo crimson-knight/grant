@@ -296,40 +296,50 @@ module Grant::Transaction
   # work correctly.  ClassMethods delegates to these module-level helpers so that
   # the Crystal class-variable scoping rule (@@var in an extended module is
   # per-including-class, not per-module) does not create per-model isolated stacks.
+  #
+  # The hash is shared by every fiber (and every thread under
+  # `-Dpreview_mt`), so reads and writes of it go through a mutex. Each stack
+  # array is owned by its fiber and needs no lock.
   @@transaction_stacks = {} of Fiber => Array(TransactionState)
+  @@transaction_stacks_mutex = Mutex.new
+
+  private def self.stack_for_current_fiber? : Array(TransactionState)?
+    fiber = Fiber.current
+    @@transaction_stacks_mutex.synchronize { @@transaction_stacks[fiber]? }
+  end
 
   # Returns the transaction stack for the current fiber, lazily creating it.
   def self.fiber_stack : Array(TransactionState)
-    stack = @@transaction_stacks[Fiber.current]?
-    unless stack
-      stack = [] of TransactionState
-      @@transaction_stacks[Fiber.current] = stack
+    fiber = Fiber.current
+    @@transaction_stacks_mutex.synchronize do
+      @@transaction_stacks[fiber] ||= [] of TransactionState
     end
-    stack
   end
 
   # Removes the current fiber's stack entry (called after the outermost transaction exits).
-  def self.clear_fiber_stack
-    @@transaction_stacks.delete(Fiber.current)
+  def self.clear_fiber_stack : Nil
+    fiber = Fiber.current
+    @@transaction_stacks_mutex.synchronize { @@transaction_stacks.delete(fiber) }
+    nil
   end
 
   # Returns true when the current fiber has at least one explicit transaction open.
   # Used by CommitCallbacks to decide whether to defer or fire immediately.
   def self.in_explicit_transaction? : Bool
-    stack = @@transaction_stacks[Fiber.current]?
+    stack = stack_for_current_fiber?
     !stack.nil? && !stack.empty?
   end
 
   # Returns the innermost open state for the current fiber, or `nil`.
   def self.current_state? : TransactionState?
-    @@transaction_stacks[Fiber.current]?.try(&.last?)
+    stack_for_current_fiber?.try(&.last?)
   end
 
   # Returns the innermost open state on *adapter* for the current fiber, or
   # `nil`. A transaction on another database may be nested inside it, so this
   # searches the whole stack rather than only its top.
   def self.current_state_for?(adapter : Grant::Adapter::Base) : TransactionState?
-    stack = @@transaction_stacks[Fiber.current]?
+    stack = stack_for_current_fiber?
     return nil unless stack
     stack.reverse_each do |state|
       return state if state.adapter.same?(adapter)
