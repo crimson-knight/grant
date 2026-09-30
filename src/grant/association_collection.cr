@@ -453,23 +453,36 @@ class Grant::AssociationCollection(Owner, Target)
   # collection, whose source association on the join model is *source_name*.
   #
   # :nodoc:
-  def through_writer(source_name : String) : Grant::Associations::ThroughWriter
+  def through_writer(source_name : String, source_type : String? = nil) : Grant::Associations::ThroughWriter
     if @through
       raise Grant::Associations::ThroughWriteError.new("Cannot write through #{Owner.name}##{@association_name}: a nested has_many :through is read-only")
     end
-    source = Grant::AssociationRegistry.get(Target.name, source_name) ||
-             raise Grant::Associations::ThroughWriteError.new("Cannot resolve source association #{Target.name}##{source_name}")
-    unless source[:type] == :belongs_to
-      raise Grant::Associations::ThroughWriteError.new("Cannot write through #{Target.name}##{source_name}: the source must be a belongs_to")
+    # A polymorphic source (`source_type:`) writes its type next to the key.
+    type_column = nil.as(String?)
+    source = Grant::AssociationRegistry.get(Target.name, source_name)
+    if source
+      unless source[:type] == :belongs_to
+        raise Grant::Associations::ThroughWriteError.new("Cannot write through #{Target.name}##{source_name}: the source must be a belongs_to")
+      end
+      target_column = source[:foreign_key]
+      target_key = source[:primary_key]
+    else
+      polymorphic = Grant::AssociationRegistry.reflection(Target.name, source_name)
+      unless polymorphic && polymorphic.polymorphic? && source_type
+        raise Grant::Associations::ThroughWriteError.new("Cannot resolve source association #{Target.name}##{source_name}")
+      end
+      target_column = polymorphic.foreign_key
+      target_key = polymorphic.primary_key
+      type_column = polymorphic.foreign_type
     end
 
     owner_column = @foreign_key.to_s
-    target_column = source[:foreign_key]
     insert = ->(owner_key : Grant::Columns::Type, keys : Array(Grant::Columns::Type)) : Nil do
       rows = keys.map do |key|
         row = {} of (String | Symbol) => Grant::Columns::Type
         row[owner_column] = owner_key
         row[target_column] = key
+        row[type_column] = source_type if type_column
         row
       end
       Target.insert_all(rows)
@@ -477,6 +490,7 @@ class Grant::AssociationCollection(Owner, Target)
     end
     remove = ->(owner_key : Grant::Columns::Type, keys : Array(Grant::Columns::Type)?, destroy : Bool) : Int64 do
       rows = Target.where({owner_column => owner_key})
+      rows = rows.where(type_column, :eq, source_type) if type_column && source_type
       rows = Grant::AssociationLoader.where_in(rows, target_column, keys) if keys
       if destroy
         destroyed = 0_i64
@@ -486,7 +500,7 @@ class Grant::AssociationCollection(Owner, Target)
         rows.delete_all
       end
     end
-    Grant::Associations::ThroughWriter.new(source[:primary_key], insert, remove)
+    Grant::Associations::ThroughWriter.new(target_key, insert, remove)
   end
 
   # Saves the targets that were built or appended while the owner was unsaved

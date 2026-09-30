@@ -428,6 +428,7 @@ module Grant::Associations
 
       def reload_{{method_name.id}} : {{class_name.id}}?
         {% if through_is_association %}
+          reset_association({{through.id.stringify}})
           reload_association({{method_name.stringify}})
         {% else %}
           reset_association({{method_name.stringify}})
@@ -770,7 +771,11 @@ module Grant::Associations
         callbacks = nil
       {% end %}
       {% if through %}
-        through_writer = -> { self.{{through.id}}.through_writer({{source.id.stringify}}) }
+        {% if options[:source_type] %}
+          through_writer = -> { self.{{through.id}}.through_writer({{source.id.stringify}}, {{options[:source_type]}}.polymorphic_name) }
+        {% else %}
+          through_writer = -> { self.{{through.id}}.through_writer({{source.id.stringify}}) }
+        {% end %}
       {% else %}
         through_writer = nil
       {% end %}
@@ -800,6 +805,10 @@ module Grant::Associations
     end
 
     def reload_{{method_name.id}}
+      {% if through %}
+        # A preloaded through association would hand back stale join rows.
+        reset_association({{through.id.stringify}})
+      {% end %}
       reload_association({{method_name.stringify}})
       {{method_name.id}}
     end
