@@ -1,0 +1,106 @@
+require "../../spec_helper"
+
+class UuidTypeAccount < Grant::Base
+  connection {{ env("CURRENT_ADAPTER") || "sqlite" }}
+  table uuid_type_accounts
+
+  column id : UUID, primary: true
+  column name : String?
+  column owner_ref : UUID?
+end
+
+class UuidTypeEvent < Grant::Base
+  connection {{ env("CURRENT_ADAPTER") || "sqlite" }}
+  table uuid_type_events
+
+  column id : UUID, primary: true, uuid_version: :v7
+  column name : String?
+end
+
+describe "UUID columns" do
+  before_each do
+    UuidTypeAccount.migrator.drop_and_create
+    UuidTypeEvent.migrator.drop_and_create
+  end
+
+  it "round trips a generated v4 key and a UUID attribute" do
+    owner = UUID.random
+    account = UuidTypeAccount.create!(name: "a", owner_ref: owner)
+    account.id.should be_a(UUID)
+    account.id!.version.v4?.should be_true
+
+    reloaded = UuidTypeAccount.find!(account.id!)
+    reloaded.id.should eq account.id
+    reloaded.owner_ref.should eq owner
+    UuidTypeAccount.create!(name: "n").owner_ref.should be_nil
+  end
+
+  it "finds by UUID value and by string" do
+    account = UuidTypeAccount.create!(name: "a")
+    UuidTypeAccount.find(account.id!).not_nil!.name.should eq "a"
+    UuidTypeAccount.find(account.id!.to_s).not_nil!.name.should eq "a"
+    UuidTypeAccount.find_by(id: account.id!.to_s).not_nil!.name.should eq "a"
+    UuidTypeAccount.find_by(owner_ref: nil).not_nil!.name.should eq "a"
+    UuidTypeAccount.find(UUID.random.to_s).should be_nil
+  end
+
+  it "finds by an upper-case UUID string" do
+    account = UuidTypeAccount.create!(name: "a")
+    UuidTypeAccount.find(account.id!.to_s.upcase).not_nil!.name.should eq "a"
+  end
+
+  it "casts a valid string and reports an invalid one" do
+    account = UuidTypeAccount.new
+    account.set_attributes({"owner_ref" => "6ba7b810-9dad-11d1-80b4-00c04fd430c8"})
+    account.errors.should be_empty
+    account.owner_ref.should eq UUID.new("6ba7b810-9dad-11d1-80b4-00c04fd430c8")
+
+    bad = UuidTypeAccount.new
+    bad.set_attributes({"owner_ref" => "not-a-uuid"})
+    bad.errors.size.should eq 1
+    bad.errors.first.field.should eq "owner_ref"
+    bad.owner_ref.should be_nil
+  end
+
+  it "stores a native uuid column on PostgreSQL and text elsewhere" do
+    type = ""
+    UuidTypeAccount.adapter.open do |db|
+      if CURRENT_ADAPTER == "pg"
+        type = db.query_one("SELECT udt_name FROM information_schema.columns WHERE table_name = 'uuid_type_accounts' AND column_name = 'id'", as: String)
+      else
+        db.query("PRAGMA table_info(uuid_type_accounts)") do |rs|
+          rs.each do
+            rs.read(Int32)
+            name = rs.read(String)
+            column_type = rs.read(String)
+            type = column_type if name == "id"
+            rs.read(Int32); rs.read(String?); rs.read(Int32)
+          end
+        end
+      end
+    end
+    if CURRENT_ADAPTER == "pg"
+      type.should eq "uuid"
+    else
+      type.should_not be_empty
+    end
+  end
+
+  it "generates time-ordered v7 keys with uuid_version: :v7" do
+    events = (1..5).map do |index|
+      sleep 2.milliseconds
+      UuidTypeEvent.create!(name: "e#{index}")
+    end
+    events.each { |event| event.id!.version.v7?.should be_true }
+    events.map(&.id!.to_s).should eq events.map(&.id!.to_s).sort
+    UuidTypeEvent.find!(events.last.id!).name.should eq "e5"
+  end
+
+  it "honors an explicitly assigned key" do
+    fixed = UUID.random
+    account = UuidTypeAccount.new(name: "fixed")
+    account.id = fixed
+    account.save!
+    UuidTypeAccount.find!(fixed).name.should eq "fixed"
+  end
+end

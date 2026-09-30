@@ -48,6 +48,7 @@ class Grant::Adapter::Pg < Grant::Adapter::Base
       "Array(Float32)" => "REAL[]",
       "Array(Float64)" => "DOUBLE PRECISION[]",
       "Array(Bool)"    => "BOOLEAN[]",
+      "Array(UUID)"    => "UUID[]",
     }
   end
 
