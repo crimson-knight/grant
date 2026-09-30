@@ -475,6 +475,8 @@ module Grant::Query::Assembler
     end
 
     def count : (Executor::MultiValue(Model, Int64) | Executor::Value(Model, Int64))
+      # Rendered first so its binds lead; the wrapped forms put it outermost.
+      with_sql = with_clause
       if @query.distinct?
         distinct_rows_sql = build_sql do |s|
           s << "SELECT DISTINCT #{field_list}"
@@ -487,7 +489,7 @@ module Grant::Query::Assembler
           s << limit
           s << offset
         end
-        sql = "#{select_prefix} COUNT(*) FROM (#{distinct_rows_sql}) AS grant_distinct_rows"
+        sql = [with_sql, "#{select_prefix} COUNT(*) FROM (#{distinct_rows_sql}) AS grant_distinct_rows"].compact.join(" ")
       elsif (@query.limit || @query.offset) && @query.group_fields.empty?
         # COUNT(*) yields one row, so a LIMIT/OFFSET on it would drop that row.
         # Count the rows the limited relation returns instead.
@@ -502,9 +504,10 @@ module Grant::Query::Assembler
           s << (limit || "LIMIT #{Int64::MAX}")
           s << offset
         end
-        sql = "#{select_prefix} COUNT(*) FROM (#{limited_rows_sql}) AS grant_limited_rows"
+        sql = [with_sql, "#{select_prefix} COUNT(*) FROM (#{limited_rows_sql}) AS grant_limited_rows"].compact.join(" ")
       else
         sql = build_sql do |s|
+          s << with_sql
           s << "#{select_prefix} COUNT(*)"
           s << from_clause
           s << joins
@@ -529,6 +532,7 @@ module Grant::Query::Assembler
       end
 
       sql = build_sql do |s|
+        s << with_clause
         s << "#{select_prefix} #{group_expressions.join(", ")}, COUNT(*)"
         s << from_clause
         s << joins
@@ -545,6 +549,7 @@ module Grant::Query::Assembler
 
     def first(n : Int32 = 1) : Executor::List(Model)
       sql = build_sql do |s|
+        s << with_clause
         s << "#{select_keyword} #{field_list}"
         s << from_clause
         s << joins
@@ -607,6 +612,7 @@ module Grant::Query::Assembler
       end
 
       sql = build_sql do |s|
+        s << with_clause
         s << "#{select_keyword} #{field_list}"
         s << from_clause
         s << joins
@@ -636,6 +642,7 @@ module Grant::Query::Assembler
       source = "(#{statement}) AS #{Model.quote(Model.table_name)}"
 
       sql = build_sql do |s|
+        s << with_clause
         s << "#{select_keyword} #{fields} FROM #{source}"
         s << joins
         s << where
@@ -660,6 +667,7 @@ module Grant::Query::Assembler
     # statement that `explain` wraps.
     def explain_select_sql : String
       build_sql do |s|
+        s << with_clause
         s << "#{select_keyword} #{field_list}"
         s << from_clause
         s << joins
@@ -706,8 +714,9 @@ module Grant::Query::Assembler
 
     def exists? : Executor::Value(Model, Bool)
       sql = build_sql do |s|
+        s << with_clause
         s << "SELECT EXISTS(SELECT 1 "
-        s << "FROM #{table_name} "
+        s << (from_source_sql ? from_clause : "FROM #{table_name} ")
         s << joins
         s << where
         s << ")"

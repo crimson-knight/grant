@@ -109,6 +109,7 @@ module Grant::Aggregations
         end
         value = aggregate_expression(function, "#{keyword}#{aggregate_column_sql(column)}", cast)
         return build_sql do |s|
+          s << with_clause
           s << "#{select_prefix} #{group_keys.join(", ")}, #{value}"
           s << from_clause
           s << joins
@@ -121,6 +122,7 @@ module Grant::Aggregations
         end
       end
 
+      with_sql = with_clause
       if @query.limit || @query.offset
         value = aggregate_expression(function, "#{keyword}grant_value", cast)
         inner = build_sql do |s|
@@ -134,11 +136,12 @@ module Grant::Aggregations
           s << (limit || "LIMIT #{Int64::MAX}")
           s << offset
         end
-        return "#{select_prefix} #{value} FROM (#{inner}) AS grant_limited_rows"
+        return [with_sql, "#{select_prefix} #{value} FROM (#{inner}) AS grant_limited_rows"].compact.join(" ")
       end
 
       value = aggregate_expression(function, "#{keyword}#{aggregate_column_sql(column)}", cast)
       build_sql do |s|
+        s << with_sql
         s << "#{select_prefix} #{value}"
         s << from_clause
         s << joins

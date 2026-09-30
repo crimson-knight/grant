@@ -35,6 +35,7 @@ module Grant::Query::Assembler
       end.join(", ")
 
       build_sql do |s|
+        s << with_clause
         s << "#{select_keyword} #{select_fields}"
         s << from_clause
         s << joins

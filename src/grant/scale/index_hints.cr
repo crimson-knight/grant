@@ -202,6 +202,10 @@ module Grant::Query::Assembler
     # adapter to render them; an adapter that cannot honor a hint returns nil and
     # the hint degrades per `Grant.settings.index_hint_mode`.
     def from_clause : String
+      if source = from_source_sql
+        return "FROM #{source}"
+      end
+
       hint = index_hint_sql
       quoted_table = table_name.downcase == "select" ? Model.quote(table_name) : table_name
       hint ? "FROM #{quoted_table} #{hint}" : "FROM #{quoted_table}"
