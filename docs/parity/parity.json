@@ -1,6 +1,6 @@
 {
   "baseline_source_commit": "32b69d8",
-  "verified_against_commit": "f94b596a1148a6b66cd132351bb5d0701f967650",
+  "verified_against_commit": "9a86adce7aa4aa6d66df93e2573f02781f664424",
   "baseline_counts": {
     "complete": 116,
     "partial": 74,
@@ -13,10 +13,12 @@
       "feature": "Grant::Migrator — compile-time CREATE TABLE DSL",
       "status": "partial",
       "evidence_spec_paths": [
+        "spec/grant/schema/create_table_spec.cr",
+        "spec/grant/schema/migrator_options_spec.cr",
         "spec/grant/migrator/migrator_spec.cr",
         "spec/grant/migrator/defaults_spec.cr"
       ],
-      "gap": "Only create/drop/drop_and_create derived from the model's own columns (not a free-form table definition). No `if_not_exists`, `force: :cascade`, `temporary`, `comment`, `id: :uuid/false`, composite PK options, or `drop_table if_exists/cascade` options. No indexes, FKs, or check constraints at create time. Spec asserts exact SQL only for the active adapter.",
+      "gap": "Free-form create_table (id types, primary_key, if_not_exists, temporary, force/:cascade, comment, options) and Model.migrator.create/drop options are done and pass on SQLite and PG (MySQL SQL asserted through the recording mock only; no MySQL server available). Indexes, foreign keys and check constraints at create time are still missing (M02b). Grant::Schema::Migration#create_table wrapper is M03; SchemaStatements is the module it will include.",
       "not_applicable_reason": ""
     },
     {
@@ -48,9 +50,9 @@
       "feature": "Schema type mapping per adapter",
       "status": "partial",
       "evidence_spec_paths": [
-        "spec/grant/migrator/migrator_spec.cr"
+        "spec/grant/schema/type_mapping_spec.cr"
       ],
-      "gap": "Maps only Bool, Float32/64, Int32/64, String, Time, UUID, created_at/updated_at (+ PG arrays). No mapping for Int8/Int16, Decimal/BigDecimal with precision/scale, Bytes, JSON::Any/jsonb, Date, Enum, Time precision, or text vs string with limit. These raise at migrate time. Spec asserts the SQL only for the current adapter.",
+      "gap": "Int8/Int16, BigDecimal precision/scale, Bytes, Date, JSON::Any, Time precision, text vs string limit and enums (as String) map per dialect; DSL SQL is asserted for all three dialects and a real create/insert/read round trip runs on the active adapter. Grant models still cannot hold Int8/Int16/BigDecimal/JSON::Any/Bytes values (Columns::Type has no such members; Crystal has no Date type), so those mappings are reachable only through the DSL and TypeCatalog, not model persistence.",
       "not_applicable_reason": ""
     },
     {
@@ -60,7 +62,7 @@
       "evidence_spec_paths": [],
       "gap": "No dump, no load, no schema file format, and no introspection layer to build one from.",
       "not_applicable_reason": "",
-      "priority": 65
+      "priority": 26
     },
     {
       "area": "Migrations & schema",
@@ -91,9 +93,10 @@
       "feature": "Column defaults in CREATE TABLE",
       "status": "partial",
       "evidence_spec_paths": [
+        "spec/grant/schema/column_defaults_spec.cr",
         "spec/grant/migrator/defaults_spec.cr"
       ],
-      "gap": "Only Crystal literal defaults (String, Number, Bool, nil) become SQL DEFAULT. No SQL-expression defaults (`default: -> { \"now()\" }`, `gen_random_uuid()`), no `change_column_default`, and non-literal Crystal defaults silently produce no DDL default.",
+      "gap": "default_sql expressions (verbatim on PG, parenthesized on MySQL/SQLite where needed) and change_column_default (SET/DROP DEFAULT, PG and MySQL) are done and verified live on PG and SQLite specs. change_column_default on SQLite raises UnsupportedOperation until the M02b table rebuild exists. Non-literal Crystal defaults still produce no DDL default (unchanged, backward compatible).",
       "not_applicable_reason": ""
     },
     {
@@ -115,11 +118,12 @@
     {
       "area": "Migrations & schema",
       "feature": "Encryption migration helpers (data migration for encrypted columns)",
-      "status": "partial",
+      "status": "complete",
       "evidence_spec_paths": [
+        "spec/grant/encryption/migration_helpers_spec.cr",
         "spec/grant/encryption_key_rotation_spec.cr"
       ],
-      "gap": "rotate_encryption is exercised on SQLite (8 examples pass). encrypt_column, decrypt_column and generate_migration have no spec. The helpers loop with `limit/offset` and `save!` per row (offset paging skips rows if the predicate changes), and no PG/MySQL run.",
+      "gap": "",
       "not_applicable_reason": ""
     },
     {
@@ -137,7 +141,7 @@
       "evidence_spec_paths": [],
       "gap": "No ALTER TABLE DSL of any kind (add/remove/change column, null, default, change_table bulk). SQLite needs a table rebuild for change_column.",
       "not_applicable_reason": "",
-      "priority": 40
+      "priority": 1
     },
     {
       "area": "Migrations & schema",
@@ -146,7 +150,7 @@
       "evidence_spec_paths": [],
       "gap": "No rename_table DSL (which in AR also renames the pk sequence and indexes).",
       "not_applicable_reason": "",
-      "priority": 46
+      "priority": 7
     },
     {
       "area": "Migrations & schema",
@@ -155,7 +159,7 @@
       "evidence_spec_paths": [],
       "gap": "No rename_column/rename_index; AR also renames default-named indexes on column rename.",
       "not_applicable_reason": "",
-      "priority": 42
+      "priority": 3
     },
     {
       "area": "Migrations & schema",
@@ -164,7 +168,7 @@
       "evidence_spec_paths": [],
       "gap": "No join-table DDL helper (name derivation from two tables, FK columns, optional index).",
       "not_applicable_reason": "",
-      "priority": 45
+      "priority": 6
     },
     {
       "area": "Migrations & schema",
@@ -173,16 +177,16 @@
       "evidence_spec_paths": [],
       "gap": "No reference helper; polymorphic `_type`/`_id` pair, index, and FK creation must be hand-written.",
       "not_applicable_reason": "",
-      "priority": 41
+      "priority": 2
     },
     {
       "area": "Migrations & schema",
       "feature": "add_timestamps / remove_timestamps / t.timestamps",
       "status": "partial",
       "evidence_spec_paths": [
-        "spec/grant/migrator/migrator_spec.cr"
+        "spec/grant/schema/timestamps_ddl_spec.cr"
       ],
-      "gap": "Model `timestamps` yields created_at/updated_at in create_sql (VARCHAR on SQLite), but there is no add_timestamps/remove_timestamps or `precision:` option, and no NOT NULL on the timestamp columns.",
+      "gap": "t.timestamps (precision, null, NOT NULL by default), add_timestamps, remove_timestamps and model null: false on created_at/updated_at are done on both adapters. SQLite cannot ADD a NOT NULL column without a default (raises UnsupportedOperation unless default: or null: true given). The model-level `timestamps` macro has no precision: option and keeps its existing nullable output.",
       "not_applicable_reason": ""
     },
     {
@@ -190,9 +194,12 @@
       "feature": "Column options: null, limit, precision, scale, comment, collation, array",
       "status": "partial",
       "evidence_spec_paths": [
-        "spec/grant/migrator/migrator_spec.cr"
+        "spec/grant/schema/migrator_options_spec.cr",
+        "spec/grant/schema/create_table_spec.cr",
+        "spec/grant/schema/type_mapping_spec.cr",
+        "spec/grant/schema/timestamps_ddl_spec.cr"
       ],
-      "gap": "Nullability is derived from Crystal nilability, and `column_type:` allows a verbatim SQL type. There are no `limit`, `precision`, `scale`, `comment`, or `collation` options. Arrays are PG-only via type table.",
+      "gap": "On a model column, `scale:` (and `precision:` on decimals) has no usable carrier: a BigDecimal model column fails to compile once it is queried, because Grant::Type/Columns::Type have no BigDecimal support. Model `precision:` works only for Time. Model `limit:` is silently ignored for non-String types (for example `column n : Int32, limit: 2` still emits INTEGER). `array:` exists only in the DSL; a model gets arrays through its Array(T) type on PostgreSQL. MySQL DDL is checked only as SQL through RecordingStatements. The DSL side covers all seven options on every dialect.",
       "not_applicable_reason": ""
     },
     {
@@ -202,7 +209,7 @@
       "evidence_spec_paths": [],
       "gap": "No comment DDL (PG COMMENT ON, MySQL COMMENT clause; SQLite unsupported).",
       "not_applicable_reason": "",
-      "priority": 47
+      "priority": 8
     },
     {
       "area": "Migrations & schema",
@@ -231,7 +238,7 @@
       "evidence_spec_paths": [],
       "gap": "No Migration base class or per-version compatibility layer; migrations are SQL files for external Micrate. Compat layers (ActiveRecord::Migration::Compatibility) are Rails-history specific.",
       "not_applicable_reason": "",
-      "priority": 48
+      "priority": 9
     },
     {
       "area": "Migrations & schema",
@@ -240,7 +247,7 @@
       "evidence_spec_paths": [],
       "gap": "None present in Grant; must go through Micrate CLI.",
       "not_applicable_reason": "",
-      "priority": 49
+      "priority": 10
     },
     {
       "area": "Migrations & schema",
@@ -249,7 +256,7 @@
       "evidence_spec_paths": [],
       "gap": "No migration runner, so no per-migration transaction wrapping and no opt-out (needed for CREATE INDEX CONCURRENTLY on PG). MySQL does not support transactional DDL.",
       "not_applicable_reason": "",
-      "priority": 51
+      "priority": 12
     },
     {
       "area": "Migrations & schema",
@@ -258,7 +265,7 @@
       "evidence_spec_paths": [],
       "gap": "No migration runner output layer; could reuse Grant::Log.",
       "not_applicable_reason": "",
-      "priority": 57
+      "priority": 18
     },
     {
       "area": "Migrations & schema",
@@ -267,7 +274,7 @@
       "evidence_spec_paths": [],
       "gap": "No detection of pending migrations at boot/in specs and no auto load of the test schema.",
       "not_applicable_reason": "",
-      "priority": 53
+      "priority": 14
     },
     {
       "area": "Migrations & schema",
@@ -276,7 +283,7 @@
       "evidence_spec_paths": [],
       "gap": "No metadata table storing environment, so destructive tasks (drop/reset) in production are not blocked. `Migrator#drop_and_create` is unguarded.",
       "not_applicable_reason": "",
-      "priority": 55
+      "priority": 16
     },
     {
       "area": "Migrations & schema",
@@ -285,16 +292,16 @@
       "evidence_spec_paths": [],
       "gap": "No DDL. Migrator never emits UNIQUE, even for validates_uniqueness_of fields.",
       "not_applicable_reason": "",
-      "priority": 44
+      "priority": 5
     },
     {
       "area": "Migrations & schema",
       "feature": "Composite primary keys and primary key options in table creation",
-      "status": "partial",
+      "status": "complete",
       "evidence_spec_paths": [
-        "spec/grant/migrator/migrator_spec.cr"
+        "spec/grant/schema/composite_pk_create_spec.cr"
       ],
-      "gap": "Migrator handles a single `primary: true` column (Int auto or UUID/String) and raises without one. Composite PK models exist (src/grant/composite_primary_key.cr) but the Migrator emits a single-column PK only; `id: false` tables (join tables) unsupported.",
+      "gap": "",
       "not_applicable_reason": ""
     },
     {
@@ -304,7 +311,7 @@
       "evidence_spec_paths": [],
       "gap": "No view DDL or view-backed model helpers; `view_exists?`/`views` introspection absent. Deferred: Low value, and needs PG-specific refresh semantics. Raw execute covers it until the DDL DSL (M02b) is stable.",
       "not_applicable_reason": "",
-      "priority": 83
+      "priority": 44
     },
     {
       "area": "Migrations & schema",
@@ -313,7 +320,7 @@
       "evidence_spec_paths": [],
       "gap": "No DDL for enums or extensions; type table lacks these types. `column_type:` verbatim works as a workaround.",
       "not_applicable_reason": "",
-      "priority": 43
+      "priority": 4
     },
     {
       "area": "Migrations & schema",
@@ -322,7 +329,7 @@
       "evidence_spec_paths": [],
       "gap": "No DDL for generated columns; must use verbatim `column_type:`. Deferred: Low value and overlaps the Infrastructure virtual-column row. Verbatim column_type: works as a workaround. Do both together later.",
       "not_applicable_reason": "",
-      "priority": 81
+      "priority": 42
     },
     {
       "area": "Migrations & schema",
@@ -339,7 +346,7 @@
       "evidence_spec_paths": [],
       "gap": "Grant has named connections and sharding, but no migration runner targets one by name, and there is no per-connection schema_migrations. Schema-tenant (PG search_path) migrations across tenants are also absent.",
       "not_applicable_reason": "",
-      "priority": 52
+      "priority": 13
     },
     {
       "area": "Migrations & schema",
@@ -348,7 +355,7 @@
       "evidence_spec_paths": [],
       "gap": "No Grant API; Micrate/Amber CLI does create/drop only. No structure dump/load, purge, `db:prepare`, `db:reset`, or `truncate_all`.",
       "not_applicable_reason": "",
-      "priority": 67
+      "priority": 28
     },
     {
       "area": "Migrations & schema",
@@ -357,7 +364,7 @@
       "evidence_spec_paths": [],
       "gap": "Depends on the schema dump row; nothing to select or load.",
       "not_applicable_reason": "",
-      "priority": 68
+      "priority": 29
     },
     {
       "area": "Migrations & schema",
@@ -366,7 +373,7 @@
       "evidence_spec_paths": [],
       "gap": "No migration runner and no advisory-lock helper in Grant, so two deploy nodes can run the same DDL concurrently.",
       "not_applicable_reason": "",
-      "priority": 50
+      "priority": 11
     },
     {
       "area": "Migrations & schema",
@@ -375,7 +382,7 @@
       "evidence_spec_paths": [],
       "gap": "Covered only inside the external Amber CLI row; no attribute parsing DSL in Grant.",
       "not_applicable_reason": "",
-      "priority": 69
+      "priority": 30
     },
     {
       "area": "Migrations & schema",
@@ -392,9 +399,12 @@
       "evidence_spec_paths": [
         "spec/grant/encryption_spec.cr",
         "spec/grant/encryption_database_spec.cr",
-        "spec/grant/encryption_key_rotation_spec.cr"
+        "spec/grant/encryption_key_rotation_spec.cr",
+        "spec/grant/encryption/transparent_column_spec.cr",
+        "spec/grant/encryption/options_spec.cr",
+        "spec/grant/encryption/previous_schemes_spec.cr"
       ],
-      "gap": "Core encrypt/decrypt, deterministic lookup, nil handling and rotation work. Cipher is AES-256-CBC+HMAC, not AES-GCM. Storage uses a separate <attr>_encrypted column instead of transparent same-name column. Only String attributes. Missing options: previous:, ignore_case:, downcase:, compress:, key_provider:, encryptor:, message_serializer:, per-attribute support_unencrypted_data:. Rotation specs are SQLite-only.",
+      "gap": "Cipher is AES-256-CBC + HMAC, not AES-GCM. There are no key_provider:, encryptor: or message_serializer: options. Typed columns decrypt eagerly when a row loads. MySQL not run.",
       "not_applicable_reason": ""
     },
     {
@@ -475,7 +485,7 @@
       "evidence_spec_paths": [],
       "gap": "No YAML fixture loader, no label-to-id hashing, no fixture accessors, no transactional-test wrapper.",
       "not_applicable_reason": "",
-      "priority": 62
+      "priority": 23
     },
     {
       "area": "Infrastructure (locking, encryption, instrumentation, …)",
@@ -484,7 +494,7 @@
       "evidence_spec_paths": [],
       "gap": "No adapter API for advisory locks. Rationale for n.a. (not core) is not a Ruby-metaprogramming reason; AR ships these as adapter methods used by the migrator.",
       "not_applicable_reason": "",
-      "priority": 56
+      "priority": 17
     },
     {
       "area": "Infrastructure (locking, encryption, instrumentation, …)",
@@ -493,18 +503,17 @@
       "evidence_spec_paths": [],
       "gap": "annotate exists per query, but no global tag config, no fiber-local context, no automatic prepend of model/controller/action/job tags.",
       "not_applicable_reason": "",
-      "priority": 63
+      "priority": 24
     },
     {
       "area": "Infrastructure (locking, encryption, instrumentation, …)",
       "feature": "Configurable optimistic-locking column (locking_column)",
-      "status": "missing",
+      "status": "complete",
       "evidence_spec_paths": [
-        "spec/grant/locking/optimistic_spec.cr"
+        "spec/grant/locking/locking_column_spec.cr"
       ],
-      "gap": "Column name lock_version is hard-coded in src/grant/locking/optimistic.cr (declares column and builds the WHERE). No locking_column override, no automatic activation when a lock_version column exists, no lock_optimistically toggle.",
-      "not_applicable_reason": "",
-      "priority": 1
+      "gap": "",
+      "not_applicable_reason": ""
     },
     {
       "area": "Infrastructure (locking, encryption, instrumentation, …)",
@@ -513,7 +522,7 @@
       "evidence_spec_paths": [],
       "gap": "No API to scope find/update/destroy/reload by multiple columns while keeping a single-column primary key (for example a sharded or tenant-partitioned key).",
       "not_applicable_reason": "",
-      "priority": 70
+      "priority": 31
     },
     {
       "area": "Infrastructure (locking, encryption, instrumentation, …)",
@@ -530,57 +539,63 @@
     {
       "area": "Infrastructure (locking, encryption, instrumentation, …)",
       "feature": "Encryption: previous: schemes for key/scheme migration",
-      "status": "missing",
-      "evidence_spec_paths": [],
-      "gap": "Only one active key; rotation is a batch re-encrypt helper (MigrationHelpers.rotate_encryption), not read-with-old, write-with-new. No multiple primary keys and no per-attribute previous schemes, so a rotation requires a maintenance window.",
-      "not_applicable_reason": "",
-      "priority": 35
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/encryption/previous_schemes_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
     },
     {
       "area": "Infrastructure (locking, encryption, instrumentation, …)",
       "feature": "Encryption: ignore_case: and downcase: options",
-      "status": "missing",
-      "evidence_spec_paths": [],
-      "gap": "Not supported by the encrypts macro; case-insensitive deterministic lookup requires the caller to downcase manually.",
-      "not_applicable_reason": "",
-      "priority": 38
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/encryption/options_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
     },
     {
       "area": "Infrastructure (locking, encryption, instrumentation, …)",
       "feature": "Encryption: compress: option",
-      "status": "missing",
-      "evidence_spec_paths": [],
-      "gap": "No compression before encrypting; large text columns are stored uncompressed.",
-      "not_applicable_reason": "",
-      "priority": 39
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/encryption/options_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
     },
     {
       "area": "Infrastructure (locking, encryption, instrumentation, …)",
       "feature": "Encryption: support_unencrypted_data and per-attribute plaintext fallback",
-      "status": "partial",
+      "status": "complete",
       "evidence_spec_paths": [
-        "spec/grant/encryption_spec.cr"
+        "spec/grant/encryption/unencrypted_fallback_spec.cr"
       ],
-      "gap": "Config.support_unencrypted_data exists and EncryptedAttribute#decrypt honors it, but the macro-generated getter calls Grant::Encryption.decrypt, which does not; no spec exercises the flag. Also no per-attribute override and no way to query plaintext + ciphertext together during migration.",
+      "gap": "",
       "not_applicable_reason": ""
     },
     {
       "area": "Infrastructure (locking, encryption, instrumentation, …)",
       "feature": "Encryption: transparent same-name column and non-String attribute types",
-      "status": "missing",
-      "evidence_spec_paths": [],
-      "gap": "encrypts creates a virtual String accessor over a <attr>_encrypted column; the original column name is not usable, where(email: ...) is not rewritten, and Int/Time/JSON values cannot be encrypted.",
-      "not_applicable_reason": "",
-      "priority": 36
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/encryption/transparent_column_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
     },
     {
       "area": "Infrastructure (locking, encryption, instrumentation, …)",
       "feature": "Encryption context and record helpers (encrypted_attribute?, ciphertext_for, encrypt, decrypt, without_encryption, protecting_encrypted_data)",
-      "status": "missing",
-      "evidence_spec_paths": [],
-      "gap": "encrypted_attributes registry exists but there is no instance ciphertext_for/encrypted_attribute?/encrypt/decrypt, and no scoped blocks to disable or pin encryption (keys, encryptor) per fiber.",
-      "not_applicable_reason": "",
-      "priority": 37
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/encryption/context_spec.cr",
+        "spec/grant/encryption/previous_schemes_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
     },
     {
       "area": "Infrastructure (locking, encryption, instrumentation, …)",
@@ -589,16 +604,19 @@
       "evidence_spec_paths": [],
       "gap": "KeyProvider is a concrete class with class-level state. Cipher is CBC+HMAC with a custom byte layout, so ciphertext is not interoperable with Rails data. No envelope-encryption provider (KMS) and no swappable encryptor. Deferred: Changing the cipher or payload layout breaks existing ciphertext. Needs a versioned payload design and a rotation plan first. Rails-compatible messages are a separate decision.",
       "not_applicable_reason": "",
-      "priority": 77
+      "priority": 38
     },
     {
       "area": "Infrastructure (locking, encryption, instrumentation, …)",
       "feature": "Encryption: filter_parameters and inspect masking of encrypted attributes",
-      "status": "missing",
-      "evidence_spec_paths": [],
-      "gap": "No filter_attributes; grep finds no inspect override on models. Plaintext appears in inspect, logs of bound values and exceptions.",
-      "not_applicable_reason": "",
-      "priority": 34
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/encryption/filter_spec.cr",
+        "spec/grant/attributes/inspect_filter_spec.cr",
+        "spec/grant/errors/taxonomy_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
     },
     {
       "area": "Infrastructure (locking, encryption, instrumentation, …)",
@@ -617,28 +635,28 @@
       "evidence_spec_paths": [],
       "gap": "SQL log shows query with colorized params but no calling file:line, no query-name label (User Load), no cached-hit marker.",
       "not_applicable_reason": "",
-      "priority": 64
+      "priority": 25
     },
     {
       "area": "Infrastructure (locking, encryption, instrumentation, …)",
       "feature": "Optimistic locking on destroy/touch, locking_enabled?, and stale-record refresh",
-      "status": "partial",
+      "status": "complete",
       "evidence_spec_paths": [
-        "spec/grant/locking/optimistic_spec.cr"
+        "spec/grant/locking/optimistic_destroy_touch_spec.cr",
+        "spec/grant/locking/locking_column_spec.cr"
       ],
-      "gap": "StaleObjectError is raised on update only (optimistic.cr); destroy and touch do not include lock_version in their WHERE, so a stale destroy succeeds. No locking_enabled?, no automatic lock_version increment on touch.",
+      "gap": "",
       "not_applicable_reason": ""
     },
     {
       "area": "Infrastructure (locking, encryption, instrumentation, …)",
       "feature": "Pessimistic lock! raises on unsaved changes",
-      "status": "missing",
+      "status": "partial",
       "evidence_spec_paths": [
-        "spec/grant/locking/pessimistic_spec.cr"
+        "spec/grant/locking/unsaved_changes_lock_spec.cr"
       ],
-      "gap": "lock! just calls reload_with_lock, silently discarding unsaved attribute changes; AR raises to prevent that data loss (unless lock! is given a lock clause on a clean record). Also no lock: option on association reload.",
-      "not_applicable_reason": "",
-      "priority": 2
+      "gap": "There is no lock: option on association reload (reload_<assoc>(lock:)).",
+      "not_applicable_reason": ""
     },
     {
       "area": "Infrastructure (locking, encryption, instrumentation, …)",
@@ -647,7 +665,7 @@
       "evidence_spec_paths": [],
       "gap": "No lock preventing two processes from running migrations at once on PG or MySQL.",
       "not_applicable_reason": "",
-      "priority": 58
+      "priority": 19
     },
     {
       "area": "Infrastructure (locking, encryption, instrumentation, …)",
@@ -656,7 +674,7 @@
       "evidence_spec_paths": [],
       "gap": "No Hash(String, String?) column type, no migration type or operators. Deferred: Low value, PG only, and JSONB covers the main use.",
       "not_applicable_reason": "",
-      "priority": 79
+      "priority": 40
     },
     {
       "area": "Infrastructure (locking, encryption, instrumentation, …)",
@@ -665,7 +683,7 @@
       "evidence_spec_paths": [],
       "gap": "Only PG::Interval appears in the adapter's allowed type list and no spec covers it. No Range(T,T) column mapping, no Socket::IPAddress column, no PG CREATE TYPE enum mapping or citext. Deferred: Effort L, low value, and range bound normalization makes dirty tracking risky. Take individual types on demand.",
       "not_applicable_reason": "",
-      "priority": 80
+      "priority": 41
     },
     {
       "area": "Infrastructure (locking, encryption, instrumentation, …)",
@@ -684,7 +702,7 @@
       "evidence_spec_paths": [],
       "gap": "Grant relies on external Micrate and the Amber CLI for these operations; no Grant-level programmatic create/drop/purge/prepare API and no structure-dump load.",
       "not_applicable_reason": "",
-      "priority": 66
+      "priority": 27
     },
     {
       "area": "Infrastructure (locking, encryption, instrumentation, …)",
@@ -720,9 +738,10 @@
       "feature": "validates_uniqueness_of (with scope, case_sensitive, allow_nil, allow_blank)",
       "status": "partial",
       "evidence_spec_paths": [
+        "spec/grant/validations/uniqueness_options_spec.cr",
         "spec/grant/validators/uniqueness_spec.cr"
       ],
-      "gap": "Row text is covered (scope single/multi, case_sensitive, allow_nil, self-exclusion in uniqueness_spec.cr) but allow_blank: has no spec, and AR options conditions: (lambda scope on the uniqueness query), index_errors:, and validating against a scope named as an association are absent. The case_sensitive: false path builds raw `LOWER(col) = LOWER(?)` with an unquoted column name. Not run per-adapter (SQLite only here).",
+      "gap": "conditions: (typed builder proc, optionally taking the record), quoted identifiers, allow_blank and scope naming a belongs_to association are done and pass on sqlite and pg. Still absent: AR's index_errors: option (nested-attributes error indexing).",
       "not_applicable_reason": ""
     },
     {
@@ -730,10 +749,10 @@
       "feature": "validates_numericality_of",
       "status": "partial",
       "evidence_spec_paths": [
-        "spec/grant/validators/built_in_spec.cr",
-        "spec/grant/validators/contexts_spec.cr"
+        "spec/grant/validations/numericality_constraints_spec.cr",
+        "spec/grant/validators/built_in_spec.cr"
       ],
-      "gap": "All failing constraints collapse into one combined message (e.g. 'must be greater than 0 and an integer') carrying a single error code; AR adds one error per failed constraint with its own type (:greater_than, :not_an_integer ...). Bounds must be compile-time literals: no Symbol (other attribute) or Proc operand for greater_than/less_than/equal_to/other_than (AR supports both). No spec for equal_to, other_than, less_than_or_equal_to, allow_blank, in:. only_numeric string-before-typecast semantics are replaced by ConversionError.",
+      "gap": "On a typed numeric column, non-numeric input (form text 'abc' for an Int32 column) raises ConversionError on assignment instead of adding a :not_a_number error. That is ActiveRecord's main use of numericality (validating raw_value before type cast). only_integer accepts a Float with no fractional part (AR rejects it). No only_numeric: option. allow_blank: has no numericality spec. One error per constraint, Symbol and Proc operands, equal_to, other_than and in: are done and pass on sqlite and pg.",
       "not_applicable_reason": ""
     },
     {
@@ -909,9 +928,10 @@
       "feature": "Errors API (add, [], full_messages, where, of_type, include?, attribute_names, group_by_attribute, merge!, to_hash, to_json)",
       "status": "partial",
       "evidence_spec_paths": [
+        "spec/grant/validations/errors_api_spec.cr",
         "spec/grant/errors/errors_api_spec.cr"
       ],
-      "gap": "Listed methods exist and 62 examples pass, but semantics diverge: of_type(attr, message : String) matches on MESSAGE while AR of_type(attr, type) matches the type symbol; where(attr) has no type/options filter; to_hash takes no full_messages arg; to_json emits [{field,message}] not AR's {attr => [messages]}; add() takes no options and cannot generate messages from a type symbol; merge! copies Error references (shared mutable objects).",
+      "gap": "of_type(attr, type) matches by type; where takes type and options; to_hash(full_messages:); as_json returns the AR shape; merge! copies errors; add takes options and generates messages from a type. Not done: Errors#to_json still emits [{field,message}] (kept for backward compatibility; as_json.to_json gives the AR shape).",
       "not_applicable_reason": ""
     },
     {
@@ -919,9 +939,10 @@
       "feature": "errors.details (AR8 structured type+options per error)",
       "status": "partial",
       "evidence_spec_paths": [
+        "spec/grant/validations/errors_details_options_spec.cr",
         "spec/grant/validators/parity_spec.cr"
       ],
-      "gap": "Errors#details now exists and returns {\"attr\" => [{:error => type}]} with :invalid fallback (parity_spec.cr 'errors.details (typed codes)', 26 examples pass on SQLite). Remaining: no options in the detail hash (AR: {error: :too_short, count: 3}, {error: :greater_than, count: 0, value: -1}); details keys are Strings not Symbols; only some validators pass a type (numericality reports only the first constraint code); no `Error#details`/`Error#type` typed options; errors added by validates_with need explicit type: or fall back to :invalid.",
+      "gap": "details hashes now carry the error's options (count:, value:) for length validators, numericality and errors.add(..., **options); the type is always present. Return type is Hash(String, Array(Hash(Symbol, Grant::Error::Value))): keys stay Strings because Crystal cannot create Symbols at run time. Not populated: value: for inclusion/exclusion/uniqueness, and count: for a combined min+max length.",
       "not_applicable_reason": ""
     },
     {
@@ -1029,21 +1050,23 @@
     {
       "area": "Validations & callbacks",
       "feature": "run_callbacks (manual callback execution)",
-      "status": "partial",
+      "status": "complete",
       "evidence_spec_paths": [
-        "spec/grant/callbacks/callbacks_spec.cr"
+        "spec/grant/callbacks/run_callbacks_spec.cr"
       ],
-      "gap": "Each event is publicly callable (`item.before_create`, spec 'manually triggered' passes as written) which runs the before/after chain for that one event. Still missing: `run_callbacks(:save) { ... }` wrapping a block between before and after chains (incl. around callbacks and halting return value), and a symbol-dispatched runtime form.",
+      "gap": "",
       "not_applicable_reason": ""
     },
     {
       "area": "Validations & callbacks",
       "feature": "Normalization (normalizes macro, runs before validation)",
-      "status": "partial",
+      "status": "complete",
       "evidence_spec_paths": [
+        "spec/grant/attributes/normalizes_spec.cr",
+        "spec/grant/attributes/normalized_query_spec.cr",
         "spec/grant/normalization_spec.cr"
       ],
-      "gap": "Implemented as a before_validation hook only, so values are normalized on valid?/save, not on assignment (AR normalizes in the attribute setter and on read of existing values). Only String-valued attributes; one attribute per call (no `normalizes :a, :b`); no with: lambda form (block only); no apply_to_nil:; no Model.normalize_value_for(:attr, value); where/find_by conditions are not normalized (AR normalizes query values); save(validate: false) skips normalization; if: option is not in AR.",
+      "gap": "",
       "not_applicable_reason": ""
     },
     {
@@ -1130,41 +1153,43 @@
     {
       "area": "Validations & callbacks",
       "feature": "Error message generation from type symbol, message: as Symbol/Proc, errors.add(attr, :type, **options)",
-      "status": "missing",
-      "evidence_spec_paths": [],
-      "gap": "Messages are hard-coded English strings at macro expansion. errors.add(:name, :blank) does not compile (message is String); `message:` on validators must be a String literal, not a Symbol key or `->(object, data)` proc; no %{count} interpolation.",
-      "not_applicable_reason": "",
-      "priority": 5
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/validations/message_generation_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
     },
     {
       "area": "Validations & callbacks",
       "feature": "Errors extras (delete, added?, of_type by type, messages_for, full_message, import/copy!, objects, uniq!, count by attribute)",
-      "status": "missing",
+      "status": "complete",
       "evidence_spec_paths": [
-        "spec/grant/errors/errors_api_spec.cr"
+        "spec/grant/validations/errors_api_spec.cr"
       ],
-      "gap": "Absent from src/grant/errors.cr: delete(attr, type=nil), added?(attr, type, **opts), messages_for(attr), full_message(attr, msg), import(error, attribute:), copy!(other), objects, uniq!, generate_message, errors.messages Hash accessor, errors.to_hash(true).",
-      "not_applicable_reason": "",
-      "priority": 6
+      "gap": "",
+      "not_applicable_reason": ""
     },
     {
       "area": "Validations & callbacks",
       "feature": "ActiveModel::Error object API (attribute, type, options, raw_type, message, detail, full_message, strict_match?)",
-      "status": "partial",
+      "status": "complete",
       "evidence_spec_paths": [
-        "spec/grant/errors/errors_api_spec.cr"
+        "spec/grant/validations/error_object_spec.cr"
       ],
-      "gap": "Grant::Error has field, message, type; missing options, attribute alias, raw_type, detail, full_message(instance), match?(attr, type, **opts). to_s capitalizes only the first letter of the raw column name (no humanize: 'first_name' becomes 'First_name').",
+      "gap": "",
       "not_applicable_reason": ""
     },
     {
       "area": "Validations & callbacks",
       "feature": "Localized error messages and human_attribute_name (I18n)",
-      "status": "missing",
-      "evidence_spec_paths": [],
-      "gap": "No locale lookup, no Model.human_attribute_name, no per-model/per-attribute message overrides, no format template ('%{attribute} %{message}').",
-      "not_applicable_reason": "",
-      "priority": 7
+      "status": "partial",
+      "evidence_spec_paths": [
+        "spec/grant/validations/i18n_spec.cr",
+        "spec/grant/validations/message_generation_spec.cr"
+      ],
+      "gap": "Length (including the non-AR wording 'must be at least N characters' and one combined :wrong_length error for min+max), comparison, email and url messages are compile-time English and bypass the translator. The locale is process-global, not per fiber. The pluggable Translator, English default table, per-model and per-attribute overrides, the errors.format template and cached lookups are done.",
+      "not_applicable_reason": ""
     },
     {
       "area": "Validations & callbacks",
@@ -1179,29 +1204,36 @@
     {
       "area": "Validations & callbacks",
       "feature": "Validator reflection (validators, validators_on, validate callbacks introspection)",
-      "status": "missing",
-      "evidence_spec_paths": [],
-      "gap": "__validators_for_validation is internal; no public list of validators per attribute, no kind/options metadata, so form builders and API docs cannot derive maxlength/required.",
-      "not_applicable_reason": "",
-      "priority": 9
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/validations/validators_on_spec.cr",
+        "spec/grant/validations/numericality_constraints_spec.cr",
+        "spec/grant/validations/uniqueness_options_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
     },
     {
       "area": "Validations & callbacks",
       "feature": "after_save_commit",
-      "status": "missing",
-      "evidence_spec_paths": [],
-      "gap": "Not in CALLBACK_NAMES (src/grant/callbacks.cr) or the commit dispatch in src/grant/commit_callbacks.cr.",
-      "not_applicable_reason": "",
-      "priority": 11
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/callbacks/after_save_commit_spec.cr",
+        "spec/grant/callbacks/commit_dedup_savepoint_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
     },
     {
       "area": "Validations & callbacks",
       "feature": "after_commit/after_rollback on: option (on: [:create, :update, :destroy])",
-      "status": "missing",
-      "evidence_spec_paths": [],
-      "gap": "Callback macros take only if:/unless:; after_rollback fires regardless of the action while AR after_rollback supports on:. Also AR dedups commit callbacks when the same record is saved several times in one transaction; not verified in Grant.",
-      "not_applicable_reason": "",
-      "priority": 10
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/callbacks/commit_on_option_spec.cr",
+        "spec/grant/callbacks/commit_dedup_savepoint_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
     },
     {
       "area": "Validations & callbacks",
@@ -1217,11 +1249,12 @@
     {
       "area": "Validations & callbacks",
       "feature": "Callback prepend: true option",
-      "status": "missing",
-      "evidence_spec_paths": [],
-      "gap": "CALLBACKS entries are always appended; no prepend: (used by dependent: :destroy ordering guidance in Rails).",
-      "not_applicable_reason": "",
-      "priority": 12
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/callbacks/prepend_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
     },
     {
       "area": "Validations & callbacks",
@@ -1230,7 +1263,7 @@
       "evidence_spec_paths": [],
       "gap": "No way to skip an inherited callback in a subclass or define new callback chains; runtime per-call skipping is impossible with compile-time chains. Callback chain is a compile-time constant, so run-time mutation is Ruby-metaprogramming-shaped. Deferred: Effort L, low value, and compile-time chains make Ruby-style runtime mutation a poor fit. Revisit after CB01.",
       "not_applicable_reason": "",
-      "priority": 85
+      "priority": 46
     },
     {
       "area": "Validations & callbacks",
@@ -1239,16 +1272,18 @@
       "evidence_spec_paths": [],
       "gap": "Callbacks accept a method Symbol or a block only; no object with a before_save(record) protocol for shared, testable callback classes. Deferred: Low value. A method Symbol or block already covers the use; the callback-object protocol adds compile-time surface for little benefit.",
       "not_applicable_reason": "",
-      "priority": 78
+      "priority": 39
     },
     {
       "area": "Validations & callbacks",
       "feature": "Model.normalize_value_for and normalization on query conditions",
-      "status": "missing",
-      "evidence_spec_paths": [],
-      "gap": "No public normalize_value_for(attr, value); where(email: \" A@X.COM \") and find_by do not normalize the search value while AR does.",
-      "not_applicable_reason": "",
-      "priority": 15
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/attributes/normalizes_spec.cr",
+        "spec/grant/attributes/normalized_query_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
     },
     {
       "area": "Multiple databases & sharding",
@@ -1421,12 +1456,14 @@
     {
       "area": "Multiple databases & sharding",
       "feature": "ShardedQueryBuilder + Query routing (single/scatter-gather/multi-shard)",
-      "status": "partial",
+      "status": "complete",
       "evidence_spec_paths": [
-        "spec/grant/sharding_integration_spec.cr",
-        "spec/grant/range_sharding_spec.cr"
+        "spec/grant/sharding/real_shard_routing_spec.cr",
+        "spec/grant/sharding/scatter_page_merge_spec.cr",
+        "spec/grant/sharding/scatter_aggregates_spec.cr",
+        "spec/grant/sharding/find_each_shards_spec.cr"
       ],
-      "gap": "Probe on real SQLite shards: order(id).limit(3).offset(2) returned [4,6,7] (OFFSET applied per shard, not globally). sum/average/minimum/maximum raise 'No shard context'. shards_by __builder hard-codes DbType::Sqlite so PG/MySQL builds use the SQLite assembler. Specs use virtual adapters only, so merged real rows are unproven.",
+      "gap": "",
       "not_applicable_reason": ""
     },
     {
@@ -1434,11 +1471,16 @@
       "feature": "Sharding integration specs (cross-strategy, error handling, transactions, concurrent)",
       "status": "partial",
       "evidence_spec_paths": [
-        "spec/grant/sharding_integration_spec.cr",
-        "spec/grant/range_sharding_spec.cr",
-        "spec/grant/geo_sharding_spec.cr"
+        "spec/grant/sharding/real_shard_routing_spec.cr",
+        "spec/grant/sharding/scatter_page_merge_spec.cr",
+        "spec/grant/sharding/scatter_aggregates_spec.cr",
+        "spec/grant/sharding/find_each_shards_spec.cr",
+        "spec/grant/sharding/instance_routing_spec.cr",
+        "spec/grant/sharding/shard_key_immutability_spec.cr",
+        "spec/grant/sharding/cross_shard_join_spec.cr",
+        "spec/grant/sharding/shard_reader_spec.cr"
       ],
-      "gap": "Suites use VirtualShardAdapter (records SQL, no rows) except one SQLite move_to_shard spec; no spec for real data merge, offset, aggregates, find_each, instance save routing, or restart-stable hashing; PostgreSQL untested.",
+      "gap": "No shard databases on PG or MySQL. No cross-shard transaction behavior, no concurrent writers, and no real-data restart-stable hashing spec.",
       "not_applicable_reason": ""
     },
     {
@@ -1452,29 +1494,33 @@
     {
       "area": "Multiple databases & sharding",
       "feature": "Shard key immutability enforcement",
-      "status": "missing",
-      "evidence_spec_paths": [],
-      "gap": "Saving a changed shard key is not guarded. Additionally, save/update on a loaded sharded record raises 'No shard context' outside with_shard (current_shard is nil after loading), so the guard needs record shard tracking first.",
-      "not_applicable_reason": "",
-      "priority": 27
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/sharding/shard_key_immutability_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
     },
     {
       "area": "Multiple databases & sharding",
       "feature": "Cross-shard join detection",
-      "status": "missing",
-      "evidence_spec_paths": [],
-      "gap": "No cross-shard join guard exists.",
-      "not_applicable_reason": "",
-      "priority": 28
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/sharding/cross_shard_join_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
     },
     {
       "area": "Multiple databases & sharding",
       "feature": "Automatic role-switching middleware (DatabaseSelector equivalent)",
-      "status": "missing",
-      "evidence_spec_paths": [],
-      "gap": "Grant has no Amber/HTTP::Handler that routes GET/HEAD to reading and other verbs to writing, nor per-session last-write tracking.",
-      "not_applicable_reason": "",
-      "priority": 29
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/middleware/database_selector_spec.cr",
+        "spec/grant/middleware/database_selector_databases_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
     },
     {
       "area": "Multiple databases & sharding",
@@ -1511,29 +1557,27 @@
       "evidence_spec_paths": [],
       "gap": "Rails migrates every database in the environment configuration, including shard entries, with a per-database migrations_paths and schema dump; Grant's Migrator is per-model adapter only and has no run-on-all-configured-connections task.",
       "not_applicable_reason": "",
-      "priority": 54
+      "priority": 15
     },
     {
       "area": "Multiple databases & sharding",
       "feature": "Per-shard connection with read replica (shards: {shard_one: {writing:, reading:}})",
       "status": "partial",
       "evidence_spec_paths": [
-        "spec/grant/connection_management_spec.cr",
-        "spec/grant/sharding_integration_spec.cr"
+        "spec/grant/sharding/shard_reader_spec.cr"
       ],
-      "gap": "Shard-config maps and shard adapter lookup are covered; Sharding::Model routing ignores reading role and connected_to(role:) for sharded models (ShardManager.adapter passes current_role but no test proves a shard replica read). No PostgreSQL evidence.",
+      "gap": "Sharding::Model does not read the connects_to(shards: {..: {writing:, reading:}}) declaration. There is no PG replica pair.",
       "not_applicable_reason": ""
     },
     {
       "area": "Multiple databases & sharding",
       "feature": "find_each across all shards",
-      "status": "missing",
+      "status": "complete",
       "evidence_spec_paths": [
-        "spec/grant/query/query_regressions_spec.cr"
+        "spec/grant/sharding/find_each_shards_spec.cr"
       ],
-      "gap": "Probe on real SQLite shards: find_each(batch_size: 3) yielded 12 rows for 10 records (duplicates and nondeterministic), because inside each with_shard the batch query is scatter-gathered across all shards again and offsets are per shard. Cited evidence covers non-sharded find_each only. No start/finish/order/error_on_ignore options on the sharded path; serial across shards.",
-      "not_applicable_reason": "",
-      "priority": 26
+      "gap": "",
+      "not_applicable_reason": ""
     },
     {
       "area": "Multiple databases & sharding",
@@ -1589,20 +1633,23 @@
     {
       "area": "Multiple databases & sharding",
       "feature": "ShardSelector middleware (shard_resolver, lock)",
-      "status": "missing",
-      "evidence_spec_paths": [],
-      "gap": "No request middleware that picks a shard per request (e.g. from tenant/subdomain) and optionally locks it.",
-      "not_applicable_reason": "",
-      "priority": 32
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/middleware/shard_selector_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
     },
     {
       "area": "Multiple databases & sharding",
       "feature": "Multi-database configuration (database.yml configurations, replica: true, DATABASE_URL)",
-      "status": "missing",
-      "evidence_spec_paths": [],
-      "gap": "No declarative per-environment multi-database config. Connections are registered in code only via establish_connection(s); no configs_for(env, name), replica marker, DATABASE_URL merge, or database_tasks flag.",
-      "not_applicable_reason": "",
-      "priority": 31
+      "status": "partial",
+      "evidence_spec_paths": [
+        "spec/grant/config/database_configurations_spec.cr",
+        "spec/grant/config/database_configurations_adapters_spec.cr"
+      ],
+      "gap": "database_tasks: false is parsed and exposed, but nothing honors it: no migration or task runner skips the database. Only the three-tier (env > name > keys) shape is accepted; the two-tier single-database database.yml form is not.",
+      "not_applicable_reason": ""
     },
     {
       "area": "Multiple databases & sharding",
@@ -1661,30 +1708,33 @@
     {
       "area": "Multiple databases & sharding",
       "feature": "Automatic shard routing for instance save/update/destroy on shards_by models",
-      "status": "partial",
+      "status": "complete",
       "evidence_spec_paths": [
-        "spec/grant/sharding_integration_spec.cr"
+        "spec/grant/sharding/instance_routing_spec.cr"
       ],
-      "gap": "Probe: new record save! outside with_shard raises 'No shard context'; a record loaded via a sharded query has current_shard nil and update raises the same outside with_shard. The before_save/after_save macros defined inside Sharding::Model are not callbacks and never run.",
+      "gap": "",
       "not_applicable_reason": ""
     },
     {
       "area": "Multiple databases & sharding",
       "feature": "Scatter-gather aggregates (sum/average/minimum/maximum/calculate) on sharded models",
-      "status": "missing",
-      "evidence_spec_paths": [],
-      "gap": "Probe: ProbeRec.sum(:tenant_id) raises 'No shard context'. Only count, exists?, pluck are routed.",
-      "not_applicable_reason": "",
-      "priority": 25
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/sharding/scatter_aggregates_spec.cr",
+        "spec/grant/sharding/scatter_page_merge_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
     },
     {
       "area": "Multiple databases & sharding",
       "feature": "Scatter-gather global LIMIT/OFFSET and ordering",
-      "status": "partial",
+      "status": "complete",
       "evidence_spec_paths": [
-        "spec/grant/sharding_integration_spec.cr"
+        "spec/grant/sharding/real_shard_routing_spec.cr",
+        "spec/grant/sharding/scatter_page_merge_spec.cr"
       ],
-      "gap": "Probe: order(id).limit(3).offset(2) returned [4,6,7] instead of [3,4,5]; offset is applied per shard and never globally. ORDER + LIMIT merge works in memory (first N after sort).",
+      "gap": "",
       "not_applicable_reason": ""
     },
     {
@@ -1876,19 +1926,22 @@
       "feature": "Enum attributes (enum_attribute macro)",
       "status": "partial",
       "evidence_spec_paths": [
+        "spec/grant/attributes/enum_options_spec.cr",
         "spec/grant/enum_attributes_spec.cr"
       ],
-      "gap": "Implemented: predicates, bang setters, positive scopes, values list, mapping, default, integer or string storage, validates_enum. Differences from AR: bang setters (published!) only assign in memory while AR persists via update!; no negated scopes (Post.not_draft); no prefix:/suffix: options so two enums with a shared member name collide at compile time; no scopes: false; no validate: option on the macro; no _previously_was; Model.statuses returns an Array where AR returns the name-to-value mapping; where(status: :published) symbol or string lookup is not shown in the spec (needs the enum type).",
+      "gap": "Model.statuses returns Array(Status), not AR's name-to-value mapping (the mapping is status_mapping). On a new record, published! only assigns and does not insert as AR's update! would. There is no _previously_was. Mass assignment of an unknown name records a ConversionError rather than using validate:. Declaring both enum_attribute and normalizes on the same column is unsupported.",
       "not_applicable_reason": ""
     },
     {
       "area": "Core persistence & attributes",
       "feature": "Normalization (normalizes macro, before_validation hook)",
-      "status": "partial",
+      "status": "complete",
       "evidence_spec_paths": [
+        "spec/grant/attributes/normalizes_spec.cr",
+        "spec/grant/attributes/normalized_query_spec.cr",
         "spec/grant/normalization_spec.cr"
       ],
-      "gap": "Source: one attribute per call, block only, applied only to String values, run in before_validation (so save(validate: false), update_columns, import, create with skip paths bypass it). AR normalizes on assignment and on query arguments (User.find_by(email: \" A@B \") matches the stored normalized value), supports multiple attributes, with: callable, apply_to_nil:, and exposes Model.normalize_value_for(:attr, value). The if: option is Grant-specific.",
+      "gap": "",
       "not_applicable_reason": ""
     },
     {
@@ -1905,11 +1958,12 @@
     {
       "area": "Core persistence & attributes",
       "feature": "Store accessors (store_accessor for JSON column sub-keys)",
-      "status": "missing",
-      "evidence_spec_paths": [],
-      "gap": "No store or store_accessor macro. serialized_column exists and could back it.",
-      "not_applicable_reason": "",
-      "priority": 16
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/attributes/store_accessor_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
     },
     {
       "area": "Core persistence & attributes",
@@ -1958,11 +2012,12 @@
     {
       "area": "Core persistence & attributes",
       "feature": "Counter caches (counter_cache: on belongs_to)",
-      "status": "partial",
+      "status": "complete",
       "evidence_spec_paths": [
+        "spec/grant/associations/counter_cache_spec.cr",
         "spec/grant/associations/association_regressions_spec.cr"
       ],
-      "gap": "belongs_to counter_cache: (create/destroy maintenance, including polymorphic adjust helper) exists. Absent (grep of src): Model.reset_counters(id, :assoc), Model.increment_counter(col, id, by:, touch:), Model.decrement_counter, counter_cache with active: false, and counter_cache resync on foreign-key change/reassignment (not verified by spec).",
+      "gap": "",
       "not_applicable_reason": ""
     },
     {
@@ -2282,11 +2337,12 @@
     {
       "area": "Core persistence & attributes",
       "feature": "has_secure_password (ActiveModel::SecurePassword)",
-      "status": "missing",
-      "evidence_spec_paths": [],
-      "gap": "No has_secure_password, password=, password_confirmation, authenticate(_password), password_challenge, or bcrypt integration (grep of src).",
-      "not_applicable_reason": "",
-      "priority": 17
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/secure_password_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
     },
     {
       "area": "Core persistence & attributes",
@@ -2340,11 +2396,12 @@
     {
       "area": "Core persistence & attributes",
       "feature": "Human-readable names and i18n (human_attribute_name, model_name)",
-      "status": "missing",
-      "evidence_spec_paths": [],
-      "gap": "No human_attribute_name or model_name object; error full_messages use raw attribute names.",
-      "not_applicable_reason": "",
-      "priority": 8
+      "status": "partial",
+      "evidence_spec_paths": [
+        "spec/grant/validations/i18n_spec.cr"
+      ],
+      "gap": "ModelName has no plural, route_key, singular_route_key, collection or human(count:). Grant::I18n.locale is process-global rather than fiber-local, so per-request locale switching in a concurrent server races. human_attribute_name, model_name.human/i18n_key/param_key/element and namespaced models are done.",
+      "not_applicable_reason": ""
     },
     {
       "area": "Core persistence & attributes",
@@ -2376,12 +2433,11 @@
     {
       "area": "Adapters & connections",
       "feature": "Single codebase with SQLite (local) + PostgreSQL (server)",
-      "status": "partial",
+      "status": "complete",
       "evidence_spec_paths": [
-        "spec/grant/advanced_multi_database_spec.cr",
-        "spec/grant/compile_target_adapters_spec.cr"
+        "spec/integration/mixed_adapter_spec.cr"
       ],
-      "gap": "advanced_multi_database_spec.cr runs entirely on SQLite in-memory. There is no spec that registers a SQLite connection and a PostgreSQL connection in one process and drives two models against them (independent transactions, no cross-adapter placeholder or type leakage). compile_target_adapters_spec.cr proves only compile-time adapter selection.",
+      "gap": "",
       "not_applicable_reason": ""
     },
     {
@@ -2472,22 +2528,26 @@
     {
       "area": "Adapters & connections",
       "feature": "Pessimistic locking (FOR UPDATE, FOR SHARE, SKIP LOCKED, NOWAIT)",
-      "status": "partial",
+      "status": "complete",
       "evidence_spec_paths": [
-        "spec/grant/locking/pessimistic_spec.cr",
-        "spec/grant/transaction_spec.cr"
+        "spec/grant/locking/lock_wait_spec.cr",
+        "spec/grant/locking/with_lock_spec.cr",
+        "spec/grant/locking/unsaved_changes_lock_spec.cr",
+        "spec/grant/locking/pessimistic_spec.cr"
       ],
-      "gap": "Specs cover SQL text per adapter and single-fiber with_lock on SQLite (where lock modes are a no-op); no spec proves blocking, NOWAIT/SKIP LOCKED behavior on a real PG/MySQL server. Defects by inspection: with_lock does result.not_nil!, so a block returning nil raises; lock!/with_lock silently overwrite unsaved changes (AR raises 'Locking a record with unsaved changes is not supported'); NOWAIT/SKIP LOCKED failures surface as raw DB::Error because LockNotAvailableError/LockWaitTimeoutError are never raised; lock accepts only the 6-value enum (no free-form lock string, no lock(false)); with_lock takes no transaction options.",
+      "gap": "",
       "not_applicable_reason": ""
     },
     {
       "area": "Adapters & connections",
       "feature": "Optimistic locking (lock_version)",
-      "status": "partial",
+      "status": "complete",
       "evidence_spec_paths": [
-        "spec/grant/locking/optimistic_spec.cr"
+        "spec/grant/locking/optimistic_spec.cr",
+        "spec/grant/locking/optimistic_destroy_touch_spec.cr",
+        "spec/grant/locking/locking_column_spec.cr"
       ],
-      "gap": "Update path is guarded and specced (12 examples pass on SQLite). Not implemented: destroy of a stale record does not raise StaleObjectError (AR checks lock_version on destroy); no lock_optimistically toggle or locking_enabled?; touch/update_columns/update_all interplay unspecced. Opt-in via include Grant::Locking::Optimistic (a deliberate Crystal difference, fine) but it force-adds a lock_version column. Configurable column is tracked separately.",
+      "gap": "",
       "not_applicable_reason": ""
     },
     {
@@ -2539,11 +2599,11 @@
       "feature": "Multiple databases / connected_to with shard:",
       "status": "partial",
       "evidence_spec_paths": [
-        "spec/grant/connection_management_spec.cr",
-        "spec/grant/sharding_integration_spec.cr",
-        "spec/integration/multi_database_spec.cr"
+        "spec/grant/sharding/shard_reader_spec.cr",
+        "spec/grant/sharding/real_shard_routing_spec.cr",
+        "spec/grant/sharding/instance_routing_spec.cr"
       ],
-      "gap": "Connection-context and virtual-shard routing specs pass on mocks/SQLite; no PostgreSQL or MySQL multi-database shard integration, and no spec where two shards resolve to two real physical databases with per-shard reader routing.",
+      "gap": "No PostgreSQL or MySQL multi-database shard integration.",
       "not_applicable_reason": ""
     },
     {
@@ -2593,7 +2653,7 @@
       "evidence_spec_paths": [],
       "gap": "BEGIN is sent immediately on every transaction block, even ones that run no query or only reads that a cache satisfies; AR defers BEGIN until the first statement. Deferred: Low value, effort L, and lazy checkout mid-block risks starving the pool. Revisit after T01 lands and benchmarks show empty-transaction cost.",
       "not_applicable_reason": "",
-      "priority": 82
+      "priority": 43
     },
     {
       "area": "Adapters & connections",
@@ -2641,20 +2701,23 @@
     {
       "area": "Adapters & connections",
       "feature": "Row-lock unsaved-changes guard (lock! / with_lock on a dirty record)",
-      "status": "missing",
-      "evidence_spec_paths": [],
-      "gap": "reload_with_lock copies fresh values over every column, silently discarding unsaved changes; AR raises RuntimeError 'Locking a record with unsaved changes is not supported'.",
-      "not_applicable_reason": "",
-      "priority": 3
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/locking/unsaved_changes_lock_spec.cr",
+        "spec/grant/locking/with_lock_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
     },
     {
       "area": "Adapters & connections",
       "feature": "Relation#lock with a custom SQL clause or false",
-      "status": "missing",
-      "evidence_spec_paths": [],
-      "gap": "Grant's lock takes only the 6-value LockMode enum. There is no free-form vendor lock string (e.g. 'FOR NO KEY UPDATE', MySQL 'LOCK IN SHARE MODE') and no lock(false) to clear a lock inherited from a scope.",
-      "not_applicable_reason": "",
-      "priority": 4
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/locking/lock_clause_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
     },
     {
       "area": "Adapters & connections",
@@ -2752,20 +2815,25 @@
     {
       "area": "Adapters & connections",
       "feature": "Database URL / DATABASE_URL configuration and adapter inference from URL scheme",
-      "status": "missing",
-      "evidence_spec_paths": [],
-      "gap": "establish_connection requires the adapter class explicitly; the URL scheme (postgres://, mysql://, sqlite3:) is never used to choose one and DATABASE_URL is not read. Custom adapter registration by name (ConnectionAdapters.register) does not exist either.",
-      "not_applicable_reason": "",
-      "priority": 30
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/config/url_scheme_spec.cr",
+        "spec/grant/config/database_configurations_spec.cr",
+        "spec/grant/config/database_configurations_adapters_spec.cr",
+        "spec/integration/mixed_adapter_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
     },
     {
       "area": "Adapters & connections",
       "feature": "Database configurations API (db_config, configs_for, per-environment named configs)",
-      "status": "missing",
-      "evidence_spec_paths": [],
-      "gap": "There is no config object model (HashConfig/UrlConfig equivalent) or lookup by environment/name; settings live only as ConnectionRegistry specs keyed by 'db:role[:shard]'. Loading a database.yml-shaped file is left to the app (Amber's environment YAML).",
-      "not_applicable_reason": "",
-      "priority": 33
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/config/database_configurations_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
     },
     {
       "area": "Adapters & connections",
@@ -2857,7 +2925,7 @@
       "evidence_spec_paths": [],
       "gap": "There is no per-connection variables hook, so statement_timeout, lock_timeout, application_name, default search_path and MySQL sql_mode cannot be set declaratively; no per-query timeout. MySQL adapter only forces utf8mb4 encoding. Deferred: crystal-db has no on-connect hook, so this needs an upstream or wrapped-connection factory. A SET on every checkout would double round trips.",
       "not_applicable_reason": "",
-      "priority": 76
+      "priority": 37
     },
     {
       "area": "Adapters & connections",
@@ -3286,11 +3354,12 @@
     {
       "area": "Query interface",
       "feature": "async queries (fiber/channel-based)",
-      "status": "partial",
+      "status": "complete",
       "evidence_spec_paths": [
+        "spec/grant/query/async_spec.cr",
         "spec/grant/async_spec.cr"
       ],
-      "gap": "Not re-run on PG (out of scope). Builder has load_async, async_count/sum/avg/min/max/pluck/delete/update. Missing: async_ids, async_pick, async_exists?, async_find_by_sql, async_average alias, and a global async executor/config (AR config.active_record.async_query_executor). Original PG note (zero results, empty metrics) unverified here.",
+      "gap": "",
       "not_applicable_reason": ""
     },
     {
@@ -3340,11 +3409,13 @@
     {
       "area": "Query interface",
       "feature": "query cache (within-request result memoization)",
-      "status": "missing",
-      "evidence_spec_paths": [],
-      "gap": "No Model.cache/uncached block or per-request (Amber pipe) query cache. Writes must clear it.",
-      "not_applicable_reason": "",
-      "priority": 13
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/query/query_cache_spec.cr",
+        "spec/grant/query/query_cache_schema_tenant_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
     },
     {
       "area": "Query interface",
@@ -3353,7 +3424,7 @@
       "evidence_spec_paths": [],
       "gap": "No Relation#from(source, subquery_name = nil) (responds_to? false); no unscope(:from).",
       "not_applicable_reason": "",
-      "priority": 60
+      "priority": 21
     },
     {
       "area": "Query interface",
@@ -3636,11 +3707,12 @@
     {
       "area": "Query interface",
       "feature": "scoping { } block (Model.scoping / Relation#scoping)",
-      "status": "missing",
-      "evidence_spec_paths": [],
-      "gap": "Only unscoped { } exists; no scoping { } that makes a relation the current scope for the block (responds_to? false).",
-      "not_applicable_reason": "",
-      "priority": 14
+      "status": "partial",
+      "evidence_spec_paths": [
+        "spec/grant/query/scoping_block_spec.cr"
+      ],
+      "gap": "ActiveRecord's scoping also applies the relation's where-attributes to Model.new and Model.create inside the block, for example Post.where(published: true).scoping { Post.new.published == true }. Grant already has Relation#new and scope_attributes, but Model.new and create inside scoping do not use them. Also: scoping keyed by model name does not reach STI subclasses, and fibers spawned inside the block do not inherit it (documented).",
+      "not_applicable_reason": ""
     },
     {
       "area": "Query interface",
@@ -3657,7 +3729,7 @@
       "evidence_spec_paths": [],
       "gap": "Absent (responds_to? false); no WITH clause support in the assemblers.",
       "not_applicable_reason": "",
-      "priority": 59
+      "priority": 20
     },
     {
       "area": "Query interface",
@@ -3789,11 +3861,13 @@
     {
       "area": "Associations",
       "feature": "dependent: :delete / :delete_all",
-      "status": "partial",
+      "status": "complete",
       "evidence_spec_paths": [
-        "spec/grant/associations/dependent_delete_all_spec.cr"
+        "spec/grant/associations/dependent_options_spec.cr",
+        "spec/grant/associations/dependent_delete_all_spec.cr",
+        "spec/grant/associations/collection_delete_strategy_spec.cr"
       ],
-      "gap": "The spellings already match AR (has_many :delete_all, has_one :delete), and dependent_delete_all_spec.cr covers both (ran: pass). Remaining: dependent: :destroy_async (and ensuring_owner_was) is absent; any unrecognized dependent: value (e.g. has_many :delete, :restrict_with_error) falls through the macro elsif chain and is silently ignored (probe P3); dependent is not applied on has_many :through join rows.",
+      "gap": "",
       "not_applicable_reason": ""
     },
     {
@@ -3810,50 +3884,54 @@
     {
       "area": "Associations",
       "feature": "dependent: :restrict / :restrict_with_exception / :restrict_with_error",
-      "status": "partial",
+      "status": "complete",
       "evidence_spec_paths": [
-        "spec/grant/associations/association_parity_spec.cr",
-        "spec/grant/associations/association_options_spec.cr"
+        "spec/grant/associations/dependent_options_spec.cr",
+        "spec/grant/associations/association_parity_spec.cr"
       ],
-      "gap": "Code has closed part of the tracked gap: :restrict_with_exception is implemented (raises Grant::Associations::RestrictError) and tested in association_parity_spec.cr. Still absent: the AR name :restrict_with_error is not recognized and is silently ignored (probe P3: destroy returned true and deleted the owner); Grant's :restrict is a non-AR alias. The exception class is RestrictError, not a DeleteRestrictionError-named equivalent; the error message is added to :base only.",
+      "gap": "",
       "not_applicable_reason": ""
     },
     {
       "area": "Associations",
       "feature": "autosave",
-      "status": "partial",
+      "status": "complete",
       "evidence_spec_paths": [
+        "spec/grant/associations/autosave_validate_spec.cr",
+        "spec/grant/associations/mark_for_destruction_spec.cr",
         "spec/grant/associations/association_options_spec.cr",
         "spec/grant/associations/association_regressions_spec.cr",
         "spec/grant/associations/integration_spec.cr",
         "spec/grant/associations/additional_options_spec.cr"
       ],
-      "gap": "New and dirty (autosave: true) children are saved via after_save with save!, so an invalid child raises after the owner row is written (inside the around_save transaction) instead of owner.save returning false with an error on the owner (AR validate: true default). No autosave: false semantics, no mark_for_destruction/marked_for_destruction?, no per-child has_many replace/removal on save, and the belongs_to autosave only saves unpersisted parents.",
+      "gap": "",
       "not_applicable_reason": ""
     },
     {
       "area": "Associations",
       "feature": "counter_cache",
-      "status": "partial",
+      "status": "complete",
       "evidence_spec_paths": [
+        "spec/grant/associations/counter_cache_spec.cr",
         "spec/grant/associations/association_regressions_spec.cr",
         "spec/grant/associations/association_options_spec.cr",
         "spec/grant/associations/additional_options_spec.cr",
         "spec/grant/associations/integration_spec.cr"
       ],
-      "gap": "Create/destroy/FK-change adjustments work (regressions A-10, A-17, options spec) and a polymorphic counter cache exists (integration_spec), but: reset_counters and increment_counter/decrement_counter class helpers are absent (update_counters exists); counter_cache: true derives the column with a naive `underscore + \"s_count\"` (Category -> categorys_count, AR gives categories_count); conditional counter_cache: {active: false} unsupported; has_many counter_cache: option (so size reads the cached column) unsupported; collection delete/delete_all/clear do not decrement; in-memory parent counters are not updated; polymorphic counter cache requires Int64 ids.",
+      "gap": "",
       "not_applicable_reason": ""
     },
     {
       "area": "Associations",
       "feature": "touch option on belongs_to",
-      "status": "partial",
+      "status": "complete",
       "evidence_spec_paths": [
+        "spec/grant/associations/touch_spec.cr",
         "spec/grant/associations/association_options_spec.cr",
         "spec/grant/associations/additional_options_spec.cr",
         "spec/grant/associations/integration_spec.cr"
       ],
-      "gap": "setup_touch runs after_save/after_destroy on the current parent only (self.association). When the FK changes, AR also touches the previous parent; Grant does not. No spec covers touch on destroy or the old-parent case. Touch runs one UPDATE per save even when nothing changed.",
+      "gap": "",
       "not_applicable_reason": ""
     },
     {
@@ -3895,11 +3973,15 @@
     {
       "area": "Associations",
       "feature": "nested attributes (accepts_nested_attributes_for)",
-      "status": "partial",
+      "status": "complete",
       "evidence_spec_paths": [
-        "spec/grant/nested_attributes_spec.cr"
+        "spec/grant/associations/nested_attributes_spec.cr",
+        "spec/grant/nested_attributes_spec.cr",
+        "spec/grant/nested_attributes_simple_spec.cr",
+        "spec/grant/nested_attributes_update_only_spec.cr",
+        "spec/grant/nested_attributes_owner_scope_spec.cr"
       ],
-      "gap": "Only has_many and has_one are handled (source branches on :has_many/:has_one); belongs_to nested attributes are unsupported. reject_if accepts only :all_blank; a proc is silently treated as nil. No index_errors, no RecordNotFound when an id is not part of the association, and it needs an explicit `enable_nested_saves` call plus a typed declaration (acceptable Crystal idiom). Spec covers create/update/destroy/limit/update_only/all_blank/validation propagation for has_many and has_one only.",
+      "gap": "",
       "not_applicable_reason": ""
     },
     {
@@ -3909,7 +3991,7 @@
       "evidence_spec_paths": [],
       "gap": "No delegated_type macro. Everything it needs (polymorphic belongs_to, has_one as:, enum-style predicates) exists separately, but only for Int64 keys.",
       "not_applicable_reason": "",
-      "priority": 61
+      "priority": 22
     },
     {
       "area": "Associations",
@@ -4012,7 +4094,7 @@
       "evidence_spec_paths": [],
       "gap": "Not generated (probe P6: responds_to?(:build_prb_detail) and :create_prb_detail are false).",
       "not_applicable_reason": "",
-      "priority": 74
+      "priority": 35
     },
     {
       "area": "Associations",
@@ -4069,7 +4151,7 @@
       "evidence_spec_paths": [],
       "gap": "AssociationCollection#through_associations does a single registry lookup; if the through association is itself a through, the join keys are wrong. No spec exists.",
       "not_applicable_reason": "",
-      "priority": 73
+      "priority": 34
     },
     {
       "area": "Associations",
@@ -4078,7 +4160,7 @@
       "evidence_spec_paths": [],
       "gap": "No source_type option; a through whose source is a polymorphic belongs_to cannot be expressed.",
       "not_applicable_reason": "",
-      "priority": 75
+      "priority": 36
     },
     {
       "area": "Associations",
@@ -4087,7 +4169,7 @@
       "evidence_spec_paths": [],
       "gap": "No option; Grant's through query already uses an IN subquery rather than a JOIN, so cross-database through is not available. Deferred: Low value and effort M. Merge with Cross-database associations (has_many / has_one through with disable_joins: true), which is a duplicate. Revisit after A02.",
       "not_applicable_reason": "",
-      "priority": 84
+      "priority": 45
     },
     {
       "area": "Associations",
@@ -4104,47 +4186,54 @@
     {
       "area": "Associations",
       "feature": "validate: option and validation of new associated records on owner save",
-      "status": "missing",
-      "evidence_spec_paths": [],
-      "gap": "Owner validation never inspects staged/new children; an invalid child surfaces as an exception from save! in after_save, not as owner.valid? == false with errors. No validate: false opt-out. validates_associated exists as a separate macro.",
-      "not_applicable_reason": "",
-      "priority": 18
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/associations/autosave_validate_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
     },
     {
       "area": "Associations",
       "feature": "mark_for_destruction / marked_for_destruction?",
-      "status": "missing",
-      "evidence_spec_paths": [],
-      "gap": "Not present; nested attributes handle _destroy with a private flow instead.",
-      "not_applicable_reason": "",
-      "priority": 24
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/associations/mark_for_destruction_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
     },
     {
       "area": "Associations",
       "feature": "destroyed_by_association",
-      "status": "missing",
-      "evidence_spec_paths": [],
-      "gap": "Children destroyed by dependent: :destroy cannot tell in their callbacks that the parent triggered the destroy.",
-      "not_applicable_reason": "",
-      "priority": 22
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/associations/dependent_options_spec.cr",
+        "spec/grant/associations/counter_cache_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
     },
     {
       "area": "Associations",
       "feature": "index_errors option for association errors",
-      "status": "missing",
-      "evidence_spec_paths": [],
-      "gap": "Child errors are not attached to the owner with indexed keys such as posts[0].title.",
-      "not_applicable_reason": "",
-      "priority": 23
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/associations/autosave_validate_spec.cr",
+        "spec/grant/associations/nested_attributes_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
     },
     {
       "area": "Associations",
       "feature": "belongs_to dependent (:destroy / :delete / :destroy_async)",
-      "status": "missing",
-      "evidence_spec_paths": [],
-      "gap": "The belongs_to macro has no dependent handling; the option is silently ignored.",
-      "not_applicable_reason": "",
-      "priority": 21
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/associations/dependent_options_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
     },
     {
       "area": "Associations",
@@ -4161,7 +4250,7 @@
       "evidence_spec_paths": [],
       "gap": "Macros take **options and ignore unknown keys; an invalid dependent: (e.g. :restrict_with_error, :delete on has_many) is silently accepted (probe P3). AR raises ArgumentError for both.",
       "not_applicable_reason": "",
-      "priority": 72
+      "priority": 33
     },
     {
       "area": "Associations",
@@ -4181,25 +4270,27 @@
       "evidence_spec_paths": [],
       "gap": "Association macros assume a single foreign key and primary key column; composite primary keys exist in src/grant/composite_primary_key.cr but associations do not use them.",
       "not_applicable_reason": "",
-      "priority": 71
+      "priority": 32
     },
     {
       "area": "Associations",
       "feature": "belongs_to default: option",
-      "status": "missing",
-      "evidence_spec_paths": [],
-      "gap": "Not supported.",
-      "not_applicable_reason": "",
-      "priority": 20
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/associations/belongs_to_extras_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
     },
     {
       "area": "Associations",
       "feature": "belongs_to association_changed? / association_previously_changed?",
-      "status": "missing",
-      "evidence_spec_paths": [],
-      "gap": "Not generated, although the FK column has _changed?/_was.",
-      "not_applicable_reason": "",
-      "priority": 19
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/associations/belongs_to_extras_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
     },
     {
       "area": "Associations",
