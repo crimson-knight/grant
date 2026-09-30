@@ -80,7 +80,6 @@ private def nt_fixture
   {ada, ben, ann, bo, cy, red, blue}
 end
 
-
 describe "nested has_many :through" do
   before_all do
     NtAuthor.migrator.drop_and_create

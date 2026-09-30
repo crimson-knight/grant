@@ -95,10 +95,10 @@ describe "association option validation" do
 
   it "rejects dependent values the association type does not support" do
     {
-      %(has_many :ov_things, class_name: OvThing, dependent: :delete)            => "has_many",
-      %(has_many :ov_things, class_name: OvThing, dependent: :bogus)             => "has_many",
-      %(has_one :ov_single, class_name: OvThing, dependent: :delete_all)         => "has_one",
-      %(belongs_to :ov_parent, class_name: OvOwner, dependent: :nullify)         => "belongs_to",
+      %(has_many :ov_things, class_name: OvThing, dependent: :delete)                => "has_many",
+      %(has_many :ov_things, class_name: OvThing, dependent: :bogus)                 => "has_many",
+      %(has_one :ov_single, class_name: OvThing, dependent: :delete_all)             => "has_one",
+      %(belongs_to :ov_parent, class_name: OvOwner, dependent: :nullify)             => "belongs_to",
       %(belongs_to :ov_parent, class_name: OvOwner, dependent: :restrict_with_error) => "belongs_to",
     }.each do |declaration, kind|
       ok, output = compile_association_source(declaration)

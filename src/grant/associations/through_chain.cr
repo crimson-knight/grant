@@ -68,8 +68,8 @@ module Grant::Associations
     private def self.chain_needed?(owner : Grant::Base.class, reflection : Grant::Reflection) : Bool
       return true if reflection.options.has_key?("source_type")
       through_name = reflection.through || return false
-      through_reflection = Grant::AssociationRegistry.reflection(owner.name, through_name) ||
-                           raise ThroughChainError.new("#{owner.name}##{reflection.name} goes through #{through_name}, which is not an association of #{owner.name}")
+      # A name that is no association is left to the collection's own keys.
+      through_reflection = Grant::AssociationRegistry.reflection(owner.name, through_name) || return false
       return true if through_reflection.through? || through_reflection.polymorphic?
       source_name = reflection.source || return false
       source = Grant::AssociationRegistry.reflection(through_reflection.klass.name, source_name)

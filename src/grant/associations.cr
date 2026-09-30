@@ -90,6 +90,12 @@ module Grant::Associations
   # * `#user=(parent : User)` — sets `user_id` to `parent.id` (in memory; call
   #   `save` to persist).
   # * a `user_id : Int64?` column to hold the foreign key.
+  # * `#build_user(**attributes) : User`, `#create_user(**attributes) : User` and
+  #   `#create_user!(**attributes) : User` — build or create the parent and assign
+  #   it. The owner itself is not saved; a built parent is saved with it.
+  #
+  # An option the macro does not know (`foriegn_key:`) or a `dependent:` value
+  # it does not support fails the build, with the valid ones listed.
   #
   # *model* may be a bare name (`:user`) or a typed declaration
   # (`user : User`). Options:
@@ -308,6 +314,11 @@ module Grant::Associations
   # * `#profile! : Profile` — same, but raises `Grant::Querying::NotFound`.
   # * `#profile=(child)` — sets the child's `user_id` to this user's primary key
   #   (in memory; `save` the child to persist).
+  # * `#build_profile(**attributes)`, `#create_profile(**attributes)` and
+  #   `#create_profile!(**attributes)` — build or create the child with this
+  #   user's key and make it the loaded target. A child already attached to a
+  #   saved user is displaced as `dependent:` says (destroyed, deleted, or its
+  #   key cleared). `create_profile` needs a saved user.
   #
   # Options:
   #
@@ -319,7 +330,8 @@ module Grant::Associations
   # * `through:` — traverse an intermediate association to reach a single record
   #   (e.g. `has_one :avatar, through: :profile`); pair with `source:` to name
   #   the association on the join model. The `through` form generates only the
-  #   getters (`#avatar` / `#avatar!`), not a setter.
+  #   getters (`#avatar` / `#avatar!`), not a setter. `source_type:` names the
+  #   class of a polymorphic source.
   # * `as:` — make this the `has_one` side of a polymorphic association (see
   #   `Grant::Polymorphic`).
   # * `dependent:` / `autosave:` / `inverse_of:` — see
@@ -623,7 +635,12 @@ module Grant::Associations
   # * `primary_key:` — the key on this model the FK references (default `"id"`).
   # * `through:` — a join model/table for many-to-many (e.g.
   #   `has_many :tags, through: :taggings`); pair with `source:` to name the
-  #   association on the join model whose target is collected.
+  #   association on the join model whose target is collected. The through
+  #   association may itself be a `through:` association (nested, read-only),
+  #   read with one statement.
+  # * `source_type:` — with `through:` and a polymorphic `belongs_to` source, the
+  #   class the target is read as (`source: :taggable, source_type: Post`). The
+  #   join adds `taggable_type = 'Post'`, and `<<` / `delete` write that type.
   # * `as:` — make this the `has_many` side of a polymorphic association.
   # * `dependent:` / `inverse_of:` / `autosave:` — see
   #   `Grant::AssociationOptions`. `dependent:` also picks how `delete`,
