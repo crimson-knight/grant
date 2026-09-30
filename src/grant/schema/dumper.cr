@@ -814,7 +814,7 @@ module Grant::Schema
 
     private def pg_dump_command : {::String, Array(::String), Hash(::String, ::String)}
       connection = ConnectionSettings.parse(@adapter.url)
-      arguments = ["--schema-only", "--no-owner", "--no-privileges", "--no-tablespaces", "--no-psqlrc"]
+      arguments = ["--schema-only", "--no-owner", "--no-privileges", "--no-tablespaces"]
       arguments.concat(connection.pg_arguments)
       schema = @adapter.schema.namespace
       arguments << "--schema=#{schema}" if schema
@@ -828,10 +828,16 @@ module Grant::Schema
       {"mysqldump", arguments, connection.environment("MYSQL_PWD")}
     end
 
+    private def current_namespace : ::String
+      @adapter.schema.namespace || @adapter.open { |db| db.scalar("SELECT current_schema()").as(::String) }
+    end
+
     private def append_versions(io : IO) : Nil
       versions = SchemaMigration.new(@adapter, @tracking).versions.to_a.sort!
       return if versions.empty?
       table = @dialect.quote(@tracking.micrate? ? SchemaMigration::MICRATE_TABLE : SchemaMigration::TABLE)
+      # pg_dump output empties the search_path, so name the schema.
+      table = "#{@dialect.quote(current_namespace)}.#{table}" if @dialect.pg?
       io << '\n'
       if @tracking.micrate?
         io << STATEMENT_MARKER << '\n' if @dialect.sqlite?

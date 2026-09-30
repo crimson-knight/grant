@@ -222,7 +222,7 @@ module Grant
       # Runs the seeds file registered for `seed_path`. Returns how many
       # `Seeds.define` blocks ran.
       def seed(path : ::String = @seed_path) : Int32
-        Seeds.run(path)
+        Seeds.run(path, adapter)
       end
 
       # ---- combined tasks -------------------------------------------------

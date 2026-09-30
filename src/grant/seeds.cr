@@ -57,6 +57,7 @@ module Grant
 
     @@blocks = [] of Block
     @@mutex = Mutex.new
+    @@scoped_adapters = {} of Fiber => Grant::Adapter::Base
 
     # Registers *body* as (part of) the seeds file *source*. The default is the
     # file that calls `define`.
@@ -75,17 +76,39 @@ module Grant
     end
 
     # Runs the blocks registered for *path* in registration order and returns
-    # how many ran. Raises `SeedFileMissing` when *path* does not exist and
-    # nothing registered for it (a compiled-in file needs no file at runtime),
-    # and `SeedsNotCompiled` when it exists but was never required.
-    def self.run(path : String = DEFAULT_PATH) : Int32
+    # how many ran. `load_once` calls without an adapter inside them use
+    # *adapter* (the default connection when nil). Raises `SeedFileMissing`
+    # when *path* does not exist and nothing registered for it (a compiled-in
+    # file needs no file at runtime), and `SeedsNotCompiled` when it exists but
+    # was never required.
+    def self.run(path : String = DEFAULT_PATH, adapter : Grant::Adapter::Base? = nil) : Int32
       blocks = blocks_for(path)
       if blocks.empty?
         raise SeedFileMissing.new(path) unless File.exists?(path)
         raise SeedsNotCompiled.new(path)
       end
-      blocks.each(&.body.call)
+      with_adapter(adapter) { blocks.each(&.body.call) }
       blocks.size
+    end
+
+    # Makes *adapter* the default of `load_once` and friends in this fiber for
+    # the duration of the block.
+    def self.with_adapter(adapter : Grant::Adapter::Base?, & : -> T) : T forall T
+      return yield if adapter.nil?
+      fiber = Fiber.current
+      previous = @@mutex.synchronize { @@scoped_adapters[fiber]? }
+      @@mutex.synchronize { @@scoped_adapters[fiber] = adapter }
+      begin
+        yield
+      ensure
+        @@mutex.synchronize do
+          if previous
+            @@scoped_adapters[fiber] = previous
+          else
+            @@scoped_adapters.delete(fiber)
+          end
+        end
+      end
     end
 
     # Runs the block unless a seed called *name* was already recorded on
@@ -138,8 +161,10 @@ module Grant
       count > 0
     end
 
+    # The adapter of `with_adapter` in this fiber, else the default connection's.
     def self.default_adapter : Grant::Adapter::Base
-      Grant::ConnectionRegistry.get_adapter(Grant::Base.default_database_name)
+      scoped = @@mutex.synchronize { @@scoped_adapters[Fiber.current]? }
+      scoped || Grant::ConnectionRegistry.get_adapter(Grant::Base.default_database_name)
     end
 
     private def self.blocks_for(path : String) : Array(Block)
