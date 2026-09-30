@@ -121,6 +121,7 @@ module Grant::Associations
   # post.user_id # => some_user.id
   # ```
   macro belongs_to(model, scope = nil, **options)
+    _grant_check_association_options(:belongs_to, {{model}}, {{options.keys.map(&.stringify)}} of String, {{options[:through] ? true : false}}, {{options[:source_type] ? true : false}})
     {% if options[:polymorphic] %}
       {% if options[:foreign_key].is_a?(TypeDeclaration) %}
         column {{options[:foreign_key]}}
@@ -215,6 +216,8 @@ module Grant::Associations
       end
       set_loaded_association({{method_name.stringify}}, parent)
     end
+
+    _grant_define_belongs_to_builders({{method_name}}, {{class_name}})
 
     # True when the foreign key changed since the record was loaded or last
     # saved, or a new, unsaved parent is assigned.
@@ -336,6 +339,7 @@ module Grant::Associations
   # user.avatar   # => Avatar? (joined through profiles)
   # ```
   macro has_one(model, scope = nil, **options)
+    _grant_check_association_options(:has_one, {{model}}, {{options.keys.map(&.stringify)}} of String, {{options[:through] ? true : false}}, {{options[:source_type] ? true : false}})
     {% if options[:as] %}
       has_one_polymorphic({{model}}, {{options[:as]}}, {% for key, value in options %}{{key.id}}: {{value}}, {% end %})
     {% elsif options[:through] %}
@@ -345,7 +349,7 @@ module Grant::Associations
         {% class_name = model.type %}
       {% else %}
         {% method_name = model.id %}
-        {% class_name = options[:class_name] || model.id.camelcase %}
+        {% class_name = options[:class_name] || options[:source_type] || model.id.camelcase %}
       {% end %}
       {% through = options[:through] %}
       {% foreign_key = options[:foreign_key] || @type.stringify.split("::").last.underscore + "_id" %}
@@ -518,6 +522,8 @@ module Grant::Associations
       set_loaded_association({{method_name.stringify}}, child)
     end
 
+    _grant_define_has_one_builders({{method_name}}, {{class_name}}, {{foreign_key_name}}, {{options[:dependent]}})
+
     def reset_{{method_name.id}} : Nil
       reset_association({{method_name.stringify}})
     end
@@ -644,6 +650,7 @@ module Grant::Associations
   # user.tags.to_a         # joined through taggings
   # ```
   macro has_many(model, scope = nil, **options)
+    _grant_check_association_options(:has_many, {{model}}, {{options.keys.map(&.stringify)}} of String, {{options[:through] ? true : false}}, {{options[:source_type] ? true : false}})
     {% if options[:as] %}
       has_many_polymorphic({{model}}, {{options[:as]}}, {% for key, value in options %}{{key.id}}: {{value}}, {% end %})
     {% else %}
@@ -655,6 +662,9 @@ module Grant::Associations
       {% if options[:class_name] %}
         # Explicit override always wins (required for irregular plurals).
         {% class_name = options[:class_name] %}
+      {% elsif options[:source_type] %}
+        # A polymorphic source is read as the class `source_type:` names.
+        {% class_name = options[:source_type] %}
       {% else %}
         # Infer the target class by singularizing the (plural) association
         # name and camelizing it: `:books` -> `Book`, `:categories` ->
@@ -990,4 +1000,7 @@ module Grant::Associations
   end
 end
 
+require "./associations/option_validation"
+require "./associations/singular_builders"
+require "./associations/through_preload"
 require "./associations/habtm"

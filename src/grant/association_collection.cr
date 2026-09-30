@@ -1,4 +1,5 @@
 require "./associations/through"
+require "./associations/through_chain"
 require "./association_callbacks"
 
 # Lazy, owner-scoped collection returned by a has_many association.
@@ -65,7 +66,7 @@ class Grant::AssociationCollection(Owner, Target)
               else
                 scope_clause, scope_params, scope_modifiers = scope_fragments
                 sql = [query, scope_clause, clause, scope_modifiers].reject(&.empty?).join(" ")
-                all_params = [owner_key]
+                all_params = [query_owner_key]
                 if (type_column = @type_column) && (type_value = @type_value)
                   all_params << type_value
                 end
@@ -453,6 +454,9 @@ class Grant::AssociationCollection(Owner, Target)
   #
   # :nodoc:
   def through_writer(source_name : String) : Grant::Associations::ThroughWriter
+    if @through
+      raise Grant::Associations::ThroughWriteError.new("Cannot write through #{Owner.name}##{@association_name}: a nested has_many :through is read-only")
+    end
     source = Grant::AssociationRegistry.get(Target.name, source_name) ||
              raise Grant::Associations::ThroughWriteError.new("Cannot resolve source association #{Target.name}##{source_name}")
     unless source[:type] == :belongs_to
@@ -946,6 +950,9 @@ class Grant::AssociationCollection(Owner, Target)
       relation = association_scope.call(relation)
     end
     if @through
+      if chain = through_chain
+        return chain.restrict(relation, owner)
+      end
       through_metadata, source_metadata = through_associations
       if source_metadata[:type] == :belongs_to
         source_key = through_metadata[:target_class].quote(source_metadata[:foreign_key])
@@ -967,6 +974,23 @@ class Grant::AssociationCollection(Owner, Target)
         relation = relation.where(type_column, :eq, type_value)
       end
       relation
+    end
+  end
+
+  # The resolved chain of a nested or polymorphic-source `:through`
+  # association; `nil` for every other association, which keeps its own keys.
+  private def through_chain : Grant::Associations::ThroughChain?
+    return nil unless @through
+    name = @association_name || return nil
+    Grant::Associations::ThroughChain.for(Owner, name)
+  end
+
+  # The key bound to the `?` of `query`.
+  private def query_owner_key : Grant::Columns::Type
+    if chain = through_chain
+      chain.owner_key(owner)
+    else
+      owner_key
     end
   end
 
@@ -1025,7 +1049,9 @@ class Grant::AssociationCollection(Owner, Target)
   end
 
   private def query : String
-    if @through.nil?
+    if chain = through_chain
+      chain.where_clause(Target)
+    elsif @through.nil?
       type_predicate = if type_column = @type_column
                          " AND #{Target.quote(Target.table_name)}.#{Target.quote(type_column)} = ?"
                        else
