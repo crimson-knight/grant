@@ -731,7 +731,7 @@ module Grant::Schema
               previous = TableRebuild::Scanner.default_clause(old)
               text += " #{previous}" if previous
             end
-            if key = old[/\sPRIMARY\s+KEY(?:\s+(?:ASC|DESC))?(?:\s+AUTOINCREMENT)?/i]
+            if key = old[/\sPRIMARY\s+KEY(?:\s+(?:ASC|DESC))?(?:\s+AUTOINCREMENT)?/i]?
               text += key
             end
             text

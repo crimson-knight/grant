@@ -35,6 +35,8 @@ module Grant::Schema
     getter table : ::String
     getter items : Array(Item)
     getter removed_columns = [] of ::String
+    @suffix : ::String
+    @original_columns : Array(::String)
 
     def initialize(@table : ::String, create_sql : ::String, @index_sqls : Array(::String) = [] of ::String)
       open = create_sql.index('(') || raise InvalidDefinition.new("Cannot read the definition of '#{@table}'")
