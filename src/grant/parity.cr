@@ -4,29 +4,29 @@
 # # Grant / ActiveRecord 8 parity
 #
 # - Grant version: `0.23.4`
-# - Generated for commit: `9a86adce7aa4aa6d66df93e2573f02781f664424`
+# - Generated for commit: `76b040b420d9f8bcea3bcc06299dfbdce2f02078`
 # Baseline score source: commit `32b69d8`.
 #
 # ## Headline
 #
-# **283 complete / 83 partial / 46 missing / 12 not applicable**
+# **308 complete / 83 partial / 21 missing / 12 not applicable**
 #
-# 68.7% of applicable features complete (283 / 412); 424 features tracked.
+# 74.8% of applicable features complete (308 / 412); 424 features tracked.
 #
 # ## Counts by area
 #
 # | Area | Complete | Partial | Missing | N/A | Applicable |
 # | --- | ---: | ---: | ---: | ---: | ---: |
 # | Adapters & connections | 41 | 7 | 2 | 0 | 50 |
-# | Associations | 29 | 17 | 7 | 1 | 53 |
+# | Associations | 30 | 17 | 6 | 1 | 53 |
 # | Core persistence & attributes | 51 | 10 | 0 | 3 | 61 |
-# | Infrastructure (locking, encryption, instrumentation, …) | 16 | 6 | 10 | 1 | 32 |
-# | Migrations & schema | 3 | 15 | 22 | 2 | 40 |
-# | Multiple databases & sharding | 30 | 9 | 1 | 2 | 40 |
-# | Query interface | 61 | 11 | 2 | 3 | 74 |
+# | Infrastructure (locking, encryption, instrumentation, …) | 19 | 8 | 5 | 1 | 32 |
+# | Migrations & schema | 21 | 13 | 6 | 2 | 40 |
+# | Multiple databases & sharding | 31 | 9 | 0 | 2 | 40 |
+# | Query interface | 63 | 11 | 0 | 3 | 74 |
 # | Raw SQL | 8 | 0 | 0 | 0 | 8 |
 # | Validations & callbacks | 44 | 8 | 2 | 0 | 54 |
-# | **Total** | **283** | **83** | **46** | **12** | **412** |
+# | **Total** | **308** | **83** | **21** | **12** | **412** |
 #
 # ## Feature status by area
 #
@@ -108,7 +108,7 @@
 # | eager loading — includes/preload/eager_load API | partial | `spec/grant/associations/preload_scope_spec.cr`, `spec/grant/associations/nested_includes_spec.cr`, `spec/grant/associations/polymorphic_preload_spec.cr`, `spec/grant/associations/has_one_through_preload_spec.cr`, `spec/grant/eager_loading/eager_loading_spec.cr` | The switch from includes to a JOIN only happens on the load path (select/first/each). count, exists? and pluck on an includes relation whose where names the association table still do not join; a probe confirmed count raises ArgumentError 'Unknown query field "ni_cities.name"', where AR counts over the join. When the where contains an OR, the association now loads all its rows (a superset) because a flat WHERE cannot be replayed; AR would hold only the joined rows. An association scope that uses .or still renders flat on the preload query (a OR b AND fk IN (...)), which over-fetches rows; that is a builder precedence issue owned by Q01. eager_load of a polymorphic belongs_to raises stdlib ArgumentError, not a Grant::ErrorBase error. |
 # | N+1 prevention / strict_loading | partial | `spec/grant/associations/strict_loading_spec.cr`, `spec/grant/associations/association_regressions_spec.cr` | Done: association strict_loading: true/false option, Model.strict_loading_by_default, strict_loading!(value, mode), :n_plus_one_only, propagation to loaded records (lazy and preloaded), Grant.settings.strict_loading_violation = :raise \| :log, polymorphic has_many/has_one/belongs_to readers assert; spec has no responds_to? guards. Gap: strict_loading_by_default is keyed by class name and not inherited by subclasses (set it on each model, or on Grant::Base for a global default); Relation#strict_loading has no mode argument (builder.cr strict_loading region belongs to Q01). |
 # | nested attributes (accepts_nested_attributes_for) | complete | `spec/grant/associations/nested_attributes_spec.cr`, `spec/grant/nested_attributes_spec.cr`, `spec/grant/nested_attributes_simple_spec.cr`, `spec/grant/nested_attributes_update_only_spec.cr`, `spec/grant/nested_attributes_owner_scope_spec.cr` | — |
-# | delegated types | missing |  | No delegated_type macro. Everything it needs (polymorphic belongs_to, has_one as:, enum-style predicates) exists separately, but only for Int64 keys. |
+# | delegated types | complete | `spec/grant/associations/delegated_type_spec.cr` | None. The implementer's report said non-Int64 keys were not exercised. I added a String-key spec (typed foreign_key: String?, String primary key, reader, id reader, includes preload, dependent: :destroy). It passes on both adapters. UUID keys are not exercised. Notes: build_entryable takes the class plus named attributes. dependent: supports :destroy and :delete only and is not wrapped in an extra transaction. |
 # | association extensions / association-level scopes | partial | `spec/grant/associations/preload_scope_spec.cr`, `spec/grant/associations/association_parity_spec.cr`, `spec/grant/associations/association_regressions_spec.cr` | Scope now applies in SQL on preload, lazy readers, and for belongs_to and has_one (zero-arg expression form and ->(q : Builder(T)) form). Still missing: extend: module/block extensions, instance-dependent scopes ->(q, owner), scope on polymorphic as: associations, scope honored by dependent:. |
 # | collection singular IDs accessor (post_ids / user_ids=) | partial | `spec/grant/associations/collection_ids_spec.cr`, `spec/grant/associations/through_writers_spec.cr`, `spec/grant/associations/habtm_spec.cr` | _ids and _ids= are not generated for has_many as:. The reader returns Array(Columns::Type). Numeric String ids are not cast to the key type. The writer uses update_all, so it skips target validations, callbacks and the updated_at touch (ActiveRecord's replace saves each record). |
 # | association :source option for has_many :through | complete | `spec/grant/associations/association_regressions_spec.cr`, `spec/grant/associations/association_parity_spec.cr`, `spec/grant/associations/has_many_through_spec.cr` | — |
@@ -221,13 +221,13 @@
 # | Instrumentation / logging (Crystal Log module) | complete | `spec/grant/instrumentation/logging_spec.cr` | — |
 # | N+1 detection and QueryStats (development/testing aid) | complete | `spec/grant/instrumentation/query_analysis_spec.cr` | — |
 # | Composite primary keys | partial | `spec/grant/composite_primary_key_spec.cr` | DSL, detection, key tuple helpers and find/exists? signatures exist (12 passing SQLite examples, config only). Persistence is unimplemented: composite_primary_key/transactions.cr is an empty TODO module, so create/update/destroy/reload rely on the single-key path. No spec inserts and reads back a composite-key row. Missing AR parts: find with array of tuples, where(id: [[a,b],...]), to_param/id as Array, associations with composite foreign keys, primary_key: [..] on belongs_to/has_many. |
-# | Database-specific types: PostgreSQL arrays (Array(T)) | partial | `spec/grant/converters/json_spec.cr`, `spec/grant/converters/pg_numeric_spec.cr` | pg.cr maps Array(String/Int/Float/Bool) to TEXT[]/INT[]/etc. and type.cr has from_rs for arrays. No spec covers array round-trip, and the cited specs are JSON and numeric converters, not arrays. Query operators (ANY, @>, &&, array_length), array_append/remove helpers and UUID/Time arrays are absent. |
-# | Database-specific types: JSON/JSONB | partial | `spec/grant/converters/json_spec.cr` | Grant::Serializers::JSONB class exists but stores plain JSON text; specs are converter unit specs only, no DB round-trip or PG jsonb column. Missing: native jsonb column type in migrations, operators (->, ->>, @>, ?, #>), where(data: {a: 1}) containment, store_accessor, in-place mutation dirty tracking. |
-# | Database-specific types: UUID | partial | `spec/grant/columns/uuid_spec.cr` | Only auto-generation of a v4 UUID on save is specced. Not proven: reload/round-trip through the DB, find/find_by by UUID string or UUID, UUID primary key, invalid-string casting, PG native uuid column vs CHAR(36) on MySQL/SQLite, gen_random_uuid() DB default. |
+# | Database-specific types: PostgreSQL arrays (Array(T)) | partial | `spec/grant/types/pg_array_spec.cr` | array_append and array_remove helpers, array_length predicate, Time arrays and a GIN index DDL helper are missing. MySQL has no array type. |
+# | Database-specific types: JSON/JSONB | partial | `spec/grant/types/jsonb_spec.cr` | store_accessor, in-place mutation dirty tracking, the where(data: {a: 1}) shorthand and the type: :jsonb column option are missing. MySQL JSON predicates raise UnsupportedOperation. SQLite json_contains cannot match objects inside arrays. |
+# | Database-specific types: UUID | complete | `spec/grant/types/uuid_spec.cr` | none |
 # | Connection-level retries (retry_attempts, retry_delay) | complete | `spec/grant/connection/reconnect_spec.cr` | — |
-# | Fixtures / test helpers (ActiveRecord::FixtureSet equivalent) | missing |  | No YAML fixture loader, no label-to-id hashing, no fixture accessors, no transactional-test wrapper. |
-# | Advisory locks (PostgreSQL pg_advisory_lock / MySQL GET_LOCK) | missing |  | No adapter API for advisory locks. Rationale for n.a. (not core) is not a Ruby-metaprogramming reason; AR ships these as adapter methods used by the migrator. |
-# | QueryLogs with context tags (SQL comment injection) | missing |  | annotate exists per query, but no global tag config, no fiber-local context, no automatic prepend of model/controller/action/job tags. |
+# | Fixtures / test helpers (ActiveRecord::FixtureSet equivalent) | complete | `spec/grant/test_fixtures_spec.cr` | No ERB in YAML. Fixture rows are not cached per accessor (each call runs find!). The proposed Grant.transactional_test is not added: the existing Grant::Spec.transactional / within_transaction wrapper is the rollback mechanism and is what the spec exercises. Columns a row omits are NULL when another row fills them. |
+# | Advisory locks (PostgreSQL pg_advisory_lock / MySQL GET_LOCK) | partial | `spec/grant/schema/advisory_lock_spec.cr` | The MySQL GET_LOCK/RELEASE_LOCK path has no spec and was not run against a server. The PostgreSQL and SQLite paths are specced and pass. |
+# | QueryLogs with context tags (SQL comment injection) | partial | `spec/grant/query_logs_spec.cr` | Not tagged: raw SQL (Model.exec, Grant::Connection calls), counters (counters.cr), bulk insert_all/upsert_all (bulk_operations.cr), STI/query_extensions/aggregations sum paths that call db.exec/db.query directly. Users can call Grant::QueryLogs.append on those. Covered: every relation-built statement (assembler build_sql), and adapter insert/update/delete/select/exists?/import. No automatic model tag (the adapter does not know the model). No Amber controller/job integration (context is set by the app via with_context). annotate still PREPENDS its comment (unchanged); only QueryLogs tags are trailing. |
 # | Configurable optimistic-locking column (locking_column) | complete | `spec/grant/locking/locking_column_spec.cr` | — |
 # | query_constraints composite model keys | missing |  | No API to scope find/update/destroy/reload by multiple columns while keeping a single-column primary key (for example a sharded or tenant-partitioned key). |
 # | Schema cache / schema introspection API | complete | `spec/grant/schema/schema_cache_spec.cr`, `spec/grant/schema/verify_model_spec.cr`, `spec/grant/schema/tenant_cache_spec.cr` | — |
@@ -240,10 +240,10 @@
 # | Encryption: pluggable key_provider, encryptor, message_serializer, AES-GCM cipher | missing |  | KeyProvider is a concrete class with class-level state. Cipher is CBC+HMAC with a custom byte layout, so ciphertext is not interoperable with Rails data. No envelope-encryption provider (KMS) and no swappable encryptor. Deferred: Changing the cipher or payload layout breaks existing ciphertext. Needs a versioned payload design and a rotation plan first. Rails-compatible messages are a separate decision. |
 # | Encryption: filter_parameters and inspect masking of encrypted attributes | complete | `spec/grant/encryption/filter_spec.cr`, `spec/grant/attributes/inspect_filter_spec.cr`, `spec/grant/errors/taxonomy_spec.cr` | — |
 # | Instrumentation notifications (sql / transaction / instantiation / strict_loading_violation events with payload) | complete | `spec/grant/notifications/subscribe_spec.cr` | — |
-# | Verbose query logs (source location of SQL) and log tags with binds | missing |  | SQL log shows query with colorized params but no calling file:line, no query-name label (User Load), no cached-hit marker. |
+# | Verbose query logs (source location of SQL) and log tags with binds | partial | `spec/grant/verbose_logs_spec.cr` | Label uses the model name for relation reads and the table name for adapter writes (record insert/update/delete), because the adapter does not know the model. The cache-hit marker covers QueryCache.fetch reads. Binds were already in the SQL log entry, so no separate bind tag was added. The builder cache-version query (builder.cr) and raw Model.exec paths do not emit the verbose line. |
 # | Optimistic locking on destroy/touch, locking_enabled?, and stale-record refresh | complete | `spec/grant/locking/optimistic_destroy_touch_spec.cr`, `spec/grant/locking/locking_column_spec.cr` | — |
 # | Pessimistic lock! raises on unsaved changes | partial | `spec/grant/locking/unsaved_changes_lock_spec.cr` | There is no lock: option on association reload (reload_<assoc>(lock:)). |
-# | Migrator advisory lock (concurrent migrate protection) | missing |  | No lock preventing two processes from running migrations at once on PG or MySQL. |
+# | Migrator advisory lock (concurrent migrate protection) | complete | `spec/grant/schema/migration_context_spec.cr`, `spec/grant/schema/advisory_lock_spec.cr`, `spec/grant/schema/ddl_transaction_spec.cr` | none (lock key includes database, tenant schema and tracking table; released after a failed migration, specced). |
 # | Database-specific types: PostgreSQL hstore | missing |  | No Hash(String, String?) column type, no migration type or operators. Deferred: Low value, PG only, and JSONB covers the main use. |
 # | Database-specific types: PostgreSQL ranges, network (inet/cidr/macaddr), interval, native enum, citext | missing |  | Only PG::Interval appears in the adapter's allowed type list and no spec covers it. No Range(T,T) column mapping, no Socket::IPAddress column, no PG CREATE TYPE enum mapping or citext. Deferred: Effort L, low value, and range bound normalization makes dirty tracking risky. Take individual types on demand. |
 # | Test assertions for queries (assert_queries_count, assert_no_queries, assert_queries_match) | complete | `spec/grant/spec_support/assert_queries_spec.cr` | — |
@@ -255,46 +255,46 @@
 #
 # | Feature | Status | Evidence specs | Gap or N/A reason |
 # | --- | --- | --- | --- |
-# | Grant::Migrator — compile-time CREATE TABLE DSL | partial | `spec/grant/schema/create_table_spec.cr`, `spec/grant/schema/migrator_options_spec.cr`, `spec/grant/migrator/migrator_spec.cr`, `spec/grant/migrator/defaults_spec.cr` | Free-form create_table (id types, primary_key, if_not_exists, temporary, force/:cascade, comment, options) and Model.migrator.create/drop options are done and pass on SQLite and PG (MySQL SQL asserted through the recording mock only; no MySQL server available). Indexes, foreign keys and check constraints at create time are still missing (M02b). Grant::Schema::Migration#create_table wrapper is M03; SchemaStatements is the module it will include. |
-# | Micrate integration — versioned SQL migration files (Up/Down) | partial |  | No Micrate reference in src/ or spec/; only docs. Versioned files, up/down, and the tracking table are wholly external. Grant offers no way to run a Crystal migration class or to call Micrate from a Grant API. |
-# | Reversible migrations | partial |  | Hand-written SQL Up/Down only. No `change` with automatic inverse, no `reversible`/`revert`/`up_only`, and no IrreversibleMigration error. |
+# | Grant::Migrator — compile-time CREATE TABLE DSL | partial | `spec/grant/schema/create_table_spec.cr`, `spec/grant/schema/migrator_options_spec.cr`, `spec/grant/migrator/migrator_spec.cr`, `spec/grant/migrator/defaults_spec.cr`, `spec/grant/schema/model_indexes_spec.cr` | Free-form create_table (id types, primary_key, if_not_exists, temporary, force/:cascade, comment, options) and Model.migrator.create/drop options are done and pass on SQLite and PG (MySQL SQL asserted through the recording mock only; no MySQL server available). Model-level `index` declarations are emitted at create time (spec/grant/schema/model_indexes_spec.cr); belongs_to does not yet emit a foreign key, and validates_uniqueness_of does not emit a UNIQUE constraint. Grant::Schema::Migration (M03) wraps SchemaStatements. |
+# | Micrate integration — versioned SQL migration files (Up/Down) | complete | `spec/grant/schema/micrate_sql_files_spec.cr` | none. Covers Up/Down/StatementBegin/StatementEnd/NoTransaction parsing, running from directories, mixing with Crystal classes, and reading/writing an existing micrate_db_version table (newest row per version wins, revert inserts is_applied=false). Not covered: the amber_cli micrate command wrapper. |
+# | Reversible migrations | complete | `spec/grant/schema/reversible_spec.cr` | none for the row. change_table, change_column, change_table_comment, change_column_comment, remove_columns and raw execute are recorded without an inverse (IrreversibleMigration, raised before any step runs); use reversible for them. |
 # | Migration CLI (amber database migrate/rollback/status/seed/create/drop) | partial |  | CLI lives in Amber/Micrate outside this repo. Grant provides no task API (create/drop database, migrate, rollback, status, seed) that a CLI can call, and no spec exists. |
 # | Schema type mapping per adapter | partial | `spec/grant/schema/type_mapping_spec.cr` | Int8/Int16, BigDecimal precision/scale, Bytes, Date, JSON::Any, Time precision, text vs string limit and enums (as String) map per dialect; DSL SQL is asserted for all three dialects and a real create/insert/read round trip runs on the active adapter. Grant models still cannot hold Int8/Int16/BigDecimal/JSON::Any/Bytes values (Columns::Type has no such members; Crystal has no Date type), so those mappings are reachable only through the DSL and TypeCatalog, not model persistence. |
 # | Schema dump / schema.rb equivalent | missing |  | No dump, no load, no schema file format, and no introspection layer to build one from. |
-# | Indexes — creation in migrations | partial |  | No index DSL. The model-based Migrator emits no indexes or unique constraints, even for `unique` columns. Missing options: unique, name, where (partial), using, order, opclass, include, expression indexes, algorithm concurrently, if_not_exists, length. No index introspection. |
-# | Foreign keys — DDL support | partial |  | No FK DDL from Grant, no `references`/`foreign_key: true` in table definitions, no on_delete/on_update/deferrable/validate options, no introspection. Model `belongs_to` does not emit an FK. |
-# | Check constraints | partial |  | No DSL, no introspection, no `validate:` option, no `t.check_constraint`. |
+# | Indexes — creation in migrations | complete | `spec/grant/schema/indexes_spec.cr`, `spec/grant/schema/model_indexes_spec.cr` | MySQL is asserted by recording only. |
+# | Foreign keys — DDL support | partial | `spec/grant/schema/foreign_keys_spec.cr`, `spec/grant/schema/references_join_table_spec.cr` | Model belongs_to still emits no FK in Migrator. The original gap named this explicitly. MySQL is asserted by recording only. |
+# | Check constraints | complete | `spec/grant/schema/check_unique_constraints_spec.cr` | MySQL is asserted by recording only. |
 # | Column defaults in CREATE TABLE | partial | `spec/grant/schema/column_defaults_spec.cr`, `spec/grant/migrator/defaults_spec.cr` | default_sql expressions (verbatim on PG, parenthesized on MySQL/SQLite where needed) and change_column_default (SET/DROP DEFAULT, PG and MySQL) are done and verified live on PG and SQLite specs. change_column_default on SQLite raises UnsupportedOperation until the M02b table rebuild exists. Non-literal Crystal defaults still produce no DDL default (unchanged, backward compatible). |
 # | Seeds | partial |  | Only a convention (a Crystal script); no `Grant::Seed` runner, no `db/seeds.cr` lookup, no idempotent-seed helper, and no spec. |
-# | Migration versioning / schema_migrations table tracking | partial |  | No Grant code reads or writes schema_migrations or ar_internal_metadata (environment protection). No current_version, status, pending check, or per-database migration paths. |
+# | Migration versioning / schema_migrations table tracking | complete | `spec/grant/schema/migration_context_spec.cr`, `spec/grant/schema/micrate_sql_files_spec.cr`, `spec/grant/schema/multi_db_migration_spec.cr` | SchemaMigration is a plain class over an adapter (table created on demand, versions in one SELECT, record/forget), not a Grant::Base model, so it works per connection and per schema tenant. |
 # | Encryption migration helpers (data migration for encrypted columns) | complete | `spec/grant/encryption/migration_helpers_spec.cr`, `spec/grant/encryption_key_rotation_spec.cr` | — |
 # | Amber CLI generate migration scaffold | partial |  | Scaffolding lives in the separate Amber CLI project; nothing in Grant's src/ or specs. No name-parsing (AddXToY -> add_column) inside Grant. |
-# | alter_table / change_column / add_column at runtime via Grant DSL | missing |  | No ALTER TABLE DSL of any kind (add/remove/change column, null, default, change_table bulk). SQLite needs a table rebuild for change_column. |
-# | rename_table DSL | missing |  | No rename_table DSL (which in AR also renames the pk sequence and indexes). |
-# | rename_column / rename_index DSL | missing |  | No rename_column/rename_index; AR also renames default-named indexes on column rename. |
-# | create_join_table / drop_join_table | missing |  | No join-table DDL helper (name derivation from two tables, FK columns, optional index). |
-# | references / belongs_to columns in migrations (add_reference, remove_reference, polymorphic) | missing |  | No reference helper; polymorphic `_type`/`_id` pair, index, and FK creation must be hand-written. |
+# | alter_table / change_column / add_column at runtime via Grant DSL | complete | `spec/grant/schema/alter_table_spec.cr` | SQLite rebuild does not recreate triggers or views. MySQL is asserted by recording only. |
+# | rename_table DSL | complete | `spec/grant/schema/rename_spec.cr` | MySQL is asserted by recording only. |
+# | rename_column / rename_index DSL | complete | `spec/grant/schema/rename_spec.cr` | MySQL is asserted by recording only. |
+# | create_join_table / drop_join_table | complete | `spec/grant/schema/references_join_table_spec.cr` | MySQL is asserted by recording only. |
+# | references / belongs_to columns in migrations (add_reference, remove_reference, polymorphic) | complete | `spec/grant/schema/references_join_table_spec.cr` | MySQL is asserted by recording only. |
 # | add_timestamps / remove_timestamps / t.timestamps | partial | `spec/grant/schema/timestamps_ddl_spec.cr` | t.timestamps (precision, null, NOT NULL by default), add_timestamps, remove_timestamps and model null: false on created_at/updated_at are done on both adapters. SQLite cannot ADD a NOT NULL column without a default (raises UnsupportedOperation unless default: or null: true given). The model-level `timestamps` macro has no precision: option and keeps its existing nullable output. |
 # | Column options: null, limit, precision, scale, comment, collation, array | partial | `spec/grant/schema/migrator_options_spec.cr`, `spec/grant/schema/create_table_spec.cr`, `spec/grant/schema/type_mapping_spec.cr`, `spec/grant/schema/timestamps_ddl_spec.cr` | On a model column, `scale:` (and `precision:` on decimals) has no usable carrier: a BigDecimal model column fails to compile once it is queried, because Grant::Type/Columns::Type have no BigDecimal support. Model `precision:` works only for Time. Model `limit:` is silently ignored for non-String types (for example `column n : Int32, limit: 2` still emits INTEGER). `array:` exists only in the DSL; a model gets arrays through its Array(T) type on PostgreSQL. MySQL DDL is checked only as SQL through RecordingStatements. The DSL side covers all seven options on every dialect. |
-# | Table and column comments | missing |  | No comment DDL (PG COMMENT ON, MySQL COMMENT clause; SQLite unsupported). |
+# | Table and column comments | complete | `spec/grant/schema/comments_spec.cr` | MySQL is asserted by recording only; SQLite is a documented no-op. |
 # | Introspection: table_exists?, column_exists?, columns, tables, primary_key, indexes, foreign_keys | complete | `spec/grant/schema/introspection_spec.cr`, `spec/grant/schema/schema_cache_spec.cr`, `spec/grant/schema/tenant_cache_spec.cr` | — |
 # | Model.reset_column_information / schema cache | n.a. |  | Ruby lazily reads columns from the DB and caches them; Grant declares columns at compile time, so a runtime column cache does not exist. The compile-time schema is the source of truth. |
-# | Migration class: up/down/change with versioned class ([8.0] compat) | missing |  | No Migration base class or per-version compatibility layer; migrations are SQL files for external Micrate. Compat layers (ActiveRecord::Migration::Compatibility) are Rails-history specific. |
-# | MigrationContext operations: migrate to version, rollback(step), redo, up/down(version), forward, status | missing |  | None present in Grant; must go through Micrate CLI. |
-# | DDL transactions and disable_ddl_transaction! | missing |  | No migration runner, so no per-migration transaction wrapping and no opt-out (needed for CREATE INDEX CONCURRENTLY on PG). MySQL does not support transactional DDL. |
-# | Migration output and helpers: say, say_with_time, announce, suppress_messages | missing |  | No migration runner output layer; could reuse Grant::Log. |
-# | Pending-migration check and maintain_test_schema | missing |  | No detection of pending migrations at boot/in specs and no auto load of the test schema. |
-# | ar_internal_metadata environment protection | missing |  | No metadata table storing environment, so destructive tasks (drop/reset) in production are not blocked. `Migrator#drop_and_create` is unguarded. |
-# | Unique constraints and exclusion constraints | missing |  | No DDL. Migrator never emits UNIQUE, even for validates_uniqueness_of fields. |
+# | Migration class: up/down/change with versioned class ([8.0] compat) | complete | `spec/grant/schema/migration_context_spec.cr`, `spec/grant/schema/reversible_spec.cr` | Version is declared with the migration_version macro (Crystal cannot do Migration[8.0]). Rails version-compatibility layers are not applicable. |
+# | MigrationContext operations: migrate to version, rollback(step), redo, up/down(version), forward, status | complete | `spec/grant/schema/migration_context_spec.cr` | none (status includes a NO FILE row for recorded versions without a migration). |
+# | DDL transactions and disable_ddl_transaction! | complete | `spec/grant/schema/ddl_transaction_spec.cr` | MySQL, which has no transactional DDL, takes the non-transactional path. That path is unexercised locally. |
+# | Migration output and helpers: say, say_with_time, announce, suppress_messages | complete | `spec/grant/schema/migration_context_spec.cr` | Schema calls print their method name and arguments going forward; rollback replay prints only the method name. |
+# | Pending-migration check and maintain_test_schema | complete | `spec/grant/schema/pending_check_spec.cr` | maintain_test_schema! yields to a caller-supplied schema loader or migrates by default; loading a dumped schema file arrives with the wave-5 dumper/loader. |
+# | ar_internal_metadata environment protection | partial | `spec/grant/schema/environment_protection_spec.cr` | InternalMetadata stores the environment (recorded on first migrate when environment: is given) and check_protected_environments! raises ProtectedEnvironmentError/EnvironmentMismatchError unless forced. It is not yet wired into Migrator#drop_and_create (not an M03-owned file) or the wave-5 Grant::Tasks destructive tasks. |
+# | Unique constraints and exclusion constraints | partial | `spec/grant/schema/check_unique_constraints_spec.cr` | Migrator does not emit UNIQUE for validates_uniqueness_of fields. The original gap named this. MySQL is asserted by recording only. |
 # | Composite primary keys and primary key options in table creation | complete | `spec/grant/schema/composite_pk_create_spec.cr` | — |
 # | Views (create_view/drop_view) and materialized views | missing |  | No view DDL or view-backed model helpers; `view_exists?`/`views` introspection absent. Deferred: Low value, and needs PG-specific refresh semantics. Raw execute covers it until the DDL DSL (M02b) is stable. |
-# | PostgreSQL enum types, extensions, and custom column types (create_enum, enable_extension, hstore, citext, jsonb, inet, ltree, money) | missing |  | No DDL for enums or extensions; type table lacks these types. `column_type:` verbatim works as a workaround. |
+# | PostgreSQL enum types, extensions, and custom column types (create_enum, enable_extension, hstore, citext, jsonb, inet, ltree, money) | partial | `spec/grant/schema/pg_enum_extension_spec.cr` | hstore, citext and ltree are asserted as SQL only; the local PostgreSQL lacks contrib. No Crystal-side type mapping (TypeCatalog). |
 # | Generated (virtual/stored) columns | missing |  | No DDL for generated columns; must use verbatim `column_type:`. Deferred: Low value and overlaps the Infrastructure virtual-column row. Verbatim column_type: works as a workaround. Do both together later. |
-# | execute (raw DDL inside a migration) and schema-qualified table names | partial |  | Model.exec works for raw SQL (out of scope). Missing: a migration-scoped `execute` that respects the runner's connection and dry run, plus schema-qualified DDL names across all DSL calls (quote handles dotted names). |
-# | Multi-database migrations (per-connection migrations_paths, db:migrate:primary, connection-specific tasks) | missing |  | Grant has named connections and sharding, but no migration runner targets one by name, and there is no per-connection schema_migrations. Schema-tenant (PG search_path) migrations across tenants are also absent. |
+# | execute (raw DDL inside a migration) and schema-qualified table names | partial | `spec/grant/schema/migration_context_spec.cr` | Migration#execute runs on the runner's connection inside its transaction and is only printed in a dry run (specced on both adapters). Dotted names are verified through create_table, add_index, add_column and drop_table on PostgreSQL only; the other DSL calls with dotted names and SQLite attached schemas are not specced. |
+# | Multi-database migrations (per-connection migrations_paths, db:migrate:primary, connection-specific tasks) | complete | `spec/grant/schema/multi_db_migration_spec.cr` | Runner side is done: per-connection contexts with their own paths and tracking table, MultiDatabaseMigrator.for_connections, for_tenants (PG schema tenants, PG-only spec). The Grant::Tasks::Database.migrate(only:) wrapper and amber CLI commands belong to the wave-5 tasks batch. |
 # | Database tasks: create/drop database, purge, structure dump (structure.sql), setup/reset/prepare, truncate_all | missing |  | No Grant API; Micrate/Amber CLI does create/drop only. No structure dump/load, purge, `db:prepare`, `db:reset`, or `truncate_all`. |
 # | Schema format configuration (:ruby vs :sql) and db:schema:load for fresh environments | missing |  | Depends on the schema dump row; nothing to select or load. |
-# | Concurrency safety: migration advisory locks | missing |  | No migration runner and no advisory-lock helper in Grant, so two deploy nodes can run the same DDL concurrently. |
+# | Concurrency safety: migration advisory locks | complete | `spec/grant/schema/migration_context_spec.cr`, `spec/grant/schema/advisory_lock_spec.cr` | none. with_migration_lock holds the lock on the connection that runs the DDL and releases it in ensure; two concurrent runners run a migration once (specced). |
 # | Migration file generator naming conventions (AddXToY, CreateXs parse, timestamped versions) | missing |  | Covered only inside the external Amber CLI row; no attribute parsing DSL in Grant. |
 # | Metaprogrammed migration lookup: Migration.method_missing forwarding to connection, and ActiveRecord::Migration.[] compatibility shims | n.a. |  | Rails forwards unknown migration methods to the connection through method_missing, and keeps version shims for Ruby-era default changes. Grant has no legacy versions to shim and would define typed methods. |
 #
@@ -326,7 +326,7 @@
 # | LookupResolver for custom shard mappings | complete | `spec/grant/sharding/lookup_resolver_spec.cr` | — |
 # | Fiber-local connection context isolation (concurrency safety) | complete | `spec/grant/fiber_connection_context_spec.cr` | — |
 # | Elastic sharding / resharding / consistent hashing | n.a. |  | ActiveRecord 8 does not provide automatic elastic resharding or consistent-hash migration. |
-# | Shard-aware migrations | missing |  | Rails migrates every database in the environment configuration, including shard entries, with a per-database migrations_paths and schema dump; Grant's Migrator is per-model adapter only and has no run-on-all-configured-connections task. |
+# | Shard-aware migrations | complete | `spec/grant/schema/multi_db_migration_spec.cr` | none. for_shards over ConnectionRegistry shards, bounded parallelism with a per-target lock, per-target results, a SkewReport listing targets behind, and MigrationReport#raise_if_failed!. |
 # | Per-shard connection with read replica (shards: {shard_one: {writing:, reading:}}) | partial | `spec/grant/sharding/shard_reader_spec.cr` | Sharding::Model does not read the connects_to(shards: {..: {writing:, reading:}}) declaration. There is no PG replica pair. |
 # | find_each across all shards | complete | `spec/grant/sharding/find_each_shards_spec.cr` | — |
 # | Async / parallel shard execution (ShardedExecutor) | complete | `spec/grant/sharding_integration_spec.cr` | — |
@@ -393,7 +393,7 @@
 # | WhereChain (LIKE, NOT LIKE, IS NULL, IS NOT NULL, NOT IN, BETWEEN, comparison ops, EXISTS/NOT EXISTS) | complete | `spec/grant/query/query_regressions_spec.cr`, `spec/grant/query/advanced_query_spec.cr` | — |
 # | scope chaining (scope.scope) | complete | `spec/grant/scoping/named_scope_chaining_spec.cr` | — |
 # | query cache (within-request result memoization) | complete | `spec/grant/query/query_cache_spec.cr`, `spec/grant/query/query_cache_schema_tenant_spec.cr` | — |
-# | from (custom FROM clause / subquery as table) | missing |  | No Relation#from(source, subquery_name = nil) (responds_to? false); no unscope(:from). |
+# | from (custom FROM clause / subquery as table) | complete | `spec/grant/query/from_subquery_spec.cr` | update_all and delete_all ignore a from source (as in ActiveRecord); only relations, raw SQL and table or CTE names are accepted as sources. |
 # | dup (query builder copy) | complete | `spec/grant/query/modifiers_spec.cr`, `spec/grant/query/advanced_query_spec.cr` | — |
 # | Relation limit / offset | complete | `spec/grant/query/query_regressions_spec.cr`, `spec/grant/query/query_parity_spec.cr` | — |
 # | Relation take / first / last result helpers | complete | `spec/grant/query/ordinal_finders_spec.cr`, `spec/grant/query/relation_immutability_spec.cr`, `spec/grant/query/implicit_order_spec.cr` | — |
@@ -423,7 +423,7 @@
 # | implicit ordering of unordered relations (implicit_order_column) | complete | `spec/grant/query/implicit_order_spec.cr` | — |
 # | scoping { } block (Model.scoping / Relation#scoping) | partial | `spec/grant/query/scoping_block_spec.cr` | ActiveRecord's scoping also applies the relation's where-attributes to Model.new and Model.create inside the block, for example Post.where(published: true).scoping { Post.new.published == true }. Grant already has Relation#new and scope_attributes, but Model.new and create inside scoping do not use them. Also: scoping keyed by model name does not reach STI subclasses, and fibers spawned inside the block do not inherit it (documented). |
 # | references | n.a. |  | references exists so includes can guess JOIN vs preload by parsing string conditions at runtime; Grant selects the strategy explicitly (includes/preload/eager_load). |
-# | with / with_recursive (common table expressions) | missing |  | Absent (responds_to? false); no WITH clause support in the assemblers. |
+# | with / with_recursive (common table expressions) | complete | `spec/grant/query/cte_spec.cr` | The MySQL below 8 raise is proven only offline (the spec pins a 5.7 adapter and calls ensure_supported!), with no live MySQL server. The recursive depth guard requires the step to be SELECT ... FROM ... [WHERE ...]. A raw recursive body needs unguarded: true. update_all and delete_all emit no WITH. |
 # | Arel-style typed column predicates (arel_table) | partial | `spec/grant/query/advanced_query_spec.cr` | WhereChain offers string-field predicates (where.gt(:age, 18)) but no typed column objects that compose (Post.arel_table[:id].gt(1).and(...)), no OR-ing of predicates, no reuse across where/order/select/having/joins conditions. Deferred: Effort L. Its value depends on stable relation immutability (Q01) and where composition (Q02). Consider a typed-column design in a later release, not this program. |
 # | to_sql / cache_key / cache_version on relations | complete | `spec/grant/query/relation_components_spec.cr` | — |
 #
@@ -501,31 +501,6 @@
 #
 # ## Prioritized missing features
 #
-# 1. **alter_table / change_column / add_column at runtime via Grant DSL** (Migrations & schema) — No ALTER TABLE DSL of any kind (add/remove/change column, null, default, change_table bulk). SQLite needs a table rebuild for change_column.
-# 2. **references / belongs_to columns in migrations (add_reference, remove_reference, polymorphic)** (Migrations & schema) — No reference helper; polymorphic `_type`/`_id` pair, index, and FK creation must be hand-written.
-# 3. **rename_column / rename_index DSL** (Migrations & schema) — No rename_column/rename_index; AR also renames default-named indexes on column rename.
-# 4. **PostgreSQL enum types, extensions, and custom column types (create_enum, enable_extension, hstore, citext, jsonb, inet, ltree, money)** (Migrations & schema) — No DDL for enums or extensions; type table lacks these types. `column_type:` verbatim works as a workaround.
-# 5. **Unique constraints and exclusion constraints** (Migrations & schema) — No DDL. Migrator never emits UNIQUE, even for validates_uniqueness_of fields.
-# 6. **create_join_table / drop_join_table** (Migrations & schema) — No join-table DDL helper (name derivation from two tables, FK columns, optional index).
-# 7. **rename_table DSL** (Migrations & schema) — No rename_table DSL (which in AR also renames the pk sequence and indexes).
-# 8. **Table and column comments** (Migrations & schema) — No comment DDL (PG COMMENT ON, MySQL COMMENT clause; SQLite unsupported).
-# 9. **Migration class: up/down/change with versioned class ([8.0] compat)** (Migrations & schema) — No Migration base class or per-version compatibility layer; migrations are SQL files for external Micrate. Compat layers (ActiveRecord::Migration::Compatibility) are Rails-history specific.
-# 10. **MigrationContext operations: migrate to version, rollback(step), redo, up/down(version), forward, status** (Migrations & schema) — None present in Grant; must go through Micrate CLI.
-# 11. **Concurrency safety: migration advisory locks** (Migrations & schema) — No migration runner and no advisory-lock helper in Grant, so two deploy nodes can run the same DDL concurrently.
-# 12. **DDL transactions and disable_ddl_transaction!** (Migrations & schema) — No migration runner, so no per-migration transaction wrapping and no opt-out (needed for CREATE INDEX CONCURRENTLY on PG). MySQL does not support transactional DDL.
-# 13. **Multi-database migrations (per-connection migrations_paths, db:migrate:primary, connection-specific tasks)** (Migrations & schema) — Grant has named connections and sharding, but no migration runner targets one by name, and there is no per-connection schema_migrations. Schema-tenant (PG search_path) migrations across tenants are also absent.
-# 14. **Pending-migration check and maintain_test_schema** (Migrations & schema) — No detection of pending migrations at boot/in specs and no auto load of the test schema.
-# 15. **Shard-aware migrations** (Multiple databases & sharding) — Rails migrates every database in the environment configuration, including shard entries, with a per-database migrations_paths and schema dump; Grant's Migrator is per-model adapter only and has no run-on-all-configured-connections task.
-# 16. **ar_internal_metadata environment protection** (Migrations & schema) — No metadata table storing environment, so destructive tasks (drop/reset) in production are not blocked. `Migrator#drop_and_create` is unguarded.
-# 17. **Advisory locks (PostgreSQL pg_advisory_lock / MySQL GET_LOCK)** (Infrastructure (locking, encryption, instrumentation, …)) — No adapter API for advisory locks. Rationale for n.a. (not core) is not a Ruby-metaprogramming reason; AR ships these as adapter methods used by the migrator.
-# 18. **Migration output and helpers: say, say_with_time, announce, suppress_messages** (Migrations & schema) — No migration runner output layer; could reuse Grant::Log.
-# 19. **Migrator advisory lock (concurrent migrate protection)** (Infrastructure (locking, encryption, instrumentation, …)) — No lock preventing two processes from running migrations at once on PG or MySQL.
-# 20. **with / with_recursive (common table expressions)** (Query interface) — Absent (responds_to? false); no WITH clause support in the assemblers.
-# 21. **from (custom FROM clause / subquery as table)** (Query interface) — No Relation#from(source, subquery_name = nil) (responds_to? false); no unscope(:from).
-# 22. **delegated types** (Associations) — No delegated_type macro. Everything it needs (polymorphic belongs_to, has_one as:, enum-style predicates) exists separately, but only for Int64 keys.
-# 23. **Fixtures / test helpers (ActiveRecord::FixtureSet equivalent)** (Infrastructure (locking, encryption, instrumentation, …)) — No YAML fixture loader, no label-to-id hashing, no fixture accessors, no transactional-test wrapper.
-# 24. **QueryLogs with context tags (SQL comment injection)** (Infrastructure (locking, encryption, instrumentation, …)) — annotate exists per query, but no global tag config, no fiber-local context, no automatic prepend of model/controller/action/job tags.
-# 25. **Verbose query logs (source location of SQL) and log tags with binds** (Infrastructure (locking, encryption, instrumentation, …)) — SQL log shows query with colorized params but no calling file:line, no query-name label (User Load), no cached-hit marker.
 # 26. **Schema dump / schema.rb equivalent** (Migrations & schema) — No dump, no load, no schema file format, and no introspection layer to build one from.
 # 27. **Database tasks (create/drop/purge/migrate/schema load, DatabaseTasks)** (Infrastructure (locking, encryption, instrumentation, …)) — Grant relies on external Micrate and the Amber CLI for these operations; no Grant-level programmatic create/drop/purge/prepare API and no structure-dump load.
 # 28. **Database tasks: create/drop database, purge, structure dump (structure.sql), setup/reset/prepare, truncate_all** (Migrations & schema) — No Grant API; Micrate/Amber CLI does create/drop only. No structure dump/load, purge, `db:prepare`, `db:reset`, or `truncate_all`.
@@ -548,11 +523,11 @@
 # 45. **has_many :through disable_joins** (Associations) — No option; Grant's through query already uses an IN subquery rather than a JOIN, so cross-database through is not available. Deferred: Low value and effort M. Merge with Cross-database associations (has_many / has_one through with disable_joins: true), which is a duplicate. Revisit after A02.
 # 46. **skip_callback / set_callback / define_callbacks / reset_callbacks (custom callback chains)** (Validations & callbacks) — No way to skip an inherited callback in a subclass or define new callback chains; runtime per-call skipping is impossible with compile-time chains. Callback chain is a compile-time constant, so run-time mutation is Ruby-metaprogramming-shaped. Deferred: Effort L, low value, and compile-time chains make Ruby-style runtime mutation a poor fit. Revisit after CB01.
 module Grant::Parity
-  COMPLETE       =      283
+  COMPLETE       =      308
   PARTIAL        =       83
-  MISSING        =       46
+  MISSING        =       21
   NOT_APPLICABLE =       12
   APPLICABLE     =      412
   TOTAL          =      424
-  PERCENT        = 68.7_f64
+  PERCENT        = 74.8_f64
 end

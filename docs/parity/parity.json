@@ -1,6 +1,6 @@
 {
   "baseline_source_commit": "32b69d8",
-  "verified_against_commit": "9a86adce7aa4aa6d66df93e2573f02781f664424",
+  "verified_against_commit": "76b040b420d9f8bcea3bcc06299dfbdce2f02078",
   "baseline_counts": {
     "complete": 116,
     "partial": 74,
@@ -16,25 +16,30 @@
         "spec/grant/schema/create_table_spec.cr",
         "spec/grant/schema/migrator_options_spec.cr",
         "spec/grant/migrator/migrator_spec.cr",
-        "spec/grant/migrator/defaults_spec.cr"
+        "spec/grant/migrator/defaults_spec.cr",
+        "spec/grant/schema/model_indexes_spec.cr"
       ],
-      "gap": "Free-form create_table (id types, primary_key, if_not_exists, temporary, force/:cascade, comment, options) and Model.migrator.create/drop options are done and pass on SQLite and PG (MySQL SQL asserted through the recording mock only; no MySQL server available). Indexes, foreign keys and check constraints at create time are still missing (M02b). Grant::Schema::Migration#create_table wrapper is M03; SchemaStatements is the module it will include.",
+      "gap": "Free-form create_table (id types, primary_key, if_not_exists, temporary, force/:cascade, comment, options) and Model.migrator.create/drop options are done and pass on SQLite and PG (MySQL SQL asserted through the recording mock only; no MySQL server available). Model-level `index` declarations are emitted at create time (spec/grant/schema/model_indexes_spec.cr); belongs_to does not yet emit a foreign key, and validates_uniqueness_of does not emit a UNIQUE constraint. Grant::Schema::Migration (M03) wraps SchemaStatements.",
       "not_applicable_reason": ""
     },
     {
       "area": "Migrations & schema",
       "feature": "Micrate integration — versioned SQL migration files (Up/Down)",
-      "status": "partial",
-      "evidence_spec_paths": [],
-      "gap": "No Micrate reference in src/ or spec/; only docs. Versioned files, up/down, and the tracking table are wholly external. Grant offers no way to run a Crystal migration class or to call Micrate from a Grant API.",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/schema/micrate_sql_files_spec.cr"
+      ],
+      "gap": "none. Covers Up/Down/StatementBegin/StatementEnd/NoTransaction parsing, running from directories, mixing with Crystal classes, and reading/writing an existing micrate_db_version table (newest row per version wins, revert inserts is_applied=false). Not covered: the amber_cli micrate command wrapper.",
       "not_applicable_reason": ""
     },
     {
       "area": "Migrations & schema",
       "feature": "Reversible migrations",
-      "status": "partial",
-      "evidence_spec_paths": [],
-      "gap": "Hand-written SQL Up/Down only. No `change` with automatic inverse, no `reversible`/`revert`/`up_only`, and no IrreversibleMigration error.",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/schema/reversible_spec.cr"
+      ],
+      "gap": "none for the row. change_table, change_column, change_table_comment, change_column_comment, remove_columns and raw execute are recorded without an inverse (IrreversibleMigration, raised before any step runs); use reversible for them.",
       "not_applicable_reason": ""
     },
     {
@@ -67,25 +72,33 @@
     {
       "area": "Migrations & schema",
       "feature": "Indexes — creation in migrations",
-      "status": "partial",
-      "evidence_spec_paths": [],
-      "gap": "No index DSL. The model-based Migrator emits no indexes or unique constraints, even for `unique` columns. Missing options: unique, name, where (partial), using, order, opclass, include, expression indexes, algorithm concurrently, if_not_exists, length. No index introspection.",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/schema/indexes_spec.cr",
+        "spec/grant/schema/model_indexes_spec.cr"
+      ],
+      "gap": "MySQL is asserted by recording only.",
       "not_applicable_reason": ""
     },
     {
       "area": "Migrations & schema",
       "feature": "Foreign keys — DDL support",
       "status": "partial",
-      "evidence_spec_paths": [],
-      "gap": "No FK DDL from Grant, no `references`/`foreign_key: true` in table definitions, no on_delete/on_update/deferrable/validate options, no introspection. Model `belongs_to` does not emit an FK.",
+      "evidence_spec_paths": [
+        "spec/grant/schema/foreign_keys_spec.cr",
+        "spec/grant/schema/references_join_table_spec.cr"
+      ],
+      "gap": "Model belongs_to still emits no FK in Migrator. The original gap named this explicitly. MySQL is asserted by recording only.",
       "not_applicable_reason": ""
     },
     {
       "area": "Migrations & schema",
       "feature": "Check constraints",
-      "status": "partial",
-      "evidence_spec_paths": [],
-      "gap": "No DSL, no introspection, no `validate:` option, no `t.check_constraint`.",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/schema/check_unique_constraints_spec.cr"
+      ],
+      "gap": "MySQL is asserted by recording only.",
       "not_applicable_reason": ""
     },
     {
@@ -110,9 +123,13 @@
     {
       "area": "Migrations & schema",
       "feature": "Migration versioning / schema_migrations table tracking",
-      "status": "partial",
-      "evidence_spec_paths": [],
-      "gap": "No Grant code reads or writes schema_migrations or ar_internal_metadata (environment protection). No current_version, status, pending check, or per-database migration paths.",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/schema/migration_context_spec.cr",
+        "spec/grant/schema/micrate_sql_files_spec.cr",
+        "spec/grant/schema/multi_db_migration_spec.cr"
+      ],
+      "gap": "SchemaMigration is a plain class over an adapter (table created on demand, versions in one SELECT, record/forget), not a Grant::Base model, so it works per connection and per schema tenant.",
       "not_applicable_reason": ""
     },
     {
@@ -137,47 +154,52 @@
     {
       "area": "Migrations & schema",
       "feature": "alter_table / change_column / add_column at runtime via Grant DSL",
-      "status": "missing",
-      "evidence_spec_paths": [],
-      "gap": "No ALTER TABLE DSL of any kind (add/remove/change column, null, default, change_table bulk). SQLite needs a table rebuild for change_column.",
-      "not_applicable_reason": "",
-      "priority": 1
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/schema/alter_table_spec.cr"
+      ],
+      "gap": "SQLite rebuild does not recreate triggers or views. MySQL is asserted by recording only.",
+      "not_applicable_reason": ""
     },
     {
       "area": "Migrations & schema",
       "feature": "rename_table DSL",
-      "status": "missing",
-      "evidence_spec_paths": [],
-      "gap": "No rename_table DSL (which in AR also renames the pk sequence and indexes).",
-      "not_applicable_reason": "",
-      "priority": 7
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/schema/rename_spec.cr"
+      ],
+      "gap": "MySQL is asserted by recording only.",
+      "not_applicable_reason": ""
     },
     {
       "area": "Migrations & schema",
       "feature": "rename_column / rename_index DSL",
-      "status": "missing",
-      "evidence_spec_paths": [],
-      "gap": "No rename_column/rename_index; AR also renames default-named indexes on column rename.",
-      "not_applicable_reason": "",
-      "priority": 3
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/schema/rename_spec.cr"
+      ],
+      "gap": "MySQL is asserted by recording only.",
+      "not_applicable_reason": ""
     },
     {
       "area": "Migrations & schema",
       "feature": "create_join_table / drop_join_table",
-      "status": "missing",
-      "evidence_spec_paths": [],
-      "gap": "No join-table DDL helper (name derivation from two tables, FK columns, optional index).",
-      "not_applicable_reason": "",
-      "priority": 6
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/schema/references_join_table_spec.cr"
+      ],
+      "gap": "MySQL is asserted by recording only.",
+      "not_applicable_reason": ""
     },
     {
       "area": "Migrations & schema",
       "feature": "references / belongs_to columns in migrations (add_reference, remove_reference, polymorphic)",
-      "status": "missing",
-      "evidence_spec_paths": [],
-      "gap": "No reference helper; polymorphic `_type`/`_id` pair, index, and FK creation must be hand-written.",
-      "not_applicable_reason": "",
-      "priority": 2
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/schema/references_join_table_spec.cr"
+      ],
+      "gap": "MySQL is asserted by recording only.",
+      "not_applicable_reason": ""
     },
     {
       "area": "Migrations & schema",
@@ -205,11 +227,12 @@
     {
       "area": "Migrations & schema",
       "feature": "Table and column comments",
-      "status": "missing",
-      "evidence_spec_paths": [],
-      "gap": "No comment DDL (PG COMMENT ON, MySQL COMMENT clause; SQLite unsupported).",
-      "not_applicable_reason": "",
-      "priority": 8
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/schema/comments_spec.cr"
+      ],
+      "gap": "MySQL is asserted by recording only; SQLite is a documented no-op.",
+      "not_applicable_reason": ""
     },
     {
       "area": "Migrations & schema",
@@ -234,63 +257,73 @@
     {
       "area": "Migrations & schema",
       "feature": "Migration class: up/down/change with versioned class ([8.0] compat)",
-      "status": "missing",
-      "evidence_spec_paths": [],
-      "gap": "No Migration base class or per-version compatibility layer; migrations are SQL files for external Micrate. Compat layers (ActiveRecord::Migration::Compatibility) are Rails-history specific.",
-      "not_applicable_reason": "",
-      "priority": 9
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/schema/migration_context_spec.cr",
+        "spec/grant/schema/reversible_spec.cr"
+      ],
+      "gap": "Version is declared with the migration_version macro (Crystal cannot do Migration[8.0]). Rails version-compatibility layers are not applicable.",
+      "not_applicable_reason": ""
     },
     {
       "area": "Migrations & schema",
       "feature": "MigrationContext operations: migrate to version, rollback(step), redo, up/down(version), forward, status",
-      "status": "missing",
-      "evidence_spec_paths": [],
-      "gap": "None present in Grant; must go through Micrate CLI.",
-      "not_applicable_reason": "",
-      "priority": 10
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/schema/migration_context_spec.cr"
+      ],
+      "gap": "none (status includes a NO FILE row for recorded versions without a migration).",
+      "not_applicable_reason": ""
     },
     {
       "area": "Migrations & schema",
       "feature": "DDL transactions and disable_ddl_transaction!",
-      "status": "missing",
-      "evidence_spec_paths": [],
-      "gap": "No migration runner, so no per-migration transaction wrapping and no opt-out (needed for CREATE INDEX CONCURRENTLY on PG). MySQL does not support transactional DDL.",
-      "not_applicable_reason": "",
-      "priority": 12
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/schema/ddl_transaction_spec.cr"
+      ],
+      "gap": "MySQL, which has no transactional DDL, takes the non-transactional path. That path is unexercised locally.",
+      "not_applicable_reason": ""
     },
     {
       "area": "Migrations & schema",
       "feature": "Migration output and helpers: say, say_with_time, announce, suppress_messages",
-      "status": "missing",
-      "evidence_spec_paths": [],
-      "gap": "No migration runner output layer; could reuse Grant::Log.",
-      "not_applicable_reason": "",
-      "priority": 18
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/schema/migration_context_spec.cr"
+      ],
+      "gap": "Schema calls print their method name and arguments going forward; rollback replay prints only the method name.",
+      "not_applicable_reason": ""
     },
     {
       "area": "Migrations & schema",
       "feature": "Pending-migration check and maintain_test_schema",
-      "status": "missing",
-      "evidence_spec_paths": [],
-      "gap": "No detection of pending migrations at boot/in specs and no auto load of the test schema.",
-      "not_applicable_reason": "",
-      "priority": 14
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/schema/pending_check_spec.cr"
+      ],
+      "gap": "maintain_test_schema! yields to a caller-supplied schema loader or migrates by default; loading a dumped schema file arrives with the wave-5 dumper/loader.",
+      "not_applicable_reason": ""
     },
     {
       "area": "Migrations & schema",
       "feature": "ar_internal_metadata environment protection",
-      "status": "missing",
-      "evidence_spec_paths": [],
-      "gap": "No metadata table storing environment, so destructive tasks (drop/reset) in production are not blocked. `Migrator#drop_and_create` is unguarded.",
+      "status": "partial",
+      "evidence_spec_paths": [
+        "spec/grant/schema/environment_protection_spec.cr"
+      ],
+      "gap": "InternalMetadata stores the environment (recorded on first migrate when environment: is given) and check_protected_environments! raises ProtectedEnvironmentError/EnvironmentMismatchError unless forced. It is not yet wired into Migrator#drop_and_create (not an M03-owned file) or the wave-5 Grant::Tasks destructive tasks.",
       "not_applicable_reason": "",
       "priority": 16
     },
     {
       "area": "Migrations & schema",
       "feature": "Unique constraints and exclusion constraints",
-      "status": "missing",
-      "evidence_spec_paths": [],
-      "gap": "No DDL. Migrator never emits UNIQUE, even for validates_uniqueness_of fields.",
+      "status": "partial",
+      "evidence_spec_paths": [
+        "spec/grant/schema/check_unique_constraints_spec.cr"
+      ],
+      "gap": "Migrator does not emit UNIQUE for validates_uniqueness_of fields. The original gap named this. MySQL is asserted by recording only.",
       "not_applicable_reason": "",
       "priority": 5
     },
@@ -316,9 +349,11 @@
     {
       "area": "Migrations & schema",
       "feature": "PostgreSQL enum types, extensions, and custom column types (create_enum, enable_extension, hstore, citext, jsonb, inet, ltree, money)",
-      "status": "missing",
-      "evidence_spec_paths": [],
-      "gap": "No DDL for enums or extensions; type table lacks these types. `column_type:` verbatim works as a workaround.",
+      "status": "partial",
+      "evidence_spec_paths": [
+        "spec/grant/schema/pg_enum_extension_spec.cr"
+      ],
+      "gap": "hstore, citext and ltree are asserted as SQL only; the local PostgreSQL lacks contrib. No Crystal-side type mapping (TypeCatalog).",
       "not_applicable_reason": "",
       "priority": 4
     },
@@ -335,18 +370,21 @@
       "area": "Migrations & schema",
       "feature": "execute (raw DDL inside a migration) and schema-qualified table names",
       "status": "partial",
-      "evidence_spec_paths": [],
-      "gap": "Model.exec works for raw SQL (out of scope). Missing: a migration-scoped `execute` that respects the runner's connection and dry run, plus schema-qualified DDL names across all DSL calls (quote handles dotted names).",
+      "evidence_spec_paths": [
+        "spec/grant/schema/migration_context_spec.cr"
+      ],
+      "gap": "Migration#execute runs on the runner's connection inside its transaction and is only printed in a dry run (specced on both adapters). Dotted names are verified through create_table, add_index, add_column and drop_table on PostgreSQL only; the other DSL calls with dotted names and SQLite attached schemas are not specced.",
       "not_applicable_reason": ""
     },
     {
       "area": "Migrations & schema",
       "feature": "Multi-database migrations (per-connection migrations_paths, db:migrate:primary, connection-specific tasks)",
-      "status": "missing",
-      "evidence_spec_paths": [],
-      "gap": "Grant has named connections and sharding, but no migration runner targets one by name, and there is no per-connection schema_migrations. Schema-tenant (PG search_path) migrations across tenants are also absent.",
-      "not_applicable_reason": "",
-      "priority": 13
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/schema/multi_db_migration_spec.cr"
+      ],
+      "gap": "Runner side is done: per-connection contexts with their own paths and tracking table, MultiDatabaseMigrator.for_connections, for_tenants (PG schema tenants, PG-only spec). The Grant::Tasks::Database.migrate(only:) wrapper and amber CLI commands belong to the wave-5 tasks batch.",
+      "not_applicable_reason": ""
     },
     {
       "area": "Migrations & schema",
@@ -369,11 +407,13 @@
     {
       "area": "Migrations & schema",
       "feature": "Concurrency safety: migration advisory locks",
-      "status": "missing",
-      "evidence_spec_paths": [],
-      "gap": "No migration runner and no advisory-lock helper in Grant, so two deploy nodes can run the same DDL concurrently.",
-      "not_applicable_reason": "",
-      "priority": 11
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/schema/migration_context_spec.cr",
+        "spec/grant/schema/advisory_lock_spec.cr"
+      ],
+      "gap": "none. with_migration_lock holds the lock on the connection that runs the DDL and releases it in ensure; two concurrent runners run a migration once (specced).",
+      "not_applicable_reason": ""
     },
     {
       "area": "Migrations & schema",
@@ -442,10 +482,9 @@
       "feature": "Database-specific types: PostgreSQL arrays (Array(T))",
       "status": "partial",
       "evidence_spec_paths": [
-        "spec/grant/converters/json_spec.cr",
-        "spec/grant/converters/pg_numeric_spec.cr"
+        "spec/grant/types/pg_array_spec.cr"
       ],
-      "gap": "pg.cr maps Array(String/Int/Float/Bool) to TEXT[]/INT[]/etc. and type.cr has from_rs for arrays. No spec covers array round-trip, and the cited specs are JSON and numeric converters, not arrays. Query operators (ANY, @>, &&, array_length), array_append/remove helpers and UUID/Time arrays are absent.",
+      "gap": "array_append and array_remove helpers, array_length predicate, Time arrays and a GIN index DDL helper are missing. MySQL has no array type.",
       "not_applicable_reason": ""
     },
     {
@@ -453,19 +492,19 @@
       "feature": "Database-specific types: JSON/JSONB",
       "status": "partial",
       "evidence_spec_paths": [
-        "spec/grant/converters/json_spec.cr"
+        "spec/grant/types/jsonb_spec.cr"
       ],
-      "gap": "Grant::Serializers::JSONB class exists but stores plain JSON text; specs are converter unit specs only, no DB round-trip or PG jsonb column. Missing: native jsonb column type in migrations, operators (->, ->>, @>, ?, #>), where(data: {a: 1}) containment, store_accessor, in-place mutation dirty tracking.",
+      "gap": "store_accessor, in-place mutation dirty tracking, the where(data: {a: 1}) shorthand and the type: :jsonb column option are missing. MySQL JSON predicates raise UnsupportedOperation. SQLite json_contains cannot match objects inside arrays.",
       "not_applicable_reason": ""
     },
     {
       "area": "Infrastructure (locking, encryption, instrumentation, …)",
       "feature": "Database-specific types: UUID",
-      "status": "partial",
+      "status": "complete",
       "evidence_spec_paths": [
-        "spec/grant/columns/uuid_spec.cr"
+        "spec/grant/types/uuid_spec.cr"
       ],
-      "gap": "Only auto-generation of a v4 UUID on save is specced. Not proven: reload/round-trip through the DB, find/find_by by UUID string or UUID, UUID primary key, invalid-string casting, PG native uuid column vs CHAR(36) on MySQL/SQLite, gen_random_uuid() DB default.",
+      "gap": "none",
       "not_applicable_reason": ""
     },
     {
@@ -481,27 +520,32 @@
     {
       "area": "Infrastructure (locking, encryption, instrumentation, …)",
       "feature": "Fixtures / test helpers (ActiveRecord::FixtureSet equivalent)",
-      "status": "missing",
-      "evidence_spec_paths": [],
-      "gap": "No YAML fixture loader, no label-to-id hashing, no fixture accessors, no transactional-test wrapper.",
-      "not_applicable_reason": "",
-      "priority": 23
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/test_fixtures_spec.cr"
+      ],
+      "gap": "No ERB in YAML. Fixture rows are not cached per accessor (each call runs find!). The proposed Grant.transactional_test is not added: the existing Grant::Spec.transactional / within_transaction wrapper is the rollback mechanism and is what the spec exercises. Columns a row omits are NULL when another row fills them.",
+      "not_applicable_reason": ""
     },
     {
       "area": "Infrastructure (locking, encryption, instrumentation, …)",
       "feature": "Advisory locks (PostgreSQL pg_advisory_lock / MySQL GET_LOCK)",
-      "status": "missing",
-      "evidence_spec_paths": [],
-      "gap": "No adapter API for advisory locks. Rationale for n.a. (not core) is not a Ruby-metaprogramming reason; AR ships these as adapter methods used by the migrator.",
+      "status": "partial",
+      "evidence_spec_paths": [
+        "spec/grant/schema/advisory_lock_spec.cr"
+      ],
+      "gap": "The MySQL GET_LOCK/RELEASE_LOCK path has no spec and was not run against a server. The PostgreSQL and SQLite paths are specced and pass.",
       "not_applicable_reason": "",
       "priority": 17
     },
     {
       "area": "Infrastructure (locking, encryption, instrumentation, …)",
       "feature": "QueryLogs with context tags (SQL comment injection)",
-      "status": "missing",
-      "evidence_spec_paths": [],
-      "gap": "annotate exists per query, but no global tag config, no fiber-local context, no automatic prepend of model/controller/action/job tags.",
+      "status": "partial",
+      "evidence_spec_paths": [
+        "spec/grant/query_logs_spec.cr"
+      ],
+      "gap": "Not tagged: raw SQL (Model.exec, Grant::Connection calls), counters (counters.cr), bulk insert_all/upsert_all (bulk_operations.cr), STI/query_extensions/aggregations sum paths that call db.exec/db.query directly. Users can call Grant::QueryLogs.append on those. Covered: every relation-built statement (assembler build_sql), and adapter insert/update/delete/select/exists?/import. No automatic model tag (the adapter does not know the model). No Amber controller/job integration (context is set by the app via with_context). annotate still PREPENDS its comment (unchanged); only QueryLogs tags are trailing.",
       "not_applicable_reason": "",
       "priority": 24
     },
@@ -631,9 +675,11 @@
     {
       "area": "Infrastructure (locking, encryption, instrumentation, …)",
       "feature": "Verbose query logs (source location of SQL) and log tags with binds",
-      "status": "missing",
-      "evidence_spec_paths": [],
-      "gap": "SQL log shows query with colorized params but no calling file:line, no query-name label (User Load), no cached-hit marker.",
+      "status": "partial",
+      "evidence_spec_paths": [
+        "spec/grant/verbose_logs_spec.cr"
+      ],
+      "gap": "Label uses the model name for relation reads and the table name for adapter writes (record insert/update/delete), because the adapter does not know the model. The cache-hit marker covers QueryCache.fetch reads. Binds were already in the SQL log entry, so no separate bind tag was added. The builder cache-version query (builder.cr) and raw Model.exec paths do not emit the verbose line.",
       "not_applicable_reason": "",
       "priority": 25
     },
@@ -661,11 +707,14 @@
     {
       "area": "Infrastructure (locking, encryption, instrumentation, …)",
       "feature": "Migrator advisory lock (concurrent migrate protection)",
-      "status": "missing",
-      "evidence_spec_paths": [],
-      "gap": "No lock preventing two processes from running migrations at once on PG or MySQL.",
-      "not_applicable_reason": "",
-      "priority": 19
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/schema/migration_context_spec.cr",
+        "spec/grant/schema/advisory_lock_spec.cr",
+        "spec/grant/schema/ddl_transaction_spec.cr"
+      ],
+      "gap": "none (lock key includes database, tenant schema and tracking table; released after a failed migration, specced).",
+      "not_applicable_reason": ""
     },
     {
       "area": "Infrastructure (locking, encryption, instrumentation, …)",
@@ -1553,11 +1602,12 @@
     {
       "area": "Multiple databases & sharding",
       "feature": "Shard-aware migrations",
-      "status": "missing",
-      "evidence_spec_paths": [],
-      "gap": "Rails migrates every database in the environment configuration, including shard entries, with a per-database migrations_paths and schema dump; Grant's Migrator is per-model adapter only and has no run-on-all-configured-connections task.",
-      "not_applicable_reason": "",
-      "priority": 15
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/schema/multi_db_migration_spec.cr"
+      ],
+      "gap": "none. for_shards over ConnectionRegistry shards, bounded parallelism with a per-target lock, per-target results, a SkewReport listing targets behind, and MigrationReport#raise_if_failed!.",
+      "not_applicable_reason": ""
     },
     {
       "area": "Multiple databases & sharding",
@@ -3420,11 +3470,12 @@
     {
       "area": "Query interface",
       "feature": "from (custom FROM clause / subquery as table)",
-      "status": "missing",
-      "evidence_spec_paths": [],
-      "gap": "No Relation#from(source, subquery_name = nil) (responds_to? false); no unscope(:from).",
-      "not_applicable_reason": "",
-      "priority": 21
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/query/from_subquery_spec.cr"
+      ],
+      "gap": "update_all and delete_all ignore a from source (as in ActiveRecord); only relations, raw SQL and table or CTE names are accepted as sources.",
+      "not_applicable_reason": ""
     },
     {
       "area": "Query interface",
@@ -3725,11 +3776,12 @@
     {
       "area": "Query interface",
       "feature": "with / with_recursive (common table expressions)",
-      "status": "missing",
-      "evidence_spec_paths": [],
-      "gap": "Absent (responds_to? false); no WITH clause support in the assemblers.",
-      "not_applicable_reason": "",
-      "priority": 20
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/query/cte_spec.cr"
+      ],
+      "gap": "The MySQL below 8 raise is proven only offline (the spec pins a 5.7 adapter and calls ensure_supported!), with no live MySQL server. The recursive depth guard requires the step to be SELECT ... FROM ... [WHERE ...]. A raw recursive body needs unguarded: true. update_all and delete_all emit no WITH.",
+      "not_applicable_reason": ""
     },
     {
       "area": "Query interface",
@@ -3987,11 +4039,12 @@
     {
       "area": "Associations",
       "feature": "delegated types",
-      "status": "missing",
-      "evidence_spec_paths": [],
-      "gap": "No delegated_type macro. Everything it needs (polymorphic belongs_to, has_one as:, enum-style predicates) exists separately, but only for Int64 keys.",
-      "not_applicable_reason": "",
-      "priority": 22
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/associations/delegated_type_spec.cr"
+      ],
+      "gap": "None. The implementer's report said non-Int64 keys were not exercised. I added a String-key spec (typed foreign_key: String?, String primary key, reader, id reader, includes preload, dependent: :destroy). It passes on both adapters. UUID keys are not exercised. Notes: build_entryable takes the class plus named attributes. dependent: supports :destroy and :delete only and is not wrapped in an extra transaction.",
+      "not_applicable_reason": ""
     },
     {
       "area": "Associations",
