@@ -48,8 +48,8 @@ module Grant::Schema
   # ```
   # context = Grant::Schema::MigrationContext.for(User.adapter, CreateUsers, AddAge,
   #   paths: ["db/migrations"], environment: "development")
-  # context.migrate                  # everything pending
-  # context.migrate(20240101120000)  # up or down to that version
+  # context.migrate                 # everything pending
+  # context.migrate(20240101120000) # up or down to that version
   # context.rollback(2)
   # context.redo
   # context.status.each { |row| puts row }

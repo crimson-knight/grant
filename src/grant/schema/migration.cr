@@ -230,12 +230,12 @@ module Grant::Schema
     end
 
     {% for name in %w(drop_table create_join_table add_timestamps remove_timestamps drop_join_table
-                      add_column remove_column remove_columns change_column change_column_null change_column_default
-                      rename_column rename_table add_index remove_index rename_index add_reference remove_reference
-                      add_foreign_key remove_foreign_key validate_foreign_key add_check_constraint remove_check_constraint
-                      validate_check_constraint add_unique_constraint remove_unique_constraint add_exclusion_constraint
-                      remove_exclusion_constraint change_table_comment change_column_comment create_enum drop_enum
-                      rename_enum add_enum_value rename_enum_value enable_extension disable_extension) %}
+                     add_column remove_column remove_columns change_column change_column_null change_column_default
+                     rename_column rename_table add_index remove_index rename_index add_reference remove_reference
+                     add_foreign_key remove_foreign_key validate_foreign_key add_check_constraint remove_check_constraint
+                     validate_check_constraint add_unique_constraint remove_unique_constraint add_exclusion_constraint
+                     remove_exclusion_constraint change_table_comment change_column_comment create_enum drop_enum
+                     rename_enum add_enum_value rename_enum_value enable_extension disable_extension) %}
       def {{name.id}}(*args, **options) : Nil
         if @recorder.recording?
           @recorder.{{name.id}}(*args, **options)

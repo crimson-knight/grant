@@ -106,6 +106,32 @@ describe Grant::Schema::MigrationContext do
     M03Fixture.table?("schema_migrations").should be_false
   end
 
+  it "prints say, say_with_time and announce output and silences it with suppress_messages" do
+    io = IO::Memory.new
+    context = Grant::Schema::MigrationContext.for(M03Fixture.adapter, M03Chatty, output: io)
+    context.migrate
+    text = io.to_s
+    text.should contain "-- hello from the migration"
+    text.should contain "-- backfill"
+    text.should contain "   -> 3 rows"
+    text.should contain "== M03Chatty: announced ="
+    text.should_not contain "hidden"
+  end
+
+  it "runs a migration once when two runners start together" do
+    M03SlowOnce.runs = 0
+    done = Channel(Nil).new
+    2.times do
+      spawn do
+        Grant::Schema::MigrationContext.for(M03Fixture.adapter, M03SlowOnce, verbose: false).migrate
+        done.send(nil)
+      end
+    end
+    2.times { done.receive }
+    M03SlowOnce.runs.should eq 1
+    M03Fixture.versions.should eq [20240201000003_i64]
+  end
+
   it "rejects two migrations with the same version" do
     context = Grant::Schema::MigrationContext.for(M03Fixture.adapter, M03CreateUsers, M03CreateUsers, verbose: false)
     expect_raises(Grant::Schema::InvalidMigration, /same|Two migrations/) { context.migrate }
@@ -153,5 +179,33 @@ class M03QualifiedPg < Grant::Schema::Migration
 
   def down
     drop_table "public.m03_widgets"
+  end
+end
+
+class M03Chatty < Grant::Schema::Migration
+  migration_version 20240201000004
+
+  def up
+    say "hello from the migration"
+    say_with_time("backfill") { 3 }
+    announce "announced"
+    suppress_messages { say "hidden" }
+  end
+
+  def down
+  end
+end
+
+class M03SlowOnce < Grant::Schema::Migration
+  migration_version 20240201000003
+
+  class_property runs = 0
+
+  def up
+    self.class.runs += 1
+    sleep 100.milliseconds
+  end
+
+  def down
   end
 end

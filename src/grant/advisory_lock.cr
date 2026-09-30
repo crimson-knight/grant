@@ -35,7 +35,7 @@ module Grant
   # Acquisition polls `try` every 25 ms instead of blocking in the server, so a
   # waiting fiber never parks a connection inside a blocking call.
   module AdvisoryLock
-    Log            = ::Log.for("grant.advisory_lock")
+    Log           = ::Log.for("grant.advisory_lock")
     POLL_INTERVAL = 25.milliseconds
 
     private class SqliteHold

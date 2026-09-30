@@ -311,7 +311,7 @@ module Grant::Schema
     # ---- no inverse ------------------------------------------------------
 
     {% for name in %w(validate_foreign_key validate_check_constraint add_exclusion_constraint remove_exclusion_constraint
-                      remove_columns change_column change_table_comment change_column_comment add_enum_value) %}
+                     remove_columns change_column change_table_comment change_column_comment add_enum_value) %}
       # Recorded without an inverse: reversing a migration that calls it raises
       # `IrreversibleMigration`. Wrap it in `reversible` to give both directions.
       def {{name.id}}(*args, **options) : Nil
