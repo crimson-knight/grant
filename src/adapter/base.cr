@@ -451,6 +451,7 @@ abstract class Grant::Adapter::Base
 
   def log(query : String, elapsed_time : Time::Span, params = [] of String) : Nil
     Grant::Logs::SQL.debug { colorize query, Grant::Encryption::LogFilter.redact(query, params), elapsed_time.total_seconds }
+    Grant::Logs.log_verbose(query, elapsed_time)
   end
 
   # remove all rows from a table and reset the counter on the id.
@@ -564,6 +565,7 @@ abstract class Grant::Adapter::Base
       stmt << " FROM #{quote(query.table_name)} #{clause}"
     end
 
+    statement = Grant::QueryLogs.append(statement)
     elapsed_time = Time.measure do
       open(statement, params) do |db|
         db.query statement, args: normalize_bind_values(params) do |rs|
@@ -580,6 +582,7 @@ abstract class Grant::Adapter::Base
     statement = "SELECT EXISTS(SELECT 1 FROM #{table_name} WHERE #{ensure_clause_template(criteria)})"
 
     exists = false
+    statement = Grant::QueryLogs.append(statement)
     elapsed_time = Time.measure do
       open(statement, params) do |db|
         exists = db.query_one?(statement, args: normalize_bind_values(params), as: Bool) || exists
@@ -732,6 +735,7 @@ abstract class Grant::Adapter::Base
     end
     statement = ensure_clause_template(statement)
 
+    statement = Grant::QueryLogs.append(statement)
     elapsed_time = Time.measure do
       open(statement, params) do |db|
         db.exec statement, args: normalize_bind_values(params)
@@ -759,6 +763,7 @@ abstract class Grant::Adapter::Base
     parameters.concat(where_params)
 
     affected = 0_i64
+    statement = Grant::QueryLogs.append(statement)
     elapsed_time = Time.measure do
       open(statement, parameters) do |db|
         result = db.exec(statement, args: normalize_bind_values(parameters))
@@ -784,6 +789,7 @@ abstract class Grant::Adapter::Base
     statement = "DELETE FROM #{quote(table_name)} WHERE #{quote(primary_name)} = ?"
     statement = ensure_clause_template(statement)
     affected = 0_i64
+    statement = Grant::QueryLogs.append(statement)
     elapsed_time = Time.measure do
       open(statement, [value]) do |db|
         result = db.exec(statement, args: normalize_bind_values([value]))
@@ -805,6 +811,7 @@ abstract class Grant::Adapter::Base
   def delete_with_where(table_name : String, where_clause : String, params : Array(DB::Any))
     statement = "DELETE FROM #{quote(table_name)} WHERE #{ensure_clause_template(where_clause)}"
 
+    statement = Grant::QueryLogs.append(statement)
     elapsed_time = Time.measure do
       open(statement, params) do |db|
         db.exec statement, args: normalize_bind_values(params)

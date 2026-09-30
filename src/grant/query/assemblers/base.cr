@@ -140,10 +140,10 @@ module Grant::Query::Assembler
       # Prepend the query annotation (sanitized SQL comment) to the executed
       # statement so it appears in the wire SQL, not just `.raw_sql` inspection.
       if comment = @query.annotation_comment
-        "#{comment} #{sql}"
-      else
-        sql
+        sql = "#{comment} #{sql}"
       end
+      # Trailing tag comment from `Grant::QueryLogs` (no-op while it is off).
+      Grant::QueryLogs.append(sql)
     end
 
     def where
