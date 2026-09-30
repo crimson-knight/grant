@@ -88,13 +88,17 @@ module Grant::Query::JoinSupport
     end
 
     reference = alias_name ? validated_alias(alias_name) : target_table
-    on = case meta[:type]
-         when :belongs_to
-           # FK lives on the owner's table.
-           "#{reference}.#{primary_key} = #{current_table}.#{foreign_key}"
+    on = if Grant::CompositeAssociation.composite?(foreign_key)
+           Grant::CompositeAssociation.join_on(meta[:type] == :belongs_to, owner, meta[:target_class], reference, current_table, foreign_key, primary_key)
          else
-           # has_many / has_one: FK lives on the target table.
-           "#{reference}.#{foreign_key} = #{current_table}.#{primary_key}"
+           case meta[:type]
+           when :belongs_to
+             # FK lives on the owner's table.
+             "#{reference}.#{primary_key} = #{current_table}.#{foreign_key}"
+           else
+             # has_many / has_one: FK lives on the target table.
+             "#{reference}.#{foreign_key} = #{current_table}.#{primary_key}"
+           end
          end
 
     table = alias_name ? "#{target_table} AS #{reference}" : target_table

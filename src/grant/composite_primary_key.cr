@@ -79,6 +79,10 @@ module Grant::CompositePrimaryKey
 
     class_property composite_key : CompositeKey?
 
+    # Lets code that only holds the class name (joins over a composite
+    # association) read this model's key columns.
+    Grant::CompositeAssociation.register_key_columns({{@type.name.stringify}}, -> { {{@type}}.persistence_key_columns })
+
     # Columns named by `query_constraints`, in declaration order.
     class_property query_constraint_names : Array(String)?
 
