@@ -84,6 +84,9 @@ class Grant::Query::Builder(Model)
       return add_nested_conditions(join, field, value)
     end
     return add_association_condition(join, field, value) if association_condition?(field)
+    {% if Model.class.has_method?(:composite_primary_key_columns) %}
+      return add_composite_key_tuple_condition(join, field, value) if value.is_a?(Tuple)
+    {% end %}
 
     field = resolve_column_alias(field)
     {% if Model.class.has_method?(:coerce_where_value) %}
@@ -133,7 +136,9 @@ class Grant::Query::Builder(Model)
   # under an association name, which `add_condition` routes elsewhere. Ranges
   # inside the array are ORed in as spans (`[1, 5..9]`).
   private def add_array_condition(join : Symbol, field : String, values : Array(T)) : Nil forall T
-    {% if T.union_types.any? { |type| type <= Grant::Base } %}
+    {% if T.union_types.all? { |type| type <= Array || type <= Tuple } %}
+      add_composite_key_tuples_condition(join, field, values)
+    {% elsif T.union_types.any? { |type| type <= Grant::Base } %}
       raise ArgumentError.new("#{field.inspect} is not an association of #{Model.name}; records cannot be compared with a column")
     {% elsif T.union_types.any? { |type| type <= Range } %}
       add_mixed_array_condition(join, field, values)

@@ -30,16 +30,7 @@ module Grant::CompositePrimaryKey::Validation
       col = col_sym.to_s
       value = read_attribute(col)
 
-      # Check if this is an auto-generated field
-      is_auto = false
-      {% begin %}
-        {% for ivar in @type.instance_vars.select { |iv| (ann = iv.annotation(Grant::Column)) && ann[:primary] } %}
-          {% ann = ivar.annotation(Grant::Column) %}
-          if col == {{ivar.name.stringify}} && {{ann[:auto]}}
-            is_auto = true
-          end
-        {% end %}
-      {% end %}
+      is_auto = self.class.__auto_generated_key_column?(col)
 
       # Only validate non-auto fields
       if !is_auto && value.nil?
