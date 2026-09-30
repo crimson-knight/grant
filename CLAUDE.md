@@ -15,8 +15,14 @@ Grant is an ActiveRecord-pattern ORM for the Crystal programming language, pursu
 | Command | Description |
 |---------|-------------|
 | `shards install` | Install dependencies |
-| `crystal spec` | Run full test suite (SQLite) |
+| `make spec` | Run the full suite (SQLite) in small groups, one process at a time; `make spec ADAPTERS="sqlite pg"` for more adapters |
+| `scripts/spec-groups.sh --only spec/grant/query pg` | Run one directory's groups on one adapter |
 | `crystal spec spec/grant/querying_spec.cr` | Run single spec file |
+
+Do not run bare `crystal spec` over the whole tree: compiling every spec file
+into one program instantiates the query builder for ~700 spec models and needs
+about 20 GB of RAM. `scripts/spec-groups.sh` keeps each compile to a few GB,
+splits any group that passes `SPEC_GROUP_MAX_RSS_GB` (default 10), and retries.
 | `crystal tool format --check` | Check formatting |
 | `crystal tool format` | Auto-format code |
 | `crystal build src/grant.cr` | Compile library |
