@@ -40,6 +40,10 @@ require "./grant/schema/constraint_catalog"
 require "./grant/schema/model_indexes"
 require "./grant/schema/migration_context"
 require "./grant/schema/multi_database_migrator"
+require "./grant/schema/generator"
+require "./grant/schema/loader"
+require "./grant/seeds"
+require "./grant/tasks/database"
 
 # Large-table / high-scale query toolkit (index hints, IN chunking, streaming,
 # tenant scoping). Required after Grant::Base is fully defined so the toolkit
