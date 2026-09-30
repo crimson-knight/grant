@@ -6,6 +6,7 @@ require "./error_translator"
 require "./placeholder_scanner"
 require "./server_version"
 require "./pool_support"
+require "../grant/advisory_lock"
 
 # The Base Adapter specifies the interface that will be used by the model
 # objects to perform actions against a specific database.  Each adapter needs
@@ -1001,6 +1002,18 @@ abstract class Grant::Adapter::Base
   # Server side advisory (application defined) locks.
   def supports_advisory_locks? : Bool
     false
+  end
+
+  # One non-blocking attempt to take the advisory lock *key* on *connection*
+  # (the session that will keep it). `Grant::AdvisoryLock.synchronize` polls
+  # this and pairs it with `#release_advisory_lock`.
+  def try_advisory_lock(connection : DB::Connection, key : String) : Bool
+    Grant::AdvisoryLock.try_acquire(self, connection, key)
+  end
+
+  # Releases *key* on the *connection* that took it.
+  def release_advisory_lock(connection : DB::Connection, key : String) : Nil
+    Grant::AdvisoryLock.release(self, connection, key)
   end
 
   # Several `ALTER TABLE` changes in one statement.

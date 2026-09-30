@@ -265,6 +265,7 @@ module Grant::Schema
 
     # True while a `#transaction` block is open.
     getter? in_transaction : Bool = false
+    @rebuilds_in_transaction = false
 
     def execute(sql : ::String) : Nil
       execute_batch([sql])
@@ -279,7 +280,13 @@ module Grant::Schema
         raise InvalidDefinition.new("CONCURRENTLY cannot run inside a transaction; use transaction(disable_ddl_transaction: true)")
       end
       if @in_transaction && statements.includes?("BEGIN")
-        raise InvalidDefinition.new("A SQLite table rebuild cannot run inside a transaction: it must switch foreign key enforcement off first")
+        unless @rebuilds_in_transaction
+          raise InvalidDefinition.new("A SQLite table rebuild cannot run inside a transaction: it must switch foreign key enforcement off first")
+        end
+        # The surrounding transaction was opened with foreign keys already off
+        # (see `#transaction`), so the rebuild's own pragmas and transaction
+        # are left out and it commits or rolls back with the rest.
+        statements = statements.reject { |sql| sql == "BEGIN" || sql == "COMMIT" || sql.starts_with?("PRAGMA foreign_keys") }
       end
       begin
         @adapter.open(statements.first) do |db|
@@ -311,17 +318,40 @@ module Grant::Schema
     # true` runs them without one, which a `CREATE INDEX CONCURRENTLY`
     # requires. Inside a transaction a concurrent index raises
     # `InvalidDefinition` instead of failing in the database.
-    def transaction(disable_ddl_transaction : Bool = false, &)
+    #
+    # A SQLite table rebuild (`change_column`, `remove_foreign_key`, ...) must
+    # switch foreign key enforcement off before its transaction begins.
+    # `rebuilds: true` does that for the whole block: foreign keys go off, the
+    # transaction runs with every rebuild joining it, and enforcement goes back
+    # to what it was. Hold one connection around the call
+    # (`Adapter::Base#with_connection`); the migration context does.
+    def transaction(disable_ddl_transaction : Bool = false, rebuilds : Bool = false, &)
       if disable_ddl_transaction || dialect.mysql?
         yield self
-      else
-        Grant::Transaction.run(@adapter, Grant::Transaction::Options.new) do
-          @in_transaction = true
+      elsif rebuilds && dialect.sqlite?
+        @adapter.with_connection do |_|
+          enforced = @adapter.open { |db| db.scalar("PRAGMA foreign_keys").as(Int).to_i64 != 0 }
+          @adapter.open { |db| db.exec "PRAGMA foreign_keys = OFF" }
           begin
-            yield self
+            run_in_transaction(true) { yield self }
           ensure
-            @in_transaction = false
+            @adapter.open { |db| db.exec "PRAGMA foreign_keys = #{enforced ? "ON" : "OFF"}" }
           end
+        end
+      else
+        run_in_transaction(false) { yield self }
+      end
+    end
+
+    private def run_in_transaction(rebuilds : Bool, &)
+      Grant::Transaction.run(@adapter, Grant::Transaction::Options.new) do
+        @in_transaction = true
+        @rebuilds_in_transaction = rebuilds
+        begin
+          yield
+        ensure
+          @in_transaction = false
+          @rebuilds_in_transaction = false
         end
       end
     end
