@@ -215,8 +215,8 @@ module Grant::Schema
     end
 
     # Runs the block only when migrating up; a rollback skips it.
-    def up_only(& : ->) : Nil
-      reversible { |direction| direction.up { yield } }
+    def up_only(&block : ->) : Nil
+      reversible { |direction| direction.up(&block) }
     end
 
     # Raw SQL, run on the migration's connection (and only printed in a dry

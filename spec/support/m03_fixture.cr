@@ -59,6 +59,7 @@ module M03Fixture
         yield second
       ensure
         second.disconnect!
+        adapter.open { |db| db.exec "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '#{name}' AND pid <> pg_backend_pid()" }
         adapter.open { |db| db.exec "DROP DATABASE IF EXISTS #{name}" }
       end
     when "sqlite"
