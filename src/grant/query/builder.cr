@@ -1128,6 +1128,10 @@ class Grant::Query::Builder(Model)
         @readonly = false
       when :optimizer_hints
         @optimizer_hints = [] of String
+      when :from
+        clear_from_source!
+      when :with
+        clear_common_tables!
       else
         raise ArgumentError.new("unscope: unknown component #{component.inspect}") unless unscope_extra_component!(component)
       end
@@ -1285,7 +1289,7 @@ class Grant::Query::Builder(Model)
 
   # Clause components `only` and `except` understand; the same table `unscope`
   # uses.
-  RELATION_COMPONENTS = [:where, :order, :limit, :offset, :group, :having, :joins, :select, :distinct, :lock]
+  RELATION_COMPONENTS = [:where, :order, :limit, :offset, :group, :having, :joins, :select, :distinct, :lock, :from, :with]
 
   # Returns a copy that keeps only the named clause *components* and drops the
   # rest. Components are `:where`, `:order`, `:limit`, `:offset`, `:group`,
@@ -2208,6 +2212,7 @@ class Grant::Query::Builder(Model)
 
     @readonly = true if other.readonly?
     @optimizer_hints = @optimizer_hints | other.optimizer_hint_list
+    merge_from_and_with!(other)
 
     self
   end
