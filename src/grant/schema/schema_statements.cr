@@ -289,11 +289,13 @@ module Grant::Schema
             if dialect.sqlite? && statements.includes?("BEGIN")
               begin
                 db.exec "ROLLBACK"
-              rescue
+              rescue DB::Error
+                # Best effort: the original error is re-raised below.
               end
               begin
                 db.exec "PRAGMA foreign_keys = ON"
-              rescue
+              rescue DB::Error
+                # Best effort: the original error is re-raised below.
               end
             end
             raise ex

@@ -159,7 +159,9 @@ module Grant::Schema
         io << dialect.quote(name) << " ON " << dialect.quote(@table)
         io << " USING " << @using if dialect.pg? && @using
         io << " (" << @columns.map { |column| column_sql(dialect, column) }.join(", ") << ')'
-        io << " USING " << @using.not_nil!.upcase if dialect.mysql? && @using && !{"fulltext", "spatial"}.includes?(@using.not_nil!.downcase)
+        if dialect.mysql? && (using = @using) && !{"fulltext", "spatial"}.includes?(using.downcase)
+          io << " USING " << using.upcase
+        end
         io << " INCLUDE (" << @covering.map { |column| dialect.quote(column) }.join(", ") << ')' unless @covering.empty?
         io << " WHERE " << @where if @where
         if dialect.mysql? && (algorithm = @algorithm) && {:inplace, :copy, :default}.includes?(algorithm)

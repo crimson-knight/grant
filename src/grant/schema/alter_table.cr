@@ -888,8 +888,11 @@ module Grant::Schema
       dialect = self.dialect
       step = AlterStep.new
       names = columns ? IndexDefinition.to_names(columns) : nil
-      raise InvalidDefinition.new("remove_unique_constraint on '#{table}' needs columns: or name:") if names.nil? && name.nil?
-      key_name = name || Naming.constraint_name("uniq", table, names.not_nil!.join("_"))
+      key_name = name
+      if key_name.nil?
+        raise InvalidDefinition.new("remove_unique_constraint on '#{table}' needs columns: or name:") unless names
+        key_name = Naming.constraint_name("uniq", table, names.join("_"))
+      end
       case dialect
       in .sqlite?
         step.rebuild = true

@@ -57,8 +57,12 @@ module Grant::Schema
       String.build do |io|
         io << "FOREIGN KEY (" << @columns.map { |column| dialect.quote(column) }.join(", ") << ") REFERENCES "
         io << dialect.quote(@to_table) << " (" << @primary_key.map { |column| dialect.quote(column) }.join(", ") << ')'
-        io << " ON DELETE " << ConstraintOptions.action_sql(@on_delete.not_nil!, "on_delete:") if @on_delete
-        io << " ON UPDATE " << ConstraintOptions.action_sql(@on_update.not_nil!, "on_update:") if @on_update
+        if on_delete = @on_delete
+          io << " ON DELETE " << ConstraintOptions.action_sql(on_delete, "on_delete:")
+        end
+        if on_update = @on_update
+          io << " ON UPDATE " << ConstraintOptions.action_sql(on_update, "on_update:")
+        end
         if clause = ConstraintOptions.deferrable_sql(dialect, @deferrable, @name)
           io << ' ' << clause
         end

@@ -28,6 +28,11 @@ module Grant::Schema
       property name : ::String?
       property text : ::String
 
+      # The item name, or an empty string for unnamed items. Column items always carry a name.
+      def name_or_empty : ::String
+        @name || ""
+      end
+
       def initialize(@kind : Symbol, @name : ::String?, @text : ::String)
       end
     end
@@ -43,17 +48,17 @@ module Grant::Schema
       close = Scanner.matching_paren(create_sql, open) || raise InvalidDefinition.new("Cannot read the definition of '#{@table}'")
       @suffix = create_sql[(close + 1)..].strip
       @items = Scanner.split_items(create_sql[(open + 1)...close]).map { |text| classify(text) }
-      @original_columns = column_items.map { |item| item.name.not_nil!.downcase }
+      @original_columns = column_items.map { |item| item.name_or_empty.downcase }
     end
 
     # Names of the column items, in order.
     def column_names : Array(::String)
-      column_items.map { |item| item.name.not_nil! }
+      column_items.map { |item| item.name_or_empty }
     end
 
     def add_column(text : ::String) : Nil
       item = classify(text)
-      raise InvalidDefinition.new("Column '#{item.name}' already exists in '#{@table}'") if find_column(item.name.not_nil!)
+      raise InvalidDefinition.new("Column '#{item.name}' already exists in '#{@table}'") if find_column(item.name_or_empty)
       # Columns go before the table-level constraints.
       position = @items.index { |existing| existing.kind != :column } || @items.size
       @items.insert(position, item)
@@ -97,7 +102,7 @@ module Grant::Schema
       end
       if removed == 0 && (wanted = columns) && wanted.size == 1 && name.nil?
         column_items.each do |item|
-          next unless item.name.not_nil!.downcase == wanted.first.downcase
+          next unless item.name_or_empty.downcase == wanted.first.downcase
           stripped = Scanner.strip_references(item.text)
           if stripped != item.text
             item.text = stripped
@@ -170,7 +175,7 @@ module Grant::Schema
     end
 
     private def find_column(name : ::String) : Item?
-      column_items.find { |item| item.name.not_nil!.downcase == name.downcase }
+      column_items.find { |item| item.name_or_empty.downcase == name.downcase }
     end
 
     private def classify(text : ::String) : Item
