@@ -1,6 +1,7 @@
 require "./serialized_object"
 require "./serializers/base"
 require "./serializers/json"
+require "./serializers/jsonb"
 require "./serializers/yaml"
 
 # Store a rich Crystal object in a single database column, serialized as JSON or

@@ -1,3 +1,4 @@
+require "json"
 require "uuid"
 require "uuid/yaml"
 
@@ -116,13 +117,12 @@ module Grant::Type
 
   # Converts an `DB::ResultSet` to `Array(UUID)`.
   def from_rs(result : DB::ResultSet, t : Array(UUID).class) : Array(UUID)
-    result.read(Array(String)).map { |s| UUID.new(s) }
+    result.read(Array(::UUID))
   end
 
   # Converts an `DB::ResultSet` to `Array(UUID)?`.
   def from_rs(result : DB::ResultSet, t : Array(UUID)?.class) : Array(UUID)?
-    value = result.read(Array(String)?)
-    value.try &.map { |s| UUID.new(s) }
+    result.read(Array(::UUID)?)
   end
 
   {% for type, method in NUMERIC_TYPES %}
@@ -179,5 +179,19 @@ module Grant::Type
 
   def convert_type(value : Nil, type : UUID?.class) : UUID?
     nil
+  end
+
+  # Converts a JSON text to a `JSON::Any` document. Text that is not valid
+  # JSON raises `ArgumentError`, which mass assignment reports as a
+  # conversion error on the attribute.
+  def convert_type(value : String, type : JSON::Any.class) : JSON::Any
+    JSON.parse(value)
+  rescue ex : JSON::ParseException
+    raise ArgumentError.new("Invalid JSON: #{ex.message}")
+  end
+
+  # :ditto:
+  def convert_type(value : String, type : JSON::Any?.class) : JSON::Any?
+    convert_type(value, JSON::Any)
   end
 end

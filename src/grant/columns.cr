@@ -151,6 +151,9 @@ module Grant::Columns
 
     {% column_type = (options[:column_type] && !options[:column_type].nil?) ? options[:column_type] : nil %}
     {% converter = (options[:converter] && !options[:converter].nil?) ? options[:converter] : nil %}
+    # A JSON::Any column stores a JSON document: a native jsonb column on
+    # PostgreSQL and JSON text elsewhere. No converter needs to be declared.
+    {% converter = "Grant::Converters::JsonDocument".id if converter == nil && not_nilable_type.resolve == JSON::Any %}
     {% primary = (options[:primary] && !options[:primary].nil?) ? options[:primary] : false %}
     {% auto = (options[:auto] && !options[:auto].nil?) ? options[:auto] : false %}
     # Only integer and UUID keys can be generated on insert, so any other
@@ -201,7 +204,7 @@ module Grant::Columns
     {% end %}
 
     {% if emit %}
-    @[Grant::Column(column_type: {{column_type}}, converter: {{converter}}, auto: {{auto}}, primary: {{primary}}, nilable: {{nilable}}, setter_type: {{not_nilable_type}}, null: {{options[:null]}}, limit: {{options[:limit]}}, precision: {{options[:precision]}}, scale: {{options[:scale]}}, comment: {{options[:comment]}}, collation: {{options[:collation]}}, default_sql: {{options[:default_sql]}})]
+    @[Grant::Column(column_type: {{column_type}}, converter: {{converter}}, auto: {{auto}}, primary: {{primary}}, nilable: {{nilable}}, setter_type: {{not_nilable_type}}, null: {{options[:null]}}, limit: {{options[:limit]}}, precision: {{options[:precision]}}, scale: {{options[:scale]}}, comment: {{options[:comment]}}, collation: {{options[:collation]}}, default_sql: {{options[:default_sql]}}, uuid_version: {{options[:uuid_version]}})]
     @{{decl.var}} : {{decl.type}}? {% unless decl.value.is_a? Nop %} = {{decl.value}} {% end %}
 
     # The value assigned by mass assignment before conversion, when it
