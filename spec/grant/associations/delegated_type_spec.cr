@@ -9,6 +9,8 @@ describe "Grant::DelegatedType" do
     DtxAdminNote.migrator.drop_and_create
     DtxDeleteHolder.migrator.drop_and_create
     DtxPlainHolder.migrator.drop_and_create
+    DtxSlugPage.migrator.drop_and_create
+    DtxSlugEntry.migrator.drop_and_create
   end
 
   before_each do
@@ -142,6 +144,22 @@ describe "Grant::DelegatedType" do
     end
   end
 
+  describe "String keys" do
+    it "works with a typed foreign key and String primary keys" do
+      DtxSlugEntry.clear
+      DtxSlugPage.clear
+      page = DtxSlugPage.create!(id: "home", heading: "Home")
+      entry = DtxSlugEntry.create!(entryable: page)
+      found = DtxSlugEntry.find!(entry.id)
+      found.dtx_slug_page?.should be_true
+      found.dtx_slug_page_id.should eq("home")
+      found.dtx_slug_page.not_nil!.heading.should eq("Home")
+      DtxSlugEntry.includes(:entryable).select.to_a.first.dtx_slug_page.not_nil!.heading.should eq("Home")
+      found.destroy
+      DtxSlugPage.find("home").should be_nil
+    end
+  end
+
   describe "dependent" do
     it "destroys the target with dependent: :destroy" do
       message = DtxMessage.create!(body: "gone")
@@ -203,6 +221,20 @@ end
     table dtx_delete_holders
     column id : Int64, primary: true
     delegated_type :entryable, types: {DtxAdminNote}, dependent: :delete
+  end
+
+  class DtxSlugPage < Grant::Base
+    connection {{ adapter_literal }}
+    table dtx_slug_pages
+    column id : String, primary: true, auto: false
+    column heading : String
+  end
+
+  class DtxSlugEntry < Grant::Base
+    connection {{ adapter_literal }}
+    table dtx_slug_entries
+    column id : Int64, primary: true
+    delegated_type :entryable, types: {DtxSlugPage}, dependent: :destroy, foreign_key: entryable_id : String?, optional: true
   end
 
   class DtxPlainHolder < Grant::Base

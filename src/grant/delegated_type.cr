@@ -23,9 +23,9 @@
 #
 # entry = Entry.new
 # entry.build_entryable(Message, body: "Hello")
-# entry.message?      # => true
-# entry.message       # => the Message
-# entry.comment       # => nil
+# entry.message?       # => true
+# entry.message        # => the Message
+# entry.comment        # => nil
 # entry.entryable_name # => "message"
 # ```
 #
@@ -147,7 +147,7 @@ module Grant::DelegatedType
       # The {{t}} target when the stored type matches, else `nil`.
       def {{short.id}} : {{t}}?
         return nil unless {{short.id}}?
-        {{role.id}}.as({{t}}?)
+        {{role.id}}.as?({{t}})
       end
 
       # The foreign key when the stored type is {{t}}, else `nil`.
