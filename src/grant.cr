@@ -23,6 +23,8 @@ module Grant
 end
 
 require "./grant/notifications"
+require "./grant/query_logs"
+require "./grant/log"
 require "./adapter/base"
 require "./grant/sanitization"
 require "./grant/connection_registry"

@@ -26,6 +26,7 @@ module Grant::Query::Executor
       else
         Grant::Logs::SQL.debug { "Query executed (#{duration_ms}ms) - #{sql} [#{model_name}] [rows: #{row_count}]" }
       end
+      Grant::Logs.log_verbose(sql, duration, model_name)
     end
   end
 end
