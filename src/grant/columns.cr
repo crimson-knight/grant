@@ -153,7 +153,10 @@ module Grant::Columns
     {% converter = (options[:converter] && !options[:converter].nil?) ? options[:converter] : nil %}
     {% primary = (options[:primary] && !options[:primary].nil?) ? options[:primary] : false %}
     {% auto = (options[:auto] && !options[:auto].nil?) ? options[:auto] : false %}
-    {% auto = (!options || (options && options[:auto] == nil)) && primary %}
+    # Only integer and UUID keys can be generated on insert, so any other
+    # primary key type (a String slug, say) defaults to `auto: false`.
+    {% auto_generatable = not_nilable_type.resolve < Int || not_nilable_type.resolve == UUID %}
+    {% auto = (!options || (options && options[:auto] == nil)) && primary && auto_generatable %}
 
     {% nilable = (type.is_a?(Path) ? type.resolve.nilable? : (type.is_a?(Union) ? type.types.any?(&.resolve.nilable?) : (type.is_a?(Generic) ? type.resolve.nilable? : type.nilable?))) %}
 
