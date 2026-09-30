@@ -16,9 +16,9 @@ module Grant::Schema
       return nil if deferrable.nil? || deferrable == false
       raise UnsupportedOperation.new("Only PostgreSQL supports deferrable constraints ('#{name}')") unless dialect.pg?
       case deferrable
-      when :deferred            then "DEFERRABLE INITIALLY DEFERRED"
-      when :immediate, true     then "DEFERRABLE INITIALLY IMMEDIATE"
-      else                           raise InvalidDefinition.new("Unknown deferrable: #{deferrable.inspect}; use true, :immediate or :deferred")
+      when :deferred        then "DEFERRABLE INITIALLY DEFERRED"
+      when :immediate, true then "DEFERRABLE INITIALLY IMMEDIATE"
+      else                       raise InvalidDefinition.new("Unknown deferrable: #{deferrable.inspect}; use true, :immediate or :deferred")
       end
     end
   end

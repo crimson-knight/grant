@@ -450,7 +450,7 @@ module Grant::Schema
       old_name = old.to_s
       new_name = new.to_s
       result = case dialect
-               in .mysql? then ["RENAME TABLE #{dialect.quote(old_name)} TO #{dialect.quote(new_name)}"]
+               in .mysql?        then ["RENAME TABLE #{dialect.quote(old_name)} TO #{dialect.quote(new_name)}"]
                in .pg?, .sqlite? then ["ALTER TABLE #{dialect.quote(old_name)} RENAME TO #{dialect.quote(new_name)}"]
                end
       if dialect.pg?

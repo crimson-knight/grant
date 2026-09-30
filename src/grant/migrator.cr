@@ -196,6 +196,9 @@ module Grant::Migrator
           statements << "COMMENT ON COLUMN #{table}.#{Model.adapter.quote(name)} IS #{dialect.quote_literal(text)}"
         end
       end
+      {% for method in Model.class.methods.select { |method| method.name.starts_with?("__grant_index_") } %}
+        statements.concat Model.{{method.name.id}}(Model.table_name).statements(dialect)
+      {% end %}
       statements
     end
 

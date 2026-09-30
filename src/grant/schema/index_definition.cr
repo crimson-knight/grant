@@ -107,17 +107,17 @@ module Grant::Schema
       names = to_names(columns)
       orders = {} of ::String => ::String
       case order
-      when Symbol then names.each { |column| orders[column] = order.to_s.upcase }
+      when Symbol           then names.each { |column| orders[column] = order.to_s.upcase }
       when Hash, NamedTuple then order.each { |column, direction| orders[column.to_s] = direction.to_s.upcase }
       end
       classes = {} of ::String => ::String
       case opclass
-      when ::String then names.each { |column| classes[column] = opclass }
+      when ::String         then names.each { |column| classes[column] = opclass }
       when Hash, NamedTuple then opclass.each { |column, klass| classes[column.to_s] = klass }
       end
       lengths = {} of ::String => Int32
       case length
-      when Int32 then names.each { |column| lengths[column] = length }
+      when Int32            then names.each { |column| lengths[column] = length }
       when Hash, NamedTuple then length.each { |column, size| lengths[column.to_s] = size }
       end
       new(table.to_s, names, name.try(&.to_s), unique, where, using.try(&.to_s), orders, classes,
@@ -187,7 +187,7 @@ module Grant::Schema
     end
 
     private def column_sql(dialect : Dialect, column : ::String) : ::String
-      sql = Naming.identifier?(column) ? dialect.quote(column) : (dialect.mysql? ? "(#{column})" : "(#{column})")
+      sql = Naming.identifier?(column) ? dialect.quote(column) : "(#{column})"
       if size = @length[column]?
         sql += "(#{size})"
       end
