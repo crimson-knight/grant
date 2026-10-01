@@ -10,7 +10,7 @@
       "command": [
         "/bin/sh",
         "-c",
-        "export PG_DATABASE_URL=\"${PG_DATABASE_URL:-postgres://localhost/grant_parity_docs}\"; exec crystal-alpha spec \"$1\"",
+        "export PG_DATABASE_URL=\"${PG_DATABASE_URL:-postgres://localhost/grant_parity_docs}\"; exec crystal-alpha spec --incremental \"$1\"",
         "crystal-regression-gate",
         "{file}"
       ]
@@ -23,6 +23,7 @@
       "command": [
         "crystal-alpha",
         "spec",
+        "--incremental",
         "{file}"
       ]
     }
