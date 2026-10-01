@@ -597,9 +597,17 @@ module Grant::Columns
   #
   # `precision:` (0 to 9) truncates every stamped value to that many fractional
   # digits, so the in-memory value equals what a column of that precision keeps.
-  macro timestamps(precision = nil)
-    column created_at : Time?
-    column updated_at : Time?
+  #
+  # The same `precision:` shapes the DDL (`DATETIME(6)` / `TIMESTAMP(6)`), and
+  # `null: false` makes both columns `NOT NULL` (the default stays nullable).
+  macro timestamps(precision = nil, null = true)
+    {% if precision %}
+      column created_at : Time?, precision: {{ precision }}, null: {{ null }}
+      column updated_at : Time?, precision: {{ precision }}, null: {{ null }}
+    {% else %}
+      column created_at : Time?, null: {{ null }}
+      column updated_at : Time?, null: {{ null }}
+    {% end %}
     {% if precision %}
       def self.timestamp_precision : Int32?
         {{ precision }}

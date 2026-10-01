@@ -76,6 +76,18 @@ module Grant::Schema
       bare = mysql? ? /\A(CURRENT_TIMESTAMP|CURRENT_DATE|CURRENT_TIME|NOW|LOCALTIMESTAMP|LOCALTIME)(\(\d*\))?\z/i : /\ACURRENT_(TIMESTAMP|DATE|TIME)\z/i
       trimmed.matches?(bare) ? trimmed : "(#{trimmed})"
     end
+
+    # Like `#default_expression` for a column of native type *type*. MySQL
+    # refuses `DEFAULT CURRENT_TIMESTAMP` on `DATETIME(6)` unless the default
+    # carries the same number of fractional digits, so a bare time keyword
+    # takes them from the column type.
+    def default_expression(expression : String, type : String) : String
+      rendered = default_expression(expression)
+      return rendered unless mysql?
+      digits = type.match(/\A(?:DATETIME|TIMESTAMP|TIME)\((\d+)\)/i).try(&.[1])
+      return rendered if digits.nil? || digits == "0"
+      rendered.match(/\A(CURRENT_TIMESTAMP|CURRENT_TIME|NOW|LOCALTIMESTAMP|LOCALTIME)\z/i) ? "#{rendered}(#{digits})" : rendered
+    end
   end
 
   # Native column types for Crystal types that the adapters' own `Schema::TYPES`

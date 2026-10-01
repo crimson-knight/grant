@@ -226,6 +226,13 @@ module Grant::Migrator
       list
     end
 
+    # The created_at/updated_at type with the `precision:` of the `timestamps`
+    # macro: fractional digits on PostgreSQL and MySQL (SQLite stores text).
+    private def stamped_type(type : String, precision : Int32?) : String
+      return type if precision.nil? || dialect.sqlite?
+      dialect.mysql? ? type.gsub("(6)", "(#{precision})") : type.sub(/\ATIMESTAMP(\(\d+\))?/i, "TIMESTAMP(#{precision})")
+    end
+
     # One column definition line, without its trailing newline.
     private def column_line(name : String, key : String, verbatim : String?, timestamp : Bool, nilable : Bool,
                             null : Bool?, primary : Bool, limit : Int32?, precision : Int32?, scale : Int32?,
@@ -233,7 +240,7 @@ module Grant::Migrator
       type = if verbatim
                verbatim
              elsif timestamp
-               native_type(name)
+               stamped_type(native_type(name), precision)
              else
                Grant::Schema::TypeCatalog.refine(dialect, key, native_type(key), limit, precision, scale)
              end
@@ -249,7 +256,7 @@ module Grant::Migrator
         # MySQL's timestamp types already carry an explicit `NULL`.
         type = type.includes?(" NULL DEFAULT") ? type.sub(" NULL DEFAULT", " NOT NULL DEFAULT") : "#{type} NOT NULL"
       end
-      default = default_sql ? " DEFAULT #{dialect.default_expression(default_sql)}" : literal_default
+      default = default_sql ? " DEFAULT #{dialect.default_expression(default_sql, type)}" : literal_default
       line = "#{Model.adapter.quote(name)} #{type}#{default}"
       line += " COMMENT #{dialect.quote_literal(comment)}" if comment && dialect.mysql?
       line

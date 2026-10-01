@@ -61,12 +61,12 @@ describe "Column defaults" do
       my.change_column_default_statements(:users, :at, default_sql: "lower('A')").should eq ["ALTER TABLE `users` ALTER COLUMN `at` SET DEFAULT (lower('A'))"]
     end
 
-    it "needs a target and is unsupported on SQLite" do
+    it "needs a target, on SQLite too" do
       expect_raises(Grant::Schema::InvalidDefinition) do
         Grant::Schema::RecordingStatements.new(Grant::Schema::Dialect::Pg).change_column_default_statements(:users, :role)
       end
-      expect_raises(Grant::Schema::UnsupportedOperation, /table rebuild/) do
-        Grant::Schema::RecordingStatements.new(Grant::Schema::Dialect::Sqlite).change_column_default_statements(:users, :role, to: "x")
+      expect_raises(Grant::Schema::InvalidDefinition) do
+        Grant::Schema::RecordingStatements.new(Grant::Schema::Dialect::Sqlite).change_column_default_statements(:users, :role)
       end
     end
   end
@@ -105,10 +105,6 @@ describe "Column defaults" do
 
     it "changes a default in place, or says why it cannot" do
       statements = Grant::Schema::AdapterStatements.new(SchemaFixture.adapter)
-      if CURRENT_ADAPTER == "sqlite"
-        expect_raises(Grant::Schema::UnsupportedOperation) { statements.change_column_default(:m02a_default_rows, :role, to: "admin") }
-        next
-      end
       statements.change_column_default(:m02a_default_rows, :role, from: "member", to: "admin")
       insert = CURRENT_ADAPTER == "mysql" ? "INSERT INTO m02a_default_rows () VALUES ()" : "INSERT INTO m02a_default_rows DEFAULT VALUES"
       M02aDefaultRow.exec(insert)

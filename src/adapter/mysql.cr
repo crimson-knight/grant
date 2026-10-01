@@ -447,7 +447,9 @@ class Grant::Adapter::Mysql < Grant::Adapter::Base
   # Catalog queries read `information_schema` for *namespace* (a database name)
   # or, without one, the connection's selected database, one statement per kind
   # of catalog data. CAST(... AS CHAR) keeps
-  # every text column a String regardless of the server's column collation.
+  # every text column a String regardless of the server's column collation, and
+  # CAST(... AS SIGNED) keeps every flag and position an Int64 (MySQL 9 returns
+  # comparisons and unsigned columns as narrower integer types).
   def catalog_tables(namespace : String? = nil) : Array(String)
     names = [] of String
     catalog_query(<<-SQL, [namespace.as(DB::Any)]) { |rs| names << rs.read(String) }
@@ -462,8 +464,8 @@ class Grant::Adapter::Mysql < Grant::Adapter::Base
     filter = table ? "AND c.TABLE_NAME = ?" : ""
     sql = <<-SQL
       SELECT CAST(c.TABLE_NAME AS CHAR), CAST(c.COLUMN_NAME AS CHAR), CAST(c.COLUMN_TYPE AS CHAR),
-             c.IS_NULLABLE = 'YES', CAST(c.COLUMN_DEFAULT AS CHAR), COALESCE(s.SEQ_IN_INDEX, 0),
-             c.EXTRA LIKE '%auto_increment%', c.ORDINAL_POSITION, CAST(c.COLUMN_COMMENT AS CHAR)
+             CAST(c.IS_NULLABLE = 'YES' AS SIGNED), CAST(c.COLUMN_DEFAULT AS CHAR), CAST(COALESCE(s.SEQ_IN_INDEX, 0) AS SIGNED),
+             CAST(c.EXTRA LIKE '%auto_increment%' AS SIGNED), CAST(c.ORDINAL_POSITION AS SIGNED), CAST(c.COLUMN_COMMENT AS CHAR)
       FROM information_schema.COLUMNS c
       LEFT JOIN information_schema.STATISTICS s
         ON s.TABLE_SCHEMA = c.TABLE_SCHEMA AND s.TABLE_NAME = c.TABLE_NAME
@@ -497,7 +499,7 @@ class Grant::Adapter::Mysql < Grant::Adapter::Base
   def catalog_indexes(table : String? = nil, namespace : String? = nil) : Array(Grant::Schema::IndexInfo)
     filter = table ? "AND TABLE_NAME = ?" : ""
     sql = <<-SQL
-      SELECT CAST(TABLE_NAME AS CHAR), CAST(INDEX_NAME AS CHAR), NON_UNIQUE, CAST(COLUMN_NAME AS CHAR)
+      SELECT CAST(TABLE_NAME AS CHAR), CAST(INDEX_NAME AS CHAR), CAST(NON_UNIQUE AS SIGNED), CAST(COLUMN_NAME AS CHAR)
       FROM information_schema.STATISTICS
       WHERE TABLE_SCHEMA = COALESCE(?, DATABASE()) AND INDEX_NAME <> 'PRIMARY' #{filter}
       ORDER BY TABLE_NAME, INDEX_NAME, SEQ_IN_INDEX

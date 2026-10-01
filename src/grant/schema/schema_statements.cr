@@ -126,24 +126,21 @@ module Grant::Schema
 
     # Returns the SQL that adds `created_at` and `updated_at` to *table*.
     #
-    # SQLite cannot add a `NOT NULL` column without a default, so
-    # `null: false` there needs `default:`; pass `null: true` or rebuild the
-    # table instead.
+    # SQLite cannot add a `NOT NULL` column without a default in place, so
+    # the table is rebuilt (`TableRebuild`); that works while the table is
+    # empty and fails on a populated table, as PostgreSQL does. Pass
+    # `null: true` or a default to add the columns to a table that has rows.
     def add_timestamps_statements(table : TableName, null : Bool = false, precision : Int32? = 6,
                                   default : DefaultLiteral | Unset = UNSET, default_sql : ::String? = nil) : Array(::String)
-      dialect = self.dialect
-      if dialect.sqlite? && !null && default.is_a?(Unset) && default_sql.nil?
-        raise UnsupportedOperation.new("SQLite cannot add NOT NULL timestamps to '#{table}' without a default; pass null: true or a default:")
-      end
       definition = TableDefinition.new(table.to_s)
       definition.timestamps(null, precision, default, default_sql)
-      adds = definition.columns.map { |column| "ADD COLUMN #{column.to_sql(dialect)}" }
-      alter_each(dialect, table.to_s, adds)
+      steps = definition.columns.map { |column| step_add_column(table.to_s, column) }
+      render_steps(table.to_s, steps, true)
     end
 
     def add_timestamps(table : TableName, null : Bool = false, precision : Int32? = 6,
                        default : DefaultLiteral | Unset = UNSET, default_sql : ::String? = nil) : Nil
-      add_timestamps_statements(table, null, precision, default, default_sql).each { |sql| execute sql }
+      execute_batch add_timestamps_statements(table, null, precision, default, default_sql)
     end
 
     # Returns the SQL that drops `created_at` and `updated_at` from *table*.
@@ -161,15 +158,29 @@ module Grant::Schema
     # expression *default_sql*. `to: nil` drops the default. *from* is the
     # previous default; it is accepted so a caller can record the inverse.
     #
-    # SQLite has no `ALTER COLUMN` and raises `UnsupportedOperation`.
+    # SQLite has no `ALTER COLUMN`: the table is rebuilt with the new default
+    # (see `TableRebuild`), copying every row.
     def change_column_default_statements(table : TableName, column : ::String | Symbol,
                                          to : DefaultLiteral | Unset = UNSET, default_sql : ::String? = nil,
                                          from : DefaultLiteral | Unset = UNSET) : Array(::String)
-      dialect = self.dialect
       if dialect.sqlite?
-        raise UnsupportedOperation.new("SQLite cannot change the default of '#{table}.#{column}' in place; it needs a table rebuild")
+        return render_steps(table.to_s, [step_change_column_default(table.to_s, column.to_s, to, default_sql)], false)
       end
-      head = "ALTER TABLE #{dialect.quote(table.to_s)} ALTER COLUMN #{dialect.quote(column.to_s)}"
+      change_column_default_sql(table.to_s, column.to_s, to, default_sql)
+    end
+
+    def change_column_default(table : TableName, column : ::String | Symbol,
+                              to : DefaultLiteral | Unset = UNSET, default_sql : ::String? = nil,
+                              from : DefaultLiteral | Unset = UNSET) : Nil
+      execute_batch change_column_default_statements(table, column, to, default_sql, from)
+    end
+
+    # The `ALTER COLUMN ... SET/DROP DEFAULT` statement of PostgreSQL and MySQL.
+    #
+    # :nodoc:
+    def change_column_default_sql(table : ::String, column : ::String, to : DefaultLiteral | Unset, default_sql : ::String?) : Array(::String)
+      dialect = self.dialect
+      head = "ALTER TABLE #{dialect.quote(table)} ALTER COLUMN #{dialect.quote(column)}"
       if expression = default_sql
         ["#{head} SET DEFAULT #{dialect.default_expression(expression)}"]
       elsif to.is_a?(Unset)
@@ -179,12 +190,6 @@ module Grant::Schema
       else
         ["#{head} SET DEFAULT #{dialect.quote_literal(to)}"]
       end
-    end
-
-    def change_column_default(table : TableName, column : ::String | Symbol,
-                              to : DefaultLiteral | Unset = UNSET, default_sql : ::String? = nil,
-                              from : DefaultLiteral | Unset = UNSET) : Nil
-      change_column_default_statements(table, column, to, default_sql, from).each { |sql| execute sql }
     end
 
     private def drop_table_sql(dialect : Dialect, name : ::String, if_exists : Bool, cascade : Bool) : ::String
@@ -359,9 +364,13 @@ module Grant::Schema
     def catalog_sqlite_table(table : ::String) : {::String, Array(::String)}
       create = nil.as(::String?)
       indexes = [] of ::String
+      # An attached database has its own catalog: `<schema>.sqlite_master`.
+      schema = Naming.schema_of(table)
+      bare = table.rpartition('.').last
+      master = schema ? "#{dialect.quote(schema)}.sqlite_master" : "sqlite_master"
       @adapter.open do |db|
-        create = db.query_one?("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?", table, as: ::String?)
-        db.query_each("SELECT sql FROM sqlite_master WHERE type = 'index' AND tbl_name = ? AND sql IS NOT NULL", table) do |rs|
+        create = db.query_one?("SELECT sql FROM #{master} WHERE type = 'table' AND name = ?", bare, as: ::String?)
+        db.query_each("SELECT sql FROM #{master} WHERE type = 'index' AND tbl_name = ? AND sql IS NOT NULL", bare) do |rs|
           indexes << rs.read(::String)
         end
       end

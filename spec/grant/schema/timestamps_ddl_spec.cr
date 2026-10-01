@@ -48,14 +48,17 @@ describe "Timestamp DDL" do
       ]
     end
 
-    it "uses one ALTER per column on SQLite and refuses a NOT NULL add without default" do
+    it "uses one ALTER per column on SQLite and rebuilds the table for a NOT NULL add without default" do
       lite = Grant::Schema::RecordingStatements.new(Grant::Schema::Dialect::Sqlite)
       lite.add_timestamps_statements(:users, null: true).should eq [
         "ALTER TABLE \"users\" ADD COLUMN \"created_at\" DATETIME",
         "ALTER TABLE \"users\" ADD COLUMN \"updated_at\" DATETIME",
       ]
       lite.remove_timestamps_statements(:users).size.should eq 2
-      expect_raises(Grant::Schema::UnsupportedOperation, /without a default/) { lite.add_timestamps_statements(:users) }
+      lite.sqlite_tables["users"] = {%(CREATE TABLE "users" ("id" INTEGER PRIMARY KEY AUTOINCREMENT, "name" VARCHAR(255))), [] of String}
+      rebuild = lite.add_timestamps_statements(:users)
+      rebuild.first.should eq "PRAGMA foreign_keys = OFF"
+      rebuild.any?(&.includes?(%("created_at" DATETIME NOT NULL))).should be_true
       lite.add_timestamps_statements(:users, default: "1970-01-01 00:00:00").first.should contain "NOT NULL DEFAULT '1970-01-01 00:00:00'"
     end
   end
@@ -95,7 +98,6 @@ describe "Timestamp DDL" do
       statements.drop_table(:m02a_stamps, if_exists: true)
       statements.create_table(:m02a_stamps) { |t| t.string :name }
       if CURRENT_ADAPTER == "sqlite"
-        expect_raises(Grant::Schema::UnsupportedOperation) { statements.add_timestamps(:m02a_stamps) }
         statements.add_timestamps(:m02a_stamps, default: "1970-01-01 00:00:00")
       else
         statements.add_timestamps(:m02a_stamps)

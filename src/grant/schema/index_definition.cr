@@ -31,6 +31,20 @@ module Grant::Schema
       "#{singularize(table.to_s.rpartition('.').last)}_id"
     end
 
+    # The schema (or MySQL database) part of a dotted table name, or nil.
+    def self.schema_of(table : ::String | Symbol) : ::String?
+      schema, dot, _ = table.to_s.rpartition('.')
+      dot.empty? ? nil : schema
+    end
+
+    # *name* prefixed with the schema of *table* when it has one. PostgreSQL
+    # and SQLite keep an index in its table's schema, and DROP, ALTER and
+    # COMMENT have to say which.
+    def self.in_schema_of(table : ::String | Symbol, name : ::String | Symbol) : ::String
+      schema = schema_of(table)
+      schema ? "#{schema}.#{name}" : name.to_s
+    end
+
     # `index_<table>_on_<a>_and_<b>`, ActiveRecord's default index name.
     def self.index_name(table : ::String | Symbol, columns : Array(::String)) : ::String
       "index_#{table.to_s.rpartition('.').last}_on_#{columns.join("_and_")}"
@@ -156,7 +170,12 @@ module Grant::Schema
         io << "INDEX "
         io << "CONCURRENTLY " if dialect.pg? && @algorithm == :concurrently
         io << "IF NOT EXISTS " if @if_not_exists && !dialect.mysql?
-        io << dialect.quote(name) << " ON " << dialect.quote(@table)
+        # SQLite names the schema on the index and not on the table.
+        if dialect.sqlite?
+          io << dialect.quote(Naming.in_schema_of(@table, name)) << " ON " << dialect.quote(@table.rpartition('.').last)
+        else
+          io << dialect.quote(name) << " ON " << dialect.quote(@table)
+        end
         io << " USING " << @using if dialect.pg? && @using
         io << " (" << @columns.map { |column| column_sql(dialect, column) }.join(", ") << ')'
         if dialect.mysql? && (using = @using) && !{"fulltext", "spatial"}.includes?(using.downcase)
@@ -178,7 +197,7 @@ module Grant::Schema
     def statements(dialect : Dialect) : Array(::String)
       result = [to_sql(dialect)]
       if dialect.pg? && (text = @comment)
-        result << "COMMENT ON INDEX #{dialect.quote(name)} IS #{dialect.quote_literal(text)}"
+        result << "COMMENT ON INDEX #{dialect.quote(Naming.in_schema_of(@table, name))} IS #{dialect.quote_literal(text)}"
       end
       result
     end
