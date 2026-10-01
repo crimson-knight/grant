@@ -256,7 +256,11 @@ class Grant::Query::Builder(Model)
     validated = Grant::Query::SqlExpression.validate!(sql, "JOIN fragment")
     arguments = [] of Grant::Columns::Type
     arguments << validated
-    binds.each { |value| arguments << value.as(Grant::Columns::Type) }
+    binds.each do |value|
+      raise ArgumentError.new("A JOIN bind must be a column value, not #{value.class}") unless value.is_a?(Grant::Columns::Type)
+
+      arguments << value
+    end
     add_join_clause({type: :raw, table: "", on: Grant::Sanitization.sanitize_sql_array(arguments, Model.adapter)})
     self
   end
