@@ -1723,7 +1723,7 @@ class Grant::Query::Builder(Model)
   # User.where(active: true).touch_all                # bump updated_at
   # User.where(active: true).touch_all(:last_seen_at) # also bump last_seen_at
   # ```
-  def touch_all(*fields, time : Time = Time.local(Grant.settings.default_timezone)) : Int64
+  def touch_all(*fields, time : Time = Grant::Timestamps.current_time) : Int64
     return 0_i64 if is_none?
 
     Model.guard_writes!

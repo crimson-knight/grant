@@ -413,7 +413,7 @@ module Grant::Querying
     end
 
     # Updates updated_at timestamp for all records matching the given criteria
-    def touch_all(*fields, time : Time = Time.local(Grant.settings.default_timezone)) : Int64
+    def touch_all(*fields, time : Time = Grant::Timestamps.current_time) : Int64
       guard_writes!
       current_scope.touch_all(*fields, time: time)
     end

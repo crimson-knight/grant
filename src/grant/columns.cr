@@ -594,9 +594,17 @@ module Grant::Columns
   end
 
   # include created_at and updated_at that will automatically be updated
-  macro timestamps
+  #
+  # `precision:` (0 to 9) truncates every stamped value to that many fractional
+  # digits, so the in-memory value equals what a column of that precision keeps.
+  macro timestamps(precision = nil)
     column created_at : Time?
     column updated_at : Time?
+    {% if precision %}
+      def self.timestamp_precision : Int32?
+        {{ precision }}
+      end
+    {% end %}
   end
 
   def to_h

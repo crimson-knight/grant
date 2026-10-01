@@ -1183,7 +1183,7 @@ module Grant::Transactions
         if self.class.readonly_attributes.includes?({{ ivar.name.stringify }})
           raise Grant::ReadOnlyRecordError.new("#{self.class.name}#" + {{ ivar.name.stringify }} + " is read only")
         end
-        @{{ ivar.name.id }} = touch_time
+        @{{ ivar.name.id }} = Grant::Timestamps.stamp({{ ivar.name.stringify }}, touch_time, self.class.timestamp_precision)
         touch_fields << {{ ivar.name.stringify }}
       {% end %}
     {% end %}
@@ -1196,7 +1196,7 @@ module Grant::Transactions
               if self.class.readonly_attributes.includes?({{time_field.stringify}})
                 raise Grant::ReadOnlyRecordError.new("#{self.class.name}#" + {{time_field.stringify}} + " is read only")
               end
-              self.{{time_field.id}} = touch_time
+              self.{{time_field.id}} = Grant::Timestamps.stamp({{time_field.stringify}}, touch_time, self.class.timestamp_precision)
               touch_fields << {{time_field.stringify}} unless touch_fields.includes?({{time_field.stringify}})
           {% end %}
         else

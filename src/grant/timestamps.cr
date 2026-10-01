@@ -3,14 +3,21 @@ require "./settings"
 # Automatic timestamps, the per-model `record_timestamps` switch, and the
 # block-scoped `no_touching` / `suppress` helpers.
 #
+# `created_on` / `updated_on` columns are date columns: Crystal has no `Date`
+# type, so they are `Time` values stamped at midnight UTC of the current date in
+# the default timezone (`date_timestamps` declares them with a `DATE` type).
+# `timestamps precision: 3` truncates every stamped value to milliseconds.
+#
 # ```
 # class Post < Grant::Base
 #   column id : Int64, primary: true
 #   column title : String
-#   timestamps
+#   timestamps precision: 3
 #
 #   record_timestamps false # opt this model out of automatic stamping
 # end
+#
+# Post.record_timestamps = true # switch it back on at run time
 #
 # Post.no_touching { post.touch }     # touch becomes a no-op inside the block
 # Post.suppress { Post.create!(...) } # save becomes a no-op inside the block
@@ -23,6 +30,44 @@ module Grant::Timestamps
   # configured default timezone.
   def self.current_time : Time
     Time.local(Grant.settings.default_timezone)
+  end
+
+  @@overrides = {} of String => Bool
+
+  # Run-time `Model.record_timestamps = value` settings by model name. The hash
+  # is replaced, never mutated, so readers take no lock.
+  #
+  # :nodoc:
+  def self.overrides : Hash(String, Bool)
+    @@overrides
+  end
+
+  # :nodoc:
+  def self.override(model_name : String, value : Bool) : Nil
+    updated = @@overrides.dup
+    updated[model_name] = value
+    @@overrides = updated
+  end
+
+  # The value to store in the timestamp column *column_name* for the instant
+  # *time*: the date at midnight UTC for `*_on` columns, otherwise *time*
+  # truncated to *precision* fractional digits (all digits when nil).
+  def self.stamp(column_name : String, time : Time, precision : Int32? = nil) : Time
+    if column_name.ends_with?("_on")
+      local = time.in(Grant.settings.default_timezone)
+      Time.utc(local.year, local.month, local.day)
+    elsif precision
+      truncate(time, precision)
+    else
+      time
+    end
+  end
+
+  # *time* without the fractional digits beyond *precision* (0 to 9).
+  def self.truncate(time : Time, precision : Int32) : Time
+    return time if precision >= 9
+    unit = 10 ** (9 - precision.clamp(0, 9))
+    time - (time.nanosecond % unit).nanoseconds
   end
 
   # Counts of the `no_touching` / `suppress` blocks open on one fiber, keyed by
@@ -63,9 +108,38 @@ module Grant::Timestamps
   end
 
   module ClassMethods
-    # True unless the model declared `record_timestamps false`.
+    # Whether saves stamp the timestamp columns: the run-time
+    # `record_timestamps =` setting, else the `record_timestamps` declaration,
+    # else true.
     def record_timestamps? : Bool
+      overrides = Grant::Timestamps.overrides
+      unless overrides.empty?
+        __lineage_names.each do |model_name|
+          if found = overrides[model_name]?
+            return found
+          elsif overrides.has_key?(model_name)
+            return false
+          end
+        end
+      end
+      __record_timestamps_default
+    end
+
+    # Turns stamping on or off for this model and its subclasses at run time
+    # (ActiveRecord's `record_timestamps=`). Takes effect for every fiber.
+    def record_timestamps=(value : Bool) : Bool
+      Grant::Timestamps.override(name, value)
+      value
+    end
+
+    # :nodoc:
+    def __record_timestamps_default : Bool
       true
+    end
+
+    # Fractional digits kept in stamped values; nil keeps them all.
+    def timestamp_precision : Int32?
+      nil
     end
 
     # The timestamp columns this model declares (`created_at`, `updated_at`,
@@ -136,9 +210,22 @@ module Grant::Timestamps
   # end
   # ```
   macro record_timestamps(value)
-    def self.record_timestamps? : Bool
+    def self.__record_timestamps_default : Bool
       {{ value }}
     end
+  end
+
+  # Declares the date-granular `created_on` and `updated_on` columns (`DATE` in
+  # the database, `Time` at midnight UTC in Crystal).
+  #
+  # ```
+  # class Invoice < Grant::Base
+  #   date_timestamps
+  # end
+  # ```
+  macro date_timestamps
+    column created_on : Time?, column_type: "DATE"
+    column updated_on : Time?, column_type: "DATE"
   end
 
   # Sets the record's creation and/or update timestamps to *time* (default:
@@ -156,12 +243,13 @@ module Grant::Timestamps
   # user.set_timestamps(to: Time.utc(2020, 1, 1)) # pin a specific time
   # ```
   def set_timestamps(*, to time = Grant::Timestamps.current_time, mode = :create)
+    precision = self.class.timestamp_precision
     {% for ivar in @type.instance_vars %}
       {% if ivar.annotation(Grant::Column) && ivar.type == Time? %}
         {% if ["created_at", "created_on"].includes?(ivar.name.stringify) %}
-          @{{ ivar.name.id }} = time if mode == :create
+          @{{ ivar.name.id }} = Grant::Timestamps.stamp({{ ivar.name.stringify }}, time, precision) if mode == :create
         {% elsif ["updated_at", "updated_on"].includes?(ivar.name.stringify) %}
-          @{{ ivar.name.id }} = time
+          @{{ ivar.name.id }} = Grant::Timestamps.stamp({{ ivar.name.stringify }}, time, precision)
         {% end %}
       {% end %}
     {% end %}
