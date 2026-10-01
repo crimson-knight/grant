@@ -544,7 +544,9 @@ module Grant::Associations
     end
 
     # Points *child* at this record and makes it the loaded target, in memory.
-    protected def _grant_assign_{{method_name.id}}(child : {{class_name.id}}?)
+    #
+    # :nodoc:
+    def _grant_assign_{{method_name.id}}(child : {{class_name.id}}?)
       if child
         if owner_key = {% if options[:primary_key] %}self.read_attribute({{primary_key_name}}){% else %}self.read_attribute(self.class.primary_name){% end %}
           child.set_attributes({ {{foreign_key_name}} => owner_key })
@@ -612,13 +614,20 @@ module Grant::Associations
   #
   # * `#posts` — returns a `Grant::AssociationCollection(User, Post)` (or a
   #   `Grant::LoadedAssociationCollection` when eager-loaded). The collection is
-  #   `Enumerable` and also exposes `build`/`create`/`create!`/`find`/`find_by`/
-  #   `where`/`destroy_all`/`delete_all` (see `Grant::AssociationCollection`).
-  # * `#post_ids : Array` — the primary keys of the associated records.
+  #   `Enumerable` and a chainable relation: `build`/`create`/`create!`,
+  #   `find`/`find_by`/`find_or_create_by`, the ordinal finders (`first(n)`,
+  #   `last`, `take`, `second`...), `replace`/`concat`/`delete`/`clear`, and the
+  #   query methods (`where`, `order`, `limit`, `pluck`, `sum`, `find_each` ...)
+  #   that run as SQL within the owner scope (see `Grant::AssociationCollection`).
+  # * `#posts=(records : Array)` — replaces the collection. On a saved owner the
+  #   change is written at once (`replace`); on an unsaved owner the records wait
+  #   for its first save.
+  # * `#post_ids : Array(Int64)` — the primary keys, typed as the key column.
   # * `#post_ids=(ids : Array)` — reassigns the collection by primary key:
-  #   records whose IDs are listed have their FK pointed at this owner; records
-  #   previously in the collection but absent from *ids* have their FK nullified.
-  #   (Not generated for `through:` associations.)
+  #   listed records are saved with this owner as their parent (validations and
+  #   callbacks run); records no longer listed are removed by the association's
+  #   `dependent:` strategy (their FK is nullified by default). Numeric strings
+  #   are cast to the key type. Also generated for `through:` and `as:`.
   #
   # The optional second positional argument *scope* is an association scope
   # lambda that further filters the collection, e.g.
@@ -924,6 +933,15 @@ module Grant::Associations
           {{method_name.id}}.replace(records)
           return records
         end
+        _grant_stage_{{method_name.id}}(records)
+      end
+
+      # Points *records* at this record and makes them the loaded target, in
+      # memory; the owner's save writes them. Used for mass assignment
+      # (`set_attributes`), which never writes by itself.
+      #
+      # :nodoc:
+      def _grant_stage_{{method_name.id}}(records : Array({{class_name.id}}))
         owner_key = self.read_attribute({{primary_key_name}})
         if owner_key
           records.each do |record|
@@ -1019,22 +1037,22 @@ module Grant::Associations
           owner = record.as({{@type}})
           {% if type == :belongs_to || type == :has_one %}
             if value.nil?
-              owner.{{name.id}} = nil
+              {% if type == :has_one %}owner._grant_assign_{{name.id}}(nil){% else %}owner.{{name.id}} = nil{% end %}
               true
             elsif associated = value.as?({{target_class.id}})
-              owner.{{name.id}} = associated
+              {% if type == :has_one %}owner._grant_assign_{{name.id}}(associated){% else %}owner.{{name.id}} = associated{% end %}
               true
             else
               false
             end
           {% elsif type == :has_many %}
             if value.nil?
-              owner.{{name.id}} = [] of {{target_class.id}}
+              owner._grant_stage_{{name.id}}([] of {{target_class.id}})
               true
             elsif associated = value.as?(Array(Grant::Base))
               if associated.all? { |item| item.is_a?({{target_class.id}}) }
                 typed_associated = associated.map(&.as({{target_class.id}}))
-                owner.{{name.id}} = typed_associated
+                owner._grant_stage_{{name.id}}(typed_associated)
                 true
               else
                 false
