@@ -103,11 +103,18 @@ describe Grant::StatementInvalid do
       end
     end
 
-    it "reports no sql when the caller did not pass one" do
+    it "reports the statement that failed when the caller did not pass one" do
       error = expect_raises(Grant::StatementInvalid) do
         Parent.adapter.open { |db| db.exec "SELECT * FROM g01_missing_table" }
       end
-      error.sql.should be_nil
+      error.sql.should eq "SELECT * FROM g01_missing_table"
+    end
+
+    it "prefers the statement the caller passed" do
+      error = expect_raises(Grant::StatementInvalid) do
+        Parent.adapter.open("labelled statement") { |db| db.exec "SELECT * FROM g01_missing_table" }
+      end
+      error.sql.should eq "labelled statement"
     end
   end
 end
