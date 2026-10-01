@@ -7,7 +7,7 @@ require "uuid/yaml"
 
 module Grant::Columns
   alias SupportedArrayTypes = Array(String) | Array(Int16) | Array(Int32) | Array(Int64) | Array(Float32) | Array(Float64) | Array(Bool) | Array(UUID) | Array(BigDecimal)
-  alias Type = DB::Any | SupportedArrayTypes | UUID | BigDecimal
+  alias Type = DB::Any | SupportedArrayTypes | UUID | BigDecimal | Int8 | Int16
 
   # Virtual attributes can participate in model mass assignment without
   # becoming database columns. Encrypted attributes register their setters
@@ -157,11 +157,14 @@ module Grant::Columns
 
     {% column_type = (options[:column_type] && !options[:column_type].nil?) ? options[:column_type] : nil %}
     {% converter = (options[:converter] && !options[:converter].nil?) ? options[:converter] : nil %}
+    {% primary_option = options[:primary] ? true : false %}
     # A JSON::Any column stores a JSON document: a native jsonb column on
     # PostgreSQL and JSON text elsewhere. No converter needs to be declared.
     {% converter = "Grant::Converters::JsonDocument".id if converter == nil && not_nilable_type.resolve == JSON::Any %}
     # A BigDecimal column stores exact decimal text; `scale:` also rounds on assignment.
     {% converter = "Grant::Converters::Decimal".id if converter == nil && not_nilable_type.resolve == BigDecimal %}
+    # Int8, Int16 and limited integers are bound and read as Int64 (drivers have nothing narrower).
+    {% converter = parse_type("Grant::Converters::SmallInteger(#{not_nilable_type.resolve.id})") if converter == nil && !primary_option && (not_nilable_type.resolve == Int8 || not_nilable_type.resolve == Int16 || (options[:limit] && (not_nilable_type.resolve == Int32 || not_nilable_type.resolve == Int64))) %}
     {% primary = (options[:primary] && !options[:primary].nil?) ? options[:primary] : false %}
     # An explicit `auto:` on a primary key wins. Without one, only integer and
     # UUID keys default to `auto: true`, since only they can be generated on

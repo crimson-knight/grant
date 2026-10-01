@@ -83,6 +83,16 @@ module Grant::Type
     from_rs(result, t)
   end
 
+  # Converts a `DB::ResultSet` to `Bytes` (a `BLOB` or `BYTEA` column).
+  def from_rs(result : DB::ResultSet, t : Bytes.class) : Bytes
+    result.read(Bytes)
+  end
+
+  # Converts a `DB::ResultSet` to `Bytes?`.
+  def from_rs(result : DB::ResultSet, t : Bytes?.class) : Bytes?
+    result.read(Bytes?)
+  end
+
   # Converts a `DB::ResultSet` to `UUID`.
   def from_rs(result : DB::ResultSet, t : UUID.class) : UUID
     value = result.read(UUID | String | Bytes)
