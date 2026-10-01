@@ -5,6 +5,7 @@ require "./encryption/config"
 require "./encryption/scheme"
 require "./encryption/context"
 require "./encryption/serializer"
+require "./encryption/sealed"
 require "./encryption/compression"
 require "./encryption/log_filter"
 require "./encryption/query_extensions"
@@ -267,6 +268,14 @@ module Grant::Encryption
       rewrite_encrypted_columns(plaintext: true)
     end
 
+    # Opens every lazily decrypted attribute still sealed on this record. Called
+    # before a whole-record serialization.
+    #
+    # :nodoc:
+    def __unseal_lazy_attributes : Nil
+      self.class.encrypted_attributes.each_value(&.unseal(self))
+    end
+
     private def encrypted_attribute_named(attribute_name : Symbol | String) : Grant::Encryption::EncryptedAttribute
       self.class.encrypted_query_attribute(attribute_name.to_s) ||
         raise ArgumentError.new("#{self.class.name}##{attribute_name} is not an encrypted attribute")
@@ -357,10 +366,17 @@ module Grant::Encryption
     #   schemes tried, newest first, when a stored value does not decrypt with
     #   the current keys. `key` is Base64 and is the deterministic key when the
     #   scheme is deterministic.
+    # * `lazy: true` — typed `String` attributes only. The value is not
+    #   decrypted when a row loads but on first read (and then kept), so reading
+    #   rows that never touch the attribute costs no decryption, and an
+    #   undecryptable value fails at the read instead of at the load. The
+    #   attribute's readers, `inspect`, `attributes`, `to_json`/`to_yaml`,
+    #   `reload` and `dup` all see a consistent value. A full-row `save` reads
+    #   every encrypted attribute. Default `false`.
     # * `support_unencrypted_data: true` — read values that were stored before
     #   encryption was enabled as they are. Overrides the global setting for
     #   this attribute; deterministic lookups then also match the plaintext.
-    macro encrypts(attribute, deterministic = false, downcase = false, ignore_case = false, compress = false, compress_threshold = nil, previous = nil, support_unencrypted_data = nil)
+    macro encrypts(attribute, deterministic = false, downcase = false, ignore_case = false, compress = false, compress_threshold = nil, previous = nil, support_unencrypted_data = nil, lazy = nil)
       {% typed = attribute.is_a?(TypeDeclaration) %}
       {% attr = typed ? attribute.var.id : attribute.id %}
       {% attr_name = attr.stringify %}
@@ -378,6 +394,13 @@ module Grant::Encryption
       {% if (downcase || ignore_case) && typed && base.resolve != String %}
         {% raise "encrypts #{attr_name}: downcase: and ignore_case: apply to String attributes only" %}
       {% end %}
+      {% if lazy && !typed %}
+        {% raise "encrypts #{attr_name}: lazy: applies to the typed form, `encrypts #{attr_name} : String`" %}
+      {% end %}
+      {% if lazy && typed && base.resolve != String %}
+        {% raise "encrypts #{attr_name}: lazy: true applies to String attributes only; other types are decrypted when the row loads" %}
+      {% end %}
+      {% lazy_on = typed && lazy == true %}
       {% if previous && !previous.is_a?(ArrayLiteral) %}
         {% raise "encrypts #{attr_name}: previous: must be an array literal of schemes" %}
       {% end %}
@@ -419,6 +442,12 @@ module Grant::Encryption
             transparent: {{typed}},
             type_name: {{typed ? base.stringify : "String"}}
           ),
+          {% if lazy_on %}
+            unsealer: ->(record : Grant::Base) do
+              record.as({{@type}}).__unseal_{{attr}}
+              nil
+            end,
+          {% end %}
           plain_reader: ->(record : Grant::Base) do
             {% if typed %}
               record.as({{@type}}).{{attr}}.try { |value| Grant::Encryption::Serializer.dump(value) }
@@ -450,12 +479,20 @@ module Grant::Encryption
 
           def to_db(value : {{base}}?) : Grant::Columns::Type
             return nil if value.nil?
+            {% if lazy_on %}
+              # Still sealed: the column already holds this ciphertext.
+              return Grant::Encryption::Sealed.stored(value) if Grant::Encryption::Sealed.sealed?(value)
+            {% end %}
             {{@type}}.{{attr}}_encrypted_attribute.seal(Grant::Encryption::Serializer.dump(value))
           end
 
           def from_rs(result : ::DB::ResultSet) : {{base}}?
             stored = result.read(String?)
             return nil if stored.nil?
+            {% if lazy_on %}
+              # Inside `without_encryption` the raw text is the value, as ever.
+              return Grant::Encryption::Sealed.wrap(stored) unless Grant::Encryption.current_context.encryption_disabled?
+            {% end %}
             {% if base.resolve != String %}
               if Grant::Encryption.current_context.encryption_disabled?
                 raise Grant::Encryption::UnsupportedTypeError.new("{{@type}}.{{attr_name.id}} is a {{base}} and cannot be read raw inside without_encryption")
@@ -466,7 +503,7 @@ module Grant::Encryption
         end
 
         {% if ignore_case %}
-          encrypts {{("original_" + attr_name).id}} : String?
+          encrypts {{("original_" + attr_name).id}} : String?{{ ", lazy: true".id if lazy_on }}
         {% end %}
 
         column {{attr}} : {{base}}?, converter: ::{{@type}}::{{attr_name.camelcase.id}}EncryptionConverter, column_type: "TEXT"
@@ -477,11 +514,71 @@ module Grant::Encryption
           end
         {% end %}
 
+        {% if lazy_on %}
+          # Opens the stored ciphertext on first use and keeps the plaintext. Keys
+          # pinned by `with_context` apply at the time of the read; a record
+          # loaded outside `without_encryption` reads as plaintext inside it, as
+          # an eagerly decrypted one does.
+          # :nodoc:
+          def __unseal_{{attr}} : String?
+            current = @{{attr}}
+            return current unless current && Grant::Encryption::Sealed.sealed?(current)
+
+            @{{attr}} = self.class.{{attr}}_encrypted_attribute.open_with_index(Grant::Encryption::Sealed.stored(current))[0]
+          end
+
+          def {{attr}} : String?
+            __unseal_{{attr}}
+          end
+
+          def {{attr}}? : String?
+            __unseal_{{attr}}
+          end
+
+          def {{attr}}! : String
+            __unseal_{{attr}} || raise NilAssertionError.new({{@type.name.stringify}} + "#" + {{attr_name}} + " cannot be nil")
+          end
+
+          def {{attr}}_in_database : String?
+            __unseal_{{attr}}
+            previous_def
+          end
+
+          def {{attr}}_previously_was : String?
+            __unseal_{{attr}}
+            previous_def
+          end
+
+          def {{attr}}=(value : String?)
+            Grant::Encryption::Sealed.guard_plaintext!({{attr_name}}, value)
+            previous_def(value)
+          end
+
+          def to_json(json : ::JSON::Builder) : Nil
+            __unseal_lazy_attributes
+            super
+          end
+
+          def to_yaml(yaml : ::YAML::Nodes::Builder) : Nil
+            __unseal_lazy_attributes
+            super
+          end
+
+          def read_attribute(name : String) : Grant::Columns::Type
+            self.class.encrypted_query_attribute(name).try(&.unseal(self))
+            super
+          end
+        {% end %}
+
         {% if ignore_case %}
           # The original case comes from the companion column; the column of
           # this name only holds the lower-cased value the lookups match.
           def {{attr}} : String?
-            @original_{{attr}} || @{{attr}}
+            {% if lazy_on %}
+              original_{{attr}} || __unseal_{{attr}}
+            {% else %}
+              @original_{{attr}} || @{{attr}}
+            {% end %}
           end
 
           def {{attr}}=(value : String?)

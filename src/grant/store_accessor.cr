@@ -32,6 +32,10 @@ require "./serializers/jsonb"
 # u.notifications? # => true
 # ```
 #
+# When the store is a `JSON::Any` column (`column settings : JSON::Any?`) the keys
+# are read from and written into that document instead; see
+# `Grant::JsonStoreAccessor` for the supported key types.
+#
 # Keys typed `Bool` also get a `key?` predicate. `prefix: true` (or a Symbol or
 # String) and `suffix:` name the accessors `settings_theme` and so on, to avoid
 # collisions between stores.
