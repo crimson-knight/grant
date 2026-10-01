@@ -117,6 +117,12 @@ describe "Timestamps" do
       W6Dated.find!(row.id).updated_on.should eq(Time.utc(2020, 5, 6))
     end
 
+    it "stamps updated_on with a date in the bulk touch" do
+      row = W6Dated.create!(title: "d")
+      W6Dated.where(id: row.id).touch_all(time: Time.utc(2022, 3, 4, 5, 6, 7)).should eq(1)
+      W6Dated.find!(row.id).updated_on.should eq(Time.utc(2022, 3, 4))
+    end
+
     it "uses the shared clock for the bulk touch default" do
       row = W6Dated.create!(title: "d")
       W6Stamped.create!(title: "other")
