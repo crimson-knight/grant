@@ -570,17 +570,21 @@ module Grant::Querying
       guard_writes!
       ensure_raw_sql_unscoped!
       mark_write_operation
-      clause = adapter.ensure_clause_template(clause)
-      adapter.open(clause, params, name) { |db| db.query(clause, args: adapter.normalize_bind_values(params)) { |rs| yield rs } }
+      clause = Grant::QueryLogs.append(adapter.ensure_clause_template(clause))
+      Grant::Logs.timed(adapter, clause, params) do
+        adapter.open(clause, params, name) { |db| db.query(clause, args: adapter.normalize_bind_values(params)) { |rs| yield rs } }
+      end
     end
 
     def scalar(clause : String = "", binds : Array(Grant::Columns::Type) = [] of Grant::Columns::Type)
       ensure_raw_sql_unscoped!
       mark_write_operation
       selected_adapter = adapter
-      statement = selected_adapter.ensure_clause_template(clause)
-      selected_adapter.open(statement, binds, name) do |database|
-        database.scalar(statement, args: selected_adapter.normalize_bind_values(binds))
+      statement = Grant::QueryLogs.append(selected_adapter.ensure_clause_template(clause))
+      Grant::Logs.timed(selected_adapter, statement, binds) do
+        selected_adapter.open(statement, binds, name) do |database|
+          database.scalar(statement, args: selected_adapter.normalize_bind_values(binds))
+        end
       end
     end
 

@@ -27,11 +27,15 @@ require "uri"
 # prepared-statement cache and `pg_stat_statements` grouping on servers that
 # hash the comment; keep such tags out if that matters more than tracing.
 #
-# Covered: every statement a relation builds (finders, `count`, `update_all`,
-# `delete_all`, ...) and the adapters' record `insert`, `update`, `delete`,
-# `select` and `exists?`. Statements written by hand (`Model.exec`, raw
-# connection calls) and the counter and bulk-insert helpers are sent as given;
-# call `QueryLogs.append` on their SQL to tag them.
+# Covered: every statement Grant sends, whichever path built it: relation
+# statements (finders, aggregations, `pluck`, `update_all`, `delete_all`, ...),
+# the adapters' record `insert`, `update`, `delete`, `select` and `exists?`,
+# counter updates, `insert_all`/`upsert_all`, raw `Model.exec`/`query`/`scalar`
+# and the `Grant.connection` helpers. The only statements sent as given are
+# those a block writes on the raw `DB::Connection` that `with_connection`
+# yields; call `QueryLogs.append` on their SQL to tag them. Request and job
+# context comes from the application through `with_context` (Grant does not
+# depend on a web framework).
 module Grant::QueryLogs
   # How the tags are written inside the comment.
   enum Format

@@ -64,7 +64,7 @@ describe Grant::Logs do
       verbose.should_not contain("src/grant/")
     end
 
-    it "labels creates, updates and destroys by table" do
+    it "labels creates, updates and destroys by model" do
       Grant::Logs.verbose_query_logs = true
 
       widget = VlWidget.new(label: "a")
@@ -74,7 +74,7 @@ describe Grant::Logs do
         widget.destroy
       end.select(&.includes?("↳")).map { |message| message.split(" (").first }
 
-      labels.should eq(["vl_widgets Create", "vl_widgets Update", "vl_widgets Destroy"])
+      labels.should eq(["VlWidget Create", "VlWidget Update", "VlWidget Destroy"])
     end
 
     it "captures no source location below the debug level" do

@@ -38,10 +38,41 @@ module Grant::Logs
     {% unless flag?(:release) %}
       return unless SQL.level <= ::Log::Severity::Debug
 
+      name ||= model_name_in(sql)
       location = source_location(caller)
       SQL.debug { "#{query_label(sql, name)} (#{format_milliseconds(elapsed_time)}ms)#{location ? "  ↳ #{location}" : ""}" }
     {% end %}
   end
+
+  # Runs a hand-written statement (raw `Model.exec`, `Grant.connection`) and
+  # writes its log entries afterwards, also when it raised. While the SQL source
+  # is below the debug level the statement is not even timed.
+  def self.timed(adapter : Grant::Adapter::Base, sql : String, binds, & : -> T) : T forall T
+    return yield unless SQL.level <= ::Log::Severity::Debug
+
+    started = Time.instant
+    begin
+      yield
+    ensure
+      adapter.log(sql, Time.instant - started, binds)
+    end
+  end
+
+  # The name of the model whose table *sql* targets, or `nil` when no model
+  # owns that table. Only used to label verbose lines, never on the hot path.
+  private def self.model_name_in(sql : String) : String?
+    table = TABLE_AFTER.match(sql).try(&.[1])
+    table ? model_name_for_table(table) : nil
+  end
+
+  # The name of the model class that owns *table* (the first one declared when
+  # several, such as single-table-inheritance models, share it), or `nil`.
+  def self.model_name_for_table(table : String) : String?
+    names = (@@model_names ||= __build_model_names)
+    names[table]?
+  end
+
+  @@model_names : Hash(String, String)?
 
   # Writes the marker for a read served from the query cache.
   def self.log_cached_query(sql : String, name : String? = nil) : Nil
@@ -87,5 +118,20 @@ module Grant::Logs
 
   private def self.format_milliseconds(elapsed_time : Time::Span) : String
     (elapsed_time.total_milliseconds.round(1)).to_s
+  end
+end
+
+macro finished
+  # The table-to-model map behind `Grant::Logs.model_name_for_table`, built from
+  # every concrete model compiled into the program.
+  # :nodoc:
+  def Grant::Logs.__build_model_names : Hash(String, String)
+    names = {} of String => String
+    {% for klass in Grant::Base.all_subclasses %}
+      {% unless klass.abstract? || !klass.type_vars.empty? || klass.name.starts_with?("Validators::") || klass.name.starts_with?("Spec::") %}
+        names[{{klass}}.table_name] ||= {{klass.name.stringify}}
+      {% end %}
+    {% end %}
+    names
   end
 end

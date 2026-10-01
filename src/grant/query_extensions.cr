@@ -22,7 +22,7 @@ class Grant::Query::Builder(Model)
     # Capture a single assembler instance: building the WHERE clause populates
     # its numbered_parameters, which must be bound when the statement runs.
     string_assembler = assembler
-    sql = string_assembler.update_all_fragment_sql(assignments)
+    sql = Grant::QueryLogs.append(string_assembler.update_all_fragment_sql(assignments))
     Model.mark_write_operation
 
     adapter = Model.adapter
@@ -99,7 +99,7 @@ class Grant::Query::Builder(Model)
     Model.mark_write_operation
 
     builder_assembler = assembler
-    sql = builder_assembler.update_all_sql(assignments)
+    sql = Grant::QueryLogs.append(builder_assembler.update_all_sql(assignments))
     params = builder_assembler.numbered_parameters
 
     adapter = Model.adapter

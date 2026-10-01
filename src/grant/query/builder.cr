@@ -1391,7 +1391,7 @@ class Grant::Query::Builder(Model)
     inner_sql = version_assembler.select.raw_sql
     has_updated_at = Model.fields.includes?("updated_at")
     newest = has_updated_at ? ", MAX(#{Model.quote("updated_at")})" : ""
-    sql = "SELECT COUNT(*)#{newest} FROM (#{inner_sql}) AS grant_cache_version"
+    sql = Grant::QueryLogs.append("SELECT COUNT(*)#{newest} FROM (#{inner_sql}) AS grant_cache_version")
 
     count = 0_i64
     newest_value : Grant::Columns::Type = nil
@@ -1407,6 +1407,7 @@ class Grant::Query::Builder(Model)
     end
     elapsed_ms = (Time.instant - started).total_milliseconds
     Grant::Logs::SQL.debug { "Query executed (#{elapsed_ms}ms) - #{sql} [#{Model.name}] [rows: 1]" }
+    Grant::Logs.log_verbose(sql, Time.instant - started, Model.name)
 
     @cache_version = cache_version_string(count, newest_value)
   end
