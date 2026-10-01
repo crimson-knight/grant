@@ -1,11 +1,13 @@
+require "big"
+require "big/json"
 require "json"
 require "uuid"
 require "uuid/json"
 require "uuid/yaml"
 
 module Grant::Columns
-  alias SupportedArrayTypes = Array(String) | Array(Int16) | Array(Int32) | Array(Int64) | Array(Float32) | Array(Float64) | Array(Bool) | Array(UUID)
-  alias Type = DB::Any | SupportedArrayTypes | UUID
+  alias SupportedArrayTypes = Array(String) | Array(Int16) | Array(Int32) | Array(Int64) | Array(Float32) | Array(Float64) | Array(Bool) | Array(UUID) | Array(BigDecimal)
+  alias Type = DB::Any | SupportedArrayTypes | UUID | BigDecimal
 
   # Virtual attributes can participate in model mass assignment without
   # becoming database columns. Encrypted attributes register their setters
@@ -158,6 +160,8 @@ module Grant::Columns
     # A JSON::Any column stores a JSON document: a native jsonb column on
     # PostgreSQL and JSON text elsewhere. No converter needs to be declared.
     {% converter = "Grant::Converters::JsonDocument".id if converter == nil && not_nilable_type.resolve == JSON::Any %}
+    # A BigDecimal column stores exact decimal text; `scale:` also rounds on assignment.
+    {% converter = "Grant::Converters::Decimal".id if converter == nil && not_nilable_type.resolve == BigDecimal %}
     {% primary = (options[:primary] && !options[:primary].nil?) ? options[:primary] : false %}
     # An explicit `auto:` on a primary key wins. Without one, only integer and
     # UUID keys default to `auto: true`, since only they can be generated on
@@ -302,7 +306,11 @@ module Grant::Columns
 
     # Assignment hook applied by the setter (see `normalizes`).
     private def __assign_hook_{{decl.var.id}}(value)
-      value
+      {% if options[:scale] && not_nilable_type.resolve == BigDecimal %}
+        value.is_a?(BigDecimal) ? value.round({{options[:scale]}}, mode: :ties_away) : value
+      {% else %}
+        value
+      {% end %}
     end
 
     # Called by the setter after the value is accepted (see `enum_attribute`).

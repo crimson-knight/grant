@@ -195,3 +195,26 @@ module Grant::Type
     convert_type(value, JSON::Any)
   end
 end
+
+module Grant::Type
+  # Converts decimal text to a `BigDecimal`; invalid text raises
+  # `ArgumentError`, which mass assignment reports as a conversion error.
+  def convert_type(value : String, type : BigDecimal.class) : BigDecimal
+    Grant::Converters::Decimal.parse(value)
+  end
+
+  # :ditto:
+  def convert_type(value : String, type : BigDecimal?.class) : BigDecimal?
+    Grant::Converters::Decimal.parse(value)
+  end
+
+  # Integers and floats become exact decimals.
+  def convert_type(value : Int | Float, type : BigDecimal.class) : BigDecimal
+    BigDecimal.new(value.to_s)
+  end
+
+  # :ditto:
+  def convert_type(value : Int | Float, type : BigDecimal?.class) : BigDecimal?
+    BigDecimal.new(value.to_s)
+  end
+end
