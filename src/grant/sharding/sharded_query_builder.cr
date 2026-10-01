@@ -52,8 +52,15 @@ module Grant::Sharding
       end
     end
 
-    # Force query to run on specific shard
+    # Returns a copy that runs on *shard*; the receiver is unchanged, like every
+    # other chain method.
     def on_shard(shard : Symbol) : self
+      chain_copy.on_shard!(shard)
+    end
+
+    # Pins this relation to *shard* in place. Like `on_shard`, it raises
+    # inside a `prohibit_shard_swapping` block that pinned another shard.
+    def on_shard!(shard : Symbol) : self
       Grant::ShardManager.guard_shard_swap!(shard)
       pin_shard(shard)
     end
@@ -66,8 +73,14 @@ module Grant::Sharding
       self
     end
 
-    # Execute query on all shards
+    # Returns a copy that runs on every shard.
     def on_all_shards : self
+      chain_copy.on_all_shards!
+    end
+
+    # Pins this relation to every shard in place, checked against
+    # `prohibit_shard_swapping` like `on_shard!`.
+    def on_all_shards! : self
       Grant::ShardManager.guard_shard_swap!
       @force_shard = :all
       self

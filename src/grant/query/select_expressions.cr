@@ -64,12 +64,4 @@ class Grant::Query::Builder(Model)
   def select(*columns : Symbol | String) : self
     chain_copy.select!(*columns)
   end
-
-  def reselect!(*columns : String) : self
-    select!(*columns)
-  end
-
-  def reselect(*columns : String) : self
-    chain_copy.select!(*columns)
-  end
 end

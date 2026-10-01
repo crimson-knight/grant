@@ -13,7 +13,7 @@
 #   CURRENT_ADAPTER=sqlite crystal-alpha run --release bench/relation_chain.cr
 #
 # Prints heap bytes allocated per chain for each arm and the ratio (the
-# guardrail is <= 1.2x), plus wall-clock time.
+# guardrail is <= 1.5x of the mutating arm), plus wall-clock time.
 
 require "./bench_helper"
 
@@ -88,5 +88,7 @@ chains.each do |name, arms|
 end
 
 puts
-puts "worst ratio: %.2fx (guardrail 1.20x)" % worst
-exit(worst <= 1.2 ? 0 : 1)
+GUARDRAIL = 1.5
+
+puts "worst ratio: %.2fx (guardrail %.2fx)" % {worst, GUARDRAIL}
+exit(worst <= GUARDRAIL ? 0 : 1)

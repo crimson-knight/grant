@@ -31,9 +31,162 @@ module Grant::Query::JoinSupport
     clauses.any? { |clause| qualifiers(clause).includes?(name) }
   end
 
+  # Collects the JOIN clauses a set of association names produces for one
+  # relation. It knows which tables the relation already uses, so a table
+  # reached a second time through a different association or path is joined
+  # under an alias (`comments_posts`) instead of being emitted twice, and a
+  # clause the relation already holds is not added again.
+  class Collector
+    getter added = [] of Clause
+    @existing : Array(Clause)
+
+    def initialize(@root_table : String, existing : Array(Clause) = [] of Clause)
+      @existing = existing
+    end
+
+    # Joins *association* of *owner*, reached from the table or alias
+    # *owner_ref*, and returns the name the target table is known by. Naming
+    # *alias_name* joins the target under that alias.
+    def step(owner : Grant::Base.class, association : Symbol, type : Symbol, owner_ref : String, alias_name : String? = nil) : String
+      reflection = Grant::AssociationRegistry.reflection(owner.name, association.to_s)
+      if reflection && reflection.polymorphic?
+        raise ArgumentError.new("Cannot join #{owner.name}##{association}: a polymorphic belongs_to has no single target table")
+      end
+      meta = Grant::AssociationRegistry.get(owner.name, association.to_s)
+      raise ArgumentError.new("Unknown association #{association.inspect} for #{owner.name}") unless meta
+
+      target_class = meta[:target_class]
+      target_table = target_class.table_name
+      foreign_key = meta[:foreign_key]
+      primary_key = meta[:primary_key]
+
+      if meta[:through]
+        raise ArgumentError.new("A through association cannot be joined under an alias (#{association.inspect} on #{owner.name})") if alias_name
+        raise ArgumentError.new("Unknown association #{association.inspect} for #{owner.name}") unless reflection
+
+        # Every hop of the path (through steps, then source steps, to any
+        # depth) is one clause; each hop's own scope goes in its ON.
+        hops = Grant::Query::AssociationHops.resolve(owner, reflection, "#{owner.name}##{association}")
+        ref = owner_ref
+        hops.each_with_index do |hop, index|
+          parent = ref
+          last = index == hops.size - 1
+          ref = emit(type, hop.target_class.table_name, nil, hop.reflection.name, parent) do |target_ref|
+            values = [] of Grant::Columns::Type
+            on = Grant::Query::AssociationHops.condition(hop, parent, target_ref, values, quoted: false)
+            on = inline(on, values, owner)
+            on = with_scope(on, hop.reflection, target_ref, owner)
+            last ? with_scope(on, reflection, target_ref, owner) : on
+          end
+        end
+        return ref
+      end
+
+      emit(type, target_table, alias_name, association.to_s, owner_ref) do |ref|
+        on = if Grant::CompositeAssociation.composite?(foreign_key)
+               Grant::CompositeAssociation.join_on(meta[:type] == :belongs_to, owner, target_class, ref, owner_ref, foreign_key, primary_key)
+             elsif meta[:type] == :belongs_to
+               "#{ref}.#{primary_key} = #{owner_ref}.#{foreign_key}"
+             else
+               "#{ref}.#{foreign_key} = #{owner_ref}.#{primary_key}"
+             end
+        with_scope(on, reflection, ref, owner)
+      end
+    end
+
+    # Joins the associations *spec* names (`:posts`, `[:a, :b]`, `{posts: :comments}`)
+    # depth first, each level from the table the previous level reached.
+    def nested(owner : Grant::Base.class, spec : Symbol, type : Symbol, owner_ref : String) : Nil
+      step(owner, spec, type, owner_ref)
+    end
+
+    def nested(owner : Grant::Base.class, spec : Array, type : Symbol, owner_ref : String) : Nil
+      spec.each { |item| nested(owner, item, type, owner_ref) }
+    end
+
+    def nested(owner : Grant::Base.class, spec : Hash | NamedTuple, type : Symbol, owner_ref : String) : Nil
+      spec.each do |name, children|
+        target_ref = step(owner, name, type, owner_ref)
+        meta = Grant::AssociationRegistry.get(owner.name, name.to_s)
+        raise ArgumentError.new("Unknown association #{name.inspect} for #{owner.name}") unless meta
+        nested(meta[:target_class], children, type, target_ref)
+      end
+    end
+
+    # Adds the clause for *table*, reached through *name_hint* from
+    # *parent_ref*, and returns the reference the clause's table is known by.
+    # The block builds the ON condition for a given reference.
+    private def emit(type : Symbol, table : String, alias_name : String?, name_hint : String, parent_ref : String, & : String -> String) : String
+      if alias_name
+        ref = JoinSupport.validated_alias(alias_name)
+        add({type: type, table: "#{table} AS #{ref}", on: yield ref})
+        return ref
+      end
+
+      plain = {type: type, table: table, on: yield table}
+      return table if holds?(plain)
+      unless used?(table)
+        @added << plain
+        return table
+      end
+
+      plural = name_hint.ends_with?('s') ? name_hint : Grant::CounterCache.pluralize(name_hint)
+      base = "#{plural}_#{parent_ref}"
+      ref = base
+      suffix = 1
+      loop do
+        clause = {type: type, table: "#{table} AS #{ref}", on: yield ref}
+        return ref if holds?(clause)
+        unless used?(ref)
+          @added << clause
+          return ref
+        end
+        suffix += 1
+        ref = "#{base}_#{suffix}"
+      end
+    end
+
+    private def add(clause : Clause) : Nil
+      @added << clause unless holds?(clause)
+    end
+
+    private def holds?(clause : Clause) : Bool
+      @existing.includes?(clause) || @added.includes?(clause)
+    end
+
+    private def used?(name : String) : Bool
+      name == @root_table || JoinSupport.joins?(@existing, name) || JoinSupport.joins?(@added, name)
+    end
+
+    # *on* with the scope of *reflection* appended, columns qualified by *ref*.
+    # Values are written into the SQL as quoted literals, because a JOIN clause
+    # carries no bind values.
+    private def with_scope(on : String, reflection : Grant::Reflection?, ref : String, owner : Grant::Base.class) : String
+      return on unless reflection && reflection.scope?
+      unless Grant::AssociationRegistry.scope_renderer?(reflection.owner_name, reflection.name)
+        raise ArgumentError.new("Cannot apply the scope of #{reflection.owner_name}##{reflection.name} in a join: it is not registered")
+      end
+
+      fragment = Grant::AssociationRegistry.scope_fragment(reflection.owner_name, reflection.name, ref)
+      return on unless fragment
+
+      "#{on} AND (#{inline(fragment[0], fragment[1], owner)})"
+    end
+
+    private def inline(sql : String, values : Array(Grant::Columns::Type), owner : Grant::Base.class) : String
+      return sql if values.empty?
+
+      arguments = [] of Grant::Columns::Type
+      arguments << sql
+      arguments.concat(values)
+      Grant::Sanitization.sanitize_sql_array(arguments, owner.adapter)
+    end
+  end
+
   # Resolves *association* on *owner* into join clauses of *type* (`:inner` or
   # `:left`). Naming *alias_name* joins the target table under that alias, which
-  # is how a table is joined to itself.
+  # is how a table is joined to itself. A scope declared on the association
+  # (and on each step of a through path) is part of the ON condition.
   #
   # The ON condition depends on where the foreign key lives:
   #
@@ -42,96 +195,23 @@ module Grant::Query::JoinSupport
   #   owner's PK.
   # - `has_many :through`: two clauses, owner to through table to target.
   #
-  # Raises `ArgumentError` if the association is unknown.
-  def self.resolve(owner : Grant::Base.class, association : Symbol, type : Symbol, alias_name : String? = nil) : Array(Clause)
-    meta = Grant::AssociationRegistry.get(owner.name, association.to_s)
-    raise ArgumentError.new("Unknown association #{association.inspect} for #{owner.name}") unless meta
-
-    target_table = meta[:target_class].table_name
-    current_table = owner.table_name
-    foreign_key = meta[:foreign_key]
-    primary_key = meta[:primary_key]
-
-    if through_name = meta[:through]
-      raise ArgumentError.new("A through association cannot be joined under an alias (#{association.inspect} on #{owner.name})") if alias_name
-
-      through_meta = Grant::AssociationRegistry.get(owner.name, through_name)
-      raise ArgumentError.new("Unknown through association #{through_name.inspect} for #{owner.name}") unless through_meta
-
-      through_class = through_meta[:target_class]
-      through_table = through_class.table_name
-      first_on = "#{through_table}.#{through_meta[:foreign_key]} = #{current_table}.#{through_meta[:primary_key]}"
-
-      source_name = meta[:source] || meta[:target_class].name.split("::").last.underscore
-      source_meta = Grant::AssociationRegistry.get(through_class.name, source_name)
-      source_foreign_key = if source = source_meta
-                             source[:foreign_key]
-                           else
-                             "#{source_name}_id"
-                           end
-      source_primary_key = if source = source_meta
-                             source[:primary_key]
-                           else
-                             meta[:target_class].primary_name
-                           end
-
-      second_on = if source_meta && source_meta[:type] == :belongs_to
-                    "#{target_table}.#{source_primary_key} = #{through_table}.#{source_foreign_key}"
-                  else
-                    "#{target_table}.#{source_foreign_key} = #{through_table}.#{source_primary_key}"
-                  end
-
-      return [
-        {type: type, table: through_table, on: first_on},
-        {type: type, table: target_table, on: second_on},
-      ]
-    end
-
-    reference = alias_name ? validated_alias(alias_name) : target_table
-    on = if Grant::CompositeAssociation.composite?(foreign_key)
-           Grant::CompositeAssociation.join_on(meta[:type] == :belongs_to, owner, meta[:target_class], reference, current_table, foreign_key, primary_key)
-         else
-           case meta[:type]
-           when :belongs_to
-             # FK lives on the owner's table.
-             "#{reference}.#{primary_key} = #{current_table}.#{foreign_key}"
-           else
-             # has_many / has_one: FK lives on the target table.
-             "#{reference}.#{foreign_key} = #{current_table}.#{primary_key}"
-           end
-         end
-
-    table = alias_name ? "#{target_table} AS #{reference}" : target_table
-    [{type: type, table: table, on: on}]
+  # Raises `ArgumentError` if the association is unknown or polymorphic.
+  def self.resolve(owner : Grant::Base.class, association : Symbol, type : Symbol, alias_name : String? = nil, existing : Array(Clause) = [] of Clause, root_table : String = owner.table_name) : Array(Clause)
+    collector = Collector.new(root_table, existing)
+    collector.step(owner, association, type, owner.table_name, alias_name)
+    collector.added
   end
 
   # Resolves a nested spec such as `{posts: :comments}` or
   # `{posts: [:comments, {likes: :user}]}` depth first, so each level joins from
-  # the model the previous level reached.
-  def self.resolve_nested(owner : Grant::Base.class, spec, type : Symbol) : Array(Clause)
-    clauses = [] of Clause
-    collect_nested(owner, spec, type, clauses)
-    clauses
+  # the model the previous level reached. A table reached twice is aliased.
+  def self.resolve_nested(owner : Grant::Base.class, spec, type : Symbol, existing : Array(Clause) = [] of Clause, root_table : String = owner.table_name) : Array(Clause)
+    collector = Collector.new(root_table, existing)
+    collector.nested(owner, spec, type, owner.table_name)
+    collector.added
   end
 
-  private def self.collect_nested(owner : Grant::Base.class, spec : Symbol, type : Symbol, into clauses : Array(Clause)) : Nil
-    clauses.concat(resolve(owner, spec, type))
-  end
-
-  private def self.collect_nested(owner : Grant::Base.class, spec : Array, type : Symbol, into clauses : Array(Clause)) : Nil
-    spec.each { |item| collect_nested(owner, item, type, clauses) }
-  end
-
-  private def self.collect_nested(owner : Grant::Base.class, spec : Hash | NamedTuple, type : Symbol, into clauses : Array(Clause)) : Nil
-    spec.each do |name, nested|
-      clauses.concat(resolve(owner, name, type))
-      meta = Grant::AssociationRegistry.get(owner.name, name.to_s)
-      raise ArgumentError.new("Unknown association #{name.inspect} for #{owner.name}") unless meta
-      collect_nested(meta[:target_class], nested, type, clauses)
-    end
-  end
-
-  private def self.validated_alias(name : String) : String
+  def self.validated_alias(name : String) : String
     unless name.matches?(/\A[A-Za-z_][A-Za-z0-9_]*\z/)
       raise ArgumentError.new("Join alias must be an identifier (got #{name.inspect})")
     end
@@ -164,17 +244,36 @@ class Grant::Query::Builder(Model)
     self
   end
 
-  # Joins nested associations, resolved through the association registry from
-  # the model each level reaches. A has_many chain multiplies rows; pair it with
-  # `distinct` (or filter with `exists?`-style predicates) when the parent rows
-  # are wanted once.
+  # Adds a raw JOIN fragment whose `?` placeholders are replaced by the quoted
+  # *binds*, left to right. The values are written into the SQL as literals (a
+  # JOIN clause carries no bind values of its own), so they are escaped by
+  # `Grant::Sanitization`; the fragment itself is still trusted.
   #
   # ```
-  # User.joins(posts: :comments)
-  # User.joins(posts: [:comments, {likes: :user}])
+  # User.joins("INNER JOIN posts ON posts.user_id = users.id AND posts.score > ?", 10)
   # ```
+  def joins!(sql : String, binds : Array) : self
+    validated = Grant::Query::SqlExpression.validate!(sql, "JOIN fragment")
+    arguments = [] of Grant::Columns::Type
+    arguments << validated
+    binds.each do |value|
+      raise ArgumentError.new("A JOIN bind must be a column value, not #{value.class}") unless value.is_a?(Grant::Columns::Type)
+
+      arguments << value
+    end
+    add_join_clause({type: :raw, table: "", on: Grant::Sanitization.sanitize_sql_array(arguments, Model.adapter)})
+    self
+  end
+
+  # :ditto:
+  def joins!(sql : String, first, *rest) : self
+    joins!(sql, [first, *rest])
+  end
+
+  # Joins only nested associations (`joins(posts: :comments)`); see the
+  # positional form for mixing plain names with nested ones.
   def joins!(**nested) : self
-    add_join_clauses(Grant::Query::JoinSupport.resolve_nested(Model, nested, :inner))
+    add_join_clauses(Grant::Query::JoinSupport.resolve_nested(Model, nested, :inner, @join_clauses))
     self
   end
 
@@ -186,12 +285,20 @@ class Grant::Query::Builder(Model)
   # User.joins(:manager, as: "managers").where("managers.name": "Ada")
   # ```
   def joins!(association : Symbol, *, as as_name : String) : self
-    add_join_clauses(Grant::Query::JoinSupport.resolve(Model, association, :inner, as_name))
+    add_join_clauses(Grant::Query::JoinSupport.resolve(Model, association, :inner, as_name, @join_clauses))
     self
   end
 
   def joins(sql : String) : self
     chain_copy.joins!(sql)
+  end
+
+  def joins(sql : String, binds : Array) : self
+    chain_copy.joins!(sql, binds)
+  end
+
+  def joins(sql : String, first, *rest) : self
+    chain_copy.joins!(sql, first, *rest)
   end
 
   def joins(**nested) : self
@@ -208,18 +315,34 @@ class Grant::Query::Builder(Model)
     joins!(sql)
   end
 
+  def left_joins!(sql : String, binds : Array) : self
+    joins!(sql, binds)
+  end
+
+  def left_joins!(sql : String, first, *rest) : self
+    joins!(sql, first, *rest)
+  end
+
   def left_joins!(**nested) : self
-    add_join_clauses(Grant::Query::JoinSupport.resolve_nested(Model, nested, :left))
+    add_join_clauses(Grant::Query::JoinSupport.resolve_nested(Model, nested, :left, @join_clauses))
     self
   end
 
   def left_joins!(association : Symbol, *, as as_name : String) : self
-    add_join_clauses(Grant::Query::JoinSupport.resolve(Model, association, :left, as_name))
+    add_join_clauses(Grant::Query::JoinSupport.resolve(Model, association, :left, as_name, @join_clauses))
     self
   end
 
   def left_joins(sql : String) : self
     chain_copy.left_joins!(sql)
+  end
+
+  def left_joins(sql : String, binds : Array) : self
+    chain_copy.left_joins!(sql, binds)
+  end
+
+  def left_joins(sql : String, first, *rest) : self
+    chain_copy.left_joins!(sql, first, *rest)
   end
 
   def left_joins(**nested) : self
@@ -240,8 +363,8 @@ class Grant::Query::Builder(Model)
     left_joins!(association)
   end
 
-  def left_outer_joins!(*associations : Symbol) : self
-    left_joins!(*associations)
+  def left_outer_joins!(*associations : Symbol, **nested) : self
+    left_joins!(*associations, **nested)
   end
 
   def left_outer_joins!(sql : String) : self
@@ -264,8 +387,8 @@ class Grant::Query::Builder(Model)
     chain_copy.left_joins!(association)
   end
 
-  def left_outer_joins(*associations : Symbol) : self
-    chain_copy.left_joins!(*associations)
+  def left_outer_joins(*associations : Symbol, **nested) : self
+    chain_copy.left_joins!(*associations, **nested)
   end
 
   def left_outer_joins(sql : String) : self
@@ -280,3 +403,5 @@ class Grant::Query::Builder(Model)
     chain_copy.left_joins!(association, as: as_name)
   end
 end
+
+require "./association_exists"

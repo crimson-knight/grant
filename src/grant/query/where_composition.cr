@@ -609,6 +609,7 @@ class Grant::Query::Builder(Model)
   # User.where(active: true).order(:id).unscope(:order, where: :active)
   # ```
   def unscope!(*components : Symbol, where columns : Symbol | Array(Symbol)) : self
+    record_unscope(components.to_a)
     unscope_components!(components.to_a)
     unscope_where_columns!(where_column_names(columns))
   end
@@ -632,6 +633,7 @@ class Grant::Query::Builder(Model)
   end
 
   protected def unscope_where_columns!(names : Array(String)) : self
+    record_unscoped_columns(names)
     reset_load_state
     columns = Set(String).new
     names.each { |name| expand_where_column_name(name).each { |column| columns << column } }
@@ -661,8 +663,9 @@ class Grant::Query::Builder(Model)
       clear_preload_associations
     when :eager_load
       clear_eager_load_associations
+      drop_eager_load_joins!
     else
-      return false
+      return unscope_relation_state!(component)
     end
 
     true
@@ -759,73 +762,6 @@ class Grant::Query::Builder(Model)
 
   def where_missing(names : Array(Symbol)) : self
     chain_copy.where_missing!(names)
-  end
-
-  private def append_association_exists(name : String, negated : Bool) : Nil
-    sql, values = association_exists_sql(name)
-    own_where_fields << {join: :and, stmt: "#{negated ? "NOT " : ""}EXISTS (#{sql})", values: values}
-  end
-
-  private def association_exists_sql(name : String) : Tuple(String, Array(Grant::Columns::Type))
-    reflection = Grant::AssociationRegistry.reflection(Model.name, name) || raise Grant::AssociationNotFoundError.new(Model.name, name)
-    if reflection.polymorphic?
-      raise ArgumentError.new("Cannot use where.associated or where.missing with polymorphic belongs_to #{Model.name}##{name}")
-    end
-
-    if reflection.scope?
-      raise ArgumentError.new("Cannot use where.associated or where.missing with scoped association #{Model.name}##{name}: the scope would be ignored")
-    end
-
-    target = reflection.klass
-    outer = Model.quote(Model.table_name)
-    target_alias = Model.quote("assoc_target")
-    values = [] of Grant::Columns::Type
-
-    unless through_name = reflection.through
-      condition = association_hop_condition(reflection, outer, Model, target_alias, values)
-      return {"SELECT 1 FROM #{Model.quote(target.table_name)} AS #{target_alias} WHERE #{condition}", values}
-    end
-
-    through_reflection = Grant::AssociationRegistry.reflection(Model.name, through_name)
-    raise Grant::AssociationNotFoundError.new(Model.name, through_name) unless through_reflection
-    if through_reflection.polymorphic? || through_reflection.through?
-      raise ArgumentError.new("Cannot use where.associated or where.missing through #{Model.name}##{through_name}: it is polymorphic or itself a through association")
-    end
-
-    through_class = through_reflection.klass
-    source_name = reflection.source || target.name.split("::").last.underscore
-    source_reflection = Grant::AssociationRegistry.reflection(through_class.name, source_name)
-    raise ArgumentError.new("Cannot resolve source #{source_name.inspect} for #{Model.name}##{name}") unless source_reflection
-    if source_reflection.polymorphic? || source_reflection.through?
-      # A polymorphic or nested source would need a type match or another hop
-      # this subquery does not build; refuse rather than match the wrong rows.
-      raise ArgumentError.new("Cannot use where.associated or where.missing with #{Model.name}##{name}: its source #{source_name.inspect} is polymorphic or itself a through association")
-    end
-
-    through_alias = Model.quote("assoc_through")
-    # The source hop comes first in the SQL text, so its bind values do too.
-    source_condition = association_hop_condition(source_reflection, through_alias, through_class, target_alias, values)
-    through_condition = association_hop_condition(through_reflection, outer, Model, through_alias, values)
-    sql = "SELECT 1 FROM #{Model.quote(through_class.table_name)} AS #{through_alias} " \
-          "INNER JOIN #{Model.quote(target.table_name)} AS #{target_alias} ON #{source_condition} " \
-          "WHERE #{through_condition}"
-    {sql, values}
-  end
-
-  # Join condition between *owner_ref* (a quoted table or alias) and the target
-  # of *reflection*, aliased *target_alias*. A polymorphic `as:` side also
-  # matches the stored type name, bound as a value.
-  private def association_hop_condition(reflection : Grant::Reflection, owner_ref : String, owner_class : Grant::Base.class, target_alias : String, values : Array(Grant::Columns::Type)) : String
-    if reflection.belongs_to?
-      "#{target_alias}.#{Model.quote(reflection.primary_key)} = #{owner_ref}.#{Model.quote(reflection.foreign_key)}"
-    else
-      condition = "#{target_alias}.#{Model.quote(reflection.foreign_key)} = #{owner_ref}.#{Model.quote(reflection.primary_key)}"
-      if reflection.polymorphic_as && (type_column = reflection.foreign_type)
-        condition += " AND #{target_alias}.#{Model.quote(type_column)} = ?"
-        values << owner_class.polymorphic_name
-      end
-      condition
-    end
   end
 end
 

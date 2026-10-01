@@ -43,7 +43,7 @@ module Grant::Querying
     # end
     # ```
     def from_rs(result : DB::ResultSet) : self
-      model = new
+      model = Grant::Scoping.hydrating { new }
       model.new_record = false
       model.from_rs result
       model.after_find if model.responds_to?(:after_find)
