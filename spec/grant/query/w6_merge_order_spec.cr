@@ -90,6 +90,15 @@ describe "merge ORDER BY" do
     right.order_fields.map { |term| term[:field] }.should eq(["rank"])
   end
 
+  it "takes the other relation's from source and common table expressions" do
+    merged = W6moItem.where(kind: "x").merge(W6moItem.from(W6moItem.where(rank: 2), as: "sub"))
+    merged.to_sql.should contain("sub")
+    seqs(merged).should eq([2])
+    with_cte = W6moItem.where(kind: "x").merge(W6moItem.with(:picked, W6moItem.where(kind: "y")))
+    with_cte.to_sql.should contain("WITH")
+    seqs(with_cte).should eq([1, 2])
+  end
+
   it "applies the unscoping of the merged relation" do
     merged = W6moItem.where(kind: "x").order(:name).merge(W6moItem.unscope(:where))
     seqs(merged).size.should eq(4)

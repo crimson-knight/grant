@@ -31,7 +31,14 @@ class Grant::Query::Builder(Model)
   # Replaces the ORDER BY with a single column and direction.
   def reorder!(field : Symbol | String, direction : Symbol, *, nulls : Symbol? = nil) : self
     start_reordering!
-    order!(field, direction, nulls: nulls)
+    # `reorder(:name, :score)` is two ascending columns, not a direction.
+    if nulls.nil? && field.is_a?(Symbol) && direction != :asc && direction != :desc
+      order!(field)
+      order!(direction)
+    else
+      order!(field, direction, nulls: nulls)
+    end
+    self
   end
 
   # Replaces the ORDER BY with a column ascending and a NULL placement.
@@ -92,7 +99,13 @@ class Grant::Query::Builder(Model)
   # :ditto:
   def regroup!(fields : ColumnList) : self
     clear_group_fields
-    fields.each { |field| group_by!(field) }
+    fields.each do |field|
+      if field.is_a?(String)
+        group_by!(field)
+      else
+        group_by!(field)
+      end
+    end
     self
   end
 

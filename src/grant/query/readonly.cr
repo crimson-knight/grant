@@ -2,7 +2,9 @@ require "./builder"
 
 class Grant::Query::Builder(Model)
   # `true` when records loaded through this relation are marked read-only.
-  getter? readonly : Bool = false
+  def readonly? : Bool
+    @readonly
+  end
 
   # Marks every record this relation loads read-only (`value = true`), so
   # `save`, `update` and `destroy` on it raise `Grant::ReadOnlyRecordError`.

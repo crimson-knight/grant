@@ -135,16 +135,21 @@ class Grant::Query::Builder(Model)
   getter? is_none : Bool = false
   getter? strict_loading : Bool = false
 
+  # Copy-on-write bookkeeping: one bit per array ivar (see `own_*`). A set bit
+  # means the array may be referenced by another relation and must be copied
+  # before it is written to. Declared next to the Bool flags so they pack into
+  # one word (every chain step copies the whole relation).
+  @shared_arrays : UInt16 = 0_u16
+
+  # Declared here, beside the other flags, so it packs into the same word; the
+  # reader and writer are in `readonly.cr`.
+  @readonly : Bool = false
+
   # Memoized result of `load`. Cleared by every mutation and by `reset`.
   @records : Array(Model)?
 
   # Memoized `cache_version`, cleared together with `@records`.
   @cache_version : String?
-
-  # Copy-on-write bookkeeping: one bit per array ivar (see `own_*`). A set bit
-  # means the array may be referenced by another relation and must be copied
-  # before it is written to.
-  @shared_arrays : UInt16 = 0_u16
 
   ALL_ARRAYS_SHARED = 0x3FF_u16
 
@@ -1330,7 +1335,7 @@ class Grant::Query::Builder(Model)
   def only(*components : Symbol) : self
     normalized = components.map do |component|
       case component
-      when :group_by            then :group
+      when :group_by         then :group
       when :left_outer_joins then :left_joins
       else                        component
       end
