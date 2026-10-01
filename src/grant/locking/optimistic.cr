@@ -225,9 +225,7 @@ module Grant::Locking::Optimistic
 
   # The primary-key relation for this row, further limited to *version*.
   private def __version_guarded_scope(version : Int32)
-    scope = self.class.__multitenant? ? self.class.__tenant_write_scope : self.class.unscoped
-    scope
-      .where(self.class.primary_name, :eq, primary_key_value.as(Grant::Columns::Type))
+    __row_key_scope
       .where("#{self.class.quote(self.class.locking_column)} = ?", version.as(Grant::Columns::Type))
   end
 

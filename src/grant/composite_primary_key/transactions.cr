@@ -24,6 +24,12 @@ module Grant::CompositePrimaryKey::Transactions
     scope
   end
 
+  # :nodoc:
+  protected def __row_key_scope
+    return super unless self.class.keyed_by_tuple?
+    __key_scope
+  end
+
   private def __key_value_in_database(column : String) : Grant::Columns::Type
     attribute_in_database(column).as(Grant::Columns::Type)
   end

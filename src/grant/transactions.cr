@@ -485,6 +485,14 @@ module Grant::Transactions
     false
   end
 
+  # The write scope narrowed to this record's own row. Models keyed by a
+  # composite primary key or `query_constraints` override it to carry every key
+  # column (see `Grant::CompositePrimaryKey::Transactions`).
+  protected def __row_key_scope
+    scope = self.class.__multitenant? ? self.class.__tenant_write_scope : self.class.unscoped
+    scope.where(self.class.primary_name, :eq, primary_key_value.as(Grant::Columns::Type))
+  end
+
   # Names of the columns a partial update must write: everything dirty tracking
   # reports as changed, plus serialized columns whose raw value no longer
   # matches what was loaded (an object mutated in place is only re-serialized
