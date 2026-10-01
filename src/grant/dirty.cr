@@ -113,7 +113,7 @@ module Grant::Dirty
 
   # Names of the attributes a save would write.
   def changed_attribute_names_to_save : Array(String)
-    changed_attributes
+    changed
   end
 
   # Pending changes for one attribute, or nil when it is unchanged.
@@ -237,6 +237,7 @@ module Grant::Dirty
     end
     pending.clear
     originals.clear
+    clear_assigned_attributes
     @forced_changes.try &.clear
     capture_original_attributes
   end

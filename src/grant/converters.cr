@@ -18,6 +18,15 @@ module Grant::Converters
       {% end %}
     end
 
+    # The model value for a stored value (what dirty tracking keeps).
+    def from_db(value) : ::UUID?
+      case value
+      when String then ::UUID.new(value)
+      when Slice  then ::UUID.new(value)
+      else             nil
+      end
+    end
+
     def from_rs(result : ::DB::ResultSet) : ::UUID?
       value = result.read(T?)
       return nil if value.nil?
@@ -44,6 +53,16 @@ module Grant::Converters
       {% else %}
         {% raise "#{@type.name}#to_db does not support #{T} yet." %}
       {% end %}
+    end
+
+    # The model value for a stored value (what dirty tracking keeps).
+    def from_db(value) : E?
+      case value
+      when Int    then E.from_value?(value.to_i64)
+      when String then E.parse?(value)
+      when Slice  then E.parse?(String.new(value))
+      else             nil
+      end
     end
 
     def from_rs(result : ::DB::ResultSet) : E?
@@ -80,6 +99,15 @@ module Grant::Converters
       {% end %}
     end
 
+    # The model value for a stored value (what dirty tracking keeps).
+    def from_db(value) : M?
+      case value
+      when String then M.from_json(value)
+      when Slice  then M.from_json(String.new(value))
+      else             nil
+      end
+    end
+
     def from_rs(result : ::DB::ResultSet) : M?
       value = result.read(T?)
       return nil if value.nil?
@@ -101,6 +129,10 @@ module Grant::Converters
 
     def self.to_db(value) : Grant::Columns::Type
       value ? value : nil
+    end
+
+    def self.from_db(value) : Float64?
+      value.as?(Float64)
     end
 
     def self.from_rs(result : ::DB::ResultSet) : Float64?

@@ -17,6 +17,10 @@ module Grant::Columns
       @@setters[{model_name, attribute_name}] = setter
     end
 
+    def self.registered?(model_name : String, attribute_name : String) : Bool
+      @@setters.has_key?({model_name, attribute_name})
+    end
+
     def self.assign(record : Grant::Base, attribute_name : String, value : Type) : Bool
       if setter = @@setters[{record.class.name, attribute_name}]?
         setter.call(record, value)
@@ -234,24 +238,36 @@ module Grant::Columns
       saved_change_to_attribute?({{decl.var.stringify}}, from: from, to: to)
     end
 
-    def saved_change_to_{{decl.var.id}} : Tuple(Grant::Base::DirtyValue, Grant::Base::DirtyValue)?
-      saved_change_to_attribute({{decl.var.stringify}})
+    def saved_change_to_{{decl.var.id}} : Tuple({{not_nilable_type}}?, {{not_nilable_type}}?)?
+      if change = saved_change_to_attribute({{decl.var.stringify}})
+        {__typed_dirty_{{decl.var.id}}(change[0]), __typed_dirty_{{decl.var.id}}(change[1])}
+      end
     end
 
     def {{decl.var.id}}_previously_changed?(*, from = Grant::Dirty::UNFILTERED, to = Grant::Dirty::UNFILTERED) : Bool
       saved_change_to_attribute?({{decl.var.stringify}}, from: from, to: to)
     end
 
-    def {{decl.var.id}}_previously_was : Grant::Base::DirtyValue
-      attribute_previously_was({{decl.var.stringify}})
+    def {{decl.var.id}}_previously_was : {{not_nilable_type}}?
+      if change = saved_change_to_attribute({{decl.var.stringify}})
+        __typed_dirty_{{decl.var.id}}(change[0])
+      else
+        @{{decl.var.id}}
+      end
     end
 
-    def {{decl.var.id}}_in_database : Grant::Base::DirtyValue
-      attribute_in_database({{decl.var.stringify}})
+    def {{decl.var.id}}_in_database : {{not_nilable_type}}?
+      if change = attribute_change_to_be_saved({{decl.var.stringify}})
+        __typed_dirty_{{decl.var.id}}(change[0])
+      else
+        @{{decl.var.id}}
+      end
     end
 
-    def {{decl.var.id}}_change_to_be_saved : Tuple(Grant::Base::DirtyValue, Grant::Base::DirtyValue)?
-      attribute_change_to_be_saved({{decl.var.stringify}})
+    def {{decl.var.id}}_change_to_be_saved : Tuple({{not_nilable_type}}?, {{not_nilable_type}}?)?
+      if change = attribute_change_to_be_saved({{decl.var.stringify}})
+        {__typed_dirty_{{decl.var.id}}(change[0]), __typed_dirty_{{decl.var.id}}(change[1])}
+      end
     end
 
     def restore_{{decl.var.id}}! : Nil
@@ -265,6 +281,31 @@ module Grant::Columns
     # Assignment hook applied by the setter (see `normalizes`).
     private def __assign_hook_{{decl.var.id}}(value)
       value
+    end
+
+    # Called by the setter after the value is accepted (see `enum_attribute`).
+    private def __after_assign_{{decl.var.id}}(value)
+    end
+
+    # Turns a value kept by dirty tracking (the database representation) back
+    # into the column type. A converter must define `from_db` for this.
+    private def __typed_dirty_{{decl.var.id}}(value : Grant::Base::DirtyValue) : {{not_nilable_type}}?
+      {% if converter %}
+        {% resolved_converter = converter.resolve %}
+        {% if resolved_converter.has_method?(:from_db) || resolved_converter.class.has_method?(:from_db) %}
+          {{converter}}.from_db(value)
+        {% else %}
+          raise Grant::ConverterError.new({{@type.name.stringify}}, {{decl.var.stringify}}, {{converter.stringify}})
+        {% end %}
+      {% else %}
+        value.as?({{not_nilable_type}})
+      {% end %}
+    end
+
+    # True when the attribute was assigned since the record was loaded or last
+    # saved (ActiveModel's `<attr>_came_from_user?`).
+    def {{decl.var.id}}_came_from_user? : Bool
+      attribute_came_from_user?({{decl.var.stringify}})
     end
 
     {% if nilable || primary %}
@@ -306,6 +347,7 @@ module Grant::Columns
 
         discard_before_type_cast({{decl.var.stringify}})
         @{{decl.var.id}} = value
+        __after_assign_{{decl.var.id}}(value)
       end
 
       def {{decl.var.id}} : {{not_nilable_type}}?
@@ -354,7 +396,7 @@ module Grant::Columns
         refresh_dirty
         ensure_dirty_tracking_initialized
         if dirty_tracking_hashes[1].has_key?({{decl.var.stringify}})
-          dirty_tracking_hashes[1][{{decl.var.stringify}}][0].as({{not_nilable_type}}?)
+          __typed_dirty_{{decl.var.id}}(dirty_tracking_hashes[1][{{decl.var.stringify}}][0])
         else
           @{{decl.var.id}}
         end
@@ -373,7 +415,7 @@ module Grant::Columns
         refresh_dirty
         ensure_dirty_tracking_initialized
         if change = dirty_tracking_hashes[1][{{decl.var.stringify}}]?
-          {change[0].as({{not_nilable_type}}?), change[1].as({{not_nilable_type}}?)}
+          {__typed_dirty_{{decl.var.id}}(change[0]), __typed_dirty_{{decl.var.id}}(change[1])}
         end
       end
       
@@ -389,7 +431,7 @@ module Grant::Columns
       def {{decl.var.id}}_before_last_save : {{not_nilable_type}}?
         ensure_dirty_tracking_initialized
         if dirty_tracking_hashes[2].has_key?({{decl.var.stringify}})
-          dirty_tracking_hashes[2][{{decl.var.stringify}}][0].as({{not_nilable_type}}?)
+          __typed_dirty_{{decl.var.id}}(dirty_tracking_hashes[2][{{decl.var.stringify}}][0])
         else
           @{{decl.var.id}}
         end
@@ -433,6 +475,7 @@ module Grant::Columns
 
         discard_before_type_cast({{decl.var.stringify}})
         @{{decl.var.id}} = value
+        __after_assign_{{decl.var.id}}(value)
       end
 
       def {{decl.var.id}} : {{type.id}}
@@ -476,7 +519,7 @@ module Grant::Columns
         refresh_dirty
         ensure_dirty_tracking_initialized
         if dirty_tracking_hashes[1].has_key?({{decl.var.stringify}})
-          dirty_tracking_hashes[1][{{decl.var.stringify}}][0].as({{type.id}})
+          __typed_dirty_{{decl.var.id}}(dirty_tracking_hashes[1][{{decl.var.stringify}}][0]).not_nil!
         else
           @{{decl.var.id}}.not_nil!
         end
@@ -495,7 +538,7 @@ module Grant::Columns
         refresh_dirty
         ensure_dirty_tracking_initialized
         if change = dirty_tracking_hashes[1][{{decl.var.stringify}}]?
-          {change[0].as({{type.id}}), change[1].as({{type.id}})}
+          {__typed_dirty_{{decl.var.id}}(change[0]).not_nil!, __typed_dirty_{{decl.var.id}}(change[1]).not_nil!}
         end
       end
       
@@ -511,7 +554,7 @@ module Grant::Columns
       def {{decl.var.id}}_before_last_save : {{type.id}}
         ensure_dirty_tracking_initialized
         if dirty_tracking_hashes[2].has_key?({{decl.var.stringify}})
-          dirty_tracking_hashes[2][{{decl.var.stringify}}][0].as({{type.id}})
+          __typed_dirty_{{decl.var.id}}(dirty_tracking_hashes[2][{{decl.var.stringify}}][0]).not_nil!
         else
           @{{decl.var.id}}.not_nil!
         end

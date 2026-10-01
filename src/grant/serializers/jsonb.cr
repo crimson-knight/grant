@@ -21,6 +21,15 @@ module Grant::Converters
       value.to_json
     end
 
+    # The model value for a stored value (what dirty tracking keeps).
+    def from_db(value) : ::JSON::Any?
+      case value
+      when String then ::JSON.parse(value)
+      when Slice  then ::JSON.parse(String.new(value))
+      else             nil
+      end
+    end
+
     def from_rs(result : ::DB::ResultSet) : ::JSON::Any?
       value = result.read
       case value

@@ -498,7 +498,7 @@ module Grant::Transactions
   # matches what was loaded (an object mutated in place is only re-serialized
   # by a `before_save` hook, so setters never saw it).
   private def __changed_column_names : Array(String)
-    names = changed_attributes
+    names = changed
     baselines = dirty_tracking_hashes[0]
     self.class.content_fields.each do |column_name|
       next unless column_name.starts_with?("_serialized_")

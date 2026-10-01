@@ -15,7 +15,7 @@ describe "Dirty control" do
     post.title = "c"
     post.restore_attribute!("title")
     post.title.should eq("a")
-    post.changed_attributes.should eq(["views"])
+    post.changed.should eq(["views"])
   end
 
   it "clears change information without touching values" do
@@ -58,7 +58,7 @@ describe "Dirty control" do
     post.views = 2
     post.clear_attribute_changes(["title"])
 
-    post.changed_attributes.should eq(["views"])
+    post.changed.should eq(["views"])
     post.title.should eq("b")
   end
 

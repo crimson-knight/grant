@@ -38,7 +38,7 @@ describe "Opt-in in-place mutation detection" do
     record.labels.not_nil! << "y"
     record.changed?.should be_false
     record.tags.not_nil! << "b"
-    record.changed_attributes.should eq(["tags"])
+    record.changed.should eq(["tags"])
   end
 
   it "never watches scalar or String columns" do
@@ -89,7 +89,7 @@ describe "Opt-in in-place mutation detection" do
 
       record.prefs.not_nil!.theme = "dark"
       record.changed?.should be_true
-      record.changed_attributes.should eq(["_serialized_prefs"])
+      record.changed.should eq(["_serialized_prefs"])
 
       record.prefs.not_nil!.theme = "light"
       record.changed?.should be_false
