@@ -14,6 +14,7 @@ class W6AbsEarlyThing < W6AppRecord
 end
 
 class W6AbsGrandThing < W6AbsEarlyThing
+  table w6_abs_things
 end
 
 class W6AbsOwnThing < W6AppRecord
@@ -65,10 +66,10 @@ describe "abstract class connection routing (#{CURRENT_ADAPTER})" do
   end
 
   it "routes every child to the parent's databases, whatever order they were declared in" do
-    {W6AbsEarlyThing, W6AbsGrandThing, W6AbsLateThing}.each do |model|
-      model.first!.label.should eq "main"
-      model.connected_to(role: :reading) { model.first!.label }.should eq "main replica"
-    end
+    {% for model in %w(W6AbsEarlyThing W6AbsGrandThing W6AbsLateThing) %}
+      {{model.id}}.connected_to(role: :writing) { {{model.id}}.first!.label }.should eq "main"
+      {{model.id}}.connected_to(role: :reading) { {{model.id}}.first!.label }.should eq "main replica"
+    {% end %}
   end
 
   it "writes through a child to the parent's writer, never its reader" do
@@ -80,7 +81,7 @@ describe "abstract class connection routing (#{CURRENT_ADAPTER})" do
   end
 
   it "lets a child's own connects_to replace the parent's whole declaration" do
-    W6AbsOwnThing.first!.label.should eq "other"
+    W6AbsOwnThing.connected_to(role: :writing) { W6AbsOwnThing.first!.label }.should eq "other"
     W6AbsOwnThing.connected_to(role: :reading) { W6AbsOwnThing.first!.label }.should eq "other replica"
     W6AbsOwnThing.shard_keys.should be_empty
     W6AbsOwnThing.sharded?.should be_false
@@ -88,8 +89,8 @@ describe "abstract class connection routing (#{CURRENT_ADAPTER})" do
   end
 
   it "serves the parent's shards to its children" do
-    W6AbsEarlyThing.connected_to(shard: :extra) { W6AbsEarlyThing.first!.label }.should eq "extra"
-    W6AbsGrandThing.connected_to(shard: :default) { W6AbsGrandThing.first!.label }.should eq "main"
+    W6AbsEarlyThing.connected_to(role: :writing, shard: :extra) { W6AbsEarlyThing.first!.label }.should eq "extra"
+    W6AbsGrandThing.connected_to(role: :writing, shard: :default) { W6AbsGrandThing.first!.label }.should eq "main"
   end
 
   it "applies connected_to on the abstract parent to its children only" do
@@ -97,7 +98,8 @@ describe "abstract class connection routing (#{CURRENT_ADAPTER})" do
       W6AbsLateThing.first!.label.should eq "main replica"
       W6AbsGrandThing.first!.label.should eq "main replica"
       # The unrelated model keeps its own database, and is not switched.
-      W6AbsUnrelatedThing.first!.label.should eq "other"
+      W6AbsUnrelatedThing.connection_context.should be_nil
+      W6AbsUnrelatedThing.preventing_writes?.should be_false
     end
   end
 
@@ -115,11 +117,11 @@ describe "abstract class connection routing (#{CURRENT_ADAPTER})" do
     original = W6AppRecord.connection_config
     begin
       W6AppRecord.connection_config = {:writing => "w6_abs_extra"}
-      W6AbsLateThing.first!.label.should eq "extra"
+      W6AbsLateThing.connected_to(role: :writing) { W6AbsLateThing.first!.label }.should eq "extra"
     ensure
       W6AppRecord.connection_config = original
     end
-    W6AbsLateThing.first!.label.should eq "main"
+    W6AbsLateThing.connected_to(role: :writing) { W6AbsLateThing.first!.label }.should eq "main"
   end
 
   it "keeps the abstract marker on the parent alone" do

@@ -61,7 +61,7 @@ module Grant::Sharding
     end
 
     def resolve_for_keys(**keys) : Symbol
-      values = @key_columns.map { |col| keys[col]? || raise "Missing shard key: #{col}" }
+      values = @key_columns.map { |col| keys[col]? || raise ShardKeyMissingError.new("Missing shard key: #{col}") }
       resolve_for_values(values)
     end
 
@@ -102,14 +102,14 @@ module Grant::Sharding
       value = values.first
 
       unless value.is_a?(String) || value.is_a?(Int64)
-        raise "Range sharding requires String or Int64 shard key, got #{value.class}"
+        raise ShardNotFoundError.new("Range sharding requires String or Int64 shard key, got #{value.class}")
       end
 
       range = @ranges.find { |r| r.includes?(value) }
       if range
         range.shard
       else
-        raise "Value #{value} not in any defined range"
+        raise ShardNotFoundError.new("Value #{value} not in any defined range")
       end
     end
 
@@ -122,11 +122,11 @@ module Grant::Sharding
                         when {String, String, String, String}
                           left.min.as(String) <= right.max.as(String) && right.min.as(String) <= left.max.as(String)
                         else
-                          raise "Range bounds must use the same type"
+                          raise ArgumentError.new("Range bounds must use the same type")
                         end
 
           if overlapping
-            raise "Overlapping ranges: #{left.min}-#{left.max} and #{right.min}-#{right.max}"
+            raise ArgumentError.new("Overlapping ranges: #{left.min}-#{left.max} and #{right.min}-#{right.max}")
           end
         end
       end
