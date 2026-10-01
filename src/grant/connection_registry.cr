@@ -209,10 +209,33 @@ module Grant
     # `#<replica_index>` after the role for the second and later replicas and
     # `:<shard>` at the end when sharded.
     def self.key_for(database : String, role : Symbol, shard : Symbol? = nil, replica_index : Int32 = 0) : String
-      if replica_index > 0
-        shard ? "#{database}:#{role}##{replica_index}:#{shard}" : "#{database}:#{role}##{replica_index}"
-      else
-        shard ? "#{database}:#{role}:#{shard}" : "#{database}:#{role}"
+      lookup = {database, role, shard, replica_index}
+      if key = @@key_cache[lookup]?
+        return key
+      end
+
+      key = if replica_index > 0
+              shard ? "#{database}:#{role}##{replica_index}:#{shard}" : "#{database}:#{role}##{replica_index}"
+            else
+              shard ? "#{database}:#{role}:#{shard}" : "#{database}:#{role}"
+            end
+      remember_key(lookup, key)
+      key
+    end
+
+    # Every model resolves its adapter through `key_for`, so the key text of a
+    # connection is built once. The map is replaced, never written in place,
+    # so readers need no lock; it stops growing at KEY_CACHE_LIMIT entries.
+    KEY_CACHE_LIMIT = 4096
+    @@key_cache = {} of Tuple(String, Symbol, Symbol?, Int32) => String
+    @@key_cache_mutex = Mutex.new
+
+    private def self.remember_key(lookup : Tuple(String, Symbol, Symbol?, Int32), key : String) : Nil
+      @@key_cache_mutex.synchronize do
+        return if @@key_cache.size >= KEY_CACHE_LIMIT
+        cache = @@key_cache.dup
+        cache[lookup] = key
+        @@key_cache = cache
       end
     end
 

@@ -57,8 +57,44 @@ abstract class Grant::Adapter::Base
     value
   end
 
+  # Returns *values* converted for the driver. A list with nothing to convert
+  # is returned as is, so the common bind list costs no copy.
   def normalize_bind_values(values)
+    return values unless values.any? { |value| bind_value_needs_normalization?(value) }
+
     values.map { |value| normalize_bind_value(value) }
+  end
+
+  # True for a value `normalize_bind_value` converts. An adapter that converts
+  # some types overrides this to say which.
+  protected def bind_value_needs_normalization?(value) : Bool
+    false
+  end
+
+  # The INSERT statements built so far, by table and column list. A model
+  # inserts the same few column lists over and over, and building the quoted
+  # statement text dominates the cost of a small insert.
+  INSERT_STATEMENT_CACHE_LIMIT = 512
+  @insert_statements = {} of Tuple(String, Array(String), String?) => String
+  @insert_statements_mutex = Mutex.new
+
+  # Returns the statement for inserting *fields* into *table_name*, building it
+  # with the block on first use. *variant* distinguishes statements for the
+  # same columns (a RETURNING clause, say).
+  protected def cached_insert_statement(table_name : String, fields : Array(String), variant : String? = nil, & : -> String) : String
+    key = {table_name, fields, variant}
+    @insert_statements_mutex.synchronize do
+      if statement = @insert_statements[key]?
+        return statement
+      end
+    end
+
+    statement = yield
+    @insert_statements_mutex.synchronize do
+      @insert_statements.clear if @insert_statements.size >= INSERT_STATEMENT_CACHE_LIMIT
+      @insert_statements[{table_name, fields.dup, variant}] = statement
+    end
+    statement
   end
 
   def read_time(result : DB::ResultSet) : Time

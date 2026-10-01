@@ -75,6 +75,10 @@ class Grant::Adapter::Sqlite < Grant::Adapter::Base
     value.to_s
   end
 
+  protected def bind_value_needs_normalization?(value) : Bool
+    value.is_a?(Time) || value.is_a?(UUID)
+  end
+
   def read_time(result : DB::ResultSet) : Time
     text = result.read(String)
     parse_time(text)
@@ -85,8 +89,62 @@ class Grant::Adapter::Sqlite < Grant::Adapter::Base
   end
 
   private def parse_time(text : String) : Time
+    if parsed = parse_canonical_time(text)
+      return parsed
+    end
+
     format = text.includes?(".") ? "%F %H:%M:%S.%N" : SQLite3::DATE_FORMAT_SECOND
     Time.parse(text, format, location: SQLite3::TIME_ZONE)
+  end
+
+  # Reads the text Grant itself stores, `YYYY-MM-DD HH:MM:SS` with an optional
+  # fraction of up to nine digits, straight from its bytes. `Time.parse` walks
+  # a format string for every value and dominates the cost of reading a row
+  # with timestamps. Anything else (another layout, an out-of-range field)
+  # returns nil and takes the general parser.
+  private def parse_canonical_time(text : String) : Time?
+    size = text.bytesize
+    return nil if size < 19 || size == 20 || size > 29
+
+    bytes = text.to_unsafe
+    return nil unless bytes[4] == '-'.ord && bytes[7] == '-'.ord && bytes[10] == ' '.ord &&
+                      bytes[13] == ':'.ord && bytes[16] == ':'.ord
+
+    year = canonical_digits(bytes, 0, 4)
+    month = canonical_digits(bytes, 5, 2)
+    day = canonical_digits(bytes, 8, 2)
+    hour = canonical_digits(bytes, 11, 2)
+    minute = canonical_digits(bytes, 14, 2)
+    second = canonical_digits(bytes, 17, 2)
+    return nil if year < 0 || month < 0 || day < 0 || hour < 0 || minute < 0 || second < 0
+
+    nanosecond = 0
+    if size > 19
+      return nil unless bytes[19] == '.'.ord
+
+      fraction_digits = size - 20
+      fraction = canonical_digits(bytes, 20, fraction_digits)
+      return nil if fraction < 0
+
+      nanosecond = fraction
+      (9 - fraction_digits).times { nanosecond *= 10 }
+    end
+
+    Time.local(year, month, day, hour, minute, second, nanosecond: nanosecond, location: SQLite3::TIME_ZONE)
+  rescue ArgumentError
+    nil
+  end
+
+  # The decimal number in *count* ASCII digits at *offset*, or -1 when one of
+  # the bytes is not a digit.
+  private def canonical_digits(bytes : Pointer(UInt8), offset : Int32, count : Int32) : Int32
+    value = 0
+    count.times do |index|
+      digit = bytes[offset + index].to_i32 - '0'.ord
+      return -1 if digit < 0 || digit > 9
+      value = value * 10 + digit
+    end
+    value
   end
 
   # PRAGMAs applied to every connection unless the URL or `pragmas` says
@@ -310,20 +368,24 @@ class Grant::Adapter::Sqlite < Grant::Adapter::Base
   end
 
   def insert(table_name : String, fields, params, lastval) : Int64
-    statement = String.build do |stmt|
-      stmt << "INSERT INTO #{quote(table_name)} ("
-      stmt << fields.map { |name| "#{quote(name)}" }.join(", ")
-      stmt << ") VALUES ("
-      stmt << fields.map { |_name| "?" }.join(", ")
-      stmt << ")"
+    statement = cached_insert_statement(table_name, fields) do
+      String.build do |stmt|
+        stmt << "INSERT INTO #{quote(table_name)} ("
+        stmt << fields.map { |name| "#{quote(name)}" }.join(", ")
+        stmt << ") VALUES ("
+        stmt << fields.map { |_name| "?" }.join(", ")
+        stmt << ")"
+      end
     end
 
     last_id = -1_i64
     statement = Grant::QueryLogs.append(statement)
     elapsed_time = Time.measure do
       open(statement, params) do |db|
-        db.exec statement, args: normalize_bind_values(params)
-        last_id = db.scalar(last_val()).as(Int64) if lastval
+        # The driver reports the new rowid with the insert, so no second
+        # statement is needed to read it.
+        result = db.exec statement, args: normalize_bind_values(params)
+        last_id = result.last_insert_id if lastval
       end
     end
 
