@@ -107,20 +107,45 @@ class Grant::Query::Builder(Model)
   # User.where.json_contains(:settings, {theme: "dark"})
   # ```
   def json_contains!(field : Symbol | String, document) : self
-    column = structured_field_sql(field.to_s)
+    add_json_containment(:and, field.to_s, document)
+    self
+  end
+
+  # `where(settings: {theme: "dark"})` on a JSON column: the same containment
+  # as `json_contains`, joined with *join* (`:and` or `:or`). Called by `where`
+  # when the value is a hash or named tuple and the key names a JSON column.
+  #
+  # :nodoc:
+  def add_json_containment(join : Symbol, field : String, document) : Nil
+    column = structured_field_sql(field)
     json = document.to_json
     case @db_type
     in .pg?
-      own_where_fields << {join: :and, stmt: "#{column} @> ?::jsonb", values: [json.as(Grant::Columns::Type)]}
+      own_where_fields << {join: join, stmt: "#{column} @> ?::jsonb", values: [json.as(Grant::Columns::Type)]}
     in .sqlite?
       clauses = [] of String
       binds = [] of Grant::Columns::Type
-      sqlite_containment(column, ::JSON.parse(json), "$", clauses, binds)
-      own_where_fields << {join: :and, stmt: "(#{clauses.join(" AND ")})", values: binds}
+      sqlite_containment(column, ::JSON.parse(json), "$", clauses, binds, 0)
+      own_where_fields << {join: join, stmt: "(#{clauses.join(" AND ")})", values: binds}
     in .mysql?
       raise_unsupported_json
     end
-    self
+  end
+
+  # True when *field* is a `JSON::Any` column of the model.
+  #
+  # :nodoc:
+  def json_document_column?(field : String) : Bool
+    {% begin %}
+      case field
+      {% for ivar in Model.instance_vars %}
+        {% if ivar.annotation(Grant::Column) && ivar.type.union_types.any? { |member| member == JSON::Any } %}
+      when {{ ivar.name.stringify }} then true
+        {% end %}
+      {% end %}
+      else false
+      end
+    {% end %}
   end
 
   # Keeps rows whose JSON column holds *value* at *path*. The path is a list
@@ -254,7 +279,11 @@ class Grant::Query::Builder(Model)
   end
 
   # Expands `col @> document` into one json_extract / json_each test per leaf.
-  private def sqlite_containment(column : String, document : ::JSON::Any, path : String, clauses : Array(String), binds : Array(Grant::Columns::Type)) : Nil
+  # An array in *document* needs, for each of its items, an element of the stored
+  # array that contains it: a scalar item compares by type and value, an object
+  # or array item recurses over the element's JSON text, under its own
+  # `json_each` alias (*depth* keeps the aliases of nested arrays apart).
+  private def sqlite_containment(column : String, document : ::JSON::Any, path : String, clauses : Array(String), binds : Array(Grant::Columns::Type), depth : Int32) : Nil
     case raw = document.raw
     when Hash
       if raw.empty?
@@ -263,20 +292,29 @@ class Grant::Query::Builder(Model)
       end
       raw.each do |key, child|
         raise ArgumentError.new("Invalid JSON key #{key.inspect}") if key.includes?('"')
-        sqlite_containment(column, child, "#{path}.\"#{key}\"", clauses, binds)
+        sqlite_containment(column, child, "#{path}.\"#{key}\"", clauses, binds, depth)
       end
     when Array
       clauses << "json_type(#{column}, ?) = 'array'"
       binds << path
       raw.each do |item|
         scalar = item.raw
+        alias_name = "grant_je#{depth}"
         if scalar.is_a?(Hash) || scalar.is_a?(Array)
-          raise Grant::Schema::UnsupportedOperation.new("SQLite json_contains cannot match objects or arrays inside an array")
+          inner = [] of String
+          sqlite_containment("#{alias_name}.value", item, "$", inner, binds_for_inner = [] of Grant::Columns::Type, depth + 1)
+          # A bare scalar element is not JSON text, so the CASE keeps the nested
+          # tests away from it (they would fail with "malformed JSON").
+          kind = scalar.is_a?(Hash) ? "object" : "array"
+          clauses << "EXISTS (SELECT 1 FROM json_each(#{column}, ?) AS #{alias_name} WHERE CASE WHEN #{alias_name}.type = '#{kind}' THEN (#{inner.join(" AND ")}) ELSE 0 END)"
+          binds << path
+          binds.concat(binds_for_inner)
+        else
+          clauses << "EXISTS (SELECT 1 FROM json_each(#{column}, ?) AS #{alias_name} WHERE #{alias_name}.type = ? AND #{alias_name}.value IS ?)"
+          binds << path
+          binds << sqlite_json_type(scalar)
+          binds << sqlite_json_value(scalar)
         end
-        clauses << "EXISTS (SELECT 1 FROM json_each(#{column}, ?) WHERE json_each.type = ? AND json_each.value IS ?)"
-        binds << path
-        binds << sqlite_json_type(scalar)
-        binds << sqlite_json_value(scalar)
       end
     when Nil
       clauses << "json_type(#{column}, ?) = 'null'"

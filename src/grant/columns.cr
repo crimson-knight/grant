@@ -158,6 +158,13 @@ module Grant::Columns
     # A JSON::Any column stores a JSON document: a native jsonb column on
     # PostgreSQL and JSON text elsewhere. No converter needs to be declared.
     {% converter = "Grant::Converters::JsonDocument".id if converter == nil && not_nilable_type.resolve == JSON::Any %}
+    {% if not_nilable_type.resolve == JSON::Any %}
+      {% Grant::JsonStoreAccessor::JSON_COLUMNS["#{@type.name}##{decl.var}"] = true %}
+    {% end %}
+    # `type: :jsonb` spells the same JSON document column out; it is only valid on a JSON::Any column.
+    {% if options[:type] != nil && (options[:type] != :jsonb || not_nilable_type.resolve != JSON::Any) %}
+      {% raise "The column #{@type.name}##{decl.var} has `type: #{options[:type]}`; only `type: :jsonb` on a JSON::Any column is supported" %}
+    {% end %}
     {% primary = (options[:primary] && !options[:primary].nil?) ? options[:primary] : false %}
     # An explicit `auto:` on a primary key wins. Without one, only integer and
     # UUID keys default to `auto: true`, since only they can be generated on

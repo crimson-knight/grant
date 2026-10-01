@@ -1,3 +1,5 @@
+require "./serializers/jsonb"
+
 # Typed accessors for individual keys of a `serialized_column`, in the style of
 # Rails' `store_accessor`.
 #
@@ -41,6 +43,10 @@ module Grant::StoreAccessor
   # the default. The store's value class must have a settable property of the
   # same name and a zero-argument constructor.
   macro store_accessor(store, *keys, **options)
+    {% json_store = Grant::JsonStoreAccessor::JSON_COLUMNS["#{@type.name}##{store.id}"] %}
+    {% if json_store %}
+      json_store_accessor {{ store }}, {{ keys.splat }}{{ ", ".id if options.size > 0 }}{{ options.double_splat }}
+    {% else %}
     {% prefix = options[:prefix] %}
     {% suffix = options[:suffix] %}
     {% name_prefix = (prefix == nil || prefix == false) ? "" : (prefix == true ? "#{store.id}_" : "#{prefix.id}_") %}
@@ -122,9 +128,11 @@ module Grant::StoreAccessor
         @{{ ivar }}_was = nil
       end
     {% end %}
+    {% end %}
   end
 end
 
 abstract class Grant::Base
   include Grant::StoreAccessor
+  include Grant::JsonStoreAccessor
 end
