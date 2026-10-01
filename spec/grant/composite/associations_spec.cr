@@ -56,7 +56,6 @@ private def seed_shared_ids
   {order_one, order_two}
 end
 
-
 describe "composite foreign keys on associations" do
   before_all do
     CkAsOrder.migrator.drop_and_create

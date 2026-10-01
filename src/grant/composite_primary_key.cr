@@ -15,9 +15,9 @@ require "./composite_primary_key/validation"
 #   composite_primary_key shop_id, order_id
 # end
 #
-# OrderItem.find({1_i64, 2_i64})                      # one row, by key tuple
-# OrderItem.find({shop_id: 1_i64, order_id: 2_i64})   # same, by name
-# OrderItem.find([{1_i64, 2_i64}, {1_i64, 3_i64}])    # rows, one row-value IN query
+# OrderItem.find({1_i64, 2_i64})                    # one row, by key tuple
+# OrderItem.find({shop_id: 1_i64, order_id: 2_i64}) # same, by name
+# OrderItem.find([{1_i64, 2_i64}, {1_i64, 3_i64}])  # rows, one row-value IN query
 # ```
 #
 # `query_constraints` keeps a single-column primary key but makes every
