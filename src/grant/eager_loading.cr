@@ -278,11 +278,43 @@ module Grant::EagerLoading
                 \{% end %}
               \{% end %}
               \{% source_ann = source_method ? source_method.annotation(Grant::Relationship) : nil %}
-              \{% unless join_model && source_ann && source_ann[:target].resolve? && !source_ann[:polymorphic] %}
+              \{% unless join_model && source_ann && source_ann[:target].resolve? %}
                 \{% raise "Cannot preload through association #{@type}##{method.name}; declare a resolvable through and source association" %}
               \{% end %}
               \{% through_belongs = through_ann[:type] == :belongs_to %}
               \{% source_belongs = source_ann[:type] == :belongs_to %}
+              \{% if through_ann[:through] || source_ann[:through] || source_ann[:polymorphic] %}
+              # A through of a through, a through source, or a polymorphic source
+              # (`source_type:`): the through association loads through its own
+              # loader, then one query reaches the targets.
+              \{% if source_ann[:through] %}
+                \{% if scope.is_a?(ProcLiteral) %}
+                  \{% scoped_message = "Cannot preload the scoped association #{@type}##{method.name}: its source is itself a through association" %}
+                  raise Grant::Associations::ThroughChainError.new(\{{scoped_message}})
+                \{% end %}
+                Grant::AssociationLoader.preload_nested_through(
+                  records, assoc_name, \{{ann[:through].id.stringify}}, \{{ann[:source].id.stringify}}, \{{ann[:type] == :has_many}})
+              \{% else %}
+                \{% nested_key = source_belongs ? (source_ann[:primary_key] ? source_ann[:primary_key].id.stringify : nil) : source_ann[:foreign_key].id.stringify %}
+                nested_key = \{{nested_key}}.as(String?) || \{{target}}.primary_name || raise Grant::Querying::MissingPrimaryKeyError.new(\{{target.stringify + " has no primary key"}})
+                nested_loader = ->(values : Array(Grant::Columns::Type)) : Array(Grant::Base) {
+                  relation = \{{target}}.current_scope
+                  \{% if scope.is_a?(ProcLiteral) %}
+                    \{% if scope.args.empty? %}
+                      relation = relation.\{{scope.body}}
+                    \{% else %}
+                      relation = \{{scope}}.call(relation)
+                    \{% end %}
+                  \{% end %}
+                  Grant::AssociationLoader.where_in(relation, nested_key, values).select.map(&.as(Grant::Base))
+                }
+                Grant::AssociationLoader.preload_nested_through(
+                  records, assoc_name, \{{ann[:through].id.stringify}}, \{{ann[:source].id.stringify}}, \{{ann[:type] == :has_many}},
+                  nested_loader,
+                  \{{(source_belongs ? source_ann[:foreign_key] : source_ann[:primary_key]).id.stringify}}, nested_key,
+                  \{% if source_ann[:polymorphic] %}\{{source_ann[:type_column].id.stringify}}, \{{target}}.polymorphic_name\{% else %}nil, nil\{% end %})
+              \{% end %}
+              \{% else %}
               join_loader = ->(values : Array(Grant::Columns::Type)) : Array(Grant::Base) {
                 Grant::AssociationLoader.where_in(\{{join_model}}.current_scope, \{{(through_belongs ? through_ann[:primary_key] : through_ann[:foreign_key]).id.stringify}}, values).select.map(&.as(Grant::Base))
               }
@@ -304,6 +336,7 @@ module Grant::EagerLoading
                 \{{(source_belongs ? source_ann[:foreign_key] : source_ann[:primary_key]).id.stringify}},
                 \{{(source_belongs ? source_ann[:primary_key] : source_ann[:foreign_key]).id.stringify}},
                 join_loader, target_loader, \{{ann[:type] == :has_many}})
+              \{% end %}
             \{% else %}
               loader = ->(values : Array(Grant::Columns::Type)) : Array(Grant::Base) {
                 relation = \{{target}}.current_scope
