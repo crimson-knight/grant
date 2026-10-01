@@ -1,6 +1,6 @@
 {
   "baseline_source_commit": "32b69d8",
-  "verified_against_commit": "76b040b420d9f8bcea3bcc06299dfbdce2f02078",
+  "verified_against_commit": "65294a79d1190d03925d6816a2874859d4af672a",
   "baseline_counts": {
     "complete": 116,
     "partial": 74,
@@ -46,8 +46,11 @@
       "area": "Migrations & schema",
       "feature": "Migration CLI (amber database migrate/rollback/status/seed/create/drop)",
       "status": "partial",
-      "evidence_spec_paths": [],
-      "gap": "CLI lives in Amber/Micrate outside this repo. Grant provides no task API (create/drop database, migrate, rollback, status, seed) that a CLI can call, and no spec exists.",
+      "evidence_spec_paths": [
+        "spec/grant/tasks/database_tasks_spec.cr",
+        "spec/grant/tasks/seeds_spec.cr"
+      ],
+      "gap": "The CLI wrapper lives in amber_cli main (V2), outside this repo.",
       "not_applicable_reason": ""
     },
     {
@@ -63,11 +66,13 @@
     {
       "area": "Migrations & schema",
       "feature": "Schema dump / schema.rb equivalent",
-      "status": "missing",
-      "evidence_spec_paths": [],
-      "gap": "No dump, no load, no schema file format, and no introspection layer to build one from.",
-      "not_applicable_reason": "",
-      "priority": 26
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/schema/dumper_spec.cr",
+        "spec/grant/tasks/database_tasks_spec.cr"
+      ],
+      "gap": "MySQL dump queries are written but untested. NULLS ordering, collations, views and triggers are not in the Crystal dump.",
+      "not_applicable_reason": ""
     },
     {
       "area": "Migrations & schema",
@@ -115,9 +120,12 @@
     {
       "area": "Migrations & schema",
       "feature": "Seeds",
-      "status": "partial",
-      "evidence_spec_paths": [],
-      "gap": "Only a convention (a Crystal script); no `Grant::Seed` runner, no `db/seeds.cr` lookup, no idempotent-seed helper, and no spec.",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/tasks/seeds_spec.cr",
+        "spec/grant/tasks/database_tasks_spec.cr"
+      ],
+      "gap": "None. Because Crystal compiles rather than interprets, db/seeds.cr must be required into the task program and registers via Grant::Seeds.define; documented.",
       "not_applicable_reason": ""
     },
     {
@@ -147,8 +155,10 @@
       "area": "Migrations & schema",
       "feature": "Amber CLI generate migration scaffold",
       "status": "partial",
-      "evidence_spec_paths": [],
-      "gap": "Scaffolding lives in the separate Amber CLI project; nothing in Grant's src/ or specs. No name-parsing (AddXToY -> add_column) inside Grant.",
+      "evidence_spec_paths": [
+        "spec/grant/schema/generator_spec.cr"
+      ],
+      "gap": "The CLI command lives in amber_cli main (V2), outside this repo.",
       "not_applicable_reason": ""
     },
     {
@@ -389,20 +399,25 @@
     {
       "area": "Migrations & schema",
       "feature": "Database tasks: create/drop database, purge, structure dump (structure.sql), setup/reset/prepare, truncate_all",
-      "status": "missing",
-      "evidence_spec_paths": [],
-      "gap": "No Grant API; Micrate/Amber CLI does create/drop only. No structure dump/load, purge, `db:prepare`, `db:reset`, or `truncate_all`.",
-      "not_applicable_reason": "",
-      "priority": 28
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/tasks/database_tasks_spec.cr",
+        "spec/grant/tasks/truncate_all_spec.cr",
+        "spec/grant/schema/dumper_spec.cr"
+      ],
+      "gap": "MySQL create, drop and structure dump are untested.",
+      "not_applicable_reason": ""
     },
     {
       "area": "Migrations & schema",
       "feature": "Schema format configuration (:ruby vs :sql) and db:schema:load for fresh environments",
-      "status": "missing",
-      "evidence_spec_paths": [],
-      "gap": "Depends on the schema dump row; nothing to select or load.",
-      "not_applicable_reason": "",
-      "priority": 29
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/tasks/database_tasks_spec.cr",
+        "spec/grant/schema/dumper_spec.cr"
+      ],
+      "gap": "None. Grant::Schema.format = :crystal | :sql, Tasks::Database#schema_load, Schema.load(adapter, path) for compiled Crystal schema files and .sql structure files.",
+      "not_applicable_reason": ""
     },
     {
       "area": "Migrations & schema",
@@ -418,11 +433,12 @@
     {
       "area": "Migrations & schema",
       "feature": "Migration file generator naming conventions (AddXToY, CreateXs parse, timestamped versions)",
-      "status": "missing",
-      "evidence_spec_paths": [],
-      "gap": "Covered only inside the external Amber CLI row; no attribute parsing DSL in Grant.",
-      "not_applicable_reason": "",
-      "priority": 30
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/schema/generator_spec.cr"
+      ],
+      "gap": "None. AddXToY, AddXAndYToZ, RemoveXFromY, CreateXs, CreateJoinTableXY, attribute types with {limit}/{precision,scale}/{polymorphic}, :index/:uniq, references, timestamped file names.",
+      "not_applicable_reason": ""
     },
     {
       "area": "Migrations & schema",
@@ -470,11 +486,15 @@
     {
       "area": "Infrastructure (locking, encryption, instrumentation, …)",
       "feature": "Composite primary keys",
-      "status": "partial",
+      "status": "complete",
       "evidence_spec_paths": [
+        "spec/grant/composite/persistence_spec.cr",
+        "spec/grant/composite/find_where_spec.cr",
+        "spec/grant/composite/associations_spec.cr",
+        "spec/grant/composite/locking_constraints_spec.cr",
         "spec/grant/composite_primary_key_spec.cr"
       ],
-      "gap": "DSL, detection, key tuple helpers and find/exists? signatures exist (12 passing SQLite examples, config only). Persistence is unimplemented: composite_primary_key/transactions.cr is an empty TODO module, so create/update/destroy/reload rely on the single-key path. No spec inserts and reads back a composite-key row. Missing AR parts: find with array of tuples, where(id: [[a,b],...]), to_param/id as Array, associations with composite foreign keys, primary_key: [..] on belongs_to/has_many.",
+      "gap": "MySQL not run. Scalar find(id) is not meaningful on a keyless composite model (use find(tuple)). Optimistic locking is now key-scoped for constrained models (reviewer fix); composite-PK with locking is not specifically spec'd.",
       "not_applicable_reason": ""
     },
     {
@@ -562,11 +582,13 @@
     {
       "area": "Infrastructure (locking, encryption, instrumentation, …)",
       "feature": "query_constraints composite model keys",
-      "status": "missing",
-      "evidence_spec_paths": [],
-      "gap": "No API to scope find/update/destroy/reload by multiple columns while keeping a single-column primary key (for example a sharded or tenant-partitioned key).",
-      "not_applicable_reason": "",
-      "priority": 31
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/composite/query_constraints_spec.cr",
+        "spec/grant/composite/locking_constraints_spec.cr"
+      ],
+      "gap": "Scalar Model.find(id) stays primary-key-only by design (use find({tenant, id})). MySQL not run.",
+      "not_applicable_reason": ""
     },
     {
       "area": "Infrastructure (locking, encryption, instrumentation, …)",
@@ -747,11 +769,13 @@
     {
       "area": "Infrastructure (locking, encryption, instrumentation, …)",
       "feature": "Database tasks (create/drop/purge/migrate/schema load, DatabaseTasks)",
-      "status": "missing",
-      "evidence_spec_paths": [],
-      "gap": "Grant relies on external Micrate and the Amber CLI for these operations; no Grant-level programmatic create/drop/purge/prepare API and no structure-dump load.",
-      "not_applicable_reason": "",
-      "priority": 27
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/tasks/database_tasks_spec.cr",
+        "spec/grant/tasks/truncate_all_spec.cr"
+      ],
+      "gap": "None for sqlite and pg; production drop/purge/reset/schema_load/truncate_all guarded (protected environments, recorded environment, mismatch), prepare = create+schema/migrate+seed for new, migrate for existing.",
+      "not_applicable_reason": ""
     },
     {
       "area": "Infrastructure (locking, encryption, instrumentation, …)",
@@ -4143,11 +4167,12 @@
     {
       "area": "Associations",
       "feature": "singular association builders build_<assoc> / create_<assoc> / create_<assoc>!",
-      "status": "missing",
-      "evidence_spec_paths": [],
-      "gap": "Not generated (probe P6: responds_to?(:build_prb_detail) and :create_prb_detail are false).",
-      "not_applicable_reason": "",
-      "priority": 35
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/associations/singular_builders_spec.cr"
+      ],
+      "gap": "none for belongs_to and has_one. Like ActiveRecord, not generated for polymorphic belongs_to, has_one :as, or has_one :through. Takes **attributes only (no positional hash, no block).",
+      "not_applicable_reason": ""
     },
     {
       "area": "Associations",
@@ -4200,20 +4225,22 @@
     {
       "area": "Associations",
       "feature": "nested has_many :through (through another through association)",
-      "status": "missing",
-      "evidence_spec_paths": [],
-      "gap": "AssociationCollection#through_associations does a single registry lookup; if the through association is itself a through, the join keys are wrong. No spec exists.",
-      "not_applicable_reason": "",
-      "priority": 34
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/associations/nested_through_spec.cr"
+      ],
+      "gap": "none for reads: lazy reader, count, exists?, where, find, ids, raw all(clause), and includes preload all work for chains of any depth, including a source that is itself a through. Nested through is read-only, as in ActiveRecord (writes raise ThroughWriteError). Not covered: a scope lambda on an association whose source is itself a through raises ThroughChainError on preload; intermediate models' default scopes are not applied to the join hops; has_one through a nested through was not specced separately.",
+      "not_applicable_reason": ""
     },
     {
       "area": "Associations",
       "feature": "has_many :through source_type (polymorphic source)",
-      "status": "missing",
-      "evidence_spec_paths": [],
-      "gap": "No source_type option; a through whose source is a polymorphic belongs_to cannot be expressed.",
-      "not_applicable_reason": "",
-      "priority": 36
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/associations/through_source_type_spec.cr"
+      ],
+      "gap": "none. source_type: Post on has_many/has_one :through, read with one statement (type predicate in the join), preload with one query per hop, scope lambda supported, << and delete write the type, and a polymorphic source without source_type raises ThroughChainError. The through-writer for a polymorphic source was not specced for destroy/delete_all beyond delete(record).",
+      "not_applicable_reason": ""
     },
     {
       "area": "Associations",
@@ -4299,11 +4326,13 @@
     {
       "area": "Associations",
       "feature": "association option validation (unknown keys and dependent: values raise)",
-      "status": "missing",
-      "evidence_spec_paths": [],
-      "gap": "Macros take **options and ignore unknown keys; an invalid dependent: (e.g. :restrict_with_error, :delete on has_many) is silently accepted (probe P3). AR raises ArgumentError for both.",
-      "not_applicable_reason": "",
-      "priority": 33
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/associations/option_validation_spec.cr",
+        "spec/grant/associations/dependent_options_spec.cr"
+      ],
+      "gap": "none. Unknown keys fail at macro expansion for belongs_to, has_one, has_many (including as:/polymorphic paths, typed declarations, habtm's forwarded options); source_type without through fails; dependent: values were already checked by Grant::Dependent.check_dependent_option and are covered per type here. The direct belongs_to_polymorphic / has_many_polymorphic macros are not separately validated.",
+      "not_applicable_reason": ""
     },
     {
       "area": "Associations",
@@ -4319,9 +4348,11 @@
     {
       "area": "Associations",
       "feature": "composite foreign keys on associations (query_constraints)",
-      "status": "missing",
-      "evidence_spec_paths": [],
-      "gap": "Association macros assume a single foreign key and primary key column; composite primary keys exist in src/grant/composite_primary_key.cr but associations do not use them.",
+      "status": "partial",
+      "evidence_spec_paths": [
+        "spec/grant/composite/associations_spec.cr"
+      ],
+      "gap": "through, as, polymorphic, counter_cache, touch and autosave are compile errors; no required-parent validation; where.associated/missing and where(assoc: record) are not adapted for composite associations. MySQL not run.",
       "not_applicable_reason": "",
       "priority": 32
     },
