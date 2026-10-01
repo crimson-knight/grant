@@ -62,24 +62,30 @@ class Grant::Query::Builder(Model)
   end
 end
 
+# Registers the scope of every scoped association once all models exist. Each
+# registration is emitted inside its model's body, so the scope lambda sees the
+# model's constants and class methods exactly as it does where it was declared.
 macro finished
   {% for model in Grant::Base.all_subclasses %}
-    {% for method in model.methods %}
-      {% ann = method.annotation(Grant::Relationship) %}
-      {% if ann && ann[:scope].is_a?(ProcLiteral) && ann[:target] && ann[:target].resolve? %}
-        {% scope = ann[:scope] %}
-        Grant::AssociationRegistry.register_scope(
-          {{model.name.stringify}}, {{method.name.stringify}},
-          ->(qualifier : String) : Grant::AssociationRegistry::ScopeFragment? {
-            relation = {{ann[:target].resolve}}.unscoped
-            {% if scope.args.empty? %}
-              relation = relation.{{scope.body}}
-            {% else %}
-              relation = {{scope}}.call(relation)
-            {% end %}
-            relation.association_scope_fragment(qualifier)
-          })
-      {% end %}
+    {% scoped = model.methods.select { |method| (ann = method.annotation(Grant::Relationship)) && ann[:scope].is_a?(ProcLiteral) && ann[:target] && ann[:target].resolve? } %}
+    {% unless scoped.empty? %}
+      class ::{{model.name}}
+        {% for method in scoped %}
+          {% ann = method.annotation(Grant::Relationship) %}
+          {% scope = ann[:scope] %}
+          Grant::AssociationRegistry.register_scope(
+            {{model.name.stringify}}, {{method.name.stringify}},
+            ->(qualifier : String) : Grant::AssociationRegistry::ScopeFragment? {
+              relation = {{ann[:target].resolve}}.unscoped
+              {% if scope.args.empty? %}
+                relation = relation.{{scope.body}}
+              {% else %}
+                relation = {{scope}}.call(relation)
+              {% end %}
+              relation.association_scope_fragment(qualifier)
+            })
+        {% end %}
+      end
     {% end %}
   {% end %}
 end
