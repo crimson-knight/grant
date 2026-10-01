@@ -782,9 +782,20 @@ class Grant::Query::Builder(Model)
     self
   end
 
-  # Adds INNER JOINs for multiple association names at once.
-  def joins!(*associations : Symbol) : self
+  # Adds INNER JOINs for several association names at once, optionally with
+  # nested associations, resolved through the association registry from the
+  # model each level reaches. A has_many chain multiplies rows; pair it with
+  # `distinct` when the parent rows are wanted once. A table reached through two
+  # different paths is joined under an alias.
+  #
+  # ```
+  # User.joins(posts: :comments)
+  # User.joins(posts: [:comments, {likes: :user}])
+  # User.joins(:comments, posts: :comments) # comments, then comments_posts
+  # ```
+  def joins!(*associations : Symbol, **nested) : self
     associations.each { |assoc| joins!(assoc) }
+    add_join_clauses(Grant::Query::JoinSupport.resolve_nested(Model, nested, :inner, @join_clauses)) unless nested.empty?
     self
   end
 
@@ -817,9 +828,11 @@ class Grant::Query::Builder(Model)
     self
   end
 
-  # Adds LEFT JOINs for multiple association names at once.
-  def left_joins!(*associations : Symbol) : self
+  # Adds LEFT JOINs for several association names at once, optionally with
+  # nested associations.
+  def left_joins!(*associations : Symbol, **nested) : self
     associations.each { |assoc| left_joins!(assoc) }
+    add_join_clauses(Grant::Query::JoinSupport.resolve_nested(Model, nested, :left, @join_clauses)) unless nested.empty?
     self
   end
 
@@ -835,7 +848,7 @@ class Grant::Query::Builder(Model)
   #
   # Raises `ArgumentError` if the association is unknown.
   private def resolve_association_join(association : Symbol, type : Symbol) : Array(NamedTuple(type: Symbol, table: String, on: String))
-    Grant::Query::JoinSupport.resolve(Model, association, type)
+    Grant::Query::JoinSupport.resolve(Model, association, type, nil, @join_clauses)
   end
 
   private def add_eager_load_join(association : Symbol) : Nil
