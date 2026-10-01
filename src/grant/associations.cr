@@ -121,7 +121,9 @@ module Grant::Associations
   # post.user_id # => some_user.id
   # ```
   macro belongs_to(model, scope = nil, **options)
-    {% if options[:polymorphic] %}
+    {% if options[:foreign_key].is_a?(TupleLiteral) || options[:foreign_key].is_a?(ArrayLiteral) || options[:query_constraints] %}
+      composite_belongs_to({{model}}, {{scope}}, {% for key, value in options %}{{key.id}}: {{value}}, {% end %})
+    {% elsif options[:polymorphic] %}
       {% if options[:foreign_key].is_a?(TypeDeclaration) %}
         column {{options[:foreign_key]}}
         belongs_to_polymorphic({{model}}, foreign_key_declared: true, {% for key, value in options %}{% if key.stringify == "foreign_key" %}foreign_key: {{value.var.stringify}}, {% else %}{{key.id}}: {{value}}, {% end %}{% end %})
@@ -336,7 +338,9 @@ module Grant::Associations
   # user.avatar   # => Avatar? (joined through profiles)
   # ```
   macro has_one(model, scope = nil, **options)
-    {% if options[:as] %}
+    {% if options[:foreign_key].is_a?(TupleLiteral) || options[:foreign_key].is_a?(ArrayLiteral) || options[:query_constraints] %}
+      composite_has_one({{model}}, {{scope}}, {% for key, value in options %}{{key.id}}: {{value}}, {% end %})
+    {% elsif options[:as] %}
       has_one_polymorphic({{model}}, {{options[:as]}}, {% for key, value in options %}{{key.id}}: {{value}}, {% end %})
     {% elsif options[:through] %}
       # has_one :through — traverses an intermediate association to find a single target record
@@ -644,7 +648,9 @@ module Grant::Associations
   # user.tags.to_a         # joined through taggings
   # ```
   macro has_many(model, scope = nil, **options)
-    {% if options[:as] %}
+    {% if options[:foreign_key].is_a?(TupleLiteral) || options[:foreign_key].is_a?(ArrayLiteral) || options[:query_constraints] %}
+      composite_has_many({{model}}, {{scope}}, {% for key, value in options %}{{key.id}}: {{value}}, {% end %})
+    {% elsif options[:as] %}
       has_many_polymorphic({{model}}, {{options[:as]}}, {% for key, value in options %}{{key.id}}: {{value}}, {% end %})
     {% else %}
     {% if model.is_a? TypeDeclaration %}
@@ -991,3 +997,4 @@ module Grant::Associations
 end
 
 require "./associations/habtm"
+require "./associations/composite_foreign_key"

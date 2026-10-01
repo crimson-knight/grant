@@ -225,7 +225,9 @@ module Grant::EagerLoading
           \{% scope = ann[:scope] %}
           \{% target = ann[:target].resolve %}
           if assoc_name == \{{method.name.stringify}}
-            \{% if ann[:type] == :belongs_to %}
+            \{% if ann[:composite] %}
+              \{{("__composite_preload_" + method.name.stringify).id}}(records, restriction)
+            \{% elsif ann[:type] == :belongs_to %}
               \{% if ann[:polymorphic] %}
                 Grant::AssociationLoader.preload_polymorphic_belongs_to(
                   records, assoc_name, \{{ann[:foreign_key].id.stringify}}, \{{ann[:type_column].id.stringify}},
