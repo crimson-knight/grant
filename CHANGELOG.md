@@ -2,6 +2,120 @@
 
 ## Unreleased
 
+### ActiveRecord parity, wave 6a
+
+Parity moves from 320 to 370 complete features (77.7% to 89.8% of applicable).
+32 features are partial and 10 are missing (the deferred list in
+`docs/parity/ROADMAP.md`). This wave closes partial rows in validations,
+attributes, querying, associations and connections.
+
+- **Validations:** numericality reports `:not_a_number`, `:not_an_integer`
+  or `:out_of_range` from the raw input when text is mass-assigned to a
+  typed numeric column, and adds `only_numeric:`. Length and comparison
+  validators add one typed error per failed bound with `count:`.
+  Inclusion, exclusion, format and uniqueness errors carry `value:` in
+  `errors.details`. `validates_with` keeps its options, and
+  `Grant::TypedValidator(T)` is new.
+- **Errors and I18n:** `Errors#details_for`; `Grant::I18n.with_locale` sets
+  a fiber-local locale, and the message caches are keyed by locale.
+- **Dirty tracking:** typed `<attr>_was`, `_change`, `_previously_was` and
+  `_in_database` through converters (new `Converter.from_db`), plus
+  `<attr>_came_from_user?`. `changed` returns names, and
+  `changed_attributes` returns name => original value.
+- **Attributes:** `Model.statuses` returns the enum mapping; signed ids on
+  every model, including composite keys. `timestamps precision:`,
+  date-granular `created_on`/`updated_on`, and a runtime
+  `record_timestamps=`. `alias_attribute` works in `find_by`, `order`,
+  `pluck`, `select` and `where`. `ModelName` gains `plural`, `collection`,
+  `route_key`, `singular_route_key` and `human(count:)`.
+- **Querying:** association scopes apply in `joins`, `left_joins`,
+  `where.associated` and `where.missing`. A table reached twice is aliased
+  automatically. `merge` appends ORDER BY. `unscope`, `only` and `except`
+  cover every component. `reorder`, `reselect` and `regroup` accept every
+  argument form. `Relation#update`/`update!` take hash, id and id-list
+  forms. `Model.scoping` applies to `new`/`create` and reaches STI
+  subclasses.
+- **Associations:** collections are chainable SQL relations (order, limit,
+  pluck, aggregates, joins, batches). They gain ordinal finders that read
+  with LIMIT, plus `find_or_create_by`, `find_or_initialize_by` and
+  `create_or_find_by`. The `has_one`, `has_many`, through and polymorphic
+  writers persist immediately on a saved owner. `<singular>_ids` is typed.
+  Built records show up in reads. Scoped `dependent:` touches only the
+  scoped rows.
+- **Connections and sharding:** `ConnectionRegistry.verify!` and
+  `verify_all!` check `connects_to` at boot. `connected_to(database:
+  {reading: ...})` accepts a role hash. Sharded models read
+  `connects_to(shards:)`. Range and time-range shard pruning is new, and
+  `prohibit_shard_swapping` is enforced everywhere. `database_tasks: false`
+  is honored. Idle pooled connections are verified lazily
+  (`verify_idle_after`, 30 s by default). `NoDatabaseError` and
+  `ConnectionFailed` replace raw driver errors.
+- **Tooling:** `scripts/spec-groups.sh` and the regression gate compile with
+  `--incremental` (6.0 GB to 4.5 GB cold and 3.2 GB warm on
+  `spec/grant/types`). `bench/lifecycle_bench.cr` compares raw crystal-db,
+  `DB::Serializable`, the current Grant, origin/main and Granite v0.23.4
+  across create, find, query, update and destroy.
+
+Not met: `bench/relation_chain.cr` measures 2.98x against its 1.5x target,
+so "Relation immutability" stays partial.
+
+Behavior changes:
+
+- `Errors#to_json` emits the ActiveRecord shape `{"attr": [messages]}`;
+  the old list shape is `Errors#to_json_list`.
+- `validates_length_of` adds `:too_short`, `:too_long` or `:wrong_length`
+  instead of one combined message. Use the `too_short:`, `too_long:` and
+  `wrong_length:` options for per-kind messages.
+- `validates_comparison_of` adds one typed error per failed constraint
+  instead of one `:comparison` error. A nil value adds `:blank`.
+- `only_integer:` rejects a Float even with no fraction (`8.0`).
+- Unconvertible text on a column with an unconditional numericality
+  validator gives validation errors instead of `Grant::ConversionError`.
+- A `validates_with` error without a type takes the validator's kind (it
+  was `:invalid`). `strict:` leaves no errors behind.
+- `changed_attributes` returns `Hash(String, DirtyValue)`; the old
+  `Array(String)` is `changed`.
+- `Model.statuses` returns `Hash(String, Enum)`; use `Status.values` for
+  the list.
+- Enum bang setters save new records too; `assign_<member>` assigns only.
+- Array columns are always watched for in-place mutation.
+- A clean save of an optimistic-locked model issues no SQL. Locked models
+  write only changed columns.
+- `created_on`/`updated_on` are stamped as dates.
+- The generated `<attr>_previously_was`, `_in_database`,
+  `_change_to_be_saved` and `saved_change_to_<attr>` methods return the
+  column type.
+- `assign_attributes` and `attributes=` raise `Grant::UnknownAttributeError`
+  for unknown keys.
+- `merge` appends the merged relation's ORDER BY instead of replacing it.
+- `unscope(:joins)` drops only inner and raw joins; use `:left_joins` for
+  LEFT JOINs.
+- Association joins include the association's scope in the ON clause, and
+  self-referential joins are aliased.
+- `ShardedQueryBuilder#on_shard` and `#on_all_shards` return a copy; use
+  `on_shard!` or `on_all_shards!` to pin in place.
+- `Model.new` and `create` inside `Model.scoping` start from the scoping
+  relation's attributes.
+- `<singular>_ids` returns the typed key array, and `<singular>_ids=` saves
+  each added record.
+- `owner.profile = x` and `owner.posts = [...]` write immediately on a
+  saved owner and apply `dependent:` to the records they displace.
+- Unsaved built records appear in reads of an unloaded collection.
+- `AssociationCollection#sum(Symbol | String)` is the SQL aggregate.
+- Scoped `dependent:` affects only the scoped rows.
+- `connects_to` owns its class's whole declaration: unnamed roles and shards
+  are no longer inherited.
+- Shard swaps inside `prohibit_shard_swapping` raise
+  `Grant::ShardSwappingProhibited`.
+- An explicit `connected_to(database:)` overrides the model's role map.
+- A refused connection raises `Grant::ConnectionFailed` or
+  `Grant::NoDatabaseError` instead of the driver exception.
+- A failed bare `Adapter#open` reports its statement in
+  `StatementInvalid#sql`.
+- `RangeResolver` raises typed `Grant::Sharding` errors.
+- A sharded model with no active shard uses its `:default` shard when one
+  is declared.
+
 ### ActiveRecord parity, wave 5
 
 Parity moves from 308 to 320 complete features (74.8% to 77.7% of applicable).
