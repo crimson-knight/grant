@@ -1,5 +1,6 @@
 require "json"
 require "./builder"
+require "../schema/gin_index"
 
 # Predicates for database-specific column types: PostgreSQL arrays and JSON
 # documents (jsonb on PostgreSQL, JSON text on SQLite).
@@ -39,6 +40,43 @@ class Grant::Query::Builder(Model)
     predicate = "? = ANY(#{structured_field_sql(field.to_s)})"
     own_where_fields << {join: :and, stmt: predicate, values: [value.as(Grant::Columns::Type)]}
     self
+  end
+
+  # Keeps rows whose array column has a number of elements that compares to
+  # *length* by *operator* (`:eq`, `:ne`, `:lt`, `:lte`, `:gt`, `:gte`;
+  # `cardinality(tags) >= $1`). An empty array counts as 0 and a NULL column
+  # never matches. The length is bound, not interpolated.
+  # ```
+  # Post.where.array_length(:tags, 3)
+  # Post.where.array_length(:tags, 0, :gt)
+  # ```
+  def array_length!(field : Symbol | String, length : Int, operator : Symbol = :eq) : self
+    require_array_support("array_length")
+    sql_operator = ARRAY_LENGTH_OPERATORS[operator]? || raise ArgumentError.new("Unknown array_length operator #{operator.inspect}; use #{ARRAY_LENGTH_OPERATORS.keys.join(", ")}")
+    predicate = "cardinality(#{structured_field_sql(field.to_s)}) #{sql_operator} ?"
+    own_where_fields << {join: :and, stmt: predicate, values: [length.to_i32.as(Grant::Columns::Type)]}
+    self
+  end
+
+  # Appends *value* to the array column of every matching row, in one
+  # `UPDATE ... SET tags = array_append(tags, $1)`. Returns the rows changed.
+  # A NULL column becomes a one-element array.
+  # ```
+  # Post.where(id: 1).array_append_all(:tags, "crystal")
+  # ```
+  def array_append_all(field : Symbol | String, value : Grant::Columns::Type) : Int64
+    array_rewrite_all(field, "array_append", value)
+  end
+
+  # Removes every occurrence of *value* from the array column of every matching
+  # row (`array_remove(tags, $1)`). Returns the rows changed.
+  def array_remove_all(field : Symbol | String, value : Grant::Columns::Type) : Int64
+    array_rewrite_all(field, "array_remove", value)
+  end
+
+  # :ditto:
+  def array_length(field : Symbol | String, length : Int, operator : Symbol = :eq) : self
+    dup.array_length!(field, length, operator)
   end
 
   # :ditto:
@@ -137,6 +175,28 @@ class Grant::Query::Builder(Model)
   # :ditto:
   def json_has_key(field : Symbol | String, key : String) : self
     dup.json_has_key!(field, key)
+  end
+
+  ARRAY_LENGTH_OPERATORS = {eq: "=", ne: "<>", lt: "<", lte: "<=", gt: ">", gte: ">="}
+
+  private def array_rewrite_all(field : Symbol | String, function : String, value : Grant::Columns::Type) : Int64
+    require_array_support(function)
+    return 0_i64 if is_none?
+
+    Model.guard_writes!
+    raise ArgumentError.new("#{function} cannot chunk an IN list") if should_chunk_in?
+    structured_field_sql(field.to_s)
+    column = Model.quote(field.to_s)
+
+    built = assembler
+    placeholder = built.add_parameter(value)
+    sql = built.update_all_fragment_sql("#{column} = #{function}(#{column}, #{placeholder})")
+    Model.mark_write_operation
+
+    adapter = Model.adapter
+    adapter.open(sql, built.numbered_parameters, Model.name) do |db|
+      db.exec(sql, args: adapter.normalize_bind_values(built.numbered_parameters)).rows_affected
+    end
   end
 
   private def add_array_predicate(field : Symbol | String, operator : String, values : Grant::Columns::SupportedArrayTypes) : self

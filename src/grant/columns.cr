@@ -4,7 +4,7 @@ require "uuid/json"
 require "uuid/yaml"
 
 module Grant::Columns
-  alias SupportedArrayTypes = Array(String) | Array(Int16) | Array(Int32) | Array(Int64) | Array(Float32) | Array(Float64) | Array(Bool) | Array(UUID)
+  alias SupportedArrayTypes = Array(String) | Array(Int16) | Array(Int32) | Array(Int64) | Array(Float32) | Array(Float64) | Array(Bool) | Array(UUID) | Array(Time)
   alias Type = DB::Any | SupportedArrayTypes | UUID
 
   # Virtual attributes can participate in model mass assignment without
