@@ -1012,7 +1012,7 @@ module Grant::Associations
   macro _grant_register_reflection(name, macro_name, target_class, foreign_key, primary_key, type_column, polymorphic_as, through, source, dependent, inverse_of, inverse_disabled, scoped, polymorphic, strict_loading, option_keys, option_values)
     Grant::AssociationRegistry.register_reflection(
       Grant::Reflection.new(
-        {{@type.name.stringify}}, {{name}}, {{macro_name}}, {{target_class.id}}, {{target_class.id}}.name,
+        {{@type.name.stringify}}, {{name}}, {{macro_name}}, {{target_class.id}}.as(Grant::Base.class), {{target_class.id}}.name,
         {{foreign_key}}, {{primary_key}},
         foreign_type: {{type_column}}, polymorphic_as: {{polymorphic_as}},
         through: {{through}}, source: {{source}}, dependent: {{dependent}},
@@ -1020,7 +1020,7 @@ module Grant::Associations
         scoped: {{scoped}}, polymorphic: {{polymorphic}}, strict_loading_option: {{strict_loading}},
         options: { {% for key, index in option_keys %}{{key}} => {{option_values[index]}}, {% end %} } of String => String
       ),
-      {{@type}}
+      {{@type}}.as(Grant::Base.class)
     )
   end
 
@@ -1034,7 +1034,7 @@ module Grant::Associations
       {{name}},
       {
         type:         {{type}},
-        target_class: {{target_class.id}},
+        target_class: {{target_class.id}}.as(Grant::Base.class),
         foreign_key:  {{foreign_key}},
         primary_key:  {{primary_key}},
         through:      {{through}},
