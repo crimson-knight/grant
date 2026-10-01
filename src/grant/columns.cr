@@ -563,6 +563,7 @@ module Grant::Columns
         {% setter_type = ann[:setter_type] %}
       {% end %}
       if hash.has_key?({{column.stringify}})
+        error = nil
         begin
           val = Grant::Type.convert_type hash[{{column.stringify}}], {{setter_type}}
         rescue ex : ArgumentError
@@ -580,7 +581,12 @@ module Grant::Columns
           end
         end
 
-        errors << error if error
+        if error
+          errors << error
+          # Keep the input that failed conversion for numericality validators.
+          failed_input = hash[{{column.stringify}}]
+          __record_unconvertible_input({{column.name.stringify}}, failed_input) if failed_input.is_a?(Grant::Columns::Type)
+        end
       end
     {% end %}
     hash.each do |attribute_name, value|
@@ -613,9 +619,11 @@ module Grant::Columns
             capture_before_type_cast({{column.name.stringify}}, value) if value != converted_value
           else
             errors << Grant::ConversionError.new({{column.name.stringify}}, "Expected {{column.name.id}} to be {{setter_type}} but got #{typeof(converted_value)}.")
+            __record_unconvertible_input({{column.name.stringify}}, value)
           end
         rescue ex : ArgumentError
           errors << Grant::ConversionError.new({{column.name.stringify}}, ex.message)
+          __record_unconvertible_input({{column.name.stringify}}, value)
         end
     {% end %}
     else

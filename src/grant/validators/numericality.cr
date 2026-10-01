@@ -35,14 +35,23 @@ module Grant::Validators
     numeric_value(operand) || raise ArgumentError.new("#{option} must be a number, got #{operand.inspect}")
   end
 
-  # True when a numeric *value* has no fractional part and *raw* was not
-  # written with one (`"1.5"`).
+  # True when *number* is an integer: it came from an Integer or from text
+  # without a fractional part. A Float is never an integer here, even `8.0`,
+  # because ActiveRecord checks the written form (`"8.0"`).
   #
   # :nodoc:
   def self.integer_value?(raw, number : Int64 | Float64) : Bool
-    return true if number.is_a?(Int64)
-    return false unless raw.is_a?(Float) || raw.is_a?(Number)
-    number == number.floor
+    number.is_a?(Int64) || raw.is_a?(Int)
+  end
+
+  # The error type for an input that was not stored because it does not fit the
+  # column (`"1.5"` for an Int32 column, `"99999999999"` for an Int32): text
+  # that parses as a number but not as an integer is `:not_an_integer`, any
+  # other number is `:out_of_range`.
+  #
+  # :nodoc:
+  def self.unstorable_type(number : Int64 | Float64) : Symbol
+    number.is_a?(Float64) ? :not_an_integer : :out_of_range
   end
 
   # Validates that a numeric field meets specified criteria. Every failing
@@ -62,6 +71,16 @@ module Grant::Validators
   # A comparison operand is a number, a Symbol naming another attribute or
   # method of the record (`greater_than: :minimum_price`), or a lambda that
   # takes the record (`less_than: ->(order : Order) { order.limit }`).
+  #
+  # Input that cannot be stored in a numeric column (`"abc"` assigned to an
+  # Int32 column) does not raise: the numericality validator on that attribute
+  # reports `:not_a_number` (or `:not_an_integer` for `"1.5"`) with the input as
+  # `value:`. Without such a validator the record stays invalid with a
+  # `Grant::ConversionError`.
+  #
+  # `only_integer:` rejects a Float even when it has no fractional part, as
+  # ActiveRecord does. `only_numeric: true` takes a String value as not a
+  # number instead of parsing it.
   #
   # Also: `message:` (a String, a Symbol translation key or a lambda; used for
   # every error this validator adds), `allow_nil:` / `allow_blank:`,
@@ -86,9 +105,41 @@ module Grant::Validators
     %}
 
     {% for field in fields %}
-      __rule({{field}}, "", nil, kind: :numericality, {{options.double_splat}}) do
+      __rule({{field}}, "", nil, false, kind: :numericality, {{options.double_splat}}) do
         %before = record.errors.size
         %message = Grant::Error.wrap_message({% if options[:message] %}{{options[:message]}}{% else %}nil{% end %})
+        # Input that could not be converted to the column's type (`"abc"` for
+        # an Int32 column) is judged as typed. Nil on every record whose
+        # assignments converted.
+        %input = record.__unconvertible_input({{field.id.stringify}})
+        unless %input.nil?
+          {% if options[:allow_blank] %}
+            next true if Grant::Validators.blank?(%input)
+          {% end %}
+          %typed = {% if options[:only_numeric] %}nil.as(Int64 | Float64 | Nil){% else %}Grant::Validators.numeric_value(%input){% end %}
+          if %typed.nil?
+            record.errors.add({{field.id.stringify}}, :not_a_number, message: %message, value: %input)
+          else
+            record.errors.add({{field.id.stringify}}, Grant::Validators.unstorable_type(%typed), message: %message, value: %input)
+          end
+          next false
+        end
+
+        value = record.{{field.id}}
+        {% if options[:allow_nil] %}
+          next true if value.nil?
+        {% end %}
+        {% if options[:allow_blank] %}
+          next true if Grant::Validators.blank?(value)
+        {% end %}
+
+        {% if options[:only_numeric] %}
+          # `only_numeric: true` takes text as not numeric, even "42".
+          if value.is_a?(String)
+            record.errors.add({{field.id.stringify}}, :not_a_number, message: %message, value: value)
+            next false
+          end
+        {% end %}
         %number = Grant::Validators.numeric_value(value)
         if %number.nil?
           record.errors.add({{field.id.stringify}}, :not_a_number, message: %message, value: value)

@@ -69,7 +69,7 @@ describe "validates (unified macro)" do
     record.email = "@" * 41
     record.valid?.should be_false
     record.errors.map(&.field.to_s).sort.should eq(["email", "name"])
-    record.errors.map(&.message).uniq!.should eq(["must be at least 2 characters and at most 40 characters"])
+    record.errors.map(&.message).uniq!.should eq(["is too short (minimum is 2 characters)", "is too long (maximum is 40 characters)"])
   end
 
   it "expands a format NamedTuple and passes shared allow_nil" do

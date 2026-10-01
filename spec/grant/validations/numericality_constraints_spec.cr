@@ -74,7 +74,8 @@ describe "validates_numericality_of constraints" do
       order = v02n_order(:ratio, ratio: 1.5)
       order.errors.map(&.type).should eq([:not_an_integer])
       order.errors.first.message.should eq("must be an integer")
-      v02n_order(:ratio, ratio: 8.0).errors.should be_empty
+      # A Float with no fractional part is still not an integer, as in ActiveRecord.
+      v02n_order(:ratio, ratio: 8.0).errors.map(&.type).should eq([:not_an_integer])
     end
 
     it "reports nil as not_a_number" do

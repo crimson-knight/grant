@@ -351,6 +351,16 @@ class Grant::Errors
     @errors.last?
   end
 
+  # Drops the errors added after the collection had *size* errors. A
+  # validator that raises (`strict:`) uses it to leave nothing behind.
+  #
+  # :nodoc:
+  def truncate_to(size : Int32) : Nil
+    return if size >= @errors.size
+    @errors.pop(@errors.size - size)
+    @index = nil
+  end
+
   # Clears all errors.
   def clear
     @errors.clear
@@ -424,18 +434,43 @@ class Grant::Errors
     result
   end
 
-  # Serializes errors to JSON.
+  # The details of the errors on *field*, looked up by Symbol or String.
+  # `details` keys are Strings (an attribute name can arrive at run time, and
+  # Crystal cannot create a Symbol from a String), so this is the way to ask
+  # with the Symbol the model declares: `errors.details_for(:name)`.
+  def details_for(field : (String | Symbol)) : Array(Error::Options)
+    list = by_attribute[field.to_s]?
+    return [] of Error::Options unless list
+    list.map(&.detail)
+  end
+
+  # Serializes errors to JSON in ActiveRecord's shape: attribute names mapped to
+  # their messages.
   #
   # ```
-  # errors.to_json # => [{"field":"name","message":"can't be blank"}]
+  # errors.to_json # => {"name":["can't be blank"]}
   # ```
   #
-  # ActiveRecord's `{"name":["can't be blank"]}` shape is `as_json.to_json`.
+  # `to_json_list` keeps the older `[{"field":..., "message":...}]` shape.
   def to_json(builder : JSON::Builder)
+    as_json.to_json(builder)
+  end
+
+  # The errors as a JSON array of `{"field", "message"}` objects, the shape
+  # `to_json` produced before it followed ActiveRecord.
+  def to_json_list(builder : JSON::Builder) : Nil
     builder.array do
       @errors.each do |error|
         error.to_json(builder)
       end
+    end
+  end
+
+  # :ditto:
+  def to_json_list : String
+    String.build do |str|
+      builder = JSON::Builder.new(str)
+      builder.document { to_json_list(builder) }
     end
   end
 
@@ -493,7 +528,7 @@ class Grant::Errors
     @errors.map { |e| yield e }
   end
 
-  # Generate errors as JSON array.
+  # Generate errors as a JSON object (see `to_json(builder)`).
   def to_json : String
     String.build do |str|
       builder = JSON::Builder.new(str)
