@@ -299,6 +299,9 @@ module Grant::Querying
     # User.find_by({"email" => "a@example.com", "active" => true})
     # ```
     def find_by(criteria : Grant::ModelArgs)
+      if has_attribute_aliases?
+        criteria = criteria.transform_keys { |field| resolve_attribute_alias(field.to_s).as(Symbol | String) }
+      end
       if criteria.keys.any? { |field| Grant::Encryption::EncryptedAttributeRegistry.for(name).has_key?(field.to_s) }
         return current_scope.where(criteria).first
       end

@@ -232,8 +232,11 @@ module Grant
     # Generates the getter, setter, `?` and `!` readers, the dirty-tracking
     # helpers and `_before_type_cast`. The alias is also resolved by mass
     # assignment (`new(new_name: ...)`, `assign_attributes`), by `[]`, `[]=`,
-    # `has_attribute?`, `slice`, `values_at`, and by `where(new_name: ...)`.
-    # It is not resolved by `find_by`, `order` or `pluck`.
+    # `has_attribute?`, `slice`, `values_at`, and by `where(new_name: ...)`,
+    # `where(:new_name, :op, value)`, `find_by`, `order`, `pluck` and `select`.
+    # Dirty helpers (`new_name_changed?`, `new_name_was`, `new_name_change`,
+    # `saved_change_to_new_name?`, `restore_new_name!`, ...) delegate to the
+    # column. Raw SQL strings are never rewritten.
     #
     # ```
     # class Post < Grant::Base
@@ -317,6 +320,38 @@ module Grant
 
       def {{new_name.id}}_before_type_cast : Grant::Columns::Type
         {{old_name.id}}_before_type_cast
+      end
+
+      def {{new_name.id}}_came_from_user? : Bool
+        {{old_name.id}}_came_from_user?
+      end
+
+      def {{new_name.id}}_before_last_save
+        {{old_name.id}}_before_last_save
+      end
+
+      def {{new_name.id}}_previously_was
+        {{old_name.id}}_previously_was
+      end
+
+      def {{new_name.id}}_previously_changed?(*, from = Grant::Dirty::UNFILTERED, to = Grant::Dirty::UNFILTERED) : Bool
+        {{old_name.id}}_previously_changed?(from: from, to: to)
+      end
+
+      def saved_change_to_{{new_name.id}}?(*, from = Grant::Dirty::UNFILTERED, to = Grant::Dirty::UNFILTERED) : Bool
+        saved_change_to_{{old_name.id}}?(from: from, to: to)
+      end
+
+      def saved_change_to_{{new_name.id}}
+        saved_change_to_{{old_name.id}}
+      end
+
+      def will_save_change_to_{{new_name.id}}? : Bool
+        will_save_change_to_{{old_name.id}}?
+      end
+
+      def restore_{{new_name.id}}! : Nil
+        restore_{{old_name.id}}!
       end
     end
 

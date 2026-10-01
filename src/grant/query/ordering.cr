@@ -109,7 +109,7 @@ class Grant::Query::Builder(Model)
     unless direction == :asc || direction == :desc
       raise ArgumentError.new("order direction must be :asc or :desc (got #{direction.inspect})")
     end
-    name = field.to_s
+    name = resolve_column_alias(field.to_s)
     unless Grant::Query::SqlExpression.identifier?(name)
       raise ArgumentError.new("order with a direction takes a column name; write the direction inside the SQL for #{name.inspect}") if nulls
       expression = raw_order_term(name, trusted: false)

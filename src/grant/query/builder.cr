@@ -324,7 +324,7 @@ class Grant::Query::Builder(Model)
   # User.where(:email, :like, "%@example.com")
   # ```
   def where!(field : (Symbol | String), operator : Symbol, value : Grant::Columns::Type) : self
-    and!(field: field.to_s, operator: operator, value: value)
+    and!(field: resolve_column_alias(field.to_s), operator: operator, value: value)
   end
 
   # Adds a raw SQL condition *stmt*, ANDed onto the query.
@@ -635,7 +635,7 @@ class Grant::Query::Builder(Model)
   # User.order(:email) # => ORDER BY email ASC
   # ```
   def order!(field : Symbol) : self
-    own_order_fields << {field: field.to_s, direction: Sort::Ascending}
+    own_order_fields << {field: resolve_column_alias(field.to_s), direction: Sort::Ascending}
 
     self
   end
@@ -677,7 +677,7 @@ class Grant::Query::Builder(Model)
         direction = Sort::Descending
       end
 
-      own_order_fields << {field: field.to_s, direction: direction}
+      own_order_fields << {field: resolve_column_alias(field.to_s), direction: direction}
     end
 
     self
@@ -1051,7 +1051,7 @@ class Grant::Query::Builder(Model)
   # ```
   def reselect!(*columns : Symbol) : self
     reset_load_state
-    @select_columns = columns.map(&.to_s).to_a
+    @select_columns = columns.map { |column| resolve_column_alias(column.to_s) }.to_a
     self
   end
 
@@ -2251,7 +2251,7 @@ class Grant::Query::Builder(Model)
   # ```
   def select!(*columns : Symbol) : self
     reset_load_state
-    @select_columns = columns.map(&.to_s).to_a
+    @select_columns = columns.map { |column| resolve_column_alias(column.to_s) }.to_a
     self
   end
 
