@@ -1236,7 +1236,9 @@ class Grant::Query::Builder(Model)
     # Apply eager loading if any associations are specified
     all_associations = @includes_associations + @preload_associations + @eager_load_associations
     unless all_associations.empty?
-      Grant::AssociationLoader.load_associations(records, all_associations, restrictions)
+      # One loader instantiation for every model, not one per `Array(Model)`.
+      loadable = Array(Grant::Base).new(records.size) { |index| records[index] }
+      Grant::AssociationLoader.load_associations(loadable, all_associations, restrictions)
     end
 
     records

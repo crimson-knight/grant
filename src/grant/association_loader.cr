@@ -42,6 +42,11 @@ module Grant
       end
     end
 
+    # True when *model* was enabled (see `enable`).
+    def self.enabled?(model : M.class) : Bool forall M
+      @@dispatchers.has_key?(M.name)
+    end
+
     # Loads *name* on *records* (all of one class) with the dispatcher enabled
     # for that class or an ancestor of it. Returns false when the association
     # is unknown to the model.
