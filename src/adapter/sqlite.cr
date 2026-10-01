@@ -146,6 +146,17 @@ class Grant::Adapter::Sqlite < Grant::Adapter::Base
     url.includes?(":memory:") || url.includes?("mode=memory")
   end
 
+  # SQLite opens (and creates) a file on connect, so the only database it can
+  # report missing is one whose directory does not exist.
+  protected def connect_failure_kind(ex : ::DB::ConnectionRefused) : Kind?
+    return nil if Sqlite.memory_url?(url)
+
+    path = url.sub(/\Asqlite3?:(?:\/\/)?/, "").split('?').first
+    return nil if path.empty?
+
+    Dir.exists?(File.dirname(path)) ? nil : Kind::NoDatabase
+  end
+
   def adapter_name : String
     "SQLite"
   end

@@ -371,6 +371,14 @@ class Grant::Adapter::Pg < Grant::Adapter::Base
     kind
   end
 
+  # A connect-time `3D000` (invalid_catalog_name): the database does not exist.
+  protected def connect_failure_kind(ex : ::DB::ConnectionRefused) : Grant::Adapter::ErrorTranslator::Kind?
+    cause = ex.cause
+    return nil unless cause.is_a?(PQ::PQError)
+
+    Pg.error_kind(cause.field_message(:code), cause.message)
+  end
+
   def translate_exception(ex : ::Exception, sql : String? = nil, binds = nil) : ::Exception
     if ex.is_a?(PQ::PQError)
       if kind = Pg.error_kind(ex.field_message(:code), ex.message)

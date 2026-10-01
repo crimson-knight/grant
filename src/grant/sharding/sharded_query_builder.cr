@@ -54,12 +54,21 @@ module Grant::Sharding
 
     # Force query to run on specific shard
     def on_shard(shard : Symbol) : self
+      Grant::ShardManager.guard_shard_swap!(shard)
+      pin_shard(shard)
+    end
+
+    # Pins the query to *shard* without the shard-swapping check, for routing
+    # Grant does itself.
+    # :nodoc:
+    def pin_shard(shard : Symbol) : self
       @force_shard = shard
       self
     end
 
     # Execute query on all shards
     def on_all_shards : self
+      Grant::ShardManager.guard_shard_swap!
       @force_shard = :all
       self
     end
@@ -229,7 +238,7 @@ module Grant::Sharding
       # If we can determine shard from ID, route directly
       if Model.sharding_config && Model.sharding_config.not_nil!.key_columns.includes?(:id)
         shard = Grant::ShardManager.resolve_shard(Model.name, id: id)
-        on_shard(shard).where(id: id).first
+        pin_shard(shard).where(id: id).first
       else
         where(id: id).first
       end
@@ -295,42 +304,43 @@ module Grant::Sharding
   # Convenience scopes for models
   class ShardedScope(Model)
     def initialize(@model : Model.class, @shard : Symbol)
+      Grant::ShardManager.guard_shard_swap!(@shard)
     end
 
     def all
-      query_builder.on_shard(@shard)
+      query_builder.pin_shard(@shard)
     end
 
     def where(**conditions)
-      query_builder.on_shard(@shard).where(**conditions)
+      query_builder.pin_shard(@shard).where(**conditions)
     end
 
     def select
-      query_builder.on_shard(@shard).select
+      query_builder.pin_shard(@shard).select
     end
 
     def find(id)
-      query_builder.on_shard(@shard).find(id)
+      query_builder.pin_shard(@shard).find(id)
     end
 
     def find!(id)
-      query_builder.on_shard(@shard).find!(id)
+      query_builder.pin_shard(@shard).find!(id)
     end
 
     def count : Query::Builder::CountResult
-      query_builder.on_shard(@shard).count
+      query_builder.pin_shard(@shard).count
     end
 
     def exists?(**conditions)
       if conditions.empty?
-        query_builder.on_shard(@shard).exists?
+        query_builder.pin_shard(@shard).exists?
       else
-        query_builder.on_shard(@shard).where(**conditions).exists?
+        query_builder.pin_shard(@shard).where(**conditions).exists?
       end
     end
 
     def pluck(column)
-      query_builder.on_shard(@shard).pluck(column)
+      query_builder.pin_shard(@shard).pluck(column)
     end
 
     private def query_builder
@@ -340,6 +350,7 @@ module Grant::Sharding
 
   class MultiShardScope(Model)
     def initialize(@model : Model.class)
+      Grant::ShardManager.guard_shard_swap!
     end
 
     def all

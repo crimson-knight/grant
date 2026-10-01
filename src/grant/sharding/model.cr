@@ -47,9 +47,10 @@ module Grant::Sharding
       # Account.find_each_shard(batch_size: 500) { |account| audit(account) }
       # ```
       def find_each_shard(batch_size : Int32 = 1000, start : Grant::Columns::Type = nil, finish : Grant::Columns::Type = nil, order : Symbol = :asc, error_on_ignore : Bool = false, &) : Nil
+        Grant::ShardManager.guard_shard_swap!
         Grant::ShardManager.shards_for_model(name).each do |shard|
-          Grant::ShardManager.with_shard(shard) do
-            __builder.on_shard(shard).find_each(batch_size: batch_size, start: start, finish: finish, order: order, error_on_ignore: error_on_ignore) do |record|
+          Grant::ShardManager.route_to(shard) do
+            __builder.pin_shard(shard).find_each(batch_size: batch_size, start: start, finish: finish, order: order, error_on_ignore: error_on_ignore) do |record|
               yield record
             end
           end
@@ -61,10 +62,10 @@ module Grant::Sharding
       # building SQL reads no data, so any shard's quoting will do. Every shard
       # of one model is expected to speak the same SQL dialect.
       def quoting_adapter : Grant::Adapter::Base
-        return adapter if Grant::ShardManager.current_shard || current_shard
+        return adapter if Grant::ShardManager.current_shard || current_shard || shard_config.has_key?(:default)
 
         shard = Grant::ShardManager.shards_for_model(name).first
-        Grant::ConnectionRegistry.get_adapter(database_name, current_role, shard)
+        adapter_for_shard(shard)
       end
 
       def quoted_table_name : String
@@ -220,7 +221,7 @@ module Grant::Sharding
         Grant::ShardManager.current_shard || raise error
       end
 
-      Grant::ShardManager.with_shard(shard) { yield }
+      Grant::ShardManager.route_to(shard) { yield }
     end
 
     private def shard_key_values(config : ShardConfig) : Array(Grant::Columns::Type)

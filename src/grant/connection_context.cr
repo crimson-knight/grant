@@ -39,6 +39,9 @@ module Grant
   class ConnectionState
     getter contexts = [] of ConnectionManagement::ConnectionContext
     property? shard_swapping_prohibited : Bool = false
+    # The shard `Grant::ShardManager` routes this fiber's sharded models to,
+    # or `nil` when no routing block is active.
+    property pinned_shard : Symbol? = nil
     # Stack size just after the innermost active `connected_to` block pushed
     # its context; entries below it belong to enclosing blocks.
     property block_floor : Int32 = 0

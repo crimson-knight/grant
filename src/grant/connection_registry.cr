@@ -62,6 +62,11 @@ module Grant
       property reaping_frequency : Time::Span = 1.minute
       property min_connections : Int32 = 0
 
+      # How long a connection may sit idle before it is probed with `SELECT 1`
+      # as it is checked out, and replaced if the probe fails. `nil` turns the
+      # probe off. See `Grant::Adapter::Base#verify_idle_after`.
+      property verify_idle_after : Time::Span? = 30.seconds
+
       # Prepared statements. `prepared_statements: false` is for PgBouncer in
       # transaction mode (SQLite always prepares). `statement_limit` bounds
       # the prepared statements cached per connection; 0 turns the cache off.
@@ -85,7 +90,7 @@ module Grant
                      @max_idle_pool_size = nil, @idle_timeout = nil, @keepalive = nil,
                      @reaping_frequency = 1.minute, @min_connections = 0, @max_age = nil,
                      @prepared_statements = true, @statement_limit = 1000,
-                     @replica_index = 0, @replica_weight = 1)
+                     @replica_index = 0, @replica_weight = 1, @verify_idle_after = 30.seconds)
         @url = url
         @url_provider = nil
       end
@@ -100,7 +105,7 @@ module Grant
                      @max_idle_pool_size = nil, @idle_timeout = nil, @keepalive = nil,
                      @reaping_frequency = 1.minute, @min_connections = 0, @max_age = nil,
                      @prepared_statements = true, @statement_limit = 1000,
-                     @replica_index = 0, @replica_weight = 1)
+                     @replica_index = 0, @replica_weight = 1, @verify_idle_after = 30.seconds)
         @url = nil
         @url_provider = url_provider
       end
@@ -241,6 +246,10 @@ module Grant
     # * *idle_timeout*, *keepalive*, *max_age*, *reaping_frequency*,
     #   *min_connections* — opt-in idle reaping (see `PoolReaper`).
     # * *prepared_statements*, *statement_limit* — prepared statement behavior.
+    # * *verify_idle_after* — a connection idle this long (30 seconds by default;
+    #   `nil` disables) is probed with `SELECT 1` when taken from the pool and
+    #   replaced when it is dead, so a restarted server does not fail one
+    #   statement per idle connection. Busier connections are never probed.
     # * *health_check_interval* / *health_check_timeout* — the health monitor.
     #
     # For a URL that is only known at runtime (a device's data directory, say),
@@ -276,6 +285,7 @@ module Grant
       statement_limit : Int32 = 1000,
       replica_index : Int32 = 0,
       replica_weight : Int32 = 1,
+      verify_idle_after : Time::Span? = 30.seconds,
     )
       spec = ConnectionSpec.new(
         database, adapter, url, role, shard,
@@ -286,7 +296,7 @@ module Grant
         keepalive: keepalive, max_age: max_age, reaping_frequency: reaping_frequency,
         min_connections: min_connections, prepared_statements: prepared_statements,
         statement_limit: statement_limit, replica_index: replica_index,
-        replica_weight: replica_weight
+        replica_weight: replica_weight, verify_idle_after: verify_idle_after
       )
       register_spec(spec, eager: true)
     end
@@ -342,6 +352,7 @@ module Grant
       statement_limit : Int32 = 1000,
       replica_index : Int32 = 0,
       replica_weight : Int32 = 1,
+      verify_idle_after : Time::Span? = 30.seconds,
     )
       spec = ConnectionSpec.new(
         database, adapter, role, url_provider: url_provider, shard: shard,
@@ -353,7 +364,7 @@ module Grant
         keepalive: keepalive, max_age: max_age, reaping_frequency: reaping_frequency,
         min_connections: min_connections, prepared_statements: prepared_statements,
         statement_limit: statement_limit, replica_index: replica_index,
-        replica_weight: replica_weight
+        replica_weight: replica_weight, verify_idle_after: verify_idle_after
       )
       # eager: false → the adapter instance (and therefore the URL provider) is
       # not materialized until first use.
@@ -456,6 +467,7 @@ module Grant
       adapter_instance.min_connections = spec.min_connections
       adapter_instance.keepalive = spec.keepalive
       adapter_instance.max_age = spec.max_age
+      adapter_instance.verify_idle_after = spec.verify_idle_after
 
       adapters = @@adapters.dup
       adapters[key] = adapter_instance
@@ -919,6 +931,25 @@ module Grant
       else
         adapter.verify!
       end
+    end
+
+    # Checks, once, that every connection *model* declared with `connects_to`
+    # is established in the registry, and raises
+    # `Grant::UnestablishedConnectionError` naming each one that is not.
+    # Declaring a connection never consults the registry (models load before an
+    # application establishes its connections), so call this at boot, after
+    # `establish_connection`. It reads registry keys only and opens no pool.
+    #
+    # ```
+    # Grant::ConnectionRegistry.verify!(User)
+    # ```
+    def self.verify!(model : Grant::Base.class) : Nil
+      model.verify_connections!
+    end
+
+    # `verify!` for every model that called `connects_to`, in one error.
+    def self.verify_all! : Nil
+      Grant::ConnectionHandling.verify_all!
     end
 
     # True when *database*'s connection is established and answers `SELECT 1`.

@@ -70,6 +70,16 @@ module Grant
   #     database_tasks: false
   # ```
   #
+  # A file with one database per environment, the two-tier form of a plain
+  # Rails `database.yml`, names no database: it is the `primary` one.
+  #
+  # ```yaml
+  # production:
+  #   adapter: postgres
+  #   url: postgres://localhost/app
+  #   pool: 10
+  # ```
+  #
   # The adapter comes from the entry's `adapter:` key or, without one, from
   # the URL scheme (`Grant::Adapter::Registry`). For the *current* environment
   # `DATABASE_URL` replaces the url of the primary entry and `<NAME>_DATABASE_URL`
@@ -89,9 +99,11 @@ module Grant
       # Logical database this replica belongs to; defaults to the name without
       # a `_replica` suffix.
       getter replica_of : String?
+      # The database file (SQLite) of an entry written without a `url:`.
+      getter database : String?
 
       def initialize(@url = nil, @adapter = nil, @pool = 25, @replica = false,
-                     @database_tasks = true, @replica_of = nil)
+                     @database_tasks = true, @replica_of = nil, @database = nil)
       end
     end
 
@@ -115,11 +127,30 @@ module Grant
       parse(File.read(path), env, env_lookup)
     end
 
-    # Loads YAML text.
+    # Loads YAML text: environments of named databases (three tiers) or of
+    # one database written directly (two tiers; it is named `primary`).
     def self.parse(yaml : String, env : String, env_lookup : Proc(String, String?) = PROCESS_ENV) : DatabaseConfigurations
-      load(Source.from_yaml(yaml), env, env_lookup)
+      load(source_from_yaml(yaml), env, env_lookup)
     rescue ex : YAML::ParseException
       raise DatabaseConfigurationError.new("Invalid database configuration: #{ex.message}", cause: ex)
+    end
+
+    # The typed source of *yaml*. An environment whose values are all scalars is
+    # one database; one with mappings is a set of named databases.
+    private def self.source_from_yaml(yaml : String) : Source
+      source = Source.new
+      document = YAML.parse(yaml).as_h? || raise DatabaseConfigurationError.new(
+        "Invalid database configuration: the file must map environments to databases")
+      document.each do |env_name, body|
+        mapping = body.as_h? || raise DatabaseConfigurationError.new(
+          "Invalid database configuration: #{env_name.as_s?.inspect} must be a mapping")
+        if mapping.values.any?(&.as_h?)
+          source[env_name.as_s] = Hash(String, Entry).from_yaml(body.to_yaml)
+        else
+          source[env_name.as_s] = {PRIMARY_NAME => Entry.from_yaml(body.to_yaml)}
+        end
+      end
+      source
     end
 
     def initialize(source : Source, @env : String, env_lookup : Proc(String, String?) = PROCESS_ENV)
@@ -132,6 +163,13 @@ module Grant
         entries = with_url_overrides({} of String => Entry, env_lookup)
         entries.each { |name, entry| @configs << build(@env, name, entry) }
       end
+    end
+
+    # The configurations the database tasks run against for *env*: primaries
+    # whose `database_tasks` is not `false`, as ActiveRecord's
+    # `configs_for(include_hidden: false)`.
+    def task_configs(env : String = @env) : Array(DatabaseConfig)
+      configs_for(env: env, include_replicas: false).select(&.database_tasks?)
     end
 
     # The configurations matching the given filters, in file order.
@@ -199,7 +237,7 @@ module Grant
         adapter_name = Grant::Adapter::Registry.scheme_of(url) ? nil : existing.try(&.adapter)
         merged[name] = if existing
                          Entry.new(url, adapter_name, existing.pool, existing.replica,
-                           existing.database_tasks, existing.replica_of)
+                           existing.database_tasks, existing.replica_of, existing.database)
                        else
                          Entry.new(url: url)
                        end
@@ -207,8 +245,16 @@ module Grant
       merged
     end
 
+    # `sqlite3:<database>` for an entry that names a SQLite file and no url.
+    private def sqlite_url(entry : Entry) : String?
+      file = entry.database || return nil
+      return nil unless entry.adapter.try { |name| name.downcase.starts_with?("sqlite") }
+
+      "sqlite3:#{file}"
+    end
+
     private def build(env_name : String, name : String, entry : Entry) : DatabaseConfig
-      url = entry.url || raise DatabaseConfigurationError.new(
+      url = entry.url || sqlite_url(entry) || raise DatabaseConfigurationError.new(
         "Database #{name.inspect} in #{env_name.inspect} has no url")
       adapter_name = entry.adapter || Grant::Adapter::Registry.scheme_of(url) || raise Grant::UnknownAdapterError.new(
         "Database #{name.inspect} in #{env_name.inspect} has no adapter key and " \

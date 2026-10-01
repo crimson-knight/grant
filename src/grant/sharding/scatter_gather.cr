@@ -92,7 +92,7 @@ module Grant::Sharding
 
       # A shard that answers yes ends the search.
       @shards.each do |shard|
-        found = Grant::ShardManager.with_shard(shard) do
+        found = Grant::ShardManager.route_to(shard) do
           local(@query).exists_without_routing
         end
         return true if found
@@ -280,7 +280,7 @@ module Grant::Sharding
     private def gather(&block : Symbol -> T) : Array(T) forall T
       if @shards.size == 1
         shard = @shards.first
-        return [Grant::ShardManager.with_shard(shard) { block.call(shard) }]
+        return [Grant::ShardManager.route_to(shard) { block.call(shard) }]
       end
 
       role = @model.current_role
@@ -288,7 +288,7 @@ module Grant::Sharding
       model = @model
       results = Grant::Async::ShardedExecutor.execute_and_wait(@shards) do |shard|
         Grant::Async::AsyncResult.new do
-          Grant::ShardManager.with_shard(shard) do
+          Grant::ShardManager.route_to(shard) do
             if role != :primary || prevent_writes
               model.connected_to(role: role, prevent_writes: prevent_writes) { block.call(shard) }
             else

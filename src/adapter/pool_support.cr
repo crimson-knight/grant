@@ -123,6 +123,12 @@ abstract class DB::Connection
   # :nodoc:
   getter grant_opened_ticks : Int64 = Grant::Adapter::PoolSupport.ticks
 
+  # When this connection was last returned to the pool (or opened), on
+  # `Grant::Adapter::PoolSupport.ticks`. The adapter compares it with
+  # `verify_idle_after` at checkout.
+  # :nodoc:
+  property grant_last_used_ticks : Int64 = Grant::Adapter::PoolSupport.ticks
+
   # Bounds this connection's prepared statement cache; 0 means unbounded.
   def statement_cache_limit=(limit : Int32) : Int32
     @statements_cache.limit = limit

@@ -22,6 +22,20 @@ module Grant::Sharding
         end
       end
 
+      # Whether this range holds a key of the interval whose open ends are
+      # `nil`. Both ends and the range share one type; the caller checks.
+      def intersects?(minimum : String | Int64 | Nil, maximum : String | Int64 | Nil) : Bool
+        if minimum.is_a?(Int64) || maximum.is_a?(Int64)
+          low = @min.as(Int64)
+          high = @max.as(Int64)
+          (maximum.nil? || low <= maximum.as(Int64)) && (minimum.nil? || high >= minimum.as(Int64))
+        else
+          low = @min.as(String)
+          high = @max.as(String)
+          (maximum.nil? || low <= maximum.as(String)) && (minimum.nil? || high >= minimum.as(String))
+        end
+      end
+
       def overlaps?(minimum : String | Int64, maximum : String | Int64) : Bool
         case {min, max, minimum, maximum}
         when {String, String, String, String}
@@ -59,6 +73,28 @@ module Grant::Sharding
     # interval. A nil result means the bounds could not be compared safely.
     def shards_for_range(minimum : String | Int64, maximum : String | Int64) : Array(Symbol)?
       @ranges.select(&.overlaps?(minimum, maximum)).map(&.shard).uniq
+    end
+
+    # The shards that can hold a key between *minimum* and *maximum*, where
+    # either bound may be `nil` for an open end (a query with only `>=` or
+    # only `<`). *upper_exclusive* says the upper bound is a `<`. A result of
+    # `nil` means the bounds cannot be compared with the ranges, so the caller
+    # keeps scatter-gathering. The router calls it once per query.
+    def shards_for_bounds(minimum : Grant::Columns::Type, maximum : Grant::Columns::Type, upper_exclusive : Bool = false) : Array(Symbol)?
+      low = minimum.is_a?(String) || minimum.is_a?(Int64) ? minimum : nil
+      high = maximum.is_a?(String) || maximum.is_a?(Int64) ? maximum : nil
+      # A bound of another type (a Time, say) cannot be compared here.
+      return nil if low.nil? && high.nil?
+      return nil if (!minimum.nil? && low.nil?) || (!maximum.nil? && high.nil?)
+      return nil if low && high && low.class != high.class
+
+      numeric = low.is_a?(Int64) || high.is_a?(Int64)
+      shards = [] of Symbol
+      @ranges.each do |range|
+        return nil unless numeric ? (range.min.is_a?(Int64) && range.max.is_a?(Int64)) : (range.min.is_a?(String) && range.max.is_a?(String))
+        shards << range.shard if range.intersects?(low, high)
+      end
+      shards.uniq
     end
 
     def resolve_for_values(values : Array) : Symbol

@@ -53,8 +53,9 @@ describe "abstract class connection inheritance" do
   it "lets a child's own connects_to win over the parent's" do
     C01OverridingChild.default_database_name.should eq "c01_own_writer"
     C01OverridingChild.connection_config[:reading].should eq "c01_own_reader"
-    # connects_to replaces only what it names; the parent's shards still apply.
-    C01OverridingChild.shard_keys.should eq [:default, :two]
+    # connects_to owns the whole declaration: the parent's shards do not apply.
+    C01OverridingChild.shard_keys.should be_empty
+    C01OverridingChild.sharded?.should be_false
 
     C01EarlyChild.default_database_name.should eq "c01_abs_writer"
   end

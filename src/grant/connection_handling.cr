@@ -64,9 +64,13 @@ module Grant
     private def self.missing_connections_message(model_name : String, names : Array({String, Symbol, Symbol?})) : String?
       missing = names.reject do |(database, role, shard)|
         registry_role = Grant::ConnectionManagement.registry_role(role)
-        Grant::ConnectionRegistry.connection_exists?(database, registry_role, shard) ||
-          Grant::ConnectionRegistry.connection_exists?(database, :writing, shard) ||
-          Grant::ConnectionRegistry.connection_exists?(database, :primary, shard)
+        # A connection `connects_to(shards:)` names is established under its
+        # own name; one established for a shard carries the shard key.
+        {shard, nil}.any? do |registered_shard|
+          Grant::ConnectionRegistry.connection_exists?(database, registry_role, registered_shard) ||
+            Grant::ConnectionRegistry.connection_exists?(database, :writing, registered_shard) ||
+            Grant::ConnectionRegistry.connection_exists?(database, :primary, registered_shard)
+        end
       end
       return if missing.empty?
 

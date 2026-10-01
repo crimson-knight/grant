@@ -67,7 +67,11 @@ module Grant::Sharding
           # `ShardManager.with_shard` wins; otherwise the shard of a
           # `connected_to(shard:)` block that applies to this class.
           if shard = Grant::ShardManager.current_shard || current_shard
-            Grant::ConnectionRegistry.get_adapter(database_name, current_role, shard)
+            adapter_for_shard(shard)
+          elsif shard_config.has_key?(:default)
+            # A shard named :default, declared with `connects_to(shards:)`,
+            # serves a sharded model while no shard is active.
+            adapter_for_shard(:default)
           else
             # No shard context - this is an error for sharded models
             raise "No shard context for sharded model #{name}. Use .on_shard or ensure shard key is provided."
@@ -108,20 +112,23 @@ module Grant::Sharding
 
       # Query on specific shard
       def self.on_shard(shard : Symbol)
+        Grant::ShardManager.guard_shard_swap!(shard)
         Grant::Sharding::ShardedQuery({{@type}}).new(self, shard)
       end
       
       # Query on all shards
       def self.on_all_shards
+        Grant::ShardManager.guard_shard_swap!
         Grant::Sharding::MultiShardQuery({{@type}}).new(self)
       end
       
       # Execute a block on all shards
       def self.on_all_shards(&block)
         if config = sharding_config
+          Grant::ShardManager.guard_shard_swap!
           shards = Grant::ShardManager.shards_for_model(self.name)
           shards.each do |shard|
-            Grant::ShardManager.with_shard(shard) do
+            Grant::ShardManager.route_to(shard) do
               yield
             end
           end
@@ -230,6 +237,7 @@ module Grant::Sharding
     # fails, the raised error reports that both copies may need reconciliation.
     def move_to_shard(target_shard : Symbol, from_shard : Symbol? = nil)
       raise "Cannot move an unpersisted record" unless persisted?
+      Grant::ShardManager.guard_shard_swap!(target_shard)
 
       config = self.class.sharding_config || raise "Model #{self.class.name} is not configured for sharding"
       raise ArgumentError.new("Unknown target shard #{target_shard} for #{self.class.name}") unless config.resolver.all_shards.includes?(target_shard)
@@ -250,17 +258,17 @@ module Grant::Sharding
       destination_record.current_shard = target_shard
       self.current_shard = source_shard
 
-      Grant::ShardManager.with_shard(target_shard) do
+      Grant::ShardManager.route_to(target_shard) do
         destination_record.save!
       end
 
       begin
-        Grant::ShardManager.with_shard(source_shard) do
+        Grant::ShardManager.route_to(source_shard) do
           destroy!
         end
       rescue source_error
         begin
-          Grant::ShardManager.with_shard(target_shard) do
+          Grant::ShardManager.route_to(target_shard) do
             destination_record.destroy!
           end
         rescue compensation_error
