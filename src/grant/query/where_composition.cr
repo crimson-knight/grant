@@ -609,6 +609,7 @@ class Grant::Query::Builder(Model)
   # User.where(active: true).order(:id).unscope(:order, where: :active)
   # ```
   def unscope!(*components : Symbol, where columns : Symbol | Array(Symbol)) : self
+    record_unscope(components.to_a)
     unscope_components!(components.to_a)
     unscope_where_columns!(where_column_names(columns))
   end
@@ -632,6 +633,7 @@ class Grant::Query::Builder(Model)
   end
 
   protected def unscope_where_columns!(names : Array(String)) : self
+    record_unscoped_columns(names)
     reset_load_state
     columns = Set(String).new
     names.each { |name| expand_where_column_name(name).each { |column| columns << column } }
@@ -661,8 +663,9 @@ class Grant::Query::Builder(Model)
       clear_preload_associations
     when :eager_load
       clear_eager_load_associations
+      drop_eager_load_joins!
     else
-      return false
+      return unscope_relation_state!(component)
     end
 
     true
