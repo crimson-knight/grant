@@ -358,6 +358,7 @@ module Grant::Associations
       composite_has_one({{model}}, {{scope}}, {% for key, value in options %}{{key.id}}: {{value}}, {% end %})
     {% elsif options[:as] %}
       has_one_polymorphic({{model}}, {{options[:as]}}, {% for key, value in options %}{{key.id}}: {{value}}, {% end %})
+      _grant_define_polymorphic_has_one_writer({{model}}, {{options[:as]}}, {{options[:class_name]}}, {{options[:foreign_key]}}, {{options[:type_column]}}, {{options[:primary_key]}}, {{options[:dependent]}})
     {% elsif options[:through] %}
       # has_one :through — traverses an intermediate association to find a single target record
       {% if model.is_a? TypeDeclaration %}
@@ -530,7 +531,23 @@ module Grant::Associations
       raise Grant::Querying::NotFound.new("No {{class_name.id}} found where #{{{foreign_key_name}}} = #{owner_value}")
     end
 
+    # Assigns the child. On a saved owner the child is saved now and the
+    # previous child is displaced the way `dependent:` says (destroyed,
+    # deleted, or its foreign key cleared), in one transaction. On an unsaved
+    # owner the child waits for its first save.
     def {{method_name}}=(child : {{class_name.id}}?)
+      if persisted?
+        current = {{method_name}}
+        owner_key = {% if options[:primary_key] %}self.read_attribute({{primary_key_name}}){% else %}self.read_attribute(self.class.primary_name){% end %}
+        Grant::Associations::HasOneWriter.replace(self, {{method_name.stringify}}, current, child, {{foreign_key_name}}, owner_key, {{options[:dependent].is_a?(SymbolLiteral) ? options[:dependent] : nil}})
+      end
+      _grant_assign_{{method_name.id}}(child)
+    end
+
+    # Points *child* at this record and makes it the loaded target, in memory.
+    #
+    # :nodoc:
+    def _grant_assign_{{method_name.id}}(child : {{class_name.id}}?)
       if child
         if owner_key = {% if options[:primary_key] %}self.read_attribute({{primary_key_name}}){% else %}self.read_attribute(self.class.primary_name){% end %}
           child.set_attributes({ {{foreign_key_name}} => owner_key })
@@ -568,7 +585,9 @@ module Grant::Associations
     Grant::Dependent.check_dependent_option(:has_one, {{method_name}}, {{options[:dependent]}})
 
     # Handle dependent option
-    {% if options[:dependent] %}
+    {% if options[:dependent] && scope %}
+      _grant_scoped_dependent({{method_name.id}}, :has_one, {{options[:dependent]}}, {{class_name.id}}, {{foreign_key_name}}, {{primary_key_name}}, {{scope}})
+    {% elsif options[:dependent] %}
       {% if options[:dependent] == :destroy %}
         setup_dependent_destroy({{method_name.id}}, :has_one, {{class_name.id}}, {{foreign_key_name}}, {{primary_key_name}})
       {% elsif options[:dependent] == :delete %}
@@ -596,13 +615,20 @@ module Grant::Associations
   #
   # * `#posts` — returns a `Grant::AssociationCollection(User, Post)` (or a
   #   `Grant::LoadedAssociationCollection` when eager-loaded). The collection is
-  #   `Enumerable` and also exposes `build`/`create`/`create!`/`find`/`find_by`/
-  #   `where`/`destroy_all`/`delete_all` (see `Grant::AssociationCollection`).
-  # * `#post_ids : Array` — the primary keys of the associated records.
+  #   `Enumerable` and a chainable relation: `build`/`create`/`create!`,
+  #   `find`/`find_by`/`find_or_create_by`, the ordinal finders (`first(n)`,
+  #   `last`, `take`, `second`...), `replace`/`concat`/`delete`/`clear`, and the
+  #   query methods (`where`, `order`, `limit`, `pluck`, `sum`, `find_each` ...)
+  #   that run as SQL within the owner scope (see `Grant::AssociationCollection`).
+  # * `#posts=(records : Array)` — replaces the collection. On a saved owner the
+  #   change is written at once (`replace`); on an unsaved owner the records wait
+  #   for its first save.
+  # * `#post_ids : Array(Int64)` — the primary keys, typed as the key column.
   # * `#post_ids=(ids : Array)` — reassigns the collection by primary key:
-  #   records whose IDs are listed have their FK pointed at this owner; records
-  #   previously in the collection but absent from *ids* have their FK nullified.
-  #   (Not generated for `through:` associations.)
+  #   listed records are saved with this owner as their parent (validations and
+  #   callbacks run); records no longer listed are removed by the association's
+  #   `dependent:` strategy (their FK is nullified by default). Numeric strings
+  #   are cast to the key type. Also generated for `through:` and `as:`.
   #
   # The optional second positional argument *scope* is an association scope
   # lambda that further filters the collection, e.g.
@@ -673,10 +699,56 @@ module Grant::Associations
   # ```
   macro has_many(model, scope = nil, **options)
     _grant_check_association_options(:has_many, {{model}}, {{options.keys.map(&.stringify)}} of String, {{options[:through] ? true : false}}, {{options[:source_type] ? true : false}})
+    {% if model.is_a? TypeDeclaration %}
+      {% hoisted_name = model.var %}
+    {% else %}
+      {% hoisted_name = model.id %}
+    {% end %}
+    {% if options[:singular] %}
+      {% singular_name = options[:singular].stringify.gsub(/:/, "").gsub(/"/, "") %}
+    {% else %}
+      {% association_name = hoisted_name.id.stringify %}
+      {% if association_name == "children" %}
+        {% singular_name = "child" %}
+      {% elsif association_name == "people" %}
+        {% singular_name = "person" %}
+      {% elsif association_name == "mice" %}
+        {% singular_name = "mouse" %}
+      {% elsif association_name == "geese" %}
+        {% singular_name = "goose" %}
+      {% elsif association_name == "men" %}
+        {% singular_name = "man" %}
+      {% elsif association_name == "women" %}
+        {% singular_name = "woman" %}
+      {% elsif association_name == "teeth" %}
+        {% singular_name = "tooth" %}
+      {% elsif association_name == "feet" %}
+        {% singular_name = "foot" %}
+      {% elsif association_name == "quizzes" %}
+        {% singular_name = "quiz" %}
+      {% elsif association_name.ends_with?("ies") %}
+        {% singular_name = association_name[0...-3] + "y" %}
+      {% elsif association_name.ends_with?("ses") || association_name.ends_with?("xes") || association_name.ends_with?("zes") || association_name.ends_with?("ches") || association_name.ends_with?("shes") %}
+        {% singular_name = association_name[0...-2] %}
+      {% elsif association_name.ends_with?("s") && !association_name.ends_with?("ss") %}
+        {% singular_name = association_name[0...-1] %}
+      {% else %}
+        {% singular_name = association_name %}
+      {% end %}
+    {% end %}
     {% if options[:foreign_key].is_a?(TupleLiteral) || options[:foreign_key].is_a?(ArrayLiteral) || options[:query_constraints] %}
       composite_has_many({{model}}, {{scope}}, {% for key, value in options %}{{key.id}}: {{value}}, {% end %})
     {% elsif options[:as] %}
       has_many_polymorphic({{model}}, {{options[:as]}}, {% for key, value in options %}{{key.id}}: {{value}}, {% end %})
+      _grant_define_ids_accessors({{hoisted_name}}, {{singular_name}}, false, true)
+
+      # Replaces the collection: removed records follow `dependent:` (`nullify`
+      # by default), each new record is saved with the owner key and type. The
+      # owner must be saved.
+      def {{hoisted_name.id}}=(records : Array)
+        {{hoisted_name.id}}.replace(records)
+        records
+      end
     {% else %}
     {% if model.is_a? TypeDeclaration %}
       {% method_name = model.var %}
@@ -717,38 +789,6 @@ module Grant::Associations
     # `source:` names the association on the join model whose target is collected
     # for `:through`. When absent it defaults to the singular form of method_name.
     {% source = options[:source] %}
-    {% if options[:singular] %}
-      {% singular_name = options[:singular].stringify.gsub(/:/, "").gsub(/"/, "") %}
-    {% else %}
-      {% association_name = method_name.id.stringify %}
-      {% if association_name == "children" %}
-        {% singular_name = "child" %}
-      {% elsif association_name == "people" %}
-        {% singular_name = "person" %}
-      {% elsif association_name == "mice" %}
-        {% singular_name = "mouse" %}
-      {% elsif association_name == "geese" %}
-        {% singular_name = "goose" %}
-      {% elsif association_name == "men" %}
-        {% singular_name = "man" %}
-      {% elsif association_name == "women" %}
-        {% singular_name = "woman" %}
-      {% elsif association_name == "teeth" %}
-        {% singular_name = "tooth" %}
-      {% elsif association_name == "feet" %}
-        {% singular_name = "foot" %}
-      {% elsif association_name == "quizzes" %}
-        {% singular_name = "quiz" %}
-      {% elsif association_name.ends_with?("ies") %}
-        {% singular_name = association_name[0...-3] + "y" %}
-      {% elsif association_name.ends_with?("ses") || association_name.ends_with?("xes") || association_name.ends_with?("zes") || association_name.ends_with?("ches") || association_name.ends_with?("shes") %}
-        {% singular_name = association_name[0...-2] %}
-      {% elsif association_name.ends_with?("s") && !association_name.ends_with?("ss") %}
-        {% singular_name = association_name[0...-1] %}
-      {% else %}
-        {% singular_name = association_name %}
-      {% end %}
-    {% end %}
     {% source = options[:source] || singular_name.id %}
     @[Grant::Relationship(target: {{class_name.id}}, through: {{through.id}}, type: :has_many,
       primary_key: {{primary_key.id}}, foreign_key: {{foreign_key.id}}, source: {{source.id}},
@@ -836,29 +876,7 @@ module Grant::Associations
       {{method_name.id}}
     end
 
-    # Collection of associated primary keys, e.g. `user.post_ids`.
-    def {{singular_name.id}}_ids
-      {{method_name.id}}.ids
-    end
-
-    # Assigns the collection by primary keys, e.g. `user.post_ids = [1, 2, 3]`.
-    # Raises `Grant::RecordNotFound` when an id has no row. The difference to the
-    # current members is applied set-based in one transaction: removed records
-    # follow the association's `dependent:` strategy (`nullify` by default),
-    # added records are pointed at this owner (or given a join row for
-    # `through:`) with one write.
-    def {{singular_name.id}}_ids=(ids : Array)
-      collection = {{method_name.id}}
-      {% unless through %}
-      unless persisted?
-        # Stage the records on the owner; the autosave callback links them on save.
-        self.{{method_name.id}} = collection.records_for_ids!(collection.normalize_ids(ids))
-        return ids
-      end
-      {% end %}
-      collection.ids = ids
-      ids
-    end
+    _grant_define_ids_accessors({{method_name}}, {{singular_name}}, {{through ? true : false}}, false)
 
     {% if through %}
     @_{{method_name.id}}_pending_through : Array({{class_name.id}})? = nil
@@ -892,6 +910,8 @@ module Grant::Associations
     # Handle dependent option
     {% if options[:dependent] && through %}
       setup_dependent_through({{method_name.id}}, {{through.id}}, {{options[:dependent]}})
+    {% elsif options[:dependent] && scope %}
+      _grant_scoped_dependent({{method_name.id}}, :has_many, {{options[:dependent]}}, {{class_name.id}}, {{foreign_key_name}}, {{primary_key_name}}, {{scope}})
     {% elsif options[:dependent] %}
       {% if options[:dependent] == :destroy %}
         setup_dependent_destroy({{method_name.id}}, :has_many, {{class_name.id}}, {{foreign_key_name}}, {{primary_key_name}})
@@ -913,7 +933,24 @@ module Grant::Associations
       # Stage assigned has_many records and persist them through the owner's save.
       setup_autosave({{method_name.id}}, :has_many, {{class_name.id}}, {{foreign_key_name}}, {{options[:primary_key] ? primary_key_name : nil}}, {{options[:autosave]}}, {{options[:validate]}}, {{options[:index_errors]}})
 
+      # Replaces the collection. On a saved owner this writes now, in one
+      # transaction: records that left the set follow the association's
+      # `dependent:` strategy and each new record is saved. On an unsaved owner
+      # the records wait for its first save.
       def {{method_name.id}}=(records : Array({{class_name.id}}))
+        if persisted?
+          {{method_name.id}}.replace(records)
+          return records
+        end
+        _grant_stage_{{method_name.id}}(records)
+      end
+
+      # Points *records* at this record and makes them the loaded target, in
+      # memory; the owner's save writes them. Used for mass assignment
+      # (`set_attributes`), which never writes by itself.
+      #
+      # :nodoc:
+      def _grant_stage_{{method_name.id}}(records : Array({{class_name.id}}))
         owner_key = self.read_attribute({{primary_key_name}})
         if owner_key
           records.each do |record|
@@ -921,6 +958,13 @@ module Grant::Associations
           end
         end
         set_loaded_association({{method_name.stringify}}, records.map(&.as(Grant::Base)))
+      end
+    {% else %}
+      # Replaces the collection: removes the targets that left the set and
+      # inserts the join rows of the new ones (one INSERT, one DELETE).
+      def {{method_name.id}}=(records : Array({{class_name.id}}))
+        {{method_name.id}}.replace(records)
+        records
       end
     {% end %}
     {% end %}
@@ -1002,22 +1046,23 @@ module Grant::Associations
           owner = record.as({{@type}})
           {% if type == :belongs_to || type == :has_one %}
             if value.nil?
-              owner.{{name.id}} = nil
+              {% if type == :has_one && @type.methods.any? { |candidate| candidate.name.stringify == "_grant_assign_" + name.id.stringify } %}owner._grant_assign_{{name.id}}(nil){% else %}owner.{{name.id}} = nil{% end %}
               true
             elsif associated = value.as?({{target_class.id}})
-              owner.{{name.id}} = associated
+              {% if type == :has_one && @type.methods.any? { |candidate| candidate.name.stringify == "_grant_assign_" + name.id.stringify } %}owner._grant_assign_{{name.id}}(associated){% else %}owner.{{name.id}} = associated{% end %}
               true
             else
               false
             end
           {% elsif type == :has_many %}
+            {% staging = @type.methods.any? { |candidate| candidate.name.stringify == "_grant_stage_" + name.id.stringify } %}
             if value.nil?
-              owner.{{name.id}} = [] of {{target_class.id}}
+              {% if staging %}owner._grant_stage_{{name.id}}([] of {{target_class.id}}){% else %}owner.{{name.id}} = [] of {{target_class.id}}{% end %}
               true
             elsif associated = value.as?(Array(Grant::Base))
               if associated.all? { |item| item.is_a?({{target_class.id}}) }
                 typed_associated = associated.map(&.as({{target_class.id}}))
-                owner.{{name.id}} = typed_associated
+                {% if staging %}owner._grant_stage_{{name.id}}(typed_associated){% else %}owner.{{name.id}} = typed_associated{% end %}
                 true
               else
                 false
@@ -1034,6 +1079,8 @@ end
 
 require "./associations/option_validation"
 require "./associations/singular_builders"
+require "./associations/collection_accessors"
+require "./associations/has_one_writer"
 require "./associations/through_preload"
 require "./associations/habtm"
 require "./associations/composite_foreign_key"
