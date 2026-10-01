@@ -1,4 +1,5 @@
 require "./association_registry"
+require "./association_writers"
 require "./reflection"
 require "./polymorphic"
 require "./delegated_type"
@@ -74,6 +75,7 @@ module Grant::Associations
   include Grant::Autosave
   include Grant::Dependent::Instance
   include Grant::CounterCache::Instance
+  include Grant::AssociationWriters
 
   macro included
     extend Grant::CounterCache::ClassMethods
@@ -1040,39 +1042,37 @@ module Grant::Associations
       }
     )
     {% if type == :belongs_to || (type == :has_one && through.nil?) || (type == :has_many && through.nil?) %}
-      Grant::AssociationRegistry.register_writer(
-        {{@type.name.stringify}}, {{name}},
-        ->(record : Grant::Base, value : Grant::AssociationRegistry::AssociationValue) : Bool {
-          owner = record.as({{@type}})
-          {% if type == :belongs_to || type == :has_one %}
-            if value.nil?
-              {% if type == :has_one && @type.methods.any? { |candidate| candidate.name.stringify == "_grant_assign_" + name.id.stringify } %}owner._grant_assign_{{name.id}}(nil){% else %}owner.{{name.id}} = nil{% end %}
-              true
-            elsif associated = value.as?({{target_class.id}})
-              {% if type == :has_one && @type.methods.any? { |candidate| candidate.name.stringify == "_grant_assign_" + name.id.stringify } %}owner._grant_assign_{{name.id}}(associated){% else %}owner.{{name.id}} = associated{% end %}
+      # The writer mass assignment uses for this association, reached through
+      # `_grant_assign_association` (see `Grant::AssociationWriters`).
+      def _grant_write_assoc_{{name.id}}(value : Grant::AssociationRegistry::AssociationValue) : Bool
+        {% if type == :belongs_to || type == :has_one %}
+          if value.nil?
+            {% if type == :has_one && @type.methods.any? { |candidate| candidate.name.stringify == "_grant_assign_" + name.id.stringify } %}_grant_assign_{{name.id}}(nil){% else %}self.{{name.id}} = nil{% end %}
+            true
+          elsif associated = value.as?({{target_class.id}})
+            {% if type == :has_one && @type.methods.any? { |candidate| candidate.name.stringify == "_grant_assign_" + name.id.stringify } %}_grant_assign_{{name.id}}(associated){% else %}self.{{name.id}} = associated{% end %}
+            true
+          else
+            false
+          end
+        {% elsif type == :has_many %}
+          {% staging = @type.methods.any? { |candidate| candidate.name.stringify == "_grant_stage_" + name.id.stringify } %}
+          if value.nil?
+            {% if staging %}_grant_stage_{{name.id}}([] of {{target_class.id}}){% else %}self.{{name.id}} = [] of {{target_class.id}}{% end %}
+            true
+          elsif associated = value.as?(Array(Grant::Base))
+            if associated.all? { |item| item.is_a?({{target_class.id}}) }
+              typed_associated = associated.map(&.as({{target_class.id}}))
+              {% if staging %}_grant_stage_{{name.id}}(typed_associated){% else %}self.{{name.id}} = typed_associated{% end %}
               true
             else
               false
             end
-          {% elsif type == :has_many %}
-            {% staging = @type.methods.any? { |candidate| candidate.name.stringify == "_grant_stage_" + name.id.stringify } %}
-            if value.nil?
-              {% if staging %}owner._grant_stage_{{name.id}}([] of {{target_class.id}}){% else %}owner.{{name.id}} = [] of {{target_class.id}}{% end %}
-              true
-            elsif associated = value.as?(Array(Grant::Base))
-              if associated.all? { |item| item.is_a?({{target_class.id}}) }
-                typed_associated = associated.map(&.as({{target_class.id}}))
-                {% if staging %}owner._grant_stage_{{name.id}}(typed_associated){% else %}owner.{{name.id}} = typed_associated{% end %}
-                true
-              else
-                false
-              end
-            else
-              false
-            end
-          {% end %}
-        }
-      )
+          else
+            false
+          end
+        {% end %}
+      end
     {% end %}
   end
 end

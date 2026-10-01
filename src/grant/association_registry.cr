@@ -119,6 +119,9 @@ module Grant
       end
     end
 
+    # Registers a custom writer for an association by hand. The writers the
+    # association macros generate are not registered here; they are reached
+    # through `Grant::AssociationWriters`.
     def self.register_writer(model_class : String, association_name : String, writer : AssociationWriter) : Nil
       @@mutex.synchronize do
         updated = @@writers.dup
@@ -131,8 +134,9 @@ module Grant
 
     # Apply association-valued mass-assignment entries through each
     # association's typed writer. Scalar column values are ignored here and
-    # continue through the normal column conversion path.
-    def self.assign(owner : Grant::Base, association_name : String, value) : Bool
+    # continue through the normal column conversion path. *owner* keeps its
+    # concrete model type so only that model's writers are reachable.
+    def self.assign(owner, association_name : String, value) : Bool
       if value.nil?
         dispatch(owner, association_name, nil)
       elsif associated = value.as?(Grant::Base)
@@ -149,7 +153,8 @@ module Grant
       end
     end
 
-    private def self.dispatch(owner : Grant::Base, association_name : String, value : AssociationValue) : Bool
+    private def self.dispatch(owner, association_name : String, value : AssociationValue) : Bool
+      return true if owner._grant_assign_association(association_name, value)
       writer = @@writers[owner.class.name]?.try(&.[association_name]?)
       writer ? writer.call(owner, value) : false
     end
