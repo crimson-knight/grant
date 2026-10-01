@@ -1,6 +1,8 @@
 require "./associations/through"
 require "./associations/through_chain"
 require "./association_callbacks"
+require "./associations/collection_relation"
+require "./associations/collection_finders"
 
 # Lazy, owner-scoped collection returned by a has_many association.
 class Grant::AssociationCollection(Owner, Target)
@@ -84,6 +86,7 @@ class Grant::AssociationCollection(Owner, Target)
       owner._adopt_strict_loading(record, true)
     end
     if clause.empty? && params.empty?
+      merge_unsaved(results)
       loaded_records = results.dup
       @loaded_records = loaded_records
       if association_name = @association_name
@@ -106,9 +109,9 @@ class Grant::AssociationCollection(Owner, Target)
     if records = @loaded_records
       records.size.to_i64
     elsif cached = cached_count
-      cached
+      cached + unsaved_records.size
     else
-      count
+      count + unsaved_records.size
     end
   end
 
@@ -129,6 +132,8 @@ class Grant::AssociationCollection(Owner, Target)
   def empty? : Bool
     if records = @loaded_records
       records.empty?
+    elsif !unsaved_records.empty?
+      false
     else
       ensure_lazy_loading_allowed
       !association_relation.exists?
@@ -138,6 +143,8 @@ class Grant::AssociationCollection(Owner, Target)
   def any? : Bool
     if records = @loaded_records
       !records.empty?
+    elsif !unsaved_records.empty?
+      true
     else
       ensure_lazy_loading_allowed
       association_relation.exists?
@@ -148,60 +155,29 @@ class Grant::AssociationCollection(Owner, Target)
     !any?
   end
 
-  def first : Target?
-    all.first?
-  end
-
-  def first! : Target
-    all.first
-  end
-
-  def last : Target?
-    all.last?
-  end
-
-  def last! : Target
-    all.last
-  end
-
-  def where(**matches) : Grant::Query::Builder(Target)
-    ensure_lazy_loading_allowed
-    association_relation.where(**matches)
-  end
-
-  def find(value) : Target?
-    record = if records = @loaded_records
-               records.find { |item| item.primary_key_value == value }
-             elsif @through
-               ensure_lazy_loading_allowed
-               all.find { |record| record.primary_key_value == value }
-             else
-               ensure_lazy_loading_allowed
-               association_relation.where(Target.primary_name, :eq, value.as(Grant::Columns::Type)).first
-             end
-    set_inverse(record) if record
-    record
-  end
-
-  def find!(value) : Target
-    find(value) || raise Grant::Querying::NotFound.new("No #{Target.name} found where #{Target.primary_name} = #{value}")
-  end
-
   def find_by(**args) : Target?
-    record = if records = @loaded_records
+    find_by(model_args(args))
+  end
+
+  # :ditto:
+  def find_by(args : Grant::ModelArgs) : Target?
+    record = if records = memory_records
                records.find do |record|
-                 args.to_h.all? { |key, value| record.read_attribute(key.to_s) == value }
+                 args.all? { |key, value| record.read_attribute(key.to_s) == value }
                end
              else
-               ensure_lazy_loading_allowed
-               association_relation.where(**args).first
+               adopt(scope.find_by(args))
              end
-    set_inverse(record) if record
     record
   end
 
   def find_by!(**args) : Target
-    find_by(**args) || raise Grant::Querying::NotFound.new("No #{Target.name} found where #{args.map { |key, value| "#{key} = #{value}" }.join(" and ")}")
+    find_by!(model_args(args))
+  end
+
+  # :ditto:
+  def find_by!(args : Grant::ModelArgs) : Target
+    find_by(args) || raise Grant::Querying::NotFound.new("No #{Target.name} found where #{args.map { |key, value| "#{key} = #{value}" }.join(" and ")}")
   end
 
   # Builds a new target from named attributes, wired to this owner. The record
@@ -374,37 +350,82 @@ class Grant::AssociationCollection(Owner, Target)
     end
   end
 
+  # The primary keys as the target's key type (`Array(Int64)` for an `Int64`
+  # key) instead of the `Grant::Columns::Type` union.
+  def typed_ids
+    ids.compact_map(&.as?(typeof(Target.new.primary_key_value.not_nil!)))
+  end
+
   # Replaces the collection with the records whose primary keys are *new_ids*.
-  # Blank ids are ignored. Every id is checked with one `WHERE pk IN (...)`
-  # query and `Grant::RecordNotFound` is raised when one is missing. The
-  # difference is then applied set-based inside one transaction: one write for
-  # the removed keys and one for the added keys.
+  # Blank ids are ignored and numeric strings are cast to the key type. Every
+  # id is checked with one `WHERE pk IN (...)` query and `Grant::RecordNotFound`
+  # is raised when one is missing. The difference is applied inside one
+  # transaction: removed records follow the association's `dependent:` strategy
+  # (set-based, no loading), and each added record is saved, so its
+  # validations and callbacks run and `updated_at` moves, as in ActiveRecord.
   def ids=(new_ids : Array) : Array
     wanted = normalize_ids(new_ids)
     targets = records_for_ids!(wanted)
     unless owner.persisted?
-      # A `:through` collection keeps the targets until the owner is saved.
-      concat(targets) if @through
+      if @type_column && !@through
+        raise Grant::Associations::OwnerNotSaved.new(owner, @association_name || Target.name, "#{@association_name}_ids=")
+      end
+      # The targets wait on the owner until it is saved.
+      concat(targets)
       return new_ids
     end
 
+    apply_difference(targets)
+    new_ids
+  end
+
+  # Replaces the members with *records*: records that are no longer in the set
+  # are removed by the association's `dependent:` strategy with set-based
+  # statements, and each new record is saved and attached. Runs in one
+  # transaction. On an unsaved owner the records only wait for its save.
+  #
+  # ```
+  # user.posts.replace([first, second])
+  # ```
+  def replace(records : Array(Target)) : self
+    unless owner.persisted?
+      replace_unsaved(records)
+      return self
+    end
+
+    apply_difference(records)
+    @loaded_records = records.dup
+    sync_loaded_association
+    self
+  end
+
+  private def apply_difference(wanted : Array(Target)) : Nil
     current = ids
     current_texts = current.map(&.to_s)
-    wanted_texts = wanted.map(&.to_s)
+    wanted_texts = wanted.compact_map { |record| record.persisted? ? record.primary_key_value.to_s : nil }
 
     stale_keys = current.reject { |key| wanted_texts.includes?(key.to_s) }
-    added = targets.reject { |record| current_texts.includes?(record.primary_key_value.to_s) }
+    added = wanted.reject { |record| record.persisted? && current_texts.includes?(record.primary_key_value.to_s) }
+    return if stale_keys.empty? && added.empty?
 
-    if stale_keys.empty? || added.empty?
+    Owner.transaction do
       remove_by_keys(stale_keys)
-      attach_all(added)
-    else
-      Owner.transaction do
-        remove_by_keys(stale_keys)
-        attach_all(added)
-      end
+      concat(added)
     end
-    new_ids
+  end
+
+  private def replace_unsaved(records : Array(Target)) : Nil
+    if pending = @pending
+      pending.clear
+    end
+    @loaded_records = [] of Target
+    records.each do |record|
+      @pending.try { |list| list << record }
+      stage_for_owner(record)
+      set_inverse(record)
+      @loaded_records.try { |list| list << record }
+    end
+    sync_loaded_association
   end
 
   # Drops blank and duplicate ids, keeping the first spelling of each.
@@ -414,7 +435,8 @@ class Grant::AssociationCollection(Owner, Target)
     list.each do |id|
       next if id.nil?
       next if id.is_a?(String) && id.blank?
-      result << id.as(Grant::Columns::Type) if seen.add?(id.to_s)
+      key = id.is_a?(String) ? cast_key(id, nil.as(typeof(Target.new.primary_key_value))) : id.as(Grant::Columns::Type)
+      result << key if seen.add?(key.to_s)
     end
     result
   end
@@ -521,8 +543,9 @@ class Grant::AssociationCollection(Owner, Target)
     if records = @loaded_records
       !records.empty?
     elsif @through
+      # A chained `:through` relation answers `exists?` unreliably; one row is cheap.
       ensure_lazy_loading_allowed
-      !all.empty?
+      !association_relation.take.nil?
     else
       ensure_lazy_loading_allowed
       association_relation.exists?
@@ -579,6 +602,72 @@ class Grant::AssociationCollection(Owner, Target)
   end
 
   private getter owner
+
+  # Casts a numeric or UUID string to the primary key type, so ids from a form
+  # compare and bind like the stored keys. Other strings stay as given.
+  private def cast_key(id : String, _type : Int64?) : Grant::Columns::Type
+    id.to_i64? || id
+  end
+
+  private def cast_key(id : String, _type : Int32?) : Grant::Columns::Type
+    id.to_i32? || id
+  end
+
+  private def cast_key(id : String, _type : UUID?) : Grant::Columns::Type
+    UUID.parse?(id) || id
+  end
+
+  private def cast_key(id : String, _type) : Grant::Columns::Type
+    id
+  end
+
+  # Records built or appended on this association that the database does not
+  # list yet: the staged records of an owner, or the pending targets of a
+  # `:through` collection. Reads of an unloaded collection include them, as in
+  # ActiveRecord.
+  private def unsaved_records : Array(Target)
+    list = [] of Target
+    if pending = @pending
+      pending.each { |record| list << record }
+    elsif (association_name = @association_name) && !@through
+      owner._autosave_staged(association_name).each do |record|
+        target = record.as?(Target)
+        list << target if target && (target.new_record? || !owner.persisted?)
+      end
+    end
+    list
+  end
+
+  # Appends the unsaved records that *results* (the rows just read) lack.
+  private def merge_unsaved(results : Array(Target)) : Nil
+    unsaved_records.each do |record|
+      known = results.any? do |row|
+        row.same?(record) || (record.persisted? && row.primary_key_value == record.primary_key_value)
+      end
+      results << record unless known
+    end
+  end
+
+  # The records to answer from without a query: the loaded ones, or, while
+  # unsaved records are waiting on the collection, the merge of the rows and
+  # those records. `nil` when the database alone can answer.
+  private def memory_records : Array(Target)?
+    if records = @loaded_records
+      records
+    elsif !unsaved_records.empty?
+      all
+    end
+  end
+
+  private def adopt(record : Target?) : Target?
+    set_inverse(record) if record
+    record
+  end
+
+  private def adopt(records : Array(Target)) : Array(Target)
+    records.each { |record| set_inverse(record) }
+    records
+  end
 
   private def in_keys(relation : Grant::Query::Builder(Target), column : String, keys : Array(Grant::Columns::Type)) : Grant::Query::Builder(Target)
     Grant::AssociationLoader.where_in(relation, column, keys)
@@ -684,32 +773,6 @@ class Grant::AssociationCollection(Owner, Target)
       end
       writer.insert(owner_key, keys)
     end
-  end
-
-  # Adds already persisted *records* with set-based writes: one UPDATE that
-  # points them at the owner, or one multi-row join INSERT.
-  private def attach_all(records : Array(Target)) : Nil
-    return if records.empty?
-    return unless run_hooks(:before_add, records)
-
-    if @through
-      writer = through_writer
-      writer.insert(owner_key, records.map { |record| record.read_attribute(writer.target_key) })
-    else
-      keys = records.map { |record| record.primary_key_value.as(Grant::Columns::Type) }
-      moved = records.count { |record| record.read_attribute(@foreign_key.to_s) != owner_key }
-      assignments = [{@foreign_key.to_s, owner_key}] of Tuple(String, Grant::Columns::Type)
-      if (type_column = @type_column) && (type_value = @type_value)
-        assignments << {type_column, type_value.as(Grant::Columns::Type)}
-      end
-      in_keys(Target.current_scope, Target.primary_name, keys).update_all(assignments)
-      adjust_counter(moved.to_i64)
-    end
-    records.each do |record|
-      set_inverse(record)
-      track_loaded(record)
-    end
-    run_hooks(:after_add, records)
   end
 
   # Removes the records with primary keys *keys* without loading them, unless a
