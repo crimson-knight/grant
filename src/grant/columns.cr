@@ -222,20 +222,42 @@ module Grant::Columns
     end
 
     def will_save_change_to_{{decl.var.id}}?(*, from) : Bool
-      will_save_change_to_attribute?({{decl.var.stringify}}, from: from)
+      __dirty_change_matches_{{decl.var.id}}(attribute_change_to_be_saved({{decl.var.stringify}}), from, Grant::Dirty::UNFILTERED)
     end
 
     def will_save_change_to_{{decl.var.id}}?(*, to) : Bool
-      will_save_change_to_attribute?({{decl.var.stringify}}, to: to)
+      __dirty_change_matches_{{decl.var.id}}(attribute_change_to_be_saved({{decl.var.stringify}}), Grant::Dirty::UNFILTERED, to)
     end
 
     def will_save_change_to_{{decl.var.id}}?(*, from, to) : Bool
-      will_save_change_to_attribute?({{decl.var.stringify}}, from: from, to: to)
+      __dirty_change_matches_{{decl.var.id}}(attribute_change_to_be_saved({{decl.var.stringify}}), from, to)
+    end
+
+    # Whether a stored change has the given `from:`/`to:` values. A filter may
+    # be the column type (an enum member, say) or the stored representation.
+    private def __dirty_change_matches_{{decl.var.id}}(change : Tuple(Grant::Base::DirtyValue, Grant::Base::DirtyValue)?, from, to) : Bool
+      return false unless change
+      __dirty_value_matches_{{decl.var.id}}(change[0], from) && __dirty_value_matches_{{decl.var.id}}(change[1], to)
+    end
+
+    private def __dirty_value_matches_{{decl.var.id}}(stored : Grant::Base::DirtyValue, filter) : Bool
+      return true if filter.is_a?(Grant::Dirty::Unfiltered)
+      return true if stored == filter
+      {% if !converter %}
+        false
+      {% else %}
+        {% resolved_filter_converter = parse_type(converter.stringify).resolve %}
+        {% if resolved_filter_converter.has_method?(:from_db) || resolved_filter_converter.class.has_method?(:from_db) %}
+          __typed_dirty_{{decl.var.id}}(stored) == filter
+        {% else %}
+          false
+        {% end %}
+      {% end %}
     end
 
     # Thin delegators to the name-keyed methods in `Grant::Dirty`.
     def saved_change_to_{{decl.var.id}}?(*, from = Grant::Dirty::UNFILTERED, to = Grant::Dirty::UNFILTERED) : Bool
-      saved_change_to_attribute?({{decl.var.stringify}}, from: from, to: to)
+      __dirty_change_matches_{{decl.var.id}}(saved_change_to_attribute({{decl.var.stringify}}), from, to)
     end
 
     def saved_change_to_{{decl.var.id}} : Tuple({{not_nilable_type}}?, {{not_nilable_type}}?)?
@@ -245,7 +267,7 @@ module Grant::Columns
     end
 
     def {{decl.var.id}}_previously_changed?(*, from = Grant::Dirty::UNFILTERED, to = Grant::Dirty::UNFILTERED) : Bool
-      saved_change_to_attribute?({{decl.var.stringify}}, from: from, to: to)
+      saved_change_to_{{decl.var.id}}?(from: from, to: to)
     end
 
     def {{decl.var.id}}_previously_was : {{not_nilable_type}}?
@@ -285,6 +307,12 @@ module Grant::Columns
 
     # Called by the setter after the value is accepted (see `enum_attribute`).
     private def __after_assign_{{decl.var.id}}(value)
+    end
+
+    # Lets a column take over mass assignment of a raw value (see
+    # `enum_attribute`); returns true when it consumed the value.
+    private def __mass_assign_special_{{decl.var.id}}(value) : Bool
+      false
     end
 
     # Turns a value kept by dirty tracking (the database representation) back
@@ -607,7 +635,7 @@ module Grant::Columns
       {% else %}
         {% setter_type = ann[:setter_type] %}
       {% end %}
-      if hash.has_key?({{column.stringify}})
+      if hash.has_key?({{column.stringify}}) && !__mass_assign_special_{{column.name.id}}(hash[{{column.stringify}}])
         begin
           val = Grant::Type.convert_type hash[{{column.stringify}}], {{setter_type}}
         rescue ex : ArgumentError
@@ -652,6 +680,7 @@ module Grant::Columns
           {% setter_type = ann[:setter_type] %}
         {% end %}
         begin
+          return if __mass_assign_special_{{column.name.id}}(value)
           converted_value = Grant::Type.convert_type(value, {{setter_type}})
           if converted_value.is_a?({{setter_type}})
             self.{{column.name.id}} = converted_value
