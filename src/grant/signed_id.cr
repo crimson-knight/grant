@@ -12,8 +12,11 @@ require "crypto/subtle"
 # cannot forge or alter it, and `find_signed` only returns the record when the
 # signature, purpose, and (if set) expiry all check out.
 #
-# This module is **opt-in** — `include Grant::SignedId` in the models that need
-# it. The signing secret comes from `Grant::TokenFor.configure` (or
+# Every `Grant::Base` model has these methods, as in ActiveRecord; no `include`
+# is needed (`include Grant::SignedId` is still accepted). The methods are plain
+# definitions, so a model that never calls them pays nothing. Models keyed by a
+# composite primary key (or `query_constraints`) sign the whole key tuple. The
+# signing secret comes from `Grant::TokenFor.configure` (or
 # `Grant::SignedId.configure`), falling back to the `GRANT_SIGNING_SECRET`
 # environment variable; generating or verifying a token without either raises
 # `Grant::MissingSigningSecret`.
@@ -22,7 +25,6 @@ require "crypto/subtle"
 # ENV["GRANT_SIGNING_SECRET"] = "a-long-random-secret"
 #
 # class User < Grant::Base
-#   include Grant::SignedId
 #   column id : Int64, primary: true
 # end
 #
@@ -196,12 +198,23 @@ module Grant::SignedId
     expiry = expires_at || (expires_in ? Time.utc + expires_in : nil)
 
     payload = {
-      "id"         => self.id.to_s,
+      "id"         => signed_id_key,
       "purpose"    => (purpose || self.class.table_name).to_s,
       "expires_at" => expiry.try(&.to_unix),
     }
 
     self.class.generate_signed_token(payload)
+  end
+
+  # The record's key as it is signed: the primary key, or a JSON array of the
+  # key columns' values for a composite key.
+  private def signed_id_key : String
+    columns = self.class.signed_id_key_columns
+    if columns.size == 1
+      read_attribute(columns.first).to_s
+    else
+      columns.map { |column_name| read_attribute(column_name).to_s }.to_json
+    end
   end
 
   # Class-level entry points for `Grant::SignedId`, mixed in via `extend
@@ -222,10 +235,7 @@ module Grant::SignedId
     def find_signed(signed_id : String, purpose : Symbol | String | Nil = nil) : self?
       payload = signed_id_payload(signed_id, purpose)
       return nil unless payload
-
-      # IDs are encoded as strings in the signed payload. Restore integer
-      # bindings before querying so PostgreSQL and SQLite compare like types.
-      find(payload.id.to_i64? || payload.id)
+      find_by_signed_key(payload.id)
     end
 
     # Like `find_signed` but raises `Grant::InvalidSignedId` for a bad, forged,
@@ -233,7 +243,17 @@ module Grant::SignedId
     # is gone.
     def find_signed!(signed_id : String, purpose : Symbol | String | Nil = nil) : self
       payload = signed_id_payload(signed_id, purpose) || raise Grant::InvalidSignedId.new
-      find(payload.id.to_i64? || payload.id) || raise Grant::RecordNotFound.new("Couldn't find #{name} with signed id")
+      find_by_signed_key(payload.id) || raise Grant::RecordNotFound.new("Couldn't find #{name} with signed id")
+    end
+
+    # The columns that identify a record in a signed id: the primary key, or
+    # the key tuple of a composite-key / `query_constraints` model.
+    def signed_id_key_columns : Array(String)
+      {% if @type.class.has_method?(:persistence_key_columns) %}
+        persistence_key_columns
+      {% else %}
+        [primary_name]
+      {% end %}
     end
 
     # Serializes *payload* to JSON, signs it with HMAC-SHA256, and returns the
@@ -254,6 +274,47 @@ module Grant::SignedId
       nil
     end
 
+    # Finds the record for a signed key (see `signed_id_key`). Key values are
+    # strings in the payload; they are converted to the column types so
+    # PostgreSQL and SQLite compare like types.
+    private def find_by_signed_key(key : String) : self?
+      columns = signed_id_key_columns
+      if columns.size == 1
+        # IDs are encoded as strings in the signed payload. Restore integer
+        # bindings before querying so PostgreSQL and SQLite compare like types.
+        return find(key.to_i64? || key)
+      end
+
+      parts = begin
+        Array(String).from_json(key)
+      rescue JSON::ParseException
+        return nil
+      end
+      return nil unless parts.size == columns.size
+
+      criteria = Grant::ModelArgs.new
+      {% begin %}
+        columns.each_with_index do |column_name, index|
+          case column_name
+          {% for ivar in @type.instance_vars.select(&.annotation(Grant::Column)) %}
+            {% setter_type = ivar.annotation(Grant::Column)[:setter_type] %}
+          when {{ ivar.name.stringify }}
+            begin
+              value = Grant::Type.convert_type(parts[index], {{ setter_type }})
+            rescue ArgumentError
+              return nil
+            end
+            return nil unless value.is_a?({{ setter_type }})
+            criteria[column_name] = value
+          {% end %}
+          else
+            return nil
+          end
+        end
+      {% end %}
+      where(criteria).first
+    end
+
     private def signed_id_payload(token : String, purpose : Symbol | String | Nil) : Grant::Signer::Payload?
       payload = Grant::Signer.open_payload(token, signed_id_signing_context)
       return nil unless payload
@@ -266,4 +327,9 @@ module Grant::SignedId
       "signed_id/#{table_name}"
     end
   end
+end
+
+# Every model signs ids, as in ActiveRecord. Nothing here is generated per model.
+abstract class Grant::Base
+  include Grant::SignedId
 end
