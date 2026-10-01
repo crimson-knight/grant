@@ -33,7 +33,7 @@
 # class Post < Grant::Base
 #   column id : Int64, primary: true
 #   column title : String?
-#   column tags : Array(String)?       # always watched
+#   column tags : Array(String)? # always watched
 #   column options : JSON::Any?
 #
 #   detect_mutation # also every serialized / mutable-converter column

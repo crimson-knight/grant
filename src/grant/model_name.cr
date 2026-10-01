@@ -120,7 +120,7 @@ struct Grant::ModelName
     case word
     when /(?:s|x|z|ch|sh)\z/ then word + "es"
     when /[^aeiou]y\z/       then word[0, word.size - 1] + "ies"
-    else                         word + "s"
+    else                          word + "s"
     end
   end
 end

@@ -65,30 +65,30 @@ describe "Mutation watching" do
     end
 
     if CURRENT_ADAPTER == "pg"
-    it "issues no SQL for a clean save" do
-      note = W6ArrayNote.create!(title: "t", tags: ["a"])
-      loaded = W6ArrayNote.find!(note.id)
-      capture_statements { loaded.save! }.should be_empty
-    end
+      it "issues no SQL for a clean save" do
+        note = W6ArrayNote.create!(title: "t", tags: ["a"])
+        loaded = W6ArrayNote.find!(note.id)
+        capture_statements { loaded.save! }.should be_empty
+      end
 
-    it "writes only the edited Array column and no stale sibling" do
-      note = W6ArrayNote.create!(title: "t", body: "b", tags: ["a"])
-      left = W6ArrayNote.find!(note.id)
-      right = W6ArrayNote.find!(note.id)
+      it "writes only the edited Array column and no stale sibling" do
+        note = W6ArrayNote.create!(title: "t", body: "b", tags: ["a"])
+        left = W6ArrayNote.find!(note.id)
+        right = W6ArrayNote.find!(note.id)
 
-      left.title = "left"
-      left.save!
+        left.title = "left"
+        left.save!
 
-      right.tags.not_nil! << "b"
-      updates = w6_updates(capture_statements { right.save! })
-      updates.size.should eq(1)
-      updates.first.should contain("tags")
-      updates.first.should_not contain("title")
+        right.tags.not_nil! << "b"
+        updates = w6_updates(capture_statements { right.save! })
+        updates.size.should eq(1)
+        updates.first.should contain("tags")
+        updates.first.should_not contain("title")
 
-      stored = W6ArrayNote.find!(note.id)
-      stored.title.should eq("left")
-      stored.tags.should eq(["a", "b"])
-    end
+        stored = W6ArrayNote.find!(note.id)
+        stored.title.should eq("left")
+        stored.tags.should eq(["a", "b"])
+      end
     end
   end
 
