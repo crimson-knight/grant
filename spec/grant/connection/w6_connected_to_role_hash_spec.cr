@@ -97,6 +97,34 @@ describe "connected_to(database: {role => connection}) on #{CURRENT_ADAPTER}" do
     W6RoleHashThing.current_database.should eq "w6_rh_primary"
   end
 
+  it "sizes the pool of each role on its own connection" do
+    yaml = <<-YAML
+      test:
+        w6_rhp:
+          url: #{W6C04.url("w6_rh_primary")}
+          pool: 5
+        w6_rhp_replica:
+          url: #{W6C04.url("w6_rh_replica")}
+          pool: 2
+          replica: true
+      YAML
+    Grant::DatabaseConfigurations.parse(yaml, "test", ->(_key : String) { nil.as(String?) }).establish_connections
+
+    begin
+      writer = Grant::ConnectionRegistry.get_adapter("w6_rhp", :writing)
+      reader = Grant::ConnectionRegistry.get_adapter("w6_rhp", :reading)
+      Grant::ConnectionRegistry.connection_spec("w6_rhp", :writing).not_nil!.pool_size.should eq 5
+      Grant::ConnectionRegistry.connection_spec("w6_rhp", :reading).not_nil!.pool_size.should eq 2
+      writer.open { |db| db.scalar("SELECT 1") }
+      reader.open { |db| db.scalar("SELECT 1") }
+      writer.pool_stat.size.should eq 5
+      reader.pool_stat.size.should eq 2
+    ensure
+      W6C04.remove("w6_rhp", :writing)
+      W6C04.remove("w6_rhp", :reading)
+    end
+  end
+
   it "switches several models at once with connected_to_many" do
     labels = Grant.connected_to_many(W6RoleHashThing, W6RoleHashOtherThing, role: :reading) do
       {W6RoleHashThing.first!.label, W6RoleHashOtherThing.first!.label}

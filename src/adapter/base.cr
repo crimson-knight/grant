@@ -170,7 +170,7 @@ abstract class Grant::Adapter::Base
   def active? : Bool
     verify!
     true
-  rescue Grant::ConnectionNotEstablished
+  rescue Grant::ConnectionNotEstablished | Grant::NoDatabaseError
     false
   end
 
@@ -312,7 +312,7 @@ abstract class Grant::Adapter::Base
       begin
         return yield schema_conn
       rescue ex : ::Exception
-        raise translate_exception(ex, sql, binds)
+        raise translate_exception(ex, sql || schema_conn.grant_last_sql, binds)
       end
     end
 
@@ -325,7 +325,7 @@ abstract class Grant::Adapter::Base
       begin
         return yield tx_conn
       rescue ex : ::Exception
-        raise translate_exception(ex, sql, binds)
+        raise translate_exception(ex, sql || tx_conn.grant_last_sql, binds)
       end
     end
 
@@ -336,7 +336,7 @@ abstract class Grant::Adapter::Base
       begin
         return yield pinned
       rescue ex : ::Exception
-        raise translate_exception(ex, sql, binds)
+        raise translate_exception(ex, sql || pinned.grant_last_sql, binds)
       end
     end
 
@@ -386,7 +386,7 @@ abstract class Grant::Adapter::Base
     attempt = 0
     loop do
       begin
-        return checked_out { |conn| yield conn }
+        return checked_out(sql, binds) { |conn| yield conn }
       rescue ex : ::DB::ConnectionLost
         raise ex if lost_retries == 0
         lost_retries -= 1
@@ -398,7 +398,7 @@ abstract class Grant::Adapter::Base
     raise translate_exception(ex, sql, binds)
   end
 
-  private def checked_out(&)
+  private def checked_out(sql : String? = nil, binds = nil, &)
     connection = checkout_connection
     @active_checkouts.add(1)
     @last_used_ticks.set(Grant::Adapter::PoolSupport.ticks)
@@ -409,6 +409,9 @@ abstract class Grant::Adapter::Base
     rescue ex : ::Exception
       if ex.message =~ /client was disconnected/
         raise ::DB::ConnectionLost.new(connection)
+      elsif sql.nil?
+        # A caller that passed no SQL still gets the statement that failed.
+        raise translate_exception(ex, connection.grant_last_sql, binds)
       else
         raise ex
       end

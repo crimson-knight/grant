@@ -129,6 +129,19 @@ abstract class DB::Connection
   # :nodoc:
   property grant_last_used_ticks : Int64 = Grant::Adapter::PoolSupport.ticks
 
+  # The text of the statement most recently built on this connection. The
+  # adapter reads it when a statement fails and its caller passed no SQL (a
+  # helper that calls `Adapter#open` bare), so the error still names the
+  # statement. One reference store per statement; nothing is copied.
+  # :nodoc:
+  getter grant_last_sql : String? = nil
+
+  # :nodoc:
+  def build(query)
+    @grant_last_sql = query if query.is_a?(String)
+    super
+  end
+
   # Bounds this connection's prepared statement cache; 0 means unbounded.
   def statement_cache_limit=(limit : Int32) : Int32
     @statements_cache.limit = limit

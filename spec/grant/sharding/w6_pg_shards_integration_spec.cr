@@ -132,7 +132,8 @@ describe "sharding integration on #{CURRENT_ADAPTER}" do
       begin
         expect_raises(Grant::AdapterNotAvailableError, /shard_1/) { W6IntRangeAccount.new(account_id: 160_i64, label: "lost").save! }
         # A scatter query fails as a whole instead of returning a partial answer.
-        expect_raises(Grant::AdapterNotAvailableError) { W6IntRangeAccount.count }
+        error = expect_raises(Grant::Async::AsyncCoordinationError) { W6IntRangeAccount.count }
+        error.message.to_s.should contain "shard_1"
       ensure
         W6C04.establish("w6_int_range", w6_int_db(:shard_1), :primary, :shard_1)
       end
@@ -202,7 +203,7 @@ describe "sharding integration on #{CURRENT_ADAPTER}" do
       resolver = W6IntHashAccount.sharding_config.not_nil!.resolver
       total = 0
       W6_INT_SHARDS.each do |shard|
-        rows = W6C04.strings(w6_int_db(shard), "SELECT account_id FROM w6_int_hash_accounts WHERE label = 'concurrent' ORDER BY account_id")
+        rows = W6C04.strings(w6_int_db(shard), "SELECT CAST(account_id AS TEXT) FROM w6_int_hash_accounts WHERE label = 'concurrent' ORDER BY account_id")
         rows.each { |account| resolver.resolve_for_values([account.to_i64]).should eq shard }
         total += rows.size
       end
