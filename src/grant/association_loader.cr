@@ -8,6 +8,53 @@ module Grant
     # target class, the association scope, and the target's default scope.
     alias BatchLoader = Proc(Array(Grant::Columns::Type), Array(Grant::Base))
 
+    # Runs one model's generated `_eager_batch_load` for records of that model.
+    alias BatchDispatcher = Proc(Array(Grant::Base), String, Array(Grant::Query::WhereField)?, Bool)
+
+    # A model's dispatcher and the test for records it can load (the model and
+    # its STI subclasses).
+    alias Dispatch = NamedTuple(handles: Proc(Grant::Base, Bool), call: BatchDispatcher)
+
+    # Per-model dispatchers, published copy-on-write like the association
+    # registry. A model is added by `enable`, which only code that can load
+    # associations calls (`includes`/`preload`/`eager_load`, `Grant::Preloader`,
+    # and the loaders the association macros generate for their targets). The
+    # loader never calls `_eager_batch_load` through `Grant::Base`, so a query
+    # without association loading does not make every model's loader reachable
+    # to the compiler.
+    @@dispatchers = {} of String => Dispatch
+    @@dispatchers_mutex = Mutex.new
+
+    # Makes *model* (and its STI subclasses) loadable by the association loader.
+    # Idempotent and cheap after the first call.
+    def self.enable(model : M.class) : Nil forall M
+      return if @@dispatchers.has_key?(M.name)
+      dispatch = {
+        handles: ->(record : Grant::Base) : Bool { record.is_a?(M) },
+        call:    ->(records : Array(Grant::Base), name : String, restriction : Array(Grant::Query::WhereField)?) : Bool {
+          records.first.as(M)._eager_batch_load(records, name, restriction)
+        },
+      }
+      @@dispatchers_mutex.synchronize do
+        updated = @@dispatchers.dup
+        updated[M.name] = dispatch
+        @@dispatchers = updated
+      end
+    end
+
+    # Loads *name* on *records* (all of one class) with the dispatcher enabled
+    # for that class or an ancestor of it. Returns false when the association
+    # is unknown to the model.
+    def self.batch_load(records : Array(Grant::Base), name : String,
+                        restriction : Array(Grant::Query::WhereField)? = nil) : Bool
+      first = records.first
+      dispatch = @@dispatchers[first.class.name]? || @@dispatchers.each_value.find(&.[:handles].call(first))
+      raise Grant::PreloadNotEnabledError.new(first.class.name) unless dispatch
+      # A proc takes the exact array type, where a method takes any subtype.
+      batch = records.map { |record| record.as(Grant::Base) }
+      dispatch[:call].call(batch, name, restriction)
+    end
+
     # Loads every association in *associations* (recursively) on *records*.
     # Records that already have an association loaded are skipped for it, and
     # records of different classes (polymorphic or STI results) are loaded per
@@ -205,7 +252,7 @@ module Grant
         next if pending.empty?
         # Delegate to the per-model instance method generated in
         # `Grant::EagerLoading`, which knows the concrete target classes.
-        unless pending.first._eager_batch_load(pending, association_name.to_s, restriction)
+        unless batch_load(pending, association_name.to_s, restriction)
           raise Grant::AssociationNotFoundError.new(pending.first.class.name, association_name.to_s)
         end
       end
@@ -246,7 +293,10 @@ module Grant
     getter records : Array(Grant::Base)
     getter associations : Array(Grant::Includes)
 
-    def initialize(records : Array, *associations, **nested_associations)
+    def initialize(records : Array(T), *associations, **nested_associations) forall T
+      {% for model in T.union_types %}
+        Grant::AssociationLoader.enable({{model}})
+      {% end %}
       @records = [] of Grant::Base
       records.each { |record| @records << record }
       @associations = [] of Grant::Includes

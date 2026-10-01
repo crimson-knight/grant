@@ -1981,6 +1981,7 @@ class Grant::Query::Builder(Model)
     specs = [] of Grant::Includes
     associations.each { |spec| specs.concat(Grant::AssociationLoader.normalize(spec)) }
     specs.concat(Grant::AssociationLoader.normalize(nested_associations)) unless nested_associations.empty?
+    Grant::AssociationLoader.enable(Model)
     own_eager_load_associations.concat(specs)
     joins_before = @join_clauses
     was_distinct = @distinct
@@ -1996,6 +1997,7 @@ class Grant::Query::Builder(Model)
   end
 
   private def add_association_specs(target : Array(Grant::Includes), positional : Tuple, nested : NamedTuple) : Nil
+    Grant::AssociationLoader.enable(Model)
     positional.each { |spec| target.concat(Grant::AssociationLoader.normalize(spec)) }
     target.concat(Grant::AssociationLoader.normalize(nested)) unless nested.empty?
   end
