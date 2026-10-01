@@ -69,11 +69,11 @@ describe "Grant::Errors API (ActiveRecord semantics)" do
       record = V02eProfile.new(first_name: "ab", age: 3)
       record.valid?.should be_false
       record.errors.to_hash.should eq({
-        "first_name" => ["must be at least 3 characters"],
+        "first_name" => ["is too short (minimum is 3 characters)"],
         "age"        => ["must be greater than 17"],
       })
       record.errors.to_hash(full_messages: true).should eq({
-        "first_name" => ["First name must be at least 3 characters"],
+        "first_name" => ["First name is too short (minimum is 3 characters)"],
         "age"        => ["Age must be greater than 17"],
       })
       record.errors.messages.should eq(record.errors.to_hash)
@@ -91,10 +91,11 @@ describe "Grant::Errors API (ActiveRecord semantics)" do
       errors.as_json.to_json.should eq(%({"name":["can't be blank","is too short"],"base":["is bad"]}))
     end
 
-    it "keeps to_json as the array of field/message objects" do
+    it "serializes to_json in the ActiveRecord shape, to_json_list as field/message objects" do
       errors = Grant::Errors.new
       errors.add(:name, "can't be blank")
-      errors.to_json.should eq(%([{"field":"name","message":"can't be blank"}]))
+      errors.to_json.should eq(%({"name":["can't be blank"]}))
+      errors.to_json_list.should eq(%([{"field":"name","message":"can't be blank"}]))
     end
   end
 

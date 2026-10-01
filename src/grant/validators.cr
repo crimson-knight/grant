@@ -26,10 +26,69 @@ require "./validators/blank"
 # end
 # ```
 abstract class Grant::Validator
+  # The keyword options `validates_with` was given, other than the conditions
+  # (`on:`, `if:`, `unless:`) and `strict:`: ActiveRecord's `validator.options`.
+  # Values that are not plain data (numbers, strings, symbols, booleans,
+  # arrays of strings, integer ranges) are kept as their `to_s`.
+  #
+  # ```
+  # validates_with LimitValidator, limit: 100
+  # # inside LimitValidator#validate
+  # options[:limit] # => 100
+  # ```
+  def options : Grant::Error::Options
+    @validator_options ||= Grant::Error::Options.new
+  end
+
+  @validator_options : Grant::Error::Options?
+
+  # `validates_with MyValidator, limit: 100` builds the validator with its
+  # keyword options; a subclass without an `initialize` of its own keeps them
+  # in `options`.
+  def initialize(**options)
+    @validator_options = Grant::Error.options_from(options)
+  end
+
+  # :nodoc:
+  def __assign_options(options : Grant::Error::Options) : Nil
+    @validator_options = options
+  end
+
+  # The validator's kind, ActiveModel's `Validator.kind`: the class name
+  # without its namespace and `Validator` suffix, underscored
+  # (`Billing::EvenValidator.kind # => :even`). Errors a validator adds without
+  # a type of their own carry this one in `errors.details`.
+  macro inherited
+    def self.kind : Symbol
+      :{{@type.name(generic_args: false).split("::").last.underscore.gsub(/_validator$/, "").id}}
+    end
+  end
+
   # Performs validation against the given record, adding any errors to
   # `record.errors`. The record is typed as `Grant::Base` for the base
-  # signature; subclasses may downcast as needed.
+  # signature; subclasses may downcast as needed, or inherit from
+  # `Grant::TypedValidator(T)` to receive it already typed.
   abstract def validate(record)
+end
+
+# A `Grant::Validator` that receives the record as the model class it was
+# written for. `Grant::Validator` itself is not generic (every existing
+# subclass would stop compiling), so the typed form is this subclass.
+#
+# ```
+# class EvenValidator < Grant::TypedValidator(Counter)
+#   def validate(record : Counter)
+#     record.errors.add(:value, "must be even", type: :even) if record.value.odd?
+#   end
+# end
+# ```
+abstract class Grant::TypedValidator(T) < Grant::Validator
+  abstract def validate(record : T)
+
+  # :nodoc:
+  def validate(record)
+    validate(record.as(T))
+  end
 end
 
 # Base class for attribute-scoped reusable validators registered via
@@ -70,10 +129,11 @@ abstract class Grant::EachValidator < Grant::Validator
   abstract def validate_each(record, attribute, value)
 
   # Reads the attribute through the record's generated typed reader
-  # (`__read_validated_attribute`), so no `to_h` snapshot is built per
-  # attribute. Non-column attributes read as nil.
+  # (`__read_attribute_for_validation`), so no `to_h` snapshot is built per
+  # attribute. Columns and declared virtual attributes are read; anything else
+  # reads as nil.
   private def record_attribute(record, attribute)
-    record.__read_validated_attribute(attribute)
+    record.__read_attribute_for_validation(attribute)
   end
 end
 
@@ -439,14 +499,20 @@ module Grant::Validators
     %}
 
     {% for field in fields %}
-      __rule({{field}}, {{message}}, :invalid, kind: :format, {{options.double_splat}}) do
+      __rule({{field}}, "", :invalid, kind: :format, {{options.double_splat}}) do
         string_value = value.to_s
 
         {% if with_pattern %}
-          next false unless string_value.matches?({{with_pattern}})
+          unless string_value.matches?({{with_pattern}})
+            record.errors.add({{field.id.stringify}}, :invalid, message: Grant::Error.wrap_message({{message}}), value: value)
+            next false
+          end
         {% end %}
         {% if without_pattern %}
-          next false if string_value.matches?({{without_pattern}})
+          if string_value.matches?({{without_pattern}})
+            record.errors.add({{field.id.stringify}}, :invalid, message: Grant::Error.wrap_message({{message}}), value: value)
+            next false
+          end
         {% end %}
 
         true
@@ -454,14 +520,23 @@ module Grant::Validators
     {% end %}
   end
 
-  # Validates the length of a string or array field.
+  # Validates the length of a string or array field. Like ActiveRecord, a
+  # length that is out of bounds adds an error whose type says which bound
+  # failed: `:too_short` (`count:` the minimum), `:too_long` (`count:` the
+  # maximum) or `:wrong_length` (`count:` the exact length).
   #
   # - `minimum:` / `min:` — minimum length required
   # - `maximum:` / `max:` — maximum length allowed
   # - `is:` — exact length required
-  # - `in:` / `within:` — a range of acceptable lengths
-  # - `message:`, `allow_nil:` / `allow_blank:`, `if:` / `unless:`, `on:`,
-  #   `strict:`
+  # - `in:` / `within:` — a range of acceptable lengths (its ends are the
+  #   minimum and maximum)
+  # - `message:` — used for every error; `too_short:`, `too_long:` and
+  #   `wrong_length:` give one message per kind. Each is a String, a Symbol
+  #   translation key or a lambda.
+  # - `allow_nil:` / `allow_blank:`, `if:` / `unless:`, `on:`, `strict:`
+  #
+  # The default messages come from the translator
+  # (`errors.messages.too_short`...).
   #
   # ```
   # validates_length_of :name, minimum: 2, maximum: 50
@@ -474,54 +549,53 @@ module Grant::Validators
       maximum = options[:maximum] || options[:max]
       exact = options[:is]
       range = options[:in] || options[:within]
-      conditions = [] of String
-
-      if minimum
-        conditions << "at least " + minimum.stringify + " characters"
-      end
-      if maximum
-        conditions << "at most " + maximum.stringify + " characters"
-      end
-      if exact
-        conditions << "exactly " + exact.stringify + " characters"
-      end
-      if range
-        conditions << "between " + range.begin.stringify + " and " + range.end.stringify + " characters"
-      end
-
-      message = options[:message] || (conditions.empty? ? "has incorrect length" : ("must be " + conditions.join(" and ")))
-
-      # Most-specific AR length code when a single bound is given.
-      len_code = :wrong_length
-      if minimum && !maximum && !exact && !range
-        len_code = :too_short
-      elsif maximum && !minimum && !exact && !range
-        len_code = :too_long
-      end
     %}
 
     {% for field in fields %}
-      __rule({{field}}, {{message}}, {{len_code}}, kind: :length, {% if len_code == :too_short %}error_options: {count: {{minimum}}}, {% elsif len_code == :too_long %}error_options: {count: {{maximum}}}, {% elsif exact && !minimum && !maximum && !range %}error_options: {count: {{exact}}}, {% end %}{{options.double_splat}}) do
+      __rule({{field}}, "", :wrong_length, kind: :length, {{options.double_splat}}) do
         length = if value.responds_to?(:size)
                    value.size
                  else
                    value.to_s.size
                  end
+        %failed = false
 
         {% if minimum %}
-          next false if length < {{minimum}}
+          if length < {{minimum}}
+            record.errors.add({{field.id.stringify}}, :too_short, message: Grant::Error.wrap_message({{options[:too_short] || options[:message]}}), count: {{minimum}})
+            %failed = true
+          end
         {% end %}
         {% if maximum %}
-          next false if length > {{maximum}}
+          if length > {{maximum}}
+            record.errors.add({{field.id.stringify}}, :too_long, message: Grant::Error.wrap_message({{options[:too_long] || options[:message]}}), count: {{maximum}})
+            %failed = true
+          end
         {% end %}
         {% if exact %}
-          next false unless length == {{exact}}
+          unless length == {{exact}}
+            record.errors.add({{field.id.stringify}}, :wrong_length, message: Grant::Error.wrap_message({{options[:wrong_length] || options[:message]}}), count: {{exact}})
+            %failed = true
+          end
         {% end %}
         {% if range %}
-          next false unless ({{range}}).includes?(length)
+          %range = {{range}}
+          %range_begin = %range.begin
+          if %range_begin && length < %range_begin
+            record.errors.add({{field.id.stringify}}, :too_short, message: Grant::Error.wrap_message({{options[:too_short] || options[:message]}}), count: %range_begin)
+            %failed = true
+          end
+          %range_end = %range.end
+          if %range_end
+            %largest = %range.excludes_end? ? %range_end - 1 : %range_end
+            if length > %largest
+              record.errors.add({{field.id.stringify}}, :too_long, message: Grant::Error.wrap_message({{options[:too_long] || options[:message]}}), count: %largest)
+              %failed = true
+            end
+          end
         {% end %}
 
-        true
+        !%failed
       end
     {% end %}
   end
@@ -631,8 +705,10 @@ module Grant::Validators
     %}
 
     {% for field in fields %}
-      __rule({{field}}, {{message}}, :inclusion, kind: :inclusion, {{options.double_splat}}) do
-        ({{in_values}}).includes?(value)
+      __rule({{field}}, "", :inclusion, kind: :inclusion, {{options.double_splat}}) do
+        next true if ({{in_values}}).includes?(value)
+        record.errors.add({{field.id.stringify}}, :inclusion, message: Grant::Error.wrap_message({{message}}), value: value)
+        false
       end
     {% end %}
   end
@@ -649,8 +725,10 @@ module Grant::Validators
     %}
 
     {% for field in fields %}
-      __rule({{field}}, {{message}}, :exclusion, kind: :exclusion, {{options.double_splat}}) do
-        !({{in_values}}).includes?(value)
+      __rule({{field}}, "", :exclusion, kind: :exclusion, {{options.double_splat}}) do
+        next true unless ({{in_values}}).includes?(value)
+        record.errors.add({{field.id.stringify}}, :exclusion, message: Grant::Error.wrap_message({{message}}), value: value)
+        false
       end
     {% end %}
   end
@@ -669,49 +747,47 @@ module Grant::Validators
   # ```
   macro validates_comparison_of(*fields, **options)
     {%
-      comparisons = [] of Nil
-      if options[:greater_than] != nil
-        comparisons << {op: ">", operand: options[:greater_than], desc: "greater than"}
-      end
-      if options[:greater_than_or_equal_to] != nil
-        comparisons << {op: ">=", operand: options[:greater_than_or_equal_to], desc: "greater than or equal to"}
-      end
-      if options[:equal_to] != nil
-        comparisons << {op: "==", operand: options[:equal_to], desc: "equal to"}
-      end
-      if options[:less_than] != nil
-        comparisons << {op: "<", operand: options[:less_than], desc: "less than"}
-      end
-      if options[:less_than_or_equal_to] != nil
-        comparisons << {op: "<=", operand: options[:less_than_or_equal_to], desc: "less than or equal to"}
-      end
-      if options[:other_than] != nil
-        comparisons << {op: "!=", operand: options[:other_than], desc: "other than"}
-      end
-
-      descs = comparisons.map { |c| c[:desc] }
-      message = options[:message] || ("must be " + descs.join(" and "))
+      comparisons = [
+        {key: :greater_than, op: ">"},
+        {key: :greater_than_or_equal_to, op: ">="},
+        {key: :equal_to, op: "=="},
+        {key: :less_than, op: "<"},
+        {key: :less_than_or_equal_to, op: "<="},
+        {key: :other_than, op: "!="},
+      ]
     %}
 
     {% for field in fields %}
-      __rule({{field}}, {{message}}, :comparison, kind: :comparison, {{options.double_splat}}) do
-        # nil cannot be meaningfully compared; AR treats it as a failure.
-        next false if value.nil?
+      __rule({{field}}, "", :comparison, kind: :comparison, {{options.double_splat}}) do
+        %message = Grant::Error.wrap_message({% if options[:message] %}{{options[:message]}}{% else %}nil{% end %})
+        # nil cannot be meaningfully compared; ActiveRecord reports it blank.
+        if value.nil?
+          record.errors.add({{field.id.stringify}}, :blank, message: %message, value: value)
+          next false
+        end
+        %before = record.errors.size
 
         {% for c in comparisons %}
-          {% operand = c[:operand] %}
-          # A Symbol operand names an instance method to read at runtime;
-          # any other operand is used as a literal value.
-          {% if operand.is_a?(SymbolLiteral) %}
-            %operand = record.{{operand.id}}
-          {% else %}
-            %operand = {{operand}}
+          {% operand = options[c[:key]] %}
+          {% if operand != nil %}
+            # A Symbol operand names an instance method to read at runtime;
+            # any other operand is used as a literal value.
+            {% if operand.is_a?(SymbolLiteral) %}
+              %operand = record.{{operand.id}}
+            {% elsif operand.is_a?(ProcLiteral) || operand.is_a?(ProcNotation) %}
+              %operand = ({{operand}}).call(record)
+            {% else %}
+              %operand = {{operand}}
+            {% end %}
+            if %operand.nil?
+              record.errors.add({{field.id.stringify}}, :comparison, message: %message, value: value)
+            elsif !(value {{c[:op].id}} %operand)
+              record.errors.add({{field.id.stringify}}, {{c[:key]}}, message: %message, count: %operand, value: value)
+            end
           {% end %}
-          next false if %operand.nil?
-          next false unless value {{c[:op].id}} %operand
         {% end %}
 
-        true
+        record.errors.size == %before
       end
     {% end %}
   end
@@ -739,11 +815,31 @@ module Grant::Validators
   # end
   # ```
   macro validates_with(validator_class, *args, **options)
+    {% given = options.keys.reject { |k| %w(on if unless strict).includes?(k.stringify) } %}
+    {% unless given.empty? %}
+      # Built once, when the validator is declared, and shared by every run.
+      %options = Grant::Error.options_from({ {% for k in given %}{{k.id}}: {{options[k]}}, {% end %} }).not_nil!
+    {% end %}
     __rule(:base, "", nil, false, kind: :with, {{options.double_splat}}) do
       %before = record.errors.size
-      %validator = {{validator_class}}.new({% for a in args %}{{a}}, {% end %}{% for k, v in options %}{% unless %w(on if unless strict).includes?(k.stringify) %}{{k.id}}: {{v}}, {% end %}{% end %})
+      %validator = {{validator_class}}.new({% for a in args %}{{a}}, {% end %}{% for k in given %}{{k.id}}: {{options[k]}}, {% end %})
+      {% unless given.empty? %}
+        %validator.__assign_options(%options)
+      {% end %}
       %validator.validate(record)
-      record.errors.size == %before
+      # Errors the validator added without a type of their own carry its kind
+      # (`:even` for `EvenValidator`), so `errors.details` names the validator.
+      %added = record.errors.size
+      if %added > %before
+        %kind = {{validator_class}}.kind
+        %index = %before
+        while %index < %added
+          %error = record.errors.objects[%index]
+          %error.type ||= %kind
+          %index += 1
+        end
+      end
+      %added == %before
     end
   end
 
@@ -810,7 +906,7 @@ module Grant::Validators
   # validates_email :email, :contact_email, message: "must be a valid email"
   # ```
   macro validates_email(*fields, **options)
-    validates_format_of({{fields.splat}}, with: Grant::Validators::BuiltIn::CommonFormats::EMAIL_REGEX, message: {{options[:message] || "is not a valid email"}}, {% for k, v in options %}{% unless k.stringify == "message" %}{{k.id}}: {{v}}, {% end %}{% end %})
+    validates_format_of({{fields.splat}}, with: Grant::Validators::BuiltIn::CommonFormats::EMAIL_REGEX, message: {{options[:message] || :invalid_email}}, {% for k, v in options %}{% unless k.stringify == "message" %}{{k.id}}: {{v}}, {% end %}{% end %})
   end
 
   # Validates that a field is a valid URL using
@@ -822,7 +918,7 @@ module Grant::Validators
   # validates_url :homepage, message: "must be a valid URL"
   # ```
   macro validates_url(*fields, **options)
-    validates_format_of({{fields.splat}}, with: Grant::Validators::BuiltIn::CommonFormats::URL_REGEX, message: {{options[:message] || "is not a valid URL"}}, {% for k, v in options %}{% unless k.stringify == "message" %}{{k.id}}: {{v}}, {% end %}{% end %})
+    validates_format_of({{fields.splat}}, with: Grant::Validators::BuiltIn::CommonFormats::URL_REGEX, message: {{options[:message] || :invalid_url}}, {% for k, v in options %}{% unless k.stringify == "message" %}{{k.id}}: {{v}}, {% end %}{% end %})
   end
 
   # AR-style unified validation macro.
@@ -925,9 +1021,13 @@ module Grant::Validators
   # record.valid?(context: [:create, :publish])
   # ```
   def valid?(skip_normalization : Bool = false, context : Symbol | Array(Symbol) | Nil = nil)
-    # Return false if any `ConversionError` were added
-    # when setting model properties
-    return false if errors.any? ConversionError
+    # A value that could not be converted to its column's type was recorded
+    # as a `ConversionError`. It fails validation, unless a numericality
+    # validator on that attribute takes it over and reports `:not_a_number`
+    # from the raw input instead.
+    if errors.any? ConversionError
+      return false unless __numericality_claims_conversion_errors?(context)
+    end
 
     errors.clear
 
@@ -935,13 +1035,7 @@ module Grant::Validators
     @_skip_normalization = skip_normalization
 
     previous_contexts = @validation_contexts
-    active_contexts = if context.is_a?(Array)
-                        context
-                      elsif context
-                        [context]
-                      else
-                        [new_record? ? :create : :update]
-                      end
+    active_contexts = __active_validation_contexts(context)
     @validation_contexts = active_contexts
 
     begin
@@ -970,8 +1064,13 @@ module Grant::Validators
             own_errors = message.is_a?(String) && message.empty?
             strict_factory = validator[:strict]
             if strict_factory
-              added = errors.last?
-              raise strict_factory.call(own_errors && added ? added.to_s : failure.to_s)
+              # ActiveRecord raises on the first error a validator adds.
+              added = errors.objects[errors_before]?
+              text = own_errors && added ? added.to_s : failure.to_s
+              # The raised exception carries the failure; the errors the
+              # validator recorded on the way do not stay behind.
+              errors.truncate_to(errors_before)
+              raise strict_factory.call(text)
             end
             # They need no placeholder next to the errors they already recorded.
             errors << failure unless own_errors && errors.size > errors_before
@@ -1031,6 +1130,70 @@ module Grant::Validators
     self
   end
 
+  # The contexts a validation run uses: *context* when given, otherwise
+  # `:create` for a new record and `:update` for a persisted one.
+  #
+  # :nodoc:
+  def __active_validation_contexts(context : Symbol | Array(Symbol) | Nil) : Array(Symbol)
+    if context.is_a?(Array)
+      context
+    elsif context
+      [context]
+    else
+      [new_record? ? :create : :update]
+    end
+  end
+
+  # The raw inputs that could not be converted to their column's type
+  # (`"abc"` for an Int32 column), by attribute. Nil until one happens, so a
+  # record that only ever gets valid input pays nothing.
+  @[JSON::Field(ignore: true)]
+  @[YAML::Field(ignore: true)]
+  @unconvertible_inputs : Hash(String, Grant::Columns::Type)?
+
+  # Remembers that assigning *raw* to *attribute* failed conversion, so a
+  # numericality validator can report it. Called by mass assignment.
+  #
+  # :nodoc:
+  def __record_unconvertible_input(attribute : String, raw : Grant::Columns::Type) : Nil
+    capture_before_type_cast(attribute, raw)
+    inputs = @unconvertible_inputs ||= {} of String => Grant::Columns::Type
+    inputs[attribute] = raw
+  end
+
+  # The raw input of *attribute* when its last assignment failed conversion
+  # and no typed write has replaced it since; nil otherwise.
+  #
+  # :nodoc:
+  def __unconvertible_input(attribute : String) : Grant::Columns::Type?
+    inputs = @unconvertible_inputs
+    return nil if inputs.nil?
+    failed = inputs[attribute]?
+    return nil if failed.nil?
+    # A later write, typed or converted, replaces the retained raw input.
+    return nil unless @attributes_before_type_cast.try(&.[]?(attribute)) == failed
+    failed
+  end
+
+  # True when every `ConversionError` on the record is on an attribute with an
+  # unconditional numericality validator that runs in this validation's
+  # context, and the raw input is still known.
+  #
+  # :nodoc:
+  def __numericality_claims_conversion_errors?(context : Symbol | Array(Symbol) | Nil) : Bool
+    contexts = __active_validation_contexts(context)
+    run_all = contexts.includes?(:save)
+    errors.all? do |error|
+      next true unless error.is_a?(ConversionError)
+      next false unless __unconvertible_input(error.attribute)
+      self.class.__validators_for_validation.any? do |validator|
+        info = validator[:info]
+        next false unless info.kind == :numericality && !info.conditional? && info.attribute == error.attribute
+        run_all || info.contexts.includes?(:save) || info.contexts.any? { |candidate| contexts.includes?(candidate) }
+      end
+    end
+  end
+
   # The context validation is currently running in (the first one when several
   # are active), or nil outside a validation run. Custom validators and
   # validation callbacks can branch on it.
@@ -1067,6 +1230,40 @@ module Grant::Validators
         rescue NilAssertionError
           nil
         end
+    {% end %}
+    else
+      nil
+    end
+    {% end %}
+  end
+
+  # Like `__read_validated_attribute`, and also reads the virtual attributes
+  # the model declares (`property nickname : String?`, a confirmation field),
+  # which is what a `Grant::EachValidator` needs. Names that are neither read
+  # as nil.
+  #
+  # :nodoc:
+  def __read_attribute_for_validation(name : String)
+    {% begin %}
+    case name
+    {% column_names = [] of String %}
+    {% for column in @type.instance_vars.select(&.annotation(Grant::Column)) %}
+      {% column_names << column.name.stringify %}
+      when {{column.name.stringify}}
+        begin
+          {{column.name.id}}
+        rescue NilAssertionError
+          nil
+        end
+    {% end %}
+    {% for ivar in @type.instance_vars %}
+      {% ivar_name = ivar.name.stringify %}
+      {% unless column_names.includes?(ivar_name) || ivar_name.starts_with?("_") || %w(errors validation_contexts unconvertible_inputs attributes_before_type_cast validator_options).includes?(ivar_name) %}
+        {% if @type.has_method?(ivar_name) %}
+      when {{ivar_name}}
+        {{ivar.name.id}}
+        {% end %}
+      {% end %}
     {% end %}
     else
       nil
