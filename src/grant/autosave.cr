@@ -122,7 +122,8 @@ module Grant::Autosave
   def _autosave_import_errors(association : String, record : Grant::Base, index : Int32?) : Nil
     prefix = index ? "#{association}[#{index}]" : association
     record.errors.each do |error|
-      errors << Grant::Error.new("#{prefix}.#{error.field}", error.message, error.type)
+      options = error.options? ? error.options.dup : nil
+      errors << Grant::Error.new("#{prefix}.#{error.field}", error.message, error.type, options: options, base: self)
     end
   end
 end

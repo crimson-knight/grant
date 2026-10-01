@@ -129,10 +129,11 @@ abstract class Grant::EachValidator < Grant::Validator
   abstract def validate_each(record, attribute, value)
 
   # Reads the attribute through the record's generated typed reader
-  # (`__read_validated_attribute`), so no `to_h` snapshot is built per
-  # attribute. Non-column attributes read as nil.
+  # (`__read_attribute_for_validation`), so no `to_h` snapshot is built per
+  # attribute. Columns and declared virtual attributes are read; anything else
+  # reads as nil.
   private def record_attribute(record, attribute)
-    record.__read_validated_attribute(attribute)
+    record.__read_attribute_for_validation(attribute)
   end
 end
 
@@ -1059,8 +1060,9 @@ module Grant::Validators
             own_errors = message.is_a?(String) && message.empty?
             strict_factory = validator[:strict]
             if strict_factory
-              added = errors.last?
-              text = own_errors && added && errors.size > errors_before ? added.to_s : failure.to_s
+              # ActiveRecord raises on the first error a validator adds.
+              added = errors.objects[errors_before]?
+              text = own_errors && added ? added.to_s : failure.to_s
               # The raised exception carries the failure; the errors the
               # validator recorded on the way do not stay behind.
               errors.truncate_to(errors_before)
@@ -1224,6 +1226,40 @@ module Grant::Validators
         rescue NilAssertionError
           nil
         end
+    {% end %}
+    else
+      nil
+    end
+    {% end %}
+  end
+
+  # Like `__read_validated_attribute`, and also reads the virtual attributes
+  # the model declares (`property nickname : String?`, a confirmation field),
+  # which is what a `Grant::EachValidator` needs. Names that are neither read
+  # as nil.
+  #
+  # :nodoc:
+  def __read_attribute_for_validation(name : String)
+    {% begin %}
+    case name
+    {% column_names = [] of String %}
+    {% for column in @type.instance_vars.select(&.annotation(Grant::Column)) %}
+      {% column_names << column.name.stringify %}
+      when {{column.name.stringify}}
+        begin
+          {{column.name.id}}
+        rescue NilAssertionError
+          nil
+        end
+    {% end %}
+    {% for ivar in @type.instance_vars %}
+      {% ivar_name = ivar.name.stringify %}
+      {% unless column_names.includes?(ivar_name) || ivar_name.starts_with?("_") || %w(errors validation_contexts unconvertible_inputs attributes_before_type_cast validator_options).includes?(ivar_name) %}
+        {% if @type.has_method?(ivar_name) %}
+      when {{ivar_name}}
+        {{ivar.name.id}}
+        {% end %}
+      {% end %}
     {% end %}
     else
       nil
