@@ -31,9 +31,17 @@ require "./error"
 # %{count} characters)"`); Grant interpolates `%{count}`, `%{attribute}`,
 # `%{model}`, `%{value}` and any other option itself.
 #
-# Lookups are cached per (model class, attribute, type), so a message costs a
-# hash lookup after the first time. Changing the translator, the locale or the
+# Lookups are cached per (locale, model class, attribute, type), so a message
+# costs a hash lookup after the first time. Changing the translator or the
 # store clears the cache.
+#
+# `Grant::I18n.locale = "es"` sets the process-wide default. A server that
+# serves several locales at once scopes the locale to the request's fiber
+# instead, which cannot race with other requests:
+#
+# ```
+# Grant::I18n.with_locale("es") { user.errors.full_messages }
+# ```
 module Grant::I18n
   # Looks up message templates by key. `nil` means "no translation here", and
   # the next key in Grant's lookup order is tried.
@@ -96,9 +104,9 @@ module Grant::I18n
   @@translator : Translator = DefaultTranslator.new
   @@locale = "en"
   @@mutex = Mutex.new
-  @@message_cache = {} of {String, String, Symbol} => String
-  @@name_cache = {} of {String, String} => String
-  @@format_cache : String?
+  @@message_cache = {} of {String, String, String, Symbol} => String
+  @@name_cache = {} of {String, String, String} => String
+  @@format_cache = {} of String => String
 
   # The active translator.
   def self.translator : Translator
@@ -112,15 +120,30 @@ module Grant::I18n
     translator
   end
 
-  # The locale passed to the translator (`"en"` by default).
+  # The locale passed to the translator: the one scoped to the current fiber by
+  # `with_locale`, else the process-wide default (`"en"` unless set).
   def self.locale : String
-    @@locale
+    Fiber.current.grant_locale || @@locale
   end
 
+  # Sets the process-wide default locale. Use `with_locale` for a locale that
+  # belongs to one request.
   def self.locale=(locale : String)
     @@locale = locale
-    clear_cache
     locale
+  end
+
+  # Runs the block with *locale* as the current fiber's locale, restoring the
+  # previous one afterwards. Other fibers keep their own locale.
+  def self.with_locale(locale : String, & : -> T) : T forall T
+    fiber = Fiber.current
+    previous = fiber.grant_locale
+    fiber.grant_locale = locale
+    begin
+      yield
+    ensure
+      fiber.grant_locale = previous
+    end
   end
 
   # Stores a template on the default translator. Raises when a custom
@@ -140,7 +163,7 @@ module Grant::I18n
     @@mutex.synchronize do
       @@message_cache.clear
       @@name_cache.clear
-      @@format_cache = nil
+      @@format_cache.clear
     end
   end
 
@@ -154,22 +177,33 @@ module Grant::I18n
   # `attributes.<model>.<attribute>` (or `attributes.<attribute>`) translation
   # when there is one, otherwise the humanized attribute name.
   def self.human_attribute_name(model : String, attribute : String) : String
-    key = {model, attribute}
+    locale = self.locale
+    key = {locale, model, attribute}
     @@mutex.synchronize do
       @@name_cache[key] ||= begin
         model_key = model_key(model)
         translator = @@translator
-        translator.translate(@@locale, "attributes.#{model_key}.#{attribute}") ||
-        translator.translate(@@locale, "attributes.#{attribute}") ||
+        translator.translate(locale, "attributes.#{model_key}.#{attribute}") ||
+        translator.translate(locale, "attributes.#{attribute}") ||
         humanize(attribute)
       end
     end
   end
 
   # The display name of the model itself (`"Blog post"` for `Blog::Post`).
-  def self.human_model_name(model : String) : String
+  #
+  # With *count*, the `models.<key>.one` / `models.<key>.other` translation is
+  # preferred (`one` for a count of 1), then `models.<key>`, then the humanized
+  # class name (which is not pluralized, as in ActiveModel).
+  def self.human_model_name(model : String, count : Int? = nil) : String
     translator = @@translator
-    translator.translate(@@locale, "models.#{model_key(model)}") || humanize(demodulize(model).underscore)
+    locale = self.locale
+    key = "models.#{model_key(model)}"
+    if count
+      found = translator.translate(locale, "#{key}.#{count == 1 ? "one" : "other"}")
+      return found if found
+    end
+    translator.translate(locale, key) || humanize(demodulize(model).underscore)
   end
 
   # `"Blog::Post"` becomes `"blog/post"`, the key used in translation files.
@@ -229,23 +263,22 @@ module Grant::I18n
   end
 
   private def self.format_template : String
-    cached = @@format_cache
-    return cached if cached
+    locale = self.locale
     @@mutex.synchronize do
-      @@format_cache ||= @@translator.translate(@@locale, "errors.format") || "%{attribute} %{message}"
+      @@format_cache[locale] ||= @@translator.translate(locale, "errors.format") || "%{attribute} %{message}"
     end
   end
 
   private def self.template_for(model : String, attribute : String, type : Symbol) : String
-    key = {model, attribute, type}
+    locale = self.locale
+    key = {locale, model, attribute, type}
     @@mutex.synchronize do
-      @@message_cache[key] ||= lookup(model, attribute, type)
+      @@message_cache[key] ||= lookup(locale, model, attribute, type)
     end
   end
 
-  private def self.lookup(model : String, attribute : String, type : Symbol) : String
+  private def self.lookup(locale : String, model : String, attribute : String, type : Symbol) : String
     translator = @@translator
-    locale = @@locale
     unless model.empty?
       model_key = model_key(model)
       found = translator.translate(locale, "errors.models.#{model_key}.attributes.#{attribute}.#{type}") ||
@@ -259,43 +292,13 @@ module Grant::I18n
   end
 end
 
-# Naming for a model class, like ActiveModel::Name.
-struct Grant::ModelName
-  # The class name, e.g. `"Blog::Post"`.
-  getter name : String
-
-  def initialize(@name : String)
-  end
-
-  # The translation key: `"blog/post"`.
-  def i18n_key : String
-    Grant::I18n.model_key(@name)
-  end
-
-  # The key used for form parameters: `"blog_post"`.
-  def param_key : String
-    i18n_key.tr("/", "_")
-  end
-
-  # `"blog_post"`.
-  def singular : String
-    param_key
-  end
-
-  # The underscored class name without its namespace: `"post"`.
-  def element : String
-    Grant::I18n.demodulize(@name).underscore
-  end
-
-  # The display name: the `models.<key>` translation or `"Blog post"`.
-  def human : String
-    Grant::I18n.human_model_name(@name)
-  end
-
-  def to_s(io : IO) : Nil
-    io << @name
-  end
+class Fiber
+  # Fiber-local slot for `Grant::I18n.with_locale`.
+  # :nodoc:
+  property grant_locale : String?
 end
+
+require "./model_name"
 
 abstract class Grant::Base
   # The `Grant::ModelName` of this model.
