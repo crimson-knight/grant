@@ -414,7 +414,15 @@ class Grant::AssociationCollection(Owner, Target)
     end
   end
 
+  # :ditto:
+  def replace(records : Array) : self
+    replace(records.map(&.as(Target)))
+  end
+
   private def replace_unsaved(records : Array(Target)) : Nil
+    if @type_column && !@through
+      raise Grant::Associations::OwnerNotSaved.new(owner, @association_name || Target.name, "#{@association_name}=")
+    end
     if pending = @pending
       pending.clear
     end

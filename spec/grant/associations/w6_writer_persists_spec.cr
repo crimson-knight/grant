@@ -15,6 +15,24 @@ require "../../support/statement_recorder"
     has_many :w6w_posts, class_name: W6wPost, foreign_key: :w6w_owner_id
     has_many :w6w_comments, class_name: W6wComment, foreign_key: :w6w_owner_id, dependent: :destroy
     has_many :w6w_notes, class_name: W6wNote, foreign_key: :w6w_owner_id, dependent: :delete_all
+    has_one :w6w_avatar, as: :imageable, class_name: W6wAvatar
+    has_many :w6w_pics, as: :imageable, class_name: W6wPic
+  end
+
+  class W6wAvatar < Grant::Base
+    connection {{ adapter_literal }}
+    table w6w_avatars
+    column id : Int64, primary: true
+    column url : String?
+    belongs_to :imageable, polymorphic: true, optional: true
+  end
+
+  class W6wPic < Grant::Base
+    connection {{ adapter_literal }}
+    table w6w_pics
+    column id : Int64, primary: true
+    column url : String?
+    belongs_to :imageable, polymorphic: true, optional: true
   end
 
   class W6wProfile < Grant::Base
@@ -81,6 +99,8 @@ describe "has_one and has_many writers on a saved owner" do
     W6wPost.migrator.drop_and_create
     W6wComment.migrator.drop_and_create
     W6wNote.migrator.drop_and_create
+    W6wAvatar.migrator.drop_and_create
+    W6wPic.migrator.drop_and_create
   end
 
   before_each do
@@ -90,6 +110,8 @@ describe "has_one and has_many writers on a saved owner" do
     W6wPost.clear
     W6wComment.clear
     W6wNote.clear
+    W6wAvatar.clear
+    W6wPic.clear
     W6wOwner.clear
   end
 
@@ -269,6 +291,43 @@ describe "has_one and has_many writers on a saved owner" do
       owner.save!
       post.persisted?.should be_true
       post.w6w_owner_id.should eq(owner.id)
+    end
+  end
+
+  describe "polymorphic as: writers" do
+    it "has_one as: saves the child with key and type and clears the displaced one" do
+      owner = W6wOwner.create!(name: "o")
+      old = W6wAvatar.create!(url: "old", imageable_id: owner.id, imageable_type: "W6wOwner")
+      child = W6wAvatar.new(url: "new")
+
+      owner.w6w_avatar = child
+
+      child.persisted?.should be_true
+      child.imageable_id.should eq(owner.id)
+      child.imageable_type.should eq("W6wOwner")
+      displaced = W6wAvatar.find!(old.id)
+      displaced.imageable_id.should be_nil
+      displaced.imageable_type.should be_nil
+    end
+
+    it "has_many as: replaces the members and nullifies key and type of the removed" do
+      owner = W6wOwner.create!(name: "o")
+      keep = W6wPic.create!(url: "keep", imageable_id: owner.id, imageable_type: "W6wOwner")
+      drop = W6wPic.create!(url: "drop", imageable_id: owner.id, imageable_type: "W6wOwner")
+      fresh = W6wPic.new(url: "fresh")
+
+      owner.w6w_pics = [keep, fresh]
+
+      fresh.persisted?.should be_true
+      fresh.imageable_type.should eq("W6wOwner")
+      dropped = W6wPic.find!(drop.id)
+      dropped.imageable_id.should be_nil
+      dropped.imageable_type.should be_nil
+      W6wPic.where(imageable_id: owner.id, imageable_type: "W6wOwner").count.should eq(2)
+    end
+
+    it "has_many as: needs a saved owner" do
+      expect_raises(Grant::Associations::OwnerNotSaved) { W6wOwner.new(name: "n").w6w_pics = [W6wPic.new(url: "x")] }
     end
   end
 end

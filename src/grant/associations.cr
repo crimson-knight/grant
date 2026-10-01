@@ -358,6 +358,7 @@ module Grant::Associations
       composite_has_one({{model}}, {{scope}}, {% for key, value in options %}{{key.id}}: {{value}}, {% end %})
     {% elsif options[:as] %}
       has_one_polymorphic({{model}}, {{options[:as]}}, {% for key, value in options %}{{key.id}}: {{value}}, {% end %})
+      _grant_define_polymorphic_has_one_writer({{model}}, {{options[:as]}}, {{options[:class_name]}}, {{options[:foreign_key]}}, {{options[:type_column]}}, {{options[:primary_key]}}, {{options[:dependent]}})
     {% elsif options[:through] %}
       # has_one :through — traverses an intermediate association to find a single target record
       {% if model.is_a? TypeDeclaration %}
@@ -740,6 +741,14 @@ module Grant::Associations
     {% elsif options[:as] %}
       has_many_polymorphic({{model}}, {{options[:as]}}, {% for key, value in options %}{{key.id}}: {{value}}, {% end %})
       _grant_define_ids_accessors({{hoisted_name}}, {{singular_name}}, false, true)
+
+      # Replaces the collection: removed records follow `dependent:` (`nullify`
+      # by default), each new record is saved with the owner key and type. The
+      # owner must be saved.
+      def {{hoisted_name.id}}=(records : Array)
+        {{hoisted_name.id}}.replace(records)
+        records
+      end
     {% else %}
     {% if model.is_a? TypeDeclaration %}
       {% method_name = model.var %}

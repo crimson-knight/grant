@@ -112,4 +112,36 @@ module Grant::Associations
       end
     {% end %}
   end
+
+  # Replaces the writer of a polymorphic `has_one ..., as:` so that, on a saved
+  # owner, assigning a child saves it (with the owner key and type) and
+  # displaces the previous child by `dependent:`, as the plain `has_one` does.
+  # On an unsaved owner the child is only pointed at the owner in memory.
+  #
+  # :nodoc:
+  macro _grant_define_polymorphic_has_one_writer(model, poly_as, class_name_option, foreign_key_option, type_column_option, primary_key_option, dependent)
+    {% if model.is_a? TypeDeclaration %}
+      {% method_name = model.var %}
+      {% class_name = model.type %}
+    {% else %}
+      {% method_name = model.id %}
+      {% class_name = class_name_option || model.id.camelcase %}
+    {% end %}
+    {% foreign_key = foreign_key_option || (poly_as.id.stringify + "_id") %}
+    {% type_column = type_column_option || (poly_as.id.stringify + "_type") %}
+    {% primary_key = primary_key_option || "id" %}
+    {% primary_key_name = primary_key.stringify.gsub(/:/, "").gsub(/"/, "") %}
+
+    def {{method_name.id}}=(child : {{class_name.id}}?)
+      owner_key = self.read_attribute({{primary_key_name}})
+      if persisted?
+        current = {{method_name.id}}
+        Grant::Associations::HasOneWriter.replace(self, {{method_name.id.stringify}}, current, child, {{foreign_key.id.stringify}}, owner_key, {{dependent.is_a?(SymbolLiteral) ? dependent : nil}}, {{type_column.id.stringify}}, self.class.polymorphic_name)
+      end
+      if child
+        child.set_attributes({ {{foreign_key.id.stringify}} => owner_key, {{type_column.id.stringify}} => self.class.polymorphic_name })
+      end
+      set_loaded_association({{method_name.id.stringify}}, child)
+    end
+  end
 end
