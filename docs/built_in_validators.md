@@ -97,8 +97,15 @@ end
 - `maximum: value` - Must have at most this many characters/elements
 - `is: value` - Must be exactly this length
 - `in: range` - Length must be within the range
+- `message:`, `too_short:`, `too_long:`, `wrong_length:` - A String, a Symbol translation key or a lambda
 - `allow_nil: true` - Skip if nil
 - `allow_blank: true` - Skip if blank
+
+Like ActiveRecord, the failing bound decides the error: `:too_short` (`count:` the
+minimum), `:too_long` (`count:` the maximum) or `:wrong_length` (`count:` the exact
+length). Default messages come from `Grant::I18n`, so a translator can change them
+(`errors.messages.too_short`, ...). `validates_email` and `validates_url` use the
+`errors.messages.invalid_email` and `errors.messages.invalid_url` keys.
 
 ### validates_email
 

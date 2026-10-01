@@ -815,12 +815,16 @@ module Grant::Validators
   # end
   # ```
   macro validates_with(validator_class, *args, **options)
+    {% given = options.keys.reject { |k| %w(on if unless strict).includes?(k.stringify) } %}
+    {% unless given.empty? %}
+      # Built once, when the validator is declared, and shared by every run.
+      %options = Grant::Error.options_from({ {% for k in given %}{{k.id}}: {{options[k]}}, {% end %} }).not_nil!
+    {% end %}
     __rule(:base, "", nil, false, kind: :with, {{options.double_splat}}) do
       %before = record.errors.size
-      %validator = {{validator_class}}.new({% for a in args %}{{a}}, {% end %}{% for k, v in options %}{% unless %w(on if unless strict).includes?(k.stringify) %}{{k.id}}: {{v}}, {% end %}{% end %})
-      {% given = options.keys.reject { |k| %w(on if unless strict).includes?(k.stringify) } %}
+      %validator = {{validator_class}}.new({% for a in args %}{{a}}, {% end %}{% for k in given %}{{k.id}}: {{options[k]}}, {% end %})
       {% unless given.empty? %}
-        %validator.__assign_options(Grant::Error.options_from({ {% for k in given %}{{k.id}}: {{options[k]}}, {% end %} }).not_nil!)
+        %validator.__assign_options(%options)
       {% end %}
       %validator.validate(record)
       # Errors the validator added without a type of their own carry its kind
