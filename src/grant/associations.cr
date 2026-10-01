@@ -1046,22 +1046,23 @@ module Grant::Associations
           owner = record.as({{@type}})
           {% if type == :belongs_to || type == :has_one %}
             if value.nil?
-              {% if type == :has_one %}owner._grant_assign_{{name.id}}(nil){% else %}owner.{{name.id}} = nil{% end %}
+              {% if type == :has_one && @type.methods.any? { |candidate| candidate.name.stringify == "_grant_assign_" + name.id.stringify } %}owner._grant_assign_{{name.id}}(nil){% else %}owner.{{name.id}} = nil{% end %}
               true
             elsif associated = value.as?({{target_class.id}})
-              {% if type == :has_one %}owner._grant_assign_{{name.id}}(associated){% else %}owner.{{name.id}} = associated{% end %}
+              {% if type == :has_one && @type.methods.any? { |candidate| candidate.name.stringify == "_grant_assign_" + name.id.stringify } %}owner._grant_assign_{{name.id}}(associated){% else %}owner.{{name.id}} = associated{% end %}
               true
             else
               false
             end
           {% elsif type == :has_many %}
+            {% staging = @type.methods.any? { |candidate| candidate.name.stringify == "_grant_stage_" + name.id.stringify } %}
             if value.nil?
-              owner._grant_stage_{{name.id}}([] of {{target_class.id}})
+              {% if staging %}owner._grant_stage_{{name.id}}([] of {{target_class.id}}){% else %}owner.{{name.id}} = [] of {{target_class.id}}{% end %}
               true
             elsif associated = value.as?(Array(Grant::Base))
               if associated.all? { |item| item.is_a?({{target_class.id}}) }
                 typed_associated = associated.map(&.as({{target_class.id}}))
-                owner._grant_stage_{{name.id}}(typed_associated)
+                {% if staging %}owner._grant_stage_{{name.id}}(typed_associated){% else %}owner.{{name.id}} = typed_associated{% end %}
                 true
               else
                 false
