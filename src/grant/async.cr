@@ -72,7 +72,7 @@ module Grant
       def async_pick(column : Symbol | String) : AsyncResult(Grant::Columns::Type?)
         query = current_scope
         if query.order_fields.empty?
-          query.order_fields << {field: primary_name, direction: Grant::Query::Builder::Sort::Ascending}
+          query.own_order_fields << {field: primary_name, direction: Grant::Query::Builder::Sort::Ascending}
         end
         AsyncResult(Grant::Columns::Type?).new do
           query.pick(column).try(&.first)

@@ -75,8 +75,9 @@ class Grant::Query::Builder(Model)
     adapter = Model.adapter
     adapter.open(sql, params, Model.name) do |db|
       db.query(sql, args: adapter.normalize_bind_values(params)) do |rs|
+        plan = Model.__column_plan(rs, adapter)
         rs.each do
-          record = Model.from_rs(rs)
+          record = Model.from_rs(rs, plan)
           record.readonly! if mark_readonly
           yield record
         end

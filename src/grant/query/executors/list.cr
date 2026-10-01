@@ -18,8 +18,9 @@ module Grant::Query::Executor
           rows = [] of Model
           adapter.open(@sql, @args, Model.name) do |db|
             db.query @sql, args: adapter.normalize_bind_values(@args) do |record_set|
+              plan = Model.__column_plan(record_set, adapter)
               record_set.each do
-                rows << Model.from_rs record_set
+                rows << Model.from_rs(record_set, plan)
               end
             end
           end

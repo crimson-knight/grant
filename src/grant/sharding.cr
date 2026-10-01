@@ -82,6 +82,11 @@ module Grant::Sharding
         end
       end
       
+      # :nodoc:
+      def self.__sharded_model? : Bool
+        !sharding_config.nil?
+      end
+
       # A transaction on a sharded model runs on the active shard's connection,
       # the one `adapter` resolves, so its statements join the transaction.
       #

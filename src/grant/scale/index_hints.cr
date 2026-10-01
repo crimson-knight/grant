@@ -20,7 +20,7 @@ end
 
 class Grant::Query::Builder(Model)
   # Index hints attached to this query, rendered per-adapter in the FROM clause.
-  getter index_hints : Array(Grant::Query::IndexHint) = [] of Grant::Query::IndexHint
+  getter index_hints : Array(Grant::Query::IndexHint) = Grant::Query::EmptyClauses::INDEX_HINTS
 
   # Suggest the query planner *consider* the named index(es).
   #
@@ -155,7 +155,7 @@ end
 class Grant::Query::Builder(Model)
   # Optimizer hints placed in a `/*+ ... */` comment right after `SELECT`. Kept
   # as an array that is replaced, never mutated, so copies share it safely.
-  @optimizer_hints : Array(String) = [] of String
+  @optimizer_hints : Array(String) = Grant::Query::EmptyClauses::OPTIMIZER_HINTS
 
   # The hints in the order they were added.
   def optimizer_hint_list : Array(String)

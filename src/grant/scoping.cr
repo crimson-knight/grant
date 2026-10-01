@@ -649,6 +649,10 @@ module Grant::Scoping
     # Post.find(1) # => Post? (respecting default scope)
     # ```
     def find(id)
+      if id.is_a?(Int32 | Int64) && __plain_lookup?
+        return __find_with_kept_statement(id)
+      end
+
       current_scope.where(primary_name, :eq, id).first
     end
 
@@ -662,6 +666,7 @@ module Grant::Scoping
         return nil unless parsed
         current_scope.where(primary_name, :eq, parsed).first
       {% else %}
+        return __find_with_kept_statement(id) if __plain_lookup?
         current_scope.where(primary_name, :eq, id).first
       {% end %}
       {% end %}
