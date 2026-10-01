@@ -378,7 +378,7 @@ module Grant::Transactions
 
     {% begin %}
       {% primary_key = @type.instance_vars.find { |ivar| (ann = ivar.annotation(Grant::Column)) && ann[:primary] } %}
-      Grant::Logs::Model.info { "Record created - #{self.class.name} [id: #{@{{primary_key.name.id}}}]" }
+      Grant::Logs::Model.debug { "Record created - #{self.class.name} [id: #{@{{primary_key.name.id}}}]" }
     {% end %}
   end
 
@@ -468,7 +468,7 @@ module Grant::Transactions
         self.class.adapter.update(self.class.table_name, self.class.primary_name, fields, params)
       end
      
-     Grant::Logs::Model.info { "Record updated - #{self.class.name} [id: #{@{{primary_key.name.id}}}]" }
+     Grant::Logs::Model.debug { "Record updated - #{self.class.name} [id: #{@{{primary_key.name.id}}}]" }
     rescue ex : Grant::TenantMismatchError | Grant::NoTenantError | Grant::StatementInvalid | Grant::Transaction::ReadOnlyError
       raise ex
     rescue err
@@ -499,11 +499,11 @@ module Grant::Transactions
   # by a `before_save` hook, so setters never saw it).
   private def __changed_column_names : Array(String)
     names = changed
-    baselines = dirty_tracking_hashes[0]
+    baselines = @original_attributes
     self.class.content_fields.each do |column_name|
       next unless column_name.starts_with?("_serialized_")
       next if names.includes?(column_name)
-      names << column_name unless baselines[column_name]? == read_attribute(column_name).as(Grant::Base::DirtyValue)
+      names << column_name unless baselines.try(&.[column_name]?) == read_attribute(column_name).as(Grant::Base::DirtyValue)
     end
     names
   end
@@ -528,7 +528,7 @@ module Grant::Transactions
     end
     @destroyed = true
     
-    Grant::Logs::Model.info { "Record destroyed - #{self.class.name} [id: #{@{{primary_key.name.id}}}]" }
+    Grant::Logs::Model.debug { "Record destroyed - #{self.class.name} [id: #{@{{primary_key.name.id}}}]" }
   {% end %}
   end
 
@@ -577,7 +577,7 @@ module Grant::Transactions
     failure_message : String? = nil
     # A save always gets its own savepoint when nested so a failed save undoes
     # only its own partial writes.
-    save_transaction = Grant::Transaction::Options.new(requires_new: true)
+    save_transaction = Grant::Transaction::Options.new(requires_new: true, lazy_begin: true)
 
     # Which operation a failed save's after_rollback belongs to, for `on:`.
     save_rollback_action = (@{{primary_key.name.id}} && !new_record?) ? Grant::CommitCallbacks::ACTION_UPDATE : Grant::CommitCallbacks::ACTION_CREATE
@@ -618,6 +618,17 @@ module Grant::Transactions
         end
         save_succeeded = !around_halted?
       rescue ex : DB::Error | Grant::StatementInvalid | Grant::Callbacks::Abort
+        # A deferred BEGIN that could not be sent is a failure of the
+        # transaction itself, not of the save: it propagates exactly as an
+        # eager BEGIN failure always did.
+        if (state = Grant::Transaction.current_state?) && state.begin_failed?
+          # `__create` and `__update` wrap a translated Grant error in a
+          # `DB::Error`; hand back the original so callers see what an eager
+          # BEGIN failure raised.
+          original = ex.cause
+          raise(original.is_a?(Grant::ErrorBase) ? original : ex)
+        end
+
         save_failed = true
         @last_save_statement_error = ex.is_a?(Grant::StatementInvalid) ? ex : ex.cause.as?(Grant::StatementInvalid)
         if message = ex.message
@@ -883,7 +894,7 @@ module Grant::Transactions
 
       begin
         self.class.adapter.update(self.class.table_name, self.class.primary_name, fields, params)
-        Grant::Logs::Model.info { "Columns updated - #{self.class.name} [id: #{@{{primary_key.name.id}}}]" }
+        Grant::Logs::Model.debug { "Columns updated - #{self.class.name} [id: #{@{{primary_key.name.id}}}]" }
       rescue err : Grant::StatementInvalid
         Grant::Logs::Model.error { "Failed to update_columns - #{self.class.name} [id: #{persisted_primary_key}] - #{err.message}" }
         raise err

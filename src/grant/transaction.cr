@@ -120,12 +120,17 @@ module Grant::Transaction
   # opts = Grant::Transaction::Options.new(readonly: true)
   # User.transaction(opts) { User.find!(1) }
   # ```
+  # - *lazy_begin* — hold off sending `BEGIN` until the first statement runs in
+  #   the transaction, and send nothing at all when none does (ActiveRecord's
+  #   lazy transactions). `save` uses it, so saving a record with nothing to
+  #   write costs no round trip.
   record Options,
     isolation : IsolationLevel? = nil,
     readonly : Bool = false,
     requires_new : Bool = false,
     joinable : Bool = true,
-    independent : Bool = false
+    independent : Bool = false,
+    lazy_begin : Bool = false
 
   # Internal per-transaction bookkeeping: the dedicated `DB::Connection`, the
   # `Options` it was opened with, the owning adapter, the savepoint counter, and
@@ -133,7 +138,6 @@ module Grant::Transaction
   # stack while a real transaction is open; use `current_transaction` (a
   # `Handle`) rather than constructing it yourself.
   class TransactionState
-    getter connection : DB::Connection
     getter options : Options
     getter adapter : Grant::Adapter::Base
     getter savepoint_counter : Int32 = 0
@@ -172,8 +176,41 @@ module Grant::Transaction
     # True when this state owns a pooled connection that must be released.
     property? owns_connection : Bool = false
 
+    # True while a deferred `BEGIN` (see `Options#lazy_begin`) has not been
+    # sent: the transaction exists on the stack but the database knows nothing
+    # of it yet.
+    getter? begin_pending : Bool = false
+
+    # True when sending the deferred `BEGIN` failed, so the failure belongs to
+    # the transaction rather than to the statement that asked for it.
+    property? begin_failed : Bool = false
+
     def initialize(@connection : DB::Connection, @options : Options, @adapter : Grant::Adapter::Base)
       @joinable = @options.joinable
+    end
+
+    # The transaction's connection. Asking for it means a statement is about to
+    # run on it, so a deferred `BEGIN` is sent first.
+    def connection : DB::Connection
+      Grant::Transaction.send_deferred_begin(self) if @begin_pending
+      @connection
+    end
+
+    # The connection without triggering a deferred `BEGIN`.
+    #
+    # :nodoc:
+    def raw_connection : DB::Connection
+      @connection
+    end
+
+    # :nodoc:
+    def defer_begin! : Nil
+      @begin_pending = true
+    end
+
+    # :nodoc:
+    def begin_pending=(value : Bool)
+      @begin_pending = value
     end
 
     def close : Nil
@@ -594,10 +631,16 @@ module Grant::Transaction
   end
 
   private def self.run_real_on(conn : DB::Connection, adapter : Grant::Adapter::Base, options : Options, & : -> T) : {Array(Proc(Nil)), T?} forall T
-    execute_begin(conn, adapter, options)
-    state = TransactionState.new(conn, options, adapter)
-    fiber_stack.push(state)
-    publish_transaction_start(state, nil)
+    if options.lazy_begin
+      state = TransactionState.new(conn, options, adapter)
+      state.defer_begin!
+      fiber_stack.push(state)
+    else
+      execute_begin(conn, adapter, options)
+      state = TransactionState.new(conn, options, adapter)
+      fiber_stack.push(state)
+      publish_transaction_start(state, nil)
+    end
     value : T? = nil
 
     begin
@@ -606,7 +649,9 @@ module Grant::Transaction
       rescue ex : IO::Error
         raise PreservedIOError.new(ex)
       end
-      execute_control(conn, adapter, "COMMIT")
+      # A deferred BEGIN that never went out means no statement ran: there is
+      # nothing to commit.
+      execute_control(conn, adapter, "COMMIT") unless state.begin_pending?
     rescue ex : Rollback
       return {abort_real(state), nil}
     rescue ex
@@ -621,7 +666,7 @@ module Grant::Transaction
   # ROLLBACK itself fails. Returns the rollback callbacks to run.
   private def self.abort_real(state : TransactionState) : Array(Proc(Nil))
     begin
-      execute_control(state.connection, state.adapter, "ROLLBACK")
+      execute_control(state.raw_connection, state.adapter, "ROLLBACK") unless state.begin_pending?
     rescue ex
       finalize_rollback(state).each(&.call)
       raise ex
@@ -650,8 +695,9 @@ module Grant::Transaction
   end
 
   private def self.finalize_rollback(state : TransactionState) : Array(Proc(Nil))
+    pending = state.begin_pending?
     leave_stack(state)
-    publish_transaction_end(state, Grant::Events::TransactionOutcome::Rollback)
+    publish_transaction_end(state, Grant::Events::TransactionOutcome::Rollback) unless pending
     restore_transaction_records(state)
     state.pending_callbacks.map(&.[:on_rollback])
   end
@@ -660,8 +706,9 @@ module Grant::Transaction
   # independent transaction nested inside another), so its after_commit
   # callbacks fire now. after_all blocks wait for the outermost commit.
   private def self.finalize_commit(state : TransactionState) : Array(Proc(Nil))
+    pending = state.begin_pending?
     leave_stack(state)
-    publish_transaction_end(state, Grant::Events::TransactionOutcome::Commit)
+    publish_transaction_end(state, Grant::Events::TransactionOutcome::Commit) unless pending
     state.list_of_record_rollback_actions.clear
     callbacks = state.pending_callbacks.map(&.[:on_commit])
     if parent = current_state?
@@ -687,6 +734,25 @@ module Grant::Transaction
   ensure
     # BEGIN, COMMIT, ROLLBACK and savepoints change what other connections see.
     Grant::QueryCache.invalidate!
+  end
+
+  # Sends the `BEGIN` a lazy transaction held back, the moment a statement is
+  # about to run on its connection.
+  #
+  # :nodoc:
+  def self.send_deferred_begin(state : TransactionState) : Nil
+    return unless state.begin_pending?
+
+    # Cleared first: the statements below ask for the connection themselves.
+    state.begin_pending = false
+    begin
+      execute_begin(state.raw_connection, state.adapter, state.options)
+    rescue ex
+      state.begin_pending = true
+      state.begin_failed = true
+      raise ex
+    end
+    publish_transaction_start(state, nil)
   end
 
   private def self.execute_begin(conn : DB::Connection, adapter : Grant::Adapter::Base, options : Options) : Nil
