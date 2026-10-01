@@ -374,6 +374,12 @@ abstract class Grant::Base
         query = query.promote_where_to_default_scope
       end
 
+      # A `scoping { }` block of a parent class (single table inheritance)
+      # applies to this class too.
+      if Fiber.current.grant_scoping_stacks && !_unscoped?
+        query = Grant::Scoping.merge_inherited(query, __lineage_names)
+      end
+
       query
     end
 
@@ -545,6 +551,7 @@ abstract class Grant::Base
       # ```
       def initialize(**args)
         ensure_dirty_tracking_initialized
+        __apply_scope_attributes
         set_attributes(args.to_h.transform_keys(&.to_s))
         establish_initial_dirty_baseline
         __after_initialize
@@ -561,6 +568,7 @@ abstract class Grant::Base
       # ```
       def initialize(args : Grant::ModelArgs)
         ensure_dirty_tracking_initialized
+        __apply_scope_attributes
         set_attributes(args.transform_keys(&.to_s))
         establish_initial_dirty_baseline
         __after_initialize
@@ -570,6 +578,7 @@ abstract class Grant::Base
       # records or arrays of records as well as scalar columns.
       def initialize(args : Hash(String | Symbol, T)) forall T
         ensure_dirty_tracking_initialized
+        __apply_scope_attributes
         set_attributes(args.transform_keys(&.to_s))
         establish_initial_dirty_baseline
         __after_initialize
@@ -585,6 +594,7 @@ abstract class Grant::Base
       # ```
       def initialize
         ensure_dirty_tracking_initialized
+        __apply_scope_attributes
         establish_initial_dirty_baseline
         __after_initialize
       end
@@ -598,6 +608,7 @@ abstract class Grant::Base
       # ```
       def initialize(**args, &)
         ensure_dirty_tracking_initialized
+        __apply_scope_attributes
         set_attributes(args.to_h.transform_keys(&.to_s))
         establish_initial_dirty_baseline
         yield self
@@ -609,10 +620,21 @@ abstract class Grant::Base
       # Attributes-hash form of the initializer block.
       def initialize(args : Grant::ModelArgs, &)
         ensure_dirty_tracking_initialized
+        __apply_scope_attributes
         set_attributes(args.transform_keys(&.to_s))
         establish_initial_dirty_baseline
         yield self
         __after_initialize
+      end
+
+      # Starts a new record from the attributes of the `scoping { }` relation
+      # in effect, so `Post.where(published: true).scoping { Post.new }` is
+      # published. Arguments passed to `new` are applied afterwards and win.
+      private def __apply_scope_attributes : Nil
+        return unless Fiber.current.grant_scoping_stacks
+
+        attributes = Grant::Scoping.new_record_attributes(self.class)
+        set_attributes(attributes) unless attributes.empty?
       end
 
       # Captures the values supplied to initialize as the initial baseline.
