@@ -155,11 +155,11 @@ module Grant::Columns
     # PostgreSQL and JSON text elsewhere. No converter needs to be declared.
     {% converter = "Grant::Converters::JsonDocument".id if converter == nil && not_nilable_type.resolve == JSON::Any %}
     {% primary = (options[:primary] && !options[:primary].nil?) ? options[:primary] : false %}
-    {% auto = (options[:auto] && !options[:auto].nil?) ? options[:auto] : false %}
-    # Only integer and UUID keys can be generated on insert, so any other
-    # primary key type (a String slug, say) defaults to `auto: false`.
+    # An explicit `auto:` on a primary key wins. Without one, only integer and
+    # UUID keys default to `auto: true`, since only they can be generated on
+    # insert; any other key type (a String slug, say) defaults to `auto: false`.
     {% auto_generatable = not_nilable_type.resolve < Int || not_nilable_type.resolve == UUID %}
-    {% auto = (!options || (options && options[:auto] == nil)) && primary && auto_generatable %}
+    {% auto = primary && (options[:auto] == nil ? auto_generatable : options[:auto]) %}
 
     {% nilable = (type.is_a?(Path) ? type.resolve.nilable? : (type.is_a?(Union) ? type.types.any?(&.resolve.nilable?) : (type.is_a?(Generic) ? type.resolve.nilable? : type.nilable?))) %}
 
