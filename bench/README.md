@@ -181,3 +181,28 @@ connection in `bench/bench_helper.cr` the same way (`Grant::Connections <<
 Grant::Adapter::Pg.new(name: "bench", url: ...)`) with the driver shard present,
 and pass the matching URL. The `--adapter` label is recorded so the harness stays
 honest about what it actually ran.
+
+---
+
+## `lifecycle_bench.cr` — record lifecycle against raw crystal-db and older Grant
+
+A one-model program that times build, create, find, a 100-row page, load-all,
+count, load-and-update and load-and-destroy three ways on the same table:
+crystal-db reading into tuples (`raw`), crystal-db parsing into a
+`DB::Serializable` struct (`serializable`), and the Grant model API. It reports
+mean/p50/p99 µs, heap bytes per operation, SQL statements per operation (from
+crystal-db's statement log), and heap/RSS across repeated full cycles to catch
+leaks. `--trace` prints the SQL each operation runs.
+
+```sh
+# One build, current tree (adapter is chosen at compile time)
+BENCH_ADAPTER=sqlite crystal run --release bench/lifecycle_bench.cr -- --iterations 2000
+
+# Compare against Grant before the parity work and the last Granite release,
+# including cold compile time, peak compiler memory and binary size
+bench/lifecycle_compare.sh --adapter sqlite origin/main v0.23.4
+BENCH_DATABASE_URL=postgres://localhost/grant_lifecycle_bench \
+  bench/lifecycle_compare.sh --adapter pg origin/main
+```
+
+Latest numbers and findings: [LIFECYCLE_RESULTS.md](LIFECYCLE_RESULTS.md).
