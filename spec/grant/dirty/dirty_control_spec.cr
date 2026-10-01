@@ -78,7 +78,7 @@ describe "Dirty control" do
     record.tags_was.should eq(["a"])
   end
 
-  it "stops watching a flagged attribute after restore" do
+  it "restores a flagged attribute and keeps tracking later edits" do
     record = F01Tagged.new(tags: ["a"])
     record.attribute_will_change!(:tags)
     record.tags.not_nil! << "b"
@@ -86,8 +86,10 @@ describe "Dirty control" do
     record.tags.should eq(["a"])
     record.changed?.should be_false
 
+    # Array columns are always watched, so a later edit is a new change.
     record.tags.not_nil! << "c"
-    record.changed?.should be_false
+    record.changed?.should be_true
+    record.tags_was.should eq(["a"])
   end
 
   it "records a flagged attribute as a saved change" do
@@ -99,7 +101,7 @@ describe "Dirty control" do
     record.saved_change_to_tags.should eq({["a"], ["a", "b"]})
     record.changed?.should be_false
     record.tags.not_nil! << "c"
-    record.changed?.should be_false
+    record.tags_was.should eq(["a", "b"])
   end
 
   if CURRENT_ADAPTER == "pg"

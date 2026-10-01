@@ -291,7 +291,7 @@ module Grant::Columns
     # into the column type. A converter must define `from_db` for this.
     private def __typed_dirty_{{decl.var.id}}(value : Grant::Base::DirtyValue) : {{not_nilable_type}}?
       {% if converter %}
-        {% resolved_converter = converter.resolve %}
+        {% resolved_converter = parse_type(converter.stringify).resolve %}
         {% if resolved_converter.has_method?(:from_db) || resolved_converter.class.has_method?(:from_db) %}
           {{converter}}.from_db(value)
         {% else %}
@@ -348,6 +348,7 @@ module Grant::Columns
         discard_before_type_cast({{decl.var.stringify}})
         @{{decl.var.id}} = value
         __after_assign_{{decl.var.id}}(value)
+        value
       end
 
       def {{decl.var.id}} : {{not_nilable_type}}?
@@ -476,6 +477,7 @@ module Grant::Columns
         discard_before_type_cast({{decl.var.stringify}})
         @{{decl.var.id}} = value
         __after_assign_{{decl.var.id}}(value)
+        value
       end
 
       def {{decl.var.id}} : {{type.id}}
