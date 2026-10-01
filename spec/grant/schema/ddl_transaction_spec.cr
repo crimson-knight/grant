@@ -103,7 +103,11 @@ describe "DDL transactions" do
 
   it "releases the migration lock after a failure" do
     context = Grant::Schema::MigrationContext.for(M03Fixture.adapter, M03FailsAfterCreate, verbose: false, lock_timeout: 200.milliseconds)
-    2.times { expect_raises(Exception, /boom after create/) { context.migrate } }
+    2.times do
+      # MySQL commits DDL as it runs, so the failed run leaves its table behind.
+      M03Fixture.adapter.open { |db| db.exec "DROP TABLE IF EXISTS m03_atomic" }
+      expect_raises(Exception, /boom after create/) { context.migrate }
+    end
   end
 
   it "builds an index concurrently only outside a transaction" do

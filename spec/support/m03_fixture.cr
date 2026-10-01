@@ -46,7 +46,7 @@ module M03Fixture
   end
 
   # A second, empty database of the same kind: another SQLite file, or another
-  # PostgreSQL database on the same server.
+  # PostgreSQL or MySQL database on the same server.
   def self.with_second_adapter(& : Grant::Adapter::Base -> T) : T forall T
     name = "m03_second_#{Random::Secure.hex(4)}"
     case CURRENT_ADAPTER
@@ -60,6 +60,17 @@ module M03Fixture
       ensure
         second.disconnect!
         adapter.open { |db| db.exec "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '#{name}' AND pid <> pg_backend_pid()" }
+        adapter.open { |db| db.exec "DROP DATABASE IF EXISTS #{name}" }
+      end
+    when "mysql"
+      adapter.open { |db| db.exec "DROP DATABASE IF EXISTS #{name}" }
+      adapter.open { |db| db.exec "CREATE DATABASE #{name}" }
+      url = ADAPTER_URL.sub(/\/[^\/?]+(\?|\z)/, "/#{name}\\1")
+      second = Grant::Adapter::Mysql.new(name: name, url: url)
+      begin
+        yield second
+      ensure
+        second.disconnect!
         adapter.open { |db| db.exec "DROP DATABASE IF EXISTS #{name}" }
       end
     when "sqlite"

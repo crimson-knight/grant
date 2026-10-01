@@ -55,7 +55,8 @@ describe "Timestamp DDL" do
         "ALTER TABLE \"users\" ADD COLUMN \"updated_at\" DATETIME",
       ]
       lite.remove_timestamps_statements(:users).size.should eq 2
-      lite.sqlite_tables["users"] = {%(CREATE TABLE "users" ("id" INTEGER PRIMARY KEY AUTOINCREMENT, "name" VARCHAR(255))), [] of String}
+      definition = %(CREATE TABLE "users" ("id" INTEGER PRIMARY KEY AUTOINCREMENT, "name" VARCHAR(255)))
+      lite.sqlite_tables["users"] = {definition, [] of String}
       rebuild = lite.add_timestamps_statements(:users)
       rebuild.first.should eq "PRAGMA foreign_keys = OFF"
       rebuild.any?(&.includes?(%("created_at" DATETIME NOT NULL))).should be_true

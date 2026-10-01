@@ -63,9 +63,27 @@ module Grant::Migrator
       end
     end
 
-    def drop_and_create
+    # Drops and creates the table. Refuses (`Grant::Schema::ProtectedEnvironmentError`)
+    # when the database recorded a protected environment such as production in
+    # `ar_internal_metadata`, unless `force: true`. With *environment* the
+    # check also applies to a database that recorded none, and a database
+    # that belongs to another environment raises
+    # `Grant::Schema::EnvironmentMismatchError`.
+    def drop_and_create(force : Bool = false, environment : String? = nil,
+                        protected_environments : Array(String) = Grant::Schema::InternalMetadata::DEFAULT_PROTECTED)
+      check_protected_environment!(force, environment, protected_environments)
       drop
       create
+    end
+
+    private def check_protected_environment!(force : Bool, environment : String?, protected_environments : Array(String)) : Nil
+      return if force
+      metadata = Grant::Schema::InternalMetadata.new(Model.adapter)
+      if environment
+        metadata.check_protected_environments!(environment, protected_environments, false)
+      elsif (stored = metadata.environment) && protected_environments.includes?(stored)
+        raise Grant::Schema::ProtectedEnvironmentError.new(stored)
+      end
     end
 
     def drop_sql(if_exists : Bool = true, cascade : Bool = false)

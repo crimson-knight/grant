@@ -721,7 +721,10 @@ module Grant::Schema
         current = lookup_column(table, name)
         nullable = null.nil? ? (current ? current.null? : true) : null
         definition.null = nullable
-        step.clauses << "MODIFY COLUMN #{definition.to_sql(dialect)}"
+        # MODIFY restates the whole column, so a default the caller did not
+        # name would be lost; carry the current one over (it is SQL text).
+        kept = current.try(&.default) if definition.default.is_a?(Unset) && definition.default_sql.nil?
+        step.clauses << "MODIFY COLUMN #{definition.to_sql(dialect)}#{" DEFAULT #{mysql_default_text(kept)}" if kept}"
       in .sqlite?
         step.rebuild = true
         step.edit = ->(rebuild : TableRebuild) do
@@ -1042,13 +1045,19 @@ module Grant::Schema
       raise UnsupportedOperation.new("#{operation} is only supported on PostgreSQL") unless dialect.pg?
     end
 
+    # A catalog default (`ColumnInfo#default`) as a MySQL `DEFAULT` operand: a
+    # literal as it is, anything else as an expression.
+    private def mysql_default_text(text : ::String) : ::String
+      text.matches?(/\A(?:'(?:[^']|'')*'|-?\d+(?:\.\d+)?|NULL|TRUE|FALSE)\z/i) ? text : dialect.default_expression(text)
+    end
+
     # MySQL restates a whole column to change one property of it.
     private def mysql_column_sql(info : ColumnInfo, null : Bool, comment : ::String? = nil) : ::String
       String.build do |io|
         io << dialect.quote(info.name) << ' ' << info.sql_type
         io << " NOT NULL" unless null
         if value = info.default
-          io << " DEFAULT " << dialect.quote_literal(value)
+          io << " DEFAULT " << mysql_default_text(value)
         end
         io << " AUTO_INCREMENT" if info.auto_increment?
         text = comment || info.comment

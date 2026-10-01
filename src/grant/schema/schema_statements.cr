@@ -186,7 +186,11 @@ module Grant::Schema
       elsif to.is_a?(Unset)
         raise InvalidDefinition.new("change_column_default needs to: or default_sql:")
       elsif to.nil?
-        ["#{head} DROP DEFAULT"]
+        # MySQL's DROP DEFAULT leaves even a nullable column without a default,
+        # so an INSERT that skips it fails in strict mode; NULL is what
+        # PostgreSQL falls back to, and what a nullable column means by none.
+        nullable = dialect.mysql? && lookup_column(table, column).try(&.null?)
+        [nullable ? "#{head} SET DEFAULT NULL" : "#{head} DROP DEFAULT"]
       else
         ["#{head} SET DEFAULT #{dialect.quote_literal(to)}"]
       end
