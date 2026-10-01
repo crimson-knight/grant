@@ -299,6 +299,9 @@ module Grant::Querying
     # User.find_by({"email" => "a@example.com", "active" => true})
     # ```
     def find_by(criteria : Grant::ModelArgs)
+      if has_attribute_aliases?
+        criteria = criteria.transform_keys { |field| resolve_attribute_alias(field.to_s).as(Symbol | String) }
+      end
       if criteria.keys.any? { |field| Grant::Encryption::EncryptedAttributeRegistry.for(name).has_key?(field.to_s) }
         return current_scope.where(criteria).first
       end
@@ -413,7 +416,7 @@ module Grant::Querying
     end
 
     # Updates updated_at timestamp for all records matching the given criteria
-    def touch_all(*fields, time : Time = Time.local(Grant.settings.default_timezone)) : Int64
+    def touch_all(*fields, time : Time = Grant::Timestamps.current_time) : Int64
       guard_writes!
       current_scope.touch_all(*fields, time: time)
     end

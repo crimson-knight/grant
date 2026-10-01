@@ -705,21 +705,34 @@ abstract class Grant::Base
       dirty_tracking_hashes[1].dup
     end
     
-    # Returns an array of names of attributes that have been changed.
+    # Returns the names of the attributes that have been changed (ActiveModel's
+    # `changed`).
     #
     # ```
     # user = User.find!(1)
     # user.name = "New Name"
     # user.email = "new@example.com"
-    # 
-    # user.changed_attributes # => ["name", "email"]
+    #
+    # user.changed # => ["name", "email"]
     # ```
-    def changed_attributes
+    def changed : Array(String)
       refresh_dirty
       ensure_dirty_tracking_initialized
       dirty_tracking_hashes[1].keys
     end
-    
+
+    # Returns the original value of every changed attribute, keyed by name
+    # (ActiveModel's `changed_attributes`). Values are the stored (database)
+    # representation, like `changes`; use `<attr>_was` for the column type.
+    #
+    # ```
+    # user.name = "New Name"
+    # user.changed_attributes # => {"name" => "Old Name"}
+    # ```
+    def changed_attributes : Hash(String, DirtyValue)
+      attributes_in_database
+    end
+
     # Returns the changes that were saved in the last save operation.
     #
     # This is useful for after_save callbacks to know what changed.
@@ -921,6 +934,7 @@ abstract class Grant::Base
       ensure_dirty_tracking_initialized
       @previous_changes = dirty_tracking_hashes[1].dup
       dirty_tracking_hashes[1].clear
+      clear_assigned_attributes
       @forced_changes.try &.clear
       dirty_tracking_hashes[0].clear
       @new_record = false

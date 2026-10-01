@@ -19,20 +19,25 @@
 #
 # ## In-place mutation
 #
-# Arrays (and the objects behind serialized columns) are mutable, so
-# `post.tags << "x"` never goes through the setter. Detection is opt-in per
-# model and only ever looks at `Array` columns and serialized columns; scalar
-# columns are never snapshotted. Crystal `String` is immutable, so it needs no
-# detection: every change to a string column goes through its setter.
+# Arrays, serialized objects and JSON documents are mutable, so
+# `post.tags << "x"` never goes through the setter. `Array` columns are always
+# compared against a copy taken when the record is loaded or saved, so partial
+# updates and `changed?` see an in-place edit; that costs one `dup` per Array
+# column. Serialized columns and converter-backed columns holding a mutable
+# value (a `Hash`, `Array`, `JSON::Any` or other object) are watched only when
+# the model opts in, because each check re-serializes the value. Scalar and
+# `String` columns are never snapshotted: every change to them goes through
+# their setter.
 #
 # ```
 # class Post < Grant::Base
 #   column id : Int64, primary: true
 #   column title : String?
-#   column tags : Array(String)?
+#   column tags : Array(String)? # always watched
+#   column options : JSON::Any?
 #
-#   detect_mutation # every Array / serialized column
-#   # detect_mutation :tags # or only the named ones
+#   detect_mutation # also every serialized / mutable-converter column
+#   # detect_mutation :options # or only the named ones
 # end
 # ```
 module Grant::Dirty
@@ -43,13 +48,12 @@ module Grant::Dirty
   UNFILTERED = Unfiltered.new
 
   # Defines `Model.mutation_detection_columns`, opting the model in to
-  # in-place mutation detection. With no names every mutable column
-  # (`Array`, serialized) is watched; with names only those are.
+  # in-place mutation detection of serialized columns and converter-backed
+  # columns that hold a mutable value. With no names every such column is
+  # watched; with names only those are. (`Array` columns are always watched.)
   #
-  # Watched columns keep a copy of their loaded value, so this costs one
-  # `dup` per watched column when a record is loaded or saved and one
-  # comparison per watched column when dirty state is read. Models that do
-  # not call it pay nothing.
+  # A watched column is compared, re-serialized, whenever dirty state is read.
+  # Models that do not call it pay nothing for those columns.
   macro detect_mutation(*names)
     def self.mutation_detection_columns : Array(String)?
       {% if names.empty? %}
@@ -67,28 +71,46 @@ module Grant::Dirty
       nil
     end
 
-    # The columns in-place mutation detection actually watches for this model.
-    # Always empty unless `detect_mutation` was declared, and never includes a
-    # scalar column.
+    # The columns in-place mutation detection actually watches for this model:
+    # every `Array` column, plus the serialized and mutable converter-backed
+    # columns when `detect_mutation` was declared. Never a scalar column.
     def mutation_detected_attributes : Array(String)
       names = mutation_detection_columns
-      return [] of String unless names
 
       {% begin %}
         watched = [] of String
         {% for ivar in @type.instance_vars %}
           {% if ivar.annotation(Grant::Column) %}
-            {% mutable = ivar.type.union_types.any? { |column_type| column_type.name.starts_with?("Array(") } %}
-            {% if mutable %}
-              watched << {{ ivar.name.stringify }} if names.empty? || names.includes?({{ ivar.name.stringify }})
+            {% ann = ivar.annotation(Grant::Column) %}
+            {% array = ivar.type.union_types.any? { |column_type| column_type.name.starts_with?("Array(") } %}
+            {% if array && !ann[:converter] %}
+              watched << {{ ivar.name.stringify }}
             {% elsif ivar.name.stringify.starts_with?("_serialized_") %}
-              if names.empty? || names.includes?({{ ivar.name.stringify }}) || names.includes?({{ ivar.name.stringify[12..-1] }})
+              if names && (names.empty? || names.includes?({{ ivar.name.stringify }}) || names.includes?({{ ivar.name.stringify[12..-1] }}))
+                watched << {{ ivar.name.stringify }}
+              end
+            {% elsif ann[:converter] && (ivar.type.union_types.reject { |column_type| column_type == Nil }.any? { |column_type| column_type.name.starts_with?("Hash(") || column_type.name.starts_with?("Array(") || column_type == JSON::Any || (column_type.class? && column_type != String) }) %}
+              if names && (names.empty? || names.includes?({{ ivar.name.stringify }}))
                 watched << {{ ivar.name.stringify }}
               end
             {% end %}
           {% end %}
         {% end %}
         watched
+      {% end %}
+    end
+
+    # True when this model has anything in-place detection could watch. Lets
+    # the dirty readers skip the comparison pass for models with only scalar
+    # columns.
+    def __watches_mutations? : Bool
+      {% begin %}
+        {% any_array = @type.instance_vars.any? { |ivar| ivar.annotation(Grant::Column) && ivar.type.union_types.any? { |column_type| column_type.name.starts_with?("Array(") } } %}
+        {% if any_array %}
+          true
+        {% else %}
+          !mutation_detection_columns.nil?
+        {% end %}
       {% end %}
     end
   end
@@ -113,7 +135,7 @@ module Grant::Dirty
 
   # Names of the attributes a save would write.
   def changed_attribute_names_to_save : Array(String)
-    changed_attributes
+    changed
   end
 
   # Pending changes for one attribute, or nil when it is unchanged.
@@ -186,9 +208,13 @@ module Grant::Dirty
   # Marks *name* as changed even though it was not assigned, for callers that
   # mutate the value in place and are not using `detect_mutation`. The current
   # value becomes the original; later in-place edits show up in `changes`.
+  #
+  # For a `serialized_column` the accessor name (`settings`) or the raw column
+  # (`_serialized_settings`) both work; the raw column is re-serialized from the
+  # cached object right away, so `changes` and a `save` see the current value.
   def attribute_will_change!(name : String | Symbol) : Nil
     refresh_dirty
-    attribute_name = name.to_s
+    attribute_name = prepare_serialized_attribute(name.to_s)
     current = read_attribute(attribute_name).as(Grant::Base::DirtyValue)
     originals, pending, _ = dirty_tracking_hashes
     unless pending.has_key?(attribute_name)
@@ -237,8 +263,30 @@ module Grant::Dirty
     end
     pending.clear
     originals.clear
+    clear_assigned_attributes
     @forced_changes.try &.clear
     capture_original_attributes
+  end
+
+  # Maps a serialized column's accessor name to its raw column and writes the
+  # cached object's current serialization into that raw column, so a flagged
+  # in-place edit is not left waiting for the before-save hook. Other names are
+  # returned unchanged.
+  private def prepare_serialized_attribute(name : String) : String
+    {% begin %}
+      {% for ivar in @type.instance_vars %}
+        {% if ivar.annotation(Grant::Column) && ivar.name.stringify.starts_with?("_serialized_") %}
+          {% base = ivar.name.stringify[12..-1] %}
+          if name == {{ base }} || name == {{ ivar.name.stringify }}
+            if cached = @_{{ base.id }}_cache
+              @_serialized_{{ base.id }} = @_{{ base.id }}_serializer.serialize(cached)
+            end
+            return {{ ivar.name.stringify }}
+          end
+        {% end %}
+      {% end %}
+    {% end %}
+    name
   end
 
   private def dirty_filter_matches?(value : Grant::Base::DirtyValue, filter) : Bool
@@ -255,8 +303,10 @@ module Grant::Dirty
   end
 
   # The baseline copy to keep for *name*: a snapshot when in-place mutation
-  # detection watches that column, otherwise the value itself.
+  # detection watches that column (always for an Array), otherwise the value itself.
   private def baseline_dirty_value(name : String, value : Grant::Base::DirtyValue) : Grant::Base::DirtyValue
+    # Array columns are always watched, so keep an independent copy.
+    return value.dup if value.is_a?(Array)
     names = self.class.mutation_detection_columns
     return value unless names
     return value unless names.empty? || names.includes?(name)
@@ -271,13 +321,14 @@ module Grant::Dirty
       unless forced.empty?
         pending = dirty_tracking_hashes[1]
         forced.each do |attribute_name|
+          prepare_serialized_attribute(attribute_name)
           if change = pending[attribute_name]?
             pending[attribute_name] = {change[0], snapshot_dirty_value(read_attribute(attribute_name).as(Grant::Base::DirtyValue))}
           end
         end
       end
     end
-    refresh_mutations if self.class.mutation_detection_columns
+    refresh_mutations if self.class.__watches_mutations?
   end
 
   # Compares one watched value with its snapshot.
@@ -312,25 +363,28 @@ module Grant::Dirty
   end
 
   # Stores the baseline copies for the columns in-place detection watches.
-  # Called wherever the baseline is (re)established; a no-op for models that
-  # did not opt in.
+  # Called wherever the baseline is (re)established; a no-op for models with
+  # nothing to watch.
   private def capture_mutation_baselines : Nil
-    names = self.class.mutation_detection_columns || return
+    return unless self.class.__watches_mutations?
+    names = self.class.mutation_detection_columns
     ensure_dirty_tracking_initialized
     originals = dirty_tracking_hashes[0]
     {% begin %}
       {% for ivar in @type.instance_vars %}
         {% if ivar.annotation(Grant::Column) %}
+          {% ann = ivar.annotation(Grant::Column) %}
           {% ivar_name = ivar.name.stringify %}
-          {% mutable = ivar.type.union_types.any? { |column_type| column_type.name.starts_with?("Array(") } %}
-          {% serialized_raw = ivar_name.starts_with?("_serialized_") %}
-          {% if mutable %}
-            if names.empty? || names.includes?({{ ivar_name }})
-              originals[{{ ivar_name }}] = snapshot_dirty_value(@{{ ivar.name.id }}.as(Grant::Base::DirtyValue))
-            end
-          {% elsif serialized_raw %}
-            if names.empty? || names.includes?({{ ivar_name }}) || names.includes?({{ ivar_name[12..-1] }})
+          {% array = ivar.type.union_types.any? { |column_type| column_type.name.starts_with?("Array(") } %}
+          {% if array && !ann[:converter] %}
+            originals[{{ ivar_name }}] = snapshot_dirty_value(@{{ ivar.name.id }}.as(Grant::Base::DirtyValue))
+          {% elsif ivar_name.starts_with?("_serialized_") %}
+            if names && (names.empty? || names.includes?({{ ivar_name }}) || names.includes?({{ ivar_name[12..-1] }}))
               originals[{{ ivar_name }}] = @{{ ivar.name.id }}.as(Grant::Base::DirtyValue)
+            end
+          {% elsif ann[:converter] && (ivar.type.union_types.reject { |column_type| column_type == Nil }.any? { |column_type| column_type.name.starts_with?("Hash(") || column_type.name.starts_with?("Array(") || column_type == JSON::Any || (column_type.class? && column_type != String) }) %}
+            if names && (names.empty? || names.includes?({{ ivar_name }}))
+              originals[{{ ivar_name }}] = {{ ann[:converter] }}.to_db(@{{ ivar.name.id }}).as(Grant::Base::DirtyValue)
             end
           {% end %}
         {% end %}
@@ -339,15 +393,21 @@ module Grant::Dirty
   end
 
   private def refresh_mutations : Nil
-    names = self.class.mutation_detection_columns || return
+    names = self.class.mutation_detection_columns
     ensure_dirty_tracking_initialized
     {% begin %}
       {% for ivar in @type.instance_vars %}
         {% if ivar.annotation(Grant::Column) %}
-          {% mutable = ivar.type.union_types.any? { |column_type| column_type.name.starts_with?("Array(") } %}
-          {% if mutable %}
-            if names.empty? || names.includes?({{ ivar.name.stringify }})
-              sync_mutated_value({{ ivar.name.stringify }}, @{{ ivar.name.id }}.as(Grant::Base::DirtyValue))
+          {% ann = ivar.annotation(Grant::Column) %}
+          {% ivar_name = ivar.name.stringify %}
+          {% array = ivar.type.union_types.any? { |column_type| column_type.name.starts_with?("Array(") } %}
+          {% if array && !ann[:converter] %}
+            sync_mutated_value({{ ivar_name }}, @{{ ivar.name.id }}.as(Grant::Base::DirtyValue))
+          {% elsif ann[:converter] && !ivar_name.starts_with?("_serialized_") && (ivar.type.union_types.reject { |column_type| column_type == Nil }.any? { |column_type| column_type.name.starts_with?("Hash(") || column_type.name.starts_with?("Array(") || column_type == JSON::Any || (column_type.class? && column_type != String) }) %}
+            # A converter-backed mutable value (a Hash, JSON document...):
+            # compare its stored form with the baseline taken at load or save.
+            if names && (names.empty? || names.includes?({{ ivar_name }}))
+              sync_mutated_value({{ ivar_name }}, {{ ann[:converter] }}.to_db(@{{ ivar.name.id }}).as(Grant::Base::DirtyValue))
             end
           {% end %}
         {% end %}
@@ -362,7 +422,7 @@ module Grant::Dirty
           {% base = ivar_name[1..-7] %}
           {% if @type.instance_vars.any? { |other| other.name.stringify == "_serialized_" + base } %}
             {% klass = ivar.type.union_types.reject { |candidate| candidate == Nil }.first %}
-            if names.empty? || names.includes?({{ base }}) || names.includes?({{ "_serialized_" + base }})
+            if names && (names.empty? || names.includes?({{ base }}) || names.includes?({{ "_serialized_" + base }}))
               if cached = @{{ ivar.name.id }}
                 sync_mutated_serialization(
                   {{ "_serialized_" + base }},

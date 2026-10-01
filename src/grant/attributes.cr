@@ -15,6 +15,18 @@ module Grant
     end
   end
 
+  # Raised when a typed dirty-tracking reader (`<attr>_was`, `<attr>_change`)
+  # needs the column's converter to turn a stored value back into the column
+  # type and the converter defines no `from_db`.
+  class ConverterError < ErrorBase
+    getter model_name : String
+    getter attribute_name : String
+
+    def initialize(@model_name : String, @attribute_name : String, converter : String)
+      super("#{converter} must define from_db(value) for typed dirty tracking of #{@model_name}##{@attribute_name}")
+    end
+  end
+
   # Compile-time description of one model column, returned by `Model.columns`.
   #
   # `crystal_type` is the column's Crystal type without `Nil` (for example
@@ -207,6 +219,12 @@ module Grant
       @[JSON::Field(ignore: true)]
       @[YAML::Field(ignore: true)]
       @attributes_before_type_cast : Hash(String, Grant::Columns::Type)?
+
+      # Names assigned through a setter since the record was loaded or last
+      # saved (`<attr>_came_from_user?`). Created on first assignment.
+      @[JSON::Field(ignore: true)]
+      @[YAML::Field(ignore: true)]
+      @assigned_attributes : Set(String)?
     end
 
     # Declares *new_name* as another name for the column *old_name*.
@@ -214,8 +232,11 @@ module Grant
     # Generates the getter, setter, `?` and `!` readers, the dirty-tracking
     # helpers and `_before_type_cast`. The alias is also resolved by mass
     # assignment (`new(new_name: ...)`, `assign_attributes`), by `[]`, `[]=`,
-    # `has_attribute?`, `slice`, `values_at`, and by `where(new_name: ...)`.
-    # It is not resolved by `find_by`, `order` or `pluck`.
+    # `has_attribute?`, `slice`, `values_at`, and by `where(new_name: ...)`,
+    # `where(:new_name, :op, value)`, `find_by`, `order`, `pluck` and `select`.
+    # Dirty helpers (`new_name_changed?`, `new_name_was`, `new_name_change`,
+    # `saved_change_to_new_name?`, `restore_new_name!`, ...) delegate to the
+    # column. Raw SQL strings are never rewritten.
     #
     # ```
     # class Post < Grant::Base
@@ -300,6 +321,38 @@ module Grant
       def {{new_name.id}}_before_type_cast : Grant::Columns::Type
         {{old_name.id}}_before_type_cast
       end
+
+      def {{new_name.id}}_came_from_user? : Bool
+        {{old_name.id}}_came_from_user?
+      end
+
+      def {{new_name.id}}_before_last_save
+        {{old_name.id}}_before_last_save
+      end
+
+      def {{new_name.id}}_previously_was
+        {{old_name.id}}_previously_was
+      end
+
+      def {{new_name.id}}_previously_changed?(*, from = Grant::Dirty::UNFILTERED, to = Grant::Dirty::UNFILTERED) : Bool
+        {{old_name.id}}_previously_changed?(from: from, to: to)
+      end
+
+      def saved_change_to_{{new_name.id}}?(*, from = Grant::Dirty::UNFILTERED, to = Grant::Dirty::UNFILTERED) : Bool
+        saved_change_to_{{old_name.id}}?(from: from, to: to)
+      end
+
+      def saved_change_to_{{new_name.id}}
+        saved_change_to_{{old_name.id}}
+      end
+
+      def will_save_change_to_{{new_name.id}}? : Bool
+        will_save_change_to_{{old_name.id}}?
+      end
+
+      def restore_{{new_name.id}}! : Nil
+        restore_{{old_name.id}}!
+      end
     end
 
     # Adds names or patterns to the values `inspect` redacts for this model, on
@@ -354,7 +407,16 @@ module Grant
     # ```
     # user.assign_attributes({"name" => "Ada", "age" => "36"})
     # ```
+    #
+    # A key that names no attribute (column, alias, association, virtual or
+    # encrypted attribute, value object) raises `Grant::UnknownAttributeError`
+    # before anything is assigned. `new`, `create` and `update` keep ignoring
+    # unknown keys.
     def assign_attributes(hash : Hash) : self
+      hash.each_key do |key|
+        attribute_name = key.to_s
+        raise Grant::UnknownAttributeError.new(self.class.name, attribute_name) unless assignable_attribute?(attribute_name)
+      end
       set_attributes(hash.transform_keys { |key| key.to_s.as(String | Symbol) })
     end
 
@@ -367,6 +429,30 @@ module Grant
     def attributes=(hash : Hash)
       assign_attributes(hash)
       hash
+    end
+
+    # Whether mass assignment knows *name*: a column or alias, an association,
+    # a virtual or encrypted attribute, or a value object.
+    def assignable_attribute?(name : String | Symbol) : Bool
+      attribute = self.class.resolve_attribute_alias(name.to_s)
+      return true if self.class.has_column?(attribute)
+      return true if Grant::Columns::VirtualAttributeRegistry.registered?(self.class.name, attribute)
+      return true if Grant::AssociationRegistry.reflection(self.class.name, attribute)
+      return true if self.class.encrypted_attributes.has_key?(attribute)
+      {% if @type.class.has_method?(:aggregations) %}
+        return true if self.class.aggregations.has_key?(attribute.to_sym)
+      {% end %}
+      false
+    end
+
+    # True when *name* was assigned through its setter (or by mass assignment)
+    # since the record was loaded, saved or had its changes cleared, like
+    # ActiveModel's `<attr>_came_from_user?`. Assigning the value it already
+    # holds counts.
+    def attribute_came_from_user?(name : String | Symbol) : Bool
+      assigned = @assigned_attributes
+      return false unless assigned
+      assigned.includes?(self.class.resolve_attribute_alias(name.to_s))
     end
 
     # The column names of this record's model.
@@ -456,11 +542,19 @@ module Grant
     protected def discard_before_type_cast(attribute : String) : Nil
       store = @attributes_before_type_cast
       store.delete(attribute) if store
+      (@assigned_attributes ||= Set(String).new) << attribute
     end
 
     # Forgets every retained raw input, for example after `reload`.
     protected def clear_before_type_cast : Nil
       @attributes_before_type_cast = nil
+      @assigned_attributes = nil
+    end
+
+    # Forgets which attributes were assigned (a save or cleared changes make
+    # the current values the database's).
+    protected def clear_assigned_attributes : Nil
+      @assigned_attributes = nil
     end
 
     private def resolved_attribute_name(name : String | Symbol) : String

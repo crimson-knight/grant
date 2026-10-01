@@ -68,7 +68,7 @@ module Grant::ConvenienceMethods(Model)
   def pluck(*fields : Symbol | String) : Array(Array(Grant::Columns::Type))
     return [] of Array(Grant::Columns::Type) if is_none?
 
-    field_names = fields.to_a.map(&.to_s)
+    field_names = fields.to_a.map { |field| resolve_column_alias(field.to_s) }
     field_names.each do |name|
       Grant::Query::SqlExpression.validate!(name, "pluck expression") unless Grant::Query::SqlExpression.identifier?(name)
     end

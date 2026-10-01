@@ -192,7 +192,7 @@ describe "Grant::Encryption Database Integration" do
 
       user.email = "new@example.com"
       user.changed?.should be_true
-      user.changed_attributes.should contain("email_encrypted")
+      user.changed.should contain("email_encrypted")
 
       user.save!
       user.changed?.should be_false

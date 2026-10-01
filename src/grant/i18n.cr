@@ -136,13 +136,12 @@ module Grant::I18n
   # Sets the process default locale.
   def self.locale=(locale : String)
     @@locale = locale
-    clear_cache
     locale
   end
 
   # Runs the block with *locale* as the locale of the current fiber, then
   # restores what it was. Other fibers keep their own locale.
-  def self.with_locale(locale : String, &)
+  def self.with_locale(locale : String, & : -> T) : T forall T
     fiber = Fiber.current
     previous = fiber.grant_locale
     fiber.grant_locale = locale
@@ -193,16 +192,26 @@ module Grant::I18n
         model_key = model_key(model)
         translator = @@translator
         translator.translate(locale, "attributes.#{model_key}.#{attribute}") ||
-          translator.translate(locale, "attributes.#{attribute}") ||
-          humanize(attribute)
+        translator.translate(locale, "attributes.#{attribute}") ||
+        humanize(attribute)
       end
     end
   end
 
   # The display name of the model itself (`"Blog post"` for `Blog::Post`).
-  def self.human_model_name(model : String) : String
+  #
+  # With *count*, the `models.<key>.one` / `models.<key>.other` translation is
+  # preferred (`one` for a count of 1), then `models.<key>`, then the humanized
+  # class name (which is not pluralized, as in ActiveModel).
+  def self.human_model_name(model : String, count : Int? = nil) : String
     translator = @@translator
-    translator.translate(locale, "models.#{model_key(model)}") || humanize(demodulize(model).underscore)
+    locale = self.locale
+    key = "models.#{model_key(model)}"
+    if count
+      found = translator.translate(locale, "#{key}.#{count == 1 ? "one" : "other"}")
+      return found if found
+    end
+    translator.translate(locale, key) || humanize(demodulize(model).underscore)
   end
 
   # `"Blog::Post"` becomes `"blog/post"`, the key used in translation files.
@@ -292,48 +301,12 @@ module Grant::I18n
 end
 
 class Fiber
-  # The locale `Grant::I18n.with_locale` set for this fiber, if any.
+  # Fiber-local slot for `Grant::I18n.with_locale`.
   # :nodoc:
   property grant_locale : String?
 end
 
-# Naming for a model class, like ActiveModel::Name.
-struct Grant::ModelName
-  # The class name, e.g. `"Blog::Post"`.
-  getter name : String
-
-  def initialize(@name : String)
-  end
-
-  # The translation key: `"blog/post"`.
-  def i18n_key : String
-    Grant::I18n.model_key(@name)
-  end
-
-  # The key used for form parameters: `"blog_post"`.
-  def param_key : String
-    i18n_key.tr("/", "_")
-  end
-
-  # `"blog_post"`.
-  def singular : String
-    param_key
-  end
-
-  # The underscored class name without its namespace: `"post"`.
-  def element : String
-    Grant::I18n.demodulize(@name).underscore
-  end
-
-  # The display name: the `models.<key>` translation or `"Blog post"`.
-  def human : String
-    Grant::I18n.human_model_name(@name)
-  end
-
-  def to_s(io : IO) : Nil
-    io << @name
-  end
-end
+require "./model_name"
 
 abstract class Grant::Base
   # The `Grant::ModelName` of this model.

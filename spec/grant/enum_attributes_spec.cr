@@ -63,7 +63,7 @@ describe "Grant::EnumAttributes" do
 
   describe "bang methods" do
     it "generates bang methods to set enum values" do
-      article = EnumArticle.new
+      article = EnumArticle.new(title: "Bang")
 
       article.published!
       article.status.should eq(EnumArticle::Status::Published)
@@ -99,7 +99,7 @@ describe "Grant::EnumAttributes" do
 
   describe "class methods" do
     it "provides access to all enum values" do
-      statuses = EnumArticle.statuses
+      statuses = EnumArticle.statuses.values
       statuses.should contain(EnumArticle::Status::Draft)
       statuses.should contain(EnumArticle::Status::Published)
       statuses.should contain(EnumArticle::Status::Archived)

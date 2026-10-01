@@ -1,12 +1,13 @@
 require "./dirty_family_models"
 
 describe "Opt-in in-place mutation detection" do
-  it "does not detect an Array edit on a model that has not opted in" do
+  it "detects an Array edit on a model that has not called detect_mutation" do
     record = F01Tagged.new(tags: ["a"])
-    record.tags.not_nil! << "b"
     record.changed?.should be_false
-    record.tags_changed?.should be_false
-    F01Tagged.mutation_detected_attributes.should be_empty
+    record.tags.not_nil! << "b"
+    record.changed?.should be_true
+    record.tags_changed?.should be_true
+    F01Tagged.mutation_detected_attributes.should eq(["tags"])
   end
 
   it "detects an Array edit on a watched column" do
@@ -31,14 +32,14 @@ describe "Opt-in in-place mutation detection" do
     record.changed?.should be_false
   end
 
-  it "only watches the columns it was given" do
-    F01WatchedNamed.mutation_detected_attributes.should eq(["tags"])
+  it "always watches every Array column, whatever detect_mutation names" do
+    F01WatchedNamed.mutation_detected_attributes.should eq(["tags", "labels"])
 
     record = F01WatchedNamed.new(tags: ["a"], labels: ["x"])
     record.labels.not_nil! << "y"
-    record.changed?.should be_false
+    record.changed.should eq(["labels"])
     record.tags.not_nil! << "b"
-    record.changed_attributes.should eq(["tags"])
+    record.changed.sort.should eq(["labels", "tags"])
   end
 
   it "never watches scalar or String columns" do
@@ -89,7 +90,7 @@ describe "Opt-in in-place mutation detection" do
 
       record.prefs.not_nil!.theme = "dark"
       record.changed?.should be_true
-      record.changed_attributes.should eq(["_serialized_prefs"])
+      record.changed.should eq(["_serialized_prefs"])
 
       record.prefs.not_nil!.theme = "light"
       record.changed?.should be_false
