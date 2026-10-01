@@ -91,6 +91,22 @@ describe "PostgreSQL array helpers" do
         W6bArrayDoc.find_by!(title: "one").tags.should eq ["crystal"]
       end
 
+      it "carries the query log tags" do
+        Grant::QueryLogs.reset!
+        Grant::QueryLogs.enabled = true
+        Grant::QueryLogs.tag(:application, "w6b")
+        begin
+          sql = StatementRecorder.statements do
+            W6bArrayDoc.where(title: "two").array_append_all(:tags, "x")
+            W6bArrayDoc.where(title: "two").array_remove_all(:tags, "x")
+          end.select(&.includes?("array_"))
+          sql.size.should eq 2
+          sql.each(&.should(end_with("/*application:w6b*/")))
+        ensure
+          Grant::QueryLogs.reset!
+        end
+      end
+
       it "returns 0 for a none relation and rejects an invalid column name" do
         W6bArrayDoc.none.array_append_all(:tags, "x").should eq 0
         expect_raises(ArgumentError) { W6bArrayDoc.all.array_append_all("tags; DROP", "x") }
