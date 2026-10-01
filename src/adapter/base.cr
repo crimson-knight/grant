@@ -464,8 +464,13 @@ abstract class Grant::Adapter::Base
       verify_idle_connection(connection)
       connection.grant_last_used_ticks = now
       true
-    rescue ::Exception
-      connection.close rescue nil
+    rescue probe_error : ::Exception
+      Grant::Log.debug(exception: probe_error) { "Idle connection to #{name} failed its probe and was discarded" }
+      begin
+        connection.close
+      rescue close_error : ::Exception
+        Grant::Log.debug(exception: close_error) { "Closing a dead idle connection to #{name} failed" }
+      end
       connection.release
       false
     end
