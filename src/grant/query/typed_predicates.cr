@@ -215,7 +215,7 @@ class Grant::Query::Builder(Model)
 
     built = assembler
     placeholder = built.add_parameter(value)
-    sql = built.update_all_fragment_sql("#{column} = #{function}(#{column}, #{placeholder})")
+    sql = Grant::QueryLogs.append(built.update_all_fragment_sql("#{column} = #{function}(#{column}, #{placeholder})"))
     Model.mark_write_operation
 
     adapter = Model.adapter
