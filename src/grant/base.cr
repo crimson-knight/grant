@@ -929,7 +929,7 @@ abstract class Grant::Base
       attrs = attributes || dirty_tracking_hashes[1].keys
       
       # Temporarily store changed attributes to restore
-      changes_to_restore = {} of String => {Grant::Columns::Type, Grant::Columns::Type}
+      changes_to_restore = {} of String => {Grant::Base::DirtyValue, Grant::Base::DirtyValue}
       attrs.each do |attr|
         if change = dirty_tracking_hashes[1][attr]?
           changes_to_restore[attr] = change
