@@ -26,11 +26,11 @@
 module Grant::Autosave
   @[JSON::Field(ignore: true)]
   @[YAML::Field(ignore: true)]
-  @_marked_for_destruction : Bool?
+  @_marked_for_destruction : Bool = false
 
   @[JSON::Field(ignore: true)]
   @[YAML::Field(ignore: true)]
-  @_autosave_checking : Bool?
+  @_autosave_checking : Bool = false
 
   @[JSON::Field(ignore: true)]
   @[YAML::Field(ignore: true)]
@@ -44,7 +44,7 @@ module Grant::Autosave
 
   # True after `mark_for_destruction`.
   def marked_for_destruction? : Bool
-    @_marked_for_destruction || false
+    @_marked_for_destruction
   end
 
   # Clears `mark_for_destruction`.

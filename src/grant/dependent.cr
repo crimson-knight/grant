@@ -122,10 +122,19 @@ end
 
 # The instance side of `dependent:`: which association's `dependent: :destroy`
 # is destroying this record.
+# Holds a reflection behind one pointer, so a record that is not being destroyed
+# by an association carries 8 bytes for it instead of the whole struct.
+class Grant::Dependent::ReflectionBox
+  getter reflection : Grant::Reflection
+
+  def initialize(@reflection : Grant::Reflection)
+  end
+end
+
 module Grant::Dependent::Instance
   @[JSON::Field(ignore: true)]
   @[YAML::Field(ignore: true)]
-  @destroyed_by_association : Grant::Reflection?
+  @destroyed_by_association : Grant::Dependent::ReflectionBox?
 
   # The reflection of the association whose `dependent: :destroy` is destroying
   # this record, or `nil` for a record destroyed directly. Readable from the
@@ -135,13 +144,14 @@ module Grant::Dependent::Instance
   # after_destroy { skip_notice if destroyed_by_association }
   # ```
   def destroyed_by_association : Grant::Reflection?
-    @destroyed_by_association
+    @destroyed_by_association.try(&.reflection)
   end
 
   # Records which association is destroying this record. Set by
   # `dependent: :destroy` just before it calls `destroy`.
   def destroyed_by_association=(reflection : Grant::Reflection?) : Grant::Reflection?
-    @destroyed_by_association = reflection
+    @destroyed_by_association = reflection ? Grant::Dependent::ReflectionBox.new(reflection) : nil
+    reflection
   end
 end
 

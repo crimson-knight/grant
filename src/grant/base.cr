@@ -63,6 +63,21 @@ abstract class Grant::Base
   # Dirty tracking storage - using a union of all possible types
   # We use a broad union type to handle all column types including enums
   alias DirtyValue = Nil | Bool | Int32 | Int64 | Float32 | Float64 | String | Time | UUID | Slice(UInt8) | Array(String) | Array(Int16) | Array(Int32) | Array(Int64) | Array(Float32) | Array(Float64) | Array(Bool) | Array(UUID)
+
+  # Keyword attributes as the one String-keyed hash `set_attributes` reads,
+  # built in a single pass (`args.to_h.transform_keys(&.to_s)` builds two).
+  #
+  # :nodoc:
+  def self.__string_keyed_attributes(args : T) forall T
+    {% if T.keys.empty? %}
+      {} of String => Grant::Columns::Type
+    {% else %}
+      hash = Hash(String, typeof(args.values.to_a.first)).new(initial_capacity: args.size)
+      args.each { |key, value| hash[key.to_s] = value }
+      hash
+    {% end %}
+  end
+
   include Associations
   include Callbacks
   include Columns
@@ -338,9 +353,10 @@ abstract class Grant::Base
     # and still lets generic class references dispatch to the right scope.
     # :nodoc:
     def self.__builder : Grant::Query::Builder({{@type}})
-      db_type = if adapter.postgres?
+      resolved_adapter = adapter
+      db_type = if resolved_adapter.postgres?
                   Grant::Query::Builder::DbType::Pg
-                elsif adapter.mysql?
+                elsif resolved_adapter.mysql?
                   Grant::Query::Builder::DbType::Mysql
                 else
                   Grant::Query::Builder::DbType::Sqlite
@@ -492,6 +508,13 @@ abstract class Grant::Base
       @[JSON::Field(ignore: true)]
       @[YAML::Field(ignore: true)]
       @forced_changes : Set(String)?
+
+      # True while `initialize` assigns the attributes it was given: those
+      # assignments are the record's starting values, not changes, so the
+      # setters skip dirty tracking and no dirty hashes are built for them.
+      @[JSON::Field(ignore: true)]
+      @[YAML::Field(ignore: true)]
+      @dirty_tracking_suspended : Bool = false
     {% else %}
       # Deeper subclass (STI): regenerate per-subclass JSON/YAML serializers so
       # they see this concrete model's own (inherited + added) column ivars,
@@ -515,6 +538,24 @@ abstract class Grant::Base
       @original_attributes ||= {} of String => DirtyValue
       @changed_attributes ||= {} of String => Tuple(DirtyValue, DirtyValue)
       @previous_changes ||= {} of String => Tuple(DirtyValue, DirtyValue)
+    end
+
+    # The original-value hash, created on the first change of a column.
+    private def dirty_originals : Hash(String, DirtyValue)
+      @original_attributes ||= {} of String => DirtyValue
+    end
+
+    # The pending-change hash, created on the first change of a column.
+    private def dirty_pending : Hash(String, Tuple(DirtyValue, DirtyValue))
+      @changed_attributes ||= {} of String => Tuple(DirtyValue, DirtyValue)
+    end
+
+    # True once any dirty hash exists. A record that was loaded and never
+    # assigned a column has none.
+    #
+    # :nodoc:
+    def __dirty_tracking_allocated? : Bool
+      !(@original_attributes.nil? && @changed_attributes.nil? && @previous_changes.nil?)
     end
 
     # Narrows the initialized nullable ivars together for operations that need
@@ -550,9 +591,10 @@ abstract class Grant::Base
       # user.save        # INSERTs the row
       # ```
       def initialize(**args)
-        ensure_dirty_tracking_initialized
+        @dirty_tracking_suspended = true
         __apply_scope_attributes
-        set_attributes(args.to_h.transform_keys(&.to_s))
+        __set_named_attributes(args)
+        @dirty_tracking_suspended = false
         establish_initial_dirty_baseline
         __after_initialize
       end
@@ -567,9 +609,10 @@ abstract class Grant::Base
       # user.save
       # ```
       def initialize(args : Grant::ModelArgs)
-        ensure_dirty_tracking_initialized
+        @dirty_tracking_suspended = true
         __apply_scope_attributes
         set_attributes(args.transform_keys(&.to_s))
+        @dirty_tracking_suspended = false
         establish_initial_dirty_baseline
         __after_initialize
       end
@@ -577,9 +620,10 @@ abstract class Grant::Base
       # Accept a dynamic attribute hash whose values may include association
       # records or arrays of records as well as scalar columns.
       def initialize(args : Hash(String | Symbol, T)) forall T
-        ensure_dirty_tracking_initialized
+        @dirty_tracking_suspended = true
         __apply_scope_attributes
         set_attributes(args.transform_keys(&.to_s))
+        @dirty_tracking_suspended = false
         establish_initial_dirty_baseline
         __after_initialize
       end
@@ -593,8 +637,11 @@ abstract class Grant::Base
       # user.save
       # ```
       def initialize
-        ensure_dirty_tracking_initialized
-        __apply_scope_attributes
+        if Fiber.current.grant_scoping_stacks
+          @dirty_tracking_suspended = true
+          __apply_scope_attributes
+          @dirty_tracking_suspended = false
+        end
         establish_initial_dirty_baseline
         __after_initialize
       end
@@ -607,9 +654,10 @@ abstract class Grant::Base
       # user = User.new(email: "a@example.com") { |u| u.name = "Ada" }
       # ```
       def initialize(**args, &)
-        ensure_dirty_tracking_initialized
+        @dirty_tracking_suspended = true
         __apply_scope_attributes
-        set_attributes(args.to_h.transform_keys(&.to_s))
+        __set_named_attributes(args)
+        @dirty_tracking_suspended = false
         establish_initial_dirty_baseline
         yield self
         __after_initialize
@@ -619,9 +667,10 @@ abstract class Grant::Base
       #
       # Attributes-hash form of the initializer block.
       def initialize(args : Grant::ModelArgs, &)
-        ensure_dirty_tracking_initialized
+        @dirty_tracking_suspended = true
         __apply_scope_attributes
         set_attributes(args.transform_keys(&.to_s))
+        @dirty_tracking_suspended = false
         establish_initial_dirty_baseline
         yield self
         __after_initialize
@@ -640,10 +689,9 @@ abstract class Grant::Base
       # Captures the values supplied to initialize as the initial baseline.
       # Later setter calls are then tracked even while the record is new.
       private def establish_initial_dirty_baseline
-        ensure_dirty_tracking_initialized
-        dirty_tracking_hashes[0].clear
-        dirty_tracking_hashes[1].clear
-        dirty_tracking_hashes[2].clear
+        @original_attributes.try &.clear
+        @changed_attributes.try &.clear
+        @previous_changes.try &.clear
         capture_original_attributes
       end
 
@@ -657,28 +705,31 @@ abstract class Grant::Base
       # The action closes over typed column values so rollback does not pass
       # custom converter values through the public attribute writer.
       private def __transaction_rollback_action : Proc(Nil)
-        ensure_dirty_tracking_initialized
         column_values = capture_column_values_for_transaction
-        original_attributes = dirty_tracking_hashes[0].dup
-        changed_attributes = dirty_tracking_hashes[1].dup
-        previous_changes = dirty_tracking_hashes[2].dup
-        aggregation_changes_snapshot = aggregation_changes.dup
-        pending_commit_callbacks = _pending_commit_callbacks.dup
+        # Nothing is created just to be snapshotted: a record that never changed
+        # a column has no dirty hashes, and its snapshot of them is nil.
+        original_attributes = @original_attributes.try(&.dup)
+        changed_attributes = @changed_attributes.try(&.dup)
+        previous_changes = @previous_changes.try(&.dup)
+        aggregation_changes_snapshot = @aggregation_changes.try(&.dup)
+        pending_commit_callbacks = @_pending_commit_callbacks.try(&.dup)
         was_new_record = new_record?
         was_destroyed = destroyed?
         was_readonly = readonly?
 
         Proc(Nil).new do
           restore_column_values_for_transaction(column_values)
-          @original_attributes = original_attributes.dup
-          @changed_attributes = changed_attributes.dup
-          @previous_changes = previous_changes.dup
-          @aggregation_changes = aggregation_changes_snapshot.dup
+          @original_attributes = original_attributes.try(&.dup)
+          @changed_attributes = changed_attributes.try(&.dup)
+          @previous_changes = previous_changes.try(&.dup)
+          @aggregation_changes = aggregation_changes_snapshot.try(&.dup)
           self.new_record = was_new_record
           restore_destroyed_state(was_destroyed)
           mark_readonly(was_readonly)
           _pending_commit_callbacks.clear
-          _pending_commit_callbacks.concat(pending_commit_callbacks)
+          if pending_commit_callbacks
+            _pending_commit_callbacks.concat(pending_commit_callbacks)
+          end
         end
       end
     end
@@ -723,8 +774,7 @@ abstract class Grant::Base
     # ```
     def changes
       refresh_dirty
-      ensure_dirty_tracking_initialized
-      dirty_tracking_hashes[1].dup
+      @changed_attributes.try(&.dup) || {} of String => Tuple(DirtyValue, DirtyValue)
     end
     
     # Returns the names of the attributes that have been changed (ActiveModel's
@@ -739,8 +789,11 @@ abstract class Grant::Base
     # ```
     def changed : Array(String)
       refresh_dirty
-      ensure_dirty_tracking_initialized
-      dirty_tracking_hashes[1].keys
+      if pending = @changed_attributes
+        pending.keys
+      else
+        [] of String
+      end
     end
 
     # Returns the original value of every changed attribute, keyed by name
@@ -768,8 +821,7 @@ abstract class Grant::Base
     # user.changes # => {} (empty after save)
     # ```
     def previous_changes
-      ensure_dirty_tracking_initialized
-      dirty_tracking_hashes[2].dup
+      @previous_changes.try(&.dup) || {} of String => Tuple(DirtyValue, DirtyValue)
     end
     
     # Alias for `previous_changes`. Returns the changes from the last save.
@@ -795,8 +847,11 @@ abstract class Grant::Base
     # ```
     def attribute_changed?(name : String | Symbol) : Bool
       refresh_dirty
-      ensure_dirty_tracking_initialized
-      dirty_tracking_hashes[1].has_key?(name.to_s)
+      if pending = @changed_attributes
+        pending.has_key?(name.to_s)
+      else
+        false
+      end
     end
     
     # Returns the original value of an attribute before it was changed.
@@ -813,10 +868,9 @@ abstract class Grant::Base
     # ```
     def attribute_was(name : String | Symbol)
       refresh_dirty
-      ensure_dirty_tracking_initialized
       name_str = name.to_s
-      if dirty_tracking_hashes[1].has_key?(name_str)
-        dirty_tracking_hashes[1][name_str][0]
+      if change = @changed_attributes.try(&.[name_str]?)
+        change[0]
       else
         read_attribute(name_str)
       end
@@ -871,8 +925,7 @@ abstract class Grant::Base
 
     private def current_attribute_change(name : String | Symbol)
       refresh_dirty
-      ensure_dirty_tracking_initialized
-      dirty_tracking_hashes[1][name.to_s]?
+      @changed_attributes.try(&.[name.to_s]?)
     end
     
     # Returns the value of an attribute before the last save.
@@ -891,10 +944,9 @@ abstract class Grant::Base
     # user.attribute_before_last_save("name") # => "John" (still from last save)
     # ```
     def attribute_before_last_save(name : String | Symbol)
-      ensure_dirty_tracking_initialized
       name_str = name.to_s
-      if dirty_tracking_hashes[2].has_key?(name_str)
-        dirty_tracking_hashes[2][name_str][0]
+      if change = @previous_changes.try(&.[name_str]?)
+        change[0]
       else
         read_attribute(name_str)
       end
@@ -953,14 +1005,18 @@ abstract class Grant::Base
     # Clear dirty state after save
     private def clear_dirty_state
       refresh_dirty
-      ensure_dirty_tracking_initialized
-      @previous_changes = dirty_tracking_hashes[1].dup
-      dirty_tracking_hashes[1].clear
+      pending = @changed_attributes
+      if pending && !pending.empty?
+        @previous_changes = pending.dup
+        pending.clear
+      else
+        @previous_changes.try(&.clear)
+      end
       clear_assigned_attributes
       @forced_changes.try &.clear
-      dirty_tracking_hashes[0].clear
+      @original_attributes.try &.clear
       @new_record = false
-      
+
       # Capture current state as new originals
       capture_original_attributes
     end

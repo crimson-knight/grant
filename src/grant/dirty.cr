@@ -141,7 +141,7 @@ module Grant::Dirty
   # Pending changes for one attribute, or nil when it is unchanged.
   def attribute_change_to_be_saved(name : String | Symbol) : Tuple(Grant::Base::DirtyValue, Grant::Base::DirtyValue)?
     refresh_dirty
-    dirty_tracking_hashes[1][name.to_s]?
+    @changed_attributes.try(&.[name.to_s]?)
   end
 
   # The attribute values as the database holds them: the original value for
@@ -149,7 +149,7 @@ module Grant::Dirty
   def attributes_in_database : Hash(String, Grant::Base::DirtyValue)
     refresh_dirty
     result = {} of String => Grant::Base::DirtyValue
-    dirty_tracking_hashes[1].each do |attribute_name, change|
+    @changed_attributes.try &.each do |attribute_name, change|
       result[attribute_name] = change[0]
     end
     result
@@ -159,7 +159,7 @@ module Grant::Dirty
   # current value).
   def attribute_in_database(name : String | Symbol) : Grant::Base::DirtyValue
     refresh_dirty
-    if change = dirty_tracking_hashes[1][name.to_s]?
+    if change = @changed_attributes.try(&.[name.to_s]?)
       change[0]
     else
       read_attribute(name.to_s).as(Grant::Base::DirtyValue)
@@ -170,8 +170,7 @@ module Grant::Dirty
 
   # Returns `{before, after}` for *name* from the last save, or nil.
   def saved_change_to_attribute(name : String | Symbol) : Tuple(Grant::Base::DirtyValue, Grant::Base::DirtyValue)?
-    ensure_dirty_tracking_initialized
-    dirty_tracking_hashes[2][name.to_s]?
+    @previous_changes.try(&.[name.to_s]?)
   end
 
   # True when *name* changed in the last save, optionally only from and/or to
