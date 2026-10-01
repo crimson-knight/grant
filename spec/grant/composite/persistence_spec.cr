@@ -207,6 +207,8 @@ describe "composite primary key persistence" do
       item = CkPersistItem.create!(shop_id: 4_i64, order_id: 5_i64)
       item.key_tuple_values.should eq [4_i64, 5_i64]
       item.to_key.should eq [4_i64, 5_i64]
+      item.id.should eq [4_i64, 5_i64]
+      CkPersistItem.new(shop_id: 1_i64).id.should be_nil
       item.to_param.should eq "4-5"
       CkPersistItem.persistence_key_columns.should eq ["shop_id", "order_id"]
     end

@@ -38,7 +38,7 @@ class CkAsOrder < Grant::Base
   composite_primary_key shop_id, id
 
   has_many :items, class_name: CkAsItem, foreign_key: {:shop_id, :order_id}, inverse_of: :order, dependent: :destroy
-  has_one :receipt, class_name: CkAsReceipt, foreign_key: {:shop_id, :order_id}, dependent: :nullify
+  has_one :receipt, class_name: CkAsReceipt, foreign_key: [:shop_id, :order_id], dependent: :nullify
 end
 
 private def make_order(shop : Int64, id : Int64, title : String = "o#{shop}-#{id}") : CkAsOrder

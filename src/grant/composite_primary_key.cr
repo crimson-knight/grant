@@ -215,6 +215,7 @@ module Grant::CompositePrimaryKey
     self.composite_key = Grant::CompositePrimaryKey::CompositeKey.new(
       [{% for col in columns %}:{{col.id}}, {% end %}] of Symbol
     )
+
   end
 
   # Instance methods
@@ -231,6 +232,12 @@ module Grant::CompositePrimaryKey
     end
 
     values
+  end
+
+  # The key tuple, as ActiveRecord's `id` of a composite primary key (nil while
+  # a part is unset). A model with a column named `id` keeps its own reader.
+  def id : Array(Grant::Columns::Type)?
+    to_key
   end
 
   # The values of the record's key columns (`persistence_key_columns`), in

@@ -121,7 +121,7 @@ module Grant::Associations
   # post.user_id # => some_user.id
   # ```
   macro belongs_to(model, scope = nil, **options)
-    {% if options[:foreign_key].is_a?(TupleLiteral) || options[:query_constraints] %}
+    {% if options[:foreign_key].is_a?(TupleLiteral) || options[:foreign_key].is_a?(ArrayLiteral) || options[:query_constraints] %}
       composite_belongs_to({{model}}, {{scope}}, {% for key, value in options %}{{key.id}}: {{value}}, {% end %})
     {% elsif options[:polymorphic] %}
       {% if options[:foreign_key].is_a?(TypeDeclaration) %}
@@ -338,7 +338,7 @@ module Grant::Associations
   # user.avatar   # => Avatar? (joined through profiles)
   # ```
   macro has_one(model, scope = nil, **options)
-    {% if options[:foreign_key].is_a?(TupleLiteral) || options[:query_constraints] %}
+    {% if options[:foreign_key].is_a?(TupleLiteral) || options[:foreign_key].is_a?(ArrayLiteral) || options[:query_constraints] %}
       composite_has_one({{model}}, {{scope}}, {% for key, value in options %}{{key.id}}: {{value}}, {% end %})
     {% elsif options[:as] %}
       has_one_polymorphic({{model}}, {{options[:as]}}, {% for key, value in options %}{{key.id}}: {{value}}, {% end %})
@@ -648,7 +648,7 @@ module Grant::Associations
   # user.tags.to_a         # joined through taggings
   # ```
   macro has_many(model, scope = nil, **options)
-    {% if options[:foreign_key].is_a?(TupleLiteral) || options[:query_constraints] %}
+    {% if options[:foreign_key].is_a?(TupleLiteral) || options[:foreign_key].is_a?(ArrayLiteral) || options[:query_constraints] %}
       composite_has_many({{model}}, {{scope}}, {% for key, value in options %}{{key.id}}: {{value}}, {% end %})
     {% elsif options[:as] %}
       has_many_polymorphic({{model}}, {{options[:as]}}, {% for key, value in options %}{{key.id}}: {{value}}, {% end %})
