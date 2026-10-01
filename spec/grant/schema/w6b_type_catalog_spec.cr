@@ -31,6 +31,16 @@ class W6bNativeRow < Grant::Base
   column price : String?, column_type: "money"
 end
 
+# An Array(T) type is the model's `array: true`: the Crystal type carries it.
+class W6bArrayRow < Grant::Base
+  connection {{ (env("CURRENT_ADAPTER") || "sqlite").id }}
+  table w6b_array_rows
+
+  column id : Int64, primary: true
+  column tags : Array(String)?
+  column scores : Array(Int32)?
+end
+
 describe "Schema type catalog on #{CURRENT_ADAPTER}" do
   pg = Grant::Schema::Dialect::Pg
   mysql = Grant::Schema::Dialect::Mysql
@@ -160,6 +170,28 @@ describe "Schema type catalog on #{CURRENT_ADAPTER}" do
       quote = CURRENT_ADAPTER == "mysql" ? "`" : "\""
       {"email" => "citext", "attrs" => "hstore", "path" => "ltree", "address" => "inet", "price" => "money"}.each do |name, type|
         sql.should contain "#{quote}#{name}#{quote} #{type}"
+      end
+    end
+  end
+
+  describe "array columns through Array(T)" do
+    before_each { TestConnection.ensure_registered }
+
+    if CURRENT_ADAPTER == "pg"
+      after_all { W6bArrayRow.migrator.drop }
+
+      it "creates native arrays and round trips them" do
+        W6bArrayRow.migrator.drop_and_create
+        W6bArrayRow.migrator.create_sql.should contain %("tags" TEXT[])
+        W6bArrayRow.migrator.create_sql.should contain %("scores" INT[])
+        row = W6bArrayRow.create!(tags: ["a", "b"], scores: [1, 2, 3])
+        found = W6bArrayRow.find!(row.id)
+        found.tags.should eq ["a", "b"]
+        found.scores.should eq [1, 2, 3]
+      end
+    else
+      it "refuses arrays where the database has none" do
+        expect_raises(Grant::Schema::UnsupportedOperation) { W6bArrayRow.migrator.create_sql }
       end
     end
   end

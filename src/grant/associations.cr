@@ -227,6 +227,21 @@ module Grant::Associations
 
     _grant_define_belongs_to_builders({{method_name}}, {{class_name}})
 
+    # `constraint:` makes `Model.migrator.create` declare the foreign key
+    # (see `Grant::Migrator`).
+    {% if options[:constraint] %}
+      {% constraint = options[:constraint] %}
+      def self.__grant_foreign_key_{{method_name.id}}(table : ::String) : ::Grant::Schema::ForeignKeyDefinition
+        ::Grant::Schema::ForeignKeyDefinition.new(table, {{class_name.id}}.table_name, [{{foreign_key_name}}], [{{primary_key_name}}],
+          {% if constraint.is_a?(NamedTupleLiteral) %}
+            name: {{constraint[:name] ? constraint[:name].id.stringify : nil}}, on_delete: {{constraint[:on_delete]}}, on_update: {{constraint[:on_update]}}, deferrable: {{constraint[:deferrable]}}
+          {% else %}
+            name: nil
+          {% end %}
+        )
+      end
+    {% end %}
+
     # True when the foreign key changed since the record was loaded or last
     # saved, or a new, unsaved parent is assigned.
     def {{method_name.id}}_changed? : Bool

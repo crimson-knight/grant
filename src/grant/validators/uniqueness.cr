@@ -21,6 +21,12 @@ module Grant::Validators
   #   query (and optionally the record) and returns the query:
   #   `->(query : Grant::Query::Builder(Article)) { query.where("deleted_at IS NULL") }`
   # - `allow_nil:` / `allow_blank:`, `if:` / `unless:`, `on:`, `strict:`
+  # - `constraint:` — `true` (or `{name:, deferrable:}`) makes
+  #   `Model.migrator.create` declare `UNIQUE (field, scope columns)`, the hard
+  #   guarantee the check-then-insert validation cannot give. A validation that
+  #   does not always run (`if:`, `unless:`, `on:`, `conditions:`,
+  #   `allow_blank:`) cannot ask for it: the build fails, since the constraint
+  #   would reject rows the validation allows.
   #
   # Column names are quoted for the adapter.
   #
@@ -34,7 +40,7 @@ module Grant::Validators
   macro validates_uniqueness_of(*fields, **options)
     {% message = options[:message] %}
     {% for field in fields %}
-      __rule({{field}}, "", :taken, kind: :uniqueness, {{options.double_splat}}) do
+      __rule({{field}}, "", :taken, kind: :uniqueness, {% for key, value in options %}{% unless key.stringify == "constraint" %}{{key.id}}: {{value}}, {% end %}{% end %}) do
         next true if value.nil?
 
         {% if options[:case_sensitive] == false %}
@@ -91,6 +97,30 @@ module Grant::Validators
         record.errors.add({{field.id.stringify}}, :taken, message: Grant::Error.wrap_message({{message}}), value: value)
         false
       end
+
+      {% if options[:constraint] %}
+        {% if options[:conditions] || options[:if] || options[:unless] || options[:on] || options[:allow_blank] %}
+          {% raise "validates_uniqueness_of :#{field.id} in #{@type} cannot declare `constraint:` together with `conditions:`, `if:`, `unless:`, `on:` or `allow_blank:`: a UNIQUE constraint always applies." %}
+        {% end %}
+        {% scopes = options[:scope] ? (options[:scope].is_a?(ArrayLiteral) ? options[:scope] : [options[:scope]]) : [] of ASTNode %}
+        {% constraint = options[:constraint] %}
+        {% suffix = ([field] + scopes).map { |part| part.id.stringify.gsub(/[^A-Za-z0-9_]/, "_") }.join("_") %}
+        def self.__grant_unique_{{suffix.id}}(table : ::String) : ::Grant::Schema::UniqueConstraintDefinition
+          columns = [{{field.id.stringify}}]
+          {% for scope_field in scopes %}
+            %scope_name = {{scope_field.id.stringify}}
+            %reflection = reflect_on_association(%scope_name)
+            columns << (%reflection ? %reflection.foreign_key : %scope_name)
+          {% end %}
+          ::Grant::Schema::UniqueConstraintDefinition.new(table, columns,
+            {% if constraint.is_a?(NamedTupleLiteral) %}
+              name: {{constraint[:name] ? constraint[:name].id.stringify : nil}}, deferrable: {{constraint[:deferrable]}}
+            {% else %}
+              name: nil
+            {% end %}
+          )
+        end
+      {% end %}
     {% end %}
   end
 end

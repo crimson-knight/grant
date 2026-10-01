@@ -33,6 +33,23 @@ require "./adapter/schema"
 # Invoice.migrator.create(if_not_exists: true, comment: "Invoices")
 # ```
 #
+# Constraints are opt-in, as ActiveRecord's are (`t.references foreign_key:
+# true`), and are part of `CREATE TABLE`, so they work on SQLite as well:
+# `belongs_to :author, constraint: true` declares the `FOREIGN KEY` (or
+# `constraint: {on_delete: :cascade, on_update:, deferrable:, name:}`), and
+# `validates_uniqueness_of :slug, scope: :author, constraint: true` declares
+# `UNIQUE (slug, author_id)`. Create tables parents first and drop them children
+# first, as with any foreign key.
+#
+# ```
+# class Post < Grant::Base
+#   column id : Int64, primary: true
+#   column slug : String
+#   belongs_to :author, constraint: {on_delete: :cascade}
+#   validates_uniqueness_of :slug, scope: :author, constraint: true
+# end
+# ```
+#
 # For tables that do not come from a model, see `Grant::Schema::SchemaStatements`.
 #
 # These are DDL statements. A constant default on an existing table is
@@ -175,6 +192,13 @@ module Grant::Migrator
             s.puts ","
             s.puts "PRIMARY KEY (#{ {{primary_keys.map(&.name.stringify)}}.map { |name| Model.adapter.quote(name) }.join(", ") })"
           {% end %}
+        {% end %}
+
+        # constraints declared with `constraint:` on `validates_uniqueness_of`
+        # and `belongs_to`
+        {% for method in Model.class.methods.select { |method| method.name.starts_with?("__grant_unique_") || method.name.starts_with?("__grant_foreign_key_") } %}
+          s.puts ","
+          s.puts "  ", Model.{{method.name.id}}(Model.table_name).constraint_sql(dialect)
         {% end %}
 
         s << ")"
