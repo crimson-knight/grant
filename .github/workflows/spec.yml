@@ -147,6 +147,14 @@ jobs:
           crystal: ${{ matrix.crystal }}
       - name: Install shards
         run: shards install --frozen --skip-postinstall --skip-executables
+      - name: Let the grant user create scratch databases
+        # The schema and task specs create and drop their own databases.
+        run: |
+          mysql -h 127.0.0.1 -P 3306 -u root -ppassword <<'SQL'
+          GRANT ALL PRIVILEGES ON *.* TO 'grant'@'%';
+          FLUSH PRIVILEGES;
+          SELECT VERSION();
+          SQL
       - name: Run tests
         # The whole suite compiled as one program needs about 20 GB of RAM; a
         # runner has 16 GB. spec-groups.sh compiles one group at a time.
@@ -213,7 +221,8 @@ jobs:
         run: |
           mysql -h 127.0.0.1 -P 3306 -u root -ppassword <<'SQL'
           ALTER USER 'grant'@'%' IDENTIFIED WITH caching_sha2_password BY 'password';
-          GRANT ALL PRIVILEGES ON grant_db.* TO 'grant'@'%';
+          -- The schema and task specs create and drop scratch databases.
+          GRANT ALL PRIVILEGES ON *.* TO 'grant'@'%';
           FLUSH PRIVILEGES;
           SELECT user, host, plugin FROM mysql.user WHERE user = 'grant';
           SELECT VERSION();

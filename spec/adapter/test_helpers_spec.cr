@@ -33,7 +33,9 @@ describe "Adapter test helpers" do
     run "DROP TABLE IF EXISTS o01_books"
     run "DROP TABLE IF EXISTS o01_authors"
     run "CREATE TABLE o01_authors (id #{serial_key}, name VARCHAR(50))"
-    run "CREATE TABLE o01_books (id #{serial_key}, author_id BIGINT NOT NULL REFERENCES o01_authors (id), title VARCHAR(50))"
+    # A table-level FOREIGN KEY clause: MySQL 8.0 parses and ignores an
+    # inline column REFERENCES clause.
+    run "CREATE TABLE o01_books (id #{serial_key}, author_id BIGINT NOT NULL, title VARCHAR(50), FOREIGN KEY (author_id) REFERENCES o01_authors (id))"
   end
 
   after_all do
