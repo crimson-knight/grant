@@ -66,7 +66,7 @@ module Grant::Sharding
     end
 
     def all_shards : Array(Symbol)
-      @time_ranges.map(&.shard).uniq
+      @time_ranges.map(&.shard).uniq!
     end
 
     def resolve_for_values(values : Array) : Symbol
@@ -90,7 +90,7 @@ module Grant::Sharding
 
     # Shards whose ranges intersect the inclusive interval `[minimum, maximum]`.
     def shards_for_range(minimum : Time, maximum : Time) : Array(Symbol)
-      @time_ranges.select(&.intersects?(minimum, maximum)).map(&.shard).uniq
+      @time_ranges.select(&.intersects?(minimum, maximum)).map(&.shard).uniq!
     end
 
     # Prunes composite-ID String bounds only. Any other bound (an Int64, or a
@@ -98,9 +98,9 @@ module Grant::Sharding
     # this returns nil and the caller scatter-gathers to every shard rather
     # than returning an empty or partial result.
     def shards_for_range(minimum : String | Int64, maximum : String | Int64) : Array(Symbol)?
-      return nil unless minimum.is_a?(String) && maximum.is_a?(String)
-      return nil unless low = composite_tail(minimum)
-      return nil unless high = composite_tail(maximum)
+      return unless minimum.is_a?(String) && maximum.is_a?(String)
+      return unless low = composite_tail(minimum)
+      return unless high = composite_tail(maximum)
       super(low, high)
     end
 
@@ -108,18 +108,18 @@ module Grant::Sharding
     # composite-ID `String` bounds (prefixed or not). Anything else is not
     # comparable with the ranges and returns nil.
     def shards_for_bounds(minimum : Grant::Columns::Type, maximum : Grant::Columns::Type, upper_exclusive : Bool = false) : Array(Symbol)?
-      return nil if minimum.nil? && maximum.nil?
+      return if minimum.nil? && maximum.nil?
 
       if (minimum.nil? || minimum.is_a?(Time)) && (maximum.nil? || maximum.is_a?(Time))
-        return @time_ranges.select { |range| time_range_reaches?(range, minimum, maximum, upper_exclusive) }.map(&.shard).uniq
+        return @time_ranges.select { |range| time_range_reaches?(range, minimum, maximum, upper_exclusive) }.map(&.shard).uniq!
       end
 
       if (minimum.nil? || minimum.is_a?(String)) && (maximum.nil? || maximum.is_a?(String))
         low = minimum.is_a?(String) ? composite_tail(minimum) : nil
         high = maximum.is_a?(String) ? composite_tail(maximum) : nil
-        return nil if minimum.is_a?(String) && low.nil?
-        return nil if maximum.is_a?(String) && high.nil?
-        return @ranges.select(&.intersects?(low, high)).map(&.shard).uniq
+        return if minimum.is_a?(String) && low.nil?
+        return if maximum.is_a?(String) && high.nil?
+        return @ranges.select(&.intersects?(low, high)).map(&.shard).uniq!
       end
 
       nil

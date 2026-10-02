@@ -252,7 +252,7 @@ describe "query cache" do
   describe Grant::Middleware::QueryCache do
     it "turns the cache on for the request and off afterwards" do
       seen = [] of Bool
-      inner = ->(context : HTTP::Server::Context) do
+      inner = ->(_context : HTTP::Server::Context) do
         seen << Grant::QueryCache.enabled?
         2.times { QueryCacheQ05Note.count }
         seen << (Grant::QueryCache.current?.not_nil!.size == 1)
@@ -269,7 +269,7 @@ describe "query cache" do
 
     it "drops the cache when the request raises" do
       handler = Grant::Middleware::QueryCache.new
-      handler.next = ->(context : HTTP::Server::Context) { raise "request failed" }
+      handler.next = ->(_context : HTTP::Server::Context) { raise "request failed" }
       io = IO::Memory.new
       context = HTTP::Server::Context.new(HTTP::Request.new("GET", "/"), HTTP::Server::Response.new(io))
       expect_raises(Exception, "request failed") { handler.call(context) }

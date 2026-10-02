@@ -6,17 +6,17 @@ require "../spec_helper"
   class TokenForTestModel < Grant::Base
     connection {{ adapter_literal }}
     table token_for_test_models
-    
+
     include Grant::TokenFor
-    
+
     generates_token_for :password_reset, expires_in: 15.minutes do
       password_salt
     end
-    
+
     generates_token_for :email_confirmation, expires_in: 24.hours do
       email
     end
-    
+
     column id : Int64, primary: true
     column name : String?
     column email : String?
@@ -92,7 +92,7 @@ describe Grant::TokenFor do
       )
 
       # Create an expired token
-      definition = TokenForTestModel.token_for_definitions[:password_reset]
+      TokenForTestModel.token_for_definitions[:password_reset]
       unique_data = "salt123"
 
       payload = {
@@ -165,12 +165,12 @@ describe Grant::TokenFor do
     it "uses the secret from Grant::TokenFor.configure, ignoring ENV" do
       ENV.delete("GRANT_SIGNING_SECRET")
       begin
-        Grant::TokenFor.configure { |c| c.secret = "configured" }
+        Grant::TokenFor.configure(&.secret=("configured"))
         model = TokenForTestModel.create(name: "T", email: "a@b.c", password_salt: "s1")
         token = model.generate_token_for(:password_reset)
         TokenForTestModel.find_by_token_for(:password_reset, token).should_not be_nil
 
-        Grant::TokenFor.configure { |c| c.secret = "other" }
+        Grant::TokenFor.configure(&.secret=("other"))
         TokenForTestModel.find_by_token_for(:password_reset, token).should be_nil
       ensure
         Grant::TokenFor.configure { |c| c.secret = nil; c.previous_secrets = [] of String }
@@ -178,20 +178,18 @@ describe Grant::TokenFor do
     end
 
     it "accepts tokens signed with a previous secret after rotation" do
-      begin
-        Grant::TokenFor.configure { |c| c.secret = "old" }
-        model = TokenForTestModel.create(name: "T", email: "a@b.c", password_salt: "s1")
-        token = model.generate_token_for(:password_reset)
+      Grant::TokenFor.configure(&.secret=("old"))
+      model = TokenForTestModel.create(name: "T", email: "a@b.c", password_salt: "s1")
+      token = model.generate_token_for(:password_reset)
 
-        Grant::TokenFor.configure { |c| c.secret = "new"; c.previous_secrets = ["old"] }
-        TokenForTestModel.find_by_token_for(:password_reset, token).should_not be_nil
-        TokenForTestModel.find_by_token_for(:password_reset, model.generate_token_for(:password_reset)).should_not be_nil
+      Grant::TokenFor.configure { |c| c.secret = "new"; c.previous_secrets = ["old"] }
+      TokenForTestModel.find_by_token_for(:password_reset, token).should_not be_nil
+      TokenForTestModel.find_by_token_for(:password_reset, model.generate_token_for(:password_reset)).should_not be_nil
 
-        Grant::TokenFor.configure { |c| c.previous_secrets = [] of String }
-        TokenForTestModel.find_by_token_for(:password_reset, token).should be_nil
-      ensure
-        Grant::TokenFor.configure { |c| c.secret = nil; c.previous_secrets = [] of String }
-      end
+      Grant::TokenFor.configure(&.previous_secrets=([] of String))
+      TokenForTestModel.find_by_token_for(:password_reset, token).should be_nil
+    ensure
+      Grant::TokenFor.configure { |c| c.secret = nil; c.previous_secrets = [] of String }
     end
 
     it "raises MissingSigningSecret instead of swallowing it" do
@@ -230,7 +228,7 @@ if token_for_adapter.is_a?(Grant::Adapter::Base)
         created_at TEXT,
         updated_at TEXT
       )
-    SQL
+      SQL
   when "pg"
     token_for_adapter.open(&.exec(<<-SQL))
       CREATE TABLE token_for_test_models (
@@ -241,7 +239,7 @@ if token_for_adapter.is_a?(Grant::Adapter::Base)
         created_at TIMESTAMP,
         updated_at TIMESTAMP
       )
-    SQL
+      SQL
   when "mysql"
     token_for_adapter.open(&.exec(<<-SQL))
       CREATE TABLE token_for_test_models (
@@ -252,6 +250,6 @@ if token_for_adapter.is_a?(Grant::Adapter::Base)
         created_at TIMESTAMP,
         updated_at TIMESTAMP
       )
-    SQL
+      SQL
   end
 end

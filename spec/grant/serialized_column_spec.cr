@@ -68,14 +68,14 @@ end
   class SerializedUser < Grant::Base
     connection {{ adapter_literal }}
     table serialized_users
-    
+
     column id : Int64, primary: true
     column name : String?
-    
+
     serialized_column :settings, UserSettings, format: :json
     serialized_column :preferences, UserPreferences, format: :jsonb
     serialized_column :config, AppConfig, format: :yaml
-    
+
     timestamps
   end
 {% end %}
@@ -95,7 +95,7 @@ when "sqlite"
       created_at TEXT,
       updated_at TEXT
     )
-  SQL
+    SQL
 when "pg"
   SerializedUser.exec(<<-SQL)
     CREATE TABLE serialized_users (
@@ -107,7 +107,7 @@ when "pg"
       created_at TIMESTAMP,
       updated_at TIMESTAMP
     )
-  SQL
+    SQL
 when "mysql"
   SerializedUser.exec(<<-SQL)
     CREATE TABLE serialized_users (
@@ -119,7 +119,7 @@ when "mysql"
       created_at TIMESTAMP,
       updated_at TIMESTAMP
     )
-  SQL
+    SQL
 end
 
 describe Grant::SerializedColumn do
@@ -135,7 +135,7 @@ describe Grant::SerializedColumn do
       reloaded = SerializedUser.find!(user.id)
       reloaded.settings.should_not be_nil
       reloaded.settings.not_nil!.theme.should eq("dark")
-      reloaded.settings.not_nil!.notifications_enabled.should eq(false)
+      reloaded.settings.not_nil!.notifications_enabled.should be_false
       reloaded.settings.not_nil!.items_per_page.should eq(50)
     end
 
@@ -186,7 +186,7 @@ describe Grant::SerializedColumn do
 
       reloaded = SerializedUser.find!(user.id)
       reloaded.config.should_not be_nil
-      reloaded.config.not_nil!.debug_mode.should eq(true)
+      reloaded.config.not_nil!.debug_mode.should be_true
       reloaded.config.not_nil!.log_level.should eq("debug")
       reloaded.config.not_nil!.api_endpoints["users"].should eq("https://api.example.com/users")
     end

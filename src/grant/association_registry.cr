@@ -2,7 +2,7 @@ module Grant
   # Registry of association metadata for each model class. Writes are
   # serialized and copy-on-write; reads take no lock.
   class AssociationRegistry
-    alias AssociationValue = Grant::Base | Array(Grant::Base) | Nil
+    alias AssociationValue = (Grant::Base | Array(Grant::Base))?
     alias AssociationWriter = Proc(Grant::Base, AssociationValue, Bool)
     alias AssociationMeta = NamedTuple(
       type: Symbol,

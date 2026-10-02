@@ -95,8 +95,8 @@ module Grant::Schema
       @steps << @source.step_rename_column(@table, old.to_s, new.to_s)
     end
 
-    def index(columns : ColumnNames, name : ::String | Symbol | Nil = nil, unique : Bool = false, where : ::String? = nil,
-              using : ::String | Symbol | Nil = nil, order = nil,
+    def index(columns : ColumnNames, name : ::String | Symbol? = nil, unique : Bool = false, where : ::String? = nil,
+              using : ::String | Symbol? = nil, order = nil,
               opclass = nil,
               include covering : ColumnNames? = nil, length = nil,
               algorithm : Symbol? = nil, if_not_exists : Bool = false) : Nil
@@ -104,7 +104,7 @@ module Grant::Schema
       @steps << @source.step_statements(definition.statements(@source.dialect))
     end
 
-    def remove_index(columns : ColumnNames? = nil, name : ::String | Symbol | Nil = nil, if_exists : Bool = false) : Nil
+    def remove_index(columns : ColumnNames? = nil, name : ::String | Symbol? = nil, if_exists : Bool = false) : Nil
       @steps << @source.step_statements(@source.remove_index_statements(@table, columns, name, if_exists))
     end
 
@@ -113,29 +113,29 @@ module Grant::Schema
     end
 
     def foreign_key(to_table : TableName, column : ColumnNames? = nil, primary_key : ColumnNames? = nil,
-                    name : ::String | Symbol | Nil = nil, on_delete : Symbol? = nil, on_update : Symbol? = nil,
-                    deferrable : Bool | Symbol | Nil = nil, validate : Bool = true) : Nil
+                    name : ::String | Symbol? = nil, on_delete : Symbol? = nil, on_update : Symbol? = nil,
+                    deferrable : Bool | Symbol? = nil, validate : Bool = true) : Nil
       definition = ForeignKeyDefinition.build(@table, to_table, column, primary_key, name, on_delete, on_update, deferrable, validate)
       @steps << @source.step_add_foreign_key(definition)
     end
 
-    def remove_foreign_key(to_table : TableName? = nil, column : ColumnNames? = nil, name : ::String | Symbol | Nil = nil) : Nil
+    def remove_foreign_key(to_table : TableName? = nil, column : ColumnNames? = nil, name : ::String | Symbol? = nil) : Nil
       @steps << @source.step_remove_foreign_key(@table, to_table, column, name, false)
     end
 
-    def check_constraint(expression : ::String, name : ::String | Symbol | Nil = nil, validate : Bool = true) : Nil
+    def check_constraint(expression : ::String, name : ::String | Symbol? = nil, validate : Bool = true) : Nil
       @steps << @source.step_add_check(CheckConstraintDefinition.new(@table, expression, name.try(&.to_s), validate))
     end
 
-    def remove_check_constraint(expression : ::String? = nil, name : ::String | Symbol | Nil = nil) : Nil
+    def remove_check_constraint(expression : ::String? = nil, name : ::String | Symbol? = nil) : Nil
       @steps << @source.step_remove_check(@table, expression, name.try(&.to_s))
     end
 
-    def unique_constraint(columns : ColumnNames, name : ::String | Symbol | Nil = nil, deferrable : Bool | Symbol | Nil = nil) : Nil
+    def unique_constraint(columns : ColumnNames, name : ::String | Symbol? = nil, deferrable : Bool | Symbol? = nil) : Nil
       @steps << @source.step_add_unique(UniqueConstraintDefinition.new(@table, IndexDefinition.to_names(columns), name.try(&.to_s), deferrable))
     end
 
-    def remove_unique_constraint(columns : ColumnNames? = nil, name : ::String | Symbol | Nil = nil) : Nil
+    def remove_unique_constraint(columns : ColumnNames? = nil, name : ::String | Symbol? = nil) : Nil
       @steps << @source.step_remove_unique(@table, columns, name.try(&.to_s))
     end
 
@@ -239,8 +239,8 @@ module Grant::Schema
     #   index cannot be built inside a transaction: see
     #   `AdapterStatements#transaction`.
     # * `if_not_exists` (PostgreSQL, SQLite).
-    def add_index_statements(table : TableName, columns : ColumnNames, name : ::String | Symbol | Nil = nil, unique : Bool = false,
-                             where : ::String? = nil, using : ::String | Symbol | Nil = nil,
+    def add_index_statements(table : TableName, columns : ColumnNames, name : ::String | Symbol? = nil, unique : Bool = false,
+                             where : ::String? = nil, using : ::String | Symbol? = nil,
                              order = nil,
                              opclass = nil,
                              include covering : ColumnNames? = nil, length = nil,
@@ -251,7 +251,7 @@ module Grant::Schema
 
     # Returns the SQL that drops an index by *name*, or the default name of
     # *columns*.
-    def remove_index_statements(table : TableName, columns : ColumnNames? = nil, name : ::String | Symbol | Nil = nil,
+    def remove_index_statements(table : TableName, columns : ColumnNames? = nil, name : ::String | Symbol? = nil,
                                 if_exists : Bool = false, algorithm : Symbol? = nil) : Array(::String)
       index_name = name.try(&.to_s)
       if index_name.nil?
@@ -305,9 +305,9 @@ module Grant::Schema
     #   not scanned; run `validate_foreign_key` afterwards.
     # * SQLite rebuilds the table.
     def add_foreign_key_statements(from_table : TableName, to_table : TableName, column : ColumnNames? = nil,
-                                   primary_key : ColumnNames? = nil, name : ::String | Symbol | Nil = nil,
+                                   primary_key : ColumnNames? = nil, name : ::String | Symbol? = nil,
                                    on_delete : Symbol? = nil, on_update : Symbol? = nil,
-                                   deferrable : Bool | Symbol | Nil = nil, validate : Bool = true,
+                                   deferrable : Bool | Symbol? = nil, validate : Bool = true,
                                    if_not_exists : Bool = false) : Array(::String)
       definition = ForeignKeyDefinition.build(from_table, to_table, column, primary_key, name, on_delete, on_update, deferrable, validate)
       if if_not_exists && (known = lookup_foreign_keys(definition.table))
@@ -319,7 +319,7 @@ module Grant::Schema
     # Returns the SQL that validates a foreign key added with `validate: false`
     # (PostgreSQL; nothing elsewhere).
     def validate_foreign_key_statements(from_table : TableName, to_table : TableName? = nil, column : ColumnNames? = nil,
-                                        name : ::String | Symbol | Nil = nil) : Array(::String)
+                                        name : ::String | Symbol? = nil) : Array(::String)
       return [] of ::String unless dialect.pg?
       key_name = name.try(&.to_s) || resolve_foreign_key_name(from_table.to_s, to_table, column)
       ["ALTER TABLE #{dialect.quote(from_table.to_s)} VALIDATE CONSTRAINT #{dialect.quote(key_name)}"]
@@ -328,7 +328,7 @@ module Grant::Schema
     # Returns the SQL that drops a foreign key, found by *name*, or by
     # *column* / *to_table*.
     def remove_foreign_key_statements(from_table : TableName, to_table : TableName? = nil, column : ColumnNames? = nil,
-                                      name : ::String | Symbol | Nil = nil, if_exists : Bool = false) : Array(::String)
+                                      name : ::String | Symbol? = nil, if_exists : Bool = false) : Array(::String)
       if if_exists && (known = lookup_foreign_keys(from_table.to_s))
         wanted = column ? IndexDefinition.to_names(column) : (to_table ? [Naming.foreign_key_column(to_table)] : nil)
         found = known.any? do |key|
@@ -344,20 +344,20 @@ module Grant::Schema
     # Returns the SQL that adds `CHECK (expression)` (MySQL 8.0.16+). The
     # default name is `chk_<table>_<digest of the expression>`. `validate:
     # false` (PostgreSQL) adds it `NOT VALID`; see `validate_check_constraint`.
-    def add_check_constraint_statements(table : TableName, expression : ::String, name : ::String | Symbol | Nil = nil,
+    def add_check_constraint_statements(table : TableName, expression : ::String, name : ::String | Symbol? = nil,
                                         validate : Bool = true) : Array(::String)
       definition = CheckConstraintDefinition.new(table.to_s, expression, name.try(&.to_s), validate)
       render_steps(table.to_s, [step_add_check(definition)], false)
     end
 
     def remove_check_constraint_statements(table : TableName, expression : ::String? = nil,
-                                           name : ::String | Symbol | Nil = nil) : Array(::String)
+                                           name : ::String | Symbol? = nil) : Array(::String)
       render_steps(table.to_s, [step_remove_check(table.to_s, expression, name.try(&.to_s))], false)
     end
 
     # PostgreSQL only; nothing elsewhere.
     def validate_check_constraint_statements(table : TableName, expression : ::String? = nil,
-                                             name : ::String | Symbol | Nil = nil) : Array(::String)
+                                             name : ::String | Symbol? = nil) : Array(::String)
       return [] of ::String unless dialect.pg?
       key_name = check_constraint_name(table.to_s, expression, name.try(&.to_s))
       ["ALTER TABLE #{dialect.quote(table.to_s)} VALIDATE CONSTRAINT #{dialect.quote(key_name)}"]
@@ -366,27 +366,27 @@ module Grant::Schema
     # Returns the SQL that adds `UNIQUE (columns)` as a named constraint.
     # `using_index` (PostgreSQL) promotes an index built `concurrently`
     # without a second scan; `deferrable` is PostgreSQL only.
-    def add_unique_constraint_statements(table : TableName, columns : ColumnNames, name : ::String | Symbol | Nil = nil,
-                                         deferrable : Bool | Symbol | Nil = nil, using_index : ::String | Symbol | Nil = nil) : Array(::String)
+    def add_unique_constraint_statements(table : TableName, columns : ColumnNames, name : ::String | Symbol? = nil,
+                                         deferrable : Bool | Symbol? = nil, using_index : ::String | Symbol? = nil) : Array(::String)
       definition = UniqueConstraintDefinition.new(table.to_s, IndexDefinition.to_names(columns), name.try(&.to_s), deferrable, using_index.try(&.to_s))
       render_steps(table.to_s, [step_add_unique(definition)], false)
     end
 
     def remove_unique_constraint_statements(table : TableName, columns : ColumnNames? = nil,
-                                            name : ::String | Symbol | Nil = nil) : Array(::String)
+                                            name : ::String | Symbol? = nil) : Array(::String)
       render_steps(table.to_s, [step_remove_unique(table.to_s, columns, name.try(&.to_s))], false)
     end
 
     # Returns the SQL that adds an exclusion constraint (PostgreSQL only).
-    def add_exclusion_constraint_statements(table : TableName, expression : ::String, using : ::String | Symbol | Nil = nil,
-                                            where : ::String? = nil, name : ::String | Symbol | Nil = nil,
-                                            deferrable : Bool | Symbol | Nil = nil) : Array(::String)
+    def add_exclusion_constraint_statements(table : TableName, expression : ::String, using : ::String | Symbol? = nil,
+                                            where : ::String? = nil, name : ::String | Symbol? = nil,
+                                            deferrable : Bool | Symbol? = nil) : Array(::String)
       definition = ExclusionConstraintDefinition.new(table.to_s, expression, using.try(&.to_s), where, name.try(&.to_s), deferrable)
       ["ALTER TABLE #{dialect.quote(table.to_s)} ADD #{definition.constraint_sql(dialect)}"]
     end
 
     def remove_exclusion_constraint_statements(table : TableName, expression : ::String? = nil,
-                                               name : ::String | Symbol | Nil = nil) : Array(::String)
+                                               name : ::String | Symbol? = nil) : Array(::String)
       raise UnsupportedOperation.new("Exclusion constraints are only supported on PostgreSQL") unless dialect.pg?
       key_name = name.try(&.to_s) || (expression ? Naming.constraint_name("excl", table, Naming.digest(expression)) : raise InvalidDefinition.new("remove_exclusion_constraint needs expression: or name:"))
       ["ALTER TABLE #{dialect.quote(table.to_s)} DROP CONSTRAINT #{dialect.quote(key_name)}"]
@@ -409,7 +409,7 @@ module Grant::Schema
     end
 
     # Returns the SQL that drops *name*. SQLite rebuilds the table.
-    def remove_column_statements(table : TableName, name : ::String | Symbol, type : ColumnKind | Symbol | ::String | Nil = nil,
+    def remove_column_statements(table : TableName, name : ::String | Symbol, type : ColumnKind | Symbol | ::String? = nil,
                                  if_exists : Bool = false) : Array(::String)
       render_steps(table.to_s, [step_remove_column(table.to_s, name.to_s, if_exists)], false)
     end
@@ -578,8 +578,8 @@ module Grant::Schema
     # Adds a value to an enum. Before PostgreSQL 12 `ALTER TYPE ... ADD VALUE`
     # cannot run in a transaction, and a new value cannot be used until the
     # transaction that added it commits.
-    def add_enum_value_statements(name : ::String | Symbol, value : ::String | Symbol, before : ::String | Symbol | Nil = nil,
-                                  after : ::String | Symbol | Nil = nil, if_not_exists : Bool = false) : Array(::String)
+    def add_enum_value_statements(name : ::String | Symbol, value : ::String | Symbol, before : ::String | Symbol? = nil,
+                                  after : ::String | Symbol? = nil, if_not_exists : Bool = false) : Array(::String)
       require_pg!("add_enum_value")
       raise InvalidDefinition.new("Give before: or after:, not both") if before && after
       sql = "ALTER TYPE #{dialect.quote(name.to_s)} ADD VALUE #{if_not_exists ? "IF NOT EXISTS " : ""}#{dialect.quote_literal(value.to_s)}"
@@ -618,13 +618,13 @@ module Grant::Schema
 
     # ---- executing forms -------------------------------------------------
 
-    {% for name in %w(add_index remove_index rename_index add_foreign_key validate_foreign_key remove_foreign_key
+    {% for name in %w[add_index remove_index rename_index add_foreign_key validate_foreign_key remove_foreign_key
                      add_check_constraint remove_check_constraint validate_check_constraint add_unique_constraint
                      remove_unique_constraint add_exclusion_constraint remove_exclusion_constraint add_column
                      remove_column remove_columns change_column change_column_null rename_column rename_table
                      add_reference remove_reference change_table_comment change_column_comment create_enum
                      drop_enum rename_enum add_enum_value rename_enum_value enable_extension disable_extension
-                     drop_join_table) %}
+                     drop_join_table] %}
       # Runs the statements of `#{{name.id}}_statements`.
       def {{name.id}}(*args, **options) : Nil
         execute_batch({{name.id}}_statements(*args, **options))
@@ -843,7 +843,7 @@ module Grant::Schema
     end
 
     # :nodoc:
-    def step_remove_foreign_key(table : ::String, to_table : TableName?, column : ColumnNames?, name : ::String | Symbol | Nil, if_exists : Bool) : AlterStep
+    def step_remove_foreign_key(table : ::String, to_table : TableName?, column : ColumnNames?, name : ::String | Symbol?, if_exists : Bool) : AlterStep
       dialect = self.dialect
       step = AlterStep.new
       columns = column ? IndexDefinition.to_names(column) : (to_table ? [Naming.foreign_key_column(to_table)] : nil)
@@ -957,7 +957,7 @@ module Grant::Schema
     def steps_remove_reference(table : ::String, name : ::String, polymorphic : Bool, foreign_key : Bool) : Array(AlterStep)
       steps = [] of AlterStep
       column = "#{name}_id"
-      if foreign_key && self.dialect.mysql?
+      if foreign_key && dialect.mysql?
         steps << step_remove_foreign_key(table, nil, column, nil, false)
       end
       steps << step_remove_column(table, column, false)

@@ -72,7 +72,7 @@ describe Grant::Logs do
         widget.save!
         widget.update!(label: "b")
         widget.destroy
-      end.select(&.includes?("↳")).map { |message| message.split(" (").first }
+      end.select(&.includes?("↳")).map(&.split(" (").first)
 
       labels.should eq(["VlWidget Create", "VlWidget Update", "VlWidget Destroy"])
     end

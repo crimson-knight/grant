@@ -25,7 +25,7 @@ describe "Grant::ConnectionManagement fiber-local connection_context" do
     role_seen_by_a = nil.as(Symbol?)
     role_seen_by_b = nil.as(Symbol?)
 
-    fiber_a = spawn do
+    spawn do
       FiberCMTestModel.connected_to(role: :primary) do
         # Signal fiber_b to enter its block now
         fiber_a_entered.send(nil)
@@ -37,7 +37,7 @@ describe "Grant::ConnectionManagement fiber-local connection_context" do
       fiber_a_finished.send(nil)
     end
 
-    fiber_b = spawn do
+    spawn do
       # Wait for fiber_a to have set its context before proceeding
       fiber_a_entered.receive
       FiberCMTestModel.connected_to(role: :reading) do

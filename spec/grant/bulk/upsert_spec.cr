@@ -81,7 +81,7 @@ describe "upsert_all" do
     BulkItem.insert_all([BulkSupport.item("a")])
     records = BulkItem.upsert_all([BulkSupport.item("a", "New"), BulkSupport.item("b")], unique_by: [:sku], returning: [:id, :sku])
 
-    records.map(&.sku).sort.should eq(["a", "b"])
+    records.map(&.sku).sort!.should eq(["a", "b"])
     records.all?(&.id).should be_true
   end
 

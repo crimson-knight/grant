@@ -20,7 +20,7 @@ describe "add_timestamps without a default" do
 
   before_each do
     statements.drop_table(:w6b_stamped, if_exists: true)
-    statements.create_table(:w6b_stamped) { |t| t.string :name }
+    statements.create_table(:w6b_stamped, &.string(:name))
   end
 
   after_all do

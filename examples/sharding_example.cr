@@ -141,9 +141,9 @@ User.on_all_shards do
 end
 
 # 7. Shard-aware batch operations
-User.find_each(batch_size: 1000) do |user|
+User.find_each(batch_size: 1000) do |batch_user|
   # Process users in batches, automatically handling shard iteration
-  puts "Processing user #{user.id} on shard #{user.current_shard}"
+  puts "Processing user #{batch_user.id} on shard #{batch_user.current_shard}"
 end
 
 # 8. Transaction within a shard

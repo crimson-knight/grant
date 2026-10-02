@@ -95,7 +95,7 @@ def setup_behavior_sti_tables
           active BOOLEAN,
           god_mode BOOLEAN
         )
-      SQL
+        SQL
     elsif CURRENT_ADAPTER == "mysql"
       db.exec <<-SQL
         CREATE TABLE sti_behavior_personas (
@@ -108,7 +108,7 @@ def setup_behavior_sti_tables
           active BOOLEAN,
           god_mode BOOLEAN
         )
-      SQL
+        SQL
     else
       db.exec <<-SQL
         CREATE TABLE sti_behavior_personas (
@@ -121,7 +121,7 @@ def setup_behavior_sti_tables
           active BOOLEAN,
           god_mode BOOLEAN
         )
-      SQL
+        SQL
     end
   end
 
@@ -136,7 +136,7 @@ def setup_behavior_sti_tables
           counterparty TEXT,
           summary TEXT
         )
-      SQL
+        SQL
     elsif CURRENT_ADAPTER == "mysql"
       db.exec <<-SQL
         CREATE TABLE sti_behavior_documents (
@@ -146,7 +146,7 @@ def setup_behavior_sti_tables
           counterparty VARCHAR(255),
           summary VARCHAR(255)
         )
-      SQL
+        SQL
     else
       db.exec <<-SQL
         CREATE TABLE sti_behavior_documents (
@@ -156,12 +156,12 @@ def setup_behavior_sti_tables
           counterparty VARCHAR(255),
           summary VARCHAR(255)
         )
-      SQL
+        SQL
     end
   end
 end
 
 def clear_behavior_sti_tables
-  BehaviorPersona.adapter.open { |db| db.exec "DELETE FROM sti_behavior_personas" }
-  BehaviorDocument.adapter.open { |db| db.exec "DELETE FROM sti_behavior_documents" }
+  BehaviorPersona.adapter.open(&.exec("DELETE FROM sti_behavior_personas"))
+  BehaviorDocument.adapter.open(&.exec("DELETE FROM sti_behavior_documents"))
 end

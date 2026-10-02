@@ -19,7 +19,7 @@ module Grant::Aggregations
 
     # Generic aggregate, like ActiveRecord's `calculate`. See
     # `Grant::Query::Builder#calculate`.
-    def calculate(operation : Grant::Calculation | Symbol, column : Symbol | String | Nil = nil)
+    def calculate(operation : Grant::Calculation | Symbol, column : Symbol | String? = nil)
       current_scope.calculate(operation, column)
     end
 

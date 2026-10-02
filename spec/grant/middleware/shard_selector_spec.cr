@@ -48,7 +48,7 @@ describe Grant::Middleware::ShardSelector do
   it "restores shard and lock after the request, even when it raises" do
     selector = Grant::Middleware::ShardSelector.new(resolver)
     expect_raises(Exception, "boom") do
-      c03_run_shard(selector, "tenant_a.example.com") { raise "boom"; 1 }
+      c03_run_shard(selector, "tenant_a.example.com") { 1.tap { raise "boom" } }
     end
     Grant::Base.current_shard.should be_nil
     Grant::Base.shard_swapping_prohibited?.should be_false

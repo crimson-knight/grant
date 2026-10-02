@@ -91,7 +91,7 @@ describe "association parity" do
       p2 = ParityPost.new(title: "B", parity_author_id: author.id)
       p2.save
 
-      author.parity_post_ids.map(&.as(Int64)).sort.should eq [p1.id, p2.id].compact.sort
+      author.parity_post_ids.map(&.as(Int64)).sort!.should eq [p1.id, p2.id].compact.sort!
     end
 
     it "assigns the collection by ids (points listed records, nullifies the rest)" do
@@ -107,7 +107,7 @@ describe "association parity" do
 
       author.parity_post_ids = [p1.id, orphan.id]
 
-      author.parity_post_ids.map(&.as(Int64)).sort.should eq [p1.id, orphan.id].compact.sort
+      author.parity_post_ids.map(&.as(Int64)).sort!.should eq [p1.id, orphan.id].compact.sort!
 
       # p2 was dropped from the set, so its FK is nullified
       ParityPost.find!(p2.id).parity_author_id.should be_nil

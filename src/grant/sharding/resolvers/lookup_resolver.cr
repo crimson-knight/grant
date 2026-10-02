@@ -46,7 +46,7 @@ module Grant::Sharding
     # Every distinct shard, each listed once (the default shard is appended
     # only when the table does not already route to it).
     def all_shards : Array(Symbol)
-      shards = @lookup_table.values.uniq
+      shards = @lookup_table.values.uniq!
       if default = @default_shard
         shards << default unless shards.includes?(default)
       end

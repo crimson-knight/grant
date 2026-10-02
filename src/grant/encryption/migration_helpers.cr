@@ -150,7 +150,7 @@ module Grant::Encryption
               previous_deterministic,
               previous_salt
             )
-          rescue ex : Cipher::DecryptionError
+          rescue Cipher::DecryptionError
             Grant::Encryption.decrypt_with_keys(
               stored,
               model_class.name,
@@ -192,34 +192,34 @@ module Grant::Encryption
 
       prepare = if encrypted_attr.transparent?
                   <<-PREPARE
-                  # Store ciphertext as text in the existing column
-                  alter_table :#{table_name} do
-                    change_column :#{column_name}, :text
-                    #{encrypted_attr.deterministic ? "add_index :#{column_name}" : "# not deterministic: not queryable, so not indexed"}
-                  end
-                  PREPARE
+                    # Store ciphertext as text in the existing column
+                    alter_table :#{table_name} do
+                      change_column :#{column_name}, :text
+                      #{encrypted_attr.deterministic ? "add_index :#{column_name}" : "# not deterministic: not queryable, so not indexed"}
+                    end
+                    PREPARE
                 else
                   <<-PREPARE
-                  # Add encrypted column for #{attribute}
-                  alter_table :#{table_name} do
-                    add_column :#{column_name}, :text
-                    #{encrypted_attr.deterministic ? "add_index :#{column_name}" : "# not deterministic: not queryable, so not indexed"}
-                  end
-                  PREPARE
+                    # Add encrypted column for #{attribute}
+                    alter_table :#{table_name} do
+                      add_column :#{column_name}, :text
+                      #{encrypted_attr.deterministic ? "add_index :#{column_name}" : "# not deterministic: not queryable, so not indexed"}
+                    end
+                    PREPARE
                 end
 
       <<-MIGRATION
-      #{prepare}
+        #{prepare}
 
-      # Encrypt existing data
-      Grant::Encryption::MigrationHelpers.encrypt_column(
-        #{model_class.name},
-        :#{attribute}
-      )
+        # Encrypt existing data
+        Grant::Encryption::MigrationHelpers.encrypt_column(
+          #{model_class.name},
+          :#{attribute}
+        )
 
-      # Optional: Remove original column after verification
-      #{encrypted_attr.transparent? ? "# (nothing to drop: the value was encrypted in place)" : "# alter_table :#{table_name} do\n      #   drop_column :#{attribute}\n      # end"}
-      MIGRATION
+        # Optional: Remove original column after verification
+        #{encrypted_attr.transparent? ? "# (nothing to drop: the value was encrypted in place)" : "# alter_table :#{table_name} do\n      #   drop_column :#{attribute}\n      # end"}
+        MIGRATION
     end
 
     private def self.encrypted_attribute_for(model_class : Grant::Base.class, attribute_name : String) : EncryptedAttribute

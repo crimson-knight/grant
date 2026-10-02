@@ -69,10 +69,10 @@ describe "Grant::Associations Integration Tests" do
       reaction1 = Reaction.create!(emoji: "👍", reactable: article)
       CachedArticle.find!(article.id.not_nil!).reactions_count.should eq(1)
 
-      reaction2 = Reaction.create!(emoji: "❤️", reactable: article)
+      Reaction.create!(emoji: "❤️", reactable: article)
       CachedArticle.find!(article.id.not_nil!).reactions_count.should eq(2)
 
-      reaction3 = Reaction.create!(emoji: "🎉", reactable: video)
+      Reaction.create!(emoji: "🎉", reactable: video)
       CachedVideo.find!(video.id.not_nil!).reactions_count.should eq(1)
 
       reaction1.destroy!
@@ -85,7 +85,7 @@ describe "Grant::Associations Integration Tests" do
       project.updated_at = original_updated
       project.save!(skip_timestamps: true)
 
-      task = ProjectTask.create!(title: "Task", touchable: project)
+      ProjectTask.create!(title: "Task", touchable: project)
 
       updated_project = TouchableProject.find!(project.id.not_nil!)
       updated_project.updated_at.not_nil!.should be > original_updated
@@ -97,7 +97,7 @@ describe "Grant::Associations Integration Tests" do
       forum = Forum.create!(name: "Tech Forum", posts_count: 0)
 
       # Create post with forum
-      post1 = ForumPost.create!(title: "Post 1", forum: forum)
+      ForumPost.create!(title: "Post 1", forum: forum)
 
       updated_forum = Forum.find!(forum.id.not_nil!)
       updated_forum.posts_count.should eq(1)

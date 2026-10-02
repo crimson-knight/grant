@@ -55,7 +55,7 @@ module Grant::EagerLoading
     # `Grant::Base+`. See issues #39/#41.
     @[JSON::Field(ignore: true)]
     @[YAML::Field(ignore: true)]
-    @loaded_associations : Hash(String, Array(Grant::Base) | Grant::Base | Nil)?
+    @loaded_associations : Hash(String, (Array(Grant::Base) | Grant::Base)?)?
 
     @[JSON::Field(ignore: true)]
     @[YAML::Field(ignore: true)]
@@ -65,8 +65,8 @@ module Grant::EagerLoading
     @[YAML::Field(ignore: true)]
     @strict_loading_mode : Grant::StrictLoadingMode?
 
-    protected def loaded_associations : Hash(String, Array(Grant::Base) | Grant::Base | Nil)
-      @loaded_associations ||= {} of String => Array(Grant::Base) | Grant::Base | Nil
+    protected def loaded_associations : Hash(String, (Array(Grant::Base) | Grant::Base)?)
+      @loaded_associations ||= {} of String => (Array(Grant::Base) | Grant::Base)?
     end
 
     # Check if an association has been loaded
@@ -397,11 +397,11 @@ module Grant::EagerLoading
     # User.strict_loading_by_default = true
     # ```
     def strict_loading_by_default=(value : Bool)
-      Grant::EagerLoading.store_strict_loading_default(self.name, value)
+      Grant::EagerLoading.store_strict_loading_default(name, value)
     end
 
     def strict_loading_by_default : Bool
-      Grant::EagerLoading.strict_loading_default_for(self.name)
+      Grant::EagerLoading.strict_loading_default_for(name)
     end
 
     # The class name stored in the type column of a polymorphic association that
@@ -409,7 +409,7 @@ module Grant::EagerLoading
     # root class name, matching ActiveRecord's `polymorphic_name`. Override it to
     # store another string.
     def polymorphic_name : String
-      self.name
+      name
     end
 
     def includes(*associations, **nested_associations)

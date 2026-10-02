@@ -56,7 +56,7 @@ describe Grant::PoolReaper do
 
     adapter.pool_stat.connections.should eq 2
     adapter.pool_stat.idle.should eq 2
-    adapter.open { |connection| connection.scalar("SELECT 1") }.should eq 1
+    adapter.open(&.scalar("SELECT 1")).should eq 1
   end
 
   it "does not touch connections that are checked out" do
@@ -79,7 +79,7 @@ describe Grant::PoolReaper do
     sleep 300.milliseconds
     reaper.sweep.should eq 3
     adapter.pool_stat.connections.should eq 0
-    adapter.open { |connection| connection.scalar("SELECT 1") }.should eq 1
+    adapter.open(&.scalar("SELECT 1")).should eq 1
   end
 
   it "closes a connection that passed max_age while it was checked out when it is returned" do

@@ -56,7 +56,7 @@ end
 
 describe "sharding integration on #{CURRENT_ADAPTER}" do
   before_all do
-    ddl = %w(w6_int_hash_accounts w6_int_lookup_accounts w6_int_range_accounts).map do |table|
+    ddl = %w[w6_int_hash_accounts w6_int_lookup_accounts w6_int_range_accounts].map do |table|
       "CREATE TABLE #{table} (#{W6C04.id_column}, account_id BIGINT NOT NULL, label TEXT)"
     end
     W6_INT_SHARDS.each do |shard|
@@ -146,8 +146,8 @@ describe "sharding integration on #{CURRENT_ADAPTER}" do
       Grant::ShardManager.with_shard(:shard_0) do
         expect_raises(Exception, "abort") do
           W6IntHashAccount.transaction do
-            W6IntHashAccount.new(account_id: 1000_i64, label: "tx a").tap { |record| record.current_shard = :shard_0 }.save!
-            W6IntHashAccount.new(account_id: 1001_i64, label: "tx b").tap { |record| record.current_shard = :shard_0 }.save!
+            W6IntHashAccount.new(account_id: 1000_i64, label: "tx a").tap(&.current_shard=(:shard_0)).save!
+            W6IntHashAccount.new(account_id: 1001_i64, label: "tx b").tap(&.current_shard=(:shard_0)).save!
             raise "abort"
           end
         end
@@ -156,7 +156,7 @@ describe "sharding integration on #{CURRENT_ADAPTER}" do
 
       Grant::ShardManager.with_shard(:shard_0) do
         W6IntHashAccount.transaction do
-          W6IntHashAccount.new(account_id: 1000_i64, label: "tx kept").tap { |record| record.current_shard = :shard_0 }.save!
+          W6IntHashAccount.new(account_id: 1000_i64, label: "tx kept").tap(&.current_shard=(:shard_0)).save!
         end
       end
       W6C04.strings(w6_int_db(:shard_0), "SELECT label FROM w6_int_hash_accounts WHERE label LIKE 'tx %'").should eq ["tx kept"]

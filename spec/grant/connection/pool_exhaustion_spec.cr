@@ -25,14 +25,14 @@ describe "connection pool exhaustion" do
 
     started = Time.instant
     error = expect_raises(Grant::ConnectionTimeoutError) do
-      adapter.open { |connection| connection.scalar("SELECT 1") }
+      adapter.open(&.scalar("SELECT 1"))
     end
     (Time.instant - started).should be >= 150.milliseconds
     error.cause.should be_a(DB::PoolTimeout)
 
     release_holder.send(nil)
     finished.receive
-    adapter.open { |connection| connection.scalar("SELECT 1") }.should eq 1
+    adapter.open(&.scalar("SELECT 1")).should eq 1
   end
 
   it "counts the blocked fiber as waiting while it waits" do
@@ -49,7 +49,7 @@ describe "connection pool exhaustion" do
     end
     holder_ready.receive
     spawn do
-      adapter.open { |connection| connection.scalar("SELECT 1") }
+      adapter.open(&.scalar("SELECT 1"))
       waiter_done.send(nil)
     end
     Fiber.yield

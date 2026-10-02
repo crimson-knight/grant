@@ -94,7 +94,7 @@ describe "Statement counts of the persistence paths" do
       person = W6PerfPerson.new(name: "built")
       statements = w6_perf_statements { person.save.should be_true }
 
-      statements.map { |statement| statement.split(' ').first }.should eq(["BEGIN", "INSERT", "COMMIT"])
+      statements.map(&.split(' ').first).should eq(["BEGIN", "INSERT", "COMMIT"])
     end
   end
 

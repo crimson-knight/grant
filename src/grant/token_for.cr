@@ -126,7 +126,7 @@ module Grant::TokenFor
     unique_data = definition.block.call(self)
 
     payload = {
-      "id"         => self.id.to_s,
+      "id"         => id.to_s,
       "purpose"    => purpose.to_s,
       "data"       => unique_data,
       "expires_at" => (exp = definition.expires_in) ? (Time.utc + exp).to_unix : nil,
@@ -171,7 +171,7 @@ module Grant::TokenFor
     # Serializes *payload* to JSON, signs it with HMAC-SHA256, and returns the
     # Base64-url-encoded envelope. Low-level building block for
     # `#generate_token_for`; prefer that.
-    def generate_token_for_payload(payload : Hash(String, String | Int64 | Nil)) : String
+    def generate_token_for_payload(payload : Hash(String, String | Int64?)) : String
       Grant::Signer.envelope(payload.to_json, token_for_signing_context)
     end
 
@@ -181,7 +181,7 @@ module Grant::TokenFor
     # those on top.
     def verify_token_for_payload(token : String) : Hash(String, JSON::Any)?
       json = Grant::Signer.open(token, token_for_signing_context)
-      return nil unless json
+      return unless json
       JSON.parse(json).as_h?
     rescue JSON::ParseException
       nil
@@ -189,10 +189,10 @@ module Grant::TokenFor
 
     private def token_for_payload(purpose : Symbol, token : String) : Grant::Signer::Payload?
       payload = Grant::Signer.open_payload(token, token_for_signing_context)
-      return nil unless payload
-      return nil unless payload.purpose == purpose.to_s
-      return nil if payload.expired?
-      return nil unless token_for_definitions[purpose]?
+      return unless payload
+      return unless payload.purpose == purpose.to_s
+      return if payload.expired?
+      return unless token_for_definitions[purpose]?
       payload
     end
 
@@ -213,9 +213,9 @@ module Grant::TokenFor
 
     private def record_for_token(purpose : Symbol, token : String) : self?
       payload = token_for_payload(purpose, token)
-      return nil unless payload
+      return unless payload
       record = find_token_record(payload)
-      return nil unless record
+      return unless record
       token_data_current?(purpose, record, payload) ? record : nil
     end
   end

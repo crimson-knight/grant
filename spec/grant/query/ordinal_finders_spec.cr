@@ -70,7 +70,7 @@ describe "Ordinal finders" do
 
   describe "second through forty_two" do
     it "returns the nth record ordered by primary key" do
-      seed_parents(%w(a b c d e f))
+      seed_parents(%w[a b c d e f])
       ids = Parent.order(:id).to_a.compact_map(&.name)
 
       Parent.second.try(&.name).should eq ids[1]
@@ -115,7 +115,7 @@ describe "Ordinal finders" do
     end
 
     it "honors the relation's own order and offset" do
-      seed_parents(%w(d a c b e))
+      seed_parents(%w[d a c b e])
 
       Parent.order(:name).second.try(&.name).should eq "b"
       Parent.order(name: :desc).second.try(&.name).should eq "d"
@@ -125,7 +125,7 @@ describe "Ordinal finders" do
     end
 
     it "works on relations and never mutates them" do
-      seed_parents(%w(a b c))
+      seed_parents(%w[a b c])
       relation = Parent.where("name != ?", "zzz")
       sql = relation.to_sql
 
@@ -141,7 +141,7 @@ describe "Ordinal finders" do
 
   describe "on a relation with LIMIT or OFFSET" do
     it "keeps first, first(n) and the ordinals inside the limit" do
-      seed_parents(%w(a b c d e))
+      seed_parents(%w[a b c d e])
       window = Parent.order(:name).limit(2)
 
       window.first(10).compact_map(&.name).should eq ["a", "b"]
@@ -153,7 +153,7 @@ describe "Ordinal finders" do
     end
 
     it "reads last and the from-the-end ordinals from the window, not the table" do
-      seed_parents(%w(a b c d e))
+      seed_parents(%w[a b c d e])
 
       Parent.order(:name).limit(3).last.try(&.name).should eq "c"
       Parent.order(:name).limit(3).last(2).compact_map(&.name).should eq ["b", "c"]

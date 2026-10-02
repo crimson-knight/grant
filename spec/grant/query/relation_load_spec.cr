@@ -85,7 +85,7 @@ describe "Relation load memoization" do
   end
 
   it "counts the rows a limited or offset relation returns" do
-    seed_parents(%w(a b c d e))
+    seed_parents(%w[a b c d e])
     relation = Parent.where("name != ?", "zzz")
 
     relation.limit(2).size.should eq 2

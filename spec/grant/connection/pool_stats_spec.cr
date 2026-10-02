@@ -92,7 +92,7 @@ describe "connection pool statistics" do
 
   it "lists every open pool through the registry, keyed by connection" do
     adapter = C02Support.establish("c02_stats", pool_size: 5, initial_pool_size: 1)
-    adapter.open { |connection| connection.scalar("SELECT 1") }
+    adapter.open(&.scalar("SELECT 1"))
 
     rows = Grant::ConnectionRegistry.pool_stats("c02_stats:writing")
     rows.size.should eq 1

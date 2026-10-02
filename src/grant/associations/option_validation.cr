@@ -11,13 +11,13 @@ module Grant::Associations
   macro _grant_check_association_options(kind, model, keys, through, source_type)
     {%
       name = model.is_a?(TypeDeclaration) ? model.var : model.id
-      common = %w(class_name foreign_key primary_key query_constraints inverse_of strict_loading autosave validate index_errors dependent)
+      common = %w[class_name foreign_key primary_key query_constraints inverse_of strict_loading autosave validate index_errors dependent]
       valid = if kind == :belongs_to
-                common + %w(polymorphic type_column optional counter_cache touch default converter primary foreign_key_declared constraint)
+                common + %w[polymorphic type_column optional counter_cache touch default converter primary foreign_key_declared constraint]
               elsif kind == :has_one
-                common + %w(through source source_type as type_column)
+                common + %w[through source source_type as type_column]
               else
-                common + %w(through source source_type as type_column singular counter_cache before_add after_add before_remove after_remove)
+                common + %w[through source source_type as type_column singular counter_cache before_add after_add before_remove after_remove]
               end
       keys.each do |key|
         unless valid.includes?(key)

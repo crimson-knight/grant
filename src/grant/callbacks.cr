@@ -131,7 +131,7 @@ module Grant::Callbacks
     end
   end
 
-  CALLBACK_NAMES = %w(
+  CALLBACK_NAMES = %w[
     after_initialize after_find
     before_validation after_validation
     before_save after_save
@@ -141,19 +141,19 @@ module Grant::Callbacks
     after_touch
     after_commit after_rollback
     after_create_commit after_update_commit after_destroy_commit after_save_commit
-  )
+  ]
 
   # Events `run_callbacks` accepts (each has a `before_`/`after_` chain and,
   # for some, an `around_` chain).
-  CALLBACK_EVENTS = %w(initialize find validation save create update destroy touch)
+  CALLBACK_EVENTS = %w[initialize find validation save create update destroy touch]
 
-  AROUND_CALLBACK_NAMES = %w(
+  AROUND_CALLBACK_NAMES = %w[
     around_validation
     around_save
     around_create
     around_update
     around_destroy
-  )
+  ]
 
   @[JSON::Field(ignore: true)]
   @[YAML::Field(ignore: true)]

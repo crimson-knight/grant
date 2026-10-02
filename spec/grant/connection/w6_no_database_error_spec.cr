@@ -28,7 +28,7 @@ describe "connection errors from live attempts (#{CURRENT_ADAPTER})" do
   it "raises NoDatabaseError for a database that does not exist" do
     adapter = W6C04.adapter_class.new("w6_no_db", w6_missing_url)
 
-    error = expect_raises(Grant::NoDatabaseError) { adapter.open("SELECT 1") { |db| db.scalar("SELECT 1") } }
+    error = expect_raises(Grant::NoDatabaseError) { adapter.open("SELECT 1", &.scalar("SELECT 1")) }
     error.cause.should_not be_nil
     error.message.to_s.should contain "w6_no_db"
   end
@@ -52,7 +52,7 @@ describe "connection errors from live attempts (#{CURRENT_ADAPTER})" do
   it "raises ConnectionFailed for a server that refuses the connection" do
     adapter = Grant::Adapter::Pg.new("w6_refused", w6_refused_url)
 
-    error = expect_raises(Grant::ConnectionFailed) { adapter.open("SELECT 1") { |db| db.scalar("SELECT 1") } }
+    error = expect_raises(Grant::ConnectionFailed) { adapter.open("SELECT 1", &.scalar("SELECT 1")) }
     error.should be_a(Grant::ConnectionNotEstablished)
     error.cause.should be_a(DB::ConnectionRefused)
     expect_raises(Grant::ConnectionFailed) { adapter.verify! }
@@ -62,7 +62,7 @@ describe "connection errors from live attempts (#{CURRENT_ADAPTER})" do
   it "does not mistake a refused connection for a missing database" do
     adapter = Grant::Adapter::Pg.new("w6_refused", w6_refused_url)
 
-    error = expect_raises(Grant::ConnectionFailed) { adapter.open { |db| db.scalar("SELECT 1") } }
+    error = expect_raises(Grant::ConnectionFailed) { adapter.open(&.scalar("SELECT 1")) }
     error.should_not be_a(Grant::NoDatabaseError)
   end
 
@@ -76,13 +76,11 @@ describe "connection errors from live attempts (#{CURRENT_ADAPTER})" do
     adapter.with_connection do |_held|
       other = Channel(Exception?).new
       spawn do
-        begin
-          # A second fiber needs a connection while the first holds the only one.
-          adapter.open_pool_connection { |connection| connection.scalar("SELECT 1") }
-          other.send(nil)
-        rescue ex
-          other.send(ex)
-        end
+        # A second fiber needs a connection while the first holds the only one.
+        adapter.open_pool_connection(&.scalar("SELECT 1"))
+        other.send(nil)
+      rescue ex
+        other.send(ex)
       end
       other.receive.should be_a(Grant::ConnectionTimeoutError)
     end

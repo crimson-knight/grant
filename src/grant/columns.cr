@@ -451,9 +451,9 @@ module Grant::Columns
         raise NilAssertionError.new {{@type.name.stringify}} + "#" + {{decl.var.stringify}} + " cannot be nil" if @{{decl.var}}.nil?
         @{{decl.var}}.not_nil!
       end
-      
+
       # Dirty tracking methods
-      
+
       # Returns true if the {{decl.var.id}} attribute has been changed.
       #
       # This is a convenience method equivalent to `attribute_changed?({{decl.var.stringify}})`.
@@ -466,7 +466,7 @@ module Grant::Columns
         refresh_dirty
         @changed_attributes.try(&.has_key?({{decl.var.stringify}})) || false
       end
-      
+
       # Returns the original value of {{decl.var.id}} before it was changed.
       #
       # If the attribute hasn't changed, returns the current value.
@@ -485,7 +485,7 @@ module Grant::Columns
           @{{decl.var.id}}
         end
       end
-      
+
       # Returns a tuple of the original and new values if {{decl.var.id}} has changed.
       #
       # Returns nil if the attribute hasn't changed.
@@ -501,7 +501,7 @@ module Grant::Columns
           {__typed_dirty_{{decl.var.id}}(change[0]), __typed_dirty_{{decl.var.id}}(change[1])}
         end
       end
-      
+
       # Returns the value of {{decl.var.id}} before the last save.
       #
       # If the attribute wasn't changed in the last save, returns current value.
@@ -563,9 +563,9 @@ module Grant::Columns
       def {{decl.var.id}}? : {{type.id}}?
         @{{decl.var}}
       end
-      
+
       # Dirty tracking methods
-      
+
       # Returns true if the {{decl.var.id}} attribute has been changed.
       #
       # This is a convenience method equivalent to `attribute_changed?({{decl.var.stringify}})`.
@@ -578,7 +578,7 @@ module Grant::Columns
         refresh_dirty
         @changed_attributes.try(&.has_key?({{decl.var.stringify}})) || false
       end
-      
+
       # Returns the original value of {{decl.var.id}} before it was changed.
       #
       # If the attribute hasn't changed, returns the current value.
@@ -613,7 +613,7 @@ module Grant::Columns
           {__typed_dirty_{{decl.var.id}}(change[0]).not_nil!, __typed_dirty_{{decl.var.id}}(change[1]).not_nil!}
         end
       end
-      
+
       # Returns the value of {{decl.var.id}} before the last save.
       #
       # If the attribute wasn't changed in the last save, returns current value.
@@ -908,7 +908,7 @@ module Grant::Columns
   # Capture current values as original attributes after save
   protected def capture_original_attributes
     ensure_dirty_tracking_initialized
-    {% for column in @type.instance_vars.select { |ivar| ivar.annotation(Grant::Column) } %}
+    {% for column in @type.instance_vars.select(&.annotation(Grant::Column)) %}
       {% column_name = column.name.id.stringify %}
       {% ann = column.annotation(Grant::Column) %}
       # Convert value for storage if there's a converter

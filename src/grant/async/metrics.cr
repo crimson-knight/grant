@@ -9,7 +9,7 @@ module Grant
       @@mutex = Mutex.new
 
       # Track an operation
-      def self.track_operation(&block)
+      def self.track_operation(&)
         @@mutex.synchronize do
           @@active_operations += 1
           @@total_operations += 1

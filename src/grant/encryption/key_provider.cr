@@ -183,7 +183,7 @@ module Grant::Encryption
     # the result (see `EncryptedAttribute`).
     def self.derive_key_from_set?(model_name : String, attribute_name : String, deterministic : Bool, key_set : KeySet) : Bytes?
       master_key = deterministic ? key_set.deterministic_key : key_set.primary_key
-      return nil unless master_key
+      return unless master_key
 
       hkdf(
         secret: master_key,

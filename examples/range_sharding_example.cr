@@ -135,7 +135,7 @@ end
 
 # 6. Migrating between shards (rebalancing)
 def migrate_orders_to_new_shard(from_date : Time, to_date : Time, target_shard : Symbol)
-  Order.where("created_at >= ? AND created_at < ?", from_date, to_date).find_each do |order|
+  Order.where("created_at >= ? AND created_at < ?", from_date, to_date).find_each do |_|
     # Would need special handling to move between shards
     # This is complex and requires careful coordination
   end

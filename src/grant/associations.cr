@@ -259,7 +259,7 @@ module Grant::Associations
     def {{method_name.id}}_previously_changed? : Bool
       saved_change_to_attribute?({{foreign_key_name}})
     end
-    
+
     # Store association metadata
     class_getter _{{method_name.id}}_association_meta = {
       type: :belongs_to,

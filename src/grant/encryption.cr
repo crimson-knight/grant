@@ -116,7 +116,7 @@ module Grant::Encryption
   end
 
   def self.encrypt(value : String?, model_name : String, attribute_name : String, deterministic : Bool = false) : String?
-    return nil if value.nil?
+    return if value.nil?
     encrypt(value, model_name, attribute_name, deterministic)
   end
 
@@ -135,7 +135,7 @@ module Grant::Encryption
   # Grant::Encryption.decrypt(sealed, "User", "note") # => "hello"
   # ```
   def self.decrypt(encrypted : String?, model_name : String, attribute_name : String) : String?
-    return nil if encrypted.nil? || encrypted.empty?
+    return if encrypted.nil? || encrypted.empty?
 
     # Decode the Base64 string to bytes
     begin
@@ -383,7 +383,7 @@ module Grant::Encryption
       {% base = nil %}
       {% if typed %}
         {% attr_type = attribute.type %}
-        {% base = attr_type.is_a?(Union) ? attr_type.types.reject { |member| member.resolve.nilable? }.first : attr_type %}
+        {% base = attr_type.is_a?(Union) ? attr_type.types.reject(&.resolve.nilable?).first : attr_type %}
       {% end %}
       {% if ignore_case && !deterministic %}
         {% raise "encrypts #{attr_name}: ignore_case: true requires deterministic: true" %}

@@ -60,7 +60,7 @@ describe "composite key finders and tuple conditions" do
       found = [] of CkFindItem
       statements = capture_statements { found = CkFindItem.find(keys) }
       found.map(&.label).should eq ["s3o1", "s1o1", "s2o2"]
-      statements.select(&.starts_with?("SELECT")).size.should eq 1
+      statements.count(&.starts_with?("SELECT")).should eq 1
     end
 
     it "find! with an array raises naming every missing key" do
@@ -78,7 +78,7 @@ describe "composite key finders and tuple conditions" do
         found = [] of CkFindItem
         statements = capture_statements { found = CkFindItem.find(keys) }
         found.size.should eq 9
-        statements.select(&.starts_with?("SELECT")).size.should eq 3
+        statements.count(&.starts_with?("SELECT")).should eq 3
       ensure
         Grant.settings.in_clause_limit = original
       end

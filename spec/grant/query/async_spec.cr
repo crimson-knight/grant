@@ -64,7 +64,7 @@ describe "async queries" do
     it "hydrates raw SQL on a fiber" do
       table = AsyncQ05Item.table_name
       rows = AsyncQ05Item.async_find_by_sql("SELECT * FROM #{table} WHERE score > ?", [10] of Grant::Columns::Type).wait
-      rows.map(&.name).compact.sort.should eq ["b", "c"]
+      rows.compact_map(&.name).sort!.should eq ["b", "c"]
     end
   end
 

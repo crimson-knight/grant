@@ -120,11 +120,11 @@ module Grant::Schema
     # Migrates every target to *target_version* (or the latest), at most
     # *parallelism* at a time.
     def migrate(target_version : Int64? = nil, parallelism : Int32 = 1) : MigrationReport
-      run_each(parallelism) { |context| context.migrate(target_version) }
+      run_each(parallelism, &.migrate(target_version))
     end
 
     def rollback(step : Int32 = 1, parallelism : Int32 = 1) : MigrationReport
-      run_each(parallelism) { |context| context.rollback(step) }
+      run_each(parallelism, &.rollback(step))
     end
 
     # Current version of every target.

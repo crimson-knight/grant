@@ -63,7 +63,7 @@ class HaltingAroundValidationModel < Grant::Base
 
   validate :record_ran
 
-  around_validation do |block|
+  around_validation do |_|
     # intentionally never call block -> validators must not run
   end
 

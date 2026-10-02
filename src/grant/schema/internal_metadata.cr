@@ -47,7 +47,7 @@ module Grant::Schema
 
     def [](key : ::String) : ::String?
       found = nil.as(::String?)
-      return nil unless @table_present || present?
+      return unless @table_present || present?
       @adapter.open do |db|
         found = db.query_one?("SELECT value FROM #{TABLE} WHERE #{@dialect.quote("key")} = #{@dialect.quote_literal(key)}", as: ::String?)
       end

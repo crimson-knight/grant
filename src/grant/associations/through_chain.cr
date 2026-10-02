@@ -77,9 +77,9 @@ module Grant::Associations
     end
 
     private def self.resolve(owner : Grant::Base.class, name : String) : ThroughChain?
-      reflection = Grant::AssociationRegistry.reflection(owner.name, name) || return nil
-      return nil unless reflection.through?
-      return nil unless chain_needed?(owner, reflection)
+      reflection = Grant::AssociationRegistry.reflection(owner.name, name) || return
+      return unless reflection.through?
+      return unless chain_needed?(owner, reflection)
       links = [] of Link
       append(links, owner, name, nil, false)
       new(links)

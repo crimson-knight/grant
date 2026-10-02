@@ -1,7 +1,7 @@
 # Test models for polymorphic associations
 {% begin %}
   {% adapter_literal = (env("CURRENT_ADAPTER") || "sqlite").id %}
-  
+
   class PolymorphicComment < Grant::Base
     connection {{ adapter_literal }}
     table polymorphic_comments

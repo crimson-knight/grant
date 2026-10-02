@@ -61,7 +61,7 @@ describe "find_each across shards" do
     selects = statements.select(&.includes?("s02_batch_things"))
 
     selects.should_not be_empty
-    selects.each { |sql| sql.upcase.should_not contain "OFFSET" }
+    selects.each(&.upcase.should_not(contain("OFFSET")))
     selects.any?(&.matches?(/id["`]?\s*>\s*[?$]/)).should be_true
   end
 

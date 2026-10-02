@@ -299,23 +299,21 @@ module Grant::Schema
       end
       begin
         @adapter.open(statements.first) do |db|
-          begin
-            statements.each { |sql| db.exec sql }
-          rescue ex
-            if dialect.sqlite? && statements.includes?("BEGIN")
-              begin
-                db.exec "ROLLBACK"
-              rescue DB::Error
-                # Best effort: the original error is re-raised below.
-              end
-              begin
-                db.exec "PRAGMA foreign_keys = ON"
-              rescue DB::Error
-                # Best effort: the original error is re-raised below.
-              end
+          statements.each { |sql| db.exec sql }
+        rescue ex
+          if dialect.sqlite? && statements.includes?("BEGIN")
+            begin
+              db.exec "ROLLBACK"
+            rescue DB::Error
+              # Best effort: the original error is re-raised below.
             end
-            raise ex
+            begin
+              db.exec "PRAGMA foreign_keys = ON"
+            rescue DB::Error
+              # Best effort: the original error is re-raised below.
+            end
           end
+          raise ex
         end
       ensure
         @adapter.reset_schema_caches!
@@ -340,7 +338,7 @@ module Grant::Schema
       elsif rebuilds && dialect.sqlite?
         @adapter.with_connection do |_|
           enforced = @adapter.open { |db| db.scalar("PRAGMA foreign_keys").as(Int).to_i64 != 0 }
-          @adapter.open { |db| db.exec "PRAGMA foreign_keys = OFF" }
+          @adapter.open(&.exec("PRAGMA foreign_keys = OFF"))
           begin
             run_in_transaction(true) { yield self }
           ensure
@@ -383,7 +381,7 @@ module Grant::Schema
     end
 
     def lookup_column(table : ::String, column : ::String) : ColumnInfo?
-      return nil unless @adapter.schema.table_exists?(table)
+      return unless @adapter.schema.table_exists?(table)
       @adapter.schema.columns(table).find { |info| info.name == column }
     end
 

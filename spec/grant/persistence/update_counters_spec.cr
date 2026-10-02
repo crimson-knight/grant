@@ -42,7 +42,7 @@ describe ".update_counters" do
   end
 
   it "updates every id in an array with one statement" do
-    posts = 3.times.map { |i| CounterTallyPost.create!(title: "p#{i}", views_count: i) }.to_a
+    posts = Array.new(3) { |i| CounterTallyPost.create!(title: "p#{i}", views_count: i) }
     untouched = CounterTallyPost.create!(title: "other", views_count: 100)
 
     statements = WriteSqlCapture.statements do

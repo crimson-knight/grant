@@ -54,7 +54,7 @@ describe "validator reflection" do
   it "reports allow_nil, contexts and conditions" do
     email = V02vPerson.validators_on(:email).first
     email.kind.should eq(:format)
-    email.option(:allow_nil).should eq(true)
+    email.option(:allow_nil).should be_true
     email.contexts.should eq([:save])
     email.conditional?.should be_false
 
@@ -69,7 +69,7 @@ describe "validator reflection" do
   end
 
   it "reports uniqueness scopes as data" do
-    uniqueness = V02vPerson.validators_on(:email).find { |info| info.kind == :uniqueness }.not_nil!
+    uniqueness = V02vPerson.validators_on(:email).find! { |info| info.kind == :uniqueness }
     uniqueness.option(:scope).should eq(["role"])
   end
 
@@ -88,8 +88,8 @@ describe "validator reflection" do
   it "introspects validate callbacks by kind" do
     V02vPerson.validators.map(&.kind).should contain(:method)
     V02vPerson.validators.map(&.kind).should contain(:custom)
-    V02vPerson.validators.select { |info| info.kind == :method }.first.attribute.should eq("base")
-    V02vPerson.validators.find { |info| info.kind == :method }.not_nil!.option(:name).should eq("some_rule")
+    V02vPerson.validators.find! { |info| info.kind == :method }.attribute.should eq("base")
+    V02vPerson.validators.find! { |info| info.kind == :method }.option(:name).should eq("some_rule")
   end
 
   it "returns nothing for an attribute without validators" do

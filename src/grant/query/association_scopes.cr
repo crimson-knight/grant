@@ -47,12 +47,12 @@ class Grant::Query::Builder(Model)
   #
   # :nodoc:
   def association_scope_fragment(qualifier : String) : Grant::AssociationRegistry::ScopeFragment?
-    return nil if @where_fields.empty?
+    return if @where_fields.empty?
 
     renderer = assembler
     sql = renderer.where_group_sql(@where_fields)
     values = renderer.numbered_parameters.dup
-    return nil if sql.empty?
+    return if sql.empty?
 
     sql = sql.gsub(/\$\d+/, "?") if @db_type.pg?
     table = Model.table_name

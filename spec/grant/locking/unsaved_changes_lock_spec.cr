@@ -74,7 +74,7 @@ describe "locking a record with unsaved changes" do
     note = UnsavedLockSpecNote.create!(title: "Original")
     note.title = "Edited"
 
-    title = note.with_lock(force: true) { |locked| locked.title }
+    title = note.with_lock(force: true, &.title)
 
     title.should eq("Original")
     note.changed?.should be_false
@@ -86,7 +86,7 @@ describe "locking a record with unsaved changes" do
     UnsavedLockSpecNote.transaction do
       note.lock!.should be(note)
     end
-    note.with_lock { |locked| locked.title }.should eq("Original")
+    note.with_lock(&.title).should eq("Original")
   end
 
   it "treats a record whose change was undone as clean" do

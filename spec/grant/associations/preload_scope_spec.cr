@@ -66,8 +66,8 @@ describe "association scopes when preloading" do
   it "applies the scope with preload and eager_load as well" do
     seed_authors(2)
 
-    PsAuthor.preload(:published_posts).select.each { |author| author.published_posts.size.should eq(2) }
-    PsAuthor.eager_load(:published_posts).select.each { |author| author.published_posts.size.should eq(2) }
+    PsAuthor.preload(:published_posts).select.each(&.published_posts.size.should(eq(2)))
+    PsAuthor.eager_load(:published_posts).select.each(&.published_posts.size.should(eq(2)))
   end
 
   it "honors a scope written as a lambda over the relation" do
@@ -75,7 +75,7 @@ describe "association scopes when preloading" do
     newest = PsAuthor.includes(:newest_posts).where(id: author.id).select.first
     lazy = PsAuthor.find!(author.id).newest_posts.to_a
     newest.newest_posts.map(&.id.not_nil!).should eq(lazy.map(&.id.not_nil!))
-    newest.newest_posts.map(&.id.not_nil!).should eq(newest.newest_posts.map(&.id.not_nil!).sort.reverse)
+    newest.newest_posts.map(&.id.not_nil!).should eq(newest.newest_posts.map(&.id.not_nil!).sort!.reverse!)
   end
 
   it "applies a has_one scope" do

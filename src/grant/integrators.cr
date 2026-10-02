@@ -161,7 +161,7 @@ module Grant::Integrators
 
   # Class-level forms of the relation methods below start from `current_scope`,
   # so a default scope's equality predicates seed the new record.
-  {% for name in %w(create_or_find_by create_or_find_by! first_or_create first_or_create! first_or_initialize) %}
+  {% for name in %w[create_or_find_by create_or_find_by! first_or_create first_or_create! first_or_initialize] %}
     def {{name.id}}(**attrs : Grant::Columns::Type)
       current_scope.{{name.id}}(**attrs)
     end

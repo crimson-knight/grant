@@ -63,7 +63,7 @@ describe "merge ORDER BY" do
   end
 
   it "appends through the block and keyword forms" do
-    merged = W6moItem.order(:name).merge { |scope| scope.order(rank: :desc) }
+    merged = W6moItem.order(:name).merge(&.order(rank: :desc))
     merged.order_fields.map { |term| term[:field] }.should eq(["name", "rank"])
     W6moItem.order(:name).merge(kind: "x").order_fields.map { |term| term[:field] }.should eq(["name"])
   end

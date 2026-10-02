@@ -25,7 +25,7 @@ private def seed_region_lines : Nil
 end
 
 private def titles(relation : Grant::Query::Builder(WfPost)) : Array(String)
-  relation.order(:id).select.map { |post| post.title.to_s }
+  relation.order(:id).select.map(&.title.to_s)
 end
 
 describe "excluding, without and invert_where" do

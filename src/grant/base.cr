@@ -63,7 +63,7 @@ require "./integration"
 abstract class Grant::Base
   # Dirty tracking storage - using a union of all possible types
   # We use a broad union type to handle all column types including enums
-  alias DirtyValue = Nil | Bool | Int32 | Int64 | Float32 | Float64 | String | Time | UUID | Slice(UInt8) | Array(String) | Array(Int16) | Array(Int32) | Array(Int64) | Array(Float32) | Array(Float64) | Array(Bool) | Array(UUID) | Array(Time)
+  alias DirtyValue = (Bool | Int32 | Int64 | Float32 | Float64 | String | Time | UUID | Slice(UInt8) | Array(String) | Array(Int16) | Array(Int32) | Array(Int64) | Array(Float32) | Array(Float64) | Array(Bool) | Array(UUID) | Array(Time))?
 
   # Keyword attributes as the one String-keyed hash `set_attributes` reads,
   # built in a single pass (`args.to_h.transform_keys(&.to_s)` builds two).
@@ -739,25 +739,25 @@ abstract class Grant::Base
     before_save { self.class.mark_write_operation }
     before_destroy { self.class.mark_write_operation }
     after_save :clear_dirty_state
-    
+
     # Dirty tracking API methods
-    
+
     # Returns true if any attributes have been changed since the last save.
     #
     # ```
     # user = User.find!(1)
     # user.changed? # => false
-    # 
+    #
     # user.name = "New Name"
     # user.changed? # => true
-    # 
+    #
     # user.save
     # user.changed? # => false
     # ```
     def changed? : Bool
       has_changes_to_save?
     end
-    
+
     # Returns a hash of all changed attributes with their original and new values.
     #
     # The hash keys are attribute names, and values are tuples of `{original_value, new_value}`.
@@ -766,10 +766,10 @@ abstract class Grant::Base
     # user = User.find!(1)
     # user.name # => "John"
     # user.age # => 25
-    # 
+    #
     # user.name = "Jane"
     # user.age = 26
-    # 
+    #
     # user.changes
     # # => {"name" => {"John", "Jane"}, "age" => {25, 26}}
     # ```
@@ -777,7 +777,7 @@ abstract class Grant::Base
       refresh_dirty
       @changed_attributes.try(&.dup) || {} of String => Tuple(DirtyValue, DirtyValue)
     end
-    
+
     # Returns the names of the attributes that have been changed (ActiveModel's
     # `changed`).
     #
@@ -817,14 +817,14 @@ abstract class Grant::Base
     # user = User.find!(1)
     # user.name = "New Name"
     # user.save
-    # 
+    #
     # user.previous_changes # => {"name" => {"Old Name", "New Name"}}
     # user.changes # => {} (empty after save)
     # ```
     def previous_changes
       @previous_changes.try(&.dup) || {} of String => Tuple(DirtyValue, DirtyValue)
     end
-    
+
     # Alias for `previous_changes`. Returns the changes from the last save.
     #
     # This method provides Rails-compatible API.
@@ -835,13 +835,13 @@ abstract class Grant::Base
     def saved_changes
       previous_changes
     end
-    
+
     # Returns true if the specified attribute has been changed.
     #
     # ```
     # user = User.find!(1)
     # user.name = "New Name"
-    # 
+    #
     # user.attribute_changed?("name")  # => true
     # user.attribute_changed?(:name)    # => true
     # user.attribute_changed?("email") # => false
@@ -854,7 +854,7 @@ abstract class Grant::Base
         false
       end
     end
-    
+
     # Returns the original value of an attribute before it was changed.
     #
     # If the attribute hasn't changed, returns the current value.
@@ -862,7 +862,7 @@ abstract class Grant::Base
     # ```
     # user = User.find!(1)
     # user.name # => "John"
-    # 
+    #
     # user.name = "Jane"
     # user.attribute_was("name") # => "John"
     # user.attribute_was(:email)  # => "john@example.com" (unchanged)
@@ -876,14 +876,14 @@ abstract class Grant::Base
         read_attribute(name_str)
       end
     end
-    
+
     # Returns true if the specified attribute was changed in the last save.
     #
     # Useful in after_save callbacks to check what was changed.
     #
     # ```
     # after_save :send_email_if_email_changed
-    # 
+    #
     # private def send_email_if_email_changed
     #   if saved_change_to_attribute?("email")
     #     # Send confirmation email
@@ -928,7 +928,7 @@ abstract class Grant::Base
       refresh_dirty
       @changed_attributes.try(&.[name.to_s]?)
     end
-    
+
     # Returns the value of an attribute before the last save.
     #
     # If the attribute wasn't changed in the last save, returns current value.
@@ -936,10 +936,10 @@ abstract class Grant::Base
     # ```
     # user = User.find!(1)
     # user.name # => "John"
-    # 
+    #
     # user.name = "Jane"
     # user.save
-    # 
+    #
     # user.attribute_before_last_save("name") # => "John"
     # user.name = "Jim"
     # user.attribute_before_last_save("name") # => "John" (still from last save)
@@ -952,7 +952,7 @@ abstract class Grant::Base
         read_attribute(name_str)
       end
     end
-    
+
     # Restores attributes to their original values.
     #
     # If specific attributes are provided, only those are restored.
@@ -962,15 +962,15 @@ abstract class Grant::Base
     # user = User.find!(1)
     # original_name = user.name # => "John"
     # original_age = user.age   # => 25
-    # 
+    #
     # user.name = "Jane"
     # user.age = 26
-    # 
+    #
     # # Restore only name
     # user.restore_attributes(["name"])
     # user.name # => "John"
     # user.age  # => 26
-    # 
+    #
     # # Restore all changes
     # user.restore_attributes
     # user.age # => 25
@@ -979,7 +979,7 @@ abstract class Grant::Base
       refresh_dirty
       ensure_dirty_tracking_initialized
       attrs = attributes || dirty_tracking_hashes[1].keys
-      
+
       # Temporarily store changed attributes to restore
       changes_to_restore = {} of String => {Grant::Base::DirtyValue, Grant::Base::DirtyValue}
       attrs.each do |attr|
@@ -987,13 +987,13 @@ abstract class Grant::Base
           changes_to_restore[attr] = change
         end
       end
-      
+
       # Clear the changes for the attributes being restored
       attrs.each do |attr|
         dirty_tracking_hashes[1].delete(attr)
         @forced_changes.try &.delete(attr)
       end
-      
+
       # Restore the values using write_attribute; a snapshot is written so the
       # restored column never aliases the stored baseline.
       changes_to_restore.each do |attr, change|
@@ -1002,7 +1002,7 @@ abstract class Grant::Base
         dirty_tracking_hashes[1].delete(attr)
       end
     end
-    
+
     # Clear dirty state after save
     private def clear_dirty_state
       refresh_dirty
@@ -1034,7 +1034,7 @@ abstract class Grant::Base
         dirty_tracking_hashes[0][attribute_name] = baseline_dirty_value(attribute_name, read_attribute(attribute_name).as(DirtyValue))
       end
     end
-    
+
     # This will be overridden in each model to capture all column values
     protected def capture_original_attributes
       capture_mutation_baselines

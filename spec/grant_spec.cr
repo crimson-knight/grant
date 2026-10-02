@@ -117,7 +117,7 @@ describe Grant::Base do
         review.upvotes.should eq 2
         review.sentiment.should eq 1.23_f32
         review.interest.should eq 4.56
-        review.published.should eq true
+        review.published.should be_true
         review.created_at.should be_nil
       end
 
@@ -222,7 +222,7 @@ describe Grant::Base do
         review.upvotes.should eq 2
         review.sentiment.should eq 1.23.to_f32
         review.interest.should eq 4.56
-        review.published.should eq true
+        review.published.should be_true
         review.created_at.should be_nil
       end
 

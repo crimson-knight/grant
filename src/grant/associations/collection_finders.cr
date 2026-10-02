@@ -149,7 +149,7 @@ class Grant::AssociationCollection(Owner, Target)
   def find!(ids : Array) : Array(Target)
     found = find(ids)
     if found.size != ids.size
-      known = found.map { |record| record.primary_key_value.to_s }
+      known = found.map(&.primary_key_value.to_s)
       missing = ids.reject { |key| known.includes?(key.to_s) }
       raise Grant::Querying::NotFound.new("Couldn't find all #{Target.name} with '#{Target.primary_name}': (#{ids.join(", ")}) (found #{found.size} results, but was looking for #{ids.size}; missing: #{missing.join(", ")})")
     end

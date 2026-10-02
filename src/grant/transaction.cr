@@ -377,7 +377,7 @@ module Grant::Transaction
   # searches the whole stack rather than only its top.
   def self.current_state_for?(adapter : Grant::Adapter::Base) : TransactionState?
     stack = stack_for_current_fiber?
-    return nil unless stack
+    return unless stack
     stack.reverse_each do |state|
       return state if state.adapter.same?(adapter)
     end
@@ -534,7 +534,7 @@ module Grant::Transaction
       execute_control(state.connection, state.adapter, "RELEASE SAVEPOINT #{savepoint_name}")
       publish_transaction_end(state, Grant::Events::TransactionOutcome::Commit, started_at, savepoint_name)
       {previous_joinable ? nil : take_released_savepoint_callbacks(state, marks), value}
-    rescue ex : Rollback
+    rescue Rollback
       rollback_to_savepoint(state, savepoint_name, marks)
       publish_transaction_end(state, Grant::Events::TransactionOutcome::Rollback, started_at, savepoint_name)
       {nil, nil}
@@ -652,7 +652,7 @@ module Grant::Transaction
       # A deferred BEGIN that never went out means no statement ran: there is
       # nothing to commit.
       execute_control(conn, adapter, "COMMIT") unless state.begin_pending?
-    rescue ex : Rollback
+    rescue Rollback
       return {abort_real(state), nil}
     rescue ex
       abort_real(state).each(&.call)

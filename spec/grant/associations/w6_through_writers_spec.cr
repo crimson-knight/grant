@@ -39,7 +39,7 @@ private def w6t_tags(count : Int32) : Array(W6tTag)
 end
 
 private def w6t_link_keys(post : W6tPost) : Array(Int64?)
-  W6tTagging.where(w6t_post_id: post.id).select.map(&.w6t_tag_id).sort_by { |key| key || 0_i64 }
+  W6tTagging.where(w6t_post_id: post.id).select.map(&.w6t_tag_id).sort_by! { |key| key || 0_i64 }
 end
 
 describe "has_many :through collection writers" do

@@ -247,8 +247,8 @@ module Grant
 
     # `sqlite3:<database>` for an entry that names a SQLite file and no url.
     private def sqlite_url(entry : Entry) : String?
-      file = entry.database || return nil
-      return nil unless entry.adapter.try { |name| name.downcase.starts_with?("sqlite") }
+      file = entry.database || return
+      return unless entry.adapter.try(&.downcase.starts_with?("sqlite"))
 
       "sqlite3:#{file}"
     end

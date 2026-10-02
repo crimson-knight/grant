@@ -118,7 +118,7 @@ describe "mark_for_destruction" do
 
       owner = MfdOwner.find!(owner.id)
       items = owner.mfd_items.load_target
-      items.find { |item| item.id == drop.id }.not_nil!.mark_for_destruction
+      items.find! { |item| item.id == drop.id }.mark_for_destruction
 
       # Nothing happens before the owner is saved.
       MfdItem.count.should eq(2)

@@ -47,7 +47,7 @@ module Grant::RecordCopy
     @errors = nil
 
     {% for ivar in @type.instance_vars %}
-      {% if ivar.annotation(Grant::Column) && ivar.type.union_types.any? { |column_type| column_type.name.starts_with?("Array(") } %}
+      {% if ivar.annotation(Grant::Column) && ivar.type.union_types.any?(&.name.starts_with?("Array(")) %}
         @{{ ivar.name.id }} = @{{ ivar.name.id }}.try(&.dup)
       {% end %}
     {% end %}

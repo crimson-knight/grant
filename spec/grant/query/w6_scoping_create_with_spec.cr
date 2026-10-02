@@ -56,7 +56,7 @@ describe "Model.scoping and new records" do
         W6scPost.new.published.should be_true
         W6scPost.new(title: "x").published.should be_true
         W6scPost.new({"title" => "y"}).published.should be_true
-        W6scPost.new { |post| post.title = "z" }.published.should be_true
+        W6scPost.new(&.title=("z")).published.should be_true
       end
     end
 

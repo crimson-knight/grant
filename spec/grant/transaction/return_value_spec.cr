@@ -18,7 +18,7 @@ describe "Transaction return value" do
   end
 
   it "returns nil when the block raises Rollback" do
-    Parent.transaction { raise Grant::Transaction::Rollback.new; 1 }.should be_nil
+    Parent.transaction { 1.tap { raise Grant::Transaction::Rollback.new } }.should be_nil
   end
 
   it "returns the value from joined, savepoint, and independent levels" do

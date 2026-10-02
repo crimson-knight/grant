@@ -24,7 +24,7 @@ class W6usNote < Grant::Base
 end
 
 private def titles(relation : Grant::Query::Builder(W6usNote)) : Array(String)
-  relation.select.map { |note| note.title.to_s }
+  relation.select.map(&.title.to_s)
 end
 
 describe "unscope for every relation component" do

@@ -7,12 +7,12 @@ describe Grant::Query::BuilderMethods do
   describe "or { } block with parameterized conditions" do
     it "returns the correct rows when the block has a single where condition" do
       Review.clear
-      r1 = Review.create(name: "alice", downvotes: 1)
-      r2 = Review.create(name: "bob", downvotes: 2)
+      Review.create(name: "alice", downvotes: 1)
+      Review.create(name: "bob", downvotes: 2)
       _r3 = Review.create(name: "carol", downvotes: 3)
 
       # WHERE name = 'bob' OR (name = 'alice')
-      found = Review.where(name: "bob").or { |q| q.where(name: "alice") }.select
+      found = Review.where(name: "bob").or(&.where(name: "alice")).select
       names = found.map(&.name)
       names.should contain("alice")
       names.should contain("bob")
@@ -21,12 +21,12 @@ describe Grant::Query::BuilderMethods do
 
     it "returns the correct rows when the block has multiple where conditions ANDed together" do
       Review.clear
-      r1 = Review.create(name: "alice", downvotes: 30)
+      Review.create(name: "alice", downvotes: 30)
       _r2 = Review.create(name: "alice", downvotes: 99)
       _r3 = Review.create(name: "carol", downvotes: 30)
 
       # WHERE name = 'carol' OR (name = 'alice' AND downvotes = 30)
-      found = Review.where(name: "carol").or { |q| q.where(name: "alice").where(downvotes: 30) }.select
+      found = Review.where(name: "carol").or(&.where(name: "alice").where(downvotes: 30)).select
       names = found.map(&.name)
       names.should contain("alice")
       names.should contain("carol")
@@ -42,7 +42,7 @@ describe Grant::Query::BuilderMethods do
       _r_eve = Review.create(name: "eve", downvotes: 20)
 
       # WHERE downvotes = 5 OR (name = 'bob' AND downvotes = 10)
-      found = Review.where(downvotes: 5).or { |q| q.where(name: "bob").where(downvotes: 10) }.select
+      found = Review.where(downvotes: 5).or(&.where(name: "bob").where(downvotes: 10)).select
       found.size.should eq 2
       ids = found.map(&.id)
       ids.should contain(r_alice.id)
@@ -54,11 +54,11 @@ describe Grant::Query::BuilderMethods do
     it "excludes rows matching parameterized conditions inside the block" do
       Review.clear
       _r1 = Review.create(name: "banned", downvotes: 0)
-      r2 = Review.create(name: "good", downvotes: 0)
-      r3 = Review.create(name: "neutral", downvotes: 0)
+      Review.create(name: "good", downvotes: 0)
+      Review.create(name: "neutral", downvotes: 0)
 
       # WHERE downvotes >= 0 AND NOT (name = 'banned')
-      found = Review.where.gteq(:downvotes, 0).not { |q| q.where(name: "banned") }.select
+      found = Review.where.gteq(:downvotes, 0).not(&.where(name: "banned")).select
       names = found.map(&.name)
       names.should_not contain("banned")
       names.should contain("good")
@@ -72,7 +72,7 @@ describe Grant::Query::BuilderMethods do
       r3 = Review.create(name: "good", downvotes: 5)    # different name — NOT excluded
 
       # WHERE downvotes >= 0 AND NOT (name = 'banned' AND downvotes = 5)
-      found = Review.where.gteq(:downvotes, 0).not { |q| q.where(name: "banned").where(downvotes: 5) }.select
+      found = Review.where.gteq(:downvotes, 0).not(&.where(name: "banned").where(downvotes: 5)).select
       ids = found.map(&.id)
       ids.should contain(r2.id)
       ids.should contain(r3.id)
@@ -91,8 +91,8 @@ describe Grant::Query::BuilderMethods do
       # WHERE name = 'alice' OR (name = 'bob' AND downvotes = 2) OR (name = 'carol' AND downvotes = 3)
       found = Review
         .where(name: "alice")
-        .or { |q| q.where(name: "bob").where(downvotes: 2) }
-        .or { |q| q.where(name: "carol").where(downvotes: 3) }
+        .or(&.where(name: "bob").where(downvotes: 2))
+        .or(&.where(name: "carol").where(downvotes: 3))
         .select
 
       ids = found.map(&.id)

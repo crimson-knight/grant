@@ -25,7 +25,7 @@ private def w6b_sql_messages(& : ->) : Array(String)
 end
 
 private def w6b_verbose_labels(messages : Array(String)) : Array(String)
-  messages.select(&.includes?("↳")).map { |message| message.split(" (").first }
+  messages.select(&.includes?("↳")).map(&.split(" (").first)
 end
 
 describe "Verbose query logs label statements by model" do
@@ -64,7 +64,7 @@ describe "Verbose query logs label statements by model" do
       W6bVlGadget.scalar("SELECT COUNT(*) FROM w6b_vl_gadgets")
     end
 
-    labels = messages.select(&.starts_with?("W6bVlGadget ")).map { |message| message.split(" (").first }
+    labels = messages.select(&.starts_with?("W6bVlGadget ")).map(&.split(" (").first)
     labels.should eq(["W6bVlGadget Update", "W6bVlGadget Load", "W6bVlGadget Load"])
     # `exec` and `scalar` are real calls, so their frame reaches the spec; `query`
     # yields, which Crystal inlines into the caller, leaving no frame to report.

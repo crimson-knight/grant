@@ -242,7 +242,7 @@ module Grant::Schema
         ->(s : SchemaStatements) { s.add_foreign_key(from_table, to_table, **options); nil }, "add_foreign_key")
     end
 
-    def remove_foreign_key(from_table : TableName, column : ColumnNames? = nil, name : ::String | Symbol | Nil = nil, if_exists : Bool = false) : Nil
+    def remove_foreign_key(from_table : TableName, column : ColumnNames? = nil, name : ::String | Symbol? = nil, if_exists : Bool = false) : Nil
       record("remove_foreign_key", ->(s : SchemaStatements) { s.remove_foreign_key(from_table, column: column, name: name, if_exists: if_exists); nil })
     end
 
@@ -310,8 +310,8 @@ module Grant::Schema
 
     # ---- no inverse ------------------------------------------------------
 
-    {% for name in %w(validate_foreign_key validate_check_constraint add_exclusion_constraint remove_exclusion_constraint
-                     remove_columns change_column change_table_comment change_column_comment add_enum_value) %}
+    {% for name in %w[validate_foreign_key validate_check_constraint add_exclusion_constraint remove_exclusion_constraint
+                     remove_columns change_column change_table_comment change_column_comment add_enum_value] %}
       # Recorded without an inverse: reversing a migration that calls it raises
       # `IrreversibleMigration`. Wrap it in `reversible` to give both directions.
       def {{name.id}}(*args, **options) : Nil

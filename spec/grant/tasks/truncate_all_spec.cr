@@ -60,7 +60,7 @@ describe "Grant::Tasks::Database#truncate_all" do
       if CURRENT_ADAPTER == "pg"
         truncates.should eq 1
         StatementRecorder.count(statements, "DELETE").should eq 0
-        statements.find { |sql| sql.lstrip.upcase.starts_with?("TRUNCATE") }.not_nil!.should contain("RESTART IDENTITY CASCADE")
+        statements.find!(&.lstrip.upcase.starts_with?("TRUNCATE")).should contain("RESTART IDENTITY CASCADE")
       end
       M04Tasks.count(tasks, "m04_task_gadgets").should eq 0
     end

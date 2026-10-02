@@ -140,8 +140,8 @@ describe "Grant::Callbacks::Lifecycle" do
       model.callback_history.should contain("after_validation")
 
       # Check order
-      before_index = model.callback_history.index("before_validation").not_nil!
-      after_index = model.callback_history.index("after_validation").not_nil!
+      before_index = model.callback_history.index!("before_validation")
+      after_index = model.callback_history.index!("after_validation")
       before_index.should be < after_index
     end
   end

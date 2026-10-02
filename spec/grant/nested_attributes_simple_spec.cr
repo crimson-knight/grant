@@ -96,7 +96,7 @@ describe "Grant::NestedAttributes Simple V2" do
       attrs.should_not be_nil
       attrs.not_nil!.size.should eq(1)
       attrs.not_nil![0]["id"].should eq(1)
-      attrs.not_nil![0]["_destroy"].should eq(true)
+      attrs.not_nil![0]["_destroy"].should be_true
     end
   end
 
@@ -175,7 +175,7 @@ describe "Grant::NestedAttributes Simple V2" do
 
       # Check destroy
       attrs.not_nil![1]["id"].should eq(2)
-      attrs.not_nil![1]["_destroy"].should eq(true)
+      attrs.not_nil![1]["_destroy"].should be_true
 
       # Check create
       attrs.not_nil![2]["title"].should eq("New Post")

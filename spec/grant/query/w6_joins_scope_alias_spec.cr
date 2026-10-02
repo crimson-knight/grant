@@ -68,7 +68,7 @@ class W6jTagging < Grant::Base
 end
 
 private def names(relation : Grant::Query::Builder(W6jAuthor)) : Array(String)
-  relation.order(:id).select.map { |author| author.name.to_s }
+  relation.order(:id).select.map(&.name.to_s)
 end
 
 describe "joins scope in ON and automatic aliasing" do
@@ -81,7 +81,7 @@ describe "joins scope in ON and automatic aliasing" do
   end
 
   before_each do
-    {% for model in %w(W6jTagging W6jTag W6jComment W6jPost W6jAuthor) %}
+    {% for model in %w[W6jTagging W6jTag W6jComment W6jPost W6jAuthor] %}
       {{ model.id }}.clear
     {% end %}
 

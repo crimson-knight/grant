@@ -101,15 +101,15 @@ describe "reversible migrations" do
     commands = recorder.capture do
       recorder.add_column(:m03_users, :age, :integer)
       recorder.add_index(:m03_users, :age, unique: true)
-      recorder.create_table(:m03_a) { |t| t.string :x }
+      recorder.create_table(:m03_a, &.string(:x))
       recorder.rename_table(:m03_a, :m03_b)
       recorder.add_foreign_key(:m03_posts, :m03_users)
       recorder.add_reference(:m03_posts, :user)
       recorder.add_timestamps(:m03_posts)
       recorder.enable_extension(:hstore)
     end
-    commands.map(&.name).should eq %w(add_column add_index create_table rename_table add_foreign_key add_reference add_timestamps enable_extension)
-    commands.map(&.inverse_name).should eq %w(remove_column remove_index drop_table rename_table remove_foreign_key remove_reference remove_timestamps disable_extension)
+    commands.map(&.name).should eq %w[add_column add_index create_table rename_table add_foreign_key add_reference add_timestamps enable_extension]
+    commands.map(&.inverse_name).should eq %w[remove_column remove_index drop_table rename_table remove_foreign_key remove_reference remove_timestamps disable_extension]
     commands.all?(&.reversible?).should be_true
     recorder.commands.should be_empty
   end

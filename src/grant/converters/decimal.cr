@@ -10,7 +10,7 @@ module Grant::Converters
     extend self
 
     def to_db(value : ::BigDecimal?) : Grant::Columns::Type
-      return nil if value.nil?
+      return if value.nil?
       value.to_s
     end
 
@@ -20,7 +20,6 @@ module Grant::Converters
       when ::BigDecimal then value
       when String       then parse(value)
       when Int, Float   then ::BigDecimal.new(value.to_s)
-      else                   nil
       end
     end
 
@@ -42,7 +41,7 @@ module Grant::Converters
     # Parses decimal text, raising `ArgumentError` for anything else.
     def parse(text : String) : ::BigDecimal
       ::BigDecimal.new(text.strip)
-    rescue ex : InvalidBigDecimalException
+    rescue InvalidBigDecimalException
       raise ArgumentError.new("Invalid decimal: #{text.inspect}")
     end
   end
@@ -66,7 +65,6 @@ module Grant::Converters
     def from_db(value) : T?
       case value
       when Int then T.new(value)
-      else          nil
       end
     end
 

@@ -38,7 +38,7 @@ batch_size = Bench.int_opt(opts, "batch", 5_000_i64).to_i
 done_pct = Bench.int_opt(opts, "done-pct", 30_i64)
 db_path = Bench.str_opt(opts, "db-path")
 indexed_only = opts.has_key?("indexed-only")
-adapter_lbl = Bench.str_opt(opts, "adapter", Bench::ADAPTER_NAME).not_nil!
+adapter_lbl = opts["adapter"]? || Bench::ADAPTER_NAME
 
 if adapter_lbl != "sqlite"
   STDERR.puts "WARNING: this harness only wires up sqlite; --adapter #{adapter_lbl} " \

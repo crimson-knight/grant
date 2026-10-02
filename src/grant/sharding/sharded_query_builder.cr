@@ -119,7 +119,7 @@ module Grant::Sharding
       end
 
       if shard = active_shard
-        records.each { |record| record.current_shard = shard }
+        records.each(&.current_shard=(shard))
       end
 
       records
@@ -249,7 +249,8 @@ module Grant::Sharding
     # Override find to use routing with shard key optimization
     def find(id)
       # If we can determine shard from ID, route directly
-      if Model.sharding_config && Model.sharding_config.not_nil!.key_columns.includes?(:id)
+      config = Model.sharding_config
+      if config && config.key_columns.includes?(:id)
         shard = Grant::ShardManager.resolve_shard(Model.name, id: id)
         pin_shard(shard).where(id: id).first
       else

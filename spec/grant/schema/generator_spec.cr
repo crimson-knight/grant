@@ -120,10 +120,10 @@ describe "a generated migration" do
     rendered.should contain("add_column :users, :email, :string")
 
     adapter = Grant::ConnectionRegistry.get_adapter(CURRENT_ADAPTER)
-    adapter.open { |db| db.exec "DROP TABLE IF EXISTS m04_gen_users" }
+    adapter.open(&.exec("DROP TABLE IF EXISTS m04_gen_users"))
     adapter.open { |db| db.exec "DROP TABLE IF EXISTS schema_migrations" }
     statements = Grant::Schema::AdapterStatements.new(adapter)
-    statements.create_table(:m04_gen_users) { |t| t.string :name }
+    statements.create_table(:m04_gen_users, &.string(:name))
     begin
       context = Grant::Schema::MigrationContext.for(adapter, M04AddEmailToUsers, verbose: false)
       context.migrate.should eq [20260930120001_i64]
@@ -134,7 +134,7 @@ describe "a generated migration" do
       adapter.reset_schema_caches!
       adapter.schema.column_exists?(:m04_gen_users, :email).should be_false
     ensure
-      adapter.open { |db| db.exec "DROP TABLE IF EXISTS m04_gen_users" }
+      adapter.open(&.exec("DROP TABLE IF EXISTS m04_gen_users"))
       adapter.open { |db| db.exec "DROP TABLE IF EXISTS schema_migrations" }
       adapter.reset_schema_caches!
     end

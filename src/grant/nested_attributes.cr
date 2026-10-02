@@ -47,7 +47,7 @@ module Grant::NestedAttributes
     end
 
     after_save :save_all_nested_attributes
-    
+
     private def save_all_nested_attributes
       return true unless @_has_nested_attributes
       return true if _nested_attributes_data.empty?
@@ -55,7 +55,7 @@ module Grant::NestedAttributes
       success = true
 
       # Process each association's nested attributes
-      {% for method in @type.methods.select { |m| m.name.starts_with?("save_nested_") } %}
+      {% for method in @type.methods.select(&.name.starts_with?("save_nested_")) %}
         {% assoc_name = method.name.gsub(/^save_nested_/, "") %}
         if attrs = _nested_attributes_data[{{ assoc_name.stringify }}]?
           success = {{ method.name.id }} && success
@@ -63,7 +63,7 @@ module Grant::NestedAttributes
       {% end %}
       # Clear nested data after processing
       _nested_attributes_data.clear if success
-      
+
       success
     end
   end
@@ -499,20 +499,20 @@ module Grant::NestedAttributes
                    attrs.each { |k, v| result[k.to_s] = v }
                    result
                  else
-                   return nil
+                   return
                  end
 
     # Check reject_if
     if config[:reject_if] == :all_blank
-      return nil if hash_attrs.all? { |k, v| k == "_destroy" || blank_value?(v) }
+      return if hash_attrs.all? { |k, v| k == "_destroy" || blank_value?(v) }
     end
 
     if rejector && rejector.call(hash_attrs)
-      return nil
+      return
     end
 
     if config[:update_only] && !hash_attrs.has_key?("id") && !_grant_nested_saves_enabled?
-      return nil
+      return
     end
 
     hash_attrs

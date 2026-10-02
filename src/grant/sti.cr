@@ -322,7 +322,7 @@ module Grant::STI
     # AdminPersona.sti_names_for_query # => ["AdminPersona"]
     # ```
     def sti_names_for_query : Array(String)
-      Grant::STI.descendant_names(self.name)
+      Grant::STI.descendant_names(name)
     end
   end
 

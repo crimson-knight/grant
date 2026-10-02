@@ -166,105 +166,105 @@ end
 # Edge case test models
 {% begin %}
   {% adapter_literal = (env("CURRENT_ADAPTER") || "sqlite").id %}
-  
+
   # Basic polymorphic comment
   class EdgeComment < Grant::Base
     connection {{ adapter_literal }}
     table edge_comments
-    
+
     column id : Int64, primary: true
     column content : String
-    
+
     belongs_to :edgeable, polymorphic: true, optional: true
   end
-  
+
   # Strict validation comment
   class EdgeStrictComment < Grant::Base
     connection {{ adapter_literal }}
     table edge_strict_comments
-    
+
     column id : Int64, primary: true
     column content : String
-    
+
     # Not optional - requires validation
     belongs_to :strict_edgeable, polymorphic: true
   end
-  
+
   # Custom column names
   class EdgeCustomItem < Grant::Base
     connection {{ adapter_literal }}
     table edge_custom_items
-    
+
     column id : Int64, primary: true
     column name : String
-    
+
     belongs_to :owner, polymorphic: true, optional: true,
       foreign_key: :owner_id, type_column: :owner_class
   end
-  
+
   # Models that can have comments
   class EdgePost < Grant::Base
     connection {{ adapter_literal }}
     table edge_posts
-    
+
     column id : Int64, primary: true
     column title : String
-    
+
     has_many :edge_comments, as: :edgeable
     has_one :edge_image, as: :imageable
   end
-  
+
   # Model with Int32 primary key
   class EdgeArticle < Grant::Base
     connection {{ adapter_literal }}
     table edge_articles
-    
+
     column id : Int32, primary: true
     column title : String
 
     register_polymorphic_type
   end
-  
+
   # Model with string primary key (invalid for polymorphic)
   class EdgeInvalidPK < Grant::Base
     connection {{ adapter_literal }}
     table edge_invalid_pks
-    
+
     column id : String, primary: true
     column name : String
 
     register_polymorphic_type
   end
-  
+
   # Image model for has_one testing
   class EdgeImage < Grant::Base
     connection {{ adapter_literal }}
     table edge_images
-    
+
     column id : Int64, primary: true
     column url : String
-    
+
     belongs_to :imageable, polymorphic: true, optional: true
   end
-  
+
   # Models with dependent options
   class EdgeDestroyPost < Grant::Base
     connection {{ adapter_literal }}
     table edge_destroy_posts
-    
+
     column id : Int64, primary: true
     column title : String
-    
+
     has_many :edge_comments, as: :edgeable, dependent: :destroy
   end
-  
+
   class EdgeNullifyPost < Grant::Base
     connection {{ adapter_literal }}
     table edge_nullify_posts
-    
+
     column id : Int64, primary: true
     column title : String
-    
+
     has_many :edge_comments, as: :edgeable, dependent: :nullify
   end
 {% end %}

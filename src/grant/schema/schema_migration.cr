@@ -53,7 +53,7 @@ module Grant::Schema
     # Creates the tracking table unless it exists.
     def create_table : Nil
       return if table_exists?
-      @adapter.open { |db| db.exec create_table_sql }
+      @adapter.open(&.exec(create_table_sql))
       @table_present = true
     end
 

@@ -23,20 +23,18 @@ module Grant
         origin = Fiber.current
         limited = false if origin.grant_async_origin
         @fiber = spawn do
-          begin
-            Async::Metrics.track_operation do
-              result = if limited
-                         Limiter.current.run { Grant::Notifications.async_from(origin) { block.call } }
-                       else
-                         Grant::Notifications.async_from(origin) { block.call }
-                       end
-              @promise.resolve(result)
-            end
-          rescue e
-            @promise.reject(e)
-          ensure
-            @completed.set(true)
+          Async::Metrics.track_operation do
+            result = if limited
+                       Limiter.current.run { Grant::Notifications.async_from(origin) { block.call } }
+                     else
+                       Grant::Notifications.async_from(origin) { block.call }
+                     end
+            @promise.resolve(result)
           end
+        rescue e
+          @promise.reject(e)
+        ensure
+          @completed.set(true)
         end
       end
 

@@ -240,8 +240,8 @@ describe "Advanced Query Interface" do
         .where(active: true)
         .where.gt(:created_at, 1.week.ago)
         .where.not_like(:email, "%spam%")
-        .or { |q| q.where(role: "admin") }
-        .not { |q| q.where.is_null(:confirmed_at) }
+        .or(&.where(role: "admin"))
+        .not(&.where.is_null(:confirmed_at))
         .order(created_at: :desc)
         .limit(10)
 

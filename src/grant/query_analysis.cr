@@ -54,7 +54,7 @@ module Grant::QueryAnalysis
     def analyze : Analysis
       potential_n1s = [] of N1Issue
 
-      @query_log.each do |key, queries|
+      @query_log.each do |_, queries|
         # Skip if only one query
         next if queries.size <= 1
 
@@ -88,25 +88,31 @@ module Grant::QueryAnalysis
     def self.detect(&) : Analysis
       detector = instance
       detector.enable!
-      analysis = nil
 
       begin
         yield
-      ensure
-        analysis = detector.analyze
-        detector.disable!
-        detector.clear
+      rescue ex
+        finish_detection(detector)
+        raise ex
+      end
+      finish_detection(detector)
+    end
 
-        if analysis.has_issues?
-          Grant::Logs::Query.warn { "Potential N+1 queries detected - #{analysis.potential_n1_issues.size} issues, #{analysis.total_queries} total queries (#{analysis.total_duration_ms}ms)" }
+    # Stops *detector*, logs any N+1 pattern it saw and returns its analysis.
+    private def self.finish_detection(detector : self) : Analysis
+      analysis = detector.analyze
+      detector.disable!
+      detector.clear
 
-          analysis.potential_n1_issues.each do |issue|
-            Grant::Logs::Query.warn { "N+1 Query Pattern - #{issue.model}##{issue.operation}: #{issue.query_count} queries (#{issue.total_duration_ms}ms) [#{issue.association || "no association"}]" }
-          end
+      if analysis.has_issues?
+        Grant::Logs::Query.warn { "Potential N+1 queries detected - #{analysis.potential_n1_issues.size} issues, #{analysis.total_queries} total queries (#{analysis.total_duration_ms}ms)" }
+
+        analysis.potential_n1_issues.each do |issue|
+          Grant::Logs::Query.warn { "N+1 Query Pattern - #{issue.model}##{issue.operation}: #{issue.query_count} queries (#{issue.total_duration_ms}ms) [#{issue.association || "no association"}]" }
         end
       end
 
-      analysis.not_nil!
+      analysis
     end
 
     private def extract_operation(sql : String) : String

@@ -679,7 +679,7 @@ module Grant::Scoping
     # Post.find!(1) # => Post (raises if absent or scoped out)
     # ```
     def find!(id)
-      find(id) || raise Grant::Querying::NotFound.new("No #{self.name} found where #{primary_name} = #{id}")
+      find(id) || raise Grant::Querying::NotFound.new("No #{name} found where #{primary_name} = #{id}")
     end
 
     # Returns the records with the given primary keys in the order of *ids*,

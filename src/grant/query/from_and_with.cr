@@ -18,7 +18,7 @@ module Grant::Query::CommonTableExpressions
 
   # Words that cannot appear at the top level of a recursive term: databases
   # reject them there, and the depth guard cannot be placed around them.
-  FORBIDDEN_STEP_WORDS = %w(GROUP ORDER LIMIT OFFSET FETCH HAVING WINDOW UNION INTERSECT EXCEPT FOR)
+  FORBIDDEN_STEP_WORDS = %w[GROUP ORDER LIMIT OFFSET FETCH HAVING WINDOW UNION INTERSECT EXCEPT FOR]
 
   # Raises `Grant::UnsupportedCommonTableExpressionError` unless *adapter*'s
   # server understands `WITH`.
@@ -193,7 +193,7 @@ class Grant::Query::Builder(Model)
     quoted = Model.quote(table.to_s)
     @from_kind = :table
     @from_alias = name
-    @from_render = ->(outer : Grant::Query::Assembler::Base(Model)) { quoted }
+    @from_render = ->(_outer : Grant::Query::Assembler::Base(Model)) { quoted }
     self
   end
 

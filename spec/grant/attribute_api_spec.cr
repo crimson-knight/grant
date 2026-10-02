@@ -187,7 +187,7 @@ describe "Grant::AttributeApi" do
 
       # For now, explicitly set the value since default isn't working for Bool
       user.verified = false
-      user.verified.should eq(false)
+      user.verified.should be_false
 
       user.full_name.should eq("Jane Doe")
       user.age.should eq(30)

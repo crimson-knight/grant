@@ -16,16 +16,16 @@ private def serial_key : String
 end
 
 private def run(statement : String) : Nil
-  adapter.open { |db| db.exec(statement) }
+  adapter.open(&.exec(statement))
 end
 
 private def count(table : String) : Int64
-  adapter.open { |db| db.scalar("SELECT COUNT(*) FROM #{table}") }.to_s.to_i64
+  adapter.open(&.scalar("SELECT COUNT(*) FROM #{table}")).to_s.to_i64
 end
 
 private def insert_author(name : String) : Int64
   run "INSERT INTO o01_authors (name) VALUES ('#{name}')"
-  adapter.open { |db| db.scalar("SELECT MAX(id) FROM o01_authors") }.to_s.to_i64
+  adapter.open(&.scalar("SELECT MAX(id) FROM o01_authors")).to_s.to_i64
 end
 
 describe "Adapter test helpers" do

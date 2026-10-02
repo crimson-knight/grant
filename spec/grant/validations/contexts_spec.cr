@@ -94,7 +94,7 @@ describe "validation contexts" do
     it "runs on: :publish validators plus the ones without on:" do
       article = fresh_article(summary: nil, title: nil)
       article.valid?(:publish).should be_false
-      article.errors.map(&.field.to_s).sort.should eq(["summary", "title"])
+      article.errors.map(&.field.to_s).sort!.should eq(["summary", "title"])
     end
 
     it "does not run :create or :update validators in a custom context" do
@@ -115,7 +115,7 @@ describe "validation contexts" do
     it "runs every validator for an explicit :save context" do
       article = fresh_article(slug: nil, notes: nil, summary: nil)
       article.valid?(:save).should be_false
-      article.errors.map(&.field.to_s).sort.should eq(["notes", "slug", "summary"])
+      article.errors.map(&.field.to_s).sort!.should eq(["notes", "slug", "summary"])
     end
 
     it "applies to subclasses" do

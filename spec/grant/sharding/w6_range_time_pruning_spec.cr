@@ -65,12 +65,12 @@ describe "time-range shard pruning (#{CURRENT_ADAPTER})" do
       W6C04.provision("w6_time_#{shard}", events_ddl)
       W6C04.establish("w6_time", "w6_time_#{shard}", :primary, shard)
       times.each_with_index do |time, index|
-        W6TimeEvent.new(created_at: time, label: "#{shard} #{index}").tap { |event| event.current_shard = shard }.save!(skip_timestamps: true)
+        W6TimeEvent.new(created_at: time, label: "#{shard} #{index}").tap(&.current_shard=(shard)).save!(skip_timestamps: true)
       end
     end
 
     orders_ddl = ["CREATE TABLE w6_time_orders (id VARCHAR(80) PRIMARY KEY, label TEXT)"]
-    {w6_o_2024: Time.utc(2024, 8, 1), w6_o_2025: Time.utc(2025, 3, 1)}.each do |shard, time|
+    {w6_o_2024: Time.utc(2024, 8, 1), w6_o_2025: Time.utc(2025, 3, 1)}.each do |shard, _|
       W6C04.provision("w6_time_#{shard}", orders_ddl)
       W6C04.establish("w6_time_orders", "w6_time_#{shard}", :primary, shard)
     end
@@ -165,7 +165,7 @@ describe "time-range shard pruning (#{CURRENT_ADAPTER})" do
     it "computes the shard set once for a count and an exists?" do
       W6TimeEvent.where(created_at: Time.utc(2024, 1, 1)...Time.utc(2024, 7, 1)).count.should eq 2
       W6TimeEvent.where(created_at: Time.utc(2025, 1, 1)..).exists?.should be_true
-      W6TimeEvent.where(created_at: Time.utc(2024, 7, 1)...Time.utc(2025, 1, 1)).pluck(:label).map(&.to_s).sort.should eq ["w6_h2 0", "w6_h2 1"]
+      W6TimeEvent.where(created_at: Time.utc(2024, 7, 1)...Time.utc(2025, 1, 1)).pluck(:label).map(&.to_s).sort!.should eq ["w6_h2 0", "w6_h2 1"]
     end
   end
 

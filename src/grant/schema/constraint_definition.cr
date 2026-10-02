@@ -12,8 +12,8 @@ module Grant::Schema
 
     # `DEFERRABLE INITIALLY ...` text for `deferrable:` (`true`, `:immediate`,
     # `:deferred`), or nil. Only PostgreSQL defers constraints.
-    def self.deferrable_sql(dialect : Dialect, deferrable : Bool | Symbol | Nil, name : ::String) : ::String?
-      return nil if deferrable.nil? || deferrable == false
+    def self.deferrable_sql(dialect : Dialect, deferrable : Bool | Symbol?, name : ::String) : ::String?
+      return if deferrable.nil? || deferrable == false
       raise UnsupportedOperation.new("Only PostgreSQL supports deferrable constraints ('#{name}')") unless dialect.pg?
       case deferrable
       when :deferred        then "DEFERRABLE INITIALLY DEFERRED"
@@ -32,20 +32,20 @@ module Grant::Schema
     getter name : ::String
     getter on_delete : Symbol?
     getter on_update : Symbol?
-    getter deferrable : Bool | Symbol | Nil
+    getter deferrable : Bool | Symbol?
     getter? validate : Bool
 
     def initialize(@table : ::String, @to_table : ::String, @columns : Array(::String), @primary_key : Array(::String),
                    name : ::String? = nil, @on_delete : Symbol? = nil, @on_update : Symbol? = nil,
-                   @deferrable : Bool | Symbol | Nil = nil, @validate : Bool = true)
+                   @deferrable : Bool | Symbol? = nil, @validate : Bool = true)
       @name = name || Naming.constraint_name("fk", @table, @columns.join("_"))
     end
 
     # Builds the definition with ActiveRecord's defaults: the column is
     # `<singular to_table>_id` and the key is `id`.
     def self.build(table : TableName, to_table : TableName, column : ColumnNames? = nil, primary_key : ColumnNames? = nil,
-                   name : ::String | Symbol | Nil = nil, on_delete : Symbol? = nil, on_update : Symbol? = nil,
-                   deferrable : Bool | Symbol | Nil = nil, validate : Bool = true) : ForeignKeyDefinition
+                   name : ::String | Symbol? = nil, on_delete : Symbol? = nil, on_update : Symbol? = nil,
+                   deferrable : Bool | Symbol? = nil, validate : Bool = true) : ForeignKeyDefinition
       columns = column ? IndexDefinition.to_names(column) : [Naming.foreign_key_column(to_table)]
       keys = primary_key ? IndexDefinition.to_names(primary_key) : ["id"]
       new(table.to_s, to_table.to_s, columns, keys, name.try(&.to_s), on_delete, on_update, deferrable, validate)
@@ -101,11 +101,11 @@ module Grant::Schema
     getter table : ::String
     getter columns : Array(::String)
     getter name : ::String
-    getter deferrable : Bool | Symbol | Nil
+    getter deferrable : Bool | Symbol?
     getter using_index : ::String?
 
     def initialize(@table : ::String, @columns : Array(::String), name : ::String? = nil,
-                   @deferrable : Bool | Symbol | Nil = nil, @using_index : ::String? = nil)
+                   @deferrable : Bool | Symbol? = nil, @using_index : ::String? = nil)
       @name = name || Naming.constraint_name("uniq", @table, @columns.join("_"))
     end
 
@@ -132,10 +132,10 @@ module Grant::Schema
     getter using : ::String?
     getter where : ::String?
     getter name : ::String
-    getter deferrable : Bool | Symbol | Nil
+    getter deferrable : Bool | Symbol?
 
     def initialize(@table : ::String, @expression : ::String, @using : ::String? = nil, @where : ::String? = nil,
-                   name : ::String? = nil, @deferrable : Bool | Symbol | Nil = nil)
+                   name : ::String? = nil, @deferrable : Bool | Symbol? = nil)
       @name = name || Naming.constraint_name("excl", @table, Naming.digest(@expression))
     end
 

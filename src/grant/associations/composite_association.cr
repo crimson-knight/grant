@@ -63,7 +63,7 @@ module Grant::CompositeAssociation
   # key with a NULL part references nothing).
   def self.key_values(record : Grant::Base, columns : Array(String)) : Array(Grant::Columns::Type)?
     values = columns.map { |column| record.read_attribute(column) }
-    values.any?(&.nil?) ? nil : values
+    values.any?(Nil) ? nil : values
   end
 
   # :ditto:
@@ -94,7 +94,7 @@ module Grant::CompositeAssociation
   # The parent a `belongs_to` with foreign key *foreign_keys* points at.
   def self.find_one(owner : Grant::Base, target : T.class, foreign_keys : Array(String), primary_keys : Array(String),
                     scope : Proc(Grant::Query::Builder(T), Grant::Query::Builder(T))?) : T? forall T
-    values = key_values(owner, foreign_keys) || return nil
+    values = key_values(owner, foreign_keys) || return
     relation = T.current_scope
     relation = scope.call(relation) if scope
     relation.where_tuples(primary_keys, [values]).first
@@ -103,7 +103,7 @@ module Grant::CompositeAssociation
   # The child a `has_one` with foreign key *foreign_keys* points back from.
   def self.find_child(owner : Grant::Base, target : T.class, foreign_keys : Array(String), primary_keys : Array(String),
                       scope : Proc(Grant::Query::Builder(T), Grant::Query::Builder(T))?) : T? forall T
-    values = key_values(owner, primary_keys) || return nil
+    values = key_values(owner, primary_keys) || return
     relation = T.current_scope
     relation = scope.call(relation) if scope
     relation.where_tuples(foreign_keys, [values]).first
@@ -227,9 +227,9 @@ module Grant::CompositeAssociation
 
   # The inverse of a `belongs_to` when it is a `has_one` on the target.
   private def self.singular_inverse(records : Array(Grant::Base), name : String) : String?
-    owner = records.first? || return nil
-    reflection = Grant::AssociationRegistry.reflection(owner.class.name, name) || return nil
-    inverse = reflection.inverse_of || return nil
+    owner = records.first? || return
+    reflection = Grant::AssociationRegistry.reflection(owner.class.name, name) || return
+    inverse = reflection.inverse_of || return
     inverse.has_one? ? inverse.name : nil
   end
 end

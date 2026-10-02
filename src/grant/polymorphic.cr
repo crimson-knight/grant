@@ -206,7 +206,7 @@ module Grant::Polymorphic
         false
       end
     end
-    
+
     # Like `load_polymorphic`, but raises `Grant::Querying::NotFound` instead of
     # returning `nil`.
     #

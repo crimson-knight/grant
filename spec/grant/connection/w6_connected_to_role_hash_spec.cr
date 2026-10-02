@@ -115,8 +115,8 @@ describe "connected_to(database: {role => connection}) on #{CURRENT_ADAPTER}" do
       reader = Grant::ConnectionRegistry.get_adapter("w6_rhp", :reading)
       Grant::ConnectionRegistry.connection_spec("w6_rhp", :writing).not_nil!.pool_size.should eq 5
       Grant::ConnectionRegistry.connection_spec("w6_rhp", :reading).not_nil!.pool_size.should eq 2
-      writer.open { |db| db.scalar("SELECT 1") }
-      reader.open { |db| db.scalar("SELECT 1") }
+      writer.open(&.scalar("SELECT 1"))
+      reader.open(&.scalar("SELECT 1"))
       writer.pool_stat.size.should eq 5
       reader.pool_stat.size.should eq 2
     ensure

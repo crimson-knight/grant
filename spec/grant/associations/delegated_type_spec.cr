@@ -112,7 +112,7 @@ describe "Grant::DelegatedType" do
         DtxEntry.create!(title: "c", entryable: DtxAdminNote.create!(note: "n")),
       ]
       labels = entries.map do |entry|
-        case klass = entry.entryable_class
+        case entry.entryable_class
         when DtxMessage.class   then "message"
         when DtxComment.class   then "comment"
         when DtxAdminNote.class then "note"

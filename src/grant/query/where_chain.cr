@@ -215,7 +215,7 @@ module Grant::Query
     # ```
     # User.where.json_path(:settings, "theme", "dark")
     # ```
-    def json_path(field : Symbol | String, path : String | Array(String), value : String | Int | Float | Bool | Nil)
+    def json_path(field : Symbol | String, path : String | Array(String), value : String | Int | Float | Bool?)
       @query.json_path(field, path, value)
     end
 

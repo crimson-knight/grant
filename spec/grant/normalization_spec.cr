@@ -59,7 +59,7 @@ when "sqlite"
       created_at TEXT,
       updated_at TEXT
     )
-  SQL
+    SQL
 when "pg"
   NormalizedUser.exec(<<-SQL)
     CREATE TABLE normalized_users (
@@ -72,7 +72,7 @@ when "pg"
       created_at TIMESTAMP,
       updated_at TIMESTAMP
     )
-  SQL
+    SQL
 when "mysql"
   NormalizedUser.exec(<<-SQL)
     CREATE TABLE normalized_users (
@@ -85,7 +85,7 @@ when "mysql"
       created_at TIMESTAMP,
       updated_at TIMESTAMP
     )
-  SQL
+    SQL
 end
 
 describe Grant::Normalization do

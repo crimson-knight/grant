@@ -38,7 +38,7 @@ describe "live DDL and catalog round trip (#{CURRENT_ADAPTER})" do
 
   it "stores the defaults it was given" do
     insert = CURRENT_ADAPTER == "mysql" ? "INSERT INTO w6b_live (name, created_at, updated_at) VALUES ('a', NOW(), NOW())" : "INSERT INTO w6b_live (name, created_at, updated_at) VALUES ('a', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
-    adapter.open { |db| db.exec insert }
+    adapter.open(&.exec(insert))
     adapter.open { |db| db.query_one("SELECT role FROM w6b_live", as: String) }.should eq "it's member"
     adapter.open { |db| db.query_one("SELECT qty FROM w6b_live", as: Int).to_i64 }.should eq 3
     adapter.open { |db| db.query_one("SELECT stamped FROM w6b_live", as: Time?) }.should_not be_nil

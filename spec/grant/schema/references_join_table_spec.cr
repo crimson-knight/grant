@@ -55,8 +55,8 @@ describe "M02b references and join tables" do
 
     before_each do
       statements.drop_table(:m02b_rf_posts, :m02b_rf_editors, :m02b_rf_groups, :m02b_rf_editors_m02b_rf_groups, if_exists: true)
-      statements.create_table(:m02b_rf_editors) { |t| t.string :name }
-      statements.create_table(:m02b_rf_posts) { |t| t.string :title }
+      statements.create_table(:m02b_rf_editors, &.string(:name))
+      statements.create_table(:m02b_rf_posts, &.string(:title))
     end
     after_each { statements.drop_table(:m02b_rf_posts, :m02b_rf_editors, :m02b_rf_groups, :m02b_rf_editors_m02b_rf_groups, if_exists: true) }
 

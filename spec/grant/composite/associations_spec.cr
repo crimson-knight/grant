@@ -184,14 +184,14 @@ describe "composite foreign keys on associations" do
 
       orders = [] of CkAsOrder
       statements = capture_statements { orders = CkAsOrder.includes(:items).to_a }
-      statements.select(&.starts_with?("SELECT")).size.should eq 2
+      statements.count(&.starts_with?("SELECT")).should eq 2
 
       orders.size.should eq 10
       orders.each do |order|
         order.association_loaded?(:items).should be_true
         order.items.loaded?.should be_true
         order.items.to_a.size.should eq 2
-        order.items.each { |item| item.order_id.should eq order.id }
+        order.items.each(&.order_id.should(eq(order.id)))
       end
 
       # Reading the loaded association does not query again.
@@ -210,29 +210,29 @@ describe "composite foreign keys on associations" do
     it "keeps orders that share an order id apart" do
       seed_shared_ids
       orders = CkAsOrder.includes(:items).order(:shop_id).to_a
-      orders.map { |order| order.items.to_a.map(&.sku.to_s).sort! }.should eq [["a1", "a2"], ["b1"]]
+      orders.map(&.items.to_a.map(&.sku.to_s).sort!).should eq [["a1", "a2"], ["b1"]]
     end
 
     it "loads belongs_to with one query for all children" do
       seed_shared_ids
       items = [] of CkAsItem
       statements = capture_statements { items = CkAsItem.includes(:order).order(:sku).to_a }
-      statements.select(&.starts_with?("SELECT")).size.should eq 2
-      items.map { |item| item.order.not_nil!.shop_id }.should eq [1_i64, 1_i64, 2_i64]
+      statements.count(&.starts_with?("SELECT")).should eq 2
+      items.map(&.order.not_nil!.shop_id).should eq [1_i64, 1_i64, 2_i64]
     end
 
     it "loads has_one with one query" do
-      order_one, order_two = seed_shared_ids
+      seed_shared_ids
       CkAsReceipt.create!(shop_id: 1_i64, order_id: 5_i64, total: 10)
       CkAsReceipt.create!(shop_id: 2_i64, order_id: 5_i64, total: 20)
       orders = [] of CkAsOrder
       statements = capture_statements { orders = CkAsOrder.includes(:receipt).order(:shop_id).to_a }
-      statements.select(&.starts_with?("SELECT")).size.should eq 2
-      orders.map { |order| order.receipt.not_nil!.total }.should eq [10, 20]
+      statements.count(&.starts_with?("SELECT")).should eq 2
+      orders.map(&.receipt.not_nil!.total).should eq [10, 20]
     end
 
     it "preloads nested associations" do
-      order_one, _ = seed_shared_ids
+      seed_shared_ids
       CkAsReceipt.create!(shop_id: 1_i64, order_id: 5_i64, total: 10)
       orders = CkAsOrder.includes(items: :order).order(:shop_id).to_a
       orders.first.items.to_a.each { |item| item.association_loaded?(:order).should be_true }
@@ -244,7 +244,7 @@ describe "composite foreign keys on associations" do
       begin
         Grant.settings.in_clause_limit = 2
         statements = capture_statements { CkAsOrder.includes(:items).to_a }
-        statements.select { |sql| sql.starts_with?("SELECT") && sql.includes?("ck_as_items") }.size.should eq 3
+        statements.count { |sql| sql.starts_with?("SELECT") && sql.includes?("ck_as_items") }.should eq 3
       ensure
         Grant.settings.in_clause_limit = original
       end

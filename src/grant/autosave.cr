@@ -93,7 +93,7 @@ module Grant::Autosave
   def _autosave_stage(name : String, record : Grant::Base) : Nil
     staged = (@_autosave_staged ||= {} of String => Array(Grant::Base))
     list = (staged[name] ||= [] of Grant::Base)
-    list << record unless list.any? { |candidate| candidate.same?(record) }
+    list << record unless list.any?(&.same?(record))
   end
 
   # :nodoc:

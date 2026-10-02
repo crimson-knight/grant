@@ -19,7 +19,7 @@ describe "class-level destroy, delete and update" do
     end
 
     it "destroys many with one SELECT, then destroys each record" do
-      ids = 3.times.map { |i| ConvItem.create!(name: "n#{i}").id.not_nil! }.to_a
+      ids = Array.new(3) { |i| ConvItem.create!(name: "n#{i}").id.not_nil! }
       destroyed = [] of ConvItem
       statements = AssociationQueryCounter.statements { destroyed = ConvItem.destroy(ids) }
       statements.count(&.includes?("SELECT")).should eq(1)
@@ -43,7 +43,7 @@ describe "class-level destroy, delete and update" do
     end
 
     it "deletes many ids without loading records" do
-      ids = 3.times.map { |i| ConvItem.create!(name: "n#{i}").id.not_nil! }.to_a
+      ids = Array.new(3) { |i| ConvItem.create!(name: "n#{i}").id.not_nil! }
       count = 0_i64
       selects = AssociationQueryCounter.selects { count = ConvItem.delete(ids[0, 2]) }
       count.should eq(2)

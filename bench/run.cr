@@ -42,7 +42,7 @@ url = Bench.setup!(db_path)
 page_size = Bench.int_opt(opts, "page", 1_000_i64).to_i
 in_size = Bench.int_opt(opts, "in-size", 20_000_i64).to_i
 in_chunk = Bench.int_opt(opts, "in-chunk", 900_i64).to_i
-results_path = Bench.str_opt(opts, "results", "bench/RESULTS.md").not_nil!
+results_path = opts["results"]? || "bench/RESULTS.md"
 skip_noindex = opts.has_key?("skip-noindex")
 
 # Discover actual scale from the DB — never assume.
@@ -94,7 +94,7 @@ end
 # lane). Benchmarking a clean keyset here keeps the OFFSET-vs-keyset comparison
 # honest. A fresh-query-per-page keyset is also exactly what `each_streamed`
 # (§2.3) does internally once merged.
-def keyset_walk(page_size : Int32, max_pages : Int32, &block : Array(Bench::Todo) ->) : Int64
+def keyset_walk(page_size : Int32, max_pages : Int32, & : Array(Bench::Todo) ->) : Int64
   last_id = 0_i64
   pages = 0
   seen = 0_i64
@@ -240,7 +240,6 @@ id_list = (1_i64..in_n.to_i64).to_a
 # honestly — slow OR failure both prove the point.
 single_result_count = 0
 single_secs = 0.0
-single_note = ""
 single_failed = false
 begin
   _, single_secs = Bench.timed do
@@ -391,52 +390,52 @@ File.open(results_path, "w") do |f|
   f.puts "## Notes on the IN-list benchmark (c)"
   f.puts
   f.puts <<-MD
-  Whether the **single huge `IN`** *fails* or merely *degrades* depends on the
-  database/driver's bind-parameter cap:
+    Whether the **single huge `IN`** *fails* or merely *degrades* depends on the
+    database/driver's bind-parameter cap:
 
-  - **PostgreSQL:** hard cap of **65535** bind params per statement -> a single
-    `IN` larger than that raises outright.
-  - **MySQL:** bounded by `max_allowed_packet`; large `IN`s either error or
-    serialize slowly.
-  - **SQLite:** `SQLITE_MAX_VARIABLE_NUMBER` defaults to **999** (pre-3.32) or
-    **32766** (3.32+), but can be compiled higher. On the build used for this
-    run, the driver accepted even very large `IN` lists, so the single-`IN`
-    here **degraded** (linear slowdown + full-result memory) rather than
-    erroring. The harness records the real outcome instead of asserting a
-    failure.
+    - **PostgreSQL:** hard cap of **65535** bind params per statement -> a single
+      `IN` larger than that raises outright.
+    - **MySQL:** bounded by `max_allowed_packet`; large `IN`s either error or
+      serialize slowly.
+    - **SQLite:** `SQLITE_MAX_VARIABLE_NUMBER` defaults to **999** (pre-3.32) or
+      **32766** (3.32+), but can be compiled higher. On the build used for this
+      run, the driver accepted even very large `IN` lists, so the single-`IN`
+      here **degraded** (linear slowdown + full-result memory) rather than
+      erroring. The harness records the real outcome instead of asserting a
+      failure.
 
-  The takeaway is identical either way: **chunked `IN` is the portable, robust
-  pattern** — it stays under every engine's cap and keeps each query bounded.
-  Thread 2's automatic `in_clause_limit` chunking (§2.2) does this transparently;
-  this harness chunks manually until that merges.
-  MD
+    The takeaway is identical either way: **chunked `IN` is the portable, robust
+    pattern** — it stays under every engine's cap and keeps each query bounded.
+    Thread 2's automatic `in_clause_limit` chunking (§2.2) does this transparently;
+    this harness chunks manually until that merges.
+    MD
   f.puts
   f.puts "## How this scales to 100M+/1B rows"
   f.puts
   f.puts <<-MD
-  These numbers were measured at **#{total_rows} rows** on sqlite locally. We do
-  **not** materialize a literal 1B-row table on a laptop. The patterns are
-  O-class invariant w.r.t. row count, so the curves shown here are the same ones
-  that bite at 100M-1B:
+    These numbers were measured at **#{total_rows} rows** on sqlite locally. We do
+    **not** materialize a literal 1B-row table on a laptop. The patterns are
+    O-class invariant w.r.t. row count, so the curves shown here are the same ones
+    that bite at 100M-1B:
 
-  - **(a) OFFSET vs keyset:** `LIMIT/OFFSET` is O(offset) per page -> O(n^2) to
-    walk the whole table; keyset (`WHERE id > last`) is O(page) per page -> O(n)
-    total, with flat per-page cost regardless of depth. At 1B rows the deep-page
-    OFFSET penalty is catastrophic; keyset is unchanged.
-  - **(b) composite index:** a `(tenant_id, created_at)` index turns a
-    full-table scan (O(n)) into an index range scan (O(log n + matches)). The
-    larger the table, the larger the win — at 1B rows the unindexed scan is
-    untenable.
-  - **(c) IN chunking:** a single huge `IN` hits the driver's bind-param cap
-    (sqlite default 999/32766) regardless of table size; chunking keeps every
-    query valid and bounded. Independent of total row count.
-  - **(d) streaming vs to_a:** `to_a` memory grows linearly with result size;
-    streaming/batched iteration stays bounded. At 1B-row scans `to_a` OOMs;
-    streaming does not.
+    - **(a) OFFSET vs keyset:** `LIMIT/OFFSET` is O(offset) per page -> O(n^2) to
+      walk the whole table; keyset (`WHERE id > last`) is O(page) per page -> O(n)
+      total, with flat per-page cost regardless of depth. At 1B rows the deep-page
+      OFFSET penalty is catastrophic; keyset is unchanged.
+    - **(b) composite index:** a `(tenant_id, created_at)` index turns a
+      full-table scan (O(n)) into an index range scan (O(log n + matches)). The
+      larger the table, the larger the win — at 1B rows the unindexed scan is
+      untenable.
+    - **(c) IN chunking:** a single huge `IN` hits the driver's bind-param cap
+      (sqlite default 999/32766) regardless of table size; chunking keeps every
+      query valid and bounded. Independent of total row count.
+    - **(d) streaming vs to_a:** `to_a` memory grows linearly with result size;
+      streaming/batched iteration stays bounded. At 1B-row scans `to_a` OOMs;
+      streaming does not.
 
-  Run at higher local scale with e.g.
-  `crystal run --release bench/seed.cr -- --rows 10_000_000 --tenants 50_000`.
-  MD
+    Run at higher local scale with e.g.
+    `crystal run --release bench/seed.cr -- --rows 10_000_000 --tenants 50_000`.
+    MD
 end
 
 puts

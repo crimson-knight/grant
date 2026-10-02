@@ -40,20 +40,18 @@ module Grant
 
         @wait_group.add(1)
         spawn do
-          begin
-            result.wait
-            @mutex.synchronize do
-              if tracked = @tracked_results.find { |tr| tr.id == id }
-                tracked.completed = true
-              end
+          result.wait
+          @mutex.synchronize do
+            if tracked = @tracked_results.find { |tr| tr.id == id }
+              tracked.completed = true
             end
-          rescue e
-            @mutex.synchronize do
-              @errors << e
-            end
-          ensure
-            @wait_group.done
           end
+        rescue e
+          @mutex.synchronize do
+            @errors << e
+          end
+        ensure
+          @wait_group.done
         end
 
         id
@@ -71,7 +69,7 @@ module Grant
         # Check for errors after all operations complete
         @mutex.synchronize do
           if @errors.any?
-            failed_ops = @errors.map(&.message).compact
+            failed_ops = @errors.compact_map(&.message)
             raise AsyncCoordinationError.new(failed_ops)
           end
         end

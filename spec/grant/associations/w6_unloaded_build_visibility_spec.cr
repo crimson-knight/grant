@@ -60,7 +60,7 @@ describe "records built on a collection that was never loaded" do
 
     built = owner.w6b_posts.build(title: "built")
 
-    titles = owner.w6b_posts.map(&.title).compact.sort!
+    titles = owner.w6b_posts.compact_map(&.title).sort!
     titles.should eq(["built", "stored"])
     owner.w6b_posts.to_a.any?(&.same?(built)).should be_true
     W6bPost.count.should eq(1)
@@ -106,7 +106,7 @@ describe "records built on a collection that was never loaded" do
     owner.w6b_posts.build(title: "a")
     owner.w6b_posts.build(title: "b")
 
-    owner.w6b_posts.map(&.title).compact.sort!.should eq(["a", "b"])
+    owner.w6b_posts.compact_map(&.title).sort!.should eq(["a", "b"])
     owner.w6b_posts.size.should eq(2)
     owner.save!
     W6bPost.where(w6b_owner_id: owner.id).count.should eq(2)
@@ -119,7 +119,7 @@ describe "records built on a collection that was never loaded" do
 
     built = owner.w6b_tags.build(label: "built")
 
-    owner.w6b_tags.map(&.label).compact.sort!.should eq(["built", "stored"])
+    owner.w6b_tags.compact_map(&.label).sort!.should eq(["built", "stored"])
     owner.w6b_tags.size.should eq(2)
     owner.w6b_tags.any?.should be_true
     owner.w6b_tags.to_a.any?(&.same?(built)).should be_true

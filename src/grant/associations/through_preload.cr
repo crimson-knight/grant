@@ -77,7 +77,7 @@ class Grant::AssociationLoader
     end
   end
 
-  private def self.rows_in(value : Array(Grant::Base) | Grant::Base | Nil) : Array(Grant::Base)
+  private def self.rows_in(value : (Array(Grant::Base) | Grant::Base)?) : Array(Grant::Base)
     case value
     when Array(Grant::Base) then value
     when Grant::Base        then [value] of Grant::Base

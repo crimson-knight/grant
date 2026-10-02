@@ -49,7 +49,7 @@ module Grant::AttributeApi
       {% converter = options[:converter] %}
       {% default = options[:default] %}
       {% cast = options[:cast] %}
-      
+
       # Store attribute metadata
       @@attribute_definitions[{{name.stringify}}] = {
         name: {{name.stringify}},
@@ -58,13 +58,13 @@ module Grant::AttributeApi
         has_default: {{default != nil}},
         has_converter: {{converter != nil}}
       }
-      
+
       {% if virtual %}
         # Virtual attributes aren't backed by DB columns
         @[JSON::Field(ignore: true)]
         @[YAML::Field(ignore: true)]
         @{{name}} : {{type}}?
-        
+
         # Getter with default value support
         def {{name}} : {{type}}?
           if @{{name}}.nil?
@@ -78,16 +78,16 @@ module Grant::AttributeApi
           end
           @{{name}}
         end
-        
+
         # Setter with dirty tracking
         def {{name}}=(value : {{type}}?)
           ensure_dirty_tracking_initialized
-          
+
           if !new_record? && @{{name}} != value
             if !dirty_tracking_hashes[0].has_key?({{name.stringify}})
               dirty_tracking_hashes[0][{{name.stringify}}] = @{{name}}.as(Grant::Base::DirtyValue)
             end
-            
+
             original = dirty_tracking_hashes[0][{{name.stringify}}]
             if original == value
               dirty_tracking_hashes[1].delete({{name.stringify}})
@@ -95,16 +95,16 @@ module Grant::AttributeApi
               dirty_tracking_hashes[1][{{name.stringify}}] = {original, value.as(Grant::Base::DirtyValue)}
             end
           end
-          
+
           @{{name}} = value
         end
-        
+
         # Dirty tracking methods
         def {{name}}_changed? : Bool
           ensure_dirty_tracking_initialized
           dirty_tracking_hashes[1].has_key?({{name.stringify}})
         end
-        
+
         def {{name}}_was : {{type}}?
           ensure_dirty_tracking_initialized
           if dirty_tracking_hashes[1].has_key?({{name.stringify}})
@@ -113,7 +113,7 @@ module Grant::AttributeApi
             @{{name}}
           end
         end
-        
+
         def {{name}}_change : Tuple({{type}}?, {{type}}?)?
           ensure_dirty_tracking_initialized
           if change = dirty_tracking_hashes[1][{{name.stringify}}]?
@@ -123,7 +123,7 @@ module Grant::AttributeApi
       {% else %}
         # Non-virtual attributes use the column macro with enhancements
         column {{name}} : {{type}}{% if converter %}, converter: {{converter}}{% end %}{% if options[:column_type] %}, column_type: {{options[:column_type]}}{% end %}{% if options[:primary] %}, primary: {{options[:primary]}}{% end %}{% if options[:auto] %}, auto: {{options[:auto]}}{% end %}
-        
+
         # Override getter to support default values
         {% if default %}
           def {{name}}
@@ -139,7 +139,7 @@ module Grant::AttributeApi
             end
           end
         {% end %}
-        
+
         # Add type casting support
         {% if cast %}
           def {{name}}=(value)
@@ -207,8 +207,6 @@ module Grant::AttributeApi
         value.to_i32?
       when Number
         value.to_i32
-      else
-        nil
       end
     end
 
@@ -223,8 +221,6 @@ module Grant::AttributeApi
         value.to_f64?
       when Number
         value.to_f64
-      else
-        nil
       end
     end
 
@@ -241,13 +237,9 @@ module Grant::AttributeApi
           true
         when "false", "0", "no", "off"
           false
-        else
-          nil
         end
       when Number
         value != 0
-      else
-        nil
       end
     end
 
@@ -260,8 +252,6 @@ module Grant::AttributeApi
         value
       when String
         Time.parse_rfc3339(value)
-      else
-        nil
       end
     end
   end

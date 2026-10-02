@@ -19,7 +19,7 @@ require "./index_definition"
 abstract class Grant::Base
   macro index(columns, **options)
     {% names = columns.is_a?(ArrayLiteral) ? columns : [columns] %}
-    {% suffix = names.map { |name| name.id.stringify.gsub(/[^A-Za-z0-9_]/, "_") }.join("_") %}
+    {% suffix = names.map(&.id.stringify.gsub(/[^A-Za-z0-9_]/, "_")).join("_") %}
     def self.__grant_index_{{suffix.id}}(table : ::String) : ::Grant::Schema::IndexDefinition
       ::Grant::Schema::IndexDefinition.build(table, {{columns}}{{", ".id if options.size > 0}}{{options.double_splat}})
     end

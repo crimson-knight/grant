@@ -133,11 +133,11 @@ module Grant
           sql = "CREATE DATABASE #{quote(database_name)}"
           sql += " ENCODING #{literal(encoding)}" if encoding
           sql += " TEMPLATE #{quote(template)}" if template
-          with_maintenance_connection { |db| db.exec sql }
+          with_maintenance_connection(&.exec(sql))
         in .mysql?
           sql = "CREATE DATABASE #{quote(database_name)} CHARACTER SET #{charset || "utf8mb4"}"
           sql += " COLLATE #{collation}" if collation
-          with_maintenance_connection { |db| db.exec sql }
+          with_maintenance_connection(&.exec(sql))
         end
         true
       end

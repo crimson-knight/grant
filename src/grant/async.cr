@@ -122,7 +122,7 @@ module Grant
       def async_find!(id) : AsyncResult(self)
         query = current_scope.where(primary_name, :eq, id.as(Grant::Columns::Type))
         AsyncResult(self).new do
-          query.first || raise Grant::Querying::NotFound.new("No #{self.name} found where #{primary_name} = #{id}")
+          query.first || raise Grant::Querying::NotFound.new("No #{name} found where #{primary_name} = #{id}")
         end
       end
 
@@ -138,7 +138,7 @@ module Grant
       def async_find_by!(**args) : AsyncResult(self)
         query = current_scope.where(**args)
         AsyncResult(self).new do
-          query.first || raise Grant::Querying::NotFound.new("No #{self.name} found where #{args}")
+          query.first || raise Grant::Querying::NotFound.new("No #{name} found where #{args}")
         end
       end
 
@@ -154,7 +154,7 @@ module Grant
       def async_first! : AsyncResult(self)
         query = current_scope
         AsyncResult(self).new do
-          query.first || raise Grant::Querying::NotFound.new("No #{self.name} found with first")
+          query.first || raise Grant::Querying::NotFound.new("No #{name} found with first")
         end
       end
 
@@ -170,7 +170,7 @@ module Grant
       def async_last! : AsyncResult(self)
         query = current_scope
         AsyncResult(self).new do
-          query.last || raise Grant::Querying::NotFound.new("No #{self.name} found with last")
+          query.last || raise Grant::Querying::NotFound.new("No #{name} found with last")
         end
       end
 
@@ -196,7 +196,7 @@ module Grant
       end
 
       # Execute multiple async operations in parallel
-      def parallel_execute(&block : Coordinator -> Nil) : Coordinator
+      def parallel_execute(& : Coordinator -> Nil) : Coordinator
         coordinator = Coordinator.new
         yield coordinator
         coordinator.wait_all

@@ -197,7 +197,7 @@ describe "association collection as a chainable relation" do
     collection.load_target
 
     statements = StatementRecorder.statements do
-      collection.map(&.title).compact.sort!.should eq(["a", "b", "c", "d"])
+      collection.compact_map(&.title).sort!.should eq(["a", "b", "c", "d"])
       collection.sum { |post| post.score || 0 }.should eq(11)
       collection.group_by(&.active).size.should eq(2)
     end

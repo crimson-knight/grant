@@ -19,7 +19,7 @@ describe "create with a block and with an array" do
     end
 
     it "tracks values set in the block as changes" do
-      item = ConvItem.new(name: "a") { |record| record.status = "x" }
+      item = ConvItem.new(name: "a", &.status=("x"))
       item.status_changed?.should be_true
     end
 
@@ -32,21 +32,21 @@ describe "create with a block and with an array" do
 
   describe "create / create! with a block" do
     it "yields the record before it is saved" do
-      item = ConvItem.create(name: "a") { |record| record.status = "from block" }
+      item = ConvItem.create(name: "a", &.status=("from block"))
       item.persisted?.should be_true
       ConvItem.find!(item.id).status.should eq("from block")
     end
 
     it "lets the block fix an otherwise invalid record" do
-      ConvItem.create(name: "") { |record| record.name = "fixed" }.persisted?.should be_true
+      ConvItem.create(name: "", &.name=("fixed")).persisted?.should be_true
     end
 
     it "raises from create! with a block when the save fails" do
-      expect_raises(Grant::RecordInvalid) { ConvItem.create!(name: "") { |record| record.status = "x" } }
+      expect_raises(Grant::RecordInvalid) { ConvItem.create!(name: "", &.status=("x")) }
     end
 
     it "persists from create! with a block" do
-      item = ConvItem.create!(name: "b") { |record| record.qty = 3 }
+      item = ConvItem.create!(name: "b", &.qty=(3))
       ConvItem.find!(item.id).qty.should eq(3)
     end
   end

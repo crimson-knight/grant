@@ -56,7 +56,7 @@ module Grant::SerializedObject
   macro track_changes_for(*properties)
     {% for prop in properties %}
       {% prop_name = prop.id.stringify %}
-      
+
       # Getter is already defined by property declaration
       # Just define the custom setter
       def {{ prop.id }}=(value)

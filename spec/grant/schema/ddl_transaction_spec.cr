@@ -105,7 +105,7 @@ describe "DDL transactions" do
     context = Grant::Schema::MigrationContext.for(M03Fixture.adapter, M03FailsAfterCreate, verbose: false, lock_timeout: 200.milliseconds)
     2.times do
       # MySQL commits DDL as it runs, so the failed run leaves its table behind.
-      M03Fixture.adapter.open { |db| db.exec "DROP TABLE IF EXISTS m03_atomic" }
+      M03Fixture.adapter.open(&.exec("DROP TABLE IF EXISTS m03_atomic"))
       expect_raises(Exception, /boom after create/) { context.migrate }
     end
   end

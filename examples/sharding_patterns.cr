@@ -36,7 +36,7 @@ class ProductView
     orders = Order.where(user_id: user_id).select
 
     # Step 2: Collect product IDs
-    product_ids = orders.map(&.product_id).uniq
+    product_ids = orders.map(&.product_id).uniq!
 
     # Step 3: Fetch products (might be on different shard)
     products = Product.where(id: product_ids).select

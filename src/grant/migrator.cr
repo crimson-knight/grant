@@ -231,14 +231,14 @@ module Grant::Migrator
       statements = [create_sql(if_not_exists, temporary, comment)]
       if dialect.pg?
         table = Model.quoted_table_name
-        if text = comment
-          statements << "COMMENT ON TABLE #{table} IS #{dialect.quote_literal(text)}"
+        if table_comment = comment
+          statements << "COMMENT ON TABLE #{table} IS #{dialect.quote_literal(table_comment)}"
         end
         column_comments.each do |name, text|
           statements << "COMMENT ON COLUMN #{table}.#{Model.adapter.quote(name)} IS #{dialect.quote_literal(text)}"
         end
       end
-      {% for method in Model.class.methods.select { |method| method.name.starts_with?("__grant_index_") } %}
+      {% for method in Model.class.methods.select(&.name.starts_with?("__grant_index_")) %}
         statements.concat Model.{{method.name.id}}(Model.table_name).statements(dialect)
       {% end %}
       statements

@@ -27,7 +27,7 @@ def mig_enc_reset
 end
 
 def mig_enc_exec(sql : String)
-  MigEncTransparent.adapter.open { |db| db.exec(sql) }
+  MigEncTransparent.adapter.open(&.exec(sql))
 end
 
 def mig_enc_raw(table : String, column : String) : Array(String?)
@@ -73,14 +73,14 @@ describe Grant::Encryption::MigrationHelpers do
 
       raw = mig_enc_raw("mig_enc_transparents", "ssn")
       raw.compact.size.should eq(25)
-      raw.compact.each { |value| value.should_not start_with("000-00-") }
-      MigEncTransparent.order(id: :asc).select.map(&.ssn).compact.first.should eq("000-00-1000")
+      raw.compact.each(&.should_not(start_with("000-00-")))
+      MigEncTransparent.order(id: :asc).select.compact_map(&.ssn).first.should eq("000-00-1000")
       MigEncTransparent.where(ssn: "000-00-1005").count.should eq(1)
 
       selects = entries.select { |entry| entry.includes?("SELECT") && entry.includes?("ORDER BY") && !entry.includes?("COUNT") }
       selects.size.should eq(4) # 26 rows in batches of 7: 7 + 7 + 7 + 5
       entries.none?(&.includes?("OFFSET")).should be_true
-      selects[1..].each { |entry| entry.should contain("> ") }
+      selects[1..].each(&.should(contain("> ")))
       # One bulk UPDATE per batch, not one per row.
       entries.count(&.starts_with?("UPDATE")).should eq(4)
     end
@@ -97,7 +97,7 @@ describe Grant::Encryption::MigrationHelpers do
       4.times { |i| mig_enc_exec("INSERT INTO mig_enc_legacies (name, ssn) VALUES ('n#{i}', 'legacy-#{i}')") }
       helpers.encrypt_column(MigEncLegacy, :ssn, batch_size: 3, progress: false).should eq(4)
 
-      mig_enc_raw("mig_enc_legacies", "ssn_encrypted").compact.each { |value| value.should_not contain("legacy-") }
+      mig_enc_raw("mig_enc_legacies", "ssn_encrypted").compact.each(&.should_not(contain("legacy-")))
       MigEncLegacy.order(id: :asc).select.map(&.ssn).should eq(["legacy-0", "legacy-1", "legacy-2", "legacy-3"])
     end
 

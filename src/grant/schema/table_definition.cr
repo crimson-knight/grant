@@ -96,7 +96,7 @@ module Grant::Schema
         return "DEFAULT #{dialect.default_expression(expression, sql_type(dialect))}"
       end
       value = @default
-      return nil if value.is_a?(Unset)
+      return if value.is_a?(Unset)
       "DEFAULT #{dialect.quote_literal(value)}"
     end
 

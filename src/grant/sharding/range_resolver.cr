@@ -24,7 +24,7 @@ module Grant::Sharding
 
       # Whether this range holds a key of the interval whose open ends are
       # `nil`. Both ends and the range share one type; the caller checks.
-      def intersects?(minimum : String | Int64 | Nil, maximum : String | Int64 | Nil) : Bool
+      def intersects?(minimum : String | Int64?, maximum : String | Int64?) : Bool
         if minimum.is_a?(Int64) || maximum.is_a?(Int64)
           low = @min.as(Int64)
           high = @max.as(Int64)
@@ -66,13 +66,13 @@ module Grant::Sharding
     end
 
     def all_shards : Array(Symbol)
-      @ranges.map(&.shard).uniq
+      @ranges.map(&.shard).uniq!
     end
 
     # Return only shards whose configured ranges intersect an inclusive query
     # interval. A nil result means the bounds could not be compared safely.
     def shards_for_range(minimum : String | Int64, maximum : String | Int64) : Array(Symbol)?
-      @ranges.select(&.overlaps?(minimum, maximum)).map(&.shard).uniq
+      @ranges.select(&.overlaps?(minimum, maximum)).map(&.shard).uniq!
     end
 
     # The shards that can hold a key between *minimum* and *maximum*, where
@@ -84,14 +84,14 @@ module Grant::Sharding
       low = minimum.is_a?(String) || minimum.is_a?(Int64) ? minimum : nil
       high = maximum.is_a?(String) || maximum.is_a?(Int64) ? maximum : nil
       # A bound of another type (a Time, say) cannot be compared here.
-      return nil if low.nil? && high.nil?
-      return nil if (!minimum.nil? && low.nil?) || (!maximum.nil? && high.nil?)
-      return nil if low && high && low.class != high.class
+      return if low.nil? && high.nil?
+      return if (!minimum.nil? && low.nil?) || (!maximum.nil? && high.nil?)
+      return if low && high && low.class != high.class
 
       numeric = low.is_a?(Int64) || high.is_a?(Int64)
       shards = [] of Symbol
       @ranges.each do |range|
-        return nil unless numeric ? (range.min.is_a?(Int64) && range.max.is_a?(Int64)) : (range.min.is_a?(String) && range.max.is_a?(String))
+        return unless numeric ? (range.min.is_a?(Int64) && range.max.is_a?(Int64)) : (range.min.is_a?(String) && range.max.is_a?(String))
         shards << range.shard if range.intersects?(low, high)
       end
       shards.uniq
@@ -105,7 +105,7 @@ module Grant::Sharding
         raise ShardNotFoundError.new("Range sharding requires String or Int64 shard key, got #{value.class}")
       end
 
-      range = @ranges.find { |r| r.includes?(value) }
+      range = @ranges.find(&.includes?(value))
       if range
         range.shard
       else

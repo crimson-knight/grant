@@ -58,7 +58,7 @@ describe "abstract class connection routing (#{CURRENT_ADAPTER})" do
   end
 
   after_all do
-    %w(w6_abs_main w6_abs_main_r w6_abs_other w6_abs_other_r w6_abs_extra).each do |name|
+    %w[w6_abs_main w6_abs_main_r w6_abs_other w6_abs_other_r w6_abs_extra].each do |name|
       W6C04.remove(name, :writing)
       W6C04.remove(name, :reading)
     end
@@ -66,7 +66,7 @@ describe "abstract class connection routing (#{CURRENT_ADAPTER})" do
   end
 
   it "routes every child to the parent's databases, whatever order they were declared in" do
-    {% for model in %w(W6AbsEarlyThing W6AbsGrandThing W6AbsLateThing) %}
+    {% for model in %w[W6AbsEarlyThing W6AbsGrandThing W6AbsLateThing] %}
       {{model.id}}.connected_to(role: :writing) { {{model.id}}.first!.label }.should eq "main"
       {{model.id}}.connected_to(role: :reading) { {{model.id}}.first!.label }.should eq "main replica"
     {% end %}

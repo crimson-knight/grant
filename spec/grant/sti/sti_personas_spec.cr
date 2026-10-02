@@ -57,7 +57,7 @@ describe "Grant::STI personas/permissions" do
 
       members = MemberPersona.all.to_a
       members.map(&.name).should eq ["Bob"]
-      members.all?(&.is_a?(MemberPersona)).should be_true
+      members.all?(MemberPersona).should be_true
     end
 
     it "includes registered descendants (AdminPersona.all returns SuperAdmins too)" do
@@ -66,8 +66,8 @@ describe "Grant::STI personas/permissions" do
       MemberPersona.create!(name: "Bob", membership_tier: "gold", active: true)
 
       admins = AdminPersona.all.to_a
-      admins.map(&.name).sort.should eq ["Alice", "Zed"]
-      admins.map(&.class.name).sort.should eq ["AdminPersona", "SuperAdminPersona"]
+      admins.map(&.name).sort!.should eq ["Alice", "Zed"]
+      admins.map(&.class.name).sort!.should eq ["AdminPersona", "SuperAdminPersona"]
     end
 
     it "applies no type filter on a root query" do

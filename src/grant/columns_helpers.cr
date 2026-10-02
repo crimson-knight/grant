@@ -9,7 +9,7 @@ module Grant::ColumnsHelpers
           {% ann = ivar.annotation(Grant::Column) %}
           when {{ivar.name.stringify}}
             {
-              name: {{ivar.name.stringify}}, 
+              name: {{ivar.name.stringify}},
               column_type: {{ann[:nilable] ? ivar.type : ivar.type.union_types.reject { |t| t == Nil }.first}},
               nilable: {{ann[:nilable] || false}}
             }
@@ -27,7 +27,7 @@ module Grant::ColumnsHelpers
           {% for ivar in @type.instance_vars.select(&.annotation(Grant::Column)) %}
             {% ann = ivar.annotation(Grant::Column) %}
             {
-              name: {{ivar.name.stringify}}, 
+              name: {{ivar.name.stringify}},
               column_type: {{ann[:nilable] ? ivar.type : ivar.type.union_types.reject { |t| t == Nil }.first}},
               nilable: {{ann[:nilable] || false}}
             },

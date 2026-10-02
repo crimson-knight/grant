@@ -74,7 +74,7 @@ describe "association collection find_or_create_by family" do
     user = W6cUser.create!(name: "u")
     W6cPost.create!(slug: "o1", title: "shared", w6c_user_id: W6cUser.create!(name: "o").id)
 
-    created = user.w6c_posts.find_or_create_by(title: "shared") { |post| post.slug = "u1" }
+    created = user.w6c_posts.find_or_create_by(title: "shared", &.slug=("u1"))
 
     created.persisted?.should be_true
     created.w6c_user_id.should eq(user.id)
@@ -103,7 +103,7 @@ describe "association collection find_or_create_by family" do
 
     user.w6c_posts.find_or_initialize_by(slug: "a").id.should eq(existing.id)
 
-    built = user.w6c_posts.find_or_initialize_by(slug: "b") { |post| post.title = "B" }
+    built = user.w6c_posts.find_or_initialize_by(slug: "b", &.title=("B"))
     built.new_record?.should be_true
     built.w6c_user_id.should eq(user.id)
     built.title.should eq("B")

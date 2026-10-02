@@ -123,7 +123,7 @@ module Grant::Type
   # Converts a `DB::ResultSet` to `UUID?`.
   def from_rs(result : DB::ResultSet, t : UUID?.class) : UUID?
     value = result.read(UUID? | String? | Bytes?)
-    return nil if value.nil?
+    return if value.nil?
 
     case value
     when UUID

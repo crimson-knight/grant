@@ -110,7 +110,7 @@ describe "Grant::Encryption support_unencrypted_data" do
       sealed = UnencNote.create!(tag: "vip")
       UnencNote.create!(tag: "regular")
 
-      UnencNote.where(tag: "vip").select.map(&.id).compact.sort!.should eq([plain_id, sealed.id.not_nil!].sort)
+      UnencNote.where(tag: "vip").select.compact_map(&.id).sort!.should eq([plain_id, sealed.id.not_nil!].sort)
       UnencNote.where(tag: ["vip", "regular"]).count.should eq(3)
       UnencNote.where(tag: "vip").to_sql.should contain("IN")
     end

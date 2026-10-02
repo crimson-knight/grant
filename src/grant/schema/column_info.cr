@@ -89,19 +89,19 @@ module Grant::Schema
 
     # The length in parentheses for character types (`varchar(120)` => 120).
     def limit : Int32?
-      return nil unless type_family.string?
+      return unless type_family.string?
       @sql_type[/\((\d+)\)/, 1]?.try(&.to_i)
     end
 
     # Total digits of a decimal type (`numeric(10,2)` => 10).
     def precision : Int32?
-      return nil unless type_family.decimal?
+      return unless type_family.decimal?
       @sql_type[/\((\d+)(?:\s*,\s*\d+)?\)/, 1]?.try(&.to_i)
     end
 
     # Digits after the decimal point (`numeric(10,2)` => 2).
     def scale : Int32?
-      return nil unless type_family.decimal?
+      return unless type_family.decimal?
       @sql_type[/\(\d+\s*,\s*(\d+)\)/, 1]?.try(&.to_i)
     end
   end

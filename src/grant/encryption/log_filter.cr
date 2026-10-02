@@ -117,7 +117,7 @@ module Grant::Encryption
       end
 
       if insert = INSERT.match(query)
-        names = insert[1].split(',').map { |name| name.strip.strip('"').strip('`') }
+        names = insert[1].split(',').map(&.strip.strip('"').strip('`'))
         base = insert.begin(2)
         position = 0
         insert[2].scan(PLACEHOLDER) do |placeholder|

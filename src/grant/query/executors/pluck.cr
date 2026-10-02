@@ -20,7 +20,7 @@ module Grant::Query::Executor
             db.query @sql, args: adapter.normalize_bind_values(@args) do |rs|
               rs.each do
                 row = [] of Grant::Columns::Type
-                @fields.each do |field|
+                @fields.each do |_|
                   # Read values in order - rs.read advances to next column automatically
                   row << rs.read(Grant::Columns::Type)
                 end

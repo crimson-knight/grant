@@ -464,7 +464,7 @@ class Grant::Query::Builder(Model)
   end
 
   private def and_array(field : String, operator : Symbol, values : Array) : self
-    has_nil = values.any?(&.nil?)
+    has_nil = values.any?(Nil)
     values_without_nil = values.compact
 
     if values_without_nil.empty?
@@ -596,7 +596,7 @@ class Grant::Query::Builder(Model)
   end
 
   private def or_array(field : String, operator : Symbol, values : Array) : self
-    has_nil = values.any?(&.nil?)
+    has_nil = values.any?(Nil)
     values_without_nil = values.compact
 
     if values_without_nil.empty?
@@ -1828,7 +1828,7 @@ class Grant::Query::Builder(Model)
       grouped = if should_chunk_in?
                   chunked_grouped_count
                 else
-                  with_index_hint_fallback { |q| q.grouped_count_single }
+                  with_index_hint_fallback(&.grouped_count_single)
                 end
       return shape_group_count(grouped)
     end

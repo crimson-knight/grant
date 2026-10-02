@@ -16,9 +16,9 @@ require "../spec_helper"
   class SignedIdTestModel < Grant::Base
     connection {{ adapter_literal }}
     table signed_id_test_models
-    
+
     include Grant::SignedId
-    
+
     column id : Int64, primary: true
     column name : String?
     timestamps
@@ -140,7 +140,7 @@ describe Grant::SignedId do
       expired = model.signed_id(purpose: :reset, expires_at: Time.utc - 1.minute)
       expect_raises(Grant::InvalidSignedId) { SignedIdTestModel.find_signed!(expired, purpose: :reset) }
 
-      Grant::SignedId.configure { |c| c.secret = "different_secret" }
+      Grant::SignedId.configure(&.secret=("different_secret"))
       expect_raises(Grant::InvalidSignedId) { SignedIdTestModel.find_signed!(token, purpose: :reset) }
       Grant::InvalidSignedId.new.should be_a(Grant::ErrorBase)
     end
@@ -157,15 +157,15 @@ describe Grant::SignedId do
       model = SignedIdTestModel.create(name: "T")
       token = model.signed_id(purpose: :x)
       ENV.delete("GRANT_SIGNING_SECRET")
-      Grant::SignedId.configure { |c| c.secret = nil }
+      Grant::SignedId.configure(&.secret=(nil))
       expect_raises(Grant::MissingSigningSecret) { SignedIdTestModel.find_signed(token, purpose: :x) }
       begin
-        Grant::SignedId.configure { |c| c.secret = "configured" }
+        Grant::SignedId.configure(&.secret=("configured"))
         configured = model.signed_id(purpose: :x)
         SignedIdTestModel.find_signed(configured, purpose: :x).should_not be_nil
         SignedIdTestModel.find_signed(token, purpose: :x).should be_nil
       ensure
-        Grant::SignedId.configure { |c| c.secret = nil }
+        Grant::SignedId.configure(&.secret=(nil))
       end
     end
 
@@ -192,7 +192,7 @@ describe Grant::SignedId do
       signed_id = model.signed_id(purpose: :password_reset)
 
       # Change the secret
-      Grant::SignedId.configure { |c| c.secret = "different_secret" }
+      Grant::SignedId.configure(&.secret=("different_secret"))
 
       found = SignedIdTestModel.find_signed(signed_id, purpose: :password_reset)
       found.should be_nil
@@ -214,7 +214,7 @@ if signed_id_adapter.is_a?(Grant::Adapter::Base)
         created_at TEXT,
         updated_at TEXT
       )
-    SQL
+      SQL
   when "pg"
     signed_id_adapter.open(&.exec(<<-SQL))
       CREATE TABLE signed_id_test_models (
@@ -223,7 +223,7 @@ if signed_id_adapter.is_a?(Grant::Adapter::Base)
         created_at TIMESTAMP,
         updated_at TIMESTAMP
       )
-    SQL
+      SQL
   when "mysql"
     signed_id_adapter.open(&.exec(<<-SQL))
       CREATE TABLE signed_id_test_models (
@@ -232,6 +232,6 @@ if signed_id_adapter.is_a?(Grant::Adapter::Base)
         created_at TIMESTAMP,
         updated_at TIMESTAMP
       )
-    SQL
+      SQL
   end
 end

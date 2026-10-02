@@ -11,7 +11,7 @@ private def remove_sqlite_files(path : String)
 end
 
 private def pragma(adapter : Grant::Adapter::Sqlite, name : String) : String
-  adapter.open { |db| db.scalar("PRAGMA #{name}").to_s }
+  adapter.open(&.scalar("PRAGMA #{name}").to_s)
 end
 
 describe "SQLite adapter PRAGMA defaults" do

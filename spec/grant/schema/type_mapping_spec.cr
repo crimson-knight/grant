@@ -83,7 +83,7 @@ describe "Schema type mapping" do
 
     it "rejects jsonb outside PostgreSQL and scale without precision" do
       expect_raises(Grant::Schema::UnsupportedOperation) do
-        Grant::Schema::RecordingStatements.new(Grant::Schema::Dialect::Mysql).create_table_statements(:a) { |t| t.jsonb :doc }
+        Grant::Schema::RecordingStatements.new(Grant::Schema::Dialect::Mysql).create_table_statements(:a, &.jsonb(:doc))
       end
       Grant::Schema::RecordingStatements.new(Grant::Schema::Dialect::Pg).create_table_statements(:a, id: false) { |t| t.jsonb :doc }.first.should contain "\"doc\" JSONB"
       expect_raises(Grant::Schema::InvalidDefinition) do

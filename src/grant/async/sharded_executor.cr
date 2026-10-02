@@ -70,17 +70,15 @@ module Grant
       # Execute with timeout across all shards
       def self.execute_with_timeout(shards : Array(Symbol),
                                     timeout : Time::Span,
-                                    &block : Symbol -> AsyncResult(T)) : Hash(Symbol, T | Nil) forall T
+                                    &block : Symbol -> AsyncResult(T)) : Hash(Symbol, T?) forall T
         async_results = execute_across_shards(shards, &block)
 
-        results = {} of Symbol => T | Nil
+        results = {} of Symbol => T?
 
         async_results.each do |shard, async_result|
-          begin
-            results[shard] = async_result.wait_with_timeout(timeout)
-          rescue AsyncTimeoutError
-            results[shard] = nil
-          end
+          results[shard] = async_result.wait_with_timeout(timeout)
+        rescue AsyncTimeoutError
+          results[shard] = nil
         end
 
         results
@@ -97,13 +95,11 @@ module Grant
         rescue e
           # Try fallback shards
           fallback_shards.each do |shard|
-            begin
-              return Grant::ShardManager.route_to(shard) do
-                block.call(shard).wait
-              end
-            rescue
-              # Continue to next fallback
+            return Grant::ShardManager.route_to(shard) do
+              block.call(shard).wait
             end
+          rescue
+            # Continue to next fallback
           end
 
           # Re-raise original error if all fallbacks failed

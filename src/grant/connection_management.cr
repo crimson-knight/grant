@@ -415,7 +415,7 @@ module Grant::ConnectionManagement
           {% raise "connects_to: shard #{shard_name} must be a NamedTuple of role: \"connection\"" unless shard_settings.is_a?(NamedTupleLiteral) %}
           {{shard_name.id.symbolize}} => {
             {% for role, db_name in shard_settings %}
-              {% raise "connects_to: shard #{shard_name} connection for #{role} must be a non-empty String or Symbol literal, got #{db_name}" unless (db_name.is_a?(StringLiteral) || db_name.is_a?(SymbolLiteral)) && !db_name.id.stringify.empty? %}
+              {% raise "connects_to: shard #{shard_name} connection for #{role} must be a non-empty String or Symbol literal, got #{db_name}" if !(db_name.is_a?(StringLiteral) || db_name.is_a?(SymbolLiteral)) || db_name.id.stringify.empty? %}
               {{role.id.symbolize}} => {{db_name.id.stringify}},
             {% end %}
           } of Symbol => String,
@@ -767,7 +767,7 @@ module Grant::ConnectionManagement
     # declares is not established; call it at boot to fail early rather than at
     # the first query. See `Grant::ConnectionHandling.verify!`.
     def verify_connections! : Nil
-      Grant::ConnectionHandling.verify!(self.name, connection_names)
+      Grant::ConnectionHandling.verify!(name, connection_names)
     end
 
     private def build_connection_context(
@@ -794,7 +794,7 @@ module Grant::ConnectionManagement
         role || current_role,
         shard || current_shard,
         prevent_writes || implied || inherited_prevention,
-        self.name
+        name
       )
     end
 
@@ -988,7 +988,7 @@ module Grant::ConnectionManagement
     # ```
     def last_write_time : Time::Instant
       key = replica_tracker_key
-      with_replica_lag_tracker(key) { |tracker| tracker.last_write_time }
+      with_replica_lag_tracker(key, &.last_write_time)
     end
 
     # Records that a write just happened for the current database/shard,
@@ -1002,7 +1002,7 @@ module Grant::ConnectionManagement
     # ```
     def mark_write_operation : Nil
       key = replica_tracker_key
-      with_replica_lag_tracker(key) { |tracker| tracker.mark_write }
+      with_replica_lag_tracker(key, &.mark_write)
     end
 
     # Forces reads onto the primary for at least *duration* (default 5 seconds),

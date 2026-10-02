@@ -37,8 +37,8 @@ describe "Grant::Associations::Options" do
     describe "dependent: :destroy" do
       it "destroys associated records when parent is destroyed" do
         author = DependentAuthor.create!(name: "Jane Doe")
-        post1 = DependentPost.create!(title: "Post 1", dependent_author_id: author.id)
-        post2 = DependentPost.create!(title: "Post 2", dependent_author_id: author.id)
+        DependentPost.create!(title: "Post 1", dependent_author_id: author.id)
+        DependentPost.create!(title: "Post 2", dependent_author_id: author.id)
 
         DependentPost.where(dependent_author_id: author.id).count.should eq(2)
 
@@ -64,7 +64,7 @@ describe "Grant::Associations::Options" do
     describe "dependent: :restrict" do
       it "prevents deletion when dependent records exist" do
         team = RestrictTeam.create!(name: "Engineering")
-        member = RestrictMember.create!(name: "John", restrict_team_id: team.id)
+        RestrictMember.create!(name: "John", restrict_team_id: team.id)
 
         expect_raises(Grant::RecordNotDestroyed) do
           team.destroy!
@@ -94,10 +94,10 @@ describe "Grant::Associations::Options" do
     it "updates counter cache on create" do
       blog = CounterBlog.create!(title: "My Blog", counter_posts_count: 0)
 
-      post1 = CounterPost.create!(content: "Post 1", counter_blog_id: blog.id)
+      CounterPost.create!(content: "Post 1", counter_blog_id: blog.id)
       CounterBlog.find!(blog.id.not_nil!).counter_posts_count.should eq(1)
 
-      post2 = CounterPost.create!(content: "Post 2", counter_blog_id: blog.id)
+      CounterPost.create!(content: "Post 2", counter_blog_id: blog.id)
       CounterBlog.find!(blog.id.not_nil!).counter_posts_count.should eq(2)
     end
 
@@ -117,7 +117,7 @@ describe "Grant::Associations::Options" do
       user.updated_at = original_updated_at
       user.save!(skip_timestamps: true)
 
-      profile = TouchProfile.create!(bio: "Bio", touch_user_id: user.id)
+      TouchProfile.create!(bio: "Bio", touch_user_id: user.id)
 
       updated_user = TouchUser.find!(user.id.not_nil!)
       updated_user.updated_at!.should be > original_updated_at

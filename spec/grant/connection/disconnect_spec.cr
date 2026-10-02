@@ -22,7 +22,7 @@ end
 
 private def used_adapter(role : Symbol = :writing) : Grant::Adapter::Base
   adapter = C02Support.establish("c02_disconnect", role, pool_size: 3)
-  adapter.open { |connection| connection.scalar("SELECT 1") }
+  adapter.open(&.scalar("SELECT 1"))
   adapter
 end
 
@@ -54,7 +54,7 @@ describe "connection teardown" do
 
     Grant::ConnectionRegistry.clear_all
 
-    pools.each { |pool| pool.pool.stats.open_connections.should eq 0 }
+    pools.each(&.pool.stats.open_connections.should(eq(0)))
     Grant::ConnectionRegistry.adapter_names.should be_empty
     Grant::ConnectionRegistry.connection_exists?("c02_disconnect", :writing).should be_false
   end
@@ -104,7 +104,7 @@ describe "connection teardown" do
 
     adapter.connected?.should be_false
     Grant::ConnectionRegistry.connection_exists?("c02_disconnect", :writing).should be_true
-    adapter.open { |connection| connection.scalar("SELECT 1") }.should eq 1
+    adapter.open(&.scalar("SELECT 1")).should eq 1
     adapter.connected?.should be_true
   end
 
@@ -113,7 +113,7 @@ describe "connection teardown" do
     adapter.disconnect!
     adapter.pool_stat.connections.should eq 0
 
-    adapter.open { |connection| connection.scalar("SELECT 1") }.should eq 1
+    adapter.open(&.scalar("SELECT 1")).should eq 1
   end
 
   describe "on the model" do

@@ -227,11 +227,11 @@ describe "has_one and has_many writers on a saved owner" do
       statements = StatementRecorder.statements { owner.w6w_posts = [keep, fresh, moved] }
 
       fresh.persisted?.should be_true
-      W6wPost.where(w6w_owner_id: owner.id).select.map(&.title).compact.sort!.should eq(["fresh", "keep", "moved"])
+      W6wPost.where(w6w_owner_id: owner.id).select.compact_map(&.title).sort!.should eq(["fresh", "keep", "moved"])
       W6wPost.find!(drop.id).w6w_owner_id.should be_nil
       # One set-based UPDATE for the removed row; the unchanged record is not written.
       StatementRecorder.count(statements, "UPDATE", "w6w_posts").should be <= 3
-      owner.w6w_posts.map(&.title).compact.sort!.should eq(["fresh", "keep", "moved"])
+      owner.w6w_posts.compact_map(&.title).sort!.should eq(["fresh", "keep", "moved"])
     end
 
     it "removes the dropped records by dependent: :destroy and :delete_all" do

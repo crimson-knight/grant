@@ -221,7 +221,7 @@ describe "belongs_to counter_cache:" do
 
       statements = StatementRecorder.statements { CcShelf.reset_counters(shelf.id.not_nil!, :cc_categories) }
 
-      writes = statements.select { |sql| sql.upcase.lstrip.starts_with?("UPDATE") }
+      writes = statements.select(&.upcase.lstrip.starts_with?("UPDATE"))
       writes.size.should eq(1)
       writes.first.should contain("SELECT COUNT(*)")
       StatementRecorder.count(statements, "SELECT", "cc_shelves").should eq(0)

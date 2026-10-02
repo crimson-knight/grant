@@ -366,7 +366,7 @@ class Grant::Adapter::Pg < Grant::Adapter::Base
   # `statement_timeout`; the server's message is the only thing that tells them
   # apart, so it is consulted for that one code.
   def self.error_kind(sqlstate : String?, message : String? = nil) : Grant::Adapter::ErrorTranslator::Kind?
-    return nil unless sqlstate
+    return unless sqlstate
     kind = Grant::Adapter::ErrorTranslator.kind_for_sqlstate(sqlstate)
     if kind.try(&.query_canceled?) && message.try(&.includes?("statement timeout"))
       return Grant::Adapter::ErrorTranslator::Kind::StatementTimeout
@@ -377,7 +377,7 @@ class Grant::Adapter::Pg < Grant::Adapter::Base
   # A connect-time `3D000` (invalid_catalog_name): the database does not exist.
   protected def connect_failure_kind(ex : ::DB::ConnectionRefused) : Grant::Adapter::ErrorTranslator::Kind?
     cause = ex.cause
-    return nil unless cause.is_a?(PQ::PQError)
+    return unless cause.is_a?(PQ::PQError)
 
     Pg.error_kind(cause.field_message(:code), cause.message)
   end

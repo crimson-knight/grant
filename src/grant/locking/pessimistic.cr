@@ -54,12 +54,12 @@ module Grant::Locking::Pessimistic
 
   module ClassMethods
     def lock(mode : LockMode = LockMode::Update)
-      query = Query::Builder(self).new(self.name)
+      query = Query::Builder(self).new(name)
       query.lock(mode)
     end
 
     def lock(clause : Clause)
-      query = Query::Builder(self).new(self.name)
+      query = Query::Builder(self).new(name)
       query.lock(clause)
     end
 

@@ -1020,7 +1020,7 @@ module Grant::Validators
   # record.valid?(context: :update) # keyword form
   # record.valid?(context: [:create, :publish])
   # ```
-  def valid?(skip_normalization : Bool = false, context : Symbol | Array(Symbol) | Nil = nil)
+  def valid?(skip_normalization : Bool = false, context : (Symbol | Array(Symbol))? = nil)
     # A value that could not be converted to its column's type was recorded
     # as a `ConversionError`. It fails validation, unless a numericality
     # validator on that attribute takes it over and reports `:not_a_number`
@@ -1103,7 +1103,7 @@ module Grant::Validators
   # record.invalid?(:publish)
   # record.invalid?(context: :create)
   # ```
-  def invalid?(skip_normalization : Bool = false, context : Symbol | Array(Symbol) | Nil = nil)
+  def invalid?(skip_normalization : Bool = false, context : (Symbol | Array(Symbol))? = nil)
     !valid?(skip_normalization: skip_normalization, context: context)
   end
 
@@ -1113,7 +1113,7 @@ module Grant::Validators
   end
 
   # ActiveModel's `validate(context)`: an alias for `#valid?`.
-  def validate(context : Symbol | Array(Symbol) | Nil = nil) : Bool
+  def validate(context : (Symbol | Array(Symbol))? = nil) : Bool
     valid?(context: context)
   end
 
@@ -1125,7 +1125,7 @@ module Grant::Validators
   # post.validate! # => post, or raises Grant::RecordInvalid
   # post.validate!(:publish)
   # ```
-  def validate!(context : Symbol | Array(Symbol) | Nil = nil) : self
+  def validate!(context : (Symbol | Array(Symbol))? = nil) : self
     valid?(context: context) || raise Grant::RecordInvalid.new(self)
     self
   end
@@ -1134,7 +1134,7 @@ module Grant::Validators
   # `:create` for a new record and `:update` for a persisted one.
   #
   # :nodoc:
-  def __active_validation_contexts(context : Symbol | Array(Symbol) | Nil) : Array(Symbol)
+  def __active_validation_contexts(context : (Symbol | Array(Symbol))?) : Array(Symbol)
     if context.is_a?(Array)
       context
     elsif context
@@ -1167,11 +1167,11 @@ module Grant::Validators
   # :nodoc:
   def __unconvertible_input(attribute : String) : Grant::Columns::Type?
     inputs = @unconvertible_inputs
-    return nil if inputs.nil?
+    return if inputs.nil?
     failed = inputs[attribute]?
-    return nil if failed.nil?
+    return if failed.nil?
     # A later write, typed or converted, replaces the retained raw input.
-    return nil unless @attributes_before_type_cast.try(&.[]?(attribute)) == failed
+    return unless @attributes_before_type_cast.try(&.[]?(attribute)) == failed
     failed
   end
 
@@ -1180,7 +1180,7 @@ module Grant::Validators
   # context, and the raw input is still known.
   #
   # :nodoc:
-  def __numericality_claims_conversion_errors?(context : Symbol | Array(Symbol) | Nil) : Bool
+  def __numericality_claims_conversion_errors?(context : (Symbol | Array(Symbol))?) : Bool
     contexts = __active_validation_contexts(context)
     run_all = contexts.includes?(:save)
     errors.all? do |error|
@@ -1188,7 +1188,8 @@ module Grant::Validators
       next false unless __unconvertible_input(error.attribute)
       self.class.__validators_for_validation.any? do |validator|
         info = validator[:info]
-        next false unless info.kind == :numericality && !info.conditional? && info.attribute == error.attribute
+        next false if info.conditional?
+        next false unless info.kind == :numericality && info.attribute == error.attribute
         run_all || info.contexts.includes?(:save) || info.contexts.any? { |candidate| contexts.includes?(candidate) }
       end
     end

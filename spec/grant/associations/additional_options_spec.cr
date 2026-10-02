@@ -52,10 +52,10 @@ describe "Grant::Associations::AdditionalOptions" do
     it "uses custom counter column name" do
       author = CustomAuthor.create!(name: "Jane", total_articles: 0)
 
-      article1 = CustomArticle.create!(title: "Article 1", custom_author_id: author.id)
+      CustomArticle.create!(title: "Article 1", custom_author_id: author.id)
       CustomAuthor.find!(author.id.not_nil!).total_articles.should eq(1)
 
-      article2 = CustomArticle.create!(title: "Article 2", custom_author_id: author.id)
+      CustomArticle.create!(title: "Article 2", custom_author_id: author.id)
       CustomAuthor.find!(author.id.not_nil!).total_articles.should eq(2)
     end
   end
@@ -67,7 +67,7 @@ describe "Grant::Associations::AdditionalOptions" do
       post.last_commented_at = original_commented_at
       post.save!(skip_timestamps: true)
 
-      comment = TouchComment.create!(content: "Great post!", touch_post_id: post.id)
+      TouchComment.create!(content: "Great post!", touch_post_id: post.id)
 
       updated_post = TouchPost.find!(post.id.not_nil!)
       updated_post.last_commented_at.not_nil!.should be > original_commented_at

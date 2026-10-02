@@ -21,7 +21,7 @@ end
     validates_length_of :email, maximum: 5, strict: true
     validates_numericality_of :age, greater_than: 0, allow_nil: true, strict: V01CustomStrictError
     validates_format_of :code, with: /\A\d+\z/, allow_nil: true, strict: true, on: :publish
-    validates_inclusion_of :role, in: %w(a b), allow_nil: true
+    validates_inclusion_of :role, in: %w[a b], allow_nil: true
   end
 {% end %}
 

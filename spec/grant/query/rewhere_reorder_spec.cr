@@ -2,7 +2,7 @@ require "../../spec_helper"
 require "../../support/where_family_models"
 
 private def titles(relation : Grant::Query::Builder(WfPost)) : Array(String)
-  relation.select.map { |post| post.title.to_s }
+  relation.select.map(&.title.to_s)
 end
 
 describe "rewhere, reorder and reverse_order" do

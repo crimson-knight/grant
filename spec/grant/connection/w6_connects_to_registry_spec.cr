@@ -42,7 +42,7 @@ W6_REG_SHARD_DDL = -> { ["CREATE TABLE w6_registry_sharded_things (#{W6C04.id_co
 
 describe "connects_to and the connection registry (#{CURRENT_ADAPTER})" do
   after_all do
-    %w(w6_reg_writer w6_reg_reader w6_reg_default w6_reg_shard_one w6_reg_shard_one_r w6_reg_shard_two).each do |name|
+    %w[w6_reg_writer w6_reg_reader w6_reg_default w6_reg_shard_one w6_reg_shard_one_r w6_reg_shard_two].each do |name|
       W6C04.remove(name, :writing)
       W6C04.remove(name, :reading)
     end

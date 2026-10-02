@@ -77,7 +77,7 @@ describe "advisory locks, live (#{CURRENT_ADAPTER})" do
           expect_raises(Grant::AdvisoryLockTimeout) do
             Grant.with_advisory_lock(key, M03Fixture.adapter, 100.milliseconds) { }
           end
-          M03Fixture.adapter.open { |db| db.exec "KILL CONNECTION #{id}" }
+          M03Fixture.adapter.open(&.exec("KILL CONNECTION #{id}"))
         end
       rescue DB::Error
         # The killed session reports its own death; the freed lock is what matters.

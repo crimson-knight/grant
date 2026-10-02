@@ -183,7 +183,7 @@ describe "Grant::ConvenienceMethods" do
 
       users = ConvenienceUser.order(name: :asc).select
       users.size.should eq(3)
-      users.map(&.name).sort.should eq(["Jane", "Jim", "John"])
+      users.map(&.name).sort!.should eq(["Jane", "Jim", "John"])
     end
 
     it "handles empty array" do

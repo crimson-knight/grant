@@ -60,7 +60,7 @@ module Grant
     #
     # Pass `adapter: Model.adapter` when an application has multiple database
     # connections and the default connection is not the tenant database.
-    def self.with(schema : String, adapter : Grant::Adapter::Base? = nil, &block : -> T) : T forall T
+    def self.with(schema : String, adapter : Grant::Adapter::Base? = nil, & : -> T) : T forall T
       validate_schema!(schema)
       selected_adapter = postgres_adapter!(adapter || default_adapter)
 
@@ -147,7 +147,7 @@ module Grant
     # :nodoc:
     def self.current_schema_for?(adapter : Grant::Adapter::Base) : String?
       context = current_context
-      return nil unless context && context.adapter.same?(adapter)
+      return unless context && context.adapter.same?(adapter)
       context.schema
     end
 
@@ -156,7 +156,7 @@ module Grant
     # silently running them without its tenant search_path.
     def self.current_connection?(adapter : Grant::Adapter::Base) : DB::Connection?
       context = current_context
-      return nil unless context
+      return unless context
 
       ensure_same_adapter!(context, adapter)
       context.connection
@@ -185,7 +185,7 @@ module Grant
       end
     end
 
-    private def self.with_pinned_connection(schema : String, adapter : Grant::Adapter::Base, &block : -> T) : T forall T
+    private def self.with_pinned_connection(schema : String, adapter : Grant::Adapter::Base, & : -> T) : T forall T
       adapter.open_pool_connection do |connection|
         context = Context.new(adapter, connection, schema)
         set_current_context(context)
@@ -207,7 +207,7 @@ module Grant
       end
     end
 
-    private def self.with_transaction_connection(schema : String, adapter : Grant::Adapter::Base, connection : DB::Connection, &block : -> T) : T forall T
+    private def self.with_transaction_connection(schema : String, adapter : Grant::Adapter::Base, connection : DB::Connection, & : -> T) : T forall T
       context = Context.new(adapter, connection, schema)
       set_current_context(context)
 
@@ -233,7 +233,7 @@ module Grant
       message : String,
       context : Context? = nil,
       close_on_failure : Bool = false,
-      &block : -> T
+      & : -> T
     ) : T forall T
       block_exception = nil.as(::Exception?)
 
@@ -246,7 +246,7 @@ module Grant
         begin
           connection.exec(reset_sql)
         rescue reset_exception : DB::Error | IO::Error
-          context.try { |active_context| active_context.usable = false }
+          context.try(&.usable=(false))
 
           if close_on_failure
             begin
@@ -263,7 +263,7 @@ module Grant
             cause: reset_exception,
             block_exception: block_exception
           )
-          context.try { |active_context| active_context.reset_error = reset_error }
+          context.try(&.reset_error=(reset_error))
           if original_exception = block_exception
             if grant_exception = original_exception.as?(Grant::ErrorBase)
               grant_exception.cleanup_error = reset_error
