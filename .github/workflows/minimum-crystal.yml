@@ -1,0 +1,57 @@
+name: minimum-crystal
+# Builds Grant and runs the SQLite suite on the minimum Crystal version that
+# shard.yml declares. Called by spec.yml (every pull request) and release.yml
+# (every tag). If code starts needing a newer Crystal, this fails: raise
+# shard.yml's crystal: floor (see docs/RELEASING.md).
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  minimum-crystal:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Read the Crystal floor from shard.yml
+        id: floor
+        run: |
+          version=$(scripts/crystal-floor.sh floor)
+          echo "Minimum Crystal: $version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Refresh apt package index
+        # install-crystal apt-installs libevent and friends without updating
+        # the index first, and the runner image's index goes stale.
+        run: sudo apt-get update
+      - name: Install Crystal
+        uses: crystal-lang/install-crystal@d8ef131ecec0352ce0e39b81b0a6d95def58fe2f # v1
+        with:
+          crystal: ${{ steps.floor.outputs.version }}
+      - name: Confirm the installed Crystal is the floor
+        env:
+          FLOOR: ${{ steps.floor.outputs.version }}
+        run: |
+          crystal --version
+          installed=$(crystal env CRYSTAL_VERSION)
+          if [ "$installed" != "$FLOOR" ]; then
+            echo "::error::installed Crystal $installed, expected the floor $FLOOR"
+            exit 1
+          fi
+      - name: Install shards
+        run: shards install --frozen --skip-postinstall --skip-executables
+      - name: Type-check Grant
+        run: crystal build --no-codegen src/grant.cr
+      - name: Run tests
+        # The whole suite compiled as one program needs about 20 GB of RAM; a
+        # runner has 16 GB. spec-groups.sh compiles one group at a time.
+        timeout-minutes: 60
+        run: scripts/spec-groups.sh sqlite
+        env:
+          CRYSTAL: crystal
+          SPEC_GROUP_INCREMENTAL: "0"
+          SPEC_GROUP_MAX_RSS_GB: "13"
+          CURRENT_ADAPTER: sqlite
+          SQLITE_DATABASE_URL: sqlite3:./grant.db
+          SQLITE_REPLICA_URL: sqlite3:./grant_replica.db

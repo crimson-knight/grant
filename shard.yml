@@ -2,7 +2,7 @@ name: grant
 
 version: 0.23.4
 
-crystal: ">= 1.6.0, < 2.0.0"
+crystal: ">= 1.19.0, < 2.0.0"
 
 authors:
   - drujensen <drujensen@gmail.com>
