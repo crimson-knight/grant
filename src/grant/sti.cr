@@ -92,8 +92,9 @@ module Grant::STI
       super(attribute_name, value)
     end
 
-    # Register the auto-set callback on the root (and again per subclass below,
-    # since each class keeps its own CALLBACKS table).
+    # Register the auto-set callback once on the root. Grant's callback runner
+    # inherits this callback through the hierarchy, and the method reads the
+    # concrete class's STI name when it runs.
     Grant::STI.register_type_callback
 
     # Mark this concrete class as the STI root for the hierarchy.
@@ -101,11 +102,9 @@ module Grant::STI
       true
     end
 
-    # Base-class (root) queries apply NO type filter — they return the whole
-    # hierarchy. They select the root's own columns; rows are dispatched to the
-    # correct concrete subclass by `from_rs` below.
-    def self.current_scope
-      __sti_unfiltered_scope
+    # :nodoc:
+    def self.__sti_model? : Bool
+      true
     end
 
     # Polymorphic loader for base-class queries.
@@ -142,6 +141,17 @@ module Grant::STI
     end
 
     macro inherited
+      # STI descendants share the root model's connection configuration and
+      # table. Keep their database/role/shard settings isolated from later
+      # configuration changes on unrelated model classes.
+      self.database_name = {{@type.superclass}}.database_name
+      self.connection_config = {{@type.superclass}}.connection_config.dup
+      inherited_shard_config = {} of Symbol => Hash(Symbol, String)
+      {{@type.superclass}}.shard_config.each do |shard, config|
+        inherited_shard_config[shard] = config.dup
+      end
+      self.shard_config = inherited_shard_config
+
       # Register every descendant for runtime type resolution. NOTE the escaped
       # interpolation below: this is a `macro inherited` nested inside `macro
       # included`, so an unescaped @type would resolve to the ROOT at
@@ -154,18 +164,6 @@ module Grant::STI
       # superclass instead, which recurses up to the STI root's table.
       def self.table_name : String
         \{{@type.superclass}}.table_name
-      end
-
-      # Register the auto-set callback in this subclass's own CALLBACKS table.
-      # (The immutable-type `write_attribute` guard is inherited from the root.)
-      #
-      # This runs inside `macro finished` because Grant's `Grant::Callbacks`
-      # re-initializes the per-class `CALLBACKS` store in ITS OWN `macro
-      # inherited`, which (for a subclass) may execute after this STI
-      # `inherited` block. Registering in `finished` guarantees the callback is
-      # appended after the callback store exists, so it is not wiped.
-      macro finished
-        Grant::STI.register_type_callback
       end
 
       # Subclasses are NOT the root.
@@ -204,31 +202,11 @@ module Grant::STI
         end
       end
 
-      # Scope every query for this subclass to its own type plus any
-      # registered descendants (AR semantics). We build the unfiltered base
-      # scope directly (NOT via `super`, which would reach the root's
-      # column-expanding `current_scope`), preserving default scopes and the
-      # chosen DB adapter, then AND-in the type filter. The root class is
-      # intentionally left unscoped (returns mixed types).
-      def self.current_scope
-        query = __sti_unfiltered_scope
-        names = sti_names_for_query
-        if names.size == 1
-          query.where(inheritance_column, :eq, names.first)
-        else
-          # `names` is an Array(String) — a member of Grant::Columns::Type's
-          # SupportedArrayTypes — which the builder expands into an IN clause.
-          query.where(inheritance_column, :in, names)
-        end
-        query
-      end
     end
   end
 
-  # Registers the before-save callback that auto-sets the inheritance column on
-  # new records. Invoked once per STI class so the callback lands in that
-  # class's own CALLBACKS table (callbacks do not merge across the hierarchy in
-  # Grant's model).
+  # Registers the root's before-save callback that auto-sets the inheritance
+  # column on new records. The callback is inherited by STI descendants.
   #
   # NOTE: the `@_sti_type_mutable` ivar and accessors, plus the `write_attribute`
   # immutability guard, are defined ONCE on the root (and inherited) — see the
@@ -348,31 +326,6 @@ module Grant::STI
     def sti_names_for_query : Array(String)
       Grant::STI.descendant_names(self.name)
     end
-
-    # Builds an unfiltered `Grant::Query::Builder` for this class, applying any
-    # default scope but NOT the STI type filter. Mirrors
-    # `Grant::Scoping::ClassMethods#current_scope` so STI can compose without
-    # relying on the `super` chain (which the root re-points for column
-    # expansion). Internal building block for `current_scope`; not part of the
-    # public query API.
-    def __sti_unfiltered_scope
-      db_type = case adapter.class.to_s
-                when "Grant::Adapter::Pg"
-                  Grant::Query::Builder::DbType::Pg
-                when "Grant::Adapter::Mysql"
-                  Grant::Query::Builder::DbType::Mysql
-                else
-                  Grant::Query::Builder::DbType::Sqlite
-                end
-
-      query = Grant::Query::Builder(self).new(db_type)
-
-      if !_unscoped? && self.responds_to?(:_has_default_scope?) && self.responds_to?(:apply_default_scope) && self._has_default_scope?
-        query = self.apply_default_scope(query)
-      end
-
-      query
-    end
   end
 
   module InstanceMethods
@@ -405,9 +358,10 @@ module Grant::STI
     # After a polymorphic base-class load, snapshot the current attribute
     # values as the dirty-tracking baseline (the standard `from_rs` does this
     # for sequential loads; the polymorphic path must do it explicitly).
+    # :nodoc:
     def __sti_capture_loaded_state
       ensure_dirty_tracking_initialized
-      @changed_attributes.not_nil!.clear
+      dirty_tracking_hashes[1].clear
       capture_original_attributes
     end
 
@@ -439,8 +393,9 @@ module Grant::STI
         params = [klass.sti_name.as(Grant::Columns::Type), primary_key_value.as(Grant::Columns::Type)]
 
         self.class.mark_write_operation
-        self.class.adapter.open do |db|
-          db.exec(sql, args: params)
+        adapter = self.class.adapter
+        adapter.open do |db|
+          db.exec(sql, args: adapter.normalize_bind_values(params))
         end
 
         # Reflect the persisted change on the receiver as well.
@@ -478,6 +433,7 @@ module Grant::STI
     end
 
     # :nodoc: setter for the destroyed flag (no public setter exists).
+    # :nodoc:
     def __sti_set_destroyed(value : Bool)
       @destroyed = value
     end

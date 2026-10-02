@@ -1,0 +1,2435 @@
+{
+  "baseline_source_commit": "32b69d8",
+  "verified_against_commit": "38ce96160323c2cdc4488d03f1d9e14315c59847",
+  "baseline_counts": {
+    "complete": 116,
+    "partial": 74,
+    "missing": 30,
+    "n.a.": 6
+  },
+  "features": [
+    {
+      "area": "Core persistence & attributes",
+      "feature": "save / save! (create + update path)",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/transactions/save_spec.cr",
+        "spec/grant/transactions/create_spec.cr",
+        "spec/grant/transactions/update_spec.cr",
+        "spec/grant/transactions/destroy_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Core persistence & attributes",
+      "feature": "create / create! (class-level convenience)",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/transactions/save_spec.cr",
+        "spec/grant/transactions/create_spec.cr",
+        "spec/grant/transactions/update_spec.cr",
+        "spec/grant/transactions/destroy_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Core persistence & attributes",
+      "feature": "update / update! (instance-level, sets attributes then saves)",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/transactions/save_spec.cr",
+        "spec/grant/transactions/create_spec.cr",
+        "spec/grant/transactions/update_spec.cr",
+        "spec/grant/transactions/destroy_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Core persistence & attributes",
+      "feature": "destroy / destroy! (with callbacks)",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/transactions/save_spec.cr",
+        "spec/grant/transactions/create_spec.cr",
+        "spec/grant/transactions/update_spec.cr",
+        "spec/grant/transactions/destroy_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Core persistence & attributes",
+      "feature": "new_record? / persisted? / destroyed?",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/transactions/save_spec.cr",
+        "spec/grant/transactions/create_spec.cr",
+        "spec/grant/transactions/update_spec.cr",
+        "spec/grant/transactions/destroy_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Core persistence & attributes",
+      "feature": "find_or_create_by / find_or_initialize_by",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/integrators/find_or_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Core persistence & attributes",
+      "feature": "touch (instance-level, updates updated_at + optional fields)",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/transactions/touch_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Core persistence & attributes",
+      "feature": "touch_all (class-level bulk timestamp update)",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/convenience_methods_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Core persistence & attributes",
+      "feature": "import (bulk INSERT with batch_size, update_on_duplicate, ignore_on_duplicate)",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/transactions/import_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Core persistence & attributes",
+      "feature": "insert_all / insert_all! (AR8 bulk insert without callbacks)",
+      "status": "partial",
+      "evidence_spec_paths": [
+        "spec/grant/convenience_methods_spec.cr",
+        "spec/grant/persistence/delete_spec.cr"
+      ],
+      "gap": "insert_all runs on PG; insert_all! bang API is absent.",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Core persistence & attributes",
+      "feature": "upsert_all / upsert_all! (AR8 bulk upsert)",
+      "status": "partial",
+      "evidence_spec_paths": [
+        "spec/grant/convenience_methods_spec.cr",
+        "spec/grant/persistence/delete_spec.cr"
+      ],
+      "gap": "upsert_all runs on PG; upsert_all! and single-row upsert are absent.",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Core persistence & attributes",
+      "feature": "update_all (bulk UPDATE via query builder)",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/query/query_parity_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Core persistence & attributes",
+      "feature": "delete_all (bulk DELETE, skips callbacks)",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/convenience_methods_spec.cr",
+        "spec/grant/persistence/delete_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Core persistence & attributes",
+      "feature": "destroy_by / delete_by (conditional bulk destroy/delete)",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/convenience_methods_spec.cr",
+        "spec/grant/persistence/delete_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Core persistence & attributes",
+      "feature": "Dirty tracking (changed?, changes, attribute_was, per-attribute helpers)",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/dirty/dirty_tracking_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Core persistence & attributes",
+      "feature": "Attribute API (virtual attributes, default values, converters)",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/attribute_api_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Core persistence & attributes",
+      "feature": "Enum attributes (enum_attribute macro)",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/enum_attributes_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Core persistence & attributes",
+      "feature": "Normalization (normalizes macro, before_validation hook)",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/normalization_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Core persistence & attributes",
+      "feature": "Serialization / serialized_column (JSON/YAML serialized columns)",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/serialized_column_spec.cr",
+        "spec/grant/serialization_multimodel_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Core persistence & attributes",
+      "feature": "Store accessors (store_accessor for JSON column sub-keys)",
+      "status": "missing",
+      "evidence_spec_paths": [],
+      "gap": "No store/store_accessor macro or per-key JSON accessors in current src.",
+      "not_applicable_reason": "",
+      "priority": 3
+    },
+    {
+      "area": "Core persistence & attributes",
+      "feature": "Secure tokens (has_secure_token)",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/secure_token_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Core persistence & attributes",
+      "feature": "Token for (generates_token_for / find_by_token_for — AR8 data-invalidating tokens)",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/token_for_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Core persistence & attributes",
+      "feature": "Signed IDs (signed_id / find_signed)",
+      "status": "partial",
+      "evidence_spec_paths": [
+        "spec/grant/signed_id_spec.cr"
+      ],
+      "gap": "PG lookup by valid signed ID returns nil; find_signed! is absent.",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Core persistence & attributes",
+      "feature": "Readonly attributes / readonly records (attr_readonly, readonly?)",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/persistence_helpers_spec.cr",
+        "spec/grant/persistence/direct_persistence_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Core persistence & attributes",
+      "feature": "Counter caches (counter_cache: on belongs_to)",
+      "status": "partial",
+      "evidence_spec_paths": [
+        "spec/grant/associations/association_regressions_spec.cr"
+      ],
+      "gap": "Association counter updates pass, but reset_counters/increment_counter/decrement_counter are absent.",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Core persistence & attributes",
+      "feature": "update_counters (class-level atomic counter increment/decrement)",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/convenience_methods_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Core persistence & attributes",
+      "feature": "update_attribute / update_columns (skip-validation targeted update)",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/persistence_helpers_spec.cr",
+        "spec/grant/persistence/direct_persistence_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Core persistence & attributes",
+      "feature": "increment! / decrement! / toggle! (in-place mutators that persist)",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/persistence_helpers_spec.cr",
+        "spec/grant/persistence/direct_persistence_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Query interface",
+      "feature": "where (hash/keyword args)",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/query/query_regressions_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Query interface",
+      "feature": "where (string/raw SQL with placeholder)",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/query/query_regressions_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Query interface",
+      "feature": "where (Range translates to >= AND <=)",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/query/query_regressions_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Query interface",
+      "feature": "where (subquery / IN subquery)",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/query/query_regressions_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Query interface",
+      "feature": "or / and (flat API on builder)",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/query/query_regressions_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Query interface",
+      "feature": "or (block form — grouped OR clause)",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/querying/or_not_block_params_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Query interface",
+      "feature": "not (block form — grouped NOT clause)",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/querying/or_not_block_params_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Query interface",
+      "feature": "merge (combining query relations)",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/query/query_regressions_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Query interface",
+      "feature": "named scopes",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/scoping/named_scope_chaining_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Query interface",
+      "feature": "default_scope",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/scoping/named_scope_chaining_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Query interface",
+      "feature": "unscoped",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/query/query_parity_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Query interface",
+      "feature": "unscope (remove specific query clauses)",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/query/query_parity_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Query interface",
+      "feature": "extending (adding methods to a relation at runtime)",
+      "status": "n.a.",
+      "evidence_spec_paths": [],
+      "gap": "",
+      "not_applicable_reason": "Ruby adds arbitrary modules to relation instances at runtime; Crystal uses static types and compile-time extensions."
+    },
+    {
+      "area": "Query interface",
+      "feature": "find_by / find_by!",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/querying/find_by_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Query interface",
+      "feature": "find_each (batch iteration)",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/query/query_regressions_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Query interface",
+      "feature": "find_in_batches",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/query/query_regressions_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Query interface",
+      "feature": "in_batches (relation-based cursor batching)",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/query/query_regressions_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Query interface",
+      "feature": "pluck (single column)",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/query/query_parity_spec.cr",
+        "spec/grant/querying/relation_calculations_spec.cr",
+        "spec/grant/query/modifiers_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Query interface",
+      "feature": "pluck (multiple columns)",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/query/query_parity_spec.cr",
+        "spec/grant/querying/relation_calculations_spec.cr",
+        "spec/grant/query/modifiers_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Query interface",
+      "feature": "pick (single/multi column first row)",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/query/query_parity_spec.cr",
+        "spec/grant/querying/relation_calculations_spec.cr",
+        "spec/grant/query/modifiers_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Query interface",
+      "feature": "ids (pluck all primary keys efficiently)",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/query/query_parity_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Query interface",
+      "feature": "select / custom column projection (SELECT id, name FROM ...)",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/query/query_parity_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Query interface",
+      "feature": "distinct",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/query/query_parity_spec.cr",
+        "spec/grant/querying/relation_calculations_spec.cr",
+        "spec/grant/query/modifiers_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Query interface",
+      "feature": "group / group_by",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/query/query_parity_spec.cr",
+        "spec/grant/querying/relation_calculations_spec.cr",
+        "spec/grant/query/modifiers_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Query interface",
+      "feature": "having",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/query/query_parity_spec.cr",
+        "spec/grant/querying/relation_calculations_spec.cr",
+        "spec/grant/query/modifiers_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Query interface",
+      "feature": "order (single/multi-field, asc/desc)",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/query/query_parity_spec.cr",
+        "spec/grant/querying/relation_calculations_spec.cr",
+        "spec/grant/query/modifiers_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Query interface",
+      "feature": "reorder / reverse_order / rewhere / reselect / regroup",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/query/query_parity_spec.cr",
+        "spec/grant/querying/relation_calculations_spec.cr",
+        "spec/grant/query/modifiers_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Query interface",
+      "feature": "joins (INNER JOIN)",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/query/query_parity_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Query interface",
+      "feature": "left_outer_joins (LEFT JOIN)",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/query/query_parity_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Query interface",
+      "feature": "where.missing / where.has (association-based JOIN conditions)",
+      "status": "partial",
+      "evidence_spec_paths": [],
+      "gap": "Grant requires explicit table and foreign_key arguments; Rails accepts association names.",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Query interface",
+      "feature": "aggregations (count / sum / avg / min / max; Model.count returns Int64)",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/query/query_parity_spec.cr",
+        "spec/grant/querying/relation_calculations_spec.cr",
+        "spec/grant/querying/count_spec.cr",
+        "spec/grant/query/modifiers_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Query interface",
+      "feature": "calculate (generic aggregation method)",
+      "status": "missing",
+      "evidence_spec_paths": [],
+      "gap": "Named aggregate methods exist; the AR calculate API is absent.",
+      "not_applicable_reason": "",
+      "priority": 17
+    },
+    {
+      "area": "Query interface",
+      "feature": "tally_by (group count via Enumerable)",
+      "status": "n.a.",
+      "evidence_spec_paths": [],
+      "gap": "",
+      "not_applicable_reason": "tally_by is not an ActiveRecord 8 public API."
+    },
+    {
+      "area": "Query interface",
+      "feature": "none (null relation)",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/query/query_parity_spec.cr",
+        "spec/grant/querying/relation_calculations_spec.cr",
+        "spec/grant/query/modifiers_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Query interface",
+      "feature": "readonly relations (prevent persistence on fetched records)",
+      "status": "missing",
+      "evidence_spec_paths": [],
+      "gap": "No equivalent found in current src.",
+      "not_applicable_reason": "",
+      "priority": 16
+    },
+    {
+      "area": "Query interface",
+      "feature": "explain (EXPLAIN query plan)",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/query/query_parity_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Query interface",
+      "feature": "annotate (SQL comment injection)",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/query/query_parity_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Query interface",
+      "feature": "optimizer hints (e.g. FORCE INDEX for MySQL)",
+      "status": "missing",
+      "evidence_spec_paths": [],
+      "gap": "No ActiveRecord-style optimizer_hints relation API exists.",
+      "not_applicable_reason": "",
+      "priority": 18
+    },
+    {
+      "area": "Query interface",
+      "feature": "async queries (fiber/channel-based)",
+      "status": "partial",
+      "evidence_spec_paths": [
+        "spec/grant/async_spec.cr"
+      ],
+      "gap": "PG async aggregation tests return zero results and async metrics stay empty.",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Query interface",
+      "feature": "exists?",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/query/query_parity_spec.cr",
+        "spec/grant/querying/relation_calculations_spec.cr",
+        "spec/grant/query/modifiers_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Query interface",
+      "feature": "sole / find_sole_by",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/query/query_parity_spec.cr",
+        "spec/grant/querying/relation_calculations_spec.cr",
+        "spec/grant/query/modifiers_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Query interface",
+      "feature": "WhereChain (LIKE, NOT LIKE, IS NULL, IS NOT NULL, NOT IN, BETWEEN, comparison ops, EXISTS/NOT EXISTS)",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/query/query_regressions_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Query interface",
+      "feature": "scope chaining (scope.scope)",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/scoping/named_scope_chaining_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Query interface",
+      "feature": "query cache (within-request result memoization)",
+      "status": "missing",
+      "evidence_spec_paths": [],
+      "gap": "No Model.cache/uncached or request query-cache implementation exists.",
+      "not_applicable_reason": "",
+      "priority": 14
+    },
+    {
+      "area": "Query interface",
+      "feature": "from (custom FROM clause / subquery as table)",
+      "status": "missing",
+      "evidence_spec_paths": [],
+      "gap": "No relation #from implementation exists.",
+      "not_applicable_reason": "",
+      "priority": 15
+    },
+    {
+      "area": "Query interface",
+      "feature": "dup (query builder copy)",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/query/query_parity_spec.cr",
+        "spec/grant/querying/relation_calculations_spec.cr",
+        "spec/grant/query/modifiers_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Associations",
+      "feature": "belongs_to",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/associations/association_options_spec.cr",
+        "spec/grant/associations/association_regressions_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Associations",
+      "feature": "has_one",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/associations/has_one_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Associations",
+      "feature": "has_many",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/associations/association_regressions_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Associations",
+      "feature": "has_many :through",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/associations/association_parity_spec.cr",
+        "spec/grant/associations/association_regressions_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Associations",
+      "feature": "has_one :through",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/associations/association_parity_spec.cr",
+        "spec/grant/associations/association_regressions_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Associations",
+      "feature": "HABTM (has_and_belongs_to_many) equivalent",
+      "status": "missing",
+      "evidence_spec_paths": [],
+      "gap": "Grant has no HABTM association macro.",
+      "not_applicable_reason": "",
+      "priority": 7
+    },
+    {
+      "area": "Associations",
+      "feature": "polymorphic associations (belongs_to, has_many :as, has_one :as)",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/associations/association_regressions_spec.cr",
+        "spec/grant/associations/association_parity_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Associations",
+      "feature": "inverse_of",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/associations/association_regressions_spec.cr",
+        "spec/grant/associations/association_parity_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Associations",
+      "feature": "dependent: :destroy",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/associations/association_options_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Associations",
+      "feature": "dependent: :delete / :delete_all",
+      "status": "partial",
+      "evidence_spec_paths": [],
+      "gap": "Core dependent actions exist, but destroy_async is absent and the delete key differs between has_one/has_many.",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Associations",
+      "feature": "dependent: :nullify",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/associations/association_options_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Associations",
+      "feature": "dependent: :restrict / :restrict_with_exception / :restrict_with_error",
+      "status": "partial",
+      "evidence_spec_paths": [],
+      "gap": "Only Grant’s error-based :restrict path exists; :restrict_with_exception is absent.",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Associations",
+      "feature": "autosave",
+      "status": "partial",
+      "evidence_spec_paths": [
+        "spec/grant/associations/association_options_spec.cr",
+        "spec/grant/associations/association_regressions_spec.cr"
+      ],
+      "gap": "Dirty persisted children are not fully autosaved/validated like ActiveRecord.",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Associations",
+      "feature": "counter_cache",
+      "status": "partial",
+      "evidence_spec_paths": [
+        "spec/grant/associations/association_regressions_spec.cr"
+      ],
+      "gap": "Basic counter updates pass, but reset_counters and polymorphic counter-cache parity are incomplete.",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Associations",
+      "feature": "touch option on belongs_to",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/associations/association_options_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Associations",
+      "feature": "optional: true on belongs_to",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/associations/association_options_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Associations",
+      "feature": "eager loading — includes/preload/eager_load API",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/eager_loading/eager_loading_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Associations",
+      "feature": "N+1 prevention / strict_loading",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/associations/association_regressions_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Associations",
+      "feature": "nested attributes (accepts_nested_attributes_for)",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/nested_attributes_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Associations",
+      "feature": "delegated types",
+      "status": "missing",
+      "evidence_spec_paths": [],
+      "gap": "No delegated_type macro or generated delegated-type helpers exist.",
+      "not_applicable_reason": "",
+      "priority": 8
+    },
+    {
+      "area": "Associations",
+      "feature": "association extensions / association-level scopes",
+      "status": "partial",
+      "evidence_spec_paths": [
+        "spec/grant/associations/association_parity_spec.cr"
+      ],
+      "gap": "Proc scopes are supported and tested; arbitrary association extension blocks are not.",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Associations",
+      "feature": "collection singular IDs accessor (post_ids / user_ids=)",
+      "status": "missing",
+      "evidence_spec_paths": [],
+      "gap": "No equivalent found in current src.",
+      "not_applicable_reason": "",
+      "priority": 6
+    },
+    {
+      "area": "Associations",
+      "feature": "association :source option for has_many :through",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/associations/association_regressions_spec.cr",
+        "spec/grant/associations/association_parity_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Associations",
+      "feature": "AssociationCollection build / create / create!",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/associations/association_regressions_spec.cr",
+        "spec/grant/associations/association_parity_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Associations",
+      "feature": "AssociationCollection destroy_all / delete_all",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/associations/association_regressions_spec.cr",
+        "spec/grant/associations/association_parity_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Associations",
+      "feature": "association caching / loaded? / reset",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/associations/association_regressions_spec.cr",
+        "spec/grant/associations/association_parity_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Associations",
+      "feature": "Relationship annotation / association reflection",
+      "status": "partial",
+      "evidence_spec_paths": [],
+      "gap": "Registration is wired, but AR reflection query methods are absent.",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Validations & callbacks",
+      "feature": "validates_presence_of",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/validators/parity_spec.cr",
+        "spec/grant/validators/contexts_spec.cr",
+        "spec/grant/errors/errors_api_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Validations & callbacks",
+      "feature": "validates_uniqueness_of (with scope, case_sensitive, allow_nil, allow_blank)",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/validators/parity_spec.cr",
+        "spec/grant/validators/contexts_spec.cr",
+        "spec/grant/errors/errors_api_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Validations & callbacks",
+      "feature": "validates_numericality_of",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/validators/parity_spec.cr",
+        "spec/grant/validators/contexts_spec.cr",
+        "spec/grant/errors/errors_api_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Validations & callbacks",
+      "feature": "validates_format_of (with:, without:)",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/validators/parity_spec.cr",
+        "spec/grant/validators/contexts_spec.cr",
+        "spec/grant/errors/errors_api_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Validations & callbacks",
+      "feature": "validates_length_of / validates_size_of",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/validators/parity_spec.cr",
+        "spec/grant/validators/contexts_spec.cr",
+        "spec/grant/errors/errors_api_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Validations & callbacks",
+      "feature": "validates_inclusion_of",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/validators/parity_spec.cr",
+        "spec/grant/validators/contexts_spec.cr",
+        "spec/grant/errors/errors_api_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Validations & callbacks",
+      "feature": "validates_exclusion_of",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/validators/parity_spec.cr",
+        "spec/grant/validators/contexts_spec.cr",
+        "spec/grant/errors/errors_api_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Validations & callbacks",
+      "feature": "validates_confirmation_of",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/validators/built_in_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Validations & callbacks",
+      "feature": "validates_acceptance_of",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/validators/built_in_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Validations & callbacks",
+      "feature": "validates_associated",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/validators/built_in_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Validations & callbacks",
+      "feature": "Custom validators via validate block/proc",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/validators/parity_spec.cr",
+        "spec/grant/validators/contexts_spec.cr",
+        "spec/grant/errors/errors_api_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Validations & callbacks",
+      "feature": "validate :method_name (AR-style method reference validator)",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/validators/parity_spec.cr",
+        "spec/grant/validators/contexts_spec.cr",
+        "spec/grant/errors/errors_api_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Validations & callbacks",
+      "feature": "Unified validates macro (AR style: validates :field, presence: true, length: {min:2})",
+      "status": "missing",
+      "evidence_spec_paths": [],
+      "gap": "No single unified validates macro; separate validator macros are required.",
+      "not_applicable_reason": "",
+      "priority": 9
+    },
+    {
+      "area": "Validations & callbacks",
+      "feature": "validates_comparison_of (AR 7.1+)",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/validators/parity_spec.cr",
+        "spec/grant/validators/contexts_spec.cr",
+        "spec/grant/errors/errors_api_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Validations & callbacks",
+      "feature": "validates_absence_of (AR opposite of presence)",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/validators/parity_spec.cr",
+        "spec/grant/validators/contexts_spec.cr",
+        "spec/grant/errors/errors_api_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Validations & callbacks",
+      "feature": "validates_with (custom validator class)",
+      "status": "partial",
+      "evidence_spec_paths": [
+        "spec/grant/validators/parity_spec.cr",
+        "spec/grant/validators/contexts_spec.cr",
+        "spec/grant/errors/errors_api_spec.cr"
+      ],
+      "gap": "Grant has a validates_with macro form, but it does not implement the ActiveRecord EachValidator class protocol.",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Validations & callbacks",
+      "feature": "Validation contexts (on: :create, :update, :save)",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/validators/parity_spec.cr",
+        "spec/grant/validators/contexts_spec.cr",
+        "spec/grant/errors/errors_api_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Validations & callbacks",
+      "feature": "Conditional validations (if:, unless: as Symbol method references)",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/validators/parity_spec.cr",
+        "spec/grant/validators/contexts_spec.cr",
+        "spec/grant/errors/errors_api_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Validations & callbacks",
+      "feature": "Conditional validations (if:/unless: as lambda/proc)",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/validators/parity_spec.cr",
+        "spec/grant/validators/contexts_spec.cr",
+        "spec/grant/errors/errors_api_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Validations & callbacks",
+      "feature": "Errors API (add, [], full_messages, where, of_type, include?, attribute_names, group_by_attribute, merge!, to_hash, to_json)",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/validators/parity_spec.cr",
+        "spec/grant/validators/contexts_spec.cr",
+        "spec/grant/errors/errors_api_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Validations & callbacks",
+      "feature": "errors.details (AR8 structured type+options per error)",
+      "status": "missing",
+      "evidence_spec_paths": [],
+      "gap": "Errors expose messages but no structured AR details/type/options API.",
+      "not_applicable_reason": "",
+      "priority": 10
+    },
+    {
+      "area": "Validations & callbacks",
+      "feature": "invalid? method",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/validators/parity_spec.cr",
+        "spec/grant/validators/contexts_spec.cr",
+        "spec/grant/errors/errors_api_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Validations & callbacks",
+      "feature": "strict: option on validators (raises instead of adding to errors)",
+      "status": "missing",
+      "evidence_spec_paths": [],
+      "gap": "No strict validation option that raises on validation failure.",
+      "not_applicable_reason": "",
+      "priority": 11
+    },
+    {
+      "area": "Validations & callbacks",
+      "feature": "Full lifecycle callbacks (before/after save, create, update, destroy, after_initialize, after_find, before/after_validation, after_touch)",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/callbacks/lifecycle_callbacks_spec.cr",
+        "spec/grant/callbacks/after_commit_timing_spec.cr",
+        "spec/grant/callbacks/around_validation_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Validations & callbacks",
+      "feature": "around_save, around_create, around_update, around_destroy",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/callbacks/lifecycle_callbacks_spec.cr",
+        "spec/grant/callbacks/after_commit_timing_spec.cr",
+        "spec/grant/callbacks/around_validation_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Validations & callbacks",
+      "feature": "around_validation callback",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/callbacks/lifecycle_callbacks_spec.cr",
+        "spec/grant/callbacks/after_commit_timing_spec.cr",
+        "spec/grant/callbacks/around_validation_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Validations & callbacks",
+      "feature": "Callback halting via abort! (equivalent to AR throw :abort)",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/callbacks/lifecycle_callbacks_spec.cr",
+        "spec/grant/callbacks/after_commit_timing_spec.cr",
+        "spec/grant/callbacks/around_validation_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Validations & callbacks",
+      "feature": "Conditional callbacks (if:, unless: on lifecycle callbacks)",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/callbacks/lifecycle_callbacks_spec.cr",
+        "spec/grant/callbacks/after_commit_timing_spec.cr",
+        "spec/grant/callbacks/around_validation_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Validations & callbacks",
+      "feature": "after_commit, after_rollback, after_create_commit, after_update_commit, after_destroy_commit",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/callbacks/lifecycle_callbacks_spec.cr",
+        "spec/grant/callbacks/after_commit_timing_spec.cr",
+        "spec/grant/callbacks/around_validation_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Validations & callbacks",
+      "feature": "after_rollback fires on explicit transaction rollback",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/callbacks/lifecycle_callbacks_spec.cr",
+        "spec/grant/callbacks/after_commit_timing_spec.cr",
+        "spec/grant/callbacks/around_validation_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Validations & callbacks",
+      "feature": "Callback ordering (multiple callbacks on same event)",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/callbacks/lifecycle_callbacks_spec.cr",
+        "spec/grant/callbacks/after_commit_timing_spec.cr",
+        "spec/grant/callbacks/around_validation_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Validations & callbacks",
+      "feature": "run_callbacks (manual callback execution)",
+      "status": "missing",
+      "evidence_spec_paths": [],
+      "gap": "No public run_callbacks(:event) API exists.",
+      "not_applicable_reason": "",
+      "priority": 12
+    },
+    {
+      "area": "Validations & callbacks",
+      "feature": "Normalization (normalizes macro, runs before validation)",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/normalization_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Validations & callbacks",
+      "feature": "skip_validation option on save (validate: false)",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/callbacks/lifecycle_callbacks_spec.cr",
+        "spec/grant/callbacks/after_commit_timing_spec.cr",
+        "spec/grant/callbacks/around_validation_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Validations & callbacks",
+      "feature": "Valid? with custom context (valid?(:custom))",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/validators/parity_spec.cr",
+        "spec/grant/validators/contexts_spec.cr",
+        "spec/grant/errors/errors_api_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Migrations & schema",
+      "feature": "Grant::Migrator — compile-time CREATE TABLE DSL",
+      "status": "partial",
+      "evidence_spec_paths": [
+        "spec/grant/migrator/migrator_spec.cr"
+      ],
+      "gap": "Create/drop and defaults work; ALTER TABLE, index, foreign-key, and check-constraint DSLs are absent.",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Migrations & schema",
+      "feature": "Micrate integration — versioned SQL migration files (Up/Down)",
+      "status": "partial",
+      "evidence_spec_paths": [],
+      "gap": "Versioning is delegated to external Micrate; Grant has no integrated migration context.",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Migrations & schema",
+      "feature": "Reversible migrations",
+      "status": "partial",
+      "evidence_spec_paths": [],
+      "gap": "Raw SQL up/down can be hand-authored; there is no reversible-operation DSL.",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Migrations & schema",
+      "feature": "Migration CLI (amber database migrate/rollback/status/seed/create/drop)",
+      "status": "partial",
+      "evidence_spec_paths": [],
+      "gap": "CLI is external to Grant and no passing Grant PG CLI spec was found.",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Migrations & schema",
+      "feature": "Schema type mapping per adapter",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/migrator/migrator_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Migrations & schema",
+      "feature": "Schema dump / schema.rb equivalent",
+      "status": "missing",
+      "evidence_spec_paths": [],
+      "gap": "No schema dump/load format or schema cache artifact exists.",
+      "not_applicable_reason": "",
+      "priority": 21
+    },
+    {
+      "area": "Migrations & schema",
+      "feature": "Indexes — creation in migrations",
+      "status": "partial",
+      "evidence_spec_paths": [],
+      "gap": "No Grant migration index DSL or index introspection; raw SQL is the workaround.",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Migrations & schema",
+      "feature": "Foreign keys — DDL support",
+      "status": "partial",
+      "evidence_spec_paths": [],
+      "gap": "No Grant migration foreign-key DDL DSL; raw SQL is the workaround.",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Migrations & schema",
+      "feature": "Check constraints",
+      "status": "partial",
+      "evidence_spec_paths": [],
+      "gap": "No Grant migration check-constraint DSL; raw SQL is the workaround.",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Migrations & schema",
+      "feature": "Column defaults in CREATE TABLE",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/migrator/migrator_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Migrations & schema",
+      "feature": "Seeds",
+      "status": "partial",
+      "evidence_spec_paths": [],
+      "gap": "A Crystal seed-script convention exists, but no Grant seed API or PG seed spec was found.",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Migrations & schema",
+      "feature": "Migration versioning / schema_migrations table tracking",
+      "status": "partial",
+      "evidence_spec_paths": [],
+      "gap": "Version tracking is external; Grant has no schema_migrations/context API.",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Migrations & schema",
+      "feature": "Encryption migration helpers (data migration for encrypted columns)",
+      "status": "partial",
+      "evidence_spec_paths": [],
+      "gap": "Source helpers exist, but this audit found no passing PG migration-helper spec.",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Migrations & schema",
+      "feature": "Amber CLI generate migration scaffold",
+      "status": "partial",
+      "evidence_spec_paths": [],
+      "gap": "Scaffolding is in a separate CLI project and was not PG-verified from this checkout.",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Migrations & schema",
+      "feature": "alter_table / change_column / add_column at runtime via Grant DSL",
+      "status": "missing",
+      "evidence_spec_paths": [],
+      "gap": "No ALTER TABLE migration DSL exists.",
+      "not_applicable_reason": "",
+      "priority": 22
+    },
+    {
+      "area": "Migrations & schema",
+      "feature": "rename_table DSL",
+      "status": "missing",
+      "evidence_spec_paths": [],
+      "gap": "No rename_table migration DSL exists.",
+      "not_applicable_reason": "",
+      "priority": 23
+    },
+    {
+      "area": "Multiple databases & sharding",
+      "feature": "connects_to (database: / shards: DSL on models)",
+      "status": "partial",
+      "evidence_spec_paths": [
+        "spec/grant/advanced_multi_database_spec.cr",
+        "spec/grant/connection_handling_spec.cr"
+      ],
+      "gap": "The DSL maps database and shard roles, but connection pools still require separate registration and no PostgreSQL shard pool is configured by the DSL.",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Multiple databases & sharding",
+      "feature": "connected_to (role/shard/database block switching)",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/prevent_writes_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Multiple databases & sharding",
+      "feature": "Reading/writing roles (role: :reading, role: :writing)",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/connection_handling_spec.cr",
+        "spec/grant/raw_sql_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Multiple databases & sharding",
+      "feature": "while_preventing_writes / prevent_writes flag",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/prevent_writes_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Multiple databases & sharding",
+      "feature": "per-model connections (connection macro / database_name)",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/connection_handling_spec.cr",
+        "spec/grant/raw_sql_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Multiple databases & sharding",
+      "feature": "ConnectionRegistry (central registry)",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/connection_registry_spec.cr",
+        "spec/grant/raw_sql_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Multiple databases & sharding",
+      "feature": "Connection pooling (pool_size, checkout_timeout, etc.)",
+      "status": "partial",
+      "evidence_spec_paths": [
+        "spec/grant/advanced_multi_database_spec.cr",
+        "spec/grant/multi_database_unit_spec.cr"
+      ],
+      "gap": "Pool configuration and URL generation pass; no PostgreSQL contention or exhaustion behavior is tested.",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Multiple databases & sharding",
+      "feature": "Connection health monitoring",
+      "status": "partial",
+      "evidence_spec_paths": [
+        "spec/grant/advanced_multi_database_spec.cr",
+        "spec/integration/multi_database_spec.cr"
+      ],
+      "gap": "In-memory SQLite health and registry checks pass; PostgreSQL connection failure and recovery behavior is unverified.",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Multiple databases & sharding",
+      "feature": "Read replica load balancing (multiple replicas, strategies)",
+      "status": "partial",
+      "evidence_spec_paths": [
+        "spec/grant/advanced_multi_database_spec.cr",
+        "spec/grant/multi_database_unit_spec.cr",
+        "spec/integration/multi_database_spec.cr"
+      ],
+      "gap": "Round-robin and least-connections unit assertions pass, but their fixtures use SQLite adapters; PostgreSQL-backed multiple-replica routing is unverified.",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Multiple databases & sharding",
+      "feature": "Replica lag tracking (stick_to_primary, wait period)",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/multi_database_unit_spec.cr",
+        "spec/grant/connection_handling_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Multiple databases & sharding",
+      "feature": "Connection failover (unhealthy primary/replica fallback)",
+      "status": "partial",
+      "evidence_spec_paths": [
+        "spec/integration/multi_database_spec.cr"
+      ],
+      "gap": "Fallback from an unavailable reader is tested with SQLite; PostgreSQL unhealthy-primary and recovery behavior is not tested.",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Multiple databases & sharding",
+      "feature": "Horizontal sharding — hash-based (shards_by :col, strategy: :hash)",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/sharding_integration_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Multiple databases & sharding",
+      "feature": "Horizontal sharding — range-based (strategy: :range / :time_range)",
+      "status": "partial",
+      "evidence_spec_paths": [
+        "spec/grant/range_sharding_spec.cr"
+      ],
+      "gap": "Numeric and string :range routing, validation, and optimized range queries pass; :time_range behavior and unsupported-predicate routing remain unverified.",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Multiple databases & sharding",
+      "feature": "Horizontal sharding — geo/region-based (strategy: :geo)",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/geo_sharding_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Multiple databases & sharding",
+      "feature": "ShardManager (fiber-local shard context)",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/sharding_integration_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Multiple databases & sharding",
+      "feature": "ShardedQueryBuilder + Query routing (single/scatter-gather/multi-shard)",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/sharding_integration_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Multiple databases & sharding",
+      "feature": "Sharding integration specs (cross-strategy, error handling, transactions, concurrent)",
+      "status": "partial",
+      "evidence_spec_paths": [
+        "spec/grant/sharding_integration_spec.cr",
+        "spec/grant/range_sharding_spec.cr",
+        "spec/grant/geo_sharding_spec.cr"
+      ],
+      "gap": "The routing suites pass and shard movement is tested across SQLite databases; PostgreSQL-backed multi-shard persistence and failure recovery remain unverified.",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Multiple databases & sharding",
+      "feature": "Distributed transactions across shards",
+      "status": "n.a.",
+      "evidence_spec_paths": [],
+      "gap": "",
+      "not_applicable_reason": "ActiveRecord 8 does not provide atomic distributed transactions across independent databases."
+    },
+    {
+      "area": "Multiple databases & sharding",
+      "feature": "Shard key immutability enforcement",
+      "status": "missing",
+      "evidence_spec_paths": [],
+      "gap": "Saving a changed shard key is not guarded.",
+      "not_applicable_reason": "",
+      "priority": 24
+    },
+    {
+      "area": "Multiple databases & sharding",
+      "feature": "Cross-shard join detection",
+      "status": "missing",
+      "evidence_spec_paths": [],
+      "gap": "No cross-shard join guard exists.",
+      "not_applicable_reason": "",
+      "priority": 25
+    },
+    {
+      "area": "Multiple databases & sharding",
+      "feature": "Automatic role-switching middleware (DatabaseSelector equivalent)",
+      "status": "missing",
+      "evidence_spec_paths": [],
+      "gap": "Grant has no Amber request middleware that automatically routes reads and writes.",
+      "not_applicable_reason": "",
+      "priority": 26
+    },
+    {
+      "area": "Multiple databases & sharding",
+      "feature": "LookupResolver for custom shard mappings",
+      "status": "partial",
+      "evidence_spec_paths": [
+        "spec/grant/advanced_multi_database_spec.cr"
+      ],
+      "gap": "Resolver exists, but the shards_by DSL does not expose strategy: :lookup and no PG spec proves it.",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Multiple databases & sharding",
+      "feature": "Fiber-local connection context isolation (concurrency safety)",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/fiber_connection_context_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Multiple databases & sharding",
+      "feature": "Elastic sharding / resharding / consistent hashing",
+      "status": "n.a.",
+      "evidence_spec_paths": [],
+      "gap": "",
+      "not_applicable_reason": "ActiveRecord 8 does not provide automatic elastic resharding or consistent-hash migration."
+    },
+    {
+      "area": "Multiple databases & sharding",
+      "feature": "Shard-aware migrations",
+      "status": "n.a.",
+      "evidence_spec_paths": [],
+      "gap": "",
+      "not_applicable_reason": "ActiveRecord 8 does not automatically coordinate schema migrations across every shard."
+    },
+    {
+      "area": "Multiple databases & sharding",
+      "feature": "Per-shard connection with read replica (shards: {shard_one: {writing:, reading:}})",
+      "status": "partial",
+      "evidence_spec_paths": [
+        "spec/grant/connection_management_spec.cr",
+        "spec/grant/sharding_integration_spec.cr"
+      ],
+      "gap": "Shard context and routing tests pass, but a PostgreSQL writer and reader per shard are not exercised.",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Multiple databases & sharding",
+      "feature": "find_each across all shards",
+      "status": "partial",
+      "evidence_spec_paths": [
+        "spec/grant/query/query_regressions_spec.cr"
+      ],
+      "gap": "No passing PG shard-wide iteration spec; current iteration is serial and option coverage is incomplete.",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Multiple databases & sharding",
+      "feature": "Async / parallel shard execution (ShardedExecutor)",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/sharding_integration_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Adapters & connections",
+      "feature": "Adapter registration / selection",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/connection_registry_spec.cr",
+        "spec/grant/raw_sql_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Adapters & connections",
+      "feature": "Single codebase with SQLite (local) + PostgreSQL (server)",
+      "status": "partial",
+      "evidence_spec_paths": [
+        "spec/grant/advanced_multi_database_spec.cr"
+      ],
+      "gap": "No same-process mixed SQLite+PG integration spec was found.",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Adapters & connections",
+      "feature": "Connection pooling",
+      "status": "partial",
+      "evidence_spec_paths": [
+        "spec/grant/advanced_multi_database_spec.cr"
+      ],
+      "gap": "Pool code exists; pool contention and exhaustion are not exercised by the PG specs run.",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Adapters & connections",
+      "feature": "Health monitor / reconnection",
+      "status": "partial",
+      "evidence_spec_paths": [
+        "spec/grant/advanced_multi_database_spec.cr"
+      ],
+      "gap": "Source typo is fixed, but PG health-monitor/reconnect behavior lacks a passing feature-specific spec.",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Adapters & connections",
+      "feature": "Replica load balancing (read/write splitting)",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/connection_handling_spec.cr",
+        "spec/grant/raw_sql_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Adapters & connections",
+      "feature": "connected_to / multiple databases (AR 8 API)",
+      "status": "partial",
+      "evidence_spec_paths": [
+        "spec/grant/prevent_writes_spec.cr"
+      ],
+      "gap": "Basic fiber-local context is fixed, but AR named-tuple connects_to/pool configuration parity is incomplete.",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Adapters & connections",
+      "feature": "Transactions (basic, rollback, requires_new)",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/transaction_atomicity_spec.cr",
+        "spec/grant/transaction_spec.cr",
+        "spec/grant/locking/optimistic_spec.cr",
+        "spec/grant/locking/pessimistic_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Adapters & connections",
+      "feature": "Savepoints / nested transactions",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/transaction_atomicity_spec.cr",
+        "spec/grant/transaction_spec.cr",
+        "spec/grant/locking/optimistic_spec.cr",
+        "spec/grant/locking/pessimistic_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Adapters & connections",
+      "feature": "Transaction isolation levels",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/transaction_atomicity_spec.cr",
+        "spec/grant/transaction_spec.cr",
+        "spec/grant/locking/optimistic_spec.cr",
+        "spec/grant/locking/pessimistic_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Adapters & connections",
+      "feature": "Pessimistic locking (FOR UPDATE, FOR SHARE, SKIP LOCKED, NOWAIT)",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/transaction_atomicity_spec.cr",
+        "spec/grant/transaction_spec.cr",
+        "spec/grant/locking/optimistic_spec.cr",
+        "spec/grant/locking/pessimistic_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Adapters & connections",
+      "feature": "Optimistic locking (lock_version)",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/transaction_atomicity_spec.cr",
+        "spec/grant/transaction_spec.cr",
+        "spec/grant/locking/optimistic_spec.cr",
+        "spec/grant/locking/pessimistic_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Adapters & connections",
+      "feature": "Adapter feature matrix (PG vs MySQL vs SQLite differences)",
+      "status": "partial",
+      "evidence_spec_paths": [
+        "spec/adapter/adapters_spec.cr",
+        "spec/grant/query/assemblers/pg_spec.cr",
+        "spec/grant/query/assemblers/mysql_spec.cr",
+        "spec/grant/query/assemblers/sqlite_spec.cr",
+        "spec/grant/migrator/migrator_spec.cr"
+      ],
+      "gap": "SQLite, PostgreSQL, and MySQL suites cover the named adapter, placeholder, and type-map behavior; a feature-by-feature matrix across every adapter remains incomplete.",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Adapters & connections",
+      "feature": "Adapter-specific SQL placeholder handling",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/query/assemblers/pg_spec.cr",
+        "spec/grant/query/assemblers/mysql_spec.cr",
+        "spec/grant/query/assemblers/sqlite_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Adapters & connections",
+      "feature": "Prepared statements / statement caching",
+      "status": "missing",
+      "evidence_spec_paths": [],
+      "gap": "No per-connection prepared-statement cache exists.",
+      "not_applicable_reason": "",
+      "priority": 19
+    },
+    {
+      "area": "Adapters & connections",
+      "feature": "Reconnection / connection lost handling",
+      "status": "partial",
+      "evidence_spec_paths": [
+        "spec/grant/advanced_multi_database_spec.cr"
+      ],
+      "gap": "Source handles connection loss; no passing PG connection-loss recovery test was found.",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Adapters & connections",
+      "feature": "Multiple databases / connected_to with shard:",
+      "status": "partial",
+      "evidence_spec_paths": [
+        "spec/grant/connection_management_spec.cr",
+        "spec/grant/sharding_integration_spec.cr"
+      ],
+      "gap": "Connection-context and virtual-shard routing specs pass; a PostgreSQL multi-database shard integration is not exercised.",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Infrastructure (locking, encryption, instrumentation, …)",
+      "feature": "Encrypted attributes (encrypts macro)",
+      "status": "partial",
+      "evidence_spec_paths": [
+        "spec/grant/encryption_database_spec.cr",
+        "spec/grant/encryption_key_rotation_spec.cr"
+      ],
+      "gap": "PG scratch round-trip and deterministic lookup pass; checked-in key-rotation specs are SQLite-bound. Cipher is AES-256-CBC + HMAC, not AR AES-GCM.",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Infrastructure (locking, encryption, instrumentation, …)",
+      "feature": "Instrumentation / logging (Crystal Log module)",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/instrumentation/logging_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Infrastructure (locking, encryption, instrumentation, …)",
+      "feature": "N+1 detection and QueryStats (development/testing aid)",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/instrumentation/query_analysis_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Infrastructure (locking, encryption, instrumentation, …)",
+      "feature": "Composite primary keys",
+      "status": "partial",
+      "evidence_spec_paths": [],
+      "gap": "Scratch PG repro: save! returned without a matching row being readable; the composite-primary-key transaction implementation is explicitly TODO in current src.",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Infrastructure (locking, encryption, instrumentation, …)",
+      "feature": "Database-specific types: PostgreSQL arrays (Array(T))",
+      "status": "partial",
+      "evidence_spec_paths": [
+        "spec/grant/converters/json_spec.cr",
+        "spec/grant/converters/pg_numeric_spec.cr"
+      ],
+      "gap": "Array storage/conversion exists, but no passing PG array-column query/operator spec was found.",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Infrastructure (locking, encryption, instrumentation, …)",
+      "feature": "Database-specific types: JSON/JSONB",
+      "status": "partial",
+      "evidence_spec_paths": [
+        "spec/grant/converters/json_spec.cr",
+        "spec/grant/converters/pg_numeric_spec.cr"
+      ],
+      "gap": "JSON serialization passes; JSONB schema/query operators and store accessors are absent.",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Infrastructure (locking, encryption, instrumentation, …)",
+      "feature": "Database-specific types: UUID",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/columns/uuid_spec.cr",
+        "spec/grant/converters/converters_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Infrastructure (locking, encryption, instrumentation, …)",
+      "feature": "Connection-level retries (retry_attempts, retry_delay)",
+      "status": "partial",
+      "evidence_spec_paths": [],
+      "gap": "Connection configuration is delegated to crystal-db; no PG retry behavior spec was found.",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Infrastructure (locking, encryption, instrumentation, …)",
+      "feature": "Fixtures / test helpers (ActiveRecord::FixtureSet equivalent)",
+      "status": "missing",
+      "evidence_spec_paths": [],
+      "gap": "No fixture loader or transactional test helper equivalent exists.",
+      "not_applicable_reason": "",
+      "priority": 20
+    },
+    {
+      "area": "Infrastructure (locking, encryption, instrumentation, …)",
+      "feature": "Advisory locks (PostgreSQL pg_advisory_lock / MySQL GET_LOCK)",
+      "status": "n.a.",
+      "evidence_spec_paths": [],
+      "gap": "",
+      "not_applicable_reason": "Database advisory-lock helpers are not part of ActiveRecord 8 core parity."
+    },
+    {
+      "area": "Infrastructure (locking, encryption, instrumentation, …)",
+      "feature": "QueryLogs with context tags (SQL comment injection)",
+      "status": "missing",
+      "evidence_spec_paths": [],
+      "gap": "Query annotate works; request-context QueryLogs tags are absent.",
+      "not_applicable_reason": "",
+      "priority": 30
+    },
+    {
+      "area": "Core persistence & attributes",
+      "feature": "Class-level find / find! by primary key",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/querying/find_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Core persistence & attributes",
+      "feature": "reload persisted record from the database",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/querying/reload_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Core persistence & attributes",
+      "feature": "create_or_find_by (unique-constraint race-safe create)",
+      "status": "missing",
+      "evidence_spec_paths": [],
+      "gap": "No equivalent class method exists.",
+      "not_applicable_reason": "",
+      "priority": 1
+    },
+    {
+      "area": "Core persistence & attributes",
+      "feature": "create_with relation defaults",
+      "status": "missing",
+      "evidence_spec_paths": [],
+      "gap": "No relation #create_with implementation exists.",
+      "not_applicable_reason": "",
+      "priority": 2
+    },
+    {
+      "area": "Query interface",
+      "feature": "Relation limit / offset",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/query/query_regressions_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Query interface",
+      "feature": "Relation take / first / last result helpers",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/querying/first_spec.cr",
+        "spec/grant/query/query_parity_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Query interface",
+      "feature": "Relation destroy_all (callback-aware relation deletion)",
+      "status": "partial",
+      "evidence_spec_paths": [
+        "spec/grant/persistence/delete_spec.cr"
+      ],
+      "gap": "The builder exposes destroy_all; PG callback semantics are not proven by a focused spec.",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Core persistence & attributes",
+      "feature": "Non-bang increment / decrement / toggle (in-memory only)",
+      "status": "partial",
+      "evidence_spec_paths": [],
+      "gap": "Non-bang behavior has no passing PG spec in this audit.",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Core persistence & attributes",
+      "feature": "Dirty tracking before save (changes_to_save / will_save_change_to_attribute?)",
+      "status": "missing",
+      "evidence_spec_paths": [
+        "spec/grant/dirty/dirty_tracking_spec.cr"
+      ],
+      "gap": "ActiveRecord pre-save dirty-state helper names are absent.",
+      "not_applicable_reason": "",
+      "priority": 4
+    },
+    {
+      "area": "Core persistence & attributes",
+      "feature": "Single-table inheritance (STI)",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/sti/sti_behavior_spec.cr",
+        "spec/grant/sti/sti_personas_spec.cr",
+        "spec/grant/sti/sti_validation_callback_inheritance_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Adapters & connections",
+      "feature": "Postgres transaction atomicity and same-connection writes",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/transaction_atomicity_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Validations & callbacks",
+      "feature": "after_all_transactions_commit",
+      "status": "missing",
+      "evidence_spec_paths": [],
+      "gap": "No global outermost-commit callback API exists.",
+      "not_applicable_reason": "",
+      "priority": 13
+    },
+    {
+      "area": "Associations",
+      "feature": "belongs_to validates the referenced record, not only foreign-key presence",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/associations/association_regressions_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Multiple databases & sharding",
+      "feature": "Row-level multi-tenancy / current tenant scoping",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/scale/multitenant_scoping_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Multiple databases & sharding",
+      "feature": "Postgres schema-per-tenant switching",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/scale/schema_tenant_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Infrastructure (locking, encryption, instrumentation, …)",
+      "feature": "Configurable optimistic-locking column (locking_column)",
+      "status": "missing",
+      "evidence_spec_paths": [],
+      "gap": "Grant does not expose ActiveRecord locking_column customization.",
+      "not_applicable_reason": "",
+      "priority": 27
+    },
+    {
+      "area": "Infrastructure (locking, encryption, instrumentation, …)",
+      "feature": "query_constraints composite model keys",
+      "status": "missing",
+      "evidence_spec_paths": [],
+      "gap": "No query_constraints model API exists.",
+      "not_applicable_reason": "",
+      "priority": 28
+    },
+    {
+      "area": "Infrastructure (locking, encryption, instrumentation, …)",
+      "feature": "Schema cache / schema introspection API",
+      "status": "missing",
+      "evidence_spec_paths": [],
+      "gap": "No ActiveRecord schema-cache equivalent is exposed.",
+      "not_applicable_reason": "",
+      "priority": 29
+    },
+    {
+      "area": "Core persistence & attributes",
+      "feature": "attribute_before_type_cast",
+      "status": "missing",
+      "evidence_spec_paths": [],
+      "gap": "No raw-before-cast attribute reader exists.",
+      "not_applicable_reason": "",
+      "priority": 5
+    },
+    {
+      "area": "Raw SQL",
+      "feature": "Model.find_by_sql(sql, binds) hydrates model instances",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/raw_sql_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Raw SQL",
+      "feature": "Model.count_by_sql(sql, binds) returns Int64",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/raw_sql_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Raw SQL",
+      "feature": "Raw connection execute/exec_query and Grant::Result",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/raw_sql_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Raw SQL",
+      "feature": "Raw connection select_all/select_one/select_value/select_values/select_rows",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/raw_sql_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Raw SQL",
+      "feature": "Bound Model.exec and Model.scalar overloads",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/raw_sql_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Raw SQL",
+      "feature": "ActiveRecord-shaped sanitize_sql_array and sanitize_sql class methods",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/raw_sql_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Raw SQL",
+      "feature": "Explicit raw scope and tenancy boundaries for model and connection SQL",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/raw_sql_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    },
+    {
+      "area": "Raw SQL",
+      "feature": "Grant.connection(name) exposes named connections without model scoping",
+      "status": "complete",
+      "evidence_spec_paths": [
+        "spec/grant/raw_sql_spec.cr"
+      ],
+      "gap": "",
+      "not_applicable_reason": ""
+    }
+  ]
+}

@@ -9,6 +9,17 @@ module Grant::Query::Assembler
       "$#{@numbered_parameters.size}"
     end
 
+    protected def select_field_sql(field : String) : String
+      sql_field = super
+      column_name = field.split('.').last
+
+      if column_name.starts_with?("_serialized_")
+        "#{sql_field}::TEXT AS #{Model.quote(column_name)}"
+      else
+        sql_field
+      end
+    end
+
     # PostgreSQL supports `EXPLAIN` and `EXPLAIN ANALYZE` (the latter executes
     # the query to produce real timing/row counts).
     def explain_keyword(analyze : Bool = false) : String
@@ -17,7 +28,11 @@ module Grant::Query::Assembler
 
     # Generate SQL for pluck operation
     def pluck_sql(fields : Array(String)) : String
-      select_fields = fields.map { |f| add_aggregate_field(f); f }.join(", ")
+      select_fields = fields.map do |field|
+        sql_field = pluck_field_sql(field)
+        add_aggregate_field(sql_field)
+        sql_field
+      end.join(", ")
 
       build_sql do |s|
         s << "#{select_keyword} #{select_fields}"

@@ -1,7 +1,7 @@
 require "../spec_helper"
 
 {% begin %}
-  {% adapter_literal = env("CURRENT_ADAPTER").id %}
+  {% adapter_literal = (env("CURRENT_ADAPTER") || "sqlite").id %}
 
   class SignedIdTestModel < Grant::Base
     connection {{ adapter_literal }}
@@ -16,81 +16,90 @@ require "../spec_helper"
 {% end %}
 
 describe Grant::SignedId do
+  before_all do
+    SignedIdTestModel.migrator.drop_and_create
+  end
+
   before_each do
     ENV["GRANT_SIGNING_SECRET"] = "test_secret"
   end
-  
+
   after_each do
     ENV.delete("GRANT_SIGNING_SECRET")
   end
-  
+
   describe "signed_id" do
     it "generates signed IDs with purpose" do
       model = SignedIdTestModel.create(name: "Test User")
-      
+
       signed_id = model.signed_id(purpose: :password_reset)
       signed_id.should_not be_nil
       signed_id.should_not be_empty
     end
-    
+
     it "generates signed IDs with expiration" do
       model = SignedIdTestModel.create(name: "Test User")
-      
+
       signed_id = model.signed_id(purpose: :password_reset, expires_in: 1.hour)
       signed_id.should_not be_nil
     end
-    
+
     it "finds by signed ID with correct purpose" do
       model = SignedIdTestModel.create(name: "Test User")
+      model.id.should_not be_nil
       signed_id = model.signed_id(purpose: :password_reset)
-      
+      payload = SignedIdTestModel.verify_signed_token(signed_id)
+      payload.should_not be_nil
+      payload.not_nil!["id"].as_s.should eq(model.id.to_s)
+      SignedIdTestModel.find(model.id).should_not be_nil
+
       found = SignedIdTestModel.find_signed(signed_id, purpose: :password_reset)
       found.should_not be_nil
       found.not_nil!.id.should eq(model.id)
     end
-    
+
     it "returns nil for wrong purpose" do
       model = SignedIdTestModel.create(name: "Test User")
       signed_id = model.signed_id(purpose: :password_reset)
-      
+
       found = SignedIdTestModel.find_signed(signed_id, purpose: :email_confirmation)
       found.should be_nil
     end
-    
+
     it "returns nil for expired tokens" do
       model = SignedIdTestModel.create(name: "Test User")
-      
+
       # Create an expired token by manipulating the payload
       payload = {
-        "id" => model.id.to_s,
-        "purpose" => "password_reset",
-        "expires_at" => (Time.utc - 1.hour).to_unix
+        "id"         => model.id.to_s,
+        "purpose"    => "password_reset",
+        "expires_at" => (Time.utc - 1.hour).to_unix,
       }
-      
+
       expired_token = SignedIdTestModel.generate_signed_token(payload)
-      
+
       found = SignedIdTestModel.find_signed(expired_token, purpose: :password_reset)
       found.should be_nil
     end
-    
+
     it "returns nil for tampered tokens" do
       model = SignedIdTestModel.create(name: "Test User")
       signed_id = model.signed_id(purpose: :password_reset)
-      
+
       # Tamper with the token
       tampered = signed_id + "tampered"
-      
+
       found = SignedIdTestModel.find_signed(tampered, purpose: :password_reset)
       found.should be_nil
     end
-    
+
     it "returns nil when signing secret changes" do
       model = SignedIdTestModel.create(name: "Test User")
       signed_id = model.signed_id(purpose: :password_reset)
-      
+
       # Change the secret
       ENV["GRANT_SIGNING_SECRET"] = "different_secret"
-      
+
       found = SignedIdTestModel.find_signed(signed_id, purpose: :password_reset)
       found.should be_nil
     end
@@ -101,7 +110,7 @@ end
 adapter = Grant::Connections[CURRENT_ADAPTER]
 if adapter.is_a?(Grant::Adapter::Base)
   adapter.exec("DROP TABLE IF EXISTS signed_id_test_models")
-  
+
   case CURRENT_ADAPTER
   when "sqlite"
     adapter.exec(<<-SQL)

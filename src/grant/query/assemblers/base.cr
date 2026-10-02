@@ -2,7 +2,7 @@ require "../../aggregations"
 
 module Grant::Query::Assembler
   abstract class Base(Model)
-    include Grant::Aggregations::QueryMethods
+    include Grant::Aggregations::QueryMethods(Model)
     @placeholder : String = ""
     @where : String?
     @order : String?
@@ -33,11 +33,34 @@ module Grant::Query::Assembler
     end
 
     def field_list
-      if select_cols = @query.select_columns
-        select_cols.join(", ")
+      fields = @query.select_columns || [Model.fields].flatten
+      fields.map { |field| select_field_sql(field) }.join(", ")
+    end
+
+    protected def select_field_sql(field : String) : String
+      if @query.join_clauses.empty?
+        quote_reserved_field(field)
       else
-        [Model.fields].flatten.join(", ")
+        qualify_join_field(field, Model.quote(Model.table_name))
       end
+    end
+
+    # Qualifies a simple plucked model field when joins can introduce another
+    # column with the same name.
+    def pluck_field_sql(field : String) : String
+      qualify_join_field(field, Model.quote(Model.table_name))
+    end
+
+    private def qualify_join_field(field : String, quoted_table_name : String) : String
+      if !@query.join_clauses.empty? && field.matches?(/\A[A-Za-z_][A-Za-z0-9_]*\z/)
+        "#{quoted_table_name}.#{Model.quote(field)}"
+      else
+        field
+      end
+    end
+
+    private def quote_reserved_field(field : String) : String
+      field.downcase == "all" ? Model.quote(field) : field
     end
 
     # Generates the SELECT keyword with optional DISTINCT modifier.
@@ -116,62 +139,215 @@ module Grant::Query::Assembler
     def where
       return @where if @where
 
-      clauses = ["WHERE"]
+      default_scope = render_where_fields(@query.default_scope_where_fields)
+      conditions = render_where_fields(@query.where_fields)
 
-      @query.where_fields.each do |expression|
-        clauses << expression[:join].to_s.upcase unless clauses.size == 1
+      return nil if default_scope.empty? && conditions.empty?
 
-        if expression[:field]?.nil? # custom SQL
-          clause = case expression
-                   when NamedTuple(join: Symbol, stmt: String, values: Array(Grant::Columns::Type))
-                     # Grouped or/not block: multiple ordered bind values — replace each ? in order
-                     sql = expression[:stmt]
-                     expression[:values].each do |val|
-                       token = add_parameter(val)
-                       sql = sql.sub(@placeholder, token)
-                     end
-                     sql
-                   else
-                     expr = expression.as(NamedTuple(join: Symbol, stmt: String, value: Grant::Columns::Type))
-                     if !expr[:value].nil?
-                       param_token = add_parameter expr[:value]
-                       expr[:stmt].gsub(@placeholder, param_token)
+      @where = String.build do |sql|
+        sql << "WHERE "
+        if !default_scope.empty? && !conditions.empty?
+          sql << "(#{default_scope}) AND (#{conditions})"
+        elsif !default_scope.empty?
+          sql << "(#{default_scope})"
+        else
+          sql << conditions
+        end
+      end
+    end
+
+    private def render_where_fields(fields : Array(Grant::Query::WhereField)) : String
+      String.build do |sql|
+        fields.each_with_index do |expression, index|
+          sql << " #{expression[:join].to_s.upcase} " unless index == 0
+
+          if expression[:field]?.nil?
+            clause = case expression
+                     when NamedTuple(join: Symbol, stmt: String, values: Array(Grant::Columns::Type))
+                       bind_raw_statement(expression[:stmt], expression[:values])
                      else
-                       expr[:stmt]
+                       expr = expression.as(NamedTuple(join: Symbol, stmt: String, value: Grant::Columns::Type))
+                       value = expr[:value]
+                       bind_raw_statement(expr[:stmt], value.nil? ? [] of Grant::Columns::Type : [value])
                      end
-                   end
-
-          clauses << clause
-        else # standard where query
-          expression = expression.as(NamedTuple(join: Symbol, field: String, operator: Symbol, value: Grant::Columns::Type))
-          add_aggregate_field expression[:field]
-
-          if expression[:value].nil?
-            clauses << "#{expression[:field]} IS NULL"
-          elsif expression[:value].is_a?(Array)
-            in_stmt = String.build do |str|
-              str << '('
-              expression[:value].as(Array).each_with_index do |val, idx|
-                case val
-                when Bool, Number
-                  str << val
-                else
-                  str << add_parameter val
-                end
-                str << ',' if expression[:value].as(Array).size - 1 != idx
-              end
-              str << ')'
-            end
-            clauses << "#{expression[:field]} #{sql_operator(expression[:operator])} #{in_stmt}"
+            sql << clause
           else
-            clauses << "#{expression[:field]} #{sql_operator(expression[:operator])} #{add_parameter expression[:value]}"
+            expr = expression.as(NamedTuple(join: Symbol, field: String, operator: Symbol, value: Grant::Columns::Type))
+            field = structured_field_sql(expr[:field])
+            add_aggregate_field(field)
+
+            value = encrypted_query_value(expr[:field], expr[:value])
+            if value.nil?
+              case expr[:operator]
+              when :eq
+                sql << "#{field} IS NULL"
+              when :neq, :ltgt
+                sql << "#{field} IS NOT NULL"
+              else
+                raise ArgumentError.new("Operator #{expr[:operator].inspect} does not support nil values")
+              end
+            else
+              if value.is_a?(Array)
+                array = value.as(Array)
+                if array.empty?
+                  sql << (expr[:operator] == :nin ? "1=1" : "1=0")
+                else
+                  placeholders = array.map { |item| add_parameter(item.as(Grant::Columns::Type)) }
+                  sql << "#{field} #{sql_operator(expr[:operator])} (#{placeholders.join(",")})"
+                end
+              else
+                sql << "#{field} #{sql_operator(expr[:operator])} #{add_parameter(value)}"
+              end
+            end
           end
         end
       end
+    end
 
-      return nil if clauses.size == 1
+    private def structured_field_sql(field : String) : String
+      parts = field.split('.')
+      unless parts.size.in?(1..2) && parts.all?(&.matches?(/\A[A-Za-z_][A-Za-z0-9_]*\z/))
+        raise ArgumentError.new("Invalid query field #{field.inspect}")
+      end
 
-      @where = clauses.join(" ")
+      column = parts.last
+      qualifier = parts.first if parts.size == 2
+      encrypted_attribute = if qualifier.nil? || qualifier == Model.table_name
+                              Grant::Encryption::EncryptedAttributeRegistry.for(Model.name)[column]?
+                            end
+      valid_column = if qualifier.nil? || qualifier == Model.table_name
+                       Model.fields.includes?(column) || !encrypted_attribute.nil?
+                     elsif @query.join_clauses.any? { |join| join[:table] == qualifier }
+                       if association = Grant::AssociationRegistry.get(Model.name, qualifier)
+                         association[:target_class].fields.includes?(column)
+                       else
+                         Model.fields.includes?(column)
+                       end
+                     else
+                       false
+                     end
+
+      unless valid_column
+        raise ArgumentError.new("Unknown query field #{field.inspect} for #{Model.name}")
+      end
+
+      column_name = encrypted_attribute.try(&.column_name) || column
+
+      if qualifier
+        "#{Model.quote(qualifier)}.#{Model.quote(column_name)}"
+      elsif !@query.join_clauses.empty?
+        "#{Model.quote(Model.table_name)}.#{Model.quote(column_name)}"
+      else
+        Model.quote(column_name)
+      end
+    end
+
+    private def encrypted_query_value(field : String, value : Grant::Columns::Type) : Grant::Columns::Type
+      parts = field.split('.')
+      return value unless parts.size == 1 || parts.first == Model.table_name
+
+      attribute_name = parts.last
+      encrypted_attribute = Grant::Encryption::EncryptedAttributeRegistry.for(Model.name)[attribute_name]?
+      return value unless encrypted_attribute
+      unless encrypted_attribute.deterministic
+        raise ArgumentError.new("Cannot query non-deterministic encrypted field: #{attribute_name}")
+      end
+
+      case value
+      when Nil
+        nil
+      when String
+        Grant::Encryption.encrypt(value, Model.name, attribute_name, true)
+      when Array(String)
+        value.map { |item| Grant::Encryption.encrypt(item, Model.name, attribute_name, true) }
+      else
+        raise ArgumentError.new("Encrypted field #{attribute_name.inspect} can only be queried with String values")
+      end
+    end
+
+    # Rewrites raw-clause placeholders to this assembler's local bind numbering
+    # and rejects mismatched argument counts before the driver sees the SQL.
+    private def bind_raw_statement(statement : String, values : Array(Grant::Columns::Type)) : String
+      output = String::Builder.new
+      chars = statement.chars
+      dollar_tokens = {} of Int32 => String
+      dollar_indices = [] of Int32
+      question_count = 0
+      dollar_style = false
+      index = 0
+      quote : Char? = nil
+
+      while index < chars.size
+        char = chars[index]
+
+        if current_quote = quote
+          output << char
+          if char == current_quote
+            if index + 1 < chars.size && chars[index + 1] == current_quote
+              output << chars[index + 1]
+              index += 1
+            else
+              quote = nil
+            end
+          elsif char == '\\' && index + 1 < chars.size
+            output << chars[index + 1]
+            index += 1
+          end
+        elsif char == '\'' || char == '"'
+          quote = char
+          output << char
+        elsif char == '-' && index + 1 < chars.size && chars[index + 1] == '-'
+          output << char << chars[index + 1]
+          index += 1
+          while index + 1 < chars.size && chars[index + 1] != '\n'
+            output << chars[index + 1]
+            index += 1
+          end
+        elsif char == '/' && index + 1 < chars.size && chars[index + 1] == '*'
+          output << char << chars[index + 1]
+          index += 1
+          while index + 1 < chars.size
+            index += 1
+            output << chars[index]
+            break if chars[index - 1] == '*' && chars[index] == '/'
+          end
+        elsif char == '?'
+          raise ArgumentError.new("Do not mix ? and numbered placeholders in one query clause") if dollar_style
+          raise ArgumentError.new("Raw query placeholder count does not match bind values") if question_count >= values.size
+          output << add_parameter(values[question_count])
+          question_count += 1
+        elsif char == '$' && index + 1 < chars.size && chars[index + 1].number?
+          raise ArgumentError.new("Do not mix ? and numbered placeholders in one query clause") if question_count > 0
+          dollar_style = true
+          number_start = index + 1
+          number_end = number_start
+          while number_end < chars.size && chars[number_end].number?
+            number_end += 1
+          end
+          parameter_index = chars[number_start...number_end].join.to_i
+          unless parameter_index.in?(1..values.size)
+            raise ArgumentError.new("Raw query placeholder count does not match bind values")
+          end
+          dollar_indices << parameter_index unless dollar_indices.includes?(parameter_index)
+          token = dollar_tokens[parameter_index] ||= add_parameter(values[parameter_index - 1])
+          output << token
+          index = number_end - 1
+        else
+          output << char
+        end
+
+        index += 1
+      end
+
+      if dollar_style
+        unless dollar_indices.size == values.size && values.size.times.all? { |number| dollar_indices.includes?(number + 1) }
+          raise ArgumentError.new("Raw query placeholder count does not match bind values")
+        end
+      elsif question_count != values.size
+        raise ArgumentError.new("Raw query placeholder count does not match bind values")
+      end
+
+      output.to_s
     end
 
     def order(use_default_order = true)
@@ -181,14 +357,25 @@ module Grant::Query::Assembler
 
       if order_fields.none?
         if use_default_order
+          if @query.group_fields.any? && @query.group_fields.none? { |expression| expression[:field] == Model.primary_name }
+            return nil
+          end
+          if @query.distinct? && (select_columns = @query.select_columns) && !select_columns.includes?(Model.primary_name)
+            return nil
+          end
           order_fields = default_order
+          if !@query.join_clauses.empty?
+            order_fields = order_fields.map do |expression|
+              {field: qualify_join_field(expression[:field], Model.quote(Model.table_name)), direction: expression[:direction]}
+            end
+          end
         else
           return nil
         end
       end
 
       order_clauses = order_fields.map do |expression|
-        field = expression[:field]
+        field = qualify_join_field(expression[:field], Model.quote(Model.table_name))
         next unless field
 
         add_aggregate_field field
@@ -208,7 +395,7 @@ module Grant::Query::Assembler
       group_fields = @query.group_fields
       return nil if group_fields.none?
       group_clauses = group_fields.map do |expression|
-        "#{expression[:field]}"
+        qualify_join_field(expression[:field], Model.quote(Model.table_name))
       end
 
       @group_by = "GROUP BY #{group_clauses.join ", "}"
@@ -236,13 +423,49 @@ module Grant::Query::Assembler
     end
 
     def default_order
-      [{field: Model.primary_name, direction: "ASC"}]
+      field = qualify_join_field(Model.primary_name, Model.quote(Model.table_name))
+      [{field: field, direction: Builder::Sort::Descending}]
     end
 
     def count : (Executor::MultiValue(Model, Int64) | Executor::Value(Model, Int64))
-      count_expr = @query.distinct? ? "COUNT(DISTINCT #{field_list})" : "COUNT(*)"
+      if @query.distinct?
+        distinct_rows_sql = build_sql do |s|
+          s << "SELECT DISTINCT #{field_list}"
+          s << from_clause
+          s << joins
+          s << where
+          s << group_by
+          s << having
+          s << order(use_default_order: false) if @query.limit || @query.offset
+          s << limit
+          s << offset
+        end
+        sql = "SELECT COUNT(*) FROM (#{distinct_rows_sql}) AS grant_distinct_rows"
+      else
+        sql = build_sql do |s|
+          s << "SELECT COUNT(*)"
+          s << from_clause
+          s << joins
+          s << where
+          s << group_by
+          s << having
+          s << order(use_default_order: false)
+          s << limit
+          s << offset
+        end
+      end
+
+      Executor::Value(Model, Int64).new sql, numbered_parameters, default: 0_i64
+    end
+
+    # Builds a grouped count that keeps every group key in the result.
+    def grouped_count : Executor::Grouped(Model)
+      group_expressions = @query.group_fields.map do |expression|
+        qualify_join_field(expression[:field], Model.quote(Model.table_name))
+      end
+
       sql = build_sql do |s|
-        s << "SELECT #{count_expr}"
+        s << "SELECT #{group_expressions.join(", ")}, COUNT(*)"
         s << from_clause
         s << joins
         s << where
@@ -253,11 +476,7 @@ module Grant::Query::Assembler
         s << offset
       end
 
-      if group_by
-        Executor::MultiValue(Model, Int64).new sql, numbered_parameters, default: 0_i64
-      else
-        Executor::Value(Model, Int64).new sql, numbered_parameters, default: 0_i64
-      end
+      Executor::Grouped(Model).new(sql, group_expressions.size, numbered_parameters)
     end
 
     def first(n : Int32 = 1) : Executor::List(Model)
@@ -278,21 +497,26 @@ module Grant::Query::Assembler
     end
 
     def delete
-      sql = build_sql do |s|
-        s << "DELETE FROM #{table_name}"
-        s << joins
-        s << where
-      end
+      sql = if limited_or_joined_write?
+              key_sql = write_target_subquery
+              "DELETE FROM #{table_name} WHERE #{Model.quote(Model.primary_name)} IN (#{key_sql})"
+            else
+              build_sql do |s|
+                s << "DELETE FROM #{table_name}"
+                s << where
+              end
+            end
 
       log sql, numbered_parameters
 
-      start_time = Time.monotonic
+      start_time = Time.instant
       begin
-        result = Model.adapter.open do |db|
-          db.exec sql, args: numbered_parameters
+        adapter = Model.adapter
+        result = adapter.open do |db|
+          db.exec sql, args: adapter.normalize_bind_values(numbered_parameters)
         end
 
-        duration = Time.monotonic - start_time
+        duration = Time.instant - start_time
         Grant::Logs::SQL.info &.emit("Delete executed",
           sql: sql,
           model: Model.name,
@@ -302,7 +526,7 @@ module Grant::Query::Assembler
 
         result
       rescue e
-        duration = Time.monotonic - start_time
+        duration = Time.instant - start_time
         Grant::Logs::SQL.error &.emit("Delete failed",
           sql: sql,
           model: Model.name,
@@ -314,6 +538,10 @@ module Grant::Query::Assembler
     end
 
     def select
+      if custom_statement = Model.custom_select_statement
+        return custom_select(custom_statement)
+      end
+
       sql = build_sql do |s|
         s << "#{select_keyword} #{field_list}"
         s << from_clause
@@ -322,6 +550,34 @@ module Grant::Query::Assembler
         s << group_by
         s << having
         s << order
+        s << limit
+        s << offset
+        s << lock
+      end
+
+      Executor::List(Model).new sql, numbered_parameters
+    end
+
+    # Applies chainable query clauses to a model-declared SELECT by treating
+    # the custom statement as a derived table. The alias matches the model's
+    # table name so existing structured field qualification remains valid.
+    private def custom_select(statement : String) : Executor::List(Model)
+      statement = statement.rstrip
+      statement = statement[0...-1].rstrip if statement.ends_with?(';')
+      fields = if select_columns = @query.select_columns
+                 select_columns.map { |field| Model.quote(field) }.join(", ")
+               else
+                 "*"
+               end
+      source = "(#{statement}) AS #{Model.quote(Model.table_name)}"
+
+      sql = build_sql do |s|
+        s << "#{select_keyword} #{fields} FROM #{source}"
+        s << joins
+        s << where
+        s << group_by
+        s << having
+        s << order(use_default_order: false)
         s << limit
         s << offset
         s << lock
@@ -365,8 +621,9 @@ module Grant::Query::Assembler
 
       begin
         rows = [] of String
-        Model.adapter.open do |db|
-          db.query(sql, args: params) do |rs|
+        adapter = Model.adapter
+        adapter.open do |db|
+          db.query(sql, args: adapter.normalize_bind_values(params)) do |rs|
             rs.each do
               cells = [] of String
               rs.column_count.times do
@@ -396,8 +653,6 @@ module Grant::Query::Assembler
     end
 
     def touch_all(fields : Tuple, time : Time) : Int64
-      time = time.at_beginning_of_second
-
       set_parts = ["#{Model.quote("updated_at")} = #{add_parameter(time)}"]
 
       # Add any additional fields to touch
@@ -405,21 +660,27 @@ module Grant::Query::Assembler
         set_parts << "#{Model.quote(field.to_s)} = #{add_parameter(time)}"
       end
 
+      where_clause = if limited_or_joined_write?
+                       "WHERE #{Model.quote(Model.primary_name)} IN (#{write_target_subquery})"
+                     else
+                       where
+                     end
       sql = build_sql do |s|
         s << "UPDATE #{table_name}"
         s << "SET #{set_parts.join(", ")}"
-        s << where
+        s << where_clause
       end
 
       log sql, numbered_parameters
 
-      start_time = Time.monotonic
+      start_time = Time.instant
       begin
-        rows_affected = Model.adapter.open do |db|
-          db.exec(sql, args: numbered_parameters).rows_affected
+        adapter = Model.adapter
+        rows_affected = adapter.open do |db|
+          db.exec(sql, args: adapter.normalize_bind_values(numbered_parameters)).rows_affected
         end
 
-        duration = Time.monotonic - start_time
+        duration = Time.instant - start_time
         Grant::Logs::SQL.info &.emit("Touch all executed",
           sql: sql,
           model: Model.name,
@@ -430,7 +691,7 @@ module Grant::Query::Assembler
 
         rows_affected
       rescue e
-        duration = Time.monotonic - start_time
+        duration = Time.instant - start_time
         Grant::Logs::SQL.error &.emit("Touch all failed",
           sql: sql,
           model: Model.name,
@@ -456,12 +717,56 @@ module Grant::Query::Assembler
       end
 
       # Render WHERE after SET so its parameters follow the SET parameters.
-      where_clause = where
+      where_clause = if limited_or_joined_write?
+                       "WHERE #{Model.quote(Model.primary_name)} IN (#{write_target_subquery})"
+                     else
+                       where
+                     end
 
       build_sql do |s|
         s << "UPDATE #{table_name}"
         s << "SET #{set_parts.join(", ")}"
         s << where_clause
+      end
+    end
+
+    # Builds an UPDATE for a developer-controlled SET fragment while preserving
+    # any relation joins, order, limit, and offset.
+    def update_all_fragment_sql(assignments : String) : String
+      where_clause = if limited_or_joined_write?
+                       "WHERE #{Model.quote(Model.primary_name)} IN (#{write_target_subquery})"
+                     else
+                       where
+                     end
+
+      build_sql do |s|
+        s << "UPDATE #{table_name} SET #{assignments}"
+        s << where_clause
+      end
+    end
+
+    private def limited_or_joined_write? : Bool
+      !@query.limit.nil? || !@query.offset.nil? || !@query.join_clauses.empty?
+    end
+
+    # The inner query selects the exact primary keys targeted by a bulk write.
+    # The outer UPDATE/DELETE syntax works across PostgreSQL and SQLite.
+    private def write_target_subquery : String
+      subquery = build_sql do |s|
+        s << "SELECT #{Model.quote(Model.primary_name)} FROM #{table_name}"
+        s << joins
+        s << where
+        s << order(use_default_order: false)
+        s << limit
+        s << offset
+      end
+
+      # MySQL rejects LIMIT directly inside an IN subquery. A derived-table
+      # layer makes the selected target keys legal for bounded bulk writes.
+      if Model.adapter.mysql?
+        "SELECT grant_write_targets.#{Model.quote(Model.primary_name)} FROM (#{subquery}) AS grant_write_targets"
+      else
+        subquery
       end
     end
 

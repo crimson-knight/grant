@@ -5,7 +5,11 @@ module Grant
   # large shared table — the billion-row footgun. Wrap queries in
   # `Grant::Tenant.with(id) { ... }`, or use `Model.unscoped { ... }` for
   # deliberate cross-tenant access.
-  class NoTenantError < Exception
+  class NoTenantError < Grant::ErrorBase
+  end
+
+  # Raised when a record or bulk insert attempts to write another tenant's row.
+  class TenantMismatchError < Grant::ErrorBase
   end
 
   # Fiber-local current-tenant context for `multitenant` models.
@@ -25,7 +29,7 @@ module Grant
 
     # Runs *block* with *id* as the current tenant for this fiber, restoring the
     # previous tenant (or clearing it) afterward.
-    def self.with(id : Grant::Columns::Type, &)
+    def self.with(id : Grant::Columns::Type, &block : -> T) : T forall T
       fiber = Fiber.current
       had_previous = false
       previous = nil.as(Grant::Columns::Type)
@@ -74,7 +78,7 @@ module Grant
     end
 
     # Clears the current tenant for this fiber (mainly for tests).
-    def self.clear
+    def self.clear : Nil
       @@mutex.synchronize { @@current.delete(Fiber.current) }
     end
   end
@@ -100,11 +104,86 @@ module Grant::Scale::MultiTenancy
   # Grant::Tenant.with(tenant_id) do
   #   Todo.where(done: false).select # => WHERE tenant_id = ? AND done = ?
   # end
+  #
+  # New records with a nil tenant column inherit the current tenant. An
+  # explicitly different value raises `Grant::TenantMismatchError` when saved,
+  # unless the write is inside `Todo.unscoped { ... }`.
   # ```
   macro multitenant(column)
     # Records the tenant column for diagnostics / introspection.
     class_getter multitenant_column : String = {{ column.id.stringify }}
 
+    # :nodoc:
+    def self.__multitenant? : Bool
+      true
+    end
+
     default_scope { where({{ column.id.stringify }}, :eq, Grant::Tenant.current!) }
+
+    # Keep instance writes tenant-bound even when a record came from an
+    # unscoped query. Only the tenant predicate is used here so unrelated
+    # default scopes do not block updates to already-loaded records.
+    # :nodoc:
+    def self.__tenant_write_scope : Grant::Query::Builder(self)
+      if _unscoped?
+        unscoped
+      else
+        unscoped.where(multitenant_column, :eq, Grant::Tenant.current!)
+      end
+    end
+
+    # :nodoc:
+    def self.__apply_tenant_to_bulk_attributes(attributes : Array(Hash(String | Symbol, Grant::Columns::Type)))
+      return attributes if _unscoped?
+
+      current_tenant = Grant::Tenant.current!
+      attributes.each do |attribute_values|
+        tenant_key = attribute_values.keys.find { |key| key.to_s == multitenant_column }
+        if key = tenant_key
+          value = attribute_values[key]?
+          if value.nil?
+            attribute_values[key] = current_tenant
+          elsif value != current_tenant
+            raise Grant::TenantMismatchError.new(
+              "Cannot write #{multitenant_column}=#{value} while current tenant is #{current_tenant}. " \
+              "Use #{self.name}.unscoped { ... } for deliberate cross-tenant writes.")
+          end
+        else
+          attribute_values[multitenant_column] = current_tenant
+        end
+      end
+      attributes
+    end
+
+    after_initialize :__assign_current_tenant_if_missing
+    before_save :__ensure_current_tenant!
+    before_destroy :__ensure_current_tenant!
+
+    private def __assign_current_tenant_if_missing
+      return if self.class._unscoped?
+      return unless read_attribute({{ column.id.stringify }}).nil?
+
+      if current_tenant = Grant::Tenant.current
+        write_attribute({{ column.id.stringify }}, current_tenant)
+      end
+    end
+
+    private def __ensure_current_tenant!
+      return if self.class._unscoped?
+
+      current_tenant = Grant::Tenant.current!
+      tenant_value = read_attribute({{ column.id.stringify }})
+      if new_record? && tenant_value.nil?
+        write_attribute({{ column.id.stringify }}, current_tenant)
+        tenant_value = current_tenant
+      end
+
+      unless tenant_value == current_tenant
+        raise Grant::TenantMismatchError.new(
+          "Cannot save or destroy #{self.class.name} with #{self.class.multitenant_column}=#{tenant_value} " \
+          "while current tenant is #{current_tenant}. Use #{self.class.name}.unscoped { ... } " \
+          "for deliberate cross-tenant writes.")
+      end
+    end
   end
 end

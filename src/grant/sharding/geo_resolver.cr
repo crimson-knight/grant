@@ -103,17 +103,17 @@ module Grant::Sharding
     # Mixin for models that need explicit region fields
     module ExplicitRegion
       macro included
-        # Validate region is set before save
-        before_save :validate_region_presence
+        # Validate that the country key is present. State and city keys are
+        # optional because many regions route without those finer details.
+        validate_method :validate_region_presence
 
         private def validate_region_presence
-          # Check if any of the shard key columns are nil
           if self.class.responds_to?(:sharding_config)
             if config = self.class.sharding_config
-              config.key_columns.each do |col|
+              if col = config.key_columns.first?
                 value = read_attribute(col.to_s)
                 if value.nil? || (value.responds_to?(:empty?) && value.empty?)
-                  raise "#{col} must be set for geo-sharded models"
+                  errors.add(col, "can't be blank", type: :blank)
                 end
               end
             end

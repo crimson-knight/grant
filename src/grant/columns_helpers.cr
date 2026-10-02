@@ -61,15 +61,40 @@ abstract class Grant::Base
     {% begin %}
       case name
       {% for ivar in @type.instance_vars.select(&.annotation(Grant::Column)) %}
+        {% ann = ivar.annotation(Grant::Column) %}
+        {% attribute_type = ann[:nilable] ? ivar.type : ivar.type.union_types.reject { |type| type == Nil }.first %}
         when {{ivar.name.stringify}}
-          if value.is_a?({{ivar.type}})
-            @{{ivar.id}} = value
+          if value.is_a?({{attribute_type}})
+            self.{{ivar.id}} = value.as({{attribute_type}})
+          elsif value.nil?
+            # Preserve the existing ability to clear a required column through
+            # the reflective writer; nil cannot pass its public setter type.
+            @{{ivar.id}} = nil
           else
-            raise "Type mismatch for {{ivar.name}}: expected {{ivar.type}} but got #{value.class}"
+            raise "Type mismatch for {{ivar.name}}: expected {{attribute_type}} but got #{value.class}"
           end
       {% end %}
       else
         raise "Unknown attribute: #{name}"
+      end
+    {% end %}
+  end
+
+  # Clears a named column when its declared type accepts nil. Association
+  # setters use this so clearing a belongs_to remains valid for models that
+  # declare a required, non-null foreign key.
+  def clear_nullable_attribute(name : String) : Nil
+    {% begin %}
+      case name
+      {% for ivar in @type.instance_vars.select(&.annotation(Grant::Column)) %}
+        {% ann = ivar.annotation(Grant::Column) %}
+        {% if ann[:nilable] %}
+          when {{ivar.name.stringify}}
+            self.{{ivar.name.id}} = nil
+        {% end %}
+      {% end %}
+      else
+        nil
       end
     {% end %}
   end

@@ -46,7 +46,7 @@ query = User.where(active: true).order(:name)
 # Execution happens here
 users = query.select     # Returns array of User
 first = query.first      # Returns User?
-count = query.count      # Returns Int32
+count = query.count      # Returns Int64, or a hash when grouped
 exists = query.exists?   # Returns Bool
 ```
 
@@ -126,13 +126,14 @@ User.where.not(:role, "guest")
 For database-specific features or complex conditions:
 
 ```crystal
-# With placeholders (? for MySQL/SQLite, $ for PostgreSQL)
+# Raw clauses accept `?` placeholders on every adapter or numbered `$1`, `$2`, … placeholders for PostgreSQL.
+# Pass values as an array when the clause has multiple placeholders; Grant validates the count.
 Post.where("LOWER(title) LIKE ?", ["%crystal%"])
 User.where("age * 2 > ?", [50])
 
 # PostgreSQL specific
 Post.where("tags @> ARRAY[?]::varchar[]", ["ruby"])
-Post.where("metadata->>'key' = $", ["value"])
+Post.where("metadata->>'key' = $1", ["value"])
 
 # MySQL specific
 Post.where("MATCH(title, content) AGAINST(? IN BOOLEAN MODE)", ["+crystal +orm"])
@@ -216,8 +217,9 @@ Post.offset((page - 1) * per_page).limit(per_page)
 
 # First/Last helpers
 User.first          # Single record
-User.first(5)       # First 5 records
-User.last(10)       # Last 10 records
+User.order(id: :asc).first(5) # First 5 records from this relation
+User.order(id: :asc).take(5)  # Take up to 5 records
+User.order(id: :asc).last     # Last record from this relation
 ```
 
 ### Distinct
@@ -305,70 +307,112 @@ Post.includes(:comments)
 ```crystal
 class Post < Grant::Base
   # Simple scopes
-  scope :published, -> { where(published: true) }
-  scope :featured, -> { where(featured: true) }
-  scope :recent, -> { order(created_at: :desc) }
-  
+  scope :published, ->(query : Grant::Query::Builder(Post)) { query.where(published: true) }
+  scope :featured, ->(query : Grant::Query::Builder(Post)) { query.where(featured: true) }
+  scope :recent, ->(query : Grant::Query::Builder(Post)) { query.order(created_at: :desc) }
+
   # Parameterized scopes
-  scope :by_author, ->(author_id : Int32) { where(author_id: author_id) }
-  scope :tagged_with, ->(tag : String) { where("tags @> ARRAY[?]", [tag]) }
-  scope :older_than, ->(date : Time) { where.lt(:created_at, date) }
-  
+  scope :by_author, ->(query : Grant::Query::Builder(Post), author_id : Int32) { query.where(author_id: author_id) }
+  scope :tagged_with, ->(query : Grant::Query::Builder(Post), tag : String) { query.where("tags @> ARRAY[?]", tag) }
+  scope :older_than, ->(query : Grant::Query::Builder(Post), date : Time) { query.where.lt(:created_at, date) }
+
   # Complex scopes
-  scope :popular, -> {
-    where.gt(:views, 1000)
+  scope :popular, ->(query : Grant::Query::Builder(Post)) {
+    query.where.gt(:views, 1000)
          .where.gt(:likes, 100)
          .order(views: :desc)
   }
-  
+
   # Scopes with joins
-  scope :with_comments, -> {
-    joins(:comments)
+  scope :with_comments, ->(query : Grant::Query::Builder(Post)) {
+    query.joins(:comments)
     .where.is_not_null("comments.id")
     .distinct
   }
 end
 
-# Using scopes
-Post.published.recent.limit(10)
-Post.by_author(current_user.id).featured
-Post.tagged_with("crystal").popular
+# Each named scope starts from the model's current scope and returns a
+# model-specific relation, so named scopes and builder methods can be chained.
+Post.published.recent.limit(10).select
+Post.by_author(current_user.id).where(featured: true).select
+Post.tagged_with("crystal")
+  .where.gt(:views, 1000)
+  .where.gt(:likes, 100)
+  .order(views: :desc)
+  .select
 ```
 
 ### Default Scopes
 
 ```crystal
 class Product < Grant::Base
+  column active : Bool
+  column deleted_at : Time?
+
   # Applied to all queries automatically
   default_scope { where(active: true).where.is_null(:deleted_at) }
-  
-  # Bypass default scope
-  scope :unscoped, -> { unscoped }
-  scope :all_including_deleted, -> { unscoped }
 end
 
 Product.all              # Includes default scope
 Product.unscoped.all     # Bypasses default scope
+Product.unscoped.where(id: 1).first
 ```
+
+A default scope starts the relation for every class-level and chained read:
+filters (`where` and `where.not`), ordering, limits, projections, distinct,
+grouping, joins, calculations, existence checks, first/last/take, and batch or
+streamed iteration. Named scopes compose on top of it. Bulk updates and deletes
+also retain it, including `update_all`, `delete_all`, `destroy_all`, `touch_all`,
+`delete_by`, `destroy_by`, and `clear`.
+
+`unscoped` is the intentional bypass. Use either the chain form or a bounded
+block; the block restores the prior scope state even if it raises:
+
+```crystal
+Product.unscoped.where(active: false).delete_all
+
+Product.unscoped do |query|
+  query.where(active: false).select
+end
+```
+
+Raw `exec`, `query`, and `scalar` calls cannot automatically apply a model's
+default scope. On a scoped model they require an explicit `unscoped` block.
+`raw_all` remains scope-aware. For `multitenant` models, every scoped operation
+also requires a current tenant; see [`../large_tables.md`](../large_tables.md)
+for tenant assignment, mismatch errors, and cross-tenant access.
 
 ### Scope Composition
 
+Named scopes return a model-specific relation with the model's other named
+scopes available on it. Combine them directly, then keep chaining builder
+methods when needed.
+
 ```crystal
 class User < Grant::Base
-  scope :active, -> { where(active: true) }
-  scope :verified, -> { where.is_not_null(:email_verified_at) }
-  scope :admins, -> { where(role: "admin") }
+  scope :active, ->(query : Grant::Query::Builder(User)) { query.where(active: true) }
+  scope :verified, ->(query : Grant::Query::Builder(User)) { query.where.is_not_null(:email_verified_at) }
+  scope :admins, ->(query : Grant::Query::Builder(User)) { query.where(role: "admin") }
   
-  # Combine scopes
-  scope :active_admins, -> { active.admins }
-  scope :verified_active, -> { active.verified }
+  # Define a commonly reused combination
+  scope :active_admins, ->(query : Grant::Query::Builder(User)) { query.where(active: true).where(role: "admin") }
+  scope :verified_active, ->(query : Grant::Query::Builder(User)) { query.where(active: true).where.is_not_null(:email_verified_at) }
   
   # Dynamic composition
   def self.for_dashboard
-    active.verified.order(last_login: :desc)
+    current_scope.where(active: true)
+      .where.is_not_null(:email_verified_at)
+      .order(last_login: :desc)
   end
 end
+
+User.active.verified.admins.select
+User.active_admins.select
 ```
+
+Use `User.active_admins` for the combined relation, or chain ordinary relation
+methods such as `User.active.where(role: "admin")`. Each class-level call
+starts from `current_scope`, so a default scope remains in effect throughout.
 
 ## Subqueries
 
@@ -431,6 +475,10 @@ User.distinct.count(:country)
 # Group count
 User.group_by(:role).count
 # => {"admin" => 5, "user" => 100, "moderator" => 10}
+
+# Multiple group fields use an array key
+Sale.group_by([:product_id, :store_id]).count
+# => {[12, 3] => 8, [12, 4] => 5}
 ```
 
 ### Sum, Average, Min, Max

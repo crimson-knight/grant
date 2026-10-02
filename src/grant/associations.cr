@@ -107,7 +107,7 @@ module Grant::Associations
   # ```
   macro belongs_to(model, **options)
     {% if options[:polymorphic] %}
-      belongs_to_polymorphic({{model}}, {{options.double_splat}})
+      belongs_to_polymorphic({{model}}, {% for key, value in options %}{{key.id}}: {{value}}, {% end %})
     {% else %}
     {% if model.is_a? TypeDeclaration %}
       {% method_name = model.var %}
@@ -120,11 +120,15 @@ module Grant::Associations
     {% if options[:foreign_key] && options[:foreign_key].is_a? TypeDeclaration %}
       {% foreign_key = options[:foreign_key].var %}
       column {{options[:foreign_key]}}{% if options[:primary] %}, primary: {{options[:primary]}}{% end %}{% if options[:converter] %}, converter: {{options[:converter]}}{% end %}
+    {% elsif options[:foreign_key] %}
+      {% foreign_key = options[:foreign_key].id %}
     {% else %}
       {% foreign_key = method_name + "_id" %}
       column {{foreign_key}} : Int64?{% if options[:primary] %}, primary: {{options[:primary]}}{% end %}{% if options[:converter] %}, converter: {{options[:converter]}}{% end %}
     {% end %}
     {% primary_key = options[:primary_key] || "id" %}
+    {% foreign_key_name = foreign_key.stringify.gsub(/:/, "").gsub(/"/, "") %}
+    {% primary_key_name = primary_key.stringify.gsub(/:/, "").gsub(/"/, "") %}
 
     {% inverse_of_bt = options[:inverse_of] %}
 
@@ -133,27 +137,53 @@ module Grant::Associations
     def {{method_name.id}} : {{class_name.id}}?
       if association_loaded?({{method_name.stringify}})
         get_loaded_association({{method_name.stringify}}).as({{class_name.id}}?)
-      elsif parent = {{class_name.id}}.find_by({{primary_key.id}}: {{foreign_key.id}})
-        Grant::Logs::Association.debug { "Loaded belongs_to association - #{self.class.name}.#{{{method_name.stringify}}} [#{{{class_name.id.stringify}}}] [fk: #{{{foreign_key.id.stringify}}} = #{{{foreign_key.id}}}]" }
+      else
+        assert_association_can_lazy_load!({{method_name.stringify}})
+        if parent = {{class_name.id}}.where({{primary_key_name}}, :eq, {{foreign_key.id}}).first
+          Grant::Logs::Association.debug { "Loaded belongs_to association - #{self.class.name}.#{{{method_name.stringify}}} [#{{{class_name.id.stringify}}}] [fk: #{{{foreign_key.id.stringify}}} = #{{{foreign_key.id}}}]" }
         {% if inverse_of_bt %}
           parent.set_loaded_association({{inverse_of_bt.id.stringify}}, self)
         {% end %}
-        parent
-      else
-        {{class_name.id}}.new
+          parent
+        else
+          nil
+        end
       end
     end
 
     def {{method_name.id}}! : {{class_name.id}}
-      result = {{class_name.id}}.find_by!({{primary_key.id}}: {{foreign_key.id}})
+      if association_loaded?({{method_name.stringify}})
+        foreign_value = read_attribute({{foreign_key_name}})
+        foreign_value_text = foreign_value.nil? ? "NULL" : foreign_value.to_s
+        get_loaded_association({{method_name.stringify}}).as({{class_name.id}}?) || raise Grant::Querying::NotFound.new("No {{class_name.id}} found where #{{{primary_key_name}}} is #{foreign_value_text}")
+      else
+        assert_association_can_lazy_load!({{method_name.stringify}})
+        foreign_value = read_attribute({{foreign_key_name}})
+        foreign_value_text = foreign_value.nil? ? "NULL" : foreign_value.to_s
+        result = {{class_name.id}}.where({{primary_key_name}}, :eq, {{foreign_key.id}}).first || raise Grant::Querying::NotFound.new("No {{class_name.id}} found where #{{{primary_key_name}}} is #{foreign_value_text}")
       {% if inverse_of_bt %}
         result.set_loaded_association({{inverse_of_bt.id.stringify}}, self)
       {% end %}
-      result
+        result
+      end
     end
 
-    def {{method_name.id}}=(parent : {{class_name.id}})
-      @{{foreign_key.id}} = parent.{{primary_key.id}}
+    def {{method_name.id}}=(parent : {{class_name.id}}?)
+      if parent
+        parent_key = parent.read_attribute({{primary_key_name}})
+        if parent_key.nil?
+          clear_nullable_attribute({{foreign_key_name}})
+        else
+          converted_key = Grant::Type.convert_type(parent_key, typeof(self.{{foreign_key.id}}))
+          self.{{foreign_key.id}} = converted_key.as(typeof(self.{{foreign_key.id}}))
+        end
+      else
+        clear_nullable_attribute({{foreign_key_name}})
+      end
+      set_loaded_association({{method_name.stringify}}, parent)
+      {% if options[:autosave] %}
+        @_{{method_name.id}}_for_autosave = parent
+      {% end %}
     end
     
     # Store association metadata
@@ -170,13 +200,19 @@ module Grant::Associations
 
     # Handle optional validation
     {% unless options[:optional] %}
-      setup_optional_validation({{method_name.id}}, {{foreign_key.id}}, false)
+      setup_optional_validation({{method_name.id}}, {{foreign_key_name}}, {{class_name.id}}, {{primary_key_name}}, false, {{options[:autosave] || false}})
     {% end %}
     
     # Handle counter cache
     {% if options[:counter_cache] %}
-      {% counter_column = options[:counter_cache] == true ? @type.stringify.split("::").last.underscore + "s_count" : options[:counter_cache] %}
-      setup_counter_cache({{method_name.id}}, {{class_name.id}}, {{counter_column}})
+      {% if options[:counter_cache] == true %}
+        {% counter_column = @type.stringify.split("::").last.underscore + "s_count" %}
+      {% elsif options[:counter_cache].is_a?(SymbolLiteral) %}
+        {% counter_column = options[:counter_cache].id.stringify %}
+      {% else %}
+        {% counter_column = options[:counter_cache].stringify.gsub(/"/, "") %}
+      {% end %}
+      setup_counter_cache({{method_name.id}}, {{class_name.id}}, {{counter_column}}, {{foreign_key_name}})
     {% end %}
     
     # Handle touch
@@ -187,16 +223,11 @@ module Grant::Associations
     
     # Handle autosave
     {% if options[:autosave] %}
-      setup_autosave({{method_name.id}}, :belongs_to)
+      setup_autosave({{method_name.id}}, :belongs_to, {{foreign_key_name}}, {{primary_key_name}})
       
       # Define instance variable for tracking autosave
       @_{{method_name.id}}_for_autosave : {{class_name.id}}? = nil
       
-      # Override setter to track autosave
-      def {{method_name.id}}=(parent : {{class_name.id}})
-        @{{foreign_key.id}} = parent.{{primary_key.id}}
-        @_{{method_name.id}}_for_autosave = parent
-      end
     {% end %}
     {% end %}
   end
@@ -243,7 +274,7 @@ module Grant::Associations
   # ```
   macro has_one(model, **options)
     {% if options[:as] %}
-      has_one_polymorphic({{model}}, {{options[:as]}}, {{options.double_splat}})
+      has_one_polymorphic({{model}}, {{options[:as]}}, {% for key, value in options %}{{key.id}}: {{value}}, {% end %})
     {% elsif options[:through] %}
       # has_one :through — traverses an intermediate association to find a single target record
       {% if model.is_a? TypeDeclaration %}
@@ -256,6 +287,8 @@ module Grant::Associations
       {% through = options[:through] %}
       {% foreign_key = options[:foreign_key] || @type.stringify.split("::").last.underscore + "_id" %}
       {% primary_key = options[:primary_key] || "id" %}
+      {% foreign_key_name = foreign_key.stringify.gsub(/:/, "").gsub(/"/, "") %}
+      {% primary_key_name = primary_key.stringify.gsub(/:/, "").gsub(/"/, "") %}
       {% source = options[:source] || method_name %}
 
       @[Grant::Relationship(target: {{class_name.id}}, type: :has_one,
@@ -273,6 +306,7 @@ module Grant::Associations
         if association_loaded?({{method_name.stringify}})
           get_loaded_association({{method_name.stringify}}).as({{class_name.id}}?)
         else
+          assert_association_can_lazy_load!({{method_name.stringify}})
           # Build JOIN query through the intermediate table
           # e.g. SELECT avatars.* FROM avatars
           #      JOIN profiles ON profiles.avatar_id = avatars.id
@@ -291,7 +325,8 @@ module Grant::Associations
             s << "JOIN #{{{through.id.stringify}}} ON #{{{through.id.stringify}}}.#{key} = #{{{class_name.id}}.table_name}.#{{{class_name.id}}.primary_name} "
             s << "WHERE #{{{through.id.stringify}}}.#{{{foreign_key.id.stringify}}} = ?"
           end
-          result = {{class_name.id}}.first(sql, [self.{{primary_key.id}}])
+          owner_key = {% if options[:primary_key] %}self.read_attribute({{primary_key_name}}){% else %}self.read_attribute(self.class.primary_name){% end %}
+          result = {{class_name.id}}.first(sql, [owner_key])
           if result
             Grant::Logs::Association.debug { "Loaded has_one :through association - #{self.class.name}.#{{{method_name.stringify}}} [#{{{class_name.id.stringify}}}] [through: #{{{through.id.stringify}}}]" }
           end
@@ -331,6 +366,8 @@ module Grant::Associations
     {% else %}
       {% primary_key = options[:primary_key] || "id" %}
     {% end %}
+    {% foreign_key_name = foreign_key.stringify.gsub(/:/, "").gsub(/"/, "") %}
+    {% primary_key_name = primary_key.stringify.gsub(/:/, "").gsub(/"/, "") %}
 
     @[Grant::Relationship(target: {{class_name.id}}, type: :has_one,
       primary_key: {{primary_key.id}}, foreign_key: {{foreign_key.id}})]
@@ -339,11 +376,21 @@ module Grant::Associations
 
     def {{method_name}} : {{class_name}}?
       if association_loaded?({{method_name.stringify}})
-        get_loaded_association({{method_name.stringify}}).as({{class_name.id}}?)
+        loaded = get_loaded_association({{method_name.stringify}}).as({{class_name.id}}?)
+        {% if options[:autosave] %}
+          @_{{method_name.id}}_for_autosave = loaded if loaded
+        {% end %}
+        loaded
       else
-        result = {{class_name.id}}.find_by({{foreign_key.id}}: self.{{primary_key.id}})
+        assert_association_can_lazy_load!({{method_name.stringify}})
+        owner_key = {% if options[:primary_key] %}self.read_attribute({{primary_key_name}}){% else %}self.read_attribute(self.class.primary_name){% end %}
+        result = {{class_name.id}}.where({{foreign_key_name}}, :eq, owner_key).first
+        set_loaded_association({{method_name.stringify}}, result)
         if result
-          Grant::Logs::Association.debug { "Loaded has_one association - #{self.class.name}.#{{{method_name.stringify}}} [#{{{class_name.id.stringify}}}] [fk: #{{{foreign_key.id.stringify}}} = #{self.{{primary_key.id}}}]" }
+          {% if options[:autosave] %}
+            @_{{method_name.id}}_for_autosave = result
+          {% end %}
+          Grant::Logs::Association.debug { "Loaded has_one association - #{self.class.name}.#{{{method_name.stringify}}} [#{{{class_name.id.stringify}}}] [fk: #{{{foreign_key.id.stringify}}} = #{owner_key}]" }
           {% if inverse_of %}
             result.set_loaded_association({{inverse_of.id.stringify}}, self)
           {% end %}
@@ -353,15 +400,27 @@ module Grant::Associations
     end
 
     def {{method_name}}! : {{class_name}}
-      result = {{class_name.id}}.find_by!({{foreign_key.id}}: self.{{primary_key.id}})
+      if association_loaded?({{method_name.stringify}})
+        get_loaded_association({{method_name.stringify}}).as({{class_name.id}}?) || raise Grant::Querying::NotFound.new("No {{class_name.id}} found")
+      else
+        assert_association_can_lazy_load!({{method_name.stringify}})
+        owner_value = {% if options[:primary_key] %}self.read_attribute({{primary_key_name}}){% else %}self.read_attribute(self.class.primary_name){% end %}
+        result = {{class_name.id}}.where({{foreign_key_name}}, :eq, owner_value).first || raise Grant::Querying::NotFound.new("No {{class_name.id}} found where #{{{foreign_key_name}}} = #{owner_value}")
       {% if inverse_of %}
         result.set_loaded_association({{inverse_of.id.stringify}}, self)
       {% end %}
-      result
+        result
+      end
     end
 
-    def {{method_name}}=(child)
-      child.{{foreign_key.id}} = self.{{primary_key.id}}
+    def {{method_name}}=(child : {{class_name.id}}?)
+      if child
+        if owner_key = {% if options[:primary_key] %}self.read_attribute({{primary_key_name}}){% else %}self.read_attribute(self.class.primary_name){% end %}
+          child.set_attributes({ {{foreign_key_name}} => owner_key })
+        end
+      end
+      set_loaded_association({{method_name.stringify}}, child)
+      @_{{method_name.id}}_for_autosave = child
     end
 
     # Store association metadata
@@ -379,31 +438,21 @@ module Grant::Associations
     # Handle dependent option
     {% if options[:dependent] %}
       {% if options[:dependent] == :destroy %}
-        setup_dependent_destroy({{method_name.id}}, :has_one, {{class_name.id}}, {{foreign_key.id}})
+        setup_dependent_destroy({{method_name.id}}, :has_one, {{class_name.id}}, {{foreign_key_name}}, {{primary_key_name}})
       {% elsif options[:dependent] == :delete %}
-        setup_dependent_delete_all({{method_name.id}}, :has_one, {{class_name.id}}, {{foreign_key.id}})
+        setup_dependent_delete_all({{method_name.id}}, :has_one, {{class_name.id}}, {{foreign_key_name}}, {{primary_key_name}})
       {% elsif options[:dependent] == :nullify %}
-        setup_dependent_nullify({{method_name.id}}, :has_one, {{class_name.id}}, {{foreign_key.id}})
+        setup_dependent_nullify({{method_name.id}}, :has_one, {{class_name.id}}, {{foreign_key_name}}, {{primary_key_name}})
       {% elsif options[:dependent] == :restrict %}
-        setup_dependent_restrict({{method_name.id}}, :has_one, {{class_name.id}}, {{foreign_key.id}})
+        setup_dependent_restrict({{method_name.id}}, :has_one, {{class_name.id}}, {{foreign_key_name}}, {{primary_key_name}})
       {% elsif options[:dependent] == :restrict_with_exception %}
-        setup_dependent_restrict_with_exception({{method_name.id}}, :has_one, {{class_name.id}}, {{foreign_key.id}})
+        setup_dependent_restrict_with_exception({{method_name.id}}, :has_one, {{class_name.id}}, {{foreign_key_name}}, {{primary_key_name}})
       {% end %}
     {% end %}
 
-    # Handle autosave
-    {% if options[:autosave] %}
-      setup_autosave({{method_name.id}}, :has_one)
-
-      # Define instance variable for tracking autosave
-      @_{{method_name.id}}_for_autosave : {{class_name.id}}? = nil
-
-      # Override setter to track autosave
-      def {{method_name}}=(child)
-        child.{{foreign_key.id}} = self.{{primary_key.id}}
-        @_{{method_name.id}}_for_autosave = child
-      end
-    {% end %}
+    # Stage assigned has_one records and persist them through the owner's save.
+    setup_autosave({{method_name.id}}, :has_one, {{foreign_key_name}}, {{primary_key_name}}, {{options[:autosave] || false}})
+    @_{{method_name.id}}_for_autosave : {{class_name.id}}? = nil
     {% end %}
   end
 
@@ -442,15 +491,16 @@ module Grant::Associations
   # * `...s` (but not `...ss`) → drop `s` (`books` → `book`)
   # * anything else is left unchanged.
   #
-  # **Irregular plurals** (`people`, `children`, `mice`, `quizzes`, etc.) are
-  # NOT handled — pass `class_name:` explicitly for those:
-  # `has_many :people, class_name: Person`.
+  # Common irregular plurals are supported. Pass `singular:` when an association
+  # name has a project-specific or less common singular form.
   #
   # Options:
   #
   # * `class_name:` — target class when it differs from the inferred name
   #   (always wins over the inferred singular name; required for irregular
   #   plurals).
+  # * `singular:` — explicit singular stem for the generated `<singular>_ids`
+  #   reader and writer.
   # * `foreign_key:` — the FK column on the target (default
   #   `"<this_model>_id"`).
   # * `primary_key:` — the key on this model the FK references (default `"id"`).
@@ -478,7 +528,7 @@ module Grant::Associations
   # ```
   macro has_many(model, scope = nil, **options)
     {% if options[:as] %}
-      has_many_polymorphic({{model}}, {{options[:as]}}, {{options.double_splat}})
+      has_many_polymorphic({{model}}, {{options[:as]}}, {% for key, value in options %}{{key.id}}: {{value}}, {% end %})
     {% else %}
     {% if model.is_a? TypeDeclaration %}
       {% method_name = model.var %}
@@ -509,13 +559,49 @@ module Grant::Associations
     {% end %}
     {% foreign_key = options[:foreign_key] || @type.stringify.split("::").last.underscore + "_id" %}
     {% primary_key = options[:primary_key] || "id" %}
+    {% foreign_key_name = foreign_key.stringify.gsub(/:/, "").gsub(/"/, "") %}
+    {% primary_key_name = primary_key.stringify.gsub(/:/, "").gsub(/"/, "") %}
     {% through = options[:through] %}
     {% inverse_of = options[:inverse_of] %}
     # `source:` names the association on the join model whose target is collected
     # for `:through`. When absent it defaults to the singular form of method_name.
     {% source = options[:source] %}
+    {% if options[:singular] %}
+      {% singular_name = options[:singular].stringify.gsub(/:/, "").gsub(/"/, "") %}
+    {% else %}
+      {% association_name = method_name.id.stringify %}
+      {% if association_name == "children" %}
+        {% singular_name = "child" %}
+      {% elsif association_name == "people" %}
+        {% singular_name = "person" %}
+      {% elsif association_name == "mice" %}
+        {% singular_name = "mouse" %}
+      {% elsif association_name == "geese" %}
+        {% singular_name = "goose" %}
+      {% elsif association_name == "men" %}
+        {% singular_name = "man" %}
+      {% elsif association_name == "women" %}
+        {% singular_name = "woman" %}
+      {% elsif association_name == "teeth" %}
+        {% singular_name = "tooth" %}
+      {% elsif association_name == "feet" %}
+        {% singular_name = "foot" %}
+      {% elsif association_name == "quizzes" %}
+        {% singular_name = "quiz" %}
+      {% elsif association_name.ends_with?("ies") %}
+        {% singular_name = association_name[0...-3] + "y" %}
+      {% elsif association_name.ends_with?("ses") || association_name.ends_with?("xes") || association_name.ends_with?("zes") || association_name.ends_with?("ches") || association_name.ends_with?("shes") %}
+        {% singular_name = association_name[0...-2] %}
+      {% elsif association_name.ends_with?("s") && !association_name.ends_with?("ss") %}
+        {% singular_name = association_name[0...-1] %}
+      {% else %}
+        {% singular_name = association_name %}
+      {% end %}
+    {% end %}
+    {% source = options[:source] || singular_name.id %}
     @[Grant::Relationship(target: {{class_name.id}}, through: {{through.id}}, type: :has_many,
-      primary_key: {{through}}, foreign_key: {{foreign_key.id}})]
+      primary_key: {{primary_key.id}}, foreign_key: {{foreign_key.id}}, source: {{source.id}},
+      owner_primary_key: {{primary_key.id}})]
     def {{method_name.id}}
       {% if scope %}
         scope_proc = ->(q : Grant::Query::Builder({{class_name.id}})) { q.{{scope.body}} }
@@ -527,42 +613,55 @@ module Grant::Associations
       {% else %}
         {% join_pk = primary_key %}
       {% end %}
+      loaded_records = nil.as(Array({{class_name.id}})?)
       if association_loaded?({{method_name.stringify}})
         loaded_data = get_loaded_association({{method_name.stringify}})
         if loaded_data.is_a?(Array(Grant::Base))
-          # Return a wrapper that behaves like AssociationCollection but uses loaded data
-          Grant::LoadedAssociationCollection(self, {{class_name.id}}).new(loaded_data.map(&.as({{class_name.id}})))
-        else
-          Grant::AssociationCollection(self, {{class_name.id}}).new(self, {{foreign_key}}, {{through}}, {{through && source ? join_pk : primary_key}}, {{inverse_of}}, scope_proc)
+          loaded_records = loaded_data.map(&.as({{class_name.id}}))
         end
-      else
-        Grant::Logs::Association.debug { "Created has_many association collection - #{self.class.name}.#{{{method_name.stringify}}} [#{{{class_name.id.stringify}}}] [fk: #{{{foreign_key.id.stringify}}}]#{{{through ? " [through: " + through.id.stringify + "]" : ""}}}" }
-        Grant::AssociationCollection(self, {{class_name.id}}).new(self, {{foreign_key}}, {{through}}, {{through && source ? join_pk : primary_key}}, {{inverse_of}}, scope_proc)
       end
+      {% if through %}
+        through_delete_all = -> : Int64 { self.{{through.id}}.delete_all }
+      {% else %}
+        through_delete_all = nil
+      {% end %}
+      unless association_loaded?({{method_name.stringify}})
+        Grant::Logs::Association.debug { "Created has_many association collection - #{self.class.name}.#{{{method_name.stringify}}} [#{{{class_name.id.stringify}}}] [fk: #{{{foreign_key.id.stringify}}}]#{{{through ? " [through: " + through.id.stringify + "]" : ""}}}" }
+      end
+      Grant::AssociationCollection(self, {{class_name.id}}).new(
+        self, {{foreign_key}}, {{through}}, {{options[:primary_key] ? primary_key : nil}},
+        {{inverse_of}}, scope_proc, {{method_name.stringify}}, loaded_records, through_delete_all,
+        {{through ? source.id.stringify : nil}}
+      )
     end
 
     # Collection of associated primary keys, e.g. `user.post_ids`.
-    def {{method_name.id[0..-2]}}_ids
-      {{method_name.id}}.map(&.primary_key_value).to_a
+    def {{singular_name.id}}_ids
+      {{method_name.id}}.ids
     end
 
     # Assigns the collection by primary keys, e.g. `user.post_ids = [1, 2, 3]`.
     # Records whose IDs are listed have their foreign key pointed at this owner;
     # records previously in the collection but absent from *ids* are nullified.
     {% unless through %}
-    def {{method_name.id[0..-2]}}_ids=(ids : Array)
+    def {{singular_name.id}}_ids=(ids : Array)
       string_ids = ids.map(&.to_s)
+      {% if options[:primary_key] %}
+        owner_key = self.read_attribute({{primary_key_name}})
+      {% else %}
+        owner_key = self.read_attribute(self.class.primary_name)
+      {% end %}
       # Nullify records no longer in the set
-      {{class_name.id}}.where({{foreign_key.id}}: self.primary_key_value).each do |record|
+      {{class_name.id}}.where({{foreign_key_name}}, :eq, owner_key).each do |record|
         unless string_ids.includes?(record.primary_key_value.to_s)
-          record.{{foreign_key.id}} = nil
+          record.set_attributes({ {{foreign_key_name}} => nil })
           record.save
         end
       end
       # Point listed records at this owner
       ids.each do |pk|
         if record = {{class_name.id}}.find(pk)
-          record.{{foreign_key.id}} = self.primary_key_value
+          record.set_attributes({ {{foreign_key_name}} => owner_key })
           record.save
         end
       end
@@ -580,35 +679,37 @@ module Grant::Associations
     }
 
     # Populate the runtime association registry so reflection works.
-    _grant_register_association({{method_name.id.stringify}}, :has_many, {{class_name.id}}, {{foreign_key.id.stringify}}, {{primary_key.id.stringify}}, {{through ? through.id.stringify : nil}})
+    _grant_register_association({{method_name.id.stringify}}, :has_many, {{class_name.id}}, {{foreign_key.id.stringify}}, {{primary_key.id.stringify}}, {{through ? through.id.stringify : nil}}, {{through ? source.id.stringify : nil}})
 
     # Handle dependent option
     {% if options[:dependent] %}
       {% if options[:dependent] == :destroy %}
-        setup_dependent_destroy({{method_name.id}}, :has_many, {{class_name.id}}, {{foreign_key.id}})
+        setup_dependent_destroy({{method_name.id}}, :has_many, {{class_name.id}}, {{foreign_key_name}}, {{primary_key_name}})
       {% elsif options[:dependent] == :delete_all %}
-        setup_dependent_delete_all({{method_name.id}}, :has_many, {{class_name.id}}, {{foreign_key.id}})
+        setup_dependent_delete_all({{method_name.id}}, :has_many, {{class_name.id}}, {{foreign_key_name}}, {{primary_key_name}})
       {% elsif options[:dependent] == :nullify %}
-        setup_dependent_nullify({{method_name.id}}, :has_many, {{class_name.id}}, {{foreign_key.id}})
+        setup_dependent_nullify({{method_name.id}}, :has_many, {{class_name.id}}, {{foreign_key_name}}, {{primary_key_name}})
       {% elsif options[:dependent] == :restrict %}
-        setup_dependent_restrict({{method_name.id}}, :has_many, {{class_name.id}}, {{foreign_key.id}})
+        setup_dependent_restrict({{method_name.id}}, :has_many, {{class_name.id}}, {{foreign_key_name}}, {{primary_key_name}})
       {% elsif options[:dependent] == :restrict_with_exception %}
-        setup_dependent_restrict_with_exception({{method_name.id}}, :has_many, {{class_name.id}}, {{foreign_key.id}})
+        setup_dependent_restrict_with_exception({{method_name.id}}, :has_many, {{class_name.id}}, {{foreign_key_name}}, {{primary_key_name}})
       {% end %}
     {% end %}
 
     # Handle autosave
-    {% if options[:autosave] %}
-      setup_autosave({{method_name.id}}, :has_many)
-      
-      # Define instance variable for tracking autosave records
+    {% unless through %}
+      # Stage assigned has_many records and persist them through the owner's save.
+      setup_autosave({{method_name.id}}, :has_many, {{foreign_key_name}}, {{primary_key_name}}, {{options[:autosave] || false}})
       @_{{method_name.id}}_for_autosave : Array({{class_name.id}})? = nil
-      
-      # Override accessor to track autosave records
+
       def {{method_name.id}}=(records : Array({{class_name.id}}))
-        records.each do |record|
-          record.{{foreign_key.id}} = self.{{primary_key.id}}
+        owner_key = self.read_attribute({{primary_key_name}})
+        if owner_key
+          records.each do |record|
+            record.set_attributes({ {{foreign_key_name}} => owner_key })
+          end
         end
+        set_loaded_association({{method_name.stringify}}, records.map(&.as(Grant::Base)))
         @_{{method_name.id}}_for_autosave = records
       end
     {% end %}
@@ -634,7 +735,7 @@ module Grant::Associations
   # `Grant::AssociationRegistry.get(model_class, name)` reflection works without
   # recompilation. Emitted by each association macro. The registration call is
   # placed at class-body level so it executes once when the model class loads.
-  macro _grant_register_association(name, type, target_class, foreign_key, primary_key, through)
+  macro _grant_register_association(name, type, target_class, foreign_key, primary_key, through, source = nil)
     Grant::AssociationRegistry.register(
       {{@type.name.stringify}},
       {{name}},
@@ -644,7 +745,42 @@ module Grant::Associations
         foreign_key:  {{foreign_key}},
         primary_key:  {{primary_key}},
         through:      {{through}},
+        source:       {{source}},
       }
     )
+    {% if type == :belongs_to || (type == :has_one && through.nil?) || (type == :has_many && through.nil?) %}
+      Grant::AssociationRegistry.register_writer(
+        {{@type.name.stringify}}, {{name}},
+        ->(record : Grant::Base, value : Grant::AssociationRegistry::AssociationValue) : Bool {
+          owner = record.as({{@type}})
+          {% if type == :belongs_to || type == :has_one %}
+            if value.nil?
+              owner.{{name.id}} = nil
+              true
+            elsif associated = value.as?({{target_class.id}})
+              owner.{{name.id}} = associated
+              true
+            else
+              false
+            end
+          {% elsif type == :has_many %}
+            if value.nil?
+              owner.{{name.id}} = [] of {{target_class.id}}
+              true
+            elsif associated = value.as?(Array(Grant::Base))
+              if associated.all? { |item| item.is_a?({{target_class.id}}) }
+                typed_associated = associated.map(&.as({{target_class.id}}))
+                owner.{{name.id}} = typed_associated
+                true
+              else
+                false
+              end
+            else
+              false
+            end
+          {% end %}
+        }
+      )
+    {% end %}
   end
 end

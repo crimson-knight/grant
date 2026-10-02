@@ -159,7 +159,7 @@ describe "Geo-based Sharding" do
 
   describe "Query routing" do
     it "routes queries with full shard key to single shard" do
-      with_virtual_shards(5) do
+      with_virtual_shards(Grant::ShardManager.shards_for_model("GeoShardedUser")) do
         # Query with country and state should route to single shard
         query_log = track_shard_queries do
           GeoShardedUser.where(country: "US", state: "CA").select
@@ -171,7 +171,7 @@ describe "Geo-based Sharding" do
     end
 
     it "routes queries with partial shard key to multiple shards" do
-      with_virtual_shards(5) do
+      with_virtual_shards(Grant::ShardManager.shards_for_model("GeoShardedUser")) do
         # Query with only country might hit multiple US shards
         query_log = track_shard_queries do
           GeoShardedUser.where(country: "US").select
@@ -184,7 +184,7 @@ describe "Geo-based Sharding" do
     end
 
     it "performs scatter-gather for non-shard-key queries" do
-      with_virtual_shards(5) do
+      with_virtual_shards(Grant::ShardManager.shards_for_model("GeoShardedUser")) do
         # Query without geo information should hit all shards
         query_log = track_shard_queries do
           GeoShardedUser.where(email: "test@example.com").select
@@ -216,6 +216,7 @@ describe "Geo-based Sharding" do
         # State is nil, which is OK for UK
       )
 
+      user.valid?.should be_true
       user.determine_shard.should eq(:shard_eu)
     end
   end

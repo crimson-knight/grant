@@ -163,18 +163,18 @@ module Bench
   # Lightweight, carriage-return progress meter for the seed loop. Prints
   # rows/sec and a percentage; never lies about the total.
   class Progress
-    @start : Time::Span
-    @last_print : Time::Span
+    @start : Time::Instant
+    @last_print : Time::Instant
 
     def initialize(@total : Int64, @label : String = "seeding")
-      @start = Time.monotonic
+      @start = Time.instant
       @last_print = @start
       @done = 0_i64
     end
 
     def advance(n : Int64)
       @done += n
-      now = Time.monotonic
+      now = Time.instant
       # throttle redraws to ~5/sec
       if (now - @last_print).total_seconds >= 0.2 || @done >= @total
         @last_print = now
@@ -182,7 +182,7 @@ module Bench
       end
     end
 
-    private def render(now : Time::Span)
+    private def render(now : Time::Instant)
       elapsed = (now - @start).total_seconds
       rate = elapsed > 0 ? (@done / elapsed) : 0.0
       pct = @total > 0 ? (@done * 100.0 / @total) : 100.0
@@ -194,7 +194,7 @@ module Bench
     end
 
     def finish
-      render(Time.monotonic)
+      render(Time.instant)
       STDERR.puts
     end
   end
@@ -203,9 +203,9 @@ module Bench
 
   # Wall-clock a block, returning {result, seconds}.
   def self.timed(&block : -> T) : Tuple(T, Float64) forall T
-    start = Time.monotonic
+    start = Time.instant
     result = block.call
-    {result, (Time.monotonic - start).total_seconds}
+    {result, (Time.instant - start).total_seconds}
   end
 
   # Current resident set size in MB, read from the OS (portable enough for

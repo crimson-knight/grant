@@ -1,6 +1,28 @@
 module Grant::Encryption
+  # Keeps each model's encrypted attribute definitions isolated. Inherited
+  # class variables made one model's declarations visible to every other model.
+  module EncryptedAttributeRegistry
+    @@attributes = {} of String => Hash(String, EncryptedAttribute)
+    @@mutex = Mutex.new
+
+    def self.for(model_name : String) : Hash(String, EncryptedAttribute)
+      @@mutex.synchronize do
+        @@attributes[model_name]?.try(&.dup) || ({} of String => EncryptedAttribute)
+      end
+    end
+
+    def self.register(model_name : String, attribute_name : String, attribute : EncryptedAttribute) : Nil
+      @@mutex.synchronize do
+        @@attributes[model_name] ||= {} of String => EncryptedAttribute
+        @@attributes[model_name][attribute_name] = attribute
+      end
+    end
+  end
+
   # Handles the encryption/decryption lifecycle for individual attributes
   class EncryptedAttribute
+    alias Writer = Proc(Grant::Base, String?, Nil)
+
     getter model_class : Grant::Base.class
     getter attribute_name : String
     getter deterministic : Bool
@@ -9,8 +31,13 @@ module Grant::Encryption
     # Decrypted value cache
     @decrypted_cache = {} of UInt64 => String?
 
-    def initialize(@model_class : Grant::Base.class, @attribute_name : String, @deterministic : Bool = false)
+    def initialize(@model_class : Grant::Base.class, @attribute_name : String, @deterministic : Bool, @writer : Writer)
       @column_name = "#{attribute_name}_encrypted"
+    end
+
+    # Assigns plaintext through the model's generated encrypted setter.
+    def assign(record : Grant::Base, value : String?) : Nil
+      @writer.call(record, value)
     end
 
     # Encrypt a value

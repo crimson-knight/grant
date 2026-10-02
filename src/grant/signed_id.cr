@@ -81,18 +81,20 @@ module Grant::SignedId
       return nil unless payload
 
       # Check purpose
-      return nil unless payload["purpose"]? == purpose.to_s
+      return nil unless payload["purpose"]?.try(&.as_s) == purpose.to_s
 
       # Check expiration
       if expires_at = payload["expires_at"]?
-        return nil if expires_at.as_i64 < Time.utc.to_unix
+        return nil if !expires_at.raw.nil? && expires_at.as_i64 < Time.utc.to_unix
       end
 
       # Find record
       id = payload["id"]?.try(&.as_s)
       return nil unless id
 
-      find(id)
+      # IDs are encoded as strings in the signed payload. Restore integer
+      # bindings before querying so PostgreSQL and SQLite compare like types.
+      find(id.to_i64? || id)
     rescue
       nil
     end

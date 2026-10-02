@@ -11,6 +11,16 @@ module Grant::Transaction
   # ```
   class Rollback < Exception; end
 
+  # Preserves an IOError escaping a transaction block so the adapter's pool
+  # wrapper does not mistake it for a broken connection during cleanup.
+  class PreservedIOError < Grant::ErrorBase
+    getter original : IO::Error
+
+    def initialize(@original : IO::Error)
+      super(@original.message || "I/O error in transaction block")
+    end
+  end
+
   # Raised when the database aborts a transaction due to a serialization /
   # concurrency conflict (e.g. a `Serializable` isolation failure or a
   # `could not serialize` error). Retrying the transaction is the usual remedy.
@@ -101,6 +111,10 @@ module Grant::Transaction
     # the transaction enclosing it.
     getter pending_callbacks = [] of NamedTuple(on_commit: Proc(Nil), on_rollback: Proc(Nil))
 
+    # Model snapshots taken before each write in this transaction. Keeping
+    # every snapshot lets a savepoint restore only the writes made inside it.
+    getter list_of_record_rollback_actions = [] of Proc(Nil)
+
     def initialize(@connection : DB::Connection, @options : Options, @adapter : Grant::Adapter::Base)
     end
 
@@ -157,6 +171,14 @@ module Grant::Transaction
       state.pending_callbacks << {on_commit: on_commit, on_rollback: on_rollback}
     else
       on_commit.call
+    end
+  end
+
+  # Enlists a record snapshot with the innermost open transaction. The snapshot
+  # is discarded on commit and called in reverse order on rollback.
+  def self.enlist_record_rollback_action(rollback_action : Proc(Nil)) : Nil
+    if state = @@transaction_stacks[Fiber.current]?.try(&.last?)
+      state.list_of_record_rollback_actions << rollback_action
     end
   end
 
@@ -221,7 +243,12 @@ module Grant::Transaction
     def transaction(options : Transaction::Options, &block) : Nil
       stack = transaction_stack
 
-      if options.requires_new || stack.empty?
+      if options.requires_new && !stack.empty? && Grant::SchemaTenant.current_connection?(adapter)
+        # A schema-tenant block owns one physical connection. Independent
+        # requires_new transactions cannot use a second connection without
+        # losing that block's search_path, so preserve nesting with a savepoint.
+        execute_savepoint(&block)
+      elsif options.requires_new || stack.empty?
         execute_transaction(options, &block)
       else
         execute_savepoint(&block)
@@ -281,42 +308,63 @@ module Grant::Transaction
     end
 
     private def execute_transaction(options : Transaction::Options, &block)
-      # Use open_pool_connection (not open) so that:
-      #   1. We always get a dedicated connection for this transaction's BEGIN/COMMIT.
-      #   2. requires_new: true transactions get a fresh connection independent of any
-      #      enclosing transaction, rather than inheriting the outer tx connection.
-      adapter.open_pool_connection do |conn|
-        start_transaction(conn, options)
-        state = TransactionState.new(conn, options, adapter)
-        transaction_stack.push(state)
+      callbacks_to_run = begin
+        if conn = Grant::SchemaTenant.current_connection?(adapter)
+          execute_transaction_on(conn, options) { yield }
+        else
+          # Use a dedicated pool checkout outside schema tenancy. Inside a schema
+          # block the same already-pinned connection must carry BEGIN through
+          # COMMIT so every statement sees the active search_path.
+          adapter.open_pool_connection do |conn|
+            execute_transaction_on(conn, options) { yield }
+          end
+        end
+      rescue ex : DB::Error
+        handle_transaction_error(ex)
+      rescue ex : PreservedIOError
+        raise ex.original
+      end
 
+      # Commit callbacks run after the transaction leaves the fiber stack. Run
+      # them outside the database-error rescue so their exceptions are preserved.
+      callbacks_to_run.each(&.call)
+    end
+
+    private def execute_transaction_on(conn : DB::Connection, options : Transaction::Options, &block) : Array(Proc(Nil))
+      start_transaction(conn, options)
+      state = TransactionState.new(conn, options, adapter)
+      transaction_stack.push(state)
+
+      begin
         begin
           yield
-
-          conn.exec("COMMIT")
-          transaction_stack.pop
-          clear_transaction_stack if transaction_stack.empty?
-          # This transaction committed durably on its own connection — true
-          # even for a requires_new transaction nested inside another one —
-          # so its deferred after_commit callbacks fire now.  Callbacks
-          # enqueued by an enclosing transaction live on that transaction's
-          # own state and wait for its commit.
-          state.pending_callbacks.each(&.[:on_commit].call)
-        rescue ex : Rollback
-          conn.exec("ROLLBACK")
-          transaction_stack.pop
-          clear_transaction_stack if transaction_stack.empty?
-          state.pending_callbacks.each(&.[:on_rollback].call)
-        rescue ex
-          conn.exec("ROLLBACK")
-          transaction_stack.pop
-          clear_transaction_stack if transaction_stack.empty?
-          state.pending_callbacks.each(&.[:on_rollback].call)
-          raise ex
+        rescue ex : IO::Error
+          raise PreservedIOError.new(ex)
         end
+        execute_transaction_control(conn, adapter, "COMMIT")
+      rescue ex : Rollback
+        execute_transaction_control(conn, adapter, "ROLLBACK")
+        transaction_stack.pop
+        clear_transaction_stack if transaction_stack.empty?
+        restore_transaction_records(state)
+        state.pending_callbacks.map(&.[:on_rollback])
+      rescue ex
+        execute_transaction_control(conn, adapter, "ROLLBACK")
+        transaction_stack.pop
+        clear_transaction_stack if transaction_stack.empty?
+        restore_transaction_records(state)
+        state.pending_callbacks.each(&.[:on_rollback].call)
+        raise ex
+      else
+        transaction_stack.pop
+        clear_transaction_stack if transaction_stack.empty?
+        state.list_of_record_rollback_actions.clear
+        # This transaction committed durably on its own connection — true
+        # even for a requires_new transaction nested inside another one —
+        # so its deferred after_commit callbacks fire now. Callbacks
+        # enqueued by an enclosing transaction wait for its commit.
+        state.pending_callbacks.map(&.[:on_commit])
       end
-    rescue ex : DB::Error
-      handle_transaction_error(ex)
     end
 
     private def execute_savepoint(&block)
@@ -328,16 +376,19 @@ module Grant::Transaction
       # this mark are pruned and get after_rollback instead of waiting around
       # to incorrectly receive after_commit at the outer commit.
       mark = current.pending_callbacks.size
+      record_rollback_mark = current.list_of_record_rollback_actions.size
 
       begin
-        current.connection.exec("SAVEPOINT #{savepoint_name}")
+        execute_transaction_control(current.connection, current.adapter, "SAVEPOINT #{savepoint_name}")
         yield
-        current.connection.exec("RELEASE SAVEPOINT #{savepoint_name}")
+        execute_transaction_control(current.connection, current.adapter, "RELEASE SAVEPOINT #{savepoint_name}")
       rescue ex : Rollback
-        current.connection.exec("ROLLBACK TO SAVEPOINT #{savepoint_name}")
+        execute_transaction_control(current.connection, current.adapter, "ROLLBACK TO SAVEPOINT #{savepoint_name}")
+        restore_savepoint_records(current, record_rollback_mark)
         fire_savepoint_rollback_callbacks(current, mark)
       rescue ex
-        current.connection.exec("ROLLBACK TO SAVEPOINT #{savepoint_name}")
+        execute_transaction_control(current.connection, current.adapter, "ROLLBACK TO SAVEPOINT #{savepoint_name}")
+        restore_savepoint_records(current, record_rollback_mark)
         fire_savepoint_rollback_callbacks(current, mark)
         raise ex
       end
@@ -345,38 +396,56 @@ module Grant::Transaction
       handle_transaction_error(ex)
     end
 
+    # crystal-mysql's prepared-statement protocol does not implement transaction
+    # control commands. Route those statements over COM_QUERY for MySQL; the
+    # other adapters accept them through the normal DB execution path.
+    private def execute_transaction_control(conn : DB::Connection, adapter : Grant::Adapter::Base, statement : String)
+      if adapter.mysql?
+        conn.unprepared.exec(statement)
+      else
+        conn.exec(statement)
+      end
+    end
+
     private def fire_savepoint_rollback_callbacks(state : TransactionState, mark : Int32)
       pruned = state.pending_callbacks.pop(state.pending_callbacks.size - mark)
       pruned.each(&.[:on_rollback].call)
+    end
+
+    private def restore_savepoint_records(state : TransactionState, mark : Int32)
+      number_to_restore = state.list_of_record_rollback_actions.size - mark
+      return if number_to_restore <= 0
+
+      rollback_actions = state.list_of_record_rollback_actions.pop(number_to_restore)
+      rollback_actions.reverse_each(&.call)
+    end
+
+    private def restore_transaction_records(state : TransactionState)
+      state.list_of_record_rollback_actions.reverse_each(&.call)
+      state.list_of_record_rollback_actions.clear
     end
 
     private def start_transaction(conn : DB::Connection, options : Transaction::Options)
       # MySQL: SET TRANSACTION ISOLATION LEVEL must be issued BEFORE START TRANSACTION.
       # (Issuing it after START TRANSACTION silently applies to the *next* transaction.)
       #
-      # Dispatch on the adapter's class NAME (a String), never on the adapter
-      # constant itself. Referencing `Grant::Adapter::Mysql`/`Pg`/`Sqlite` here
-      # would force all three adapters to be compiled into every binary (the
-      # constant must exist), breaking single-adapter / compile-target builds
-      # with `undefined constant Grant::Adapter::Mysql`. The string form is the
-      # same pattern used in scoping.cr / sti.cr / association_collection.cr.
-      adapter_name = adapter.class.name
-      if options.isolation && adapter_name == "Grant::Adapter::Mysql"
-        conn.exec("SET TRANSACTION ISOLATION LEVEL #{options.isolation.not_nil!.to_sql}")
+      if adapter.mysql?
+        # crystal-mysql cannot prepare START TRANSACTION or SET TRANSACTION.
+        # Send transaction-control statements through DB's unprepared path.
+        if isolation = options.isolation
+          conn.unprepared.exec("SET TRANSACTION ISOLATION LEVEL #{isolation.to_sql}")
+        end
+        conn.unprepared.exec(build_mysql_transaction_sql(options))
+      else
+        sql = if adapter.postgres?
+                build_pg_transaction_sql(options)
+              elsif adapter.sqlite?
+                build_sqlite_transaction_sql(options)
+              else
+                "BEGIN"
+              end
+        conn.exec(sql)
       end
-
-      sql = case adapter_name
-            when "Grant::Adapter::Pg"
-              build_pg_transaction_sql(options)
-            when "Grant::Adapter::Mysql"
-              build_mysql_transaction_sql(options)
-            when "Grant::Adapter::Sqlite"
-              build_sqlite_transaction_sql(options)
-            else
-              "BEGIN"
-            end
-
-      conn.exec(sql)
     end
 
     private def build_pg_transaction_sql(options : Transaction::Options) : String

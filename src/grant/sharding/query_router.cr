@@ -25,10 +25,8 @@ module Grant::Sharding
         # All shard keys present and resolvable -> target one shard.
         SingleShardExecution(Model).new(@model, query, single_shard)
       else
-        # Missing/partial/unresolvable shard keys -> scatter-gather across all
-        # shards. Correct (if less efficient) regardless of the where clause.
-        all_shards = Grant::ShardManager.shards_for_model(@model.name)
-        ScatterGatherExecution(Model).new(@model, query, all_shards)
+        shards = resolve_range_shards(query) || Grant::ShardManager.shards_for_model(@model.name)
+        ScatterGatherExecution(Model).new(@model, query, shards)
       end
     end
 
@@ -79,12 +77,50 @@ module Grant::Sharding
         nil
       end
     end
+
+    # Route a simple inclusive range predicate to the configured shards it
+    # intersects. Unknown SQL shapes and OR conditions retain scatter-gather.
+    private def resolve_range_shards(query : Query::Builder(Model)) : Array(Symbol)?
+      resolver = @shard_config.resolver.as?(RangeResolver)
+      return nil unless resolver
+      key_name = @shard_config.key_column_names.first?
+      return nil unless key_name
+      return nil if query.where_fields.any? { |condition| condition[:join] != :and }
+
+      minimum = nil.as(Grant::Columns::Type?)
+      maximum = nil.as(Grant::Columns::Type?)
+      query.where_fields.each do |condition|
+        case condition
+        when NamedTuple(join: Symbol, field: String, operator: Symbol, value: Grant::Columns::Type)
+          next unless condition[:field] == key_name
+          case condition[:operator]
+          when :gt, :gteq
+            minimum = condition[:value]
+          when :lt, :lteq
+            maximum = condition[:value]
+          end
+        when NamedTuple(join: Symbol, stmt: String, values: Array(Grant::Columns::Type))
+          match = condition[:stmt].match(/^\s*["`]?([a-zA-Z_][a-zA-Z0-9_]*)["`]?\s*>=\s*\?\s+AND\s+["`]?([a-zA-Z_][a-zA-Z0-9_]*)["`]?\s*<=\s*\?\s*$/i)
+          if match && match[1] == key_name && match[2] == key_name && condition[:values].size == 2
+            minimum = condition[:values][0]
+            maximum = condition[:values][1]
+          end
+        end
+      end
+
+      low = minimum
+      high = maximum
+      return nil unless low && high
+      return nil unless low.is_a?(String) || low.is_a?(Int64)
+      return nil unless high.is_a?(String) || high.is_a?(Int64)
+      resolver.shards_for_range(low, high)
+    end
   end
 
   # Base class for query execution strategies
   abstract class QueryExecution(Model)
     abstract def execute : Array(Model)
-    abstract def count : Int64
+    abstract def count : Grant::Query::Builder::CountResult
     abstract def exists? : Bool
     abstract def pluck(column : String | Symbol) : Array(Grant::Columns::Type)
   end
@@ -105,7 +141,7 @@ module Grant::Sharding
       end
     end
 
-    def count : Int64
+    def count : Grant::Query::Builder::CountResult
       Grant::ShardManager.with_shard(@shard) do
         # Always use the non-routing method to avoid infinite recursion
         @query.as(Grant::Sharding::ShardedQueryBuilder(Model)).count_without_routing
@@ -151,8 +187,8 @@ module Grant::Sharding
       merge_results(results.values)
     end
 
-    def count : Int64
-      results = Grant::Async::ShardedExecutor.execute_and_aggregate(@shards) do |shard|
+    def count : Grant::Query::Builder::CountResult
+      results = Grant::Async::ShardedExecutor.execute_and_wait(@shards) do |shard|
         Grant::Async::AsyncResult.new do
           Grant::ShardManager.with_shard(shard) do
             # Always use the non-routing method to avoid infinite recursion
@@ -161,7 +197,30 @@ module Grant::Sharding
         end
       end
 
-      results.as(Int64)
+      merge_count_results(results.values)
+    end
+
+    private def merge_count_results(results : Array(Grant::Query::Builder::CountResult)) : Grant::Query::Builder::CountResult
+      case @query.group_fields.size
+      when 0
+        results.sum(0_i64) { |result| result.as(Int64) }
+      when 1
+        counts = {} of Grant::Columns::Type => Int64
+        results.each do |result|
+          result.as(Hash(Grant::Columns::Type, Int64)).each do |key, count|
+            counts[key] = counts.fetch(key, 0_i64) + count
+          end
+        end
+        counts
+      else
+        counts = {} of Array(Grant::Columns::Type) => Int64
+        results.each do |result|
+          result.as(Hash(Array(Grant::Columns::Type), Int64)).each do |key, count|
+            counts[key] = counts.fetch(key, 0_i64) + count
+          end
+        end
+        counts
+      end
     end
 
     def exists? : Bool
@@ -265,7 +324,7 @@ module Grant::Sharding
       ScatterGatherExecution(Model).new(@model, @query, @shards).execute
     end
 
-    def count : Int64
+    def count : Grant::Query::Builder::CountResult
       ScatterGatherExecution(Model).new(@model, @query, @shards).count
     end
 

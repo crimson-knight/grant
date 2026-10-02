@@ -2,7 +2,7 @@ version: '3.8'
 
 services:
   postgres-primary:
-    image: postgres:14
+    image: postgres:14@sha256:816cf7d06ec33116c8f54cf14197085be89f25291686229485ee7d53a785b901
     container_name: grant_postgres_primary
     environment:
       POSTGRES_DB: grant_test
@@ -17,7 +17,7 @@ services:
       retries: 5
       
   postgres-replica:
-    image: postgres:14
+    image: postgres:14@sha256:816cf7d06ec33116c8f54cf14197085be89f25291686229485ee7d53a785b901
     container_name: grant_postgres_replica
     environment:
       POSTGRES_DB: grant_test
@@ -32,7 +32,7 @@ services:
       retries: 5
       
   mysql-primary:
-    image: mysql:8
+    image: mysql:8@sha256:0744ee5ef89ce6ccfa13de3e579fe6b9e27f93dd70da9c06d2c908b1b193fb8d
     container_name: grant_mysql_primary
     environment:
       MYSQL_DATABASE: grant_test
@@ -48,7 +48,7 @@ services:
       retries: 5
       
   mysql-replica:
-    image: mysql:8
+    image: mysql:8@sha256:0744ee5ef89ce6ccfa13de3e579fe6b9e27f93dd70da9c06d2c908b1b193fb8d
     container_name: grant_mysql_replica
     environment:
       MYSQL_DATABASE: grant_test
@@ -90,8 +90,7 @@ services:
   # inside the TLS tunnel and no RSA step is needed.)
   # --------------------------------------------------------------------------
   mysql8:
-    image: mysql:8.0
-    container_name: grant_mysql8_caching_sha2
+    image: mysql:8.0@sha256:7dcddc01f13bab2f15cde676d44d01f61fc9f99fe7785e86196dfc07d358ae2b
     # No command override: keep the server default auth plugin
     # (caching_sha2_password). caching_sha2_password is also the explicit
     # default below for older 8.0 point releases that still defaulted to
@@ -103,7 +102,7 @@ services:
       MYSQL_PASSWORD: test_password
       MYSQL_ROOT_PASSWORD: root_password
     ports:
-      - "3308:3306"
+      - "${GRANT_MYSQL_TEST_PORT:-3308}:3306"
     volumes:
       - ./docker/mysql-auth-init:/docker-entrypoint-initdb.d:ro
     healthcheck:
@@ -114,7 +113,7 @@ services:
       start_period: 30s
 
   mysql9:
-    image: mysql:9.0
+    image: mysql:9.0@sha256:92dc869678019f65d761155dacac660a904f6245bfe1b7997da0a73b2bfc68c9
     container_name: grant_mysql9_caching_sha2
     # MySQL 9.x defaults to caching_sha2_password and the
     # --default-authentication-plugin option is REMOVED in 9.x, so we pass no
@@ -160,7 +159,7 @@ services:
   # default. 8.0.11 still allowed --default-authentication-plugin; we pin it to
   # caching_sha2_password explicitly (it is already the default here).
   mysql8011:
-    image: mysql:8.0.11
+    image: mysql:8.0.11@sha256:ffa442557c7a350939d9cd531f77d6cbb98e868aeb4a328289e0e5469101c20e
     container_name: grant_mysql8011_caching_sha2
     # 8.0.11 predates the arm64 image publishing era — ONLY linux/amd64 exists
     # (no early 8.0.x point release has an arm64 manifest). On an amd64 CI host
@@ -192,7 +191,7 @@ services:
 
   # MySQL 8.0 current point release (8.0.4x). Default caching_sha2_password.
   mysql8046:
-    image: mysql:8.0
+    image: mysql:8.0@sha256:7dcddc01f13bab2f15cde676d44d01f61fc9f99fe7785e86196dfc07d358ae2b
     container_name: grant_mysql8046_caching_sha2
     command: ["--default-authentication-plugin=caching_sha2_password"]
     environment:
@@ -217,7 +216,7 @@ services:
   # the only auth plugin available out of the box here, so 8.4 is the strictest
   # test of the full-auth RSA path. We pass NO command override.
   mysql84:
-    image: mysql:8.4
+    image: mysql:8.4@sha256:0744ee5ef89ce6ccfa13de3e579fe6b9e27f93dd70da9c06d2c908b1b193fb8d
     container_name: grant_mysql84_caching_sha2
     environment:
       MYSQL_DATABASE: grant_test
@@ -238,7 +237,7 @@ services:
   # MySQL 9.x LTS. --default-authentication-plugin is REMOVED in 9.x; the
   # default is caching_sha2_password. No command override.
   mysql97:
-    image: mysql:9.7
+    image: mysql:9.7@sha256:30a0abfa7b502a496e12339b54cd07aaa70363396dc4b8e8a72a92804a505cd6
     container_name: grant_mysql97_caching_sha2
     environment:
       MYSQL_DATABASE: grant_test
@@ -263,7 +262,7 @@ services:
   # its own init dir. (Real MariaDB security would need ed25519/PARSEC — an
   # unbuilt, documented future gap; see docs/mysql_compatibility.md.)
   mariadb:
-    image: mariadb:11.8
+    image: mariadb:11.8@sha256:79d59758afc91b89b120b0a8904d637f5a3b3e1c4900f29b740d6d46c72fef68
     container_name: grant_mariadb_native
     environment:
       MARIADB_DATABASE: grant_test
@@ -285,7 +284,7 @@ services:
   # MySQL's implementation (same full-auth RSA path). Confirms the matrix covers
   # Percona, a common production MySQL-compatible server.
   percona80:
-    image: percona/percona-server:8.0
+    image: percona/percona-server:8.0@sha256:a4ba7d1afd325f40bc6d65b6455fb4f15388638dfa39e3b85f9755755fd9ec2d
     container_name: grant_percona80_caching_sha2
     command: ["--default-authentication-plugin=caching_sha2_password"]
     environment:

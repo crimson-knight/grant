@@ -121,10 +121,18 @@ module Grant::ValueObjects
     {% method_name = name.id %}
     {% klass = actual_class_name.id %}
     {% mapping_hash = actual_mapping %}
+    {% method_name_string = method_name.stringify.gsub(/"/, "") %}
+    {% aggregation_constant_names = @type.constants.select { |constant| constant.stringify.starts_with?("GRANT_AGGREGATION_META_") }.map(&.stringify) %}
+    {% current_aggregation_constant = "GRANT_AGGREGATION_META_" + method_name_string.upcase %}
+    {% aggregation_constant_names << current_aggregation_constant %}
+
+    # Register a compile-time marker so later declarations can include every
+    # aggregation on this model in metadata and dispatch methods.
+    GRANT_AGGREGATION_META_{{method_name_string.upcase.id}} = true
     
     # Store aggregation metadata
     class_getter _{{method_name}}_aggregation_meta = Grant::ValueObjects::AggregationMeta.new(
-      {{name.stringify}},
+      {{method_name.stringify}},
       {{actual_class_name.stringify}},
       { {% for key, value in mapping_hash %}{{key.stringify}} => {{value}},{% end %} },
       {% if actual_constructor %}true{% else %}false{% end %},
@@ -145,7 +153,7 @@ module Grant::ValueObjects
     # Define getter method
     def {{method_name}} : {{klass}}?
       # Return cached value if columns haven't changed
-      if @_cached_{{method_name}} && !aggregation_changed?({{name.stringify}})
+      if @_cached_{{method_name}} && !{{method_name}}_changed?
         return @_cached_{{method_name}}
       end
       
@@ -163,13 +171,19 @@ module Grant::ValueObjects
           return nil if @{{column_name.id}}.nil?
         {% end %}
       {% end %}
+
+      # A partially populated value object cannot satisfy its constructor.
+      {% for column_name, attr_name in mapping_hash %}
+        grant_{{column_name.id}}_value = @{{column_name.id}}
+        return nil if grant_{{column_name.id}}_value.nil?
+      {% end %}
       
       # Build the value object
       @_cached_{{method_name}} = {% if actual_constructor %}
         # Use custom constructor
         result = {{actual_constructor}}.call(
           {% for column_name, attr_name in mapping_hash %}
-            @{{column_name.id}},
+            grant_{{column_name.id}}_value,
           {% end %}
         )
         result.as({{klass}}?)
@@ -177,7 +191,7 @@ module Grant::ValueObjects
         # Use default constructor with named arguments
         {{klass}}.new(
           {% for column_name, attr_name in mapping_hash %}
-            {{attr_name.id}}: @{{column_name.id}}.not_nil!,
+            {{attr_name.id}}: grant_{{column_name.id}}_value,
           {% end %}
         )
       {% end %}
@@ -202,19 +216,50 @@ module Grant::ValueObjects
       @_cached_{{method_name}} = nil
       
       # Track aggregation change
-      track_aggregation_change({{name.stringify}}, old_value, value)
+      track_aggregation_change({{method_name.stringify}}, old_value, value)
     end
     
     # Check if the aggregation has changed
     def {{method_name}}_changed? : Bool
-      aggregation_changed?({{name.stringify}})
+      changed = false
+      {% for column_name, attr_name in mapping_hash %}
+        changed ||= attribute_changed?({{column_name.stringify}})
+      {% end %}
+      changed
     end
     
     # Get the previous value of the aggregation
     def {{method_name}}_was : {{klass}}?
-      aggregation_was({{name.stringify}}).as({{klass}}?)
+      {% for column_name, attr_name in mapping_hash %}
+        grant_{{column_name.id}}_was_value = {{column_name.id}}_was
+        return nil if grant_{{column_name.id}}_was_value.nil?
+      {% end %}
+
+      {% if actual_constructor %}
+        {{actual_constructor}}.call(
+          {% for column_name, attr_name in mapping_hash %}
+            grant_{{column_name.id}}_was_value,
+          {% end %}
+        ).as({{klass}}?)
+      {% else %}
+        {{klass}}.new(
+          {% for column_name, attr_name in mapping_hash %}
+            {{attr_name.id}}: grant_{{column_name.id}}_was_value,
+          {% end %}
+        )
+      {% end %}
     end
-    
+
+    protected def _grant_write_{{method_name}}_aggregation(value)
+      if value.nil?
+        self.{{method_name}} = nil
+      elsif value.is_a?({{klass}})
+        self.{{method_name}} = value
+      else
+        errors << Grant::ConversionError.new({{method_name.stringify}}, "has the wrong value object type (got #{typeof(value)})")
+      end
+    end
+
     # Add to list of aggregations for introspection
     
     # Add validation support
@@ -245,6 +290,81 @@ module Grant::ValueObjects
         false
       end
     end
+
+    # Regenerate model-specific aggregation helpers from every declaration
+    # visible at this point in the model body.
+    def self.aggregations : Hash(Symbol, Grant::ValueObjects::AggregationMeta)
+      {
+        {% for constant_name in aggregation_constant_names %}
+          {% aggregation_name = constant_name.gsub(/^GRANT_AGGREGATION_META_/, "").downcase %}
+          {{aggregation_name.id.symbolize}} => self._{{aggregation_name.id}}_aggregation_meta,
+        {% end %}
+      }
+    end
+
+    def aggregation_changed?(aggregation_name : String) : Bool
+      case aggregation_name
+      {% for constant_name in aggregation_constant_names %}
+        {% aggregation_name = constant_name.gsub(/^GRANT_AGGREGATION_META_/, "").downcase %}
+        when {{aggregation_name}}
+          self.{{aggregation_name.id}}_changed?
+      {% end %}
+      else
+        false
+      end
+    end
+
+    def aggregation_was(aggregation_name : String)
+      case aggregation_name
+      {% for constant_name in aggregation_constant_names %}
+        {% aggregation_name = constant_name.gsub(/^GRANT_AGGREGATION_META_/, "").downcase %}
+        when {{aggregation_name}}
+          self.{{aggregation_name.id}}_was
+      {% end %}
+      else
+        nil
+      end
+    end
+
+    def read_aggregation(aggregation_name : String | Symbol)
+      case aggregation_name.to_s
+      {% for constant_name in aggregation_constant_names %}
+        {% aggregation_name = constant_name.gsub(/^GRANT_AGGREGATION_META_/, "").downcase %}
+        when {{aggregation_name}}
+          self.{{aggregation_name.id}}
+      {% end %}
+      else
+        nil
+      end
+    end
+
+    def write_aggregation(aggregation_name : String | Symbol, value)
+      case aggregation_name.to_s
+      {% for constant_name in aggregation_constant_names %}
+        {% aggregation_name = constant_name.gsub(/^GRANT_AGGREGATION_META_/, "").downcase %}
+        when {{aggregation_name}}
+          _grant_write_{{aggregation_name.id}}_aggregation(value)
+      {% end %}
+      end
+    end
+
+    def set_attributes(args : Hash(K, T)) : self forall K, T
+      args.each do |attribute_name, value|
+        if {% for constant_name in aggregation_constant_names %}
+             {% aggregation_name = constant_name.gsub(/^GRANT_AGGREGATION_META_/, "").downcase %}
+             attribute_name.to_s == {{aggregation_name}} ||
+           {% end %} false
+          write_aggregation(attribute_name, value)
+        elsif value.is_a?(Grant::Columns::Type)
+          assign_mass_assignment_column(attribute_name.to_s, value)
+        else
+          errors << Grant::ConversionError.new(attribute_name.to_s, "is not a supported value type")
+        end
+      end
+
+      self
+    end
+
   end
 
   # Class-level value-object support, extended onto every `Grant::Base`. The
@@ -378,18 +498,20 @@ module Grant::ValueObjects
     # keys through the normal `write_attribute` path. Overrides the base
     # `set_attributes` to make value objects mass-assignable.
     def set_attributes(args : Grant::ModelArgs)
-      args.each do |k, v|
+      args.each do |attribute_name, value|
         if {% for ivar in @type.class.instance_vars %}
              {% if ivar.name.ends_with?("_aggregation_meta") && ivar.name.starts_with?("_") %}
                {% name = ivar.name.gsub(/^_/, "").gsub(/_aggregation_meta$/, "") %}
-               k.to_s == {{name.stringify}} ||
+               attribute_name.to_s == {{name.stringify}} ||
              {% end %}
            {% end %} false
-          write_aggregation(k, v)
+          write_aggregation(attribute_name, value)
         else
-          write_attribute(k, v)
+          assign_mass_assignment_column(attribute_name.to_s, value)
         end
       end
+
+      self
     end
   end
 

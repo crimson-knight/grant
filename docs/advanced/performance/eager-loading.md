@@ -7,7 +7,7 @@ complexity: "intermediate"
 version: "1.0.0"
 prerequisites: ["../../core-features/relationships.md", "../../core-features/querying-and-scopes.md"]
 related_docs: ["query-optimization.md", "../../core-features/relationships.md", "../data-management/batch-operations.md"]
-last_updated: "2025-01-13"
+last_updated: "2026-09-23"
 estimated_read_time: "15 minutes"
 use_cases: ["api-optimization", "view-rendering", "report-generation", "data-export"]
 database_support: ["postgresql", "mysql", "sqlite"]
@@ -31,7 +31,7 @@ posts.each do |post|
 end
 
 # GOOD: Eager loading (2 queries total)
-posts = Post.includes(:author).limit(100)  # Query 1 + 1 join
+posts = Post.includes(:author).limit(100)  # Query 1 + one batched author query
 posts.each do |post|
   puts post.author.name  # No additional queries
 end
@@ -102,20 +102,21 @@ end
 Grant provides different strategies for eager loading:
 
 ```crystal
-# includes - Smart loading (decides between preload and eager_load)
+# includes - Batch-load associations with separate queries
 Post.includes(:comments)
-# Uses separate queries when possible (better for memory)
-# Falls back to JOIN when necessary (with conditions)
+# SELECT posts.* FROM posts
+# SELECT comments.* FROM comments WHERE post_id IN (...)
 
 # preload - Always uses separate queries
 Post.preload(:comments)
 # SELECT * FROM posts
 # SELECT * FROM comments WHERE post_id IN (1, 2, 3, ...)
 
-# eager_load - Always uses LEFT OUTER JOIN
+# eager_load - Adds LEFT OUTER JOINs for associated-table filters
 Post.eager_load(:comments)
-# SELECT posts.*, comments.* FROM posts
+# SELECT DISTINCT posts.* FROM posts
 # LEFT OUTER JOIN comments ON comments.post_id = posts.id
+# Associations are then batch-loaded into the association cache.
 
 # joins - INNER JOIN without loading (for filtering only)
 Post.joins(:comments).where(comments: {approved: true})
@@ -124,17 +125,22 @@ Post.joins(:comments).where(comments: {approved: true})
 ### Choosing the Right Strategy
 
 ```crystal
-# Use includes for most cases (automatic optimization)
+# Use includes for most cases (separate batched queries)
 posts = Post.includes(:author, :comments)
 
 # Use preload when you know separate queries are better
 # (Large associations, avoiding JOIN complexity)
 users = User.preload(:orders)  # If users have many orders
 
-# Use eager_load when you need a JOIN
-# (Ordering by associated column, complex conditions)
+# Use eager_load when a query condition references an associated table
 posts = Post.eager_load(:author)
-            .order("users.name")
+            .where("users.name = ?", "Ada")
+
+# Through associations can be joined when their through/source metadata resolves.
+doctors = Doctor.eager_load(:patients)
+
+# A polymorphic target has no single table to join. Use includes/preload instead.
+comments = Comment.includes(:commentable)
 
 # Use joins when you only need to filter, not load
 popular_posts = Post.joins(:comments)
@@ -185,7 +191,8 @@ end
 # Eager load scoped associations
 posts = Post.includes(:approved_comments, :recent_comments)
 
-# The scoped conditions are applied during eager loading
+# These associations can be loaded in batches; lazy collection queries retain
+# their association where/order/limit scope.
 posts.each do |post|
   puts "Approved: #{post.approved_comments.size}"
   puts "Recent: #{post.recent_comments.map(&.body)}"
@@ -209,7 +216,7 @@ class Video < Grant::Base
   has_many :comments, as: :commentable
 end
 
-# Eager load polymorphic associations
+# Eager load polymorphic associations; targets are batched by type.
 comments = Comment.includes(:commentable)
 
 # Grant handles different types automatically
@@ -259,7 +266,7 @@ class Patient < Grant::Base
   has_many :doctors, through: :appointments
 end
 
-# Eager load through associations
+# Eager load through associations. Grant batches join rows, then target rows.
 doctors = Doctor.includes(:patients)
 
 # Or load the join model too
@@ -549,18 +556,20 @@ end
 ```crystal
 class Post < Grant::Base
   # Define reusable eager loading scopes
-  scope :with_author, -> { includes(:author) }
-  scope :with_comments, -> { includes(:comments) }
-  scope :with_all, -> { includes(:author, :comments, :tags) }
+  scope :with_author, ->(query : Grant::Query::Builder(Post)) { query.includes(:author) }
+  scope :with_comments, ->(query : Grant::Query::Builder(Post)) { query.includes(:comments) }
+  scope :with_all, ->(query : Grant::Query::Builder(Post)) { query.includes(:author, :comments, :tags) }
   
   # Compose as needed
-  scope :for_index, -> { with_author.published.recent }
-  scope :for_detail, -> { with_all }
+  scope :for_index, ->(query : Grant::Query::Builder(Post)) {
+    query.includes(:author).where(published: true).order(created_at: :desc)
+  }
+  scope :for_detail, ->(query : Grant::Query::Builder(Post)) { query.includes(:author, :comments, :tags) }
 end
 
 # Clean controller code
-Post.for_index.page(params[:page])
-Post.for_detail.find(params[:id])
+Post.for_index.limit(20).select
+Post.for_detail.where(id: params[:id]).first
 ```
 
 ### 3. Default Includes
@@ -572,11 +581,15 @@ class Comment < Grant::Base
   # Always load author by default
   default_scope { includes(:author) }
   
-  # Or conditional default
-  def self.default_scope
-    current_user.admin? ? all : includes(:author)
-  end
+  # For conditional eager loading, use an explicit scope instead of a default:
+  scope :with_author_when, ->(query : Grant::Query::Builder(Comment), should_include : Bool) {
+    should_include ? query.includes(:author) : query
+  }
 end
+
+# In controller code, pass the request-specific decision explicitly.
+include_author = !current_user.admin?
+Comment.with_author_when(include_author).select
 ```
 
 ### 4. Lazy Loading Detection
@@ -592,6 +605,22 @@ class Post < Grant::Base
   end
 end
 ```
+
+### Strict Loading
+
+Use strict loading to make an unexpected lazy association query raise a
+`Grant::StrictLoadingViolationError`:
+
+```crystal
+posts = Post.strict_loading.includes(:author).select
+posts.first.not_nil!.author # preloaded; no error
+
+post = Post.find!(1).strict_loading!
+post.comments # raises if comments were not preloaded
+```
+
+Strict loading is available on query relations and individual records. Preload
+the associations the code will access before enabling this check.
 
 ## Testing Eager Loading
 

@@ -58,18 +58,53 @@ end
 - `Grant::Tenant.current!` — the current tenant, raising `Grant::NoTenantError`
   if unset (this is what the default scope calls).
 
+The default scope is part of the model relation, so class-level and chained
+queries keep it through filters, ordering, projections, joins, calculations,
+existence checks, `first`/`last`/`take`, and batch or streamed iteration. Bulk
+updates and deletes (`update_all`, `delete_all`, `destroy_all`, `touch_all`,
+`delete_by`, `destroy_by`, and `clear`) use the same scope. These calls also raise
+`Grant::NoTenantError` when no tenant is set, including `count`, `exists?`, and
+empty bulk inserts/upserts. `insert_all` and `upsert_all` fill a missing tenant
+column on every row and reject an explicit tenant that differs from the current
+one.
+
+New records inherit the current tenant when their tenant column is `nil`:
+
+```crystal
+Grant::Tenant.with(current_tenant_id) do
+  todo = Todo.create!(done: false, created_at: Time.utc)
+  todo.tenant_id # => current_tenant_id
+end
+```
+
+An explicitly supplied tenant value is retained when it matches the current
+tenant. Saving a record assigned to another tenant raises
+`Grant::TenantMismatchError`. Use `unscoped` only for an intentional cross-tenant
+write.
+
 ### Bypassing the scope (deliberately)
 
 Admin / cross-tenant jobs use `unscoped`, which skips the default scope and does
 **not** require a tenant:
 
 ```crystal
-Todo.unscoped.where(done: true).count   # every tenant — use with care
+Todo.unscoped.where(done: true).count
+
+Todo.unscoped do |query|
+  query.where(done: true).update_all(done: false)
+end
+
+# The block form also permits explicit class-level operations inside the block.
+Todo.unscoped { Todo.count }
 ```
 
 > **Danger:** `unscoped` removes the guard rail. On a large table an unscoped
 > query is a full scan. Reach for it only for genuine cross-tenant work, and
 > pair it with `LIMIT` / batching.
+
+Raw `exec`, `query`, and `scalar` calls cannot represent a model's default
+scope. On a scoped model, call them inside `Model.unscoped { ... }` for a
+deliberate raw-SQL bypass. `raw_all` remains scope-aware.
 
 ### What to expect / EXPLAIN / index
 

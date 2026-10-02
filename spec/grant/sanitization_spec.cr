@@ -76,11 +76,12 @@ describe Grant::Sanitization do
     it "neutralizes an identifier-based injection attempt" do
       # An attacker-controlled column name must not be able to break out of the
       # quoted identifier and inject a subquery.
-      malicious = %(id"; DROP TABLE users; --)
+      quote_character = CURRENT_ADAPTER == "mysql" ? '`' : '"'
+      malicious = "id#{quote_character}; DROP TABLE users; --"
       quoted = Grant::Sanitization.quote_identifier(malicious, adapter)
-      # The injected quote char is doubled, so the whole thing stays one identifier.
+      # The adapter's quote character is doubled, so the whole thing stays one identifier.
       quoted.should eq adapter.quote(malicious)
-      quoted.should contain "\"\""
+      quoted.should contain "#{quote_character}#{quote_character}"
     end
   end
 

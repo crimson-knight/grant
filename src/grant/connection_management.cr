@@ -6,11 +6,50 @@ require "./connection_registry"
 # (`connection` / `connects_to`), automatic read/write splitting across primary
 # and replica connections, horizontal sharding, read-only windows, and the
 # write-tracking that decides when a replica is safe to read. The public entry
-# points are the `connects_to` / `connection` / `connection_config` macros and
+# points are the `connects_to` / `connection` / `configure_connection` macros and
 # the `ClassMethods` (`connected_to`, `while_preventing_writes`, `current_role`,
 # `adapter`, etc.). Named connections themselves are established via
 # `Grant::ConnectionRegistry.establish_connection`.
 module Grant::ConnectionManagement
+  @@write_prevention_depth = {} of Fiber => Int32
+  @@write_prevention_mutex = Mutex.new
+
+  # :nodoc:
+  def self.preventing_writes? : Bool
+    @@write_prevention_mutex.synchronize do
+      @@write_prevention_depth[Fiber.current]?.try(&.positive?) || false
+    end
+  end
+
+  # :nodoc:
+  def self.with_write_prevention(&block : -> T) : T forall T
+    fiber = Fiber.current
+    @@write_prevention_mutex.synchronize do
+      @@write_prevention_depth[fiber] = (@@write_prevention_depth[fiber]? || 0) + 1
+    end
+
+    begin
+      yield
+    ensure
+      @@write_prevention_mutex.synchronize do
+        if depth = @@write_prevention_depth[fiber]?
+          if depth <= 1
+            @@write_prevention_depth.delete(fiber)
+          else
+            @@write_prevention_depth[fiber] = depth - 1
+          end
+        end
+      end
+    end
+  end
+
+  # :nodoc:
+  def self.guard_writes! : Nil
+    return unless preventing_writes?
+
+    raise Grant::Transaction::ReadOnlyError.new("Write query attempted while writes are prevented")
+  end
+
   # Snapshot of a fiber's active connection context: which database, role, and
   # shard a unit of work is targeting, and whether writes are prevented.
   #
@@ -34,17 +73,20 @@ module Grant::ConnectionManagement
   # Per database/shard bookkeeping for the read/write splitter: when the last
   # write happened, an optional "stick to primary until" deadline, and the lag
   # threshold. Drives the decision of whether a read may safely use a replica.
-  struct ReplicaLagTracker
+  class ReplicaLagTracker
     # Monotonic timestamp of the most recent tracked write.
-    property last_write_time : Time::Span
+    property last_write_time : Time::Instant
     # Monotonic deadline before which reads must use the primary, or `nil`.
-    property sticky_until : Time::Span?
+    property sticky_until : Time::Instant?
+    # Whether a write has been tracked since this tracker was created.
+    property? written : Bool
     # How stale a replica may be before reads return to the primary.
     property lag_threshold : Time::Span
 
-    def initialize(@last_write_time = Time.monotonic,
+    def initialize(@last_write_time = Time.instant,
                    @sticky_until = nil,
-                   @lag_threshold = 2.seconds)
+                   @lag_threshold = 2.seconds,
+                   @written = false)
     end
 
     # Records a write now, resetting `last_write_time` to the current monotonic
@@ -54,7 +96,8 @@ module Grant::ConnectionManagement
     # tracker.mark_write
     # ```
     def mark_write
-      @last_write_time = Time.monotonic
+      @last_write_time = Time.instant
+      @written = true
     end
 
     # Forces reads onto the primary for the next *duration* by setting
@@ -64,7 +107,7 @@ module Grant::ConnectionManagement
     # tracker.stick_to_primary(5.seconds)
     # ```
     def stick_to_primary(duration : Time::Span)
-      @sticky_until = Time.monotonic + duration
+      @sticky_until = Time.instant + duration
     end
 
     # Returns `true` when a replica may be read from: there is no active sticky
@@ -74,7 +117,7 @@ module Grant::ConnectionManagement
     # tracker.can_use_replica?(2.seconds) # => true once 2s have passed write-free
     # ```
     def can_use_replica?(wait_period : Time::Span) : Bool
-      now = Time.monotonic
+      now = Time.instant
 
       # Check if we're in sticky period
       if sticky = @sticky_until
@@ -82,22 +125,34 @@ module Grant::ConnectionManagement
       end
 
       # Check if enough time has passed since last write
-      now - @last_write_time > wait_period
+      !written? || now - @last_write_time > wait_period
     end
   end
 
   macro included
     # Connection configuration
-    class_property database_name : String = "primary"
+    # The configured connection is class-wide; temporary selections live only
+    # in the current fiber's ConnectionContext.
+    class_property default_database_name : String = "primary"
     class_property connection_config = {} of Symbol => String
     class_property shard_config = {} of Symbol => Hash(Symbol, String)
 
+    # Returns the active database for this fiber, falling back to the model's
+    # configured default when no connected_to block is active.
+    def self.database_name : String
+      connection_context.try(&.database) || default_database_name
+    end
+
+    # Sets the model's configured default database. connected_to never changes
+    # this shared class-level value.
+    def self.database_name=(database : String)
+      self.default_database_name = database
+    end
+
     # Fiber-keyed connection context — one slot per fiber so concurrent fibers
     # that each call connected_to cannot corrupt each other's role/database/shard.
-    # No mutex: safe under Crystal's default single-threaded fiber scheduler;
-    # would need synchronization under -Dpreview_mt (as ShardManager's config
-    # hash already has).
     @@connection_contexts = {} of Fiber => ConnectionContext
+    @@connection_contexts_mutex = Mutex.new
 
     # Returns the current fiber's `ConnectionContext`, or `nil` when no
     # `#connected_to` block is active (the default primary/writing context).
@@ -106,24 +161,36 @@ module Grant::ConnectionManagement
     # User.connection_context # => nil (outside any connected_to block)
     # ```
     def self.connection_context : ConnectionContext?
-      @@connection_contexts[Fiber.current]?
+      @@connection_contexts_mutex.synchronize { @@connection_contexts[Fiber.current]? }
     end
 
     # Sets (or with `nil`, clears) the current fiber's `ConnectionContext`.
     # Managed by `#connected_to`; you rarely call it directly. Passing `nil`
     # deletes the fiber's entry to avoid leaking context on long-lived fibers.
     def self.connection_context=(ctx : ConnectionContext?)
-      if ctx.nil?
-        # Delete the entry rather than storing nil — avoids a memory leak
-        # where long-lived fibers accumulate dead entries.
-        @@connection_contexts.delete(Fiber.current)
-      else
-        @@connection_contexts[Fiber.current] = ctx
+      @@connection_contexts_mutex.synchronize do
+        if ctx.nil?
+          # Delete the entry rather than storing nil — avoids a memory leak
+          # where long-lived fibers accumulate dead entries.
+          @@connection_contexts.delete(Fiber.current)
+        else
+          @@connection_contexts[Fiber.current] = ctx
+        end
       end
     end
 
-    # Enhanced replica lag tracking per database/shard
-    class_property replica_lag_trackers = {} of String => ReplicaLagTracker
+    # Enhanced replica lag tracking per database/shard. The same lock protects
+    # tracker lookup and mutation because adapter lookups read this state often.
+    @@replica_lag_trackers = {} of String => ReplicaLagTracker
+    @@replica_lag_trackers_mutex = Mutex.new
+
+    private def self.with_replica_lag_tracker(key : String, &block : ReplicaLagTracker -> T) : T forall T
+      @@replica_lag_trackers_mutex.synchronize do
+        tracker = @@replica_lag_trackers[key]? || ReplicaLagTracker.new(lag_threshold: replica_lag_threshold)
+        @@replica_lag_trackers[key] = tracker
+        yield tracker
+      end
+    end
 
     # Connection behavior configuration
     class_property replica_lag_threshold : Time::Span = 2.seconds
@@ -207,13 +274,13 @@ module Grant::ConnectionManagement
   #
   # ```
   # class User < Grant::Base
-  #   connection_config(
+  #   configure_connection(
   #     replica_lag_threshold: 2.seconds,
   #     failover_retry_attempts: 3
   #   )
   # end
   # ```
-  macro connection_config(**options)
+  macro configure_connection(**options)
     {% for key, value in options %}
       {% if key == :replica_lag_threshold %}
         self.replica_lag_threshold = {{value}}
@@ -246,7 +313,7 @@ module Grant::ConnectionManagement
     #   User.guard_writes! # raises Grant::Transaction::ReadOnlyError
     # end
     # ```
-    def guard_writes!
+    def guard_writes! : Nil
       if preventing_writes?
         raise Grant::Transaction::ReadOnlyError.new(
           "Write query attempted while in readonly mode: #{name}"
@@ -276,6 +343,26 @@ module Grant::ConnectionManagement
       Grant::Connections.connection_switch_wait_period = value
     end
 
+    # Keeps calls to the former `connection_config(**options)` method working
+    # while applications transition to `configure_connection(**options)`.
+    @[Deprecated("Use configure_connection instead")]
+    def connection_config(**options) : Nil
+      options.each do |key, value|
+        case key
+        when :replica_lag_threshold
+          self.replica_lag_threshold = value.as?(Time::Span) || raise ArgumentError.new("replica_lag_threshold must be a Time::Span")
+        when :failover_retry_attempts
+          self.failover_retry_attempts = value.as?(Int32) || raise ArgumentError.new("failover_retry_attempts must be an Int32")
+        when :health_check_interval
+          self.health_check_interval = value.as?(Time::Span) || raise ArgumentError.new("health_check_interval must be a Time::Span")
+        when :connection_switch_wait_period
+          self.connection_switch_wait_period = value.as?(Int32) || raise ArgumentError.new("connection_switch_wait_period must be an Int32")
+        else
+          raise ArgumentError.new("Unknown connection config option: #{key}")
+        end
+      end
+    end
+
     # Runs the block with a temporary connection context — switching the
     # *database*, *role*, *shard*, and/or write-prevention — and restores the
     # previous context afterward (even on exception). Returns the block's value.
@@ -300,40 +387,40 @@ module Grant::ConnectionManagement
       role : Symbol? = nil,
       shard : Symbol? = nil,
       prevent_writes : Bool = false,
-      &
-    )
+      &block : -> T
+    ) : T forall T
       # Save current context
       previous_context = connection_context
-      previous_database = database_name if database
 
       # Create new context
-      self.connection_context = ConnectionContext.new(
+      context = ConnectionContext.new(
         database || current_database,
         role || current_role,
         shard || current_shard,
         prevent_writes || preventing_writes?
       )
+      self.connection_context = context
 
-      # Update database name if provided
-      self.database_name = database if database
-
-      yield
+      if context.prevent_writes
+        Grant::ConnectionManagement.with_write_prevention { yield }
+      else
+        yield
+      end
     ensure
       # Restore previous context
       self.connection_context = previous_context
-      self.database_name = previous_database if database && previous_database
     end
 
     # Returns the name (`String`) of the database the model is currently using —
     # the active `#connected_to` context's database if one is set, otherwise the
-    # model's default `database_name`.
+    # model's configured `default_database_name`.
     #
     # ```
     # User.current_database                                              # => "primary"
     # User.connected_to(database: "analytics") { User.current_database } # => "analytics"
     # ```
     def current_database : String
-      connection_context.try(&.database) || database_name
+      connection_context.try(&.database) || default_database_name
     end
 
     # Returns the connection role (`Symbol`) currently in effect: an explicit
@@ -384,7 +471,7 @@ module Grant::ConnectionManagement
     #   User.create(...) # raises Grant::Transaction::ReadOnlyError
     # end
     # ```
-    def while_preventing_writes(&)
+    def while_preventing_writes(&block : -> T) : T forall T
       connected_to(prevent_writes: true) do
         yield
       end
@@ -405,12 +492,24 @@ module Grant::ConnectionManagement
     # User.connected_to(role: :reading) { User.adapter } # => the replica adapter
     # ```
     def adapter : Grant::Adapter::Base
+      resolve_adapter_for_role(current_role)
+    end
+
+    # Resolves a model's connection for an explicit raw-SQL operation role.
+    # An active `connected_to` role takes precedence, matching the surrounding
+    # connection context; otherwise *role* selects the model's configured
+    # writer or reader.
+    def connection_adapter(role : Symbol) : Grant::Adapter::Base
+      resolve_adapter_for_role(connection_context.try(&.role) || role)
+    end
+
+    private def resolve_adapter_for_role(role : Symbol) : Grant::Adapter::Base
       # Determine database name
       db_name = if shard = current_shard
                   # For sharded connections, look up the database name
                   shard_settings = shard_config[shard]?
-                  shard_settings.try(&.[current_role]?) || current_database
-                elsif role_db = connection_config[current_role]?
+                  shard_settings.try(&.[role]?) || current_database
+                elsif role_db = connection_config[role]?
                   # For role-based connections
                   role_db
                 else
@@ -419,7 +518,7 @@ module Grant::ConnectionManagement
                 end
 
       begin
-        ConnectionRegistry.get_adapter(db_name, current_role, current_shard)
+        ConnectionRegistry.get_adapter(db_name, role, current_shard)
       rescue ex : Grant::AdapterNotAvailableError
         # Fallback to first registered connection for backward compatibility.
         # This handles legacy setups where a model references a connection name
@@ -435,18 +534,33 @@ module Grant::ConnectionManagement
       end
     end
 
-    # Returns the monotonic `Time::Span` timestamp of the most recent write
+    # Returns a raw connection facade for this model. Connection calls do not
+    # apply `default_scope`; model-level raw methods enforce the explicit
+    # `unscoped` rule before using this facade.
+    def connection : Grant::Connection
+      Grant::Connection.new(
+        ->(role : Symbol) do
+          role == :writing ? connection_adapter(:writing) : adapter
+        end,
+        -> do
+          guard_writes!
+          mark_write_operation
+          nil
+        end
+      )
+    end
+
+    # Returns the monotonic `Time::Instant` timestamp of the most recent write
     # tracked for the current database/shard. Used by the read/write splitter to
     # decide when a replica is safe to read from after a write.
     #
     # ```
     # User.create(name: "Ada")
-    # User.last_write_time # => a monotonic Time::Span just recorded
+    # User.last_write_time # => a monotonic Time::Instant just recorded
     # ```
-    def last_write_time : Time::Span
+    def last_write_time : Time::Instant
       key = replica_tracker_key
-      tracker = replica_lag_trackers[key] ||= ReplicaLagTracker.new(lag_threshold: replica_lag_threshold)
-      tracker.last_write_time
+      with_replica_lag_tracker(key) { |tracker| tracker.last_write_time }
     end
 
     # Records that a write just happened for the current database/shard,
@@ -458,11 +572,9 @@ module Grant::ConnectionManagement
     # User.adapter.open { |db| db.exec("UPDATE users SET ...") }
     # User.mark_write_operation # tell the splitter a write happened
     # ```
-    def mark_write_operation
+    def mark_write_operation : Nil
       key = replica_tracker_key
-      tracker = replica_lag_trackers[key] ||= ReplicaLagTracker.new(lag_threshold: replica_lag_threshold)
-      tracker.mark_write
-      replica_lag_trackers[key] = tracker
+      with_replica_lag_tracker(key) { |tracker| tracker.mark_write }
     end
 
     # Forces reads onto the primary for at least *duration* (default 5 seconds),
@@ -473,11 +585,9 @@ module Grant::ConnectionManagement
     # User.stick_to_primary(10.seconds)
     # User.where(active: true).select # served by the primary for the next 10s
     # ```
-    def stick_to_primary(duration : Time::Span = 5.seconds)
+    def stick_to_primary(duration : Time::Span = 5.seconds) : Nil
       key = replica_tracker_key
-      tracker = replica_lag_trackers[key] ||= ReplicaLagTracker.new(lag_threshold: replica_lag_threshold)
-      tracker.stick_to_primary(duration)
-      replica_lag_trackers[key] = tracker
+      with_replica_lag_tracker(key) { |tracker| tracker.stick_to_primary(duration) }
     end
 
     # Check if should use reader with enhanced logic
@@ -497,11 +607,9 @@ module Grant::ConnectionManagement
 
       # Check replica lag tracking
       key = replica_tracker_key
-      tracker = replica_lag_trackers[key]? || ReplicaLagTracker.new(lag_threshold: replica_lag_threshold)
-
       # Convert connection_switch_wait_period (milliseconds) to Time::Span
       wait_period = connection_switch_wait_period.milliseconds
-      tracker.can_use_replica?(wait_period)
+      with_replica_lag_tracker(key) { |tracker| tracker.can_use_replica?(wait_period) }
     end
 
     # Get key for replica tracker

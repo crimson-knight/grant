@@ -6,53 +6,53 @@ require "../src/grant"
 Grant::ConnectionRegistry.establish_connections({
   "primary" => {
     adapter: Grant::Adapter::Pg,
-    writer: ENV["PRIMARY_DATABASE_URL"],
-    reader: ENV["PRIMARY_REPLICA_URL"]?,
-    pool: {
-      max_pool_size: 25,
+    writer:  ENV["PRIMARY_DATABASE_URL"],
+    reader:  ENV["PRIMARY_REPLICA_URL"]?,
+    pool:    {
+      max_pool_size:     25,
       initial_pool_size: 5,
-      checkout_timeout: 5.seconds,
-      retry_attempts: 3,
-      retry_delay: 0.2.seconds
+      checkout_timeout:  5.seconds,
+      retry_attempts:    3,
+      retry_delay:       0.2.seconds,
     },
     health_check: {
       interval: 30.seconds,
-      timeout: 5.seconds
-    }
+      timeout:  5.seconds,
+    },
   },
   "analytics" => {
     adapter: Grant::Adapter::Pg,
-    url: ENV["ANALYTICS_DATABASE_URL"],
-    pool: {
-      max_pool_size: 10,
-      checkout_timeout: 3.seconds
+    url:     ENV["ANALYTICS_DATABASE_URL"],
+    pool:    {
+      max_pool_size:    10,
+      checkout_timeout: 3.seconds,
     },
     health_check: {
       interval: 60.seconds,
-      timeout: 10.seconds
-    }
+      timeout:  10.seconds,
+    },
   },
   "cache" => {
     adapter: Grant::Adapter::Sqlite,
-    url: "sqlite3://./cache.db",
-    pool: {
-      max_pool_size: 5
-    }
-  }
+    url:     "sqlite3://./cache.db",
+    pool:    {
+      max_pool_size: 5,
+    },
+  },
 })
 
 # 2. Models with different database connections
 class User < Grant::Base
   # Connect to primary database with read/write splitting
   connects_to database: "primary"
-  
+
   # Configure connection behavior
   connection_config(
     replica_lag_threshold: 3.seconds,
     failover_retry_attempts: 5,
     connection_switch_wait_period: 2500 # milliseconds
   )
-  
+
   table users
   column id : Int64, primary: true
   column email : String
@@ -63,7 +63,7 @@ end
 class AnalyticsEvent < Grant::Base
   # Connect to analytics database
   connects_to database: "analytics"
-  
+
   table events
   column id : Int64, primary: true
   column user_id : Int64
@@ -75,7 +75,7 @@ end
 class CachedResult < Grant::Base
   # Connect to local SQLite cache
   connects_to database: "cache"
-  
+
   table cached_results
   column id : Int64, primary: true
   column key : String
@@ -94,7 +94,7 @@ user = User.create(
 puts "Created user: #{user.id}"
 
 # Read from replica after delay
-sleep 2.1 # Wait for replication lag
+sleep(2.1.seconds) # Wait for replication lag
 User.connected_to(role: :reading) do
   users = User.all
   puts "Found #{users.size} users on replica"
@@ -134,7 +134,7 @@ User.while_preventing_writes do
   # Reading is allowed
   users = User.all
   puts "Can read: found #{users.size} users"
-  
+
   # Writing would raise an error
   # User.create(email: "blocked@example.com", name: "Blocked")
 end
@@ -142,37 +142,37 @@ end
 # 6. Sharded database example
 class ShardedOrder < Grant::Base
   include Grant::ConnectionManagementV2
-  
+
   connects_to(
     shards: {
       us_east: {
         writing: ENV["US_EAST_SHARD_URL"],
-        reading: ENV["US_EAST_REPLICA_URL"]
+        reading: ENV["US_EAST_REPLICA_URL"],
       },
       us_west: {
         writing: ENV["US_WEST_SHARD_URL"],
-        reading: ENV["US_WEST_REPLICA_URL"]
+        reading: ENV["US_WEST_REPLICA_URL"],
       },
       eu: {
         writing: ENV["EU_SHARD_URL"],
-        reading: ENV["EU_REPLICA_URL"]
-      }
+        reading: ENV["EU_REPLICA_URL"],
+      },
     }
   )
-  
+
   table orders
   column id : Int64, primary: true
   column user_id : Int64
   column region : String
   column total : Float64
-  
+
   # Determine shard based on region
   def self.shard_for_region(region : String) : Symbol
     case region
     when "US-EAST" then :us_east
     when "US-WEST" then :us_west
     when "EU"      then :eu
-    else               :us_east # default
+    else                :us_east # default
     end
   end
 end
@@ -182,7 +182,7 @@ puts "\n=== Sharded Database Example ==="
 # Create orders in different shards
 ["US-EAST", "US-WEST", "EU"].each do |region|
   shard = ShardedOrder.shard_for_region(region)
-  
+
   ShardedOrder.connected_to(shard: shard) do
     order = ShardedOrder.create(
       user_id: user.id.not_nil!,
@@ -224,7 +224,7 @@ if lb = Grant::ConnectionRegistry.get_load_balancer("primary")
   puts "\nPrimary database load balancer:"
   puts "Total replicas: #{lb.size}"
   puts "Healthy replicas: #{lb.healthy_count}"
-  
+
   lb.status.each do |replica|
     puts "  #{replica[:adapter]} - Healthy: #{replica[:healthy]}"
   end

@@ -197,12 +197,14 @@ describe Grant::Normalization do
     it "marks as changed when normalization actually changes the value" do
       user = NormalizedUser.new
       user.email = "  TEST@EXAMPLE.COM  "
-      user.email_changed?.should be_false # New record, no changes yet
+      user.email_changed?.should be_true # Rails 8 tracks assignments on new records
+      user.email_was.should be_nil
 
       user.valid?
       user.email.should eq("test@example.com")
-      # For new records, normalization shouldn't mark as changed
-      user.email_changed?.should be_false
+      user.email_changed?.should be_true
+      user.email_was.should be_nil
+      user.email_change.should eq({nil, "test@example.com"})
     end
   end
 

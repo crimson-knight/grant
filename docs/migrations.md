@@ -72,6 +72,10 @@ puts m.drop_sql     # => "DROP TABLE IF EXISTS users;"
   `BIGSERIAL` on Postgres); otherwise the column's own type is used.
 - Each non-primary `column` maps to the adapter's SQL type for its Crystal type.
   Non-nilable columns get `NOT NULL`; nilable columns (`String?`) do not.
+- Scalar literal column defaults (`String`, numeric, `Bool`, and `nil`) become
+  SQL `DEFAULT` clauses. String defaults escape embedded apostrophes. Crystal
+  expressions that are not literals remain record-side defaults because an
+  arbitrary Crystal expression has no general SQL equivalent.
 - A `column ... , column_type: "TEXT"` override is emitted verbatim as the SQL
   type.
 - `created_at` / `updated_at` (from `timestamps`) get the adapter's timestamp

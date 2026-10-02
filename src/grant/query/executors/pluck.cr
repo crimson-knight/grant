@@ -8,12 +8,13 @@ module Grant::Query::Executor
     def run : Array(Array(Grant::Columns::Type))
       log @sql, @args
 
-      start_time = Time.monotonic
+      start_time = Time.instant
       results = [] of Array(Grant::Columns::Type)
 
       begin
-        Model.adapter.open do |db|
-          db.query @sql, args: @args do |rs|
+        adapter = Model.adapter
+        adapter.open do |db|
+          db.query @sql, args: adapter.normalize_bind_values(@args) do |rs|
             rs.each do
               row = [] of Grant::Columns::Type
               @fields.each do |field|
@@ -25,10 +26,10 @@ module Grant::Query::Executor
           end
         end
 
-        duration = Time.monotonic - start_time
+        duration = Time.instant - start_time
         log_query_with_timing(@sql, @args, duration, results.size, Model.name)
       rescue e
-        duration = Time.monotonic - start_time
+        duration = Time.instant - start_time
         Grant::Logs::SQL.error { "Pluck query failed (#{duration.total_milliseconds}ms) - #{@sql} [#{Model.name}] [fields: #{@fields.join(", ")}] - #{e.message}" }
         raise e
       end

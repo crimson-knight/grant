@@ -75,6 +75,44 @@ admin  = AdminPersona.create!(name: "Alice", access_level: 9)  # type => "AdminP
 member = MemberPersona.create!(name: "Bob", membership_tier: "gold")  # type => "MemberPersona"
 ```
 
+## Validation and callback inheritance
+
+Validations registered on an STI root run for every descendant. A subclass
+can add its own validations; each rule runs once, with ancestor validations
+before subclass validations.
+
+Lifecycle callbacks also inherit through the hierarchy. For a given event,
+root callbacks run before callbacks registered on descendants. Around callbacks
+wrap descendant callbacks in the same root-to-child order.
+
+```crystal
+class Persona < Grant::Base
+  include Grant::STI
+
+  validates_presence_of :name
+  before_save :normalize_name
+
+  column id : Int64, primary: true
+  column type : String
+  column name : String
+
+  private def normalize_name
+    self.name = name.strip
+  end
+end
+
+class AdminPersona < Persona
+  validate :name, "is reserved" do |record|
+    record.name != "reserved"
+  end
+  before_save :record_admin_save
+
+  column access_level : Int32?
+
+  private def record_admin_save; end
+end
+```
+
 ## Querying
 
 ### Subclass queries filter by type (including descendants)
@@ -195,13 +233,6 @@ These are deliberate, documented boundaries of the current implementation:
    level down: `AdminPersona.all` returns `SuperAdminPersona` rows correctly
    typed but with `SuperAdminPersona`-only columns left `nil`.
 
-2. **Validators registered on a base class do not auto-run on subclass
-   instances.** Crystal class variables are per-class, so the validator store
-   declared on `Persona` is not shared with `AdminPersona`. Declare shared
-   validations on each concrete class, or implement shared logic in a
-   `before_validation` callback. (Subclass-specific `validate` blocks must use
-   the base type for their block parameter.)
-
-3. **`unscoped` on a subclass** returns rows of unrelated sibling types typed as
+2. **`unscoped` on a subclass** returns rows of unrelated sibling types typed as
    the queried subclass with only the shared columns populated (it cannot
    re-type them, since the result collection is `Array(Subclass)`).

@@ -2,83 +2,11 @@
 
 The `Grant` ORM is an Active Record pattern ORM that aims to achieve feature parity with Rails 8+.
 
-## Grant vs ActiveRecord Feature Comparison
+## ActiveRecord compatibility
 
-| Feature/Query Method | Grant | ActiveRecord |
-|---------------------|-------|--------------|
-| **Core Persistence** | | |
-| Basic CRUD (create, save, update, destroy) | ✅ | ✅ |
-| Timestamps (created_at, updated_at) | ✅ | ✅ |
-| Touch methods | ✅ | ✅ |
-| **Query Interface** | | |
-| Basic querying (where, order, limit, select) | ✅ | ✅ |
-| Advanced querying (joins, group, having) | 🔶 | ✅ |
-| Finder methods (find_by, exists?, any?, none?) | ✅ | ✅ |
-| Scopes and default_scope | ✅ | ✅ |
-| Query chaining | ✅ | ✅ |
-| OR queries | ✅ | ✅ |
-| NOT queries | ✅ | ✅ |
-| Enumerable collection methods on queries | ✅ | ✅ |
-| **Associations** | | |
-| belongs_to, has_one, has_many | ✅ | ✅ |
-| has_many :through | ✅ | ✅ |
-| Polymorphic associations | ✅ | ✅ |
-| Association options (dependent, counter_cache) | 🔶 | ✅ |
-| Nested attributes | ✅ | ✅ |
-| **Validations** | | |
-| Basic validations (presence, uniqueness, length) | ✅ | ✅ |
-| Built-in validators (numericality, format, etc.) | 🔶 | ✅ |
-| Custom validators | ✅ | ✅ |
-| Validation contexts | 🔶 | ✅ |
-| **Callbacks** | | |
-| Lifecycle callbacks (before_save, after_create, etc.) | ✅ | ✅ |
-| Transaction callbacks (after_commit, after_rollback) | ✅ | ✅ |
-| **Advanced Features** | | |
-| Dirty tracking (changed?, attribute_was) | ✅ | ✅ |
-| Enum attributes | ✅ | ✅ |
-| Serialized columns (JSON/YAML) | ✅ | ✅ |
-| Attribute API (custom types, virtual attributes) | ✅ | ✅ |
-| Value objects/aggregations | ✅ | ✅ |
-| **Security & Data Protection** | | |
-| Encrypted attributes | ✅ | ✅ |
-| Secure tokens | ✅ | ✅ |
-| Signed IDs | ✅ | ✅ |
-| Token generation (token_for) | ✅ | ✅ |
-| Data normalization | ✅ | ✅ |
-| **Database Features** | | |
-| Transactions (explicit blocks) | ✅ | ✅ |
-| Nested transactions | ✅ | ✅ |
-| Transaction isolation levels | ✅ | ✅ |
-| Pessimistic locking | ✅ | ✅ |
-| Optimistic locking | ✅ | ✅ |
-| **Performance & Optimization** | | |
-| Eager loading (includes, preload) | ✅ | ✅ |
-| Query batching (find_each, find_in_batches) | ✅ | ✅ |
-| Connection pooling | 🔶 | ✅ |
-| Query caching | 🔶 | ✅ |
-| **Multi-Database Support** | | |
-| Multiple database connections | 🔶 | ✅ |
-| Read/write splitting | 🔶 | ✅ |
-| Horizontal sharding | ✅ | ❌ |
-| **Convenience Methods** | | |
-| Pluck, pick | ✅ | ✅ |
-| Increment, decrement, toggle | ✅ | ✅ |
-| Update columns | ✅ | ✅ |
-| Upsert operations | ✅ | ✅ |
-| **Migrations** | | |
-| Schema migrations | 🔶 | ✅ |
-| Index management | 🔶 | ✅ |
-| Foreign key constraints | ✅ | ✅ |
-| Migration rollbacks | 🔶 | ✅ |
-| **Development Tools** | | |
-| SQL logging and instrumentation | ✅ | ✅ |
-| Query analysis and debugging | ✅ | ✅ |
-| N+1 query detection | ✅ | ✅ |
-
-**Legend:**
-- ✅ Fully implemented and production-ready
-- 🔶 Partially implemented (basic functionality present, some advanced features missing)
-- ❌ Not implemented
+See the [generated ActiveRecord 8 parity tracker](docs/PARITY.md) for the
+current score, per-feature evidence, known gaps, and prioritized missing
+features.
 
 **Grant's Unique Features:**
 - **Horizontal Sharding**: Built-in support for distributing data across multiple databases
@@ -86,8 +14,6 @@ The `Grant` ORM is an Active Record pattern ORM that aims to achieve feature par
 - **Crystal Type Safety**: Compile-time type checking eliminates many runtime errors
 - **Fiber-based Concurrency**: Native async support without callback complexity
 - **Zero-cost Abstractions**: Performance comparable to hand-written SQL
-
-**Note**: Grant achieves strong feature parity with ActiveRecord (~80-85%) while adding Crystal-specific enhancements and some advanced features (like built-in sharding) that ActiveRecord lacks. While many core features are fully implemented, some advanced options and edge cases found in ActiveRecord's 20+ years of development are still being developed.
 
 [Amber](https://github.com/amberframework/amber) is a web framework written in
 the [Crystal](https://github.com/crystal-lang/crystal) language.
@@ -633,6 +559,8 @@ Each model showcases different aspects while remaining realistic examples of how
 
 [Documentation](docs/readme.md)
 
+[PostgreSQL Schema Tenancy](docs/schema_tenancy.md)
+
 ### Experimental Features
 
 - **[Horizontal Sharding](docs/SHARDING.md)** ⚠️ - Distribute data across multiple databases (Alpha - not production ready)
@@ -644,6 +572,30 @@ Each model showcases different aspects while remaining realistic examples of how
 3. Commit your changes (git commit -am 'Add some feature')
 4. Push to the branch (git push origin my-new-feature)
 5. Create a new Pull Request
+
+## Running the specs
+
+Use the project `crystal-alpha` toolchain. When `CURRENT_ADAPTER` is unset, the spec helper defaults to SQLite at `./grant_green.db`. Keep compilation in a private cache for parallel runs:
+
+```sh
+CRYSTAL_CACHE_DIR=$PWD/.crystal-cache crystal-alpha spec
+```
+
+Run against the Dockerized PostgreSQL service with:
+
+```sh
+docker compose -f docker-compose.test.yml up -d --wait postgres-primary
+CRYSTAL_CACHE_DIR=$PWD/.crystal-cache CURRENT_ADAPTER=pg PG_DATABASE_URL=postgres://grant:test_password@localhost:5434/grant_test crystal-alpha spec
+```
+
+Run against Dockerized MySQL 8 with:
+
+```sh
+docker compose -f docker-compose.test.yml up -d --wait mysql8
+CRYSTAL_CACHE_DIR=$PWD/.crystal-cache CURRENT_ADAPTER=mysql MYSQL_DATABASE_URL=mysql://grant:test_password@127.0.0.1:3308/grant_test crystal-alpha spec
+```
+
+`make mysql-spec` starts MySQL 8 and runs the same full suite.
 
 ## Running tests
 Grant uses Crystal's built in test framework. The tests can be run either within a [dockerized testing environment](#docker-setup) or [locally](#local-setup). 

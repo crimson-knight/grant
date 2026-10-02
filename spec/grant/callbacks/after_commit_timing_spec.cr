@@ -320,7 +320,31 @@ describe "after_commit / after_rollback timing (AR semantics)" do
       CommitTimingModel.event_log.should_not contain("after_commit:outer-doomed")
     end
 
-    pending "fires the inner transaction's own callbacks at its own durable commit (needs a multi-writer adapter — PG/MySQL — since SQLite blocks inner writes)" do
+    it "keeps inner savepoint callbacks until the outer transaction completes" do
+      expect_raises(Exception, "outer dies") do
+        CommitTimingModel.transaction do
+          CommitTimingModel.new(name: "outer-doomed-inner-commit").save
+
+          CommitTimingModel.transaction do
+            # A released savepoint is not durable while the outer transaction
+            # is open. Enqueue directly to avoid SQLite's second-writer limit.
+            Grant::Transaction.enqueue_pending_callback(
+              Proc(Nil).new { CommitTimingModel.event_log << "after_commit:inner-savepoint" },
+              Proc(Nil).new { CommitTimingModel.event_log << "after_rollback:inner-savepoint" }
+            )
+          end
+
+          CommitTimingModel.event_log.should_not contain("after_commit:inner-savepoint")
+          CommitTimingModel.event_log.should_not contain("after_rollback:inner-savepoint")
+          CommitTimingModel.event_log.should_not contain("after_commit:outer-doomed-inner-commit")
+          raise "outer dies"
+        end
+      end
+
+      CommitTimingModel.event_log.should contain("after_rollback:inner-savepoint")
+      CommitTimingModel.event_log.should contain("after_rollback:outer-doomed-inner-commit")
+      CommitTimingModel.event_log.should_not contain("after_commit:inner-savepoint")
+      CommitTimingModel.where(name: "outer-doomed-inner-commit").first.should be_nil
     end
   end
 end

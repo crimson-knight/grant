@@ -36,7 +36,7 @@ describe "#update" do
       parent = Parent.new(name: "New Parent")
       parent.save!
 
-      created_at = parent.created_at!.at_beginning_of_second
+      created_at = parent.created_at!
 
       # Simulating instantiating a new object with same ID
       new_parent = Parent.new(name: "New New Parent")
@@ -48,7 +48,7 @@ describe "#update" do
       saved_parent = Parent.find!(parent.id)
       saved_parent.name.should eq "New New Parent"
       saved_parent.created_at.should eq created_at
-      saved_parent.updated_at.should eq Time.utc.at_beginning_of_second
+      saved_parent.updated_at!.should be > created_at
     end
   end
 

@@ -7,146 +7,146 @@ describe "Grant::Associations::AdditionalOptions" do
     UpdatePost.migrator.drop_and_create
     CustomAuthor.migrator.drop_and_create
     CustomArticle.migrator.drop_and_create
-    
+
     # Touch models
     TouchPost.migrator.drop_and_create
     TouchComment.migrator.drop_and_create
     TouchUpdateUser.migrator.drop_and_create
     UserActivity.migrator.drop_and_create
-    
+
     # Dependent models
     Account.migrator.drop_and_create
     AccountPreferences.migrator.drop_and_create
     NullifyProfile.migrator.drop_and_create
     ProfileAvatar.migrator.drop_and_create
-    
+
     # Polymorphic models
     Attachment.migrator.drop_and_create
-    Document.migrator.drop_and_create
-    
+    AdditionalOptionsDocument.migrator.drop_and_create
+
     # Autosave models
     FailedOrder.migrator.drop_and_create
     FailedLineItem.migrator.drop_and_create
     Vendor.migrator.drop_and_create
     VendorProduct.migrator.drop_and_create
   end
-  
+
   describe "counter_cache with updates" do
     it "updates counter when association changes" do
       blog1 = UpdateBlog.create!(title: "Blog 1", posts_count: 0)
       blog2 = UpdateBlog.create!(title: "Blog 2", posts_count: 0)
-      
+
       post = UpdatePost.create!(title: "Post", update_blog_id: blog1.id)
-      
+
       UpdateBlog.find!(blog1.id.not_nil!).posts_count.should eq(1)
       UpdateBlog.find!(blog2.id.not_nil!).posts_count.should eq(0)
-      
+
       # Change blog association
       post.update_blog_id = blog2.id
       post.save!
-      
+
       UpdateBlog.find!(blog1.id.not_nil!).posts_count.should eq(0)
       UpdateBlog.find!(blog2.id.not_nil!).posts_count.should eq(1)
     end
-    
+
     it "uses custom counter column name" do
       author = CustomAuthor.create!(name: "Jane", total_articles: 0)
-      
+
       article1 = CustomArticle.create!(title: "Article 1", custom_author_id: author.id)
       CustomAuthor.find!(author.id.not_nil!).total_articles.should eq(1)
-      
+
       article2 = CustomArticle.create!(title: "Article 2", custom_author_id: author.id)
       CustomAuthor.find!(author.id.not_nil!).total_articles.should eq(2)
     end
   end
-  
+
   describe "touch with custom column" do
     it "touches custom column on parent" do
       post = TouchPost.create!(title: "Post")
-      original_commented_at = post.last_commented_at
-      
-      sleep 0.001
-      
+      original_commented_at = Time.utc(2000, 1, 1)
+      post.last_commented_at = original_commented_at
+      post.save!(skip_timestamps: true)
+
       comment = TouchComment.create!(content: "Great post!", touch_post_id: post.id)
-      
+
       updated_post = TouchPost.find!(post.id.not_nil!)
-      updated_post.last_commented_at.should_not eq(original_commented_at)
+      updated_post.last_commented_at.not_nil!.should be > original_commented_at
     end
-    
+
     it "touches on update as well as create" do
       user = TouchUpdateUser.create!(name: "John")
       activity = UserActivity.create!(description: "Joined", touch_update_user_id: user.id)
-      
-      original_active_at = TouchUpdateUser.find!(user.id.not_nil!).last_active_at
-      
-      sleep 0.001
-      
+
+      original_active_at = Time.utc(2000, 1, 1)
+      user.last_active_at = original_active_at
+      user.save!(skip_timestamps: true)
+
       activity.description = "Updated profile"
       activity.save!
-      
-      TouchUpdateUser.find!(user.id.not_nil!).last_active_at.should_not eq(original_active_at)
+
+      TouchUpdateUser.find!(user.id.not_nil!).last_active_at.not_nil!.should be > original_active_at
     end
   end
-  
+
   describe "dependent with has_one" do
     it "destroys has_one association" do
       account = Account.create!(email: "test@example.com")
       preferences = AccountPreferences.create!(theme: "dark", account_id: account.id)
-      
+
       AccountPreferences.exists?(preferences.id).should be_true
-      
+
       account.destroy!
-      
+
       AccountPreferences.exists?(preferences.id).should be_false
     end
-    
+
     it "nullifies has_one association" do
       profile = NullifyProfile.create!(name: "John")
       avatar = ProfileAvatar.create!(url: "avatar.jpg", nullify_profile_id: profile.id)
-      
+
       profile.destroy!
-      
+
       ProfileAvatar.find!(avatar.id.not_nil!).nullify_profile_id.should be_nil
     end
   end
-  
+
   describe "polymorphic with custom columns" do
     it "uses custom foreign key and type columns" do
-      document = Document.create!(title: "Report")
+      document = AdditionalOptionsDocument.create!(title: "Report")
       attachment = Attachment.new(filename: "report.pdf")
       attachment.owner = document
       attachment.save!
-      
+
       attachment.owner_id.should eq(document.id)
-      attachment.owner_class.should eq("Document")
-      
+      attachment.owner_class.should eq("AdditionalOptionsDocument")
+
       loaded = Attachment.find!(attachment.id.not_nil!)
-      loaded.owner.should be_a(Document)
-      loaded.owner.not_nil!.as(Document).id.should eq(document.id)
+      loaded.owner.should be_a(AdditionalOptionsDocument)
+      loaded.owner.not_nil!.as(AdditionalOptionsDocument).id.should eq(document.id)
     end
   end
-  
+
   describe "autosave edge cases" do
     it "doesn't save if parent validation fails" do
       invalid_order = FailedOrder.create(order_number: "") # Missing required field
       line_item = FailedLineItem.new(product: "Widget", quantity: 1)
-      
+
       invalid_order.items = [line_item]
-      
+
       expect_raises(Grant::RecordNotSaved) do
         invalid_order.save!
       end
-      
+
       FailedLineItem.count.should eq(0)
     end
-    
+
     it "handles belongs_to autosave" do
       new_vendor = Vendor.new(name: "ACME Supplies")
       product = VendorProduct.new(name: "Widget")
       product.vendor = new_vendor
-      
+
       product.save!
-      
+
       # Vendor should be saved automatically
       new_vendor.persisted?.should be_true
       Vendor.find!(new_vendor.id.not_nil!).name.should eq("ACME Supplies")
@@ -156,49 +156,49 @@ end
 
 # Counter cache update test models
 class UpdateBlog < Grant::Base
-  connection sqlite
+  connection {{(env("CURRENT_ADAPTER") || "sqlite").id}}
   table update_blogs
-  
+
   column id : Int64, primary: true
   column title : String
   column posts_count : Int32
 end
 
 class UpdatePost < Grant::Base
-  connection sqlite
+  connection {{(env("CURRENT_ADAPTER") || "sqlite").id}}
   table update_posts
-  
+
   column id : Int64, primary: true
   column title : String
-  
+
   belongs_to :update_blog, counter_cache: :posts_count
 end
 
 # Custom counter column
 class CustomAuthor < Grant::Base
-  connection sqlite
+  connection {{(env("CURRENT_ADAPTER") || "sqlite").id}}
   table custom_authors
-  
+
   column id : Int64, primary: true
   column name : String
   column total_articles : Int32
 end
 
 class CustomArticle < Grant::Base
-  connection sqlite
+  connection {{(env("CURRENT_ADAPTER") || "sqlite").id}}
   table custom_articles
-  
+
   column id : Int64, primary: true
   column title : String
-  
+
   belongs_to :custom_author, counter_cache: :total_articles
 end
 
 # Touch with custom column
 class TouchPost < Grant::Base
-  connection sqlite
+  connection {{(env("CURRENT_ADAPTER") || "sqlite").id}}
   table touch_posts
-  
+
   column id : Int64, primary: true
   column title : String
   column last_commented_at : Time?
@@ -206,20 +206,20 @@ class TouchPost < Grant::Base
 end
 
 class TouchComment < Grant::Base
-  connection sqlite
+  connection {{(env("CURRENT_ADAPTER") || "sqlite").id}}
   table touch_comments
-  
+
   column id : Int64, primary: true
   column content : String
-  
+
   belongs_to :touch_post, touch: :last_commented_at
 end
 
 # Touch on update
 class TouchUpdateUser < Grant::Base
-  connection sqlite
+  connection {{(env("CURRENT_ADAPTER") || "sqlite").id}}
   table touch_update_users
-  
+
   column id : Int64, primary: true
   column name : String
   column last_active_at : Time?
@@ -227,30 +227,30 @@ class TouchUpdateUser < Grant::Base
 end
 
 class UserActivity < Grant::Base
-  connection sqlite
+  connection {{(env("CURRENT_ADAPTER") || "sqlite").id}}
   table user_activities
-  
+
   column id : Int64, primary: true
   column description : String
-  
+
   belongs_to :touch_update_user, touch: :last_active_at
 end
 
 # Has one with dependent
 class Account < Grant::Base
-  connection sqlite
+  connection {{(env("CURRENT_ADAPTER") || "sqlite").id}}
   table accounts
-  
+
   column id : Int64, primary: true
   column email : String
-  
+
   has_one :preferences, class_name: AccountPreferences, dependent: :destroy
 end
 
 class AccountPreferences < Grant::Base
-  connection sqlite
+  connection {{(env("CURRENT_ADAPTER") || "sqlite").id}}
   table account_preferences
-  
+
   column id : Int64, primary: true
   column theme : String
   column account_id : Int64?
@@ -258,19 +258,19 @@ end
 
 # Has one nullify
 class NullifyProfile < Grant::Base
-  connection sqlite
+  connection {{(env("CURRENT_ADAPTER") || "sqlite").id}}
   table nullify_profiles
-  
+
   column id : Int64, primary: true
   column name : String
-  
+
   has_one :avatar, class_name: ProfileAvatar, foreign_key: :nullify_profile_id, dependent: :nullify
 end
 
 class ProfileAvatar < Grant::Base
-  connection sqlite
+  connection {{(env("CURRENT_ADAPTER") || "sqlite").id}}
   table profile_avatars
-  
+
   column id : Int64, primary: true
   column url : String
   column nullify_profile_id : Int64?
@@ -278,44 +278,44 @@ end
 
 # Polymorphic custom columns
 class Attachment < Grant::Base
-  connection sqlite
+  connection {{(env("CURRENT_ADAPTER") || "sqlite").id}}
   table attachments
-  
+
   column id : Int64, primary: true
   column filename : String
-  
+
   belongs_to :owner, polymorphic: true, foreign_key: :owner_id, type_column: :owner_class, optional: true
 end
 
-class Document < Grant::Base
-  connection sqlite
+class AdditionalOptionsDocument < Grant::Base
+  connection {{(env("CURRENT_ADAPTER") || "sqlite").id}}
   table documents
-  
+
   column id : Int64, primary: true
   column title : String
-  
+
   has_many :attachments, as: :owner
 end
 
 # Autosave validation failure
 class FailedOrder < Grant::Base
-  connection sqlite
+  connection {{(env("CURRENT_ADAPTER") || "sqlite").id}}
   table failed_orders
-  
+
   column id : Int64, primary: true
   column order_number : String
-  
+
   has_many :items, class_name: FailedLineItem, autosave: true
-  
+
   validate :order_number, "can't be blank" do |order|
     !order.order_number.to_s.blank?
   end
 end
 
 class FailedLineItem < Grant::Base
-  connection sqlite
+  connection {{(env("CURRENT_ADAPTER") || "sqlite").id}}
   table failed_line_items
-  
+
   column id : Int64, primary: true
   column product : String
   column quantity : Int32
@@ -324,19 +324,19 @@ end
 
 # Belongs to autosave
 class Vendor < Grant::Base
-  connection sqlite
+  connection {{(env("CURRENT_ADAPTER") || "sqlite").id}}
   table vendors
-  
+
   column id : Int64, primary: true
   column name : String
 end
 
 class VendorProduct < Grant::Base
-  connection sqlite
+  connection {{(env("CURRENT_ADAPTER") || "sqlite").id}}
   table vendor_products
-  
+
   column id : Int64, primary: true
   column name : String
-  
+
   belongs_to :vendor, autosave: true
 end

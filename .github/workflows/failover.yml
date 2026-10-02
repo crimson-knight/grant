@@ -21,7 +21,7 @@ jobs:
     services:
       # Primary that will be stopped during test
       postgres-primary:
-        image: postgres:16
+        image: postgres:16@sha256:a3b7f434b2dc57ce85a67e171163eb8ab1a1ebcb39d27484661f26b1dfbe30d6
         env:
           POSTGRES_USER: grant
           POSTGRES_PASSWORD: password
@@ -36,7 +36,7 @@ jobs:
       
       # Replica that should take over
       postgres-replica1:
-        image: postgres:16
+        image: postgres:16@sha256:a3b7f434b2dc57ce85a67e171163eb8ab1a1ebcb39d27484661f26b1dfbe30d6
         env:
           POSTGRES_USER: grant
           POSTGRES_PASSWORD: password
@@ -51,7 +51,7 @@ jobs:
       
       # Second replica for testing multiple replicas
       postgres-replica2:
-        image: postgres:16
+        image: postgres:16@sha256:a3b7f434b2dc57ce85a67e171163eb8ab1a1ebcb39d27484661f26b1dfbe30d6
         env:
           POSTGRES_USER: grant
           POSTGRES_PASSWORD: password
@@ -66,15 +66,15 @@ jobs:
     
     steps:
       - name: Download source
-        uses: actions/checkout@v4
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       
       - name: Install Crystal
-        uses: crystal-lang/install-crystal@v1
+        uses: crystal-lang/install-crystal@d8ef131ecec0352ce0e39b81b0a6d95def58fe2f # v1
         with:
-          crystal: latest
+          crystal: 1.21.0
       
       - name: Install shards
-        run: shards update --ignore-crystal-version --skip-postinstall --skip-executables
+        run: shards install --frozen --skip-postinstall --skip-executables
       
       - name: Run failover tests
         timeout-minutes: 15
@@ -110,7 +110,7 @@ jobs:
     runs-on: ubuntu-latest
     services:
       mysql-primary:
-        image: mysql:8.0
+        image: mysql:8.0@sha256:7dcddc01f13bab2f15cde676d44d01f61fc9f99fe7785e86196dfc07d358ae2b
         env:
           MYSQL_ROOT_PASSWORD: password
           MYSQL_DATABASE: grant_db
@@ -125,7 +125,7 @@ jobs:
           - 3306:3306
       
       mysql-replica:
-        image: mysql:8.0
+        image: mysql:8.0@sha256:7dcddc01f13bab2f15cde676d44d01f61fc9f99fe7785e86196dfc07d358ae2b
         env:
           MYSQL_ROOT_PASSWORD: password
           MYSQL_DATABASE: grant_db
@@ -141,15 +141,15 @@ jobs:
     
     steps:
       - name: Download source
-        uses: actions/checkout@v4
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       
       - name: Install Crystal
-        uses: crystal-lang/install-crystal@v1
+        uses: crystal-lang/install-crystal@d8ef131ecec0352ce0e39b81b0a6d95def58fe2f # v1
         with:
-          crystal: latest
+          crystal: 1.21.0
       
       - name: Install shards
-        run: shards update --ignore-crystal-version --skip-postinstall --skip-executables
+        run: shards install --frozen --skip-postinstall --skip-executables
       
       - name: Run MySQL failover tests
         timeout-minutes: 15

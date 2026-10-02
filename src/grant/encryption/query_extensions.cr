@@ -12,7 +12,7 @@ module Grant::Encryption
           key_str = key.to_s
 
           # Check if this is an encrypted attribute
-          if encrypted_attr = @@encrypted_attributes[key_str]?
+          if encrypted_attr = encrypted_attributes[key_str]?
             # Only deterministic fields can be queried
             if encrypted_attr.deterministic
               encrypted_value = Grant::Encryption.encrypt(

@@ -144,10 +144,12 @@ describe "Grant::Sharding" do
       with_virtual_shards(4) do
         # Count should aggregate across all shards
         # For now, just verify it attempts to query all shards
+        count = 0_i64
         query_log = track_shard_queries do
-          ShardedUser.count
+          count = ShardedUser.count
         end
 
+        count.should be_a(Int64)
         query_log.shards_accessed.sort.should eq([:shard_0, :shard_1, :shard_2, :shard_3])
       end
     end
@@ -168,10 +170,12 @@ describe "Grant::Sharding" do
   describe "on_all_shards scope" do
     it "executes queries on all shards" do
       with_virtual_shards(4) do
+        count = 0_i64
         query_log = track_shard_queries do
-          ShardedUser.on_all_shards.count
+          count = ShardedUser.on_all_shards.count
         end
 
+        count.should be_a(Int64)
         query_log.shards_accessed.sort.should eq([:shard_0, :shard_1, :shard_2, :shard_3])
       end
     end

@@ -5,8 +5,15 @@ require "log"
 module Grant
   Log = ::Log.for("grant")
 
+  # Base class for domain errors raised by Grant's public behavior.
+  class ErrorBase < ::Exception
+    # A secondary cleanup error attached while preserving the original failure.
+    # :nodoc:
+    property cleanup_error : ::Exception?
+  end
+
   TIME_ZONE       = "UTC"
-  DATETIME_FORMAT = "%F %X%z"
+  DATETIME_FORMAT = "%F %X.%6N%z"
 
   alias ModelArgs = Hash(Symbol | String, Grant::Columns::Type)
 
@@ -18,6 +25,8 @@ end
 require "./adapter/base"
 require "./grant/sanitization"
 require "./grant/connection_registry"
+require "./grant/result"
+require "./grant/connection"
 require "./grant/target"
 require "./grant/base"
 require "./grant/sti"
@@ -26,3 +35,4 @@ require "./grant/sti"
 # tenant scoping). Required after Grant::Base is fully defined so the toolkit
 # can reopen the builder and include the tenant-scoping macros into Base.
 require "./grant/scale"
+require "./grant/parity"

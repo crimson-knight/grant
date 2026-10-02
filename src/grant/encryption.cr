@@ -103,12 +103,15 @@ module Grant::Encryption
   # sealed = Grant::Encryption.encrypt("123-45-6789", "User", "ssn")
   # sealed # => Base64 ciphertext (String), differs each call (non-deterministic)
   # ```
-  def self.encrypt(value : String?, model_name : String, attribute_name : String, deterministic : Bool = false) : String?
-    return nil if value.nil?
-
+  def self.encrypt(value : String, model_name : String, attribute_name : String, deterministic : Bool = false) : String
     key = KeyProvider.derive_key(model_name, attribute_name, deterministic)
     encrypted_bytes = Cipher.encrypt(value, key, deterministic)
     Base64.strict_encode(encrypted_bytes)
+  end
+
+  def self.encrypt(value : String?, model_name : String, attribute_name : String, deterministic : Bool = false) : String?
+    return nil if value.nil?
+    encrypt(value, model_name, attribute_name, deterministic)
   end
 
   # Decrypts the Base64-encoded *encrypted* ciphertext for the
@@ -146,15 +149,71 @@ module Grant::Encryption
     end
   end
 
+  # :nodoc:
+  def self.encrypt_with_keys(
+    value : String,
+    model_name : String,
+    attribute_name : String,
+    deterministic : Bool,
+    primary_key : Bytes?,
+    deterministic_key : Bytes?,
+    salt : String,
+  ) : String
+    key = KeyProvider.derive_key_with_keys(
+      model_name, attribute_name, deterministic, primary_key, deterministic_key, salt
+    )
+    Base64.strict_encode(Cipher.encrypt(value, key, deterministic))
+  end
+
+  # :nodoc:
+  def self.decrypt_with_keys(
+    encrypted : String,
+    model_name : String,
+    attribute_name : String,
+    primary_key : Bytes?,
+    deterministic_key : Bytes?,
+    salt : String,
+  ) : String
+    encrypted_bytes = Base64.decode(encrypted)
+    last_error = nil.as(Cipher::DecryptionError?)
+
+    if primary_key
+      begin
+        key = KeyProvider.derive_key_with_keys(model_name, attribute_name, false, primary_key, deterministic_key, salt)
+        return Cipher.decrypt(encrypted_bytes, key)
+      rescue ex : Cipher::DecryptionError
+        last_error = ex
+      end
+    end
+
+    if deterministic_key
+      begin
+        key = KeyProvider.derive_key_with_keys(model_name, attribute_name, true, primary_key, deterministic_key, salt)
+        return Cipher.decrypt(encrypted_bytes, key)
+      rescue ex : Cipher::DecryptionError
+        last_error = ex
+      end
+    end
+
+    raise last_error if last_error
+    raise KeyProvider::KeyError.new("No encryption key was provided")
+  rescue ex : Base64::Error
+    raise Cipher::DecryptionError.new("Failed to decode Base64: #{ex.message}")
+  end
+
   # Encryption support mixed into every `Grant::Base` model. Provides the
   # `encrypts` macro and the per-instance decrypted-value cache. You normally do
   # not include this directly — `Grant::Base` already does.
   module Model
+    module ClassMethods
+      def encrypted_attributes : Hash(String, Grant::Encryption::EncryptedAttribute)
+        Grant::Encryption::EncryptedAttributeRegistry.for(name)
+      end
+    end
+
     macro included
       include Grant::Encryption::QueryExtensions
-
-      # Track encrypted attributes at the class level
-      class_getter encrypted_attributes = {} of String => Grant::Encryption::EncryptedAttribute
+      extend ClassMethods
 
       # Instance cache for decrypted values.
       # Declared nilable (with lazy initialization in `encrypted_attribute_cache`
@@ -237,11 +296,18 @@ module Grant::Encryption
         Grant::Encryption::EncryptedAttribute.new(
           self,
           {{attr_name}},
-          {{deterministic}}
+          {{deterministic}},
+          ->(record : Grant::Base, value : String?) do
+            record.as({{@type}}).{{attribute.id}} = value
+          end
         )
       
       # Store in registry
-      @@encrypted_attributes[{{attr_name}}] = {{attribute.id}}_encrypted_attribute
+      Grant::Encryption::EncryptedAttributeRegistry.register(
+        self.name,
+        {{attr_name}},
+        {{attribute.id}}_encrypted_attribute
+      )
       
       # Create the encrypted column (stores Base64-encoded string)
       column {{attribute.id}}_encrypted : String?
@@ -287,10 +353,18 @@ module Grant::Encryption
         if responds_to?(:changed_attributes)
           ensure_dirty_tracking_initialized
           # Track encrypted column change
-          old_val = @original_attributes.not_nil!["{{attribute.id}}_encrypted"]? || nil
-          @changed_attributes.not_nil!["{{attribute.id}}_encrypted"] = {old_val, @{{attribute.id}}_encrypted}
+          old_val = dirty_tracking_hashes[0]["{{attribute.id}}_encrypted"]? || nil
+          dirty_tracking_hashes[1]["{{attribute.id}}_encrypted"] = {old_val, @{{attribute.id}}_encrypted}
         end
       end
+
+      Grant::Columns::VirtualAttributeRegistry.register(
+        {{@type.name.stringify}},
+        {{attr_name}},
+        ->(record : Grant::Base, value : Grant::Columns::Type) do
+          record.as({{@type}}).{{attribute.id}} = Grant::Columns::VirtualAttributeRegistry.string_value(value)
+        end
+      )
       
       # Add query support for deterministic fields
       {% if deterministic %}

@@ -1,7 +1,7 @@
 require "../../spec_helper"
 
 describe Grant::Converters do
-  {% if env("CURRENT_ADAPTER") == "pg" %}
+  {% if (env("CURRENT_ADAPTER") || "sqlite") == "pg" %}
     describe "#save" do
       it "should handle nil values" do
         model = ConverterModel.new
@@ -115,7 +115,7 @@ describe Grant::Converters do
         retrieved_model.binary_json.should eq obj
       end
     end
-  {% elsif env("CURRENT_ADAPTER") == "sqlite" %}
+  {% elsif (env("CURRENT_ADAPTER") || "sqlite") == "sqlite" %}
     describe "#save" do
       it "should handle nil values" do
         model = ConverterModel.new
@@ -201,7 +201,7 @@ describe Grant::Converters do
         retrieved_model.binary_json.should eq obj
       end
     end
-  {% elsif env("CURRENT_ADAPTER") == "mysql" %}
+  {% elsif (env("CURRENT_ADAPTER") || "sqlite") == "mysql" %}
     describe "#save" do
       it "should handle nil values" do
         model = ConverterModel.new

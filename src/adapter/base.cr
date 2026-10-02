@@ -20,11 +20,53 @@ abstract class Grant::Adapter::Base
   def initialize(@name : String, @url : String)
   end
 
+  # Adapters convert Grant values at the bind boundary when their drivers do
+  # not accept the model type directly.
+  def normalize_bind_value(value)
+    value
+  end
+
+  def normalize_bind_values(values)
+    values.map { |value| normalize_bind_value(value) }
+  end
+
+  def read_time(result : DB::ResultSet) : Time
+    result.read(Time)
+  end
+
+  def read_nullable_time(result : DB::ResultSet) : Time?
+    result.read(Time?)
+  end
+
+  # Normalizes one buffered result value into Grant's stable result union.
+  def normalize_result_value(value) : Grant::Result::Value
+    Grant::Result.normalize(value)
+  end
+
+  def postgres? : Bool
+    false
+  end
+
+  def mysql? : Bool
+    false
+  end
+
+  def sqlite? : Bool
+    false
+  end
+
   def database : DB::Database
     @_database ||= DB.open(@url)
   end
 
   def open(&)
+    # A schema-tenant block owns one pool connection for its lifetime. Check it
+    # before transaction routing so a model on another adapter cannot bypass
+    # the tenant context merely because that adapter already has a transaction.
+    if schema_conn = Grant::SchemaTenant.current_connection?(self)
+      return yield schema_conn
+    end
+
     # If the current fiber has an open transaction THAT THIS ADAPTER started,
     # reuse that connection so all DML issued inside the transaction block runs
     # on the same connection as BEGIN/COMMIT — making the transaction truly
@@ -58,7 +100,7 @@ abstract class Grant::Adapter::Base
   end
 
   def log(query : String, elapsed_time : Time::Span, params = [] of String) : Nil
-    Log.debug { colorize query, params, elapsed_time.total_seconds }
+    Grant::Logs::SQL.debug { colorize query, params, elapsed_time.total_seconds }
   end
 
   # remove all rows from a table and reset the counter on the id.
@@ -78,7 +120,7 @@ abstract class Grant::Adapter::Base
 
     elapsed_time = Time.measure do
       open do |db|
-        db.query statement, args: params do |rs|
+        db.query statement, args: normalize_bind_values(params) do |rs|
           yield rs
         end
       end
@@ -94,7 +136,7 @@ abstract class Grant::Adapter::Base
     exists = false
     elapsed_time = Time.measure do
       open do |db|
-        exists = db.query_one?(statement, args: params, as: Bool) || exists
+        exists = db.query_one?(statement, args: normalize_bind_values(params), as: Bool) || exists
       end
     end
 
@@ -107,8 +149,15 @@ abstract class Grant::Adapter::Base
   # native parameter syntax. The base implementation is a no-op since
   # SQLite and MySQL use `?` natively. The PG adapter overrides this
   # to convert `?` to `$1`, `$2`, etc.
-  def ensure_clause_template(clause : String) : String
+  def ensure_clause_template(clause : String, starting_index : Int32 = 0) : String
     clause
+  end
+
+  # Returns the placeholder for the *index*th bound parameter. Adapters with
+  # positional question-mark placeholders ignore the index; PostgreSQL uses it
+  # to keep composed SQL fragments from reusing an earlier parameter number.
+  def parameter_placeholder(index : Int32) : String
+    "?"
   end
 
   # Quotes a boolean as a SQL literal for this adapter. PostgreSQL and SQLite
@@ -141,15 +190,72 @@ abstract class Grant::Adapter::Base
 
     elapsed_time = Time.measure do
       open do |db|
-        db.exec statement, args: params
+        db.exec statement, args: normalize_bind_values(params)
       end
     end
 
     log statement, elapsed_time, params
   end
 
+  # Atomically adds *amount* to one column for rows matching *where_clause*.
+  # The `where_clause` includes its WHERE keyword. Its placeholders and
+  # parameters are shifted after the amount parameter for PostgreSQL.
+  def increment_with_where(
+    table_name : String,
+    field_name : String,
+    amount : Grant::Columns::Type,
+    where_clause : String,
+    where_params : Array(Grant::Columns::Type),
+  ) : Int64
+    field = quote(field_name)
+    shifted_where_clause = shift_parameter_placeholders(where_clause, 1)
+    statement = "UPDATE #{quote(table_name)} SET #{field} = COALESCE(#{field}, 0) + #{parameter_placeholder(1)} #{shifted_where_clause}"
+    parameters = [] of Grant::Columns::Type
+    parameters << amount
+    parameters.concat(where_params)
+
+    affected = 0_i64
+    elapsed_time = Time.measure do
+      open do |db|
+        result = db.exec(statement, args: normalize_bind_values(parameters))
+        affected = rows_affected_after_write(db, result)
+      end
+    end
+
+    log statement, elapsed_time, parameters
+    affected
+  end
+
+  private def shift_parameter_placeholders(clause : String, offset : Int32) : String
+    clause.gsub(/\$(\d+)/) do |match|
+      "$#{match[1..].to_i + offset}"
+    end
+  end
+
   # This will delete a row from the database.
   abstract def delete(table_name : String, primary_name : String, value)
+
+  # Deletes one row and returns its affected-row count.
+  def delete_with_rows_affected(table_name : String, primary_name : String, value : Grant::Columns::Type) : Int64
+    statement = "DELETE FROM #{quote(table_name)} WHERE #{quote(primary_name)} = ?"
+    statement = ensure_clause_template(statement)
+    affected = 0_i64
+    elapsed_time = Time.measure do
+      open do |db|
+        result = db.exec(statement, args: normalize_bind_values([value]))
+        affected = rows_affected_after_write(db, result)
+      end
+    end
+
+    log statement, elapsed_time, value
+    affected
+  end
+
+  # Returns the number of rows affected by a completed write. SQLite overrides
+  # this because its driver does not report the count on DB::ExecResult.
+  def rows_affected_after_write(db, result : DB::ExecResult) : Int64
+    result.rows_affected
+  end
 
   # Delete with custom WHERE clause for composite keys
   def delete_with_where(table_name : String, where_clause : String, params : Array(DB::Any))
@@ -157,7 +263,7 @@ abstract class Grant::Adapter::Base
 
     elapsed_time = Time.measure do
       open do |db|
-        db.exec statement, args: params
+        db.exec statement, args: normalize_bind_values(params)
       end
     end
 
@@ -186,9 +292,12 @@ abstract class Grant::Adapter::Base
     # `Grant::Sanitization.quote_identifier`.
     def quote(name : String) : String
       String.build do |str|
-        str << QUOTING_CHAR
-        str << name.gsub(QUOTING_CHAR, "#{QUOTING_CHAR}#{QUOTING_CHAR}")
-        str << QUOTING_CHAR
+        name.split('.').each_with_index do |part, index|
+          str << '.' unless index == 0
+          str << QUOTING_CHAR
+          str << part.gsub(QUOTING_CHAR, "#{QUOTING_CHAR}#{QUOTING_CHAR}")
+          str << QUOTING_CHAR
+        end
       end
     end
 

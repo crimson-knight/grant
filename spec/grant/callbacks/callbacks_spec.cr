@@ -4,13 +4,18 @@ describe "(callback feature)" do
   describe "#save (new record)" do
     it "runs before_save, before_create, after_create, after_save" do
       callback = Callback.new(name: "foo")
+      callback.history = IO::Memory.new
       callback.save
 
       callback.history.to_s.strip.should eq <<-EOF
+        before_validation
+        after_validation
         before_save
         before_create
         after_create
         after_save
+        after_create_commit
+        after_commit
         EOF
     end
   end
@@ -19,13 +24,18 @@ describe "(callback feature)" do
     it "runs before_save, before_update, after_update, after_save" do
       Callback.new(name: "foo").save
       callback = Callback.first!
+      callback.history = IO::Memory.new
       callback.save
 
       callback.history.to_s.strip.should eq <<-EOF
+        before_validation
+        after_validation
         before_save
         before_update
         after_update
         after_save
+        after_update_commit
+        after_commit
         EOF
     end
   end
@@ -34,11 +44,14 @@ describe "(callback feature)" do
     it "runs before_destroy, after_destroy" do
       Callback.new(name: "foo").save
       callback = Callback.first!
+      callback.history = IO::Memory.new
       callback.destroy
 
       callback.history.to_s.strip.should eq <<-EOF
         before_destroy
         after_destroy
+        after_destroy_commit
+        after_commit
         EOF
     end
   end

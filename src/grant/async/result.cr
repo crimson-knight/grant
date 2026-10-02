@@ -8,12 +8,12 @@ module Grant
       getter promise : Promise(T)
       @fiber : Fiber?
       @completed : Atomic(Bool)
-      @started_at : Time::Span
+      @started_at : Time::Instant
 
       def initialize(&block : -> T)
         @completed = Atomic(Bool).new(false)
         @promise = Promise(T).new
-        @started_at = Time.monotonic
+        @started_at = Time.instant
         @fiber = spawn do
           begin
             Async::Metrics.track_operation do
@@ -36,7 +36,7 @@ module Grant
       # Wait with timeout
       def wait_with_timeout(timeout : Time::Span) : T
         deadline = @started_at + timeout
-        remaining = deadline - Time.monotonic
+        remaining = deadline - Time.instant
 
         if remaining <= Time::Span.zero
           raise AsyncTimeoutError.new("async operation", timeout)

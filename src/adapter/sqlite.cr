@@ -40,6 +40,33 @@ end
 class Grant::Adapter::Sqlite < Grant::Adapter::Base
   QUOTING_CHAR = '"'
 
+  def sqlite? : Bool
+    true
+  end
+
+  # SQLite stores Grant timestamps as text and UUID columns as CHAR(36).
+  def normalize_bind_value(value : Time) : String
+    value.in(SQLite3::TIME_ZONE).to_s("%F %H:%M:%S.%6N")
+  end
+
+  def normalize_bind_value(value : UUID) : String
+    value.to_s
+  end
+
+  def read_time(result : DB::ResultSet) : Time
+    text = result.read(String)
+    parse_time(text)
+  end
+
+  def read_nullable_time(result : DB::ResultSet) : Time?
+    result.read(String?).try { |text| parse_time(text) }
+  end
+
+  private def parse_time(text : String) : Time
+    format = text.includes?(".") ? "%F %H:%M:%S.%N" : SQLite3::DATE_FORMAT_SECOND
+    Time.parse(text, format, location: SQLite3::TIME_ZONE)
+  end
+
   def initialize(@name : String, @url : String)
     super
     # Check SQLite version on first connection
@@ -84,7 +111,7 @@ class Grant::Adapter::Sqlite < Grant::Adapter::Base
     last_id = -1_i64
     elapsed_time = Time.measure do
       open do |db|
-        db.exec statement, args: params
+        db.exec statement, args: normalize_bind_values(params)
         last_id = db.scalar(last_val()).as(Int64) if lastval
       end
     end
@@ -99,9 +126,7 @@ class Grant::Adapter::Sqlite < Grant::Adapter::Base
 
     statement = String.build do |stmt|
       if options["update_on_duplicate"]?
-        # Note: This is legacy code. New code should use upsert_all
-        # which properly handles ON CONFLICT for SQLite 3.24+
-        stmt << "INSERT OR REPLACE "
+        stmt << "INSERT "
       elsif options["ignore_on_duplicate"]?
         stmt << "INSERT OR IGNORE "
       else
@@ -112,7 +137,6 @@ class Grant::Adapter::Sqlite < Grant::Adapter::Base
       stmt << ") VALUES "
 
       model_array.each do |model|
-        next unless model.valid?
         model.set_timestamps
         stmt << '('
         stmt << Array.new(fields.size, '?').join(',')
@@ -121,9 +145,20 @@ class Grant::Adapter::Sqlite < Grant::Adapter::Base
       end
     end.chomp(',')
 
+    if options["update_on_duplicate"]?
+      if columns = options["columns"]?
+        update_columns = columns.dup
+        update_columns << "updated_at" if fields.includes?("updated_at") && !update_columns.includes?("updated_at")
+        unless update_columns.empty?
+          statement += " ON CONFLICT (#{quote(primary_name)}) DO UPDATE SET "
+          statement += update_columns.map { |key| "#{quote(key)} = excluded.#{quote(key)}" }.join(", ")
+        end
+      end
+    end
+
     elapsed_time = Time.measure do
       open do |db|
-        db.exec statement, args: params
+        db.exec statement, args: normalize_bind_values(params)
       end
     end
 
@@ -144,7 +179,7 @@ class Grant::Adapter::Sqlite < Grant::Adapter::Base
 
     elapsed_time = Time.measure do
       open do |db|
-        db.exec statement, args: params
+        db.exec statement, args: normalize_bind_values(params)
       end
     end
 
@@ -157,7 +192,7 @@ class Grant::Adapter::Sqlite < Grant::Adapter::Base
 
     elapsed_time = Time.measure do
       open do |db|
-        db.exec statement, value
+        db.exec statement, normalize_bind_value(value)
       end
     end
 
@@ -191,6 +226,11 @@ class Grant::Adapter::Sqlite < Grant::Adapter::Base
   # SQLite does not report affected rows through `DB::ExecResult` for our
   # optimistic-lock UPDATE, so query `changes()` on the same connection.
   def rows_affected_for_optimistic_lock(db, result : DB::ExecResult) : Int64
+    db.scalar("SELECT changes()").as(Int64)
+  end
+
+  # SQLite's DB::ExecResult does not reliably expose the affected-row count.
+  def rows_affected_after_write(db, result : DB::ExecResult) : Int64
     db.scalar("SELECT changes()").as(Int64)
   end
 

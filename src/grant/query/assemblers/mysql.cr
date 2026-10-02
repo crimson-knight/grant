@@ -5,6 +5,7 @@ module Grant::Query::Assembler
     @placeholder = "?"
 
     def add_parameter(value : Grant::Columns::Type) : String
+      value = value.to_s if value.is_a?(UUID)
       @numbered_parameters << value
       "?"
     end
@@ -18,7 +19,11 @@ module Grant::Query::Assembler
 
     # Generate SQL for pluck operation
     def pluck_sql(fields : Array(String)) : String
-      select_fields = fields.map { |f| add_aggregate_field(f); f }.join(", ")
+      select_fields = fields.map do |field|
+        sql_field = pluck_field_sql(field)
+        add_aggregate_field(sql_field)
+        sql_field
+      end.join(", ")
 
       build_sql do |s|
         s << "#{select_keyword} #{select_fields}"

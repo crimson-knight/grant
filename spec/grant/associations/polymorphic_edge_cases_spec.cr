@@ -2,19 +2,23 @@ require "../../spec_helper"
 
 # Test edge cases and advanced scenarios for polymorphic associations
 describe "Grant::Associations::Polymorphic - Edge Cases" do
+  before_all do
+    EdgePost.migrator.drop_and_create
+  end
+
   describe "error handling" do
     it "handles invalid type names gracefully" do
       proxy = Grant::Polymorphic::PolymorphicProxy.new("InvalidClass", 123_i64)
       proxy.load.should be_nil
     end
-    
+
     it "raises appropriate error with load!" do
       proxy = Grant::Polymorphic::PolymorphicProxy.new("InvalidClass", 123_i64)
       expect_raises(Grant::Querying::NotFound, /No InvalidClass found/) do
         proxy.load!
       end
     end
-    
+
     it "handles nil proxy with load!" do
       proxy = Grant::Polymorphic::PolymorphicProxy.new(nil, nil)
       expect_raises(Grant::Querying::NotFound, /Polymorphic association not set/) do
@@ -22,65 +26,65 @@ describe "Grant::Associations::Polymorphic - Edge Cases" do
       end
     end
   end
-  
+
   describe "proxy behavior" do
     it "reloads associations" do
       proxy = Grant::Polymorphic::PolymorphicProxy.new("EdgePost", 999_i64)
       # Should return nil since the record doesn't exist
       proxy.reload.should be_nil
     end
-    
+
     it "correctly identifies present associations" do
       # With both type and id
       proxy1 = Grant::Polymorphic::PolymorphicProxy.new("EdgePost", 123_i64)
       proxy1.present?.should be_true
-      
+
       # With only type
       proxy2 = Grant::Polymorphic::PolymorphicProxy.new("EdgePost", nil)
       proxy2.present?.should be_false
-      
+
       # With only id
       proxy3 = Grant::Polymorphic::PolymorphicProxy.new(nil, 123_i64)
       proxy3.present?.should be_false
     end
   end
-  
+
   describe "setter edge cases" do
     it "handles setting association to nil" do
       comment = EdgeComment.new(content: "Test")
       post = EdgePost.new(id: 123_i64, title: "Test Post")
-      
+
       # Set association
       comment.edgeable = post
       comment.edgeable_id.should eq(123_i64)
       comment.edgeable_type.should eq("EdgePost")
-      
+
       # Clear association
       comment.edgeable = nil
       comment.edgeable_id.should be_nil
       comment.edgeable_type.should be_nil
     end
-    
+
     it "handles setting with Int32 primary key" do
       comment = EdgeComment.new(content: "Test")
       # Create a mock object with Int32 id
       article = EdgeArticle.new(id: 42, title: "Test Article")
-      
+
       comment.edgeable = article
       comment.edgeable_id.should eq(42_i64) # Should be converted to Int64
       comment.edgeable_type.should eq("EdgeArticle")
     end
-    
+
     it "raises error for non-numeric primary keys" do
       comment = EdgeComment.new(content: "Test")
       invalid = EdgeInvalidPK.new(id: "abc123", name: "Invalid")
-      
+
       expect_raises(Exception, /require numeric primary keys/) do
         comment.edgeable = invalid
       end
     end
   end
-  
+
   describe "association metadata" do
     it "stores correct metadata for belongs_to polymorphic" do
       meta = EdgeComment._edgeable_association_meta
@@ -90,7 +94,7 @@ describe "Grant::Associations::Polymorphic - Edge Cases" do
       meta[:type_column].should eq("edgeable_type")
       meta[:primary_key].should eq("id")
     end
-    
+
     it "stores correct metadata for has_many polymorphic" do
       meta = EdgePost._edge_comments_association_meta
       meta[:type].should eq(:has_many)
@@ -99,7 +103,7 @@ describe "Grant::Associations::Polymorphic - Edge Cases" do
       meta[:foreign_key].should eq("edgeable_id")
       meta[:type_column].should eq("edgeable_type")
     end
-    
+
     it "stores correct metadata for has_one polymorphic" do
       meta = EdgePost._edge_image_association_meta
       meta[:type].should eq(:has_one)
@@ -109,29 +113,29 @@ describe "Grant::Associations::Polymorphic - Edge Cases" do
       meta[:type_column].should eq("imageable_type")
     end
   end
-  
+
   describe "validation edge cases" do
     it "validates presence when not optional" do
       comment = EdgeStrictComment.new(content: "Test")
       comment.valid?.should be_false
-      
+
       post = EdgePost.new(id: 123_i64, title: "Test")
       comment.strict_edgeable = post
       comment.valid?.should be_true
     end
-    
+
     it "allows nil when optional" do
       comment = EdgeComment.new(content: "Test")
       comment.valid?.should be_true # edgeable is optional
     end
   end
-  
+
   describe "custom column names" do
     it "uses custom foreign key and type columns" do
       item = EdgeCustomItem.new(name: "Custom")
       EdgeCustomItem.fields.includes?("owner_id").should be_true
       EdgeCustomItem.fields.includes?("owner_class").should be_true
-      
+
       # Set owner
       post = EdgePost.new(id: 789_i64, title: "Owner")
       item.owner = post
@@ -139,7 +143,7 @@ describe "Grant::Associations::Polymorphic - Edge Cases" do
       item.owner_class.should eq("EdgePost")
     end
   end
-  
+
   describe "dependent options" do
     it "respects dependent destroy on has_many" do
       # Dependent options are implemented via callbacks
@@ -148,7 +152,7 @@ describe "Grant::Associations::Polymorphic - Edge Cases" do
       meta[:type].should eq(:has_many)
       meta[:polymorphic_as].should eq("edgeable")
     end
-    
+
     it "respects dependent nullify on has_many" do
       # Dependent options are implemented via callbacks
       # This is tested in integration tests with actual database operations
@@ -161,7 +165,7 @@ end
 
 # Edge case test models
 {% begin %}
-  {% adapter_literal = env("CURRENT_ADAPTER").id %}
+  {% adapter_literal = (env("CURRENT_ADAPTER") || "sqlite").id %}
   
   # Basic polymorphic comment
   class EdgeComment < Grant::Base
@@ -217,6 +221,8 @@ end
     
     column id : Int32, primary: true
     column title : String
+
+    register_polymorphic_type
   end
   
   # Model with string primary key (invalid for polymorphic)
@@ -226,6 +232,8 @@ end
     
     column id : String, primary: true
     column name : String
+
+    register_polymorphic_type
   end
   
   # Image model for has_one testing

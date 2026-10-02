@@ -133,32 +133,33 @@ module Grant::Validators
 
   macro included
     macro inherited
-      # `@@validators` is declared on EVERY level so each concrete class
-      # (including multi-level STI subclasses) can read it in `valid?`. Crystal
-      # class variables are per-class, and re-declaring with a different element
-      # type than an ancestor is a compile error, so the Proc's argument is typed
-      # to the *first-level* ancestor (the class directly below `Grant::Base`)
-      # rather than to `self`. The `self.validate` overloads / `validate_method`
-      # / `validate` macros are defined only at the first level (where `self` ==
-      # that ancestor) and inherited — see the first-level guard below. Macro
-      # control flow nested in `macro included` is escaped with a leading
-      # backslash so it evaluates at each subclass's `inherited` expansion.
+      # `@@validators` is declared on every level, and each class stores only
+      # its own validators. The block is wrapped as `Proc(Grant::Base, Bool)`
+      # so every class in an STI hierarchy has the same class-variable type;
+      # the wrapper casts back to the registering class before calling the
+      # user's block, preserving access to subclass-only columns.
       #
-      # NOTE (STI limitation): class vars are per-class, so a base class's
-      # `validate` registrations populate only the base class's store and don't
-      # auto-run on STI subclass instances; and subclass-specific
-      # `validate`/`validates_*` blocks see `record` typed as the first-level
-      # ancestor, so reference base columns or use `before_validation`.
-      \{% candidates = [@type] + @type.ancestors %}
-      \{% first_level = candidates.find { |a| a.class? && a.superclass && a.superclass.id == "Grant::Base" } %}
-      \{% first_level = @type if first_level == nil %}
-      @@validators = Array({field: String, message: String, block: Proc(\{{ first_level }}, Bool), context: Symbol, code: Symbol?}).new
+      # Macro control flow nested in `macro included` is escaped with a leading
+      # backslash so it evaluates at each subclass's `inherited` expansion.
+      @@validators = Array({field: String, message: String, block: Proc(Grant::Base, Bool), context: Symbol, code: Symbol?}).new
 
       \{% if @type.superclass.id == "Grant::Base" %}
-      # Low-level registration helper used by both the `self.validate` method
-      # overloads and the bare-Symbol `validate :method_name` macro form.
+      disable_grant_docs? def self.__validators_for_validation
+        @@validators
+      end
+      \{% else %}
+      disable_grant_docs? def self.__validators_for_validation
+        \{{@type.superclass}}.__validators_for_validation + @@validators
+      end
+      \{% end %}
+
+      # These registration methods are generated on every model class. An
+      # inherited class method would specialize `self` to a child model while
+      # still appending to its parent's class variable, producing incompatible
+      # Proc types and registering the validator on the wrong class.
       disable_grant_docs? def self.__add_validator(field : (Symbol | String), message : String, block : self -> Bool, context : Symbol = :save, code : Symbol? = nil)
-        @@validators << {field: field.to_s, message: message, block: block, context: context, code: code}
+        wrapped_block = ->(record : Grant::Base) { block.call(record.as(\{{@type}})) }
+        @@validators << {field: field.to_s, message: message, block: wrapped_block, context: context, code: code}
       end
 
       # Block-based validate (no context)
@@ -178,18 +179,20 @@ module Grant::Validators
 
       # Proc-based validate with field (no context)
       disable_grant_docs? def self.validate(field : (Symbol | String), message : String, block : self -> Bool, code : Symbol? = nil)
-        @@validators << {field: field.to_s, message: message, block: block, context: :save, code: code}
+        __add_validator(field, message, block, :save, code)
       end
 
       # Proc-based validate with context
       disable_grant_docs? def self.validate(field : (Symbol | String), message : String, block : self -> Bool, context : Symbol, code : Symbol? = nil)
-        @@validators << {field: field.to_s, message: message, block: block, context: context, code: code}
+        __add_validator(field, message, block, context, code)
       end
 
       # Block-based validate with context keyword (and optional error code)
       disable_grant_docs? def self.validate(field : (Symbol | String), message : String, *, context : Symbol = :save, code : Symbol? = nil, &block : self -> Bool)
-        @@validators << {field: field.to_s, message: message, block: block, context: context, code: code}
+        __add_validator(field, message, block, context, code)
       end
+
+      \{% if @type.superclass.id == "Grant::Base" %}
 
       # Registers an instance method that performs its own validation and adds
       # errors directly (AR-compatible `validate :method_name`).
@@ -280,7 +283,7 @@ module Grant::Validators
             \\{{block.body}}
           end
         \\{% else %}
-          validate_method(\\{{name_or_method}}, \\{{**options}})
+          validate_method(\\{{name_or_method}}, \\{% for key, value in options %}\\{{key.id}}: \\{{value}}, \\{% end %})
         \\{% end %}
       end
       \{% end %}
@@ -432,7 +435,12 @@ module Grant::Validators
             _field_name = \\{{field.id.stringify}}
             query = self.where("LOWER(#{_field_name}) = LOWER(?)", value)
           \\{% else %}
-            query = self.where(\\{{field.id}}: value)
+            if self.adapter.mysql?
+              _field_name = self.quote(\\{{field.id.stringify}})
+              query = self.where("BINARY #{_field_name} = BINARY ?", value)
+            else
+              query = self.where(\\{{field.id}}: value)
+            end
           \\{% end %}
 
           # Add scope conditions
@@ -774,7 +782,7 @@ module Grant::Validators
 
       # Alias for `validates_length_of`.
       macro validates_size_of(field, **options)
-        validates_length_of(\\{{field}}, \\{{**options}})
+        validates_length_of(\\{{field}}, \\{% for key, value in options %}\\{{key.id}}: \\{{value}}, \\{% end %})
       end
 
       # Validates that a confirmation field matches the original field.
@@ -789,12 +797,11 @@ module Grant::Validators
       macro validates_confirmation_of(field, **options)
         \\{%
           message = options[:message] || "doesn't match confirmation"
-          confirmation_field = (field.stringify + "_confirmation").id
           context = options[:on] || :save
         %}
 
         # Create virtual attribute for confirmation
-        property \\{{confirmation_field}} : String?
+        property \\{{field.id}}_confirmation : String?
 
         validate(\\{{field}}, \\{{message}}, context: \\{{context}}, code: :confirmation) do |record|
           \\{% if options[:if] %}
@@ -816,7 +823,7 @@ module Grant::Validators
             \\{% end %}
           \\{% end %}
 
-          confirmation_value = record.\\{{confirmation_field}}
+          confirmation_value = record.\\{{field.id}}_confirmation
           next true if confirmation_value.nil?
 
           record.\\{{field.id}}.to_s == confirmation_value
@@ -839,10 +846,8 @@ module Grant::Validators
           context = options[:on] || :save
         %}
 
-        # Create virtual attribute if it doesn't exist
-        \\{% unless @type.instance_vars.any? { |ivar| ivar.name == field.id } %}
-          property \\{{field}} : String?
-        \\{% end %}
+        # Acceptance values are virtual unless a model declares its own column.
+        property \\{{field.id}} : String?
 
         validate(\\{{field}}, \\{{message}}, context: \\{{context}}, code: :accepted) do |record|
           \\{% if options[:if] %}
@@ -919,6 +924,10 @@ module Grant::Validators
               true
             when Array
               associated.all? { |item| item.valid? }
+            when Grant::AssociationCollection
+              associated.to_a.all? { |item| item.valid? }
+            when Grant::LoadedAssociationCollection
+              associated.to_a.all? { |item| item.valid? }
             else
               associated.valid?
             end
@@ -1332,7 +1341,7 @@ module Grant::Validators
       # Run before_validation callbacks
       before_validation if responds_to?(:before_validation)
 
-      @@validators.each do |validator|
+      self.class.__validators_for_validation.each do |validator|
         # Filter by context when specified
         if context
           validator_context = validator[:context]

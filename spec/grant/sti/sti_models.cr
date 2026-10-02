@@ -7,7 +7,7 @@ require "../../spec_helper"
 # their own type-specific columns and permission behaviour — the exact shape
 # of Seth's type-safe personas/permissions use case.
 {% begin %}
-  {% adapter_literal = env("CURRENT_ADAPTER").id %}
+  {% adapter_literal = (env("CURRENT_ADAPTER") || "sqlite").id %}
 
   class Persona < Grant::Base
     include Grant::STI
@@ -83,31 +83,81 @@ require "../../spec_helper"
 def setup_sti_tables
   Persona.adapter.open do |db|
     db.exec "DROP TABLE IF EXISTS sti_personas"
-    db.exec <<-SQL
-      CREATE TABLE sti_personas (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        type VARCHAR(255) NOT NULL,
-        name VARCHAR(255) NOT NULL,
-        role VARCHAR(255),
-        access_level INTEGER,
-        membership_tier VARCHAR(255),
-        active BOOLEAN,
-        god_mode BOOLEAN
-      )
-    SQL
+    if CURRENT_ADAPTER == "pg"
+      db.exec <<-SQL
+        CREATE TABLE sti_personas (
+          id BIGSERIAL PRIMARY KEY,
+          type TEXT NOT NULL,
+          name TEXT NOT NULL,
+          role TEXT,
+          access_level INTEGER,
+          membership_tier TEXT,
+          active BOOLEAN,
+          god_mode BOOLEAN
+        )
+      SQL
+    elsif CURRENT_ADAPTER == "mysql"
+      db.exec <<-SQL
+        CREATE TABLE sti_personas (
+          id BIGINT AUTO_INCREMENT PRIMARY KEY,
+          type VARCHAR(255) NOT NULL,
+          name VARCHAR(255) NOT NULL,
+          role VARCHAR(255),
+          access_level INTEGER,
+          membership_tier VARCHAR(255),
+          active BOOLEAN,
+          god_mode BOOLEAN
+        )
+      SQL
+    else
+      db.exec <<-SQL
+        CREATE TABLE sti_personas (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          type VARCHAR(255) NOT NULL,
+          name VARCHAR(255) NOT NULL,
+          role VARCHAR(255),
+          access_level INTEGER,
+          membership_tier VARCHAR(255),
+          active BOOLEAN,
+          god_mode BOOLEAN
+        )
+      SQL
+    end
   end
 
   Document.adapter.open do |db|
     db.exec "DROP TABLE IF EXISTS sti_documents"
-    db.exec <<-SQL
-      CREATE TABLE sti_documents (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        doc_type VARCHAR(255) NOT NULL,
-        title VARCHAR(255) NOT NULL,
-        counterparty VARCHAR(255),
-        summary VARCHAR(255)
-      )
-    SQL
+    if CURRENT_ADAPTER == "pg"
+      db.exec <<-SQL
+        CREATE TABLE sti_documents (
+          id BIGSERIAL PRIMARY KEY,
+          doc_type TEXT NOT NULL,
+          title TEXT NOT NULL,
+          counterparty TEXT,
+          summary TEXT
+        )
+      SQL
+    elsif CURRENT_ADAPTER == "mysql"
+      db.exec <<-SQL
+        CREATE TABLE sti_documents (
+          id BIGINT AUTO_INCREMENT PRIMARY KEY,
+          doc_type VARCHAR(255) NOT NULL,
+          title VARCHAR(255) NOT NULL,
+          counterparty VARCHAR(255),
+          summary VARCHAR(255)
+        )
+      SQL
+    else
+      db.exec <<-SQL
+        CREATE TABLE sti_documents (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          doc_type VARCHAR(255) NOT NULL,
+          title VARCHAR(255) NOT NULL,
+          counterparty VARCHAR(255),
+          summary VARCHAR(255)
+        )
+      SQL
+    end
   end
 end
 

@@ -63,7 +63,7 @@ module Grant::Polymorphic
       case type_name
       {% for name, klass in REGISTERED_TYPES %}
       when {{name}}
-        {% if name.starts_with?("Validators::") || name.starts_with?("Spec::") %}
+        {% if name == "Grant::Base" || name.starts_with?("Validators::") || name.starts_with?("Spec::") %}
           nil
         {% else %}
           {{klass}}.find(id)
@@ -71,6 +71,123 @@ module Grant::Polymorphic
       {% end %}
       else
         nil
+      end
+    end
+
+    # Updates a counter on a polymorphic target through a compile-time
+    # dispatch table, retaining each target model's primary-key and adapter
+    # behavior even though the association is typed as Grant::Base.
+    def self.update_counter(type_name : String, id : Int64, column_name : String, amount : Int32) : Nil
+      case type_name
+      {% for name, klass in REGISTERED_TYPES %}
+      when {{name}}
+        {% if name == "Grant::Base" || name.starts_with?("Validators::") || name.starts_with?("Spec::") %}
+          nil
+        {% else %}
+          quoted_column = {{klass}}.quote(column_name)
+          operator = amount > 0 ? "+" : "-"
+          {{klass}}.where({{klass}}.primary_name, :eq, id)
+            .update_all("#{quoted_column} = #{quoted_column} #{operator} #{amount.abs}")
+          nil
+        {% end %}
+      {% end %}
+      else
+        nil
+      end
+    end
+
+    # Touches a polymorphic target through concrete model dispatch so its
+    # timestamp columns and primary key are resolved at compile time.
+    def self.touch_target(type_name : String, id : Int64, fields : Array(String)) : Nil
+      case type_name
+      {% for name, klass in REGISTERED_TYPES %}
+      when {{name}}
+        {% if name == "Grant::Base" || name.starts_with?("Validators::") || name.starts_with?("Spec::") %}
+          nil
+        {% else %}
+          if {{klass}}.fields.includes?("updated_at")
+            time = Time.local(Grant.settings.default_timezone).at_beginning_of_second
+            field_names = ["updated_at"] + fields
+            parameters = [] of DB::Any
+            field_names.each { parameters << time }
+            parameters << id
+            quoted_primary_key = {{klass}}.quote({{klass}}.primary_name)
+            where_clause = "#{quoted_primary_key} = ?"
+            {{klass}}.adapter.update_with_where({{klass}}.table_name, field_names, parameters, where_clause)
+          end
+          nil
+        {% end %}
+      {% end %}
+      else
+        nil
+      end
+    end
+
+    # Loads one batch of targets that share a stored polymorphic type. The
+    # query runs through each target model's current scope, including tenant and
+    # default scopes.
+    def self.load_polymorphic_batch(type_name : String, primary_key : String, ids : Array(Grant::Columns::Type)) : Array(Grant::Base)
+      case type_name
+      {% for name, klass in REGISTERED_TYPES %}
+      when {{name}}
+        {% if name == "Grant::Base" || name.starts_with?("Validators::") || name.starts_with?("Spec::") %}
+          [] of Grant::Base
+        {% else %}
+          return [] of Grant::Base if ids.empty?
+          placeholders = ids.map { "?" }.join(", ")
+          quoted_primary_key = {{klass}}.quote(primary_key)
+          {{klass}}.all("WHERE #{quoted_primary_key} IN (#{placeholders})", ids)
+            .to_a.map(&.as(Grant::Base))
+        {% end %}
+      {% end %}
+      else
+        [] of Grant::Base
+      end
+    end
+
+    # Adjusts a numeric counter column on a polymorphic target without losing
+    # the concrete model's adapter, default scope, or tenancy behavior.
+    def self.adjust_polymorphic_counter_cache(type_name : String, id : Int64, column : String, delta : Int32) : Nil
+      case type_name
+      {% for name, klass in REGISTERED_TYPES %}
+      when {{name}}
+        {% if name == "Grant::Base" || name.starts_with?("Validators::") || name.starts_with?("Spec::") %}
+          nil
+        {% else %}
+          quoted_column = {{klass}}.quote(column)
+          {{klass}}.where({{klass}}.primary_name, :eq, id)
+            .update_all("#{quoted_column} = COALESCE(#{quoted_column}, 0) + #{delta}")
+        {% end %}
+      {% end %}
+      else
+        nil
+      end
+      nil
+    end
+
+    # Touches a polymorphic target through its model-scoped relation, avoiding
+    # record hydration while preserving the model's current scopes and tenancy.
+    def self.touch_polymorphic_target(type_name : String, id : Int64, column : String?) : Bool
+      case type_name
+      {% for name, klass in REGISTERED_TYPES %}
+      when {{name}}
+        {% if name == "Grant::Base" || name.starts_with?("Validators::") || name.starts_with?("Spec::") %}
+          false
+        {% else %}
+          if {{klass}}.fields.includes?("updated_at")
+            relation = {{klass}}.where({{klass}}.primary_name, :eq, id)
+            if column
+              relation.touch_all(column.to_sym) > 0
+            else
+              relation.touch_all > 0
+            end
+          else
+            false
+          end
+        {% end %}
+      {% end %}
+      else
+        false
       end
     end
     
@@ -94,7 +211,7 @@ module Grant::Polymorphic
       case type_name
       {% for name, klass in REGISTERED_TYPES %}
       when {{name}}
-        {% if name.starts_with?("Validators::") || name.starts_with?("Spec::") %}
+        {% if name == "Grant::Base" || name.starts_with?("Validators::") || name.starts_with?("Spec::") %}
           false
         {% else %}
           true
@@ -104,6 +221,7 @@ module Grant::Polymorphic
         false
       end
     end
+
   end
 
   # Lazy loader for a polymorphic `belongs_to` target, returned by the generated
@@ -132,8 +250,12 @@ module Grant::Polymorphic
     # comment.commentable_proxy.load # => Post? / Photo? / nil
     # ```
     def load : Grant::Base?
-      return nil unless @type && @id
-      Grant::Polymorphic.load_polymorphic(@type.not_nil!, @id.not_nil!)
+      if type = @type
+        if id = @id
+          return Grant::Polymorphic.load_polymorphic(type, id)
+        end
+      end
+      nil
     end
 
     # Resolves and returns the target record, raising `Grant::Querying::NotFound`
@@ -143,8 +265,9 @@ module Grant::Polymorphic
     # comment.commentable_proxy.load! # => Grant::Base (raises if absent)
     # ```
     def load! : Grant::Base
-      raise Grant::Querying::NotFound.new("Polymorphic association not set") unless @type && @id
-      Grant::Polymorphic.load_polymorphic!(@type.not_nil!, @id.not_nil!)
+      type = @type || raise Grant::Querying::NotFound.new("Polymorphic association not set")
+      id = @id || raise Grant::Querying::NotFound.new("Polymorphic association not set")
+      Grant::Polymorphic.load_polymorphic!(type, id)
     end
 
     # True when both the type and id are set (so a target can be resolved).
@@ -188,6 +311,65 @@ module Grant::Polymorphic
     {% type_column = options[:type_column] || name.id.stringify + "_type" %}
     {% foreign_key = options[:foreign_key] || name.id.stringify + "_id" %}
     {% primary_key = options[:primary_key] || "id" %}
+
+    {% if options[:counter_cache] %}
+      {% if options[:counter_cache].is_a?(SymbolLiteral) %}
+        {% counter_column = options[:counter_cache].id.stringify %}
+      {% elsif options[:counter_cache].is_a?(StringLiteral) %}
+        {% counter_column = options[:counter_cache].id.stringify %}
+      {% else %}
+        {% counter_column = @type.stringify.split("::").last.underscore + "s_count" %}
+      {% end %}
+      after_create do
+        foreign_id = self.read_attribute({{foreign_key.id.stringify}})
+        type_name = self.read_attribute({{type_column.id.stringify}})
+        if foreign_id.is_a?(Int64) && type_name.is_a?(String)
+          Grant::Polymorphic.adjust_polymorphic_counter_cache(type_name, foreign_id, {{counter_column}}, 1)
+        end
+      end
+
+      before_update do
+        if attribute_changed?({{foreign_key.id.stringify}}) || attribute_changed?({{type_column.id.stringify}})
+          old_id = attribute_was({{foreign_key.id.stringify}})
+          old_type = attribute_was({{type_column.id.stringify}})
+          new_id = self.read_attribute({{foreign_key.id.stringify}})
+          new_type = self.read_attribute({{type_column.id.stringify}})
+
+          if old_id.is_a?(Int64) && old_type.is_a?(String)
+            Grant::Polymorphic.adjust_polymorphic_counter_cache(old_type, old_id, {{counter_column}}, -1)
+          end
+          if new_id.is_a?(Int64) && new_type.is_a?(String)
+            Grant::Polymorphic.adjust_polymorphic_counter_cache(new_type, new_id, {{counter_column}}, 1)
+          end
+        end
+      end
+
+      after_destroy do
+        foreign_id = self.read_attribute({{foreign_key.id.stringify}})
+        type_name = self.read_attribute({{type_column.id.stringify}})
+        if foreign_id.is_a?(Int64) && type_name.is_a?(String)
+          Grant::Polymorphic.adjust_polymorphic_counter_cache(type_name, foreign_id, {{counter_column}}, -1)
+        end
+      end
+    {% end %}
+
+    {% if options[:touch] %}
+      {% touch_column = options[:touch] == true ? nil : options[:touch] %}
+      after_save do
+        foreign_id = self.read_attribute({{foreign_key.id.stringify}})
+        type_name = self.read_attribute({{type_column.id.stringify}})
+        if foreign_id.is_a?(Int64) && type_name.is_a?(String)
+          Grant::Polymorphic.touch_polymorphic_target(type_name, foreign_id, {{touch_column ? touch_column.id.stringify : nil}})
+        end
+      end
+      after_destroy do
+        foreign_id = self.read_attribute({{foreign_key.id.stringify}})
+        type_name = self.read_attribute({{type_column.id.stringify}})
+        if foreign_id.is_a?(Int64) && type_name.is_a?(String)
+          Grant::Polymorphic.touch_polymorphic_target(type_name, foreign_id, {{touch_column ? touch_column.id.stringify : nil}})
+        end
+      end
+    {% end %}
     
     # Define the foreign key column
     column {{foreign_key.id}} : Int64?
@@ -201,13 +383,26 @@ module Grant::Polymorphic
     end
     
     # Define getter method
+    @[Grant::Relationship(target: Grant::Base, type: :belongs_to, polymorphic: true,
+      foreign_key: {{foreign_key.id.stringify}}, type_column: {{type_column.id.stringify}},
+      primary_key: {{primary_key.id.stringify}})]
     def {{name.id}} : Grant::Base?
-      {{name.id}}_proxy.load
+      if association_loaded?({{name.id.stringify}})
+        get_loaded_association({{name.id.stringify}}).as(Grant::Base?)
+      else
+        assert_association_can_lazy_load!({{name.id.stringify}})
+        {{name.id}}_proxy.load
+      end
     end
     
     # Define bang getter
     def {{name.id}}! : Grant::Base
-      {{name.id}}_proxy.load!
+      if association_loaded?({{name.id.stringify}})
+        get_loaded_association({{name.id.stringify}}).as(Grant::Base?) || raise Grant::Querying::NotFound.new("Polymorphic association not found")
+      else
+        assert_association_can_lazy_load!({{name.id.stringify}})
+        {{name.id}}_proxy.load!
+      end
     end
     
     # Define setter method
@@ -216,19 +411,34 @@ module Grant::Polymorphic
         @{{foreign_key.id}} = nil
         @{{type_column.id}} = nil
       else
-        # Get primary key value and ensure it's Int64
-        pk_value = record.primary_key_value
-        @{{foreign_key.id}} = case pk_value
+        primary_key_value = record.read_attribute({{primary_key.id.stringify}})
+        @{{foreign_key.id}} = case primary_key_value
                               when Int64
-                                pk_value
+                                primary_key_value
                               when Int32
-                                pk_value.to_i64
+                                primary_key_value.to_i64
                               else
-                                raise "Polymorphic associations require numeric primary keys, got #{pk_value.class}"
+                                raise "Polymorphic associations require numeric primary keys, got #{primary_key_value.class}"
                               end
         @{{type_column.id}} = record.class.name
       end
+      set_loaded_association({{name.id.stringify}}, record)
     end
+
+    Grant::AssociationRegistry.register_writer(
+      {{@type.name.stringify}}, {{name.id.stringify}},
+      ->(owner : Grant::Base, value : Grant::AssociationRegistry::AssociationValue) : Bool {
+        if value.nil?
+          owner.as({{@type}}).{{name.id}} = nil
+          true
+        elsif associated = value.as?(Grant::Base)
+          owner.as({{@type}}).{{name.id}} = associated
+          true
+        else
+          false
+        end
+      }
+    )
     
     # Store association metadata
     class_getter _{{name.id}}_association_meta = {
@@ -245,6 +455,7 @@ module Grant::Polymorphic
         !instance.{{foreign_key.id}}.nil? && !instance.{{type_column.id}}.nil?
       end
     {% end %}
+
   end
 
   # Implements the polymorphic `has_many` (invoked by
@@ -267,28 +478,52 @@ module Grant::Polymorphic
   macro has_many_polymorphic(name, poly_as, **options)
     {% foreign_key = options[:foreign_key] || (poly_as.id.stringify + "_id") %}
     {% type_column = options[:type_column] || (poly_as.id.stringify + "_type") %}
+    {% primary_key = options[:primary_key] || "id" %}
+    {% primary_key_name = primary_key.stringify.gsub(/:/, "").gsub(/"/, "") %}
     {% if name.is_a? TypeDeclaration %}
       {% method_name = name.var %}
       {% class_name = name.type %}
     {% else %}
       {% method_name = name.id %}
-      {% class_name = options[:class_name] || name.id.stringify.camelcase %}
+      {% if options[:class_name] %}
+        {% class_name = options[:class_name] %}
+      {% else %}
+        {% plural_name = name.id.stringify %}
+        {% if plural_name.ends_with?("ies") %}
+          {% singular_name = plural_name[0...(plural_name.size - 3)] + "y" %}
+        {% elsif plural_name.ends_with?("ses") || plural_name.ends_with?("xes") || plural_name.ends_with?("zes") || plural_name.ends_with?("ches") || plural_name.ends_with?("shes") %}
+          {% singular_name = plural_name[0...(plural_name.size - 2)] %}
+        {% elsif plural_name.ends_with?("s") && !plural_name.ends_with?("ss") %}
+          {% singular_name = plural_name[0...(plural_name.size - 1)] %}
+        {% else %}
+          {% singular_name = plural_name %}
+        {% end %}
+        {% class_name = singular_name.camelcase %}
+      {% end %}
     {% end %}
     
     def {{method_name.id}}
       if association_loaded?({{method_name.stringify}})
         loaded_data = get_loaded_association({{method_name.stringify}})
         if loaded_data.is_a?(Array(Grant::Base))
-          Grant::LoadedAssociationCollection(self, {{class_name.id}}).new(loaded_data.map(&.as({{class_name.id}})))
+          Grant::LoadedAssociationCollection(self, {{class_name.id}}).new(
+            loaded_data.map(&.as({{class_name.id}})), self,
+            {{foreign_key.id.stringify}}, {{type_column.id.stringify}}, {{primary_key_name}}
+          )
         else
           # For polymorphic, we need to use where query with both type and id
-          records = {{class_name.id}}.where({{type_column.id}}: self.class.name, {{foreign_key.id}}: primary_key_value).select
-          Grant::LoadedAssociationCollection(self, {{class_name.id}}).new(records)
+          records = {{class_name.id}}.where({{type_column.id}}: self.class.name, {{foreign_key.id}}: self.read_attribute({{primary_key_name}})).select
+          Grant::LoadedAssociationCollection(self, {{class_name.id}}).new(
+            records, self, {{foreign_key.id.stringify}}, {{type_column.id.stringify}}, {{primary_key_name}}
+          )
         end
       else
+        assert_association_can_lazy_load!({{method_name.stringify}})
         # For polymorphic, we need to use where query with both type and id
-        records = {{class_name.id}}.where({{type_column.id}}: self.class.name, {{foreign_key.id}}: primary_key_value).select
-        Grant::LoadedAssociationCollection(self, {{class_name.id}}).new(records)
+        records = {{class_name.id}}.where({{type_column.id}}: self.class.name, {{foreign_key.id}}: self.read_attribute({{primary_key_name}})).select
+        Grant::LoadedAssociationCollection(self, {{class_name.id}}).new(
+          records, self, {{foreign_key.id.stringify}}, {{type_column.id.stringify}}, {{primary_key_name}}
+        )
       end
     end
     
@@ -300,6 +535,9 @@ module Grant::Polymorphic
       foreign_key: {{foreign_key.id.stringify}},
       type_column: {{type_column.id.stringify}}
     }
+
+    # Register this owner model as a concrete polymorphic target.
+    register_polymorphic_type
     
     # Handle dependent option
     {% if options[:dependent] %}
@@ -347,10 +585,12 @@ module Grant::Polymorphic
     {% end %}
     
     def {{method_name.id}} : {{class_name.id}}?
+      assert_association_can_lazy_load!({{method_name.stringify}}) unless association_loaded?({{method_name.stringify}})
       {{class_name.id}}.where({{type_column.id}}: self.class.name, {{foreign_key.id}}: primary_key_value).first
     end
     
     def {{method_name.id}}! : {{class_name.id}}
+      assert_association_can_lazy_load!({{method_name.stringify}}) unless association_loaded?({{method_name.stringify}})
       {{class_name.id}}.where({{type_column.id}}: self.class.name, {{foreign_key.id}}: primary_key_value).first || raise Grant::Querying::NotFound.new("No {{class_name.id}} found for #{self.class.name} with id #{primary_key_value}")
     end
     
@@ -362,6 +602,9 @@ module Grant::Polymorphic
       foreign_key: {{foreign_key.id.stringify}},
       type_column: {{type_column.id.stringify}}
     }
+
+    # Register this owner model as a concrete polymorphic target.
+    register_polymorphic_type
     
     # Handle dependent option
     {% if options[:dependent] %}

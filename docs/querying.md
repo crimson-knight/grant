@@ -18,16 +18,81 @@ Post.where(:created_at, :gt, Time.local - 7.days)
 
 Supported operators are :eq, :gteq, :lteq, :neq, :gt, :lt, :nlt, :ngt, :ltgt, :in, :nin, :like, :nlike
 
-Alternatively, `#where`, `#and`, and `#or` accept a raw SQL clause, with an optional placeholder (`?` for MySQL/SQLite, `$` for Postgres) to avoid SQL Injection.
+Alternatively, `#where`, `#and`, and `#or` accept a raw SQL clause. Use `?` placeholders on any adapter, or numbered `$1`, `$2`, … placeholders in PostgreSQL SQL. Pass the bind values as an array when a clause has multiple placeholders. Grant checks that the placeholder count matches the values before sending the query.
 
 ```crystal
 # Example using Postgres adapter
 Post.where(:created_at, :gt, Time.local - 7.days)
-  .where("LOWER(author_name) = $", name)
+  .where("LOWER(author_name) = $1", name)
   .where("tags @> '{"Journal", "Book"}') # PG's array contains operator
 ```
 
 This is useful for building more sophisticated queries, including queries dependent on database specific features not supported by the operators above. However, **clauses built with this method are not validated.**
+
+## Raw SQL
+
+Use model-level raw SQL methods when the statement should still return hydrated
+Grant models, or use `connection` when you need a raw database result. Pass bind
+values as an array; Grant sends them through the adapter's parameter binding and
+does not interpolate them into the SQL string.
+
+```crystal
+posts = Post.find_by_sql(
+  "SELECT * FROM posts WHERE author_id = ? ORDER BY id",
+  [author_id]
+)
+
+post_count = Post.count_by_sql(
+  "SELECT COUNT(*) FROM posts WHERE author_id = ?",
+  [author_id]
+)
+
+Post.exec("UPDATE posts SET published = ? WHERE id = ?", [true, post_id])
+Post.scalar("SELECT title FROM posts WHERE id = ?", [post_id])
+```
+
+`find_by_sql` returns an `Array(Post)` and hydrates each row as a persisted
+model. `count_by_sql` returns `Int64`. `exec` uses the write connection;
+`scalar` uses the read route and returns the first cell or `nil`. `Model.query`
+also accepts bound values and yields the adapter result set to its block.
+
+For rows and columns without model hydration, use the model's raw connection:
+
+```crystal
+result = Post.connection.exec_query(
+  "SELECT id, title FROM posts WHERE author_id = ?",
+  [author_id]
+)
+
+result.columns # => ["id", "title"]
+result.to_a    # => [{"id" => 1, "title" => "First post"}, ...]
+result.each { |row| puts row["title"] }
+result.size
+result.empty?
+```
+
+`Grant::Result` also exposes positional `rows`. `connection.execute(sql, binds)`
+executes a bound statement on the write route and returns `DB::ExecResult`.
+Read helpers are `select_all`, `select_one`, `select_value`, `select_values`,
+and `select_rows`. A named connection can be reached through
+`Grant.connection("analytics")`; the default connection is
+`Grant.connection`.
+
+`sanitize_sql_array(["title = ?", value])` and `sanitize_sql` are available on
+models for constructing SQL fragments. Prefer bound execution methods for SQL
+sent to a database.
+
+### Scopes and tenancy
+
+Raw SQL does not infer a model's default scope or inject row-tenant predicates.
+Model-level raw calls (`find_by_sql`, `count_by_sql`, `exec`, `scalar`, and
+`query`) on a model with a default scope raise
+`Grant::Querying::ScopedRawSqlError` unless the call is deliberately wrapped in
+`Model.unscoped { ... }`. Add any tenant predicate required by the statement
+yourself. `Model.connection` and `Grant.connection(name)` are explicitly raw and
+do not apply model scopes or row-tenant predicates. They still use Grant's
+connection routing and keep active transactions and schema-tenant connection
+pinning.
 
 ## Order
 

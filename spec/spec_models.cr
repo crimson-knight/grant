@@ -6,7 +6,7 @@ class Grant::Base
 end
 
 {% begin %}
-  {% adapter_literal = env("CURRENT_ADAPTER").id %}
+  {% adapter_literal = (env("CURRENT_ADAPTER") || "sqlite").id %}
 
   class ReplicatedChat < Grant::Base
     connection {{ "#{adapter_literal}_with_replica" }}
@@ -257,9 +257,9 @@ end
 
     @[JSON::Field(ignore: true)]
     @[YAML::Field(ignore: true)]
-    belongs_to publisher : Company, foreign_key: publisher_id : Int32?
+    belongs_to publisher : Company, foreign_key: publisher_id : Int32?, optional: true
     has_many :book_reviews, class_name: BookReview
-    belongs_to author : Person
+    belongs_to author : Person, optional: true
   end
 
   class BookReview < Grant::Base
@@ -320,14 +320,14 @@ end
   end
 
   class SongThread < Grant::Base
-    connection {{ env("CURRENT_ADAPTER").id }}
+    connection {{ (env("CURRENT_ADAPTER") || "sqlite").id }}
 
     column id : Int64, primary: true
     column name : String?
   end
 
   class CustomSongThread < Grant::Base
-    connection {{ env("CURRENT_ADAPTER").id }}
+    connection {{ (env("CURRENT_ADAPTER") || "sqlite").id }}
     table custom_table_name
 
     column custom_primary_key : Int64, primary: true
@@ -382,7 +382,7 @@ end
   end
 
   # Only PG supports array types
-  {% if env("CURRENT_ADAPTER") == "pg" %}
+  {% if (env("CURRENT_ADAPTER") || "sqlite") == "pg" %}
     class ArrayModel < Grant::Base
       connection {{ adapter_literal }}
 
@@ -415,7 +415,7 @@ end
 
   class UUIDNaturalModel < Grant::Base
     connection {{ adapter_literal }}
-    table uuids
+    table uuid_natural_models
 
     column uuid : UUID, primary: true, auto: false
     column field_uuid : UUID?
@@ -551,7 +551,7 @@ end
     column id : Int64, primary: true
   end
 
-  {% if env("CURRENT_ADAPTER") == "pg" %}
+  {% if (env("CURRENT_ADAPTER") || "sqlite") == "pg" %}
     class ConverterModel < Grant::Base
       connection {{ adapter_literal }}
       table converters
@@ -579,7 +579,7 @@ end
       END$$;
       TYPE
     )
-  {% elsif env("CURRENT_ADAPTER") == "sqlite" %}
+  {% elsif (env("CURRENT_ADAPTER") || "sqlite") == "sqlite" %}
     class ConverterModel < Grant::Base
       connection {{ adapter_literal }}
       table converters
@@ -593,7 +593,7 @@ end
       column string_enum : MyEnum?, column_type: "TEXT", converter: Grant::Converters::Enum(MyEnum, String)
       column binary_enum : MyEnum?, column_type: "BLOB", converter: Grant::Converters::Enum(MyEnum, String)
     end
-  {% elsif env("CURRENT_ADAPTER") == "mysql" %}
+  {% elsif (env("CURRENT_ADAPTER") || "sqlite") == "mysql" %}
     class ConverterModel < Grant::Base
       connection {{ adapter_literal }}
       table converters

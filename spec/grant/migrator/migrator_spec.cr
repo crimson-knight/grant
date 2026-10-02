@@ -2,8 +2,8 @@ require "../../spec_helper"
 
 describe Grant::Migrator do
   describe "#drop_sql" do
-    it "generates correct SQL with #{{{ env("CURRENT_ADAPTER") }}} adapter" do
-      {% if env("CURRENT_ADAPTER") == "mysql" %}
+    it "generates correct SQL with #{{{ (env("CURRENT_ADAPTER") || "sqlite") }}} adapter" do
+      {% if (env("CURRENT_ADAPTER") || "sqlite") == "mysql" %}
         Review.migrator.drop_sql.should eq "DROP TABLE IF EXISTS `reviews`;"
       {% else %}
         Review.migrator.drop_sql.should eq "DROP TABLE IF EXISTS \"reviews\";"
@@ -12,8 +12,8 @@ describe Grant::Migrator do
   end
 
   describe "#create_sql" do
-    it "generates correct SQL with #{{{ env("CURRENT_ADAPTER") }}} adapter" do
-      {% if env("CURRENT_ADAPTER") == "pg" %}
+    it "generates correct SQL with #{{{ (env("CURRENT_ADAPTER") || "sqlite") }}} adapter" do
+      {% if (env("CURRENT_ADAPTER") || "sqlite") == "pg" %}
         Review.migrator.create_sql.should eq <<-SQL
           CREATE TABLE "reviews"(
           "id" BIGSERIAL PRIMARY KEY,
@@ -71,7 +71,7 @@ describe Grant::Migrator do
           "bool_array" BOOLEAN[]
           ) ;\n
           SQL
-      {% elsif env("CURRENT_ADAPTER") == "mysql" %}
+      {% elsif (env("CURRENT_ADAPTER") || "sqlite") == "mysql" %}
         Review.migrator.create_sql.should eq <<-SQL
           CREATE TABLE `reviews`(
           `id` BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
@@ -87,7 +87,7 @@ describe Grant::Migrator do
           ,
           `published` BOOL
           ,
-          `created_at` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP
+          `created_at` TIMESTAMP(6) NULL DEFAULT CURRENT_TIMESTAMP(6)
           ) ;\n
           SQL
 
@@ -109,7 +109,7 @@ describe Grant::Migrator do
           CREATE TABLE `uuids`(
           `uuid` CHAR(36) PRIMARY KEY) ;\n
           SQL
-      {% elsif env("CURRENT_ADAPTER") == "sqlite" %}
+      {% elsif (env("CURRENT_ADAPTER") || "sqlite") == "sqlite" %}
         Review.migrator.create_sql.should eq <<-SQL
           CREATE TABLE "reviews"(
           "id" INTEGER NOT NULL PRIMARY KEY,
@@ -151,21 +151,21 @@ describe Grant::Migrator do
     end
 
     it "supports a manually supplied column type" do
-      {% if env("CURRENT_ADAPTER") == "pg" %}
+      {% if (env("CURRENT_ADAPTER") || "sqlite") == "pg" %}
         ManualColumnType.migrator.create_sql.should eq <<-SQL
           CREATE TABLE "manual_column_types"(
           "id" BIGSERIAL PRIMARY KEY,
           "foo" DECIMAL(12, 10)
           ) ;\n
           SQL
-      {% elsif env("CURRENT_ADAPTER") == "mysql" %}
+      {% elsif (env("CURRENT_ADAPTER") || "sqlite") == "mysql" %}
         ManualColumnType.migrator.create_sql.should eq <<-SQL
           CREATE TABLE `manual_column_types`(
           `id` BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
           `foo` DECIMAL(12, 10)
           ) ;\n
           SQL
-      {% elsif env("CURRENT_ADAPTER") == "sqlite" %}
+      {% elsif (env("CURRENT_ADAPTER") || "sqlite") == "sqlite" %}
         ManualColumnType.migrator.create_sql.should eq <<-SQL
           CREATE TABLE "manual_column_types"(
           "id" INTEGER NOT NULL PRIMARY KEY,

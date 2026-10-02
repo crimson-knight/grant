@@ -66,10 +66,28 @@ module Grant::Type
     result.read(Time?).try &.in(Grant.settings.default_timezone)
   end
 
+  def from_rs(result : DB::ResultSet, t : Time.class, adapter : Grant::Adapter::Base) : Time
+    adapter.read_time(result).in(Grant.settings.default_timezone)
+  end
+
+  def from_rs(result : DB::ResultSet, t : Time?.class, adapter : Grant::Adapter::Base) : Time?
+    adapter.read_nullable_time(result).try &.in(Grant.settings.default_timezone)
+  end
+
+  def from_rs(result : DB::ResultSet, t : T.class, adapter : Grant::Adapter::Base) : T forall T
+    from_rs(result, t)
+  end
+
+  def from_rs(result : DB::ResultSet, t : T?.class, adapter : Grant::Adapter::Base) : T? forall T
+    from_rs(result, t)
+  end
+
   # Converts a `DB::ResultSet` to `UUID`.
   def from_rs(result : DB::ResultSet, t : UUID.class) : UUID
-    value = result.read(String | Bytes)
+    value = result.read(UUID | String | Bytes)
     case value
+    when UUID
+      value
     when String
       UUID.new(value)
     when Bytes
@@ -81,10 +99,12 @@ module Grant::Type
 
   # Converts a `DB::ResultSet` to `UUID?`.
   def from_rs(result : DB::ResultSet, t : UUID?.class) : UUID?
-    value = result.read(String? | Bytes?)
+    value = result.read(UUID? | String? | Bytes?)
     return nil if value.nil?
 
     case value
+    when UUID
+      value
     when String
       UUID.new(value)
     when Bytes
@@ -116,6 +136,28 @@ module Grant::Type
       value{{method.id}}
     end
   {% end %}
+
+  # Converts Rails-style enum symbols in mass-assignment payloads to the
+  # corresponding native Crystal enum member.
+  def convert_type(value : Symbol, type : T.class) : T forall T
+    {% if T < Enum %}
+      T.values.find { |candidate| candidate.to_s.underscore == value.to_s } ||
+        raise ArgumentError.new("Unknown #{T} value #{value.inspect}")
+    {% else %}
+      raise ArgumentError.new("Cannot convert #{value.inspect} to #{T}")
+    {% end %}
+  end
+
+  # Nilable enum columns accept the same symbolic member names as non-nilable
+  # enum columns.
+  def convert_type(value : Symbol, type : T?.class) : T? forall T
+    {% if T < Enum %}
+      T.values.find { |candidate| candidate.to_s.underscore == value.to_s } ||
+        raise ArgumentError.new("Unknown #{T} value #{value.inspect}")
+    {% else %}
+      raise ArgumentError.new("Cannot convert #{value.inspect} to #{T}?")
+    {% end %}
+  end
 
   def convert_type(value, type)
     value

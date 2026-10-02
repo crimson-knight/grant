@@ -1,9 +1,30 @@
 require "./base"
 require "mysql"
 
+# crystal-mysql 0.17.0 does not register the protocol JSON type (245), so its
+# result-set decoder raises before Grant can normalize the returned text. This
+# one type registration is required at driver decode time; the driver exposes no
+# adapter-local decoder hook.
 # Mysql implementation of the Adapter
 class Grant::Adapter::Mysql < Grant::Adapter::Base
   QUOTING_CHAR = '`'
+
+  def mysql? : Bool
+    true
+  end
+
+  # crystal-mysql defaults its handshake charset to utf8 (utf8mb3), which
+  # cannot bind four-byte Unicode such as emoji into MySQL 8 utf8mb4 columns.
+  # Keep an explicit caller setting and use a broadly supported utf8mb4
+  # collation when the URL does not provide one.
+  def initialize(name : String, url : String)
+    MySql::Type.types_by_code[245_u8] = MySql::Type::String
+    unless url.matches?(/[?&]encoding=/i)
+      separator = url.includes?("?") ? "&" : "?"
+      url = "#{url}#{separator}encoding=utf8mb4_general_ci"
+    end
+    super(name, url)
+  end
 
   module Schema
     TYPES = {
@@ -12,8 +33,9 @@ class Grant::Adapter::Mysql < Grant::Adapter::Base
       "AUTO_UUID"  => "CHAR(36)",
       "Float64"    => "DOUBLE",
       "UUID"       => "CHAR(36)",
-      "created_at" => "TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP",
-      "updated_at" => "TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP",
+      "Time"       => "TIMESTAMP(6)",
+      "created_at" => "TIMESTAMP(6) NULL DEFAULT CURRENT_TIMESTAMP(6)",
+      "updated_at" => "TIMESTAMP(6) NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6)",
     }
   end
 
@@ -42,7 +64,7 @@ class Grant::Adapter::Mysql < Grant::Adapter::Base
     last_id = -1_i64
     elapsed_time = Time.measure do
       open do |conn|
-        conn.exec statement, args: params
+        conn.exec statement, args: normalize_bind_values(params)
         last_id = conn.scalar(last_val()).as(Int64) if lastval
       end
     end
@@ -64,7 +86,6 @@ class Grant::Adapter::Mysql < Grant::Adapter::Base
 
       model_array.each do |model|
         model.set_timestamps
-        next unless model.valid?
         stmt << "("
         stmt << Array.new(fields.size, '?').join(',')
         params.concat fields.map { |field| model.read_attribute field }
@@ -85,7 +106,7 @@ class Grant::Adapter::Mysql < Grant::Adapter::Base
 
     elapsed_time = Time.measure do
       open do |db|
-        db.exec statement, args: params
+        db.exec statement, args: normalize_bind_values(params)
       end
     end
 
@@ -106,7 +127,7 @@ class Grant::Adapter::Mysql < Grant::Adapter::Base
 
     elapsed_time = Time.measure do
       open do |db|
-        db.exec statement, args: params
+        db.exec statement, args: normalize_bind_values(params)
       end
     end
 
@@ -119,11 +140,22 @@ class Grant::Adapter::Mysql < Grant::Adapter::Base
 
     elapsed_time = Time.measure do
       open do |db|
-        db.exec statement, value
+        db.exec statement, normalize_bind_value(value)
       end
     end
 
     log statement, elapsed_time, value
+  end
+
+  # Grant stores MySQL UUID columns as CHAR(36), while crystal-mysql's UUID
+  # parameter encoder sends the 16-byte binary representation. Bind the
+  # canonical string used by this adapter's schema instead.
+  def normalize_bind_value(value : UUID) : String
+    value.to_s
+  end
+
+  def normalize_bind_value(value)
+    value
   end
 
   def supports_lock_mode?(mode : Grant::Locking::LockMode) : Bool

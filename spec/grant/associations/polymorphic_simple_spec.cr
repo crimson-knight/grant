@@ -17,14 +17,14 @@ describe "Grant::Associations::Polymorphic - Basic Implementation" do
       Grant::Polymorphic.registered_type?("NonExistent").should be_false
     end
   end
-  
+
   describe "polymorphic proxy" do
     it "creates a proxy for lazy loading" do
       proxy = Grant::Polymorphic::PolymorphicProxy.new("TestPost", 123_i64)
       proxy.type.should eq("TestPost")
       proxy.id.should eq(123_i64)
       proxy.present?.should be_true
-      
+
       nil_proxy = Grant::Polymorphic::PolymorphicProxy.new(nil, nil)
       nil_proxy.present?.should be_false
     end
@@ -33,7 +33,7 @@ end
 
 # Simple test models to verify compilation
 {% begin %}
-  {% adapter_literal = env("CURRENT_ADAPTER").id %}
+  {% adapter_literal = (env("CURRENT_ADAPTER") || "sqlite").id %}
   
   class TestComment < Grant::Base
     connection {{ adapter_literal }}

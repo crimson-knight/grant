@@ -13,17 +13,18 @@ module Grant::Query::Executor
       if @default.nil?
         raise "No default provided"
       else
-        start_time = Time.monotonic
+        start_time = Time.instant
         begin
-          result = Model.adapter.open do |db|
-            db.query_one?(@sql, args: @args, as: Scalar) || @default
+          adapter = Model.adapter
+          result = adapter.open do |db|
+            db.query_one?(@sql, args: adapter.normalize_bind_values(@args), as: Scalar) || @default
           end
 
-          duration = Time.monotonic - start_time
+          duration = Time.instant - start_time
           log_query_with_timing(@sql, @args, duration, 1, Model.name)
           result
         rescue e
-          duration = Time.monotonic - start_time
+          duration = Time.instant - start_time
           Grant::Logs::SQL.error { "Query failed (#{duration.total_milliseconds}ms) - #{@sql} [#{Model.name}] - #{e.message}" }
           raise e
         end

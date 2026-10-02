@@ -1,4 +1,13 @@
 module Grant::Sharding
+  class ShardMoveError < Grant::ErrorBase
+    getter source_error : ::Exception
+    getter compensation_error : ::Exception
+
+    def initialize(message : String, @source_error : ::Exception, @compensation_error : ::Exception)
+      super(message, cause: compensation_error)
+    end
+  end
+
   # Base class for all shard resolvers
   abstract class ShardResolver
     # Resolve shard for a model instance
@@ -165,9 +174,15 @@ module Grant::Sharding
       # for a sharded model with no shard context. Route it through the sharded
       # query builder instead so `Model.count` scatter-gathers across all shards
       # (and still single-shards if a shard context is active).
-      def self.count : Int32
+      # Returns the count as `Int64`.
+      def self.count : Int64
         if sharding_config
-          __builder.count.to_i32
+          result = __builder.count
+          if result.is_a?(Int64)
+            result
+          else
+            result.values.sum
+          end
         else
           super
         end
@@ -287,6 +302,7 @@ module Grant::Sharding
       )
       
       # Override query builder to use sharded version
+      # :nodoc:
       def self.__builder
         # For sharded models, we can't call adapter directly since it requires shard context
         # Instead, we'll default to sqlite for now - the actual adapter will be determined
@@ -309,6 +325,57 @@ module Grant::Sharding
       else
         raise "Model #{self.class.name} is not configured for sharding"
       end
+    end
+
+    # Copy a persisted record to another shard, then remove the source copy.
+    # Cross-database transactions are not available, so a failed source delete
+    # triggers a compensating delete on the destination. If compensation also
+    # fails, the raised error reports that both copies may need reconciliation.
+    def move_to_shard(target_shard : Symbol, from_shard : Symbol? = nil)
+      raise "Cannot move an unpersisted record" unless persisted?
+
+      config = self.class.sharding_config || raise "Model #{self.class.name} is not configured for sharding"
+      raise ArgumentError.new("Unknown target shard #{target_shard} for #{self.class.name}") unless config.resolver.all_shards.includes?(target_shard)
+
+      source_shard = from_shard || @current_shard || config.resolver.resolve(self)
+      raise ArgumentError.new("Unknown source shard #{source_shard} for #{self.class.name}") unless config.resolver.all_shards.includes?(source_shard)
+      return self if source_shard == target_shard
+      resolved_destination = config.resolver.resolve(self)
+      unless resolved_destination == target_shard
+        raise ArgumentError.new("Current shard key resolves to #{resolved_destination}; update the shard key for #{self.class.name} before moving it to #{target_shard}")
+      end
+
+      destination_record = self.class.new
+      self.class.content_fields.each do |field|
+        destination_record.write_attribute(field, read_attribute(field))
+      end
+      destination_record.write_attribute(self.class.primary_name, read_attribute(self.class.primary_name))
+      destination_record.current_shard = target_shard
+
+      Grant::ShardManager.with_shard(target_shard) do
+        destination_record.save!
+      end
+
+      begin
+        Grant::ShardManager.with_shard(source_shard) do
+          destroy!
+        end
+      rescue source_error
+        begin
+          Grant::ShardManager.with_shard(target_shard) do
+            destination_record.destroy!
+          end
+        rescue compensation_error
+          raise ShardMoveError.new(
+            "Move of #{self.class.name} #{primary_key_value} failed on source cleanup (#{source_error.message}); destination compensation also failed (#{compensation_error.message})",
+            source_error,
+            compensation_error
+          )
+        end
+        raise source_error
+      end
+
+      destination_record
     end
 
     # Ensure we're on the correct shard before operations
@@ -343,7 +410,8 @@ module Grant::Sharding
       @scope.all
     end
 
-    def count
+    # Returns scalar or grouped counts from the selected shard.
+    def count : Grant::Query::Builder::CountResult
       @scope.count
     end
 
@@ -361,8 +429,14 @@ module Grant::Sharding
       @scope = MultiShardScope(Model).new(@model)
     end
 
+    # Returns the summed count across all shards as `Int64`.
     def count : Int64
-      @scope.count
+      result = @scope.count
+      if result.is_a?(Int64)
+        result
+      else
+        result.values.sum
+      end
     end
 
     def where(**conditions)

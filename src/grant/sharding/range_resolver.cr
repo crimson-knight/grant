@@ -21,6 +21,17 @@ module Grant::Sharding
           false
         end
       end
+
+      def overlaps?(minimum : String | Int64, maximum : String | Int64) : Bool
+        case {min, max, minimum, maximum}
+        when {String, String, String, String}
+          min.as(String) <= maximum && max.as(String) >= minimum
+        when {Int64, Int64, Int64, Int64}
+          min.as(Int64) <= maximum && max.as(Int64) >= minimum
+        else
+          false
+        end
+      end
     end
 
     @ranges : Array(RangeDefinition)
@@ -44,6 +55,12 @@ module Grant::Sharding
       @ranges.map(&.shard).uniq
     end
 
+    # Return only shards whose configured ranges intersect an inclusive query
+    # interval. A nil result means the bounds could not be compared safely.
+    def shards_for_range(minimum : String | Int64, maximum : String | Int64) : Array(Symbol)?
+      @ranges.select(&.overlaps?(minimum, maximum)).map(&.shard).uniq
+    end
+
     def resolve_for_values(values : Array) : Symbol
       # For range sharding, typically use first key column only
       value = values.first
@@ -61,25 +78,19 @@ module Grant::Sharding
     end
 
     private def validate_ranges!
-      # Check for gaps or overlaps
-      sorted = @ranges.sort_by { |r| r.min.to_s }
+      @ranges.each_with_index do |left, left_index|
+        @ranges[(left_index + 1)..].each do |right|
+          overlapping = case {left.min, left.max, right.min, right.max}
+                        when {Int64, Int64, Int64, Int64}
+                          left.min.as(Int64) <= right.max.as(Int64) && right.min.as(Int64) <= left.max.as(Int64)
+                        when {String, String, String, String}
+                          left.min.as(String) <= right.max.as(String) && right.min.as(String) <= left.max.as(String)
+                        else
+                          raise "Range bounds must use the same type"
+                        end
 
-      sorted.each_cons(2) do |pair|
-        prev = pair[0]
-        curr = pair[1]
-        # For strings, we can't easily detect gaps, but we can detect overlaps
-        if prev.max.to_s >= curr.min.to_s
-          # Check if it's a real overlap (not just adjacent)
-          case {prev.max, curr.min}
-          when {Int64, Int64}
-            if prev.max.as(Int64) >= curr.min.as(Int64)
-              raise "Overlapping ranges: #{prev.max} and #{curr.min}"
-            end
-          else
-            # For strings, adjacent is OK (e.g., "2024_06_30" and "2024_07_01")
-            if prev.max.to_s > curr.min.to_s
-              raise "Overlapping ranges: #{prev.max} and #{curr.min}"
-            end
+          if overlapping
+            raise "Overlapping ranges: #{left.min}-#{left.max} and #{right.min}-#{right.max}"
           end
         end
       end

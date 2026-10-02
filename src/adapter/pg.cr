@@ -1,9 +1,32 @@
-require "./base"
 require "pg"
+require "./base"
 
 # PostgreSQL implementation of the Adapter
 class Grant::Adapter::Pg < Grant::Adapter::Base
   QUOTING_CHAR = '"'
+
+  def postgres? : Bool
+    true
+  end
+
+  # Normalize PostgreSQL-specific values after the driver has decoded them.
+  # Numeric and geometric values use strings to preserve their exact text;
+  # arrays use the driver's text representation when their element types are
+  # outside Grant's core result union.
+  def normalize_result_value(value) : Grant::Result::Value
+    return Grant::Result.normalize(value) if value.is_a?(Grant::Result::Value)
+
+    case value
+    when JSON::PullParser
+      JSON::Any.new(value)
+    when PG::Numeric, PG::Geo::Point, PG::Geo::Line, PG::Geo::Circle,
+         PG::Geo::LineSegment, PG::Geo::Box, PG::Geo::Path, PG::Geo::Polygon,
+         PG::Interval, Array
+      value.to_s
+    else
+      Grant::Result.normalize(value)
+    end
+  end
 
   module Schema
     TYPES = {
@@ -54,9 +77,9 @@ class Grant::Adapter::Pg < Grant::Adapter::Base
     elapsed_time = Time.measure do
       open do |db|
         if lastval
-          last_id = db.scalar(statement, args: params).as(Int32 | Int64).to_i64
+          last_id = db.scalar(statement, args: normalize_bind_values(params)).as(Int32 | Int64).to_i64
         else
-          db.exec statement, args: params
+          db.exec statement, args: normalize_bind_values(params)
         end
       end
     end
@@ -81,7 +104,6 @@ class Grant::Adapter::Pg < Grant::Adapter::Base
 
       model_array.each do |model|
         model.set_timestamps
-        next unless model.valid?
         stmt << '('
         stmt << fields.map_with_index { |_f, idx| "$#{index + idx + 1}" }.join(',')
         params.concat fields.map { |field| model.read_attribute field }
@@ -105,7 +127,7 @@ class Grant::Adapter::Pg < Grant::Adapter::Base
 
     elapsed_time = Time.measure do
       open do |db|
-        db.exec statement, args: params
+        db.exec statement, args: normalize_bind_values(params)
       end
     end
 
@@ -122,7 +144,7 @@ class Grant::Adapter::Pg < Grant::Adapter::Base
 
     elapsed_time = Time.measure do
       open do |db|
-        db.exec statement, args: params
+        db.exec statement, args: normalize_bind_values(params)
       end
     end
 
@@ -147,16 +169,20 @@ class Grant::Adapter::Pg < Grant::Adapter::Base
     value ? "TRUE" : "FALSE"
   end
 
-  def ensure_clause_template(clause : String) : String
+  def ensure_clause_template(clause : String, starting_index : Int32 = 0) : String
     if clause.includes?("?")
       num_subs = clause.count("?")
 
       num_subs.times do |i|
-        clause = clause.sub("?", "$#{i + 1}")
+        clause = clause.sub("?", "$#{starting_index + i + 1}")
       end
     end
 
     clause
+  end
+
+  def parameter_placeholder(index : Int32) : String
+    "$#{index}"
   end
 
   private def position_str(n : Int32) : String

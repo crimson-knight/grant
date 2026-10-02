@@ -133,11 +133,11 @@ module Grant::SerializedColumn
       
       # Track the change in the standard dirty tracking system
       if !new_record?
-        original = @original_attributes.not_nil!["_serialized_{{ name.id }}"]? || nil
+        original = dirty_tracking_hashes[0]["_serialized_{{ name.id }}"]? || nil
         current = @_serialized_{{ name.id }}.as(Grant::Base::DirtyValue?)
         
         if original != current
-          @changed_attributes.not_nil!["_serialized_{{ name.id }}"] = {
+          dirty_tracking_hashes[1]["_serialized_{{ name.id }}"] = {
             original || "".as(Grant::Base::DirtyValue), 
             current || "".as(Grant::Base::DirtyValue)
           }
@@ -155,7 +155,7 @@ module Grant::SerializedColumn
       
       # Check dirty tracking for the underlying column
       if !new_record? && @changed_attributes
-        if @changed_attributes.not_nil!.has_key?("_serialized_{{ name.id }}")
+        if dirty_tracking_hashes[1].has_key?("_serialized_{{ name.id }}")
           return true
         end
       end
@@ -180,11 +180,11 @@ module Grant::SerializedColumn
       
       # Track the change in the standard dirty tracking system
       if !new_record?
-        original = @original_attributes.not_nil!["_serialized_{{ name.id }}"]? || nil
+        original = dirty_tracking_hashes[0]["_serialized_{{ name.id }}"]? || nil
         current = @_serialized_{{ name.id }}.as(Grant::Base::DirtyValue?)
         
         if original != current
-          @changed_attributes.not_nil!["_serialized_{{ name.id }}"] = {
+          dirty_tracking_hashes[1]["_serialized_{{ name.id }}"] = {
             original || "".as(Grant::Base::DirtyValue), 
             current || "".as(Grant::Base::DirtyValue)
           }
