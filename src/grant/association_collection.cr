@@ -1,4 +1,5 @@
 require "./associations/through"
+require "./associations/through_chain"
 require "./association_callbacks"
 
 # Lazy, owner-scoped collection returned by a has_many association.
@@ -65,7 +66,7 @@ class Grant::AssociationCollection(Owner, Target)
               else
                 scope_clause, scope_params, scope_modifiers = scope_fragments
                 sql = [query, scope_clause, clause, scope_modifiers].reject(&.empty?).join(" ")
-                all_params = [owner_key]
+                all_params = [query_owner_key]
                 if (type_column = @type_column) && (type_value = @type_value)
                   all_params << type_value
                 end
@@ -452,20 +453,36 @@ class Grant::AssociationCollection(Owner, Target)
   # collection, whose source association on the join model is *source_name*.
   #
   # :nodoc:
-  def through_writer(source_name : String) : Grant::Associations::ThroughWriter
-    source = Grant::AssociationRegistry.get(Target.name, source_name) ||
-             raise Grant::Associations::ThroughWriteError.new("Cannot resolve source association #{Target.name}##{source_name}")
-    unless source[:type] == :belongs_to
-      raise Grant::Associations::ThroughWriteError.new("Cannot write through #{Target.name}##{source_name}: the source must be a belongs_to")
+  def through_writer(source_name : String, source_type : String? = nil) : Grant::Associations::ThroughWriter
+    if @through
+      raise Grant::Associations::ThroughWriteError.new("Cannot write through #{Owner.name}##{@association_name}: a nested has_many :through is read-only")
+    end
+    # A polymorphic source (`source_type:`) writes its type next to the key.
+    type_column = nil.as(String?)
+    source = Grant::AssociationRegistry.get(Target.name, source_name)
+    if source
+      unless source[:type] == :belongs_to
+        raise Grant::Associations::ThroughWriteError.new("Cannot write through #{Target.name}##{source_name}: the source must be a belongs_to")
+      end
+      target_column = source[:foreign_key]
+      target_key = source[:primary_key]
+    else
+      polymorphic = Grant::AssociationRegistry.reflection(Target.name, source_name)
+      unless polymorphic && polymorphic.polymorphic? && source_type
+        raise Grant::Associations::ThroughWriteError.new("Cannot resolve source association #{Target.name}##{source_name}")
+      end
+      target_column = polymorphic.foreign_key
+      target_key = polymorphic.primary_key
+      type_column = polymorphic.foreign_type
     end
 
     owner_column = @foreign_key.to_s
-    target_column = source[:foreign_key]
     insert = ->(owner_key : Grant::Columns::Type, keys : Array(Grant::Columns::Type)) : Nil do
       rows = keys.map do |key|
         row = {} of (String | Symbol) => Grant::Columns::Type
         row[owner_column] = owner_key
         row[target_column] = key
+        row[type_column] = source_type if type_column
         row
       end
       Target.insert_all(rows)
@@ -473,6 +490,7 @@ class Grant::AssociationCollection(Owner, Target)
     end
     remove = ->(owner_key : Grant::Columns::Type, keys : Array(Grant::Columns::Type)?, destroy : Bool) : Int64 do
       rows = Target.where({owner_column => owner_key})
+      rows = rows.where(type_column, :eq, source_type) if type_column && source_type
       rows = Grant::AssociationLoader.where_in(rows, target_column, keys) if keys
       if destroy
         destroyed = 0_i64
@@ -482,7 +500,7 @@ class Grant::AssociationCollection(Owner, Target)
         rows.delete_all
       end
     end
-    Grant::Associations::ThroughWriter.new(source[:primary_key], insert, remove)
+    Grant::Associations::ThroughWriter.new(target_key, insert, remove)
   end
 
   # Saves the targets that were built or appended while the owner was unsaved
@@ -946,6 +964,9 @@ class Grant::AssociationCollection(Owner, Target)
       relation = association_scope.call(relation)
     end
     if @through
+      if chain = through_chain
+        return chain.restrict(relation, owner)
+      end
       through_metadata, source_metadata = through_associations
       if source_metadata[:type] == :belongs_to
         source_key = through_metadata[:target_class].quote(source_metadata[:foreign_key])
@@ -967,6 +988,23 @@ class Grant::AssociationCollection(Owner, Target)
         relation = relation.where(type_column, :eq, type_value)
       end
       relation
+    end
+  end
+
+  # The resolved chain of a nested or polymorphic-source `:through`
+  # association; `nil` for every other association, which keeps its own keys.
+  private def through_chain : Grant::Associations::ThroughChain?
+    return nil unless @through
+    name = @association_name || return nil
+    Grant::Associations::ThroughChain.for(Owner, name)
+  end
+
+  # The key bound to the `?` of `query`.
+  private def query_owner_key : Grant::Columns::Type
+    if chain = through_chain
+      chain.owner_key(owner)
+    else
+      owner_key
     end
   end
 
@@ -1025,7 +1063,9 @@ class Grant::AssociationCollection(Owner, Target)
   end
 
   private def query : String
-    if @through.nil?
+    if chain = through_chain
+      chain.where_clause(Target)
+    elsif @through.nil?
       type_predicate = if type_column = @type_column
                          " AND #{Target.quote(Target.table_name)}.#{Target.quote(type_column)} = ?"
                        else

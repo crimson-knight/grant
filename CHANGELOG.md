@@ -2,6 +2,55 @@
 
 ## Unreleased
 
+### ActiveRecord parity, wave 5
+
+Parity moves from 308 to 320 complete features (74.8% to 77.7% of applicable).
+The 10 features still missing are the ones deliberately deferred in
+`docs/parity/ROADMAP.md` (views, generated columns, hstore and range types,
+pluggable encryption, custom callback chains, lazy transactions, session
+variables, `disable_joins`).
+
+- **Database tasks:** `Grant::Tasks::Database` with `create`, `drop`,
+  `purge`, `migrate`, `rollback`, `status`, `seed`, `schema_dump`,
+  `structure_dump`, `schema_load`, `setup`, `reset`, `prepare` and
+  `truncate_all` (one multi-table `TRUNCATE` on PostgreSQL), per named
+  connection, with protected-environment guards. The `amber` CLI commands
+  are a thin wrapper in amber_cli.
+- **Schema dump and load:** `Grant::Schema::Dumper` writes a Crystal
+  `Grant::Schema.define` file (columns, keys, indexes, constraints, comments,
+  PostgreSQL enums and extensions) with a fixed number of catalog queries, or
+  a SQL structure file. `Grant::Schema.format` picks `:crystal` or `:sql`.
+  Crystal schema and seed files are compiled into the task program, not
+  interpreted.
+- **Seeds:** `Grant::Seeds.define`, `run`, and idempotent `load_once`.
+- **Generator API:** `Grant::Schema::Generator` parses `AddXToY`,
+  `RemoveXFromY`, `CreateXs` and `CreateJoinTableXY` plus `name:type:index`
+  attributes and renders the migration class.
+- **Composite keys:** composite primary keys now create, update, destroy,
+  reload and touch through the whole key; `find` by tuple and arrays of
+  tuples with row-value `IN`; `query_constraints` so every write carries the
+  extra predicates (optimistic locking included); and tuple foreign keys on
+  `belongs_to`, `has_one` and `has_many` with batched preloading.
+- **Associations:** `build_<assoc>`, `create_<assoc>` and `create_<assoc>!`
+  for `belongs_to` and `has_one`; nested `has_many :through` (read-only);
+  `source_type:` over a polymorphic source; and association options
+  checked at compile time.
+
+Behavior changes:
+
+- An unknown association option (a typo, or an unsupported option such as
+  `required:`, `order:` or `readonly:`) is now a compile error listing the
+  valid options; before, it was silently ignored. `source_type:` without
+  `through:` is a compile error too.
+- Composite-key models now insert on `save`; before, `save` inserted nothing.
+- An explicit `auto:` on a primary key column is now honored; before, the
+  column macro silently replaced it with `false`.
+- `reload_<assoc>` on a `:through` association also resets the through
+  association, so it no longer returns stale join rows.
+- Models now define `build_<assoc>`, `create_<assoc>` and `create_<assoc>!`
+  for each non-polymorphic `belongs_to` and `has_one`; a method of the same
+  name defined later in the class still overrides them.
+
 ### ActiveRecord parity, wave 4
 
 Parity moves from 283 to 308 complete features (68.7% to 74.8% of applicable).
