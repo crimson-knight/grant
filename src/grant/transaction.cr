@@ -684,6 +684,9 @@ module Grant::Transaction
     end
   rescue ex : ::Exception
     raise adapter.translate_exception(ex, statement)
+  ensure
+    # BEGIN, COMMIT, ROLLBACK and savepoints change what other connections see.
+    Grant::QueryCache.invalidate!
   end
 
   private def self.execute_begin(conn : DB::Connection, adapter : Grant::Adapter::Base, options : Options) : Nil

@@ -52,12 +52,16 @@ require "./association_options"
 # * `foreign_key:` — override the foreign-key column name.
 # * `primary_key:` — override the referenced key (defaults to `"id"`).
 # * `dependent:` — `:destroy` / `:delete` / `:delete_all` / `:nullify` /
-#   `:restrict` / `:restrict_with_exception` (see `Grant::AssociationOptions`).
+#   `:restrict_with_error` (`:restrict`) / `:restrict_with_exception` /
+#   `:destroy_async` (see `Grant::AssociationOptions`). An unsupported value is a
+#   compile error.
 # * `optional: true` — skip the auto presence validation on a `belongs_to`.
-# * `counter_cache:` / `touch:` / `autosave:` / `inverse_of:` — see
-#   `Grant::AssociationOptions`.
+# * `counter_cache:` / `touch:` / `autosave:` / `validate:` / `index_errors:` /
+#   `inverse_of:` — see `Grant::AssociationOptions`.
+# * `default:` (on `belongs_to`) — a proc that supplies the parent when the key is
+#   missing on create.
 #
-# See `docs/associations.md` for the full guide.
+# See `docs/advanced_associations.md` for the full guide.
 module Grant::Associations
   include Grant::Polymorphic
   include Grant::AssociationOptions::DependentCallbacks
@@ -65,6 +69,14 @@ module Grant::Associations
   include Grant::AssociationOptions::TouchCallbacks
   include Grant::AssociationOptions::AutosaveCallbacks
   include Grant::AssociationOptions::OptionalValidation
+  include Grant::Autosave
+  include Grant::Dependent::Instance
+  include Grant::CounterCache::Instance
+
+  macro included
+    extend Grant::CounterCache::ClassMethods
+    Grant::AssociationTouch.define_touch_flag
+  end
 
   # Declares that this model belongs to *model* — i.e. it holds the foreign key.
   #
@@ -200,9 +212,22 @@ module Grant::Associations
         clear_nullable_attribute({{foreign_key_name}})
       end
       set_loaded_association({{method_name.stringify}}, parent)
-      {% if options[:autosave] %}
-        @_{{method_name.id}}_for_autosave = parent
-      {% end %}
+    end
+
+    # True when the foreign key changed since the record was loaded or last
+    # saved, or a new, unsaved parent is assigned.
+    def {{method_name.id}}_changed? : Bool
+      return true if attribute_changed?({{foreign_key_name}})
+      if association_loaded?({{method_name.stringify}})
+        parent = get_loaded_association({{method_name.stringify}}).as?({{class_name.id}})
+        return !parent.nil? && parent.new_record?
+      end
+      false
+    end
+
+    # True when the last save changed the foreign key.
+    def {{method_name.id}}_previously_changed? : Bool
+      saved_change_to_attribute?({{foreign_key_name}})
     end
     
     # Store association metadata
@@ -220,37 +245,51 @@ module Grant::Associations
       nil, nil, nil, nil, {{options[:dependent]}}, {{inverse_of_bt ? inverse_of_bt.id.stringify : nil}}, {{options[:inverse_of] == false}},
       {{scope ? true : false}}, false, {{options[:strict_loading]}}, {{options.keys.map(&.stringify)}} of String, {{options.values.map(&.stringify)}} of String)
 
+    Grant::Dependent.check_dependent_option(:belongs_to, {{method_name}}, {{options[:dependent]}})
+
     # Handle optional validation
     {% unless options[:optional] %}
-      setup_optional_validation({{method_name.id}}, {{foreign_key_name}}, {{class_name.id}}, {{primary_key_name}}, false, {{options[:autosave] || false}})
+      setup_optional_validation({{method_name.id}}, {{foreign_key_name}}, {{class_name.id}}, {{primary_key_name}}, false)
     {% end %}
-    
+
+    # `default:` fills a missing parent key before validation on create.
+    {% if options[:default] %}
+      before_validation on: :create do
+        if read_attribute({{foreign_key_name}}).nil?
+          if default_parent = ({{options[:default]}}).call(self)
+            self.{{method_name.id}} = default_parent
+          end
+        end
+      end
+    {% end %}
+
     # Handle counter cache
     {% if options[:counter_cache] %}
-      {% if options[:counter_cache] == true %}
-        {% counter_column = @type.stringify.split("::").last.underscore + "s_count" %}
-      {% elsif options[:counter_cache].is_a?(SymbolLiteral) %}
-        {% counter_column = options[:counter_cache].id.stringify %}
+      {% counter_option = options[:counter_cache] %}
+      {% if counter_option == true %}
+        setup_counter_cache({{method_name.id}}, {{class_name.id}}, nil, {{foreign_key_name}})
+      {% elsif counter_option.is_a?(NamedTupleLiteral) %}
+        setup_counter_cache({{method_name.id}}, {{class_name.id}}, {{counter_option[:column]}}, {{foreign_key_name}}, {{counter_option[:active] == false ? false : true}})
+      {% elsif counter_option.is_a?(SymbolLiteral) %}
+        setup_counter_cache({{method_name.id}}, {{class_name.id}}, {{counter_option.id.stringify}}, {{foreign_key_name}})
       {% else %}
-        {% counter_column = options[:counter_cache].stringify.gsub(/"/, "") %}
+        setup_counter_cache({{method_name.id}}, {{class_name.id}}, {{counter_option.stringify.gsub(/"/, "")}}, {{foreign_key_name}})
       {% end %}
-      setup_counter_cache({{method_name.id}}, {{class_name.id}}, {{counter_column}}, {{foreign_key_name}})
     {% end %}
-    
+
     # Handle touch
     {% if options[:touch] %}
       {% touch_column = options[:touch] == true ? nil : options[:touch] %}
-      setup_touch({{method_name.id}}, {{touch_column}})
+      setup_touch({{method_name.id}}, {{touch_column}}, {{class_name.id}}, {{foreign_key_name}}, {{primary_key_name}})
     {% end %}
-    
-    # Handle autosave
-    {% if options[:autosave] %}
-      setup_autosave({{method_name.id}}, :belongs_to, {{foreign_key_name}}, {{primary_key_name}})
-      
-      # Define instance variable for tracking autosave
-      @_{{method_name.id}}_for_autosave : {{class_name.id}}? = nil
-      
+
+    # Handle dependent
+    {% if options[:dependent] %}
+      setup_dependent_belongs_to({{method_name.id}}, {{options[:dependent]}}, {{class_name.id}}, {{foreign_key_name}}, {{primary_key_name}})
     {% end %}
+
+    # Autosave, validation of an assigned parent and index_errors
+    setup_autosave({{method_name.id}}, :belongs_to, {{class_name.id}}, {{foreign_key_name}}, {{options[:primary_key] ? primary_key_name : nil}}, {{options[:autosave]}}, {{options[:validate]}}, {{options[:index_errors]}})
     {% end %}
   end
 
@@ -430,11 +469,7 @@ module Grant::Associations
 
     def {{method_name}} : {{class_name}}?
       if association_loaded?({{method_name.stringify}})
-        loaded = get_loaded_association({{method_name.stringify}}).as({{class_name.id}}?)
-        {% if options[:autosave] %}
-          @_{{method_name.id}}_for_autosave = loaded if loaded
-        {% end %}
-        loaded
+        get_loaded_association({{method_name.stringify}}).as({{class_name.id}}?)
       else
         assert_association_can_lazy_load!({{method_name.stringify}}, {{options[:strict_loading]}})
         owner_key = {% if options[:primary_key] %}self.read_attribute({{primary_key_name}}){% else %}self.read_attribute(self.class.primary_name){% end %}
@@ -449,9 +484,6 @@ module Grant::Associations
         result = relation.first
         set_loaded_association({{method_name.stringify}}, result)
         if result
-          {% if options[:autosave] %}
-            @_{{method_name.id}}_for_autosave = result
-          {% end %}
           Grant::Logs::Association.debug { "Loaded has_one association - #{self.class.name}.#{{{method_name.stringify}}} [#{{{class_name.id.stringify}}}] [fk: #{{{foreign_key.id.stringify}}} = #{owner_key}]" }
           _adopt_strict_loading(result, false)
           {% if inverse_of %}
@@ -482,7 +514,6 @@ module Grant::Associations
         end
       end
       set_loaded_association({{method_name.stringify}}, child)
-      @_{{method_name.id}}_for_autosave = child
     end
 
     def reset_{{method_name.id}} : Nil
@@ -509,6 +540,8 @@ module Grant::Associations
       nil, nil, nil, nil, {{options[:dependent]}}, {{inverse_of ? inverse_of.id.stringify : nil}}, {{options[:inverse_of] == false}},
       {{scope ? true : false}}, false, {{options[:strict_loading]}}, {{options.keys.map(&.stringify)}} of String, {{options.values.map(&.stringify)}} of String)
 
+    Grant::Dependent.check_dependent_option(:has_one, {{method_name}}, {{options[:dependent]}})
+
     # Handle dependent option
     {% if options[:dependent] %}
       {% if options[:dependent] == :destroy %}
@@ -517,16 +550,17 @@ module Grant::Associations
         setup_dependent_delete_all({{method_name.id}}, :has_one, {{class_name.id}}, {{foreign_key_name}}, {{primary_key_name}})
       {% elsif options[:dependent] == :nullify %}
         setup_dependent_nullify({{method_name.id}}, :has_one, {{class_name.id}}, {{foreign_key_name}}, {{primary_key_name}})
-      {% elsif options[:dependent] == :restrict %}
+      {% elsif options[:dependent] == :restrict || options[:dependent] == :restrict_with_error %}
         setup_dependent_restrict({{method_name.id}}, :has_one, {{class_name.id}}, {{foreign_key_name}}, {{primary_key_name}})
       {% elsif options[:dependent] == :restrict_with_exception %}
         setup_dependent_restrict_with_exception({{method_name.id}}, :has_one, {{class_name.id}}, {{foreign_key_name}}, {{primary_key_name}})
+      {% elsif options[:dependent] == :destroy_async %}
+        setup_dependent_destroy_async({{method_name.id}}, :has_one, {{class_name.id}}, {{foreign_key_name}}, {{primary_key_name}})
       {% end %}
     {% end %}
 
     # Stage assigned has_one records and persist them through the owner's save.
-    setup_autosave({{method_name.id}}, :has_one, {{foreign_key_name}}, {{primary_key_name}}, {{options[:autosave] || false}})
-    @_{{method_name.id}}_for_autosave : {{class_name.id}}? = nil
+    setup_autosave({{method_name.id}}, :has_one, {{class_name.id}}, {{foreign_key_name}}, {{options[:primary_key] ? primary_key_name : nil}}, {{options[:autosave]}}, {{options[:validate]}}, {{options[:index_errors]}})
     {% end %}
   end
 
@@ -744,7 +778,8 @@ module Grant::Associations
         dependent: {{options[:dependent].is_a?(SymbolLiteral) ? options[:dependent] : nil}},
         through_writer: through_writer,
         callbacks: callbacks,
-        pending: pending
+        pending: pending,
+        counter_column: {% if options[:counter_cache] %}{% if options[:counter_cache] == true %}{{method_name.id.stringify + "_count"}}{% else %}{{options[:counter_cache].id.stringify}}{% end %}{% else %}nil{% end %}
       )
     end
 
@@ -808,26 +843,31 @@ module Grant::Associations
       nil, nil, {{through ? through.id.stringify : nil}}, {{through ? source.id.stringify : nil}}, {{options[:dependent]}}, {{inverse_of ? inverse_of.id.stringify : nil}}, {{options[:inverse_of] == false}},
       {{scope ? true : false}}, false, {{options[:strict_loading]}}, {{options.keys.map(&.stringify)}} of String, {{options.values.map(&.stringify)}} of String)
 
+    Grant::Dependent.check_dependent_option(:has_many, {{method_name}}, {{options[:dependent]}})
+
     # Handle dependent option
-    {% if options[:dependent] %}
+    {% if options[:dependent] && through %}
+      setup_dependent_through({{method_name.id}}, {{through.id}}, {{options[:dependent]}})
+    {% elsif options[:dependent] %}
       {% if options[:dependent] == :destroy %}
         setup_dependent_destroy({{method_name.id}}, :has_many, {{class_name.id}}, {{foreign_key_name}}, {{primary_key_name}})
       {% elsif options[:dependent] == :delete_all %}
         setup_dependent_delete_all({{method_name.id}}, :has_many, {{class_name.id}}, {{foreign_key_name}}, {{primary_key_name}})
       {% elsif options[:dependent] == :nullify %}
         setup_dependent_nullify({{method_name.id}}, :has_many, {{class_name.id}}, {{foreign_key_name}}, {{primary_key_name}})
-      {% elsif options[:dependent] == :restrict %}
+      {% elsif options[:dependent] == :restrict || options[:dependent] == :restrict_with_error %}
         setup_dependent_restrict({{method_name.id}}, :has_many, {{class_name.id}}, {{foreign_key_name}}, {{primary_key_name}})
       {% elsif options[:dependent] == :restrict_with_exception %}
         setup_dependent_restrict_with_exception({{method_name.id}}, :has_many, {{class_name.id}}, {{foreign_key_name}}, {{primary_key_name}})
+      {% elsif options[:dependent] == :destroy_async %}
+        setup_dependent_destroy_async({{method_name.id}}, :has_many, {{class_name.id}}, {{foreign_key_name}}, {{primary_key_name}})
       {% end %}
     {% end %}
 
     # Handle autosave
     {% unless through %}
       # Stage assigned has_many records and persist them through the owner's save.
-      setup_autosave({{method_name.id}}, :has_many, {{foreign_key_name}}, {{primary_key_name}}, {{options[:autosave] || false}})
-      @_{{method_name.id}}_for_autosave : Array({{class_name.id}})? = nil
+      setup_autosave({{method_name.id}}, :has_many, {{class_name.id}}, {{foreign_key_name}}, {{options[:primary_key] ? primary_key_name : nil}}, {{options[:autosave]}}, {{options[:validate]}}, {{options[:index_errors]}})
 
       def {{method_name.id}}=(records : Array({{class_name.id}}))
         owner_key = self.read_attribute({{primary_key_name}})
@@ -837,7 +877,6 @@ module Grant::Associations
           end
         end
         set_loaded_association({{method_name.stringify}}, records.map(&.as(Grant::Base)))
-        @_{{method_name.id}}_for_autosave = records
       end
     {% end %}
     {% end %}

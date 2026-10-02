@@ -15,6 +15,7 @@ describe "(callback feature)" do
         after_create
         after_save
         after_create_commit
+        after_save_commit
         after_commit
         EOF
     end
@@ -35,6 +36,7 @@ describe "(callback feature)" do
         after_update
         after_save
         after_update_commit
+        after_save_commit
         after_commit
         EOF
     end

@@ -18,9 +18,7 @@ class Grant::Query::Builder(Model)
     target.own_eager_load_associations.concat(eager_load_associations)
     target.own_preload_associations.concat(preload_associations)
     target.own_includes_associations.concat(includes_associations)
-    if mode = lock_mode
-      target.lock!(mode)
-    end
+    target.take_lock_from!(self)
     target.own_join_clauses.concat(join_clauses)
     target.distinct! if distinct?
     target.own_having_clauses.concat(having_clauses)
@@ -59,9 +57,7 @@ class Grant::Query::Builder(Model)
     own_preload_associations.concat(other.preload_associations).uniq!
     own_includes_associations.concat(other.includes_associations).uniq!
 
-    if mode = other.lock_mode
-      lock!(mode)
-    end
+    take_lock_from!(other)
 
     other.join_clauses.each do |clause|
       own_join_clauses << clause unless join_clauses.includes?(clause)

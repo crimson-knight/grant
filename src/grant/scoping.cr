@@ -69,6 +69,71 @@ module Grant::Scoping
     end
   end
 
+  # :nodoc:
+  abstract class ScopeEntry
+  end
+
+  # :nodoc:
+  class RelationEntry(Model) < ScopeEntry
+    getter relation : Grant::Query::Builder(Model)
+
+    def initialize(@relation : Grant::Query::Builder(Model))
+    end
+  end
+
+  # Marks an `unscoped { }` block: it hides every outer `scoping { }` relation
+  # of the model until the block ends, as ActiveRecord's `unscoped` does.
+  # :nodoc:
+  class UnscopedEntry < ScopeEntry
+  end
+
+  # A copy of the relation the innermost `Model.scoping { }` block of the
+  # current fiber made the current scope for *model*, or `nil` outside such a
+  # block. It is a copy because class-level query methods change the scope they
+  # get in place.
+  # The stack lives in a slot on the fiber, so no lock is taken and other
+  # fibers never see it.
+  def self.current_relation(model : Model.class) : Grant::Query::Builder(Model)? forall Model
+    stacks = Fiber.current.grant_scoping_stacks
+    return unless stacks
+    stack = stacks[model.name]?
+    return if stack.nil? || stack.empty?
+    stack.last.as?(RelationEntry(Model)).try(&.relation.dup)
+  end
+
+  # Runs *block* with *relation* as the current scope of *model*, restoring the
+  # previous scope afterwards, also when the block raises.
+  def self.with_relation(model : Model.class, relation : Grant::Query::Builder(Model), & : -> T) : T forall Model, T
+    push_entry(model.name, RelationEntry(Model).new(relation)) { yield }
+  end
+
+  # Runs *block* with no `scoping { }` relation in effect for the model named
+  # *model_name*; used by the block form of `unscoped`.
+  #
+  # :nodoc:
+  def self.without_relation(model_name : String, & : -> T) : T forall T
+    stacks = Fiber.current.grant_scoping_stacks
+    # Nothing to hide: skip the allocation on the common path.
+    return yield unless stacks && stacks.has_key?(model_name)
+
+    push_entry(model_name, UnscopedEntry.new) { yield }
+  end
+
+  private def self.push_entry(model_name : String, entry : ScopeEntry, & : -> T) : T forall T
+    stacks = (Fiber.current.grant_scoping_stacks ||= {} of String => Array(ScopeEntry))
+    stack = (stacks[model_name] ||= [] of ScopeEntry)
+    stack << entry
+    begin
+      yield
+    ensure
+      stack.pop
+      if stack.empty?
+        stacks.delete(model_name)
+        Fiber.current.grant_scoping_stacks = nil if stacks.empty?
+      end
+    end
+  end
+
   macro included
     macro inherited
       def self._unscoped? : Bool
@@ -269,6 +334,23 @@ module Grant::Scoping
       query
     end
 
+    # Makes *relation* this model's current scope for the block, so class-level
+    # queries (`where`, `all`, `count`, `first`, ...) start from it instead of the
+    # model's own scope, as ActiveRecord's `Model.scoping`. The previous scope is
+    # restored when the block ends, also when it raises. The scope is local to
+    # the calling fiber; fibers spawned inside the block do not inherit it.
+    # `unscoped` ignores it. Returns the block's value.
+    #
+    # ```
+    # Post.scoping(Post.where(published: true)) do
+    #   Post.count        # counts published posts
+    #   Post.where(id: 1) # AND published
+    # end
+    # ```
+    def scoping(relation : Grant::Query::Builder(self), & : -> T) : T forall T
+      Grant::Scoping.with_relation(self, relation) { yield }
+    end
+
     # Block form of `unscoped`: runs *block* with the default scope disabled for
     # this model, yielding a fresh unscoped `Grant::Query::Builder`, and restores
     # the previous scoping state afterward (even on exception). Returns whatever
@@ -298,7 +380,7 @@ module Grant::Scoping
       query = Grant::Query::Builder(self).new(db_type)
 
       begin
-        yield query
+        Grant::Scoping.without_relation(name) { yield query }
       ensure
         self._unscoped = old_unscoped
       end
@@ -608,4 +690,18 @@ module Grant::Scoping
       current_scope.find!([first, second, *rest])
     end
   end
+end
+
+class Grant::Query::Builder(Model)
+  # Makes this relation the current scope of its model for the block; see
+  # `Grant::Base.scoping`.
+  def scoping(& : -> T) : T forall T
+    Model.scoping(self) { yield }
+  end
+end
+
+class Fiber
+  # Fiber-local stacks of `scoping { }` relations, keyed by model name.
+  # :nodoc:
+  property grant_scoping_stacks : Hash(String, Array(Grant::Scoping::ScopeEntry))?
 end

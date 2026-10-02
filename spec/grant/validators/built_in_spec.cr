@@ -8,7 +8,7 @@ describe "Grant::Validators::BuiltIn" do
 
       product.price = nil
       product.valid?.should be_false
-      product.errors.first.message.not_nil!.should contain("greater than 0")
+      product.errors.first.message.not_nil!.should eq("is not a number")
     end
 
     it "validates greater_than constraint" do
@@ -47,7 +47,7 @@ describe "Grant::Validators::BuiltIn" do
 
       order.status = "completed"
       order.valid?.should be_false # total required when completed
-      order.errors.first.message.not_nil!.should contain("greater than 0")
+      order.errors.first.message.not_nil!.should eq("is not a number")
 
       order.total = 100.0
       order.valid?.should be_true

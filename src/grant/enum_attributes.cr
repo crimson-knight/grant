@@ -43,11 +43,21 @@ module Grant::EnumAttributes
   # * **predicates** `#draft? : Bool`, `#published? : Bool`, `#archived? : Bool`
   #   — true when `status` equals that member;
   # * **bang-setters** `#draft!`, `#published!`, `#archived!` — assign that member
-  #   to `status` and return it;
-  # * **scopes** `.draft`, `.published`, `.archived` — class methods returning a
-  #   query filtered to that member;
+  #   and, on a persisted record, `save!` it (one UPDATE; validations and
+  #   callbacks run; raises `Grant::RecordInvalid` on failure). A new record is
+  #   only assigned;
+  # * **in-memory setters** `#assign_draft`, `#assign_published`, ... — assign
+  #   without saving;
+  # * **scopes** `.draft`, `.published`, `.archived` and negated
+  #   `.not_draft`, ... — class methods returning a query filtered to that member;
+  # * `#status=(String | Symbol)` — assigns by member name;
   # * `.statuses` — all enum values (`Array(Status)`);
   # * `.status_mapping` — a `Hash` of underscored member name ⇒ enum value.
+  #
+  # Options: `prefix:` / `suffix:` (true, a Symbol or a String) rename the
+  # generated methods, `scopes: false` skips the scopes, and `validate: true`
+  # (or `validate: {allow_nil: true}`) reports unknown names and nil through
+  # validation instead of raising `Grant::UnknownEnumValueError`.
   #
   # A default given as a symbol (`= :draft`) or an enum literal is applied via an
   # `after_initialize` hook to new records only.
@@ -80,10 +90,10 @@ module Grant::EnumAttributes
         raise "enum_attribute expects a type declaration like 'status : Status'"
       end
     %}
-    
+
     {% column_type = options[:column_type] || String %}
     {% converter = options[:converter] %}
-    
+
     # Define the column with enum converter
     {% if converter %}
       column {{name}} : {{type}}, converter: {{converter}}
@@ -95,33 +105,61 @@ module Grant::EnumAttributes
       {% end %}
       column {{name}} : {{type}}, converter: Grant::Converters::Enum({{enum_converter_type}}, {{column_type}})
     {% end %}
-    
+
     # Generate helper methods for each enum value
     {% if type.resolve.nilable? %}
       {% enum_type = type.resolve.union_types.find { |t| t != Nil } %}
+      {% type_nilable = true %}
     {% else %}
       {% enum_type = type.resolve %}
+      {% type_nilable = false %}
     {% end %}
-    
+
+    # `prefix:` / `suffix:` (true, a Symbol or a String) disambiguate members
+    # shared between two enums: `prefix: true` gives `status_draft?`,
+    # `suffix: :state` gives `draft_state?`.
+    {% prefix = options[:prefix] %}
+    {% suffix = options[:suffix] %}
+    {% name_prefix = (prefix == nil || prefix == false) ? "" : (prefix == true ? "#{name.id}_" : "#{prefix.id}_") %}
+    {% name_suffix = (suffix == nil || suffix == false) ? "" : (suffix == true ? "_#{name.id}" : "_#{suffix.id}") %}
+    {% define_scopes = options[:scopes] != false %}
+
     {% for member in enum_type.constants %}
+      {% method_name = "#{name_prefix.id}#{member.underscore}#{name_suffix.id}" %}
+
       # Predicate method (e.g., draft?)
-      def {{member.underscore}}? : Bool
+      def {{method_name.id}}? : Bool
         {{name}} == {{enum_type}}::{{member}}
       end
-      
-      # Bang method to set value (e.g., published!)
-      def {{member.underscore}}! : {{enum_type}}
+
+      # Sets the value in memory only (e.g., assign_published).
+      def assign_{{method_name.id}} : {{enum_type}}
         self.{{name}} = {{enum_type}}::{{member}}
       end
-    {% end %}
-    
-    # Scope for each enum value
-    {% for member in enum_type.constants %}
-      def self.{{member.underscore}}
-        where({{name}}: {{enum_type}}::{{member}})
+
+      # Sets the value and, on a persisted record, saves it like Rails'
+      # `update!` (validations and callbacks run, one UPDATE round trip;
+      # raises on failure). A new record only has the value assigned: use
+      # `save!` to insert it. Returns the enum member.
+      def {{method_name.id}}! : {{enum_type}}
+        self.{{name}} = {{enum_type}}::{{member}}
+        save! if persisted?
+        {{enum_type}}::{{member}}
       end
+
+      {% if define_scopes %}
+        # Scope for the enum value (e.g., Post.published)
+        def self.{{method_name.id}}
+          where({{name}}: {{enum_type}}::{{member}})
+        end
+
+        # Negated scope (e.g., Post.not_published)
+        def self.not_{{method_name.id}}
+          where.not({{name}}: {{enum_type}}::{{member}})
+        end
+      {% end %}
     {% end %}
-    
+
     # Class methods to access enum values
     {% plural_name = name.id.stringify %}
     {% if plural_name.ends_with?("s") %}
@@ -132,7 +170,7 @@ module Grant::EnumAttributes
     def self.{{plural_name.id}}
       {{enum_type}}.values
     end
-    
+
     # Return mapping of enum names to values
     def self.{{name.id}}_mapping
       {
@@ -141,7 +179,80 @@ module Grant::EnumAttributes
         {% end %}
       }
     end
-    
+
+    # Looks a member up by its underscored name (String or Symbol), or by
+    # its enum name; nil when unknown.
+    # :nodoc:
+    def self.__enum_lookup_{{name.id}}(value : String | Symbol) : {{enum_type}}?
+      text = value.to_s
+      {{enum_type}}.values.find { |member| member.to_s.underscore == text.underscore }
+    end
+
+    # Query values: a member, its name (`where(status: "published")`) or its
+    # symbol are all converted to the stored representation.
+    # :nodoc:
+    def self.__coerce_where_{{name.id}}(value)
+      {% if converter %}
+        {% enum_converter = converter %}
+      {% else %}
+        {% enum_converter = "Grant::Converters::Enum(#{enum_type}, #{column_type})".id %}
+      {% end %}
+      if value.is_a?({{enum_type}})
+        {{enum_converter}}.to_db(value)
+      elsif value.is_a?(String) || value.is_a?(Symbol)
+        if member = __enum_lookup_{{name.id}}(value)
+          {{enum_converter}}.to_db(member)
+        else
+          value
+        end
+      {% if !converter %}
+      elsif value.is_a?(Array)
+        converted = [] of {% if column_type.resolve <= Number %}Int64{% else %}String{% end %}
+        value.each do |item|
+          member = item.is_a?({{enum_type}}) ? item : ((item.is_a?(String) || item.is_a?(Symbol)) ? __enum_lookup_{{name.id}}(item) : nil)
+          return value unless member
+          converted << {{enum_converter}}.to_db(member).as({% if column_type.resolve <= Number %}Int64{% else %}String{% end %})
+        end
+        converted
+      {% end %}
+      else
+        value
+      end
+    end
+
+    # Assigns by name. An unknown name raises `Grant::UnknownEnumValueError`,
+    # or, with `validate:`, is remembered and reported by validation.
+    @[JSON::Field(ignore: true)]
+    @[YAML::Field(ignore: true)]
+    @_invalid_enum_{{name.id}} : String? = nil
+
+    # Any assignment through the column setter (a member or nil) replaces a
+    # previously remembered unknown name, so validation reflects the latest value.
+    private def __assign_hook_{{name.id}}(value)
+      @_invalid_enum_{{name.id}} = nil
+      value
+    end
+
+    def {{name.id}}=(value : String | Symbol)
+      if member = self.class.__enum_lookup_{{name.id}}(value)
+        @_invalid_enum_{{name.id}} = nil
+        self.{{name.id}} = member
+      else
+        {% if options[:validate] %}
+          @_invalid_enum_{{name.id}} = value.to_s
+        {% else %}
+          raise Grant::UnknownEnumValueError.new("'#{value}' is not a valid {{name.id}}")
+        {% end %}
+      end
+    end
+
+    {% if options[:validate] %}
+      {% allow_nil = type_nilable && options[:validate].is_a?(NamedTupleLiteral) && options[:validate][:allow_nil] %}
+      validate "{{name.id}} is not included in the list" do |model|
+        model.@_invalid_enum_{{name.id}}.nil? && {% if allow_nil %}true{% else %}!model.{{name.id}}.nil?{% end %}
+      end
+    {% end %}
+
     # Add default value if specified
     {% if default %}
       after_initialize do
@@ -227,4 +338,10 @@ end
 abstract class Grant::Base
   include Grant::EnumAttributes
   extend Grant::EnumAttributes::Validations
+end
+
+# Raised when an enum attribute is assigned a name that is not a member of its
+# enum (for example `post.status = "bogus"`) and the attribute was declared
+# without `validate:`.
+class Grant::UnknownEnumValueError < Grant::ErrorBase
 end

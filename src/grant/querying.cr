@@ -607,7 +607,11 @@ module Grant::Querying
 
     private def build_find_by_clause(criteria : Grant::ModelArgs)
       keys = criteria.keys
-      criteria_hash = criteria.dup
+      criteria_hash = Hash(Symbol | String, Grant::Columns::Type).new
+
+      criteria.each do |name, value|
+        criteria_hash[name] = coerce_where_value(name.to_s, value).as(Grant::Columns::Type)
+      end
 
       clauses = keys.map do |name|
         if criteria_hash.has_key?(name) && !criteria_hash[name].nil?
@@ -646,6 +650,7 @@ module Grant::Querying
     clear_before_type_cast
     self.new_record = false
     clear_loaded_associations
+    _autosave_reset_for_reload
     ensure_dirty_tracking_initialized
     original_attributes, changed_attributes, previous_changes = dirty_tracking_hashes
     original_attributes.clear

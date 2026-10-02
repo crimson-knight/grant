@@ -135,6 +135,34 @@ Available lock modes:
 - `ShareNoWait` - Shared lock, fail if locked
 - `ShareSkipLocked` - Shared lock, skip locked rows
 
+### Custom lock clauses and `unlock`
+
+For a vendor clause the enum has no name for, build a `Grant::Locking.clause`. It
+compiles only for a string literal or a constant, so request data can never reach
+the SQL. SQLite drops the clause, like every other row lock.
+
+```crystal
+NO_KEY_UPDATE = Grant::Locking.clause("FOR NO KEY UPDATE")
+
+User.where(id: 1).lock(NO_KEY_UPDATE).first!
+User.lock.unlock          # or lock(false): clears a lock a scope added
+```
+
+### Waiting and not waiting
+
+`UpdateNoWait` raises `Grant::LockWaitTimeout` (also named
+`Grant::Locking::LockWaitTimeoutError`) when another transaction holds the row.
+`UpdateSkipLocked` returns only the rows nobody holds. Row locks are only useful
+inside a transaction: `lock!` and `reload_with_lock` raise
+`Grant::Locking::TransactionRequiredError` on adapters with real row locks when
+none is open.
+
+### Unsaved changes
+
+`lock!`, `reload_with_lock` and `with_lock` reload the row, which would throw away
+unsaved changes, so they raise `Grant::UnsavedChangesLockError` for a changed
+record. Pass `force: true` to discard the changes on purpose.
+
 ### Block-Based Locking
 
 Automatically handle transactions and locking:
@@ -158,6 +186,12 @@ user.with_lock do |locked_user|
 end
 ```
 
+`with_lock` returns the block's value, `nil` included, and takes the transaction
+options `requires_new:` (a savepoint inside an open transaction) and
+`isolation:` (outermost transaction only). A block that raises
+`Grant::Transaction::Rollback` undoes its work and raises `Rollback` again, since
+there is no value to return.
+
 ## Optimistic Locking
 
 Optimistic locking uses a version column to detect concurrent modifications.
@@ -178,6 +212,25 @@ end
 ```
 
 This adds a `lock_version` column that increments with each update.
+
+### A different column, and turning it off
+
+Name the column with `locking_column` before the include; it declares an `Int32`
+column that defaults to 0:
+
+```crystal
+class Account < Grant::Base
+  locking_column :revision
+  include Grant::Locking::Optimistic
+end
+
+Account.locking_enabled?          # => true
+Account.lock_optimistically = false # stop checking and bumping
+```
+
+The version is checked and bumped on `save`, `touch` and `destroy` (one guarded
+`UPDATE`/`DELETE`, no read first). `update_columns` and `update_all` skip it, as in
+ActiveRecord. `delete` (no callbacks) does not check the version.
 
 ### Handling Conflicts
 

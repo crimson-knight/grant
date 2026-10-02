@@ -22,7 +22,8 @@ class Grant::AssociationCollection(Owner, Target)
                  @dependent : Symbol? = nil,
                  @through_writer : Proc(Grant::Associations::ThroughWriter)? = nil,
                  @callbacks : Grant::AssociationCallbacks(Target)? = nil,
-                 @pending : Array(Target)? = nil)
+                 @pending : Array(Target)? = nil,
+                 @counter_column : String? = nil)
     @writer = nil.as(Grant::Associations::ThroughWriter?)
   end
 
@@ -103,6 +104,8 @@ class Grant::AssociationCollection(Owner, Target)
   def size : Int64
     if records = @loaded_records
       records.size.to_i64
+    elsif cached = cached_count
+      cached
     else
       count
     end
@@ -429,6 +432,21 @@ class Grant::AssociationCollection(Owner, Target)
     found
   end
 
+  # The members of this collection whose primary keys are in *keys*, without
+  # raising for a missing one: read from the loaded records when the collection
+  # is loaded, otherwise found with one `WHERE pk IN (...)` query scoped to the
+  # owner. `accepts_nested_attributes_for` uses it to check submitted ids.
+  def records_for_ids(keys : Array(Grant::Columns::Type)) : Array(Target)
+    return [] of Target if keys.empty?
+
+    if records = @loaded_records
+      wanted = keys.map(&.to_s)
+      return records.select { |record| wanted.includes?(record.primary_key_value.to_s) }
+    end
+    ensure_lazy_loading_allowed
+    in_keys(association_relation, Target.primary_name, keys).select
+  end
+
   # For a collection of *join* rows (the `through:` association of another
   # collection): the writer that inserts and deletes join rows for that other
   # collection, whose source association on the join model is *source_name*.
@@ -536,6 +554,7 @@ class Grant::AssociationCollection(Owner, Target)
             else
               association_relation.update_all(nullify_assignments)
             end
+    adjust_counter(-count) unless @through
     @loaded_records.try(&.clear)
     sync_loaded_association
     count
@@ -573,6 +592,8 @@ class Grant::AssociationCollection(Owner, Target)
 
     @pending.try { |list| list << record }
     track_loaded(record)
+    # A built record waits on the owner, whose save persists it.
+    stage_for_owner(record) unless defer_after_add
     run_hooks(:after_add, built) unless defer_after_add
     {record, true}
   end
@@ -609,6 +630,7 @@ class Grant::AssociationCollection(Owner, Target)
       end
     end
     record.save! if owner.persisted? && (key_changed || !record.persisted?)
+    stage_for_owner(record) unless owner.persisted?
     set_inverse(record)
     track_loaded(record)
   end
@@ -657,11 +679,13 @@ class Grant::AssociationCollection(Owner, Target)
       writer.insert(owner_key, records.map { |record| record.read_attribute(writer.target_key) })
     else
       keys = records.map { |record| record.primary_key_value.as(Grant::Columns::Type) }
+      moved = records.count { |record| record.read_attribute(@foreign_key.to_s) != owner_key }
       assignments = [{@foreign_key.to_s, owner_key}] of Tuple(String, Grant::Columns::Type)
       if (type_column = @type_column) && (type_value = @type_value)
         assignments << {type_column, type_value.as(Grant::Columns::Type)}
       end
       in_keys(Target.current_scope, Target.primary_name, keys).update_all(assignments)
+      adjust_counter(moved.to_i64)
     end
     records.each do |record|
       set_inverse(record)
@@ -686,11 +710,12 @@ class Grant::AssociationCollection(Owner, Target)
       remove_join_rows(keys, strategy)
     else
       relation = in_keys(association_relation, Target.primary_name, keys)
-      if strategy == :delete_all
-        relation.delete_all
-      else
-        relation.update_all(nullify_assignments)
-      end
+      removed = if strategy == :delete_all
+                  relation.delete_all
+                else
+                  relation.update_all(nullify_assignments)
+                end
+      adjust_counter(-removed)
     end
     @loaded_records.try(&.reject! { |record| keys.any? { |key| key.to_s == record.primary_key_value.to_s } })
     sync_loaded_association
@@ -709,11 +734,11 @@ class Grant::AssociationCollection(Owner, Target)
       relation = in_keys(association_relation, Target.primary_name, keys)
       case strategy
       when :delete_all
-        relation.delete_all
+        adjust_counter(-relation.delete_all)
       when :destroy
         Owner.transaction { members.each(&.destroy!) }
       else
-        relation.update_all(nullify_assignments)
+        adjust_counter(-relation.update_all(nullify_assignments))
         members.each do |record|
           record.write_attribute(@foreign_key.to_s, nil)
           @type_column.try { |column| record.write_attribute(column, nil) }
@@ -785,6 +810,45 @@ class Grant::AssociationCollection(Owner, Target)
       assignments << {type_column, nil.as(Grant::Columns::Type)}
     end
     assignments
+  end
+
+  # Registers a record built or appended on an unsaved owner (or built on a
+  # saved one) so the owner's save persists it.
+  private def stage_for_owner(record : Target) : Nil
+    return if @through
+    if association_name = @association_name
+      owner._autosave_stage(association_name, record)
+    end
+  end
+
+  # The counter column of this association that Grant maintains, if any: the
+  # `counter_cache:` column named on the has_many, else the child's
+  # `belongs_to` counter cache.
+  private def counter_column : String?
+    return nil if @through || @scope
+    @counter_column || Grant::CounterCache.active_column(Owner.name, Target.name, @foreign_key.to_s)
+  end
+
+  # The owner's cached count, when the association keeps one and it is set.
+  private def cached_count : Int64?
+    column = counter_column || return
+    return unless owner.persisted?
+    case value = owner.read_attribute(column)
+    when Int32 then value.to_i64
+    when Int64 then value
+    end
+  end
+
+  # Moves the owner's counter cache by *delta* for rows that were removed from
+  # or added to the association without their callbacks running.
+  private def adjust_counter(delta : Int64) : Nil
+    return if delta == 0
+    return unless owner.persisted?
+    column = counter_column || return
+    Owner.__apply_counter_update(
+      Owner.__counter_write_scope.where((@primary_key || Owner.primary_name).to_s, :eq, owner_key),
+      {column => delta})
+    owner.__counter_adjust_in_memory(column, delta)
   end
 
   private def member?(record : Target) : Bool

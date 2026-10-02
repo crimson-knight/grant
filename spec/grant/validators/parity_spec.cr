@@ -333,7 +333,7 @@ describe "Validation parity" do
       m = LengthDetailsModel.new
       m.code = "ab"
       m.valid?.should be_false
-      m.errors.details["code"].should eq([{:error => :too_short}])
+      m.errors.details["code"].should eq([{:error => :too_short, :count => 4}])
     end
 
     it "exposes :comparison for comparison failures" do

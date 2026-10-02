@@ -12,8 +12,9 @@ module Grant
     # indirectly via `current_database` / `current_role` / `current_shard` /
     # `preventing_writes?` rather than constructing one yourself.
     struct ConnectionContext
-      # The target database (connection) name.
-      property database : String
+      # The target database (connection) name, or `nil` when the context
+      # switches role or shard only and each model keeps its own database.
+      property database : String?
       # The target role (`:primary`, `:writing`, `:reading`, ...).
       property role : Symbol
       # The target shard, or `nil` for the unsharded connection.

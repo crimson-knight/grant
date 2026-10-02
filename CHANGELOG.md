@@ -2,6 +2,63 @@
 
 ## Unreleased
 
+### ActiveRecord parity, wave 3
+
+Parity moves from 227 to 283 complete features (55.1% to 68.7% of applicable).
+
+- **Locking:** `with_lock` returning the block's value, lock clauses
+  (`FOR SHARE`, `NOWAIT`, `SKIP LOCKED`), `locking_column`,
+  `lock_optimistically`, and version-checked `destroy` and `touch`.
+- **Errors and validations:** an ActiveRecord-shaped `Errors` object
+  (`of_type?`, `where`, `details` with options, humanized `full_messages`),
+  message generation with I18n hooks (`human_attribute_name`), uniqueness
+  `conditions:`, and one numericality error per failed constraint.
+- **Callbacks:** `run_callbacks`, `after_save_commit`, `on:` for commit
+  callbacks, `prepend:`, and one commit dispatch per record per transaction.
+- **Queries:** a fiber-local query cache with an Amber V2 pipe, bounded async
+  queries (`async_pluck`, `async_exists?`, ...), and scoping blocks.
+- **Attributes:** enum prefixes, suffixes and `not_` scopes, `normalizes` on
+  any type with query coercion, and typed `store_accessor`.
+- **Passwords:** `has_secure_password` (optional `require
+  "grant/secure_password"`, stdlib bcrypt, no new dependency).
+- **Associations:** autosave with validation, `mark_for_destruction`, nested
+  attributes for `belongs_to`, `dependent:` checks at compile time,
+  `restrict_with_error`, counter caches with `reset_counters`, and touch on
+  foreign-key change and destroy.
+- **Sharding:** routed queries inside `with_shard`, merged ordered
+  pagination, correct scatter aggregates (average from sum and count),
+  instance routing, and shard-key immutability.
+- **Configuration:** request middleware for reader/writer and shard
+  selection, and declarative database configurations with per-name
+  `*_DATABASE_URL` overrides.
+- **Schema:** a create-table DSL, full type mapping (Int8/16, BigDecimal
+  precision and scale, Bytes, Date, JSON), `default_sql`, and column options.
+- **Encryption:** previous schemes for key rotation, `ignore_case`,
+  compression, transparent same-name columns with deterministic `where`,
+  fiber-local encryption context, and keyset-batched migration helpers.
+- **Tooling:** `make spec` runs the suite in small groups
+  (`scripts/spec-groups.sh`); a whole-suite `crystal spec` needs about 20 GB.
+
+**Breaking changes (migration notes):**
+
+- Primary keys default to `auto: true` only for integer and UUID types; a
+  String key is a natural key.
+- `lock!` and `with_lock` raise `UnsavedChangesLockError` on a dirty record
+  (pass `force: true`), and `lock!` outside a transaction raises on PG and
+  MySQL. Stale optimistic `destroy` and `touch` raise `StaleObjectError`.
+- `full_messages` humanize attribute names ("First name"); numericality adds
+  one error per constraint; `Errors#details` entries carry their options.
+- Commit callbacks run once per record per transaction.
+- `normalizes` runs in the setter, not before validation. Enum bang setters
+  (`published!`) save persisted records.
+- `has_many` validates new children on owner save; built children and new
+  `belongs_to` parents are saved with the owner. Nested attributes raise
+  `RecordNotFound` for ids outside the association.
+- Queries inside `with_shard` target only that shard. Changing a persisted
+  record's shard key raises `ShardKeyChangedError` (use `move_to_shard`);
+  cross-shard joins raise `CrossShardJoinError`.
+- Encryption migration helpers return counts and batch by key.
+
 ### ActiveRecord parity, wave 2
 
 Parity moves from 137 to 227 complete features (33.3% to 55.1% of applicable).

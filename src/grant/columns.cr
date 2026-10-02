@@ -153,7 +153,10 @@ module Grant::Columns
     {% converter = (options[:converter] && !options[:converter].nil?) ? options[:converter] : nil %}
     {% primary = (options[:primary] && !options[:primary].nil?) ? options[:primary] : false %}
     {% auto = (options[:auto] && !options[:auto].nil?) ? options[:auto] : false %}
-    {% auto = (!options || (options && options[:auto] == nil)) && primary %}
+    # Only integer and UUID keys can be generated on insert, so any other
+    # primary key type (a String slug, say) defaults to `auto: false`.
+    {% auto_generatable = not_nilable_type.resolve < Int || not_nilable_type.resolve == UUID %}
+    {% auto = (!options || (options && options[:auto] == nil)) && primary && auto_generatable %}
 
     {% nilable = (type.is_a?(Path) ? type.resolve.nilable? : (type.is_a?(Union) ? type.types.any?(&.resolve.nilable?) : (type.is_a?(Generic) ? type.resolve.nilable? : type.nilable?))) %}
 
@@ -198,7 +201,7 @@ module Grant::Columns
     {% end %}
 
     {% if emit %}
-    @[Grant::Column(column_type: {{column_type}}, converter: {{converter}}, auto: {{auto}}, primary: {{primary}}, nilable: {{nilable}}, setter_type: {{not_nilable_type}})]
+    @[Grant::Column(column_type: {{column_type}}, converter: {{converter}}, auto: {{auto}}, primary: {{primary}}, nilable: {{nilable}}, setter_type: {{not_nilable_type}}, null: {{options[:null]}}, limit: {{options[:limit]}}, precision: {{options[:precision]}}, scale: {{options[:scale]}}, comment: {{options[:comment]}}, collation: {{options[:collation]}}, default_sql: {{options[:default_sql]}})]
     @{{decl.var}} : {{decl.type}}? {% unless decl.value.is_a? Nop %} = {{decl.value}} {% end %}
 
     # The value assigned by mass assignment before conversion, when it
@@ -256,9 +259,16 @@ module Grant::Columns
       attribute_will_change!({{decl.var.stringify}})
     end
 
+    # Assignment hook applied by the setter (see `normalizes`).
+    private def __assign_hook_{{decl.var.id}}(value)
+      value
+    end
+
     {% if nilable || primary %}
       def {{decl.var.id}}=(value : {{not_nilable_type}}?)
         __guard_readonly_attribute!({{decl.var.stringify}})
+        # `normalizes` overrides this hook; unaffected columns pay an inlined identity call.
+        value = __assign_hook_{{decl.var.id}}(value)
         # Dirty tracking compares assignments against the initialized baseline.
         ensure_dirty_tracking_initialized
 
@@ -384,6 +394,8 @@ module Grant::Columns
     {% else %}
       def {{decl.var.id}}=(value : {{type.id}})
         __guard_readonly_attribute!({{decl.var.stringify}})
+        # `normalizes` overrides this hook; unaffected columns pay an inlined identity call.
+        value = __assign_hook_{{decl.var.id}}(value)
         # Dirty tracking compares assignments against the initialized baseline.
         ensure_dirty_tracking_initialized
 

@@ -86,9 +86,14 @@ class Grant::Query::Builder(Model)
     return add_association_condition(join, field, value) if association_condition?(field)
 
     field = resolve_column_alias(field)
+    {% if Model.class.has_method?(:coerce_where_value) %}
+      value = Model.coerce_where_value(field, value)
+    {% end %}
     if value.is_a?(Array)
       add_array_condition_per_type(join, field, value)
     elsif value.is_a?(Enum)
+      add_field_condition(join, field, :eq, value.to_s)
+    elsif value.is_a?(Symbol)
       add_field_condition(join, field, :eq, value.to_s)
     elsif value.is_a?(Range)
       add_range_condition(join, field, value)
@@ -480,7 +485,7 @@ class Grant::Query::Builder(Model)
     differing << :joins if @join_clauses != other.join_clauses
     differing << :limit if @limit != other.limit
     differing << :offset if @offset != other.offset
-    differing << :lock if @lock_mode != other.lock_mode
+    differing << :lock if @lock_mode != other.lock_mode || @lock_clause != other.lock_clause
     differing << :select if @select_columns != other.select_columns
     differing << :distinct if @distinct != other.distinct?
     differing << :includes if @includes_associations != other.includes_associations

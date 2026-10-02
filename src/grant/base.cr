@@ -38,6 +38,7 @@ require "./eager_loading"
 require "./association_loader"
 require "./commit_callbacks"
 require "./scoping"
+require "./query_cache"
 require "./attribute_api"
 require "./logging"
 require "./query_analysis"
@@ -46,6 +47,7 @@ require "./secure_token"
 require "./signed_id"
 require "./token_for"
 require "./serialized_column"
+require "./store_accessor"
 require "./normalization"
 require "./nested_attributes"
 require "./async"
@@ -132,16 +134,12 @@ abstract class Grant::Base
   extend Select
   extend EagerLoading::ClassMethods
   extend Scoping::ClassMethods
+  extend QueryCache::ClassMethods
   extend Grant::Async::ClassMethods
   extend Grant::Aggregations::ClassMethods
   extend ValueObjects::ClassMethods
   extend Attributes::ClassMethods
   extend Integration::ClassMethods
-
-  # Make normalization macro available
-  macro normalizes(attribute, **options, &block)
-    Grant::Normalization.normalizes({{attribute}}, {{**options}}) {{block}}
-  end
 
   # Serialization support is included on the abstract base itself (not only on
   # concrete subclasses via `inherited`) so that the abstract `Grant::Base` type
@@ -351,6 +349,10 @@ abstract class Grant::Base
     end
 
     def self.current_scope : Grant::Query::Builder({{@type}})
+      if scoped = Grant::Scoping.current_relation({{@type}})
+        return scoped
+      end
+
       # `__builder` may be overridden by the sharding macro and Crystal sees
       # the union of builders from STI siblings here. Cast back to this model's
       # builder type while retaining the sharded subclass at runtime.

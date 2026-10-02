@@ -743,6 +743,7 @@ class Grant::Query::Builder(Model)
   # ```
   def lock!(mode : Grant::Locking::LockMode = Grant::Locking::LockMode::Update) : self
     reset_load_state
+    @lock_clause = nil
     @lock_mode = mode
     self
   end
@@ -1122,6 +1123,7 @@ class Grant::Query::Builder(Model)
         @distinct = false
       when :lock
         @lock_mode = nil
+        @lock_clause = nil
       when :readonly
         @readonly = false
       when :optimizer_hints
@@ -2185,8 +2187,8 @@ class Grant::Query::Builder(Model)
     own_includes_associations.concat(other.includes_associations).uniq!
     @strict_loading = true if other.strict_loading?
 
-    # Use other's lock mode if set
-    @lock_mode = other.lock_mode if other.lock_mode
+    # Use other's lock if set
+    take_lock_from!(other)
 
     # Merge join clauses
     other.join_clauses.each do |jc|
@@ -2273,6 +2275,7 @@ require "./ordering"
 require "./joins"
 require "./grouping"
 require "./readonly"
+require "./locking"
 require "./select_expressions"
 require "./aggregations"
 require "./pluck"

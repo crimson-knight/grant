@@ -5,22 +5,89 @@ module Grant::Locking::Optimistic
     getter record_class : String
     getter record_id : String?
 
-    def initialize(record : Grant::Base)
+    # *operation* names the write that found the row changed or gone: "update"
+    # (also used for touch) or "destroy".
+    def initialize(record : Grant::Base, operation : String = "update")
       @record_class = record.class.name
       @record_id = record.primary_key_value.to_s rescue nil
 
       message = if id = @record_id
-                  "Attempted to update a stale #{@record_class} (id: #{id})"
+                  "Attempted to #{operation} a stale #{@record_class} (id: #{id})"
                 else
-                  "Attempted to update a stale #{@record_class}"
+                  "Attempted to #{operation} a stale #{@record_class}"
                 end
 
       super(message)
     end
   end
 
+  # Class-body macros every model can use before it includes the module.
+  module Declaration
+    macro included
+      extend ClassMethods
+    end
+
+    module ClassMethods
+      # Whether writes on this model check and bump a lock version. False for
+      # models that do not include `Grant::Locking::Optimistic`.
+      def locking_enabled? : Bool
+        false
+      end
+    end
+
+    # Names the column that holds the optimistic lock version (an `Int32`
+    # that defaults to 0) and declares it. It must come before
+    # `include Grant::Locking::Optimistic`, which otherwise declares
+    # `lock_version`.
+    #
+    # ```
+    # class Account < Grant::Base
+    #   locking_column :revision
+    #   include Grant::Locking::Optimistic
+    # end
+    # ```
+    macro locking_column(name)
+      {% if @type.ancestors.any? { |ancestor| ancestor.stringify == "Grant::Locking::Optimistic" } %}
+        {% raise "locking_column #{name} must be declared before `include Grant::Locking::Optimistic` in #{@type.name}" %}
+      {% end %}
+      LOCKING_COLUMN = {{name.id.stringify}}
+      column {{name.id}} : Int32 = 0
+    end
+  end
+
   macro included
-    column lock_version : Int32 = 0
+    {% locking_name = @type.has_constant?("LOCKING_COLUMN") ? @type.constant("LOCKING_COLUMN").id.stringify : "lock_version" %}
+    # `locking_column` already declared the column for a custom name.
+    {% unless @type.has_constant?("LOCKING_COLUMN") %}
+      column lock_version : Int32 = 0
+    {% end %}
+
+    # The column that holds the lock version.
+    def self.locking_column : String
+      {{locking_name}}
+    end
+
+    # Reached only by a `locking_column :name` written after the include (the
+    # macro of that name is shadowed by the reader above once the module is in).
+    def self.locking_column(name) : NoReturn
+      \{% raise "locking_column must be declared before `include Grant::Locking::Optimistic` in #{@type.name}" %}
+    end
+
+    # Set to false to stop checking and bumping the version (ActiveRecord's
+    # `lock_optimistically`); the column then behaves like any other.
+    class_property lock_optimistically : Bool = true
+
+    def self.locking_enabled? : Bool
+      lock_optimistically
+    end
+
+    private def __locking_version : Int32
+      @{{locking_name.id}} || 0
+    end
+
+    private def __locking_version=(version : Int32) : Int32
+      @{{locking_name.id}} = version
+    end
 
     after_update :__increment_lock_version
 
@@ -42,7 +109,7 @@ module Grant::Locking::Optimistic
     # Capture lock_version before saving an existing record so __check_lock_version
     # can compare against it in the before_update callback.
     def save(*, validate : Bool = true, skip_timestamps : Bool = false, context : Symbol | Array(Symbol) | Nil = nil)
-      @lock_version_was = lock_version unless new_record?
+      @lock_version_was = __locking_version unless new_record?
       super
     end
   end
@@ -52,7 +119,7 @@ module Grant::Locking::Optimistic
   end
 
   def lock_version_changed? : Bool
-    lock_version != lock_version_was
+    __locking_version != lock_version_was
   end
 
   def with_optimistic_retry(max_retries : Int32 = self.class.lock_conflict_max_retries, &block)
@@ -80,6 +147,7 @@ module Grant::Locking::Optimistic
   # record's attributes and the incremented lock version, guarded by the
   # version that was loaded from the database.
   protected def __update_with_optimistic_lock(skip_timestamps : Bool = false) : Bool
+    return false unless self.class.locking_enabled?
     raise Grant::ReadOnlyRecordError.new("#{self.class.name} is marked as read only") if readonly?
 
     set_timestamps(mode: :update) unless skip_timestamps || !self.class.record_timestamps?
@@ -95,7 +163,7 @@ module Grant::Locking::Optimistic
     end
 
     self.class.readonly_attributes.each do |readonly_field|
-      next if readonly_field == "lock_version"
+      next if readonly_field == self.class.locking_column
 
       if readonly_index = fields.index(readonly_field)
         fields.delete_at(readonly_index)
@@ -104,10 +172,11 @@ module Grant::Locking::Optimistic
     end
 
     next_lock_version = lock_version_was + 1
-    if lock_version_index = fields.index("lock_version")
+    locking_column = self.class.locking_column
+    if lock_version_index = fields.index(locking_column)
       params[lock_version_index] = next_lock_version
     else
-      fields << "lock_version"
+      fields << locking_column
       params << next_lock_version
     end
 
@@ -116,31 +185,8 @@ module Grant::Locking::Optimistic
       assignments << {field, params[index]}
     end
 
-    record_id = primary_key_value.as(Grant::Columns::Type)
-    query = if self.class.__multitenant?
-              self.class.__tenant_write_scope
-            else
-              self.class.unscoped
-            end
-
-    affected_rows = query
-      .where(self.class.primary_name, :eq, record_id)
-      .where("lock_version = ?", lock_version_was.as(Grant::Columns::Type))
-      .update_all(assignments)
-
-    if affected_rows == 0
-      if self.class.__multitenant? && !self.class._unscoped?
-        tenant_record_exists = self.class.__tenant_write_scope
-          .where(self.class.primary_name, :eq, record_id)
-          .exists?
-        unless tenant_record_exists
-          raise Grant::TenantMismatchError.new(
-            "#{self.class.name} row #{record_id} is outside the current tenant.")
-        end
-      end
-
-      raise StaleObjectError.new(self)
-    end
+    affected_rows = __version_guarded_scope(lock_version_was).update_all(assignments)
+    __raise_stale_record!("update") if affected_rows == 0
 
     true
   rescue ex : StaleObjectError | Grant::TenantMismatchError | Grant::NoTenantError | Grant::ReadOnlyRecordError | Grant::StatementInvalid
@@ -149,23 +195,73 @@ module Grant::Locking::Optimistic
     raise DB::Error.new(err.message, cause: err)
   end
 
+  # Deletes the row only while it still has the version this record loaded, so
+  # a concurrent update or destroy is caught by the affected-row count without
+  # reading the row first.
+  private def __destroy
+    return super unless self.class.locking_enabled?
+
+    affected_rows = __version_guarded_scope(__locking_version).delete_all
+    __raise_stale_record!("destroy") if affected_rows == 0
+    @destroyed = true
+  end
+
+  # Touch is a write, so it checks and bumps the version like an update: the
+  # version bump runs first (one guarded UPDATE), then the normal touch writes
+  # the timestamps.
+  def touch(*fields, time : Time = Grant::Timestamps.current_time) : Bool
+    if self.class.locking_enabled? && persisted? && !readonly? && !self.class.no_touching?
+      current_version = __locking_version
+      affected_rows = __version_guarded_scope(current_version)
+        .update_all([{self.class.locking_column, (current_version + 1).as(Grant::Columns::Type)}])
+      __raise_stale_record!("update") if affected_rows == 0
+
+      self.__locking_version = current_version + 1
+      @lock_version_was = current_version + 1
+      clear_dirty_tracking_for([self.class.locking_column])
+    end
+    super
+  end
+
+  # The primary-key relation for this row, further limited to *version*.
+  private def __version_guarded_scope(version : Int32)
+    scope = self.class.__multitenant? ? self.class.__tenant_write_scope : self.class.unscoped
+    scope
+      .where(self.class.primary_name, :eq, primary_key_value.as(Grant::Columns::Type))
+      .where("#{self.class.quote(self.class.locking_column)} = ?", version.as(Grant::Columns::Type))
+  end
+
+  # Called when a version-guarded write changed no row: the row is either
+  # outside the current tenant or was changed or removed by someone else.
+  private def __raise_stale_record!(operation : String) : NoReturn
+    if self.class.__multitenant? && !self.class._unscoped?
+      tenant_record_exists = self.class.__tenant_write_scope
+        .where(self.class.primary_name, :eq, primary_key_value.as(Grant::Columns::Type))
+        .exists?
+      unless tenant_record_exists
+        raise Grant::TenantMismatchError.new(
+          "#{self.class.name} row #{primary_key_value} is outside the current tenant.")
+      end
+    end
+
+    raise StaleObjectError.new(self, operation)
+  end
+
   private def __increment_lock_version
-    @lock_version = lock_version_was + 1
-    @lock_version_was = lock_version
+    return unless self.class.locking_enabled?
+    self.__locking_version = lock_version_was + 1
+    @lock_version_was = __locking_version
   end
 
   private def attribute_before_last_save(name : String)
-    case name
-    when "lock_version"
+    if name == self.class.locking_column
       lock_version_was
-    else
-      nil
     end
   end
 
   def reload
     super
-    @lock_version_was = lock_version
+    @lock_version_was = __locking_version
     self
   end
 end

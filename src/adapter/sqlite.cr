@@ -2,6 +2,7 @@ require "./base"
 require "sqlite3"
 require "../grant/sqlite_version_check"
 require "../grant/schema/column_info"
+require "./registry"
 
 # Patch SQLite3::Statement so that perform_exec always calls sqlite3_reset in
 # its ensure clause.  SQLite does NOT decrement db->nVdbeActive when
@@ -666,3 +667,5 @@ class Grant::Adapter::Sqlite < Grant::Adapter::Base
 end
 
 require "./sqlite_test_helpers"
+
+Grant::Adapter::Registry.register(Grant::Adapter::Sqlite, "sqlite3", "sqlite")

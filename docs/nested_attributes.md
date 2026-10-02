@@ -10,6 +10,13 @@ This feature provides Rails-style nested attributes functionality for Grant (Gra
 - Validation propagation from nested records to parent
 - Compile-time validation for type safety
 
+## Also supported
+
+- `belongs_to` associations: `accepts_nested_attributes_for publisher : Publisher` builds the parent (or updates the current one when its id is given) and saves it before the record.
+- `reject_if:` takes `:all_blank`, a proc `->(attrs : Hash(String, Grant::Columns::Type)) { ... }`, or the name of an instance method.
+- Submitted ids are checked when the setter runs, with one `WHERE id IN (...)` query, and `Grant::RecordNotFound` is raised for an id that is not part of the association.
+- Errors of an invalid nested record land on the owner as `posts.title`, or `posts[0].title` when the association has `index_errors: true`.
+
 ## Usage
 
 ### Basic Setup

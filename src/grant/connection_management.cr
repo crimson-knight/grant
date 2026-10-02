@@ -192,7 +192,7 @@ module Grant::ConnectionManagement
     # Returns the active database for this fiber, falling back to the model's
     # configured default when no connected_to block is active.
     def self.database_name : String
-      connection_context.try(&.database) || default_database_name
+      connection_context_database || default_database_name
     end
 
     # Sets the model's configured default database. connected_to never changes
@@ -214,6 +214,25 @@ module Grant::ConnectionManagement
       state.contexts.reverse_each do |context|
         owner = context.owner
         return context if owner.nil? || __connection_owned_by?(owner)
+      end
+      nil
+    end
+
+    # The database named by the innermost applicable `#connected_to` context
+    # that named one, or `nil`. A context entered without *database* (for
+    # example `Grant::Base.connected_to(role: :reading)`) switches the role
+    # only, so each model keeps its own database under it.
+    #
+    # :nodoc:
+    def self.connection_context_database : String?
+      return nil unless state = ConnectionState.current?
+
+      state.contexts.reverse_each do |context|
+        owner = context.owner
+        next unless owner.nil? || __connection_owned_by?(owner)
+        if database = context.database
+          return database
+        end
       end
       nil
     end
@@ -723,7 +742,7 @@ module Grant::ConnectionManagement
       implied = role ? Grant::ConnectionManagement.reading_role?(role) : false
 
       ConnectionContext.new(
-        database || current_database,
+        database,
         role || current_role,
         shard || current_shard,
         prevent_writes || implied || inherited_prevention,
@@ -740,7 +759,7 @@ module Grant::ConnectionManagement
     # User.connected_to(database: "analytics") { User.current_database } # => "analytics"
     # ```
     def current_database : String
-      connection_context.try(&.database) || default_database_name
+      connection_context_database || default_database_name
     end
 
     # Returns the connection role (`Symbol`) currently in effect: an explicit
