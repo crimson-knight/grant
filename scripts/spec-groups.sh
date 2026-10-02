@@ -32,6 +32,8 @@
 #                           group its own, so a rerun of that group compiles warm
 #                           (about 190 MB of disk per group)
 #   SPEC_GROUP_CACHE_DIR    root of those caches (default: .crystal-cache/spec-groups-cache)
+#   SPEC_GROUP_LINK_FLAGS   passed as --link-flags (default on Linux: -Wl,--no-export-dynamic,
+#                           so GNU ld does not overflow the symbol version table; see below)
 #
 # Incremental compilation keeps only the last program it compiled, so a cache
 # shared by every group mostly saves parse and macro work (measured on
@@ -58,6 +60,17 @@ case "${SPEC_GROUP_INCREMENTAL:-auto}" in
     ;;
   *) echo "SPEC_GROUP_INCREMENTAL must be 0 or 1, not $SPEC_GROUP_INCREMENTAL" >&2; exit 2 ;;
 esac
+# Crystal links with -rdynamic on Linux, so every symbol goes into .dynsym.
+# GNU ld reads the "@" in Crystal's inherited-method symbols
+# (*ArgumentError@Exception#initialize<String>:Nil) as a symbol version, and
+# the larger groups define more than 32767 of them.
+# Version indexes are 15 bits, so the glibc version references overflow and
+# the binary will not start: "symbol lookup error: undefined symbol: environ,
+# version <some Crystal method name>". Not exporting the symbols avoids it.
+default_link_flags=""
+[ "$(uname -s)" = Linux ] && default_link_flags="-Wl,--no-export-dynamic"
+link_flags="${SPEC_GROUP_LINK_FLAGS-$default_link_flags}"
+[ -n "$link_flags" ] && spec_flags+=("--link-flags=$link_flags")
 case "$cache_mode" in
   adapter|per-group) ;;
   *) echo "SPEC_GROUP_CACHE must be adapter or per-group, not $cache_mode" >&2; exit 2 ;;
@@ -70,7 +83,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --list) list_only=true ;;
     --only) shift; only+=("${1%/}") ;;
-    -h|--help) sed -n '2,39p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,41p' "$0"; exit 0 ;;
     *) adapters+=("$1") ;;
   esac
   shift
