@@ -48,7 +48,8 @@ describe "reorder, reselect and regroup raw-SQL forms" do
 
     it "takes a direction and a NULL placement" do
       seqs(W6roRow.order(:name).reorder(:rank, :desc)).should eq([4, 3, 2, 1])
-      W6roRow.order(:name).reorder("rank", :desc).to_sql.should contain("ORDER BY rank DESC")
+      # rank is reserved on MySQL, so Grant quotes it on every adapter.
+      W6roRow.order(:name).reorder("rank", :desc).to_sql.should contain("ORDER BY #{W6roRow.quote("rank")} DESC")
       W6roRow.order(:name).reorder(:rank, nulls: :last).order_fields.size.should eq(1)
     end
 

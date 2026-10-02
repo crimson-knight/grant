@@ -82,7 +82,8 @@ describe "query cache" do
       QueryCacheQ05Note.order(:rank).first!.title.should eq "renamed"
       QueryCacheQ05Note.where(rank: 3).delete_all
       QueryCacheQ05Note.count.should eq 2
-      QueryCacheQ05Note.update_all("rank = 9")
+      # rank is a reserved word on MySQL, so the raw SQL quotes it.
+      QueryCacheQ05Note.update_all("#{QueryCacheQ05Note.quote("rank")} = 9")
       QueryCacheQ05Note.where(rank: 9).count.should eq 2
     end
   end

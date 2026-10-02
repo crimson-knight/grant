@@ -125,7 +125,10 @@ describe "Timestamps" do
 
     it "uses the shared clock for the bulk touch default" do
       row = W6Dated.create!(title: "d")
-      W6Stamped.create!(title: "other")
+      stamped = W6Stamped.create!(title: "other")
+      # Start from an old stamp so the touch changes the row: MySQL counts
+      # changed rows, not matched ones.
+      stamped.update_columns(updated_at: Time.utc(2000, 1, 1))
       W6Stamped.touch_all.should eq(1)
       W6Stamped.first!.updated_at.not_nil!.should be_close(Grant::Timestamps.current_time, 5.seconds)
       row.id.should_not be_nil
