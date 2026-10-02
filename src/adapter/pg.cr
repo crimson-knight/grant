@@ -49,6 +49,7 @@ class Grant::Adapter::Pg < Grant::Adapter::Base
       "Array(Float64)" => "DOUBLE PRECISION[]",
       "Array(Bool)"    => "BOOLEAN[]",
       "Array(UUID)"    => "UUID[]",
+      "Array(Time)"    => "TIMESTAMP[]",
     }
   end
 
@@ -67,14 +68,16 @@ class Grant::Adapter::Pg < Grant::Adapter::Base
   end
 
   def insert(table_name : String, fields, params, lastval) : Int64
-    statement = String.build do |stmt|
-      stmt << "INSERT INTO #{quote(table_name)} ("
-      stmt << fields.map { |name| "#{quote(name)}" }.join(", ")
-      stmt << ") VALUES ("
-      stmt << position_str(fields.size)
-      stmt << ")"
+    statement = cached_insert_statement(table_name, fields, lastval) do
+      String.build do |stmt|
+        stmt << "INSERT INTO #{quote(table_name)} ("
+        stmt << fields.map { |name| "#{quote(name)}" }.join(", ")
+        stmt << ") VALUES ("
+        stmt << position_str(fields.size)
+        stmt << ")"
 
-      stmt << " RETURNING #{quote(lastval)}" if lastval
+        stmt << " RETURNING #{quote(lastval)}" if lastval
+      end
     end
 
     last_id = -1_i64

@@ -59,7 +59,7 @@ module Grant::Aggregations
     def pick(column : Symbol | String) : Grant::Columns::Type?
       query = current_scope
       if query.order_fields.empty?
-        query.order_fields << {field: primary_name, direction: Grant::Query::Builder::Sort::Ascending}
+        query.own_order_fields << {field: primary_name, direction: Grant::Query::Builder::Sort::Ascending}
       end
       query.pick(column).try(&.first)
     end
@@ -251,9 +251,9 @@ module Grant::Aggregations
 
       # Create new builder with reversed order
       new_builder = self.class.new(@db_type)
-      new_builder.where_fields.concat(@where_fields)
-      new_builder.group_fields.concat(@group_fields)
-      reverse_order.each { |field| new_builder.order_fields << field }
+      new_builder.own_where_fields.concat(@where_fields)
+      new_builder.own_group_fields.concat(@group_fields)
+      reverse_order.each { |field| new_builder.own_order_fields << field }
       new_builder.limit = 1
 
       new_builder.select.first?

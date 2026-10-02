@@ -267,17 +267,17 @@ module Grant::Sharding
       new_builder = self.class.new(@db_type, @boolean_operator)
 
       # Copy all fields
-      new_builder.where_fields.concat(@where_fields)
-      new_builder.group_fields.concat(@group_fields)
+      new_builder.own_where_fields.concat(@where_fields)
+      new_builder.own_group_fields.concat(@group_fields)
       new_builder.offset = @offset
       new_builder.limit = @limit
 
       # Reverse order fields
       @order_fields.each do |order|
-        new_builder.order_fields << Grant::Query::OrderSupport.reverse(order)
+        new_builder.own_order_fields << Grant::Query::OrderSupport.reverse(order)
       end
       if new_builder.order_fields.empty?
-        new_builder.order_fields << {field: Model.primary_name, direction: Grant::Query::Builder::Sort::Descending}
+        new_builder.own_order_fields << {field: Model.primary_name, direction: Grant::Query::Builder::Sort::Descending}
       end
 
       # Preserve shard settings

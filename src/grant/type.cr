@@ -67,6 +67,18 @@ module Grant::Type
     result.read(Time?).try &.in(Grant.settings.default_timezone)
   end
 
+  # Converts a `DB::ResultSet` to `Array(Time)` (PostgreSQL `timestamp[]`).
+  def from_rs(result : DB::ResultSet, t : Array(Time).class) : Array(Time)
+    zone = Grant.settings.default_timezone
+    result.read(Array(Time)).map(&.in(zone))
+  end
+
+  # Converts a `DB::ResultSet` to `Array(Time)?`.
+  def from_rs(result : DB::ResultSet, t : Array(Time)?.class) : Array(Time)?
+    zone = Grant.settings.default_timezone
+    result.read(Array(Time)?).try(&.map(&.in(zone)))
+  end
+
   def from_rs(result : DB::ResultSet, t : Time.class, adapter : Grant::Adapter::Base) : Time
     adapter.read_time(result).in(Grant.settings.default_timezone)
   end
@@ -81,6 +93,16 @@ module Grant::Type
 
   def from_rs(result : DB::ResultSet, t : T?.class, adapter : Grant::Adapter::Base) : T? forall T
     from_rs(result, t)
+  end
+
+  # Converts a `DB::ResultSet` to `Bytes` (a `BLOB` or `BYTEA` column).
+  def from_rs(result : DB::ResultSet, t : Bytes.class) : Bytes
+    result.read(Bytes)
+  end
+
+  # Converts a `DB::ResultSet` to `Bytes?`.
+  def from_rs(result : DB::ResultSet, t : Bytes?.class) : Bytes?
+    result.read(Bytes?)
   end
 
   # Converts a `DB::ResultSet` to `UUID`.
@@ -193,5 +215,28 @@ module Grant::Type
   # :ditto:
   def convert_type(value : String, type : JSON::Any?.class) : JSON::Any?
     convert_type(value, JSON::Any)
+  end
+end
+
+module Grant::Type
+  # Converts decimal text to a `BigDecimal`; invalid text raises
+  # `ArgumentError`, which mass assignment reports as a conversion error.
+  def convert_type(value : String, type : BigDecimal.class) : BigDecimal
+    Grant::Converters::Decimal.parse(value)
+  end
+
+  # :ditto:
+  def convert_type(value : String, type : BigDecimal?.class) : BigDecimal?
+    Grant::Converters::Decimal.parse(value)
+  end
+
+  # Integers and floats become exact decimals.
+  def convert_type(value : Int | Float, type : BigDecimal.class) : BigDecimal
+    BigDecimal.new(value.to_s)
+  end
+
+  # :ditto:
+  def convert_type(value : Int | Float, type : BigDecimal?.class) : BigDecimal?
+    BigDecimal.new(value.to_s)
   end
 end

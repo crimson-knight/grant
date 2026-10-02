@@ -50,6 +50,35 @@ module Grant::Query
   alias WhereField = NamedTuple(join: Symbol, field: String, operator: Symbol, value: Grant::Columns::Type) |
                      NamedTuple(join: Symbol, stmt: String, value: Grant::Columns::Type) |
                      NamedTuple(join: Symbol, stmt: String, values: Array(Grant::Columns::Type))
+
+  # The empty clause lists every new relation starts with. They are shared by
+  # all relations and never written: a relation's `@shared_arrays` bit for a
+  # list is set while it still holds one of these, so the first write goes
+  # through `own_<list>` and copies it. A relation that adds only a WHERE
+  # therefore never allocates its (empty) ORDER, GROUP, JOIN, HAVING or
+  # association lists.
+  module EmptyClauses
+    WHERE_FIELDS               = [] of Grant::Query::WhereField
+    DEFAULT_SCOPE_WHERE_FIELDS = [] of Grant::Query::WhereField
+    ORDER_FIELDS               = [] of NamedTuple(field: String, direction: Grant::Query::Builder::Sort)
+    GROUP_FIELDS               = [] of NamedTuple(field: String)
+    JOIN_CLAUSES               = [] of NamedTuple(type: Symbol, table: String, on: String)
+    HAVING_CLAUSES             = [] of NamedTuple(stmt: String, value: Grant::Columns::Type)
+    INCLUDES_ASSOCIATIONS      = [] of Grant::Includes
+    PRELOAD_ASSOCIATIONS       = [] of Grant::Includes
+    EAGER_LOAD_ASSOCIATIONS    = [] of Grant::Includes
+    INDEX_HINTS                = [] of Grant::Query::IndexHint
+    OPTIMIZER_HINTS            = [] of String
+
+    # True while every shared list is still empty. A list that has been
+    # written through the wrong path would show up here.
+    def self.untouched? : Bool
+      WHERE_FIELDS.empty? && DEFAULT_SCOPE_WHERE_FIELDS.empty? && ORDER_FIELDS.empty? &&
+        GROUP_FIELDS.empty? && JOIN_CLAUSES.empty? && HAVING_CLAUSES.empty? &&
+        INCLUDES_ASSOCIATIONS.empty? && PRELOAD_ASSOCIATIONS.empty? &&
+        EAGER_LOAD_ASSOCIATIONS.empty? && INDEX_HINTS.empty? && OPTIMIZER_HINTS.empty?
+    end
+  end
 end
 
 class Grant::Query::Builder(Model)
@@ -110,26 +139,26 @@ class Grant::Query::Builder(Model)
   alias AssociationQuery = Grant::Includes
 
   getter db_type : DbType
-  getter where_fields : Array(WhereField) = [] of WhereField
-  getter default_scope_where_fields : Array(WhereField) = [] of WhereField
-  getter order_fields = [] of NamedTuple(field: String, direction: Sort)
-  getter group_fields = [] of NamedTuple(field: String)
+  getter where_fields : Array(WhereField) = Grant::Query::EmptyClauses::WHERE_FIELDS
+  getter default_scope_where_fields : Array(WhereField) = Grant::Query::EmptyClauses::DEFAULT_SCOPE_WHERE_FIELDS
+  getter order_fields : Array(NamedTuple(field: String, direction: Sort)) = Grant::Query::EmptyClauses::ORDER_FIELDS
+  getter group_fields : Array(NamedTuple(field: String)) = Grant::Query::EmptyClauses::GROUP_FIELDS
   getter offset : Int64?
   getter limit : Int64?
-  getter eager_load_associations : Array(Grant::Includes) = [] of Grant::Includes
-  getter preload_associations : Array(Grant::Includes) = [] of Grant::Includes
-  getter includes_associations : Array(Grant::Includes) = [] of Grant::Includes
+  getter eager_load_associations : Array(Grant::Includes) = Grant::Query::EmptyClauses::EAGER_LOAD_ASSOCIATIONS
+  getter preload_associations : Array(Grant::Includes) = Grant::Query::EmptyClauses::PRELOAD_ASSOCIATIONS
+  getter includes_associations : Array(Grant::Includes) = Grant::Query::EmptyClauses::INCLUDES_ASSOCIATIONS
   getter lock_mode : Grant::Locking::LockMode?
   property select_columns : Array(String)?
 
   # Join clauses for INNER JOIN and LEFT JOIN operations.
-  getter join_clauses = [] of NamedTuple(type: Symbol, table: String, on: String)
+  getter join_clauses : Array(NamedTuple(type: Symbol, table: String, on: String)) = Grant::Query::EmptyClauses::JOIN_CLAUSES
 
   # Flag for SELECT DISTINCT queries.
   getter? distinct : Bool = false
 
   # Having clauses for aggregate filtering after GROUP BY.
-  getter having_clauses = [] of NamedTuple(stmt: String, value: Grant::Columns::Type)
+  getter having_clauses : Array(NamedTuple(stmt: String, value: Grant::Columns::Type)) = Grant::Query::EmptyClauses::HAVING_CLAUSES
 
   # Flag for null relation (none) — short-circuits to empty results.
   getter? is_none : Bool = false
@@ -139,7 +168,7 @@ class Grant::Query::Builder(Model)
   # means the array may be referenced by another relation and must be copied
   # before it is written to. Declared next to the Bool flags so they pack into
   # one word (every chain step copies the whole relation).
-  @shared_arrays : UInt16 = 0_u16
+  @shared_arrays : UInt16 = 0x3FF_u16
 
   # Declared here, beside the other flags, so it packs into the same word; the
   # reader and writer are in `readonly.cr`.
@@ -156,7 +185,7 @@ class Grant::Query::Builder(Model)
   def initialize(@db_type, @boolean_operator = :and)
   end
 
-  {% for pair in [{"where_fields", 1}, {"default_scope_where_fields", 2}, {"order_fields", 4}, {"group_fields", 8}, {"join_clauses", 16}, {"having_clauses", 32}, {"includes_associations", 64}, {"preload_associations", 128}, {"eager_load_associations", 256}, {"index_hints", 512}] %}
+  {% for pair in [{"where_fields", 1, "WHERE_FIELDS"}, {"default_scope_where_fields", 2, "DEFAULT_SCOPE_WHERE_FIELDS"}, {"order_fields", 4, "ORDER_FIELDS"}, {"group_fields", 8, "GROUP_FIELDS"}, {"join_clauses", 16, "JOIN_CLAUSES"}, {"having_clauses", 32, "HAVING_CLAUSES"}, {"includes_associations", 64, "INCLUDES_ASSOCIATIONS"}, {"preload_associations", 128, "PRELOAD_ASSOCIATIONS"}, {"eager_load_associations", 256, "EAGER_LOAD_ASSOCIATIONS"}, {"index_hints", 512, "INDEX_HINTS"}] %}
     {% name = pair[0].id %}
     {% bit = pair[1] %}
     # Returns the writable `{{name}}` array, copying it first when another
@@ -176,12 +205,12 @@ class Grant::Query::Builder(Model)
       @{{name}}
     end
 
-    # Replaces `{{name}}` with a fresh empty array.
+    # Replaces `{{name}}` with the shared empty list.
     #
     # :nodoc:
     def clear_{{name}} : Nil
-      @{{name}} = @{{name}}.class.new
-      @shared_arrays &= ~{{bit}}_u16
+      @{{name}} = Grant::Query::EmptyClauses::{{pair[2].id}}
+      @shared_arrays |= {{bit}}_u16
       reset_load_state
     end
   {% end %}
@@ -1391,7 +1420,7 @@ class Grant::Query::Builder(Model)
     inner_sql = version_assembler.select.raw_sql
     has_updated_at = Model.fields.includes?("updated_at")
     newest = has_updated_at ? ", MAX(#{Model.quote("updated_at")})" : ""
-    sql = "SELECT COUNT(*)#{newest} FROM (#{inner_sql}) AS grant_cache_version"
+    sql = Grant::QueryLogs.append("SELECT COUNT(*)#{newest} FROM (#{inner_sql}) AS grant_cache_version")
 
     count = 0_i64
     newest_value : Grant::Columns::Type = nil
@@ -1407,6 +1436,7 @@ class Grant::Query::Builder(Model)
     end
     elapsed_ms = (Time.instant - started).total_milliseconds
     Grant::Logs::SQL.debug { "Query executed (#{elapsed_ms}ms) - #{sql} [#{Model.name}] [rows: 1]" }
+    Grant::Logs.log_verbose(sql, Time.instant - started, Model.name)
 
     @cache_version = cache_version_string(count, newest_value)
   end
@@ -1603,6 +1633,16 @@ class Grant::Query::Builder(Model)
     copy = ordered_copy
     copy.offset!((@offset || 0_i64) + index) unless index.zero?
     copy.limit!(effective).select
+  end
+
+  # The SQL `first` runs for this relation: the ordered statement with
+  # `LIMIT 1`. `Model.find` keeps it per model (`Grant::PrimaryKeyLookup`).
+  #
+  # :nodoc:
+  def __first_statement_sql : String
+    copy = ordered_copy
+    copy.limit!(1)
+    copy.assembler.select.raw_sql
   end
 
   private def limit_or_offset? : Bool
@@ -1981,6 +2021,7 @@ class Grant::Query::Builder(Model)
     specs = [] of Grant::Includes
     associations.each { |spec| specs.concat(Grant::AssociationLoader.normalize(spec)) }
     specs.concat(Grant::AssociationLoader.normalize(nested_associations)) unless nested_associations.empty?
+    Grant::AssociationLoader.enable(Model)
     own_eager_load_associations.concat(specs)
     joins_before = @join_clauses
     was_distinct = @distinct
@@ -1996,6 +2037,7 @@ class Grant::Query::Builder(Model)
   end
 
   private def add_association_specs(target : Array(Grant::Includes), positional : Tuple, nested : NamedTuple) : Nil
+    Grant::AssociationLoader.enable(Model)
     positional.each { |spec| target.concat(Grant::AssociationLoader.normalize(spec)) }
     target.concat(Grant::AssociationLoader.normalize(nested)) unless nested.empty?
   end

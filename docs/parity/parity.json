@@ -1,6 +1,6 @@
 {
   "baseline_source_commit": "32b69d8",
-  "verified_against_commit": "7e5f571b38a09f9193b72efe2a17aa3a596a8ec7",
+  "verified_against_commit": "69989489dcc5b493620e3a468b3a1eb2851c1748",
   "baseline_counts": {
     "complete": 116,
     "partial": 74,
@@ -13,13 +13,14 @@
       "feature": "Grant::Migrator — compile-time CREATE TABLE DSL",
       "status": "partial",
       "evidence_spec_paths": [
+        "spec/grant/schema/w6b_mysql_live_spec.cr",
+        "spec/grant/schema/w6b_add_timestamps_sqlite_spec.cr",
         "spec/grant/schema/create_table_spec.cr",
         "spec/grant/schema/migrator_options_spec.cr",
         "spec/grant/migrator/migrator_spec.cr",
-        "spec/grant/migrator/defaults_spec.cr",
         "spec/grant/schema/model_indexes_spec.cr"
       ],
-      "gap": "Free-form create_table (id types, primary_key, if_not_exists, temporary, force/:cascade, comment, options) and Model.migrator.create/drop options are done and pass on SQLite and PG (MySQL SQL asserted through the recording mock only; no MySQL server available). Model-level `index` declarations are emitted at create time (spec/grant/schema/model_indexes_spec.cr); belongs_to does not yet emit a foreign key, and validates_uniqueness_of does not emit a UNIQUE constraint. Grant::Schema::Migration (M03) wraps SchemaStatements.",
+      "gap": "The 'MySQL asserted through the mock only' part is closed: the DSL now runs against a live MySQL 9.2 server (w6b_mysql_live_spec passes on mysql, sqlite and pg; spec/grant/schema, migrator, composite and tasks pass on mysql apart from the Dumper golden-file specs listed in open_issues). Still open and untouched by this batch: belongs_to does not emit a foreign key at create time, and validates_uniqueness_of does not emit a UNIQUE constraint.",
       "not_applicable_reason": ""
     },
     {
@@ -56,11 +57,13 @@
     {
       "area": "Migrations & schema",
       "feature": "Schema type mapping per adapter",
-      "status": "partial",
+      "status": "complete",
       "evidence_spec_paths": [
+        "spec/grant/schema/w6b_type_catalog_spec.cr",
+        "spec/grant/columns/w6b_bigdecimal_column_spec.cr",
         "spec/grant/schema/type_mapping_spec.cr"
       ],
-      "gap": "Int8/Int16, BigDecimal precision/scale, Bytes, Date, JSON::Any, Time precision, text vs string limit and enums (as String) map per dialect; DSL SQL is asserted for all three dialects and a real create/insert/read round trip runs on the active adapter. Grant models still cannot hold Int8/Int16/BigDecimal/JSON::Any/Bytes values (Columns::Type has no such members; Crystal has no Date type), so those mappings are reachable only through the DSL and TypeCatalog, not model persistence.",
+      "gap": "None. Int8, Int16, BigDecimal (precision/scale), JSON::Any, Bytes, Time precision and String limit all create, insert and read back through a model on SQLite and PG (w6b_type_catalog_spec, w6b_bigdecimal_column_spec). New TypeCatalog.crystal_type maps native types back to Crystal types per dialect. Crystal has no Date type, so DATE is reached with `column x : Time, column_type: \"DATE\"` or the DSL; that part is not applicable. MySQL is asserted through TypeCatalog.refine and the recording statements only (no MySQL server). SQLite keeps BigDecimal in a NUMERIC column, which holds about 15 significant digits exactly (a SQLite storage limit).",
       "not_applicable_reason": ""
     },
     {
@@ -88,12 +91,13 @@
     {
       "area": "Migrations & schema",
       "feature": "Foreign keys — DDL support",
-      "status": "partial",
+      "status": "complete",
       "evidence_spec_paths": [
+        "spec/grant/schema/w6b_migrator_foreign_keys_spec.cr",
         "spec/grant/schema/foreign_keys_spec.cr",
         "spec/grant/schema/references_join_table_spec.cr"
       ],
-      "gap": "Model belongs_to still emits no FK in Migrator. The original gap named this explicitly. MySQL is asserted by recording only.",
+      "gap": "None. `belongs_to :author, constraint: true` or `constraint: {on_delete:, on_update:, deferrable:, name:}` makes Model.migrator.create emit the FOREIGN KEY inside CREATE TABLE (works on SQLite, which cannot ALTER ADD FK). It is opt-in, like ActiveRecord's `references foreign_key: true`, because ActiveRecord models themselves never emit FKs and an automatic FK would break every existing app that creates tables in arbitrary order or inserts orphan rows. validate: false / validate_foreign_key stay in the DSL (ALTER ... NOT VALID has no CREATE TABLE form). MySQL asserted by recording only.",
       "not_applicable_reason": ""
     },
     {
@@ -109,12 +113,14 @@
     {
       "area": "Migrations & schema",
       "feature": "Column defaults in CREATE TABLE",
-      "status": "partial",
+      "status": "complete",
       "evidence_spec_paths": [
+        "spec/grant/schema/w6b_change_column_default_sqlite_spec.cr",
         "spec/grant/schema/column_defaults_spec.cr",
-        "spec/grant/migrator/defaults_spec.cr"
+        "spec/grant/migrator/defaults_spec.cr",
+        "spec/grant/schema/w6b_mysql_live_spec.cr"
       ],
-      "gap": "default_sql expressions (verbatim on PG, parenthesized on MySQL/SQLite where needed) and change_column_default (SET/DROP DEFAULT, PG and MySQL) are done and verified live on PG and SQLite specs. change_column_default on SQLite raises UnsupportedOperation until the M02b table rebuild exists. Non-literal Crystal defaults still produce no DDL default (unchanged, backward compatible).",
+      "gap": "None. change_column_default on SQLite now rebuilds the table (rows, NOT NULL, indexes survive; escaped-quote defaults handled), and it ran live on MySQL 9.2 (MODIFY keeps the default, DROP DEFAULT on a nullable column becomes SET DEFAULT NULL, CURRENT_TIMESTAMP default takes the column's fractional digits). Non-literal Crystal defaults (procs) produce no DDL default by design: a Crystal expression cannot be translated to SQL; default_sql: is the supported route.",
       "not_applicable_reason": ""
     },
     {
@@ -214,24 +220,27 @@
     {
       "area": "Migrations & schema",
       "feature": "add_timestamps / remove_timestamps / t.timestamps",
-      "status": "partial",
+      "status": "complete",
       "evidence_spec_paths": [
+        "spec/grant/schema/w6b_add_timestamps_sqlite_spec.cr",
         "spec/grant/schema/timestamps_ddl_spec.cr"
       ],
-      "gap": "t.timestamps (precision, null, NOT NULL by default), add_timestamps, remove_timestamps and model null: false on created_at/updated_at are done on both adapters. SQLite cannot ADD a NOT NULL column without a default (raises UnsupportedOperation unless default: or null: true given). The model-level `timestamps` macro has no precision: option and keeps its existing nullable output.",
+      "gap": "None. SQLite add_timestamps with the default NOT NULL columns now rebuilds the table (works on an empty table, fails on a populated one exactly as PostgreSQL does; null: true or a default adds them to populated tables), and the failed rebuild now rolls back (add_timestamps used to run the rebuild statement by statement). The model `timestamps` macro takes precision: (DDL fractional digits on PG and MySQL, not only value truncation) and null: false.",
       "not_applicable_reason": ""
     },
     {
       "area": "Migrations & schema",
       "feature": "Column options: null, limit, precision, scale, comment, collation, array",
-      "status": "partial",
+      "status": "complete",
       "evidence_spec_paths": [
+        "spec/grant/schema/w6b_type_catalog_spec.cr",
+        "spec/grant/columns/w6b_bigdecimal_column_spec.cr",
         "spec/grant/schema/migrator_options_spec.cr",
         "spec/grant/schema/create_table_spec.cr",
         "spec/grant/schema/type_mapping_spec.cr",
         "spec/grant/schema/timestamps_ddl_spec.cr"
       ],
-      "gap": "On a model column, `scale:` (and `precision:` on decimals) has no usable carrier: a BigDecimal model column fails to compile once it is queried, because Grant::Type/Columns::Type have no BigDecimal support. Model `precision:` works only for Time. Model `limit:` is silently ignored for non-String types (for example `column n : Int32, limit: 2` still emits INTEGER). `array:` exists only in the DSL; a model gets arrays through its Array(T) type on PostgreSQL. MySQL DDL is checked only as SQL through RecordingStatements. The DSL side covers all seven options on every dialect.",
+      "gap": "None. A BigDecimal model column now takes precision: and scale: (DECIMAL/NUMERIC(p, s)); scale also rounds on assignment (half away from zero) so every adapter stores the same value. limit: on Int32/Int64 columns picks SMALLINT/MEDIUMINT/BIGINT and on Bytes picks MySQL BLOB sizes, and the value reads back whatever width the database returns. `array: true` is not a model option by design: the Crystal type Array(T) is the array declaration (creates INT[]/TEXT[] on PostgreSQL and round trips; other adapters raise UnsupportedOperation), asserted in w6b_type_catalog_spec. MySQL asserted by SQL only (no MySQL server).",
       "not_applicable_reason": ""
     },
     {
@@ -318,24 +327,25 @@
     {
       "area": "Migrations & schema",
       "feature": "ar_internal_metadata environment protection",
-      "status": "partial",
+      "status": "complete",
       "evidence_spec_paths": [
-        "spec/grant/schema/environment_protection_spec.cr"
+        "spec/grant/schema/w6b_internal_metadata_wired_spec.cr",
+        "spec/grant/schema/environment_protection_spec.cr",
+        "spec/grant/tasks/database_tasks_spec.cr"
       ],
-      "gap": "InternalMetadata stores the environment (recorded on first migrate when environment: is given) and check_protected_environments! raises ProtectedEnvironmentError/EnvironmentMismatchError unless forced. It is not yet wired into Migrator#drop_and_create (not an M03-owned file) or the wave-5 Grant::Tasks destructive tasks.",
-      "not_applicable_reason": "",
-      "priority": 16
+      "gap": "None for the gap as written. Grant::Tasks::Database destructive tasks and Schema::Loader were already wired (verified, specced on all three adapters including MySQL scratch databases). Added MigrationContext#check_protected_environments!(force:), #recorded_environment, #set_environment! (db:environment:set) and a protected_environments: option, and Model.migrator.drop_and_create(force:, environment:, protected_environments:) which refuses a database recorded as a protected environment. Note: plain Migrator#drop is not guarded (only drop_and_create), matching the gap's scope.",
+      "not_applicable_reason": ""
     },
     {
       "area": "Migrations & schema",
       "feature": "Unique constraints and exclusion constraints",
-      "status": "partial",
+      "status": "complete",
       "evidence_spec_paths": [
+        "spec/grant/schema/w6b_migrator_unique_spec.cr",
         "spec/grant/schema/check_unique_constraints_spec.cr"
       ],
-      "gap": "Migrator does not emit UNIQUE for validates_uniqueness_of fields. The original gap named this. MySQL is asserted by recording only.",
-      "not_applicable_reason": "",
-      "priority": 5
+      "gap": "None. `validates_uniqueness_of :slug, scope: :author, constraint: true` (or `{name:, deferrable:}`) makes Model.migrator.create emit UNIQUE (slug, author_id), resolving an association scope to its foreign key; it is opt-in and rejected at compile time together with if:/unless:/on:/conditions:/allow_blank: because a constraint always applies. Exclusion constraints are PostgreSQL-only DSL (add_exclusion_constraint, create_table t.exclusion_constraint) as in ActiveRecord, which has no model-level form either. MySQL asserted by recording only.",
+      "not_applicable_reason": ""
     },
     {
       "area": "Migrations & schema",
@@ -359,13 +369,13 @@
     {
       "area": "Migrations & schema",
       "feature": "PostgreSQL enum types, extensions, and custom column types (create_enum, enable_extension, hstore, citext, jsonb, inet, ltree, money)",
-      "status": "partial",
+      "status": "complete",
       "evidence_spec_paths": [
+        "spec/grant/schema/w6b_type_catalog_spec.cr",
         "spec/grant/schema/pg_enum_extension_spec.cr"
       ],
-      "gap": "hstore, citext and ltree are asserted as SQL only; the local PostgreSQL lacks contrib. No Crystal-side type mapping (TypeCatalog).",
-      "not_applicable_reason": "",
-      "priority": 4
+      "gap": "hstore, citext and ltree cannot be created live here (no contrib extensions on the local PostgreSQL), so their SQL is asserted only (model `column_type: \"citext\"/\"hstore\"/\"ltree\"/\"inet\"/\"money\"` emitted verbatim in w6b_type_catalog_spec, DSL SQL in pg_enum_extension_spec). Crystal-side mapping now exists: TypeCatalog.crystal_type(dialect, native) maps hstore/citext/ltree/inet/cidr/macaddr/money to String (their text form) and jsonb to JSON::Any, and TypeCatalog.extension_for names the extension a type needs. A Hash(String, String?) hstore codec is deliberately not provided: it could not be exercised against a real server.",
+      "not_applicable_reason": ""
     },
     {
       "area": "Migrations & schema",
@@ -381,9 +391,10 @@
       "feature": "execute (raw DDL inside a migration) and schema-qualified table names",
       "status": "partial",
       "evidence_spec_paths": [
+        "spec/grant/schema/w6b_execute_schema_qualified_spec.cr",
         "spec/grant/schema/migration_context_spec.cr"
       ],
-      "gap": "Migration#execute runs on the runner's connection inside its transaction and is only printed in a dry run (specced on both adapters). Dotted names are verified through create_table, add_index, add_column and drop_table on PostgreSQL only; the other DSL calls with dotted names and SQLite attached schemas are not specced.",
+      "gap": "Closed and specced on PG schema, MySQL database and SQLite attached database: create_table (with inline index), add_column, add_index, add_timestamps, rename_column, remove_index, remove_timestamps, remove_column, rename_table, create_join_table, drop_table, raw execute. Fixed real bugs found: SQLite index DDL and table rebuild on attached schemas, PG DROP INDEX and RENAME TO with a qualified table, rename_table to a qualified target. Still not specced with dotted names: add_foreign_key/add_reference, change_column/change_column_null/change_column_default, constraints and comments.",
       "not_applicable_reason": ""
     },
     {
@@ -453,14 +464,13 @@
       "feature": "Encrypted attributes (encrypts macro)",
       "status": "partial",
       "evidence_spec_paths": [
+        "spec/grant/encryption/w6b_lazy_decrypt_spec.cr",
         "spec/grant/encryption_spec.cr",
         "spec/grant/encryption_database_spec.cr",
         "spec/grant/encryption_key_rotation_spec.cr",
-        "spec/grant/encryption/transparent_column_spec.cr",
-        "spec/grant/encryption/options_spec.cr",
-        "spec/grant/encryption/previous_schemes_spec.cr"
+        "spec/grant/encryption/options_spec.cr"
       ],
-      "gap": "Cipher is AES-256-CBC + HMAC, not AES-GCM. There are no key_provider:, encryptor: or message_serializer: options. Typed columns decrypt eagerly when a row loads. MySQL not run.",
+      "gap": "AES-GCM, key_provider:, encryptor: and message_serializer: are deferred by roadmap decision (the ciphertext format is unchanged). Lazy decryption is opt-in and covers typed String attributes only. A full-row save decrypts and re-seals lazy attributes. MySQL was not run.",
       "not_applicable_reason": ""
     },
     {
@@ -500,11 +510,12 @@
     {
       "area": "Infrastructure (locking, encryption, instrumentation, …)",
       "feature": "Database-specific types: PostgreSQL arrays (Array(T))",
-      "status": "partial",
+      "status": "complete",
       "evidence_spec_paths": [
+        "spec/grant/types/w6b_pg_array_helpers_spec.cr",
         "spec/grant/types/pg_array_spec.cr"
       ],
-      "gap": "array_append and array_remove helpers, array_length predicate, Time arrays and a GIN index DDL helper are missing. MySQL has no array type.",
+      "gap": "None for PostgreSQL. Time arrays map to timestamp[] only, not timestamptz[]. SQLite and MySQL have no array type (not applicable).",
       "not_applicable_reason": ""
     },
     {
@@ -512,9 +523,12 @@
       "feature": "Database-specific types: JSON/JSONB",
       "status": "partial",
       "evidence_spec_paths": [
-        "spec/grant/types/jsonb_spec.cr"
+        "spec/grant/types/w6b_jsonb_store_spec.cr",
+        "spec/grant/types/jsonb_spec.cr",
+        "spec/grant/attributes/store_accessor_spec.cr",
+        "spec/grant/dirty/w6_mutation_watch_spec.cr"
       ],
-      "gap": "store_accessor, in-place mutation dirty tracking, the where(data: {a: 1}) shorthand and the type: :jsonb column option are missing. MySQL JSON predicates raise UnsupportedOperation. SQLite json_contains cannot match objects inside arrays.",
+      "gap": "MySQL JSON predicates (json_contains, json_path, json_has_key) still raise UnsupportedOperation. MySQL belongs to batch MY01 and no MySQL server was run.",
       "not_applicable_reason": ""
     },
     {
@@ -550,24 +564,25 @@
     {
       "area": "Infrastructure (locking, encryption, instrumentation, …)",
       "feature": "Advisory locks (PostgreSQL pg_advisory_lock / MySQL GET_LOCK)",
-      "status": "partial",
+      "status": "complete",
       "evidence_spec_paths": [
+        "spec/grant/schema/w6b_advisory_lock_mysql_spec.cr",
         "spec/grant/schema/advisory_lock_spec.cr"
       ],
-      "gap": "The MySQL GET_LOCK/RELEASE_LOCK path has no spec and was not run against a server. The PostgreSQL and SQLite paths are specced and pass.",
-      "not_applicable_reason": "",
-      "priority": 17
+      "gap": "None. GET_LOCK/RELEASE_LOCK run against a live MySQL 9.2 server: lock held on the block's own connection (IS_USED_LOCK = CONNECTION_ID), serialization of fibers, timeout against a second session, release on raise, release when the holding session is killed, re-entrant holds, and keys over 64 bytes hashed.",
+      "not_applicable_reason": ""
     },
     {
       "area": "Infrastructure (locking, encryption, instrumentation, …)",
       "feature": "QueryLogs with context tags (SQL comment injection)",
-      "status": "partial",
+      "status": "complete",
       "evidence_spec_paths": [
-        "spec/grant/query_logs_spec.cr"
+        "spec/grant/w6b_query_logs_all_paths_spec.cr",
+        "spec/grant/query_logs_spec.cr",
+        "spec/grant/types/w6b_pg_array_helpers_spec.cr"
       ],
-      "gap": "Not tagged: raw SQL (Model.exec, Grant::Connection calls), counters (counters.cr), bulk insert_all/upsert_all (bulk_operations.cr), STI/query_extensions/aggregations sum paths that call db.exec/db.query directly. Users can call Grant::QueryLogs.append on those. Covered: every relation-built statement (assembler build_sql), and adapter insert/update/delete/select/exists?/import. No automatic model tag (the adapter does not know the model). No Amber controller/job integration (context is set by the app via with_context). annotate still PREPENDS its comment (unchanged); only QueryLogs tags are trailing.",
-      "not_applicable_reason": "",
-      "priority": 24
+      "gap": "None. Statements written on the raw DB::Connection inside with_connection stay untagged by design (use QueryLogs.append). The array_append_all and array_remove_all gap was closed in this review.",
+      "not_applicable_reason": ""
     },
     {
       "area": "Infrastructure (locking, encryption, instrumentation, …)",
@@ -697,13 +712,13 @@
     {
       "area": "Infrastructure (locking, encryption, instrumentation, …)",
       "feature": "Verbose query logs (source location of SQL) and log tags with binds",
-      "status": "partial",
+      "status": "complete",
       "evidence_spec_paths": [
+        "spec/grant/w6b_verbose_logs_model_label_spec.cr",
         "spec/grant/verbose_logs_spec.cr"
       ],
-      "gap": "Label uses the model name for relation reads and the table name for adapter writes (record insert/update/delete), because the adapter does not know the model. The cache-hit marker covers QueryCache.fetch reads. Binds were already in the SQL log entry, so no separate bind tag was added. The builder cache-version query (builder.cr) and raw Model.exec paths do not emit the verbose line.",
-      "not_applicable_reason": "",
-      "priority": 25
+      "gap": "None. Model.query called with a block has the model label but no source location, because the caller frame is inlined by yield (a Crystal limitation).",
+      "not_applicable_reason": ""
     },
     {
       "area": "Infrastructure (locking, encryption, instrumentation, …)",
@@ -1989,11 +2004,10 @@
       "feature": "Dirty tracking (changed?, changes, attribute_was, per-attribute helpers)",
       "status": "partial",
       "evidence_spec_paths": [
-        "spec/grant/persistence/w6_dirty_typed_spec.cr",
-        "spec/grant/dirty/dirty_tracking_spec.cr",
-        "spec/grant/dirty/saved_changes_spec.cr"
+        "spec/grant/perf/w6_lazy_dirty_spec.cr",
+        "spec/grant/dirty"
       ],
-      "gap": "The name-keyed changes, changes_to_save and changed_attributes hashes hold the stored (database) representation, not the typed values ActiveRecord returns, for example an enum as its integer. Per-column typed readers cover the typed case.",
+      "gap": "`changes` still returns the DirtyValue union rather than typed per-column values.",
       "not_applicable_reason": ""
     },
     {
@@ -3581,10 +3595,10 @@
       "feature": "Relation immutability (each chain method returns a new relation)",
       "status": "partial",
       "evidence_spec_paths": [
-        "spec/grant/query/relation_immutability_spec.cr",
-        "spec/grant/query/w6_on_shard_immutability_spec.cr"
+        "spec/grant/perf/w6_primary_key_lookup_spec.cr",
+        "bench/relation_chain.cr"
       ],
-      "gap": "Behavior is complete and on_shard now returns a copy. The bench/relation_chain.cr guardrail is not met: the implementer measured a worst ratio of 2.98x against 1.5x. I did not re-run the bench. Meeting it needs a persistent or lazy clause-node Builder.",
+      "gap": "bench/relation_chain.cr worst ratio is 2.57x against the 1.5x guardrail. Needs a persistent clause-log or thin-view Builder. The claim of partial is accurate and I did not change it.",
       "not_applicable_reason": ""
     },
     {

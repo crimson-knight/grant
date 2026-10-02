@@ -225,6 +225,10 @@ module Grant::EagerLoading
           \{% scope = ann[:scope] %}
           \{% target = ann[:target].resolve %}
           if assoc_name == \{{method.name.stringify}}
+            \{% unless ann[:polymorphic] %}
+              # Nested `includes` load the target's own associations next.
+              Grant::AssociationLoader.enable(\{{target}})
+            \{% end %}
             \{% if ann[:composite] %}
               \{{("__composite_preload_" + method.name.stringify).id}}(records, restriction)
             \{% elsif ann[:type] == :belongs_to %}
@@ -278,6 +282,9 @@ module Grant::EagerLoading
                 \{% end %}
               \{% end %}
               \{% source_ann = source_method ? source_method.annotation(Grant::Relationship) : nil %}
+              \{% if join_model %}
+                Grant::AssociationLoader.enable(\{{join_model}})
+              \{% end %}
               \{% unless join_model && source_ann && source_ann[:target].resolve? %}
                 \{% raise "Cannot preload through association #{@type}##{method.name}; declare a resolvable through and source association" %}
               \{% end %}

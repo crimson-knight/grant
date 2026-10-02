@@ -52,19 +52,23 @@ module Grant
       Grant::ConnectionManagement.guard_writes!
       @before_write.call
       selected_adapter = adapter(Grant.settings.writing_role)
-      statement = selected_adapter.ensure_clause_template(sql)
-      selected_adapter.open(statement, binds) do |database|
-        database.exec(statement, args: selected_adapter.normalize_bind_values(binds))
+      statement = Grant::QueryLogs.append(selected_adapter.ensure_clause_template(sql))
+      Grant::Logs.timed(selected_adapter, statement, binds) do
+        selected_adapter.open(statement, binds) do |database|
+          database.exec(statement, args: selected_adapter.normalize_bind_values(binds))
+        end
       end
     end
 
     # Runs a bound query on the selected read connection and buffers its rows.
     def exec_query(sql : String, binds : Array(Grant::Columns::Type) = [] of Grant::Columns::Type) : Grant::Result
       selected_adapter = adapter(Grant.settings.reading_role)
-      statement = selected_adapter.ensure_clause_template(sql)
-      selected_adapter.open(statement, binds) do |database|
-        database.query(statement, args: selected_adapter.normalize_bind_values(binds)) do |result_set|
-          return Grant::Result.from(result_set, selected_adapter)
+      statement = Grant::QueryLogs.append(selected_adapter.ensure_clause_template(sql))
+      Grant::Logs.timed(selected_adapter, statement, binds) do
+        selected_adapter.open(statement, binds) do |database|
+          database.query(statement, args: selected_adapter.normalize_bind_values(binds)) do |result_set|
+            return Grant::Result.from(result_set, selected_adapter)
+          end
         end
       end
       raise DB::Error.new("The selected adapter did not yield a result set")
@@ -102,10 +106,12 @@ module Grant
     # database values into buffered rows.
     def with_result_set(sql : String, binds : Array(Grant::Columns::Type) = [] of Grant::Columns::Type, & : DB::ResultSet -> T) : T forall T
       selected_adapter = adapter(Grant.settings.reading_role)
-      statement = selected_adapter.ensure_clause_template(sql)
-      selected_adapter.open(statement, binds) do |database|
-        database.query(statement, args: selected_adapter.normalize_bind_values(binds)) do |result_set|
-          return yield result_set
+      statement = Grant::QueryLogs.append(selected_adapter.ensure_clause_template(sql))
+      Grant::Logs.timed(selected_adapter, statement, binds) do
+        selected_adapter.open(statement, binds) do |database|
+          database.query(statement, args: selected_adapter.normalize_bind_values(binds)) do |result_set|
+            return yield result_set
+          end
         end
       end
       raise DB::Error.new("The selected adapter did not yield a result set")

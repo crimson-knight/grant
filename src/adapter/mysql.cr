@@ -211,8 +211,8 @@ class Grant::Adapter::Mysql < Grant::Adapter::Base
     value.to_s
   end
 
-  def normalize_bind_value(value)
-    value
+  protected def bind_value_needs_normalization?(value) : Bool
+    value.is_a?(UUID) || super
   end
 
   def supports_lock_mode?(mode : Grant::Locking::LockMode) : Bool
@@ -447,7 +447,9 @@ class Grant::Adapter::Mysql < Grant::Adapter::Base
   # Catalog queries read `information_schema` for *namespace* (a database name)
   # or, without one, the connection's selected database, one statement per kind
   # of catalog data. CAST(... AS CHAR) keeps
-  # every text column a String regardless of the server's column collation.
+  # every text column a String regardless of the server's column collation, and
+  # CAST(... AS SIGNED) keeps every flag and position an Int64 (MySQL 9 returns
+  # comparisons and unsigned columns as narrower integer types).
   def catalog_tables(namespace : String? = nil) : Array(String)
     names = [] of String
     catalog_query(<<-SQL, [namespace.as(DB::Any)]) { |rs| names << rs.read(String) }
@@ -462,8 +464,9 @@ class Grant::Adapter::Mysql < Grant::Adapter::Base
     filter = table ? "AND c.TABLE_NAME = ?" : ""
     sql = <<-SQL
       SELECT CAST(c.TABLE_NAME AS CHAR), CAST(c.COLUMN_NAME AS CHAR), CAST(c.COLUMN_TYPE AS CHAR),
-             c.IS_NULLABLE = 'YES', CAST(c.COLUMN_DEFAULT AS CHAR), COALESCE(s.SEQ_IN_INDEX, 0),
-             c.EXTRA LIKE '%auto_increment%', c.ORDINAL_POSITION, CAST(c.COLUMN_COMMENT AS CHAR)
+             CAST(c.IS_NULLABLE = 'YES' AS SIGNED), CAST(c.COLUMN_DEFAULT AS CHAR), CAST(COALESCE(s.SEQ_IN_INDEX, 0) AS SIGNED),
+             CAST(c.EXTRA LIKE '%auto_increment%' AS SIGNED), CAST(c.ORDINAL_POSITION AS SIGNED), CAST(c.COLUMN_COMMENT AS CHAR),
+             CAST(c.EXTRA LIKE '%DEFAULT_GENERATED%' AS SIGNED)
       FROM information_schema.COLUMNS c
       LEFT JOIN information_schema.STATISTICS s
         ON s.TABLE_SCHEMA = c.TABLE_SCHEMA AND s.TABLE_NAME = c.TABLE_NAME
@@ -486,18 +489,31 @@ class Grant::Adapter::Mysql < Grant::Adapter::Base
       auto = rs.read(Int64) != 0
       position = rs.read(Int64).to_i
       comment = rs.read(String?)
+      generated = rs.read(Int64) != 0
       # MariaDB reports "no default" as the text NULL.
       default = nil if maria && default == "NULL"
+      default = default_as_sql(default, type, generated) unless maria
       columns << Grant::Schema::ColumnInfo.new(table_name, name, type, nullable, default,
         key_position, auto, position, comment.presence)
     end
     columns
   end
 
+  # MySQL reports a literal default as bare text (`active`, `1`) and an
+  # expression default (`DEFAULT_GENERATED` in EXTRA, such as
+  # `CURRENT_TIMESTAMP(6)`) as its text. `ColumnInfo#default` is a SQL
+  # expression, so a string or temporal literal comes back quoted.
+  private def default_as_sql(default : String?, type : String, generated : Bool) : String?
+    return default if default.nil? || generated
+    return default if Grant::Schema::TypeFamily.classify(type).in?(Grant::Schema::TypeFamily::Integer, Grant::Schema::TypeFamily::Float, Grant::Schema::TypeFamily::Decimal, Grant::Schema::TypeFamily::Boolean)
+    Grant::Schema::Dialect::Mysql.quote_literal(default)
+  end
+
   def catalog_indexes(table : String? = nil, namespace : String? = nil) : Array(Grant::Schema::IndexInfo)
     filter = table ? "AND TABLE_NAME = ?" : ""
     sql = <<-SQL
-      SELECT CAST(TABLE_NAME AS CHAR), CAST(INDEX_NAME AS CHAR), NON_UNIQUE, CAST(COLUMN_NAME AS CHAR)
+      SELECT CAST(TABLE_NAME AS CHAR), CAST(INDEX_NAME AS CHAR), CAST(NON_UNIQUE AS SIGNED), CAST(COLUMN_NAME AS CHAR),
+             #{mariadb? ? "NULL" : "CAST(EXPRESSION AS CHAR)"}
       FROM information_schema.STATISTICS
       WHERE TABLE_SCHEMA = COALESCE(?, DATABASE()) AND INDEX_NAME <> 'PRIMARY' #{filter}
       ORDER BY TABLE_NAME, INDEX_NAME, SEQ_IN_INDEX
@@ -517,14 +533,15 @@ class Grant::Adapter::Mysql < Grant::Adapter::Base
       index_name = rs.read(String)
       unique = rs.read(Int64) == 0
       column = rs.read(String?)
-      # Functional key parts have no column name.
+      key_expression = rs.read(String?)
+      # Functional key parts have no column name; MySQL 8 reports their expression.
       expression = column.nil?
       if (entry = current) && entry[0] == table_name && entry[1] == index_name
-        entry[3] << (column || "(expression)")
+        entry[3] << (column || key_expression || "(expression)")
         current = {entry[0], entry[1], entry[2], entry[3], entry[4] || expression}
       else
         flush.call
-        current = {table_name, index_name, unique, [column || "(expression)"], expression}
+        current = {table_name, index_name, unique, [column || key_expression || "(expression)"], expression}
       end
     end
     flush.call

@@ -143,7 +143,10 @@ module Grant::Schema
     # The first and last are `PRAGMA foreign_keys` and must always run.
     def statements : Array(::String)
       dialect = Dialect::Sqlite
-      scratch = "__grant_rebuild_#{@table}"
+      schema = Naming.schema_of(@table)
+      bare = @table.rpartition('.').last
+      # The scratch table lives beside the original, in the same attached database.
+      scratch = Naming.in_schema_of(@table, "__grant_rebuild_#{bare}")
       kept = column_names.map(&.downcase) & @original_columns
       quoted = kept.map { |column| dialect.quote(column_case(column)) }.join(", ")
       body = @items.map(&.text).join(",\n  ")
@@ -155,15 +158,23 @@ module Grant::Schema
         create,
         "INSERT INTO #{dialect.quote(scratch)} (#{quoted}) SELECT #{quoted} FROM #{dialect.quote(@table)}",
         "DROP TABLE #{dialect.quote(@table)}",
-        "ALTER TABLE #{dialect.quote(scratch)} RENAME TO #{dialect.quote(@table)}",
+        "ALTER TABLE #{dialect.quote(scratch)} RENAME TO #{dialect.quote(bare)}",
       ]
       @index_sqls.each do |sql|
         next if @removed_columns.any? { |column| Scanner.mentions?(sql, column) }
-        result << sql
+        result << (schema ? qualify_index(sql, schema) : sql)
       end
       result << "COMMIT"
       result << "PRAGMA foreign_keys = ON"
       result
+    end
+
+    # `CREATE INDEX "name"` => `CREATE INDEX "schema"."name"`, so the index
+    # is recreated in the attached database the table lives in.
+    private def qualify_index(sql : ::String, schema : ::String) : ::String
+      sql.sub(/\A(\s*CREATE\s+(?:UNIQUE\s+)?INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?)("(?:[^"]|"")+"|`[^`]+`|\[[^\]]+\]|\w+)/i) do |_, match|
+        "#{match[1]}#{Dialect::Sqlite.quote(schema)}.#{match[2]}"
+      end
     end
 
     private def column_case(lowered : ::String) : ::String
@@ -298,7 +309,13 @@ module Grant::Schema
         stop = if char == '('
                  (matching_paren(text, index) || return nil) + 1
                elsif char == '\'' || char == '"'
-                 close = text.index(char, index + 1) || return nil
+                 close = index + 1
+                 loop do
+                   close = text.index(char, close) || return nil
+                   # A doubled quote is an escaped quote, not the end.
+                   break unless text[close + 1]? == char
+                   close += 2
+                 end
                  close + 1
                else
                  rest = text[index..]

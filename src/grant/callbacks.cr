@@ -161,7 +161,7 @@ module Grant::Callbacks
 
   @[JSON::Field(ignore: true)]
   @[YAML::Field(ignore: true)]
-  @_around_halted : Bool?
+  @_around_halted : Bool = false
 
   macro included
     macro inherited
@@ -563,7 +563,7 @@ module Grant::Callbacks
   # record.around_halted? # => true if an around_save callback never yielded
   # ```
   def around_halted? : Bool
-    !!@_around_halted
+    @_around_halted
   end
 
   # Halts the current persistence operation by raising

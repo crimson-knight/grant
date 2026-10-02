@@ -73,6 +73,7 @@ module Grant::Schema
     getter internal_metadata : InternalMetadata
     getter environment : ::String?
     getter lock_timeout : Time::Span
+    getter protected_environments : Array(::String)
     getter? dry_run : Bool
     getter tenant : ::String?
 
@@ -85,7 +86,8 @@ module Grant::Schema
     def initialize(@adapter : Grant::Adapter::Base, migrations : Array(MigrationEntry) = [] of MigrationEntry,
                    paths : Array(::String) = [] of ::String, @tracking : Tracking = Tracking::Grant,
                    @output : IO? = nil, @verbose : Bool = true, @environment : ::String? = nil,
-                   @lock_timeout : Time::Span = 10.minutes, @dry_run : Bool = false, @tenant : ::String? = nil)
+                   @lock_timeout : Time::Span = 10.minutes, @dry_run : Bool = false, @tenant : ::String? = nil,
+                   @protected_environments : Array(::String) = InternalMetadata::DEFAULT_PROTECTED)
       @entries = migrations
       @paths = paths
       @schema_migration = SchemaMigration.new(@adapter, @tracking)
@@ -204,6 +206,39 @@ module Grant::Schema
           end
         end
       end
+    end
+
+    # ---- environment protection ---------------------------------------------
+
+    # The environment recorded in `ar_internal_metadata` by the first
+    # `migrate` that ran with `environment:`, if any.
+    def recorded_environment : ::String?
+      in_scope { @internal_metadata.environment }
+    end
+
+    # Guard for destructive work against this database (the `Migrator`, the
+    # `Grant::Tasks::Database` tasks and `Grant::Schema::Loader` use the same
+    # check). Raises `ProtectedEnvironmentError` when the recorded environment,
+    # or this context's `environment:` when none was recorded, is in
+    # `protected_environments`, and `EnvironmentMismatchError` when the
+    # database was recorded for another environment. `force: true` skips both.
+    # A context without `environment:` checks the recorded one only.
+    def check_protected_environments!(force : Bool = false) : Nil
+      return if force
+      in_scope do
+        if current = @environment
+          @internal_metadata.check_protected_environments!(current, @protected_environments, false)
+        elsif (stored = @internal_metadata.environment) && @protected_environments.includes?(stored)
+          raise ProtectedEnvironmentError.new(stored)
+        end
+      end
+    end
+
+    # Records this context's environment, replacing a recorded one (ActiveRecord's
+    # `db:environment:set`), for a database that was migrated under another name.
+    def set_environment! : Nil
+      current = @environment || raise InvalidMigration.new("set_environment! needs a context created with environment:")
+      in_scope { @internal_metadata.record_environment(current) }
     end
 
     # ---- internals ------------------------------------------------------------

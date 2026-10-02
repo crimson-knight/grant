@@ -1,3 +1,31 @@
+# The SELECT statements behind `Model.find(id)`, kept per model, adapter family
+# and key type. A key lookup on a plain model (no default scope, scoping block
+# or inheritance filter) always renders the same statement, so it is built
+# once through the query builder and reused with the key as its only bind.
+module Grant::PrimaryKeyLookup
+  @@statements = {} of Tuple(String, Int32) => String
+  @@mutex = Mutex.new
+
+  # The statement for *model_name* in *slot*, built by the block on first use.
+  def self.statement(model_name : String, slot : Int32, & : -> String) : String
+    key = {model_name, slot}
+    @@mutex.synchronize do
+      if statement = @@statements[key]?
+        return statement
+      end
+    end
+
+    statement = yield
+    @@mutex.synchronize { @@statements[key] = statement }
+    statement
+  end
+
+  # Drops every kept statement (a model's table or scope changed).
+  def self.clear : Nil
+    @@mutex.synchronize { @@statements.clear }
+  end
+end
+
 module Grant::Querying
   alias IdValue = Int32 | Int64 | Float32 | Float64 | String
 
@@ -20,6 +48,41 @@ module Grant::Querying
   end
 
   module ClassMethods
+    # True for a model whose connection depends on a shard context. Sharded
+    # models resolve their adapter per query, so they take the relation path.
+    #
+    # :nodoc:
+    def __sharded_model? : Bool
+      false
+    end
+
+    # True when `find` may reuse a kept statement: the model's current scope is
+    # an empty relation (no scoping block, default scope, tenancy or
+    # inheritance filter) and nothing tags statements with a comment.
+    #
+    # :nodoc:
+    def __plain_lookup? : Bool
+      return false if Fiber.current.grant_scoping_stacks
+      return false if __sharded_model?
+      return false if __multitenant? || Grant::QueryLogs.enabled?
+      return false if __sti_model? && !sti_root_class?
+      _unscoped? || !_has_default_scope?
+    end
+
+    # Looks up one record by primary key with the kept statement, running the
+    # same list executor a relation does.
+    #
+    # :nodoc:
+    def __find_with_kept_statement(id : Int32 | Int64 | String) : self?
+      adapter = self.adapter
+      family = adapter.postgres? ? 0 : (adapter.mysql? ? 1 : 2)
+      kind = id.is_a?(Int32) ? 0 : (id.is_a?(Int64) ? 1 : 2)
+      sql = Grant::PrimaryKeyLookup.statement(name, family * 3 + kind) do
+        current_scope.where(primary_name, :eq, id).__first_statement_sql
+      end
+      Grant::Query::Executor::List(self).new(sql, [id.as(Grant::Columns::Type)]).run.first?
+    end
+
     # Builds a single model instance from the current row of a result set.
     #
     # Marks the record as persisted (not a new record) and fires the
@@ -43,9 +106,21 @@ module Grant::Querying
     # end
     # ```
     def from_rs(result : DB::ResultSet) : self
+      from_rs(result, __column_plan(result, adapter))
+    end
+
+    # Hydrates the current row using a *plan* built once for the whole result
+    # set (`__column_plan`), so reading many rows does not repeat the column
+    # lookups or the adapter resolution for each one. Single table inheritance
+    # models resolve the row's class first and take the unplanned path.
+    #
+    # :nodoc:
+    def from_rs(result : DB::ResultSet, plan : Grant::ColumnPlan) : self
+      return from_rs(result) if __sti_model?
+
       model = Grant::Scoping.hydrating { new }
       model.new_record = false
-      model.from_rs result
+      model.from_rs result, plan
       model.after_find if model.responds_to?(:after_find)
       Grant::Notifications.instrument(Grant::Events::Instantiation) do
         Grant::Events::Instantiation.new(name)
@@ -61,8 +136,9 @@ module Grant::Querying
 
       records = [] of self
       connection.with_result_set(sql, binds) do |result_set|
+        plan = __column_plan(result_set, adapter)
         result_set.each do
-          records << from_rs(result_set)
+          records << from_rs(result_set, plan)
         end
       end
       records
@@ -133,14 +209,16 @@ module Grant::Querying
         end
 
         adapter.select(Grant::Select::Container.new(scoped_sql), "", scoped_params) do |results|
+          plan = __column_plan(results, adapter)
           results.each do
-            rows << from_rs(results)
+            rows << from_rs(results, plan)
           end
         end
       else
         adapter.select(select_container, clause, params) do |results|
+          plan = __column_plan(results, adapter)
           results.each do
-            rows << from_rs(results)
+            rows << from_rs(results, plan)
           end
         end
       end
@@ -570,17 +648,21 @@ module Grant::Querying
       guard_writes!
       ensure_raw_sql_unscoped!
       mark_write_operation
-      clause = adapter.ensure_clause_template(clause)
-      adapter.open(clause, params, name) { |db| db.query(clause, args: adapter.normalize_bind_values(params)) { |rs| yield rs } }
+      clause = Grant::QueryLogs.append(adapter.ensure_clause_template(clause))
+      Grant::Logs.timed(adapter, clause, params) do
+        adapter.open(clause, params, name) { |db| db.query(clause, args: adapter.normalize_bind_values(params)) { |rs| yield rs } }
+      end
     end
 
     def scalar(clause : String = "", binds : Array(Grant::Columns::Type) = [] of Grant::Columns::Type)
       ensure_raw_sql_unscoped!
       mark_write_operation
       selected_adapter = adapter
-      statement = selected_adapter.ensure_clause_template(clause)
-      selected_adapter.open(statement, binds, name) do |database|
-        database.scalar(statement, args: selected_adapter.normalize_bind_values(binds))
+      statement = Grant::QueryLogs.append(selected_adapter.ensure_clause_template(clause))
+      Grant::Logs.timed(selected_adapter, statement, binds) do
+        selected_adapter.open(statement, binds, name) do |database|
+          database.scalar(statement, args: selected_adapter.normalize_bind_values(binds))
+        end
       end
     end
 

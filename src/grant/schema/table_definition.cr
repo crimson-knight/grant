@@ -93,7 +93,7 @@ module Grant::Schema
     # The `DEFAULT ...` clause, or nil when the column has no default.
     def default_clause(dialect : Dialect) : ::String?
       if expression = @default_sql
-        return "DEFAULT #{dialect.default_expression(expression)}"
+        return "DEFAULT #{dialect.default_expression(expression, sql_type(dialect))}"
       end
       value = @default
       return nil if value.is_a?(Unset)
@@ -154,34 +154,11 @@ module Grant::Schema
     end
 
     private def integer_type(dialect : Dialect, limit : Int32) : ::String
-      case dialect
-      in .pg?
-        limit <= 2 ? "SMALLINT" : (limit <= 4 ? "INTEGER" : "BIGINT")
-      in .mysql?
-        case limit
-        when 1    then "TINYINT"
-        when 2    then "SMALLINT"
-        when 3    then "MEDIUMINT"
-        when 4    then "INT"
-        when 5..8 then "BIGINT"
-        else           raise InvalidDefinition.new("No integer type has limit: #{limit}")
-        end
-      in .sqlite?
-        case limit
-        when 1    then "TINYINT"
-        when 2    then "SMALLINT"
-        when 3, 4 then "INTEGER"
-        when 5..8 then "BIGINT"
-        else           raise InvalidDefinition.new("No integer type has limit: #{limit}")
-        end
-      end
+      TypeCatalog.integer_type(dialect, limit)
     end
 
     private def mysql_sized(default : ::String, steps : Hash(Int32, ::String), largest : ::String) : ::String
-      limit = @limit
-      return default unless limit
-      steps.each { |max, type| return type if limit <= max }
-      largest
+      TypeCatalog.sized(default, steps, largest, @limit)
     end
   end
 

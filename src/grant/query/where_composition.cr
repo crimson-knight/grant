@@ -228,6 +228,9 @@ class Grant::Query::Builder(Model)
   # must be the model's own or one of its associations (by association or table
   # name), so the qualifier is always a known identifier.
   private def add_nested_conditions(join : Symbol, table_key : String, conditions) : Nil
+    # `where(settings: {theme: "dark"})` on a JSON column is containment.
+    return add_json_condition(join, table_key, conditions) if json_document_column?(table_key)
+
     qualifier = if table_key == Model.table_name
                   table_key
                 else

@@ -2,12 +2,12 @@ require "../spec_helper"
 require "file_utils"
 
 # Databases of their own for the database task specs: a scratch SQLite file or
-# a scratch PostgreSQL database on the spec server, so creating, dropping and
+# a scratch PostgreSQL or MySQL database on the spec server, so creating, dropping and
 # purging never touch the shared spec database.
 module M04Tasks
   def self.url(name : String) : String
     case CURRENT_ADAPTER
-    when "pg"
+    when "pg", "mysql"
       ADAPTER_URL.sub(/\/[^\/?]+(\?|\z)/, "/#{name}\\1")
     when "sqlite"
       "sqlite3:#{File.join(Dir.tempdir, "#{name}.sqlite3")}"

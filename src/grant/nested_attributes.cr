@@ -36,7 +36,7 @@ module Grant::NestedAttributes
     # Nilable for the same reason as above; `nil` is treated as `false`.
     @[JSON::Field(ignore: true)]
     @[YAML::Field(ignore: true)]
-    @_has_nested_attributes : Bool?
+    @_has_nested_attributes : Bool = false
   end
 
   # Macro to enable automatic nested saves via callbacks

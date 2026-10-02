@@ -33,6 +33,23 @@ require "./adapter/schema"
 # Invoice.migrator.create(if_not_exists: true, comment: "Invoices")
 # ```
 #
+# Constraints are opt-in, as ActiveRecord's are (`t.references foreign_key:
+# true`), and are part of `CREATE TABLE`, so they work on SQLite as well:
+# `belongs_to :author, constraint: true` declares the `FOREIGN KEY` (or
+# `constraint: {on_delete: :cascade, on_update:, deferrable:, name:}`), and
+# `validates_uniqueness_of :slug, scope: :author, constraint: true` declares
+# `UNIQUE (slug, author_id)`. Create tables parents first and drop them children
+# first, as with any foreign key.
+#
+# ```
+# class Post < Grant::Base
+#   column id : Int64, primary: true
+#   column slug : String
+#   belongs_to :author, constraint: {on_delete: :cascade}
+#   validates_uniqueness_of :slug, scope: :author, constraint: true
+# end
+# ```
+#
 # For tables that do not come from a model, see `Grant::Schema::SchemaStatements`.
 #
 # These are DDL statements. A constant default on an existing table is
@@ -63,9 +80,27 @@ module Grant::Migrator
       end
     end
 
-    def drop_and_create
+    # Drops and creates the table. Refuses (`Grant::Schema::ProtectedEnvironmentError`)
+    # when the database recorded a protected environment such as production in
+    # `ar_internal_metadata`, unless `force: true`. With *environment* the
+    # check also applies to a database that recorded none, and a database
+    # that belongs to another environment raises
+    # `Grant::Schema::EnvironmentMismatchError`.
+    def drop_and_create(force : Bool = false, environment : String? = nil,
+                        protected_environments : Array(String) = Grant::Schema::InternalMetadata::DEFAULT_PROTECTED)
+      check_protected_environment!(force, environment, protected_environments)
       drop
       create
+    end
+
+    private def check_protected_environment!(force : Bool, environment : String?, protected_environments : Array(String)) : Nil
+      return if force
+      metadata = Grant::Schema::InternalMetadata.new(Model.adapter)
+      if environment
+        metadata.check_protected_environments!(environment, protected_environments, false)
+      elsif (stored = metadata.environment) && protected_environments.includes?(stored)
+        raise Grant::Schema::ProtectedEnvironmentError.new(stored)
+      end
     end
 
     def drop_sql(if_exists : Bool = true, cascade : Bool = false)
@@ -177,6 +212,13 @@ module Grant::Migrator
           {% end %}
         {% end %}
 
+        # constraints declared with `constraint:` on `validates_uniqueness_of`
+        # and `belongs_to`
+        {% for method in Model.class.methods.select { |method| method.name.starts_with?("__grant_unique_") || method.name.starts_with?("__grant_foreign_key_") } %}
+          s.puts ","
+          s.puts "  ", Model.{{method.name.id}}(Model.table_name).constraint_sql(dialect)
+        {% end %}
+
         s << ")"
         s << " COMMENT=#{dialect.quote_literal(comment)}" if comment && dialect.mysql?
         s.puts " #{@table_options};"
@@ -226,6 +268,13 @@ module Grant::Migrator
       list
     end
 
+    # The created_at/updated_at type with the `precision:` of the `timestamps`
+    # macro: fractional digits on PostgreSQL and MySQL (SQLite stores text).
+    private def stamped_type(type : String, precision : Int32?) : String
+      return type if precision.nil? || dialect.sqlite?
+      dialect.mysql? ? type.gsub("(6)", "(#{precision})") : type.sub(/\ATIMESTAMP(\(\d+\))?/i, "TIMESTAMP(#{precision})")
+    end
+
     # One column definition line, without its trailing newline.
     private def column_line(name : String, key : String, verbatim : String?, timestamp : Bool, nilable : Bool,
                             null : Bool?, primary : Bool, limit : Int32?, precision : Int32?, scale : Int32?,
@@ -233,7 +282,7 @@ module Grant::Migrator
       type = if verbatim
                verbatim
              elsif timestamp
-               native_type(name)
+               stamped_type(native_type(name), precision)
              else
                Grant::Schema::TypeCatalog.refine(dialect, key, native_type(key), limit, precision, scale)
              end
@@ -249,7 +298,7 @@ module Grant::Migrator
         # MySQL's timestamp types already carry an explicit `NULL`.
         type = type.includes?(" NULL DEFAULT") ? type.sub(" NULL DEFAULT", " NOT NULL DEFAULT") : "#{type} NOT NULL"
       end
-      default = default_sql ? " DEFAULT #{dialect.default_expression(default_sql)}" : literal_default
+      default = default_sql ? " DEFAULT #{dialect.default_expression(default_sql, type)}" : literal_default
       line = "#{Model.adapter.quote(name)} #{type}#{default}"
       line += " COMMENT #{dialect.quote_literal(comment)}" if comment && dialect.mysql?
       line

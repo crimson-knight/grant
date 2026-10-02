@@ -136,7 +136,7 @@ module Grant::CommitCallbacks
     # currently being dispatched; read by `on:` conditions.
     @[JSON::Field(ignore: true)]
     @[YAML::Field(ignore: true)]
-    @_commit_action_bits : UInt8?
+    @_commit_action_bits : UInt8 = 0_u8
 
     @[JSON::Field(ignore: true)]
     @[YAML::Field(ignore: true)]
@@ -164,7 +164,8 @@ module Grant::CommitCallbacks
   def __commit_on?(action_mask : UInt8) : Bool
     # Called outside a dispatch (a direct `record.after_rollback`): infer the
     # operation from the record's state.
-    bits = @_commit_action_bits || (new_record? ? ACTION_CREATE : ACTION_UPDATE)
+    bits = @_commit_action_bits
+    bits = (new_record? ? ACTION_CREATE : ACTION_UPDATE) if bits == 0_u8
     (bits & action_mask) != 0
   end
 
@@ -281,7 +282,7 @@ module Grant::CommitCallbacks
       end
       after_commit if (commit_bits & COMMIT_CALLBACK_BITS[:after_commit]) != 0 && responds_to?(:after_commit)
     ensure
-      @_commit_action_bits = nil
+      @_commit_action_bits = 0_u8
     end
   end
 
@@ -290,7 +291,7 @@ module Grant::CommitCallbacks
     begin
       after_rollback if responds_to?(:after_rollback)
     ensure
-      @_commit_action_bits = nil
+      @_commit_action_bits = 0_u8
     end
   end
 

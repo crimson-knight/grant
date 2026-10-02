@@ -196,7 +196,7 @@ module Grant::Validators
 
   @[JSON::Field(ignore: true)]
   @[YAML::Field(ignore: true)]
-  @_skip_normalization : Bool?
+  @_skip_normalization : Bool = false
 
   # The contexts of the validation run in progress, nil otherwise. Nilable
   # without a default for the same serialization reason as `@errors`.

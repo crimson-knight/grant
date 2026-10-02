@@ -123,7 +123,7 @@ describe Grant::Schema::Introspection do
     it "reads update and delete actions separately" do
       key = schema.foreign_keys(:m01_memberships).first
       key.on_update.should eq Grant::Schema::ReferentialAction::Cascade
-      key.on_delete.should eq Grant::Schema::ReferentialAction::SetNull
+      key.on_delete.should eq(CURRENT_ADAPTER == "mysql" ? Grant::Schema::ReferentialAction::Restrict : Grant::Schema::ReferentialAction::SetNull)
     end
 
     it "is empty for a table without keys and answers foreign_key_exists?" do

@@ -120,8 +120,10 @@ module Grant::Schema
     def load_definition(definition : Definition) : Int64
       guard!
       statements = AdapterStatements.new(@adapter)
-      statements.transaction(rebuilds: true) do |scope|
-        definition.body.call(scope)
+      referential_integrity_off do
+        statements.transaction(rebuilds: true) do |scope|
+          definition.body.call(scope)
+        end
       end
       finish(definition.version)
       definition.version
@@ -131,8 +133,10 @@ module Grant::Schema
     def load_snapshot(snapshot : SchemaSnapshot) : Int64
       guard!
       statements = AdapterStatements.new(@adapter)
-      statements.transaction(rebuilds: true) do |scope|
-        snapshot.apply(scope)
+      referential_integrity_off do
+        statements.transaction(rebuilds: true) do |scope|
+          snapshot.apply(scope)
+        end
       end
       finish(snapshot.version)
       snapshot.version
@@ -154,6 +158,22 @@ module Grant::Schema
         metadata.record_environment(current)
       end
       SchemaMigration.new(@adapter, @tracking).current_version
+    end
+
+    # MySQL cannot drop a table another table's key refers to (and ignores
+    # `CASCADE`), so a load that replaces tables, or creates cyclic keys, runs
+    # with foreign key checks off on one connection, as ActiveRecord's
+    # `disable_referential_integrity` does. Other databases check at commit.
+    private def referential_integrity_off(& : -> T) : T forall T
+      return yield unless @dialect.mysql?
+      @adapter.with_connection do |connection|
+        connection.exec "SET FOREIGN_KEY_CHECKS = 0"
+        begin
+          yield
+        ensure
+          connection.exec "SET FOREIGN_KEY_CHECKS = 1"
+        end
+      end
     end
 
     private def guard! : Nil

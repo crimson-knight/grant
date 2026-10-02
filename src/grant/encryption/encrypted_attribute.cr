@@ -81,6 +81,7 @@ module Grant::Encryption
       @options : Options = Options.new,
       @plain_reader : Reader? = nil,
       @stored_reader : Reader? = nil,
+      @unsealer : Proc(Grant::Base, Nil)? = nil,
     )
       @column_name = column_name || "#{attribute_name}_encrypted"
     end
@@ -93,6 +94,18 @@ module Grant::Encryption
     # Whether the value is stored in a column named like the attribute.
     def transparent? : Bool
       @options.transparent?
+    end
+
+    # Whether the attribute is decrypted when first read rather than when its
+    # row loads (see `Grant::Encryption::Sealed`).
+    def lazy? : Bool
+      !@unsealer.nil?
+    end
+
+    # Decrypts *record*'s value for this attribute if it is still sealed. A
+    # no-op for an eager attribute or one that was already read.
+    def unseal(record : Grant::Base) : Nil
+      @unsealer.try(&.call(record))
     end
 
     # The attribute's current value as the text that gets encrypted, or `nil`.
