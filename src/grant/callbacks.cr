@@ -494,7 +494,11 @@ module Grant::Callbacks
           %result = {% if block %}{{block.body}}{% else %}true{% end %}
           {% if has_after %}__after_{{ev.id}} unless around_halted?{% end %}
         end
-        {% if block %}around_halted? ? nil : %result{% else %}!around_halted?{% end %}
+        {% if block %}
+          around_halted? ? nil : %result
+        {% else %}
+          !around_halted?
+        {% end %}
       {% else %}
         {% if has_before %}__before_{{ev.id}}{% end %}
         %result = {% if block %}{{block.body}}{% else %}true{% end %}
