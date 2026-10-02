@@ -22,7 +22,7 @@ This project is to provide an ORM in Crystal using the Active Record pattern.
 
 ## Requirements
 
-Crystal 1.19.0 or newer (below 2.0). `shard.yml` declares the minimum, and CI
+Crystal 1.21.0 or newer (below 2.0). `shard.yml` declares the minimum, and CI
 proves it on every pull request; see [docs/RELEASING.md](docs/RELEASING.md).
 
 ## Comprehensive Feature Examples

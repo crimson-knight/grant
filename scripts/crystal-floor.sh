@@ -2,7 +2,7 @@
 # Reads and checks Grant's minimum Crystal version (the "floor").
 #
 # shard.yml's `crystal:` constraint is the one source of truth, for example
-# `crystal: ">= 1.19.0, < 2.0.0"`. CI and the release workflow read the floor
+# `crystal: ">= 1.21.0, < 2.0.0"`. CI and the release workflow read the floor
 # through this script, so no workflow repeats the version number.
 #
 # Usage:
@@ -10,7 +10,7 @@
 #       Print the floor (the `>=` bound of shard.yml's `crystal:` constraint).
 #   scripts/crystal-floor.sh below
 #       Print the latest patch release of the minor version below the floor
-#       (1.18.2 for a 1.19.0 floor), read from crystal-lang/crystal's tags.
+#       (1.20.3 for a 1.21.0 floor), read from crystal-lang/crystal's tags.
 #   scripts/crystal-floor.sh check-deps
 #       Fail if a runtime dependency (shard.yml `dependencies:`, not
 #       `development_dependencies:`) declares a higher Crystal floor than

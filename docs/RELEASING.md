@@ -37,7 +37,7 @@ If the release workflow fails, fix `main`, delete the tag
 
 ## The minimum Crystal version
 
-`shard.yml`'s `crystal:` constraint (for example `">= 1.19.0, < 2.0.0"`) is
+`shard.yml`'s `crystal:` constraint (for example `">= 1.21.0, < 2.0.0"`) is
 the only place the minimum is written. `scripts/crystal-floor.sh` reads it for
 CI, so workflows never repeat the number.
 

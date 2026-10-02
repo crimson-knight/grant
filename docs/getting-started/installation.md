@@ -19,7 +19,7 @@ Grant is a powerful ORM (Object-Relational Mapping) library for Crystal, origina
 
 ## Prerequisites
 
-- Crystal 1.19.0 or newer (the `crystal:` constraint in Grant's `shard.yml`)
+- Crystal 1.21.0 or newer (the `crystal:` constraint in Grant's `shard.yml`)
 - Access to one of the supported databases:
   - PostgreSQL 9.5+ (for ON CONFLICT support)
   - MySQL 5.6+ (for ON DUPLICATE KEY UPDATE)
