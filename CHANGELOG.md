@@ -2,6 +2,54 @@
 
 ## Unreleased
 
+### ActiveRecord parity, wave 4
+
+Parity moves from 283 to 308 complete features (68.7% to 74.8% of applicable).
+
+- **Schema DDL:** `add_index`/`remove_index`/`rename_index` and a model-level
+  `index` declaration (unique, partial `where:`, `using:`, order, opclass,
+  `include:`, expression, `concurrently` with `disable_ddl_transaction`);
+  foreign key, check, unique and exclusion constraints with `validate: false`
+  then `validate_*` on PostgreSQL; `add_column`, `remove_column`,
+  `change_column`, `change_column_null` with backfill, and
+  `change_table(bulk: true)`; `rename_table` (the PostgreSQL sequence and key
+  index follow) and `rename_column` (default-named indexes follow);
+  `create_join_table`, `add_reference` (polymorphic), table and column
+  comments, and PostgreSQL enums and extensions. SQLite changes it cannot
+  `ALTER` in place go through a table rebuild (`Grant::Schema::TableRebuild`).
+- **Migrations:** `Grant::Schema::Migration` (`up`/`down`/`change`,
+  `reversible`, `revert`, automatic inverses and `IrreversibleMigration`),
+  `MigrationContext` (migrate to a version, rollback, redo, status, pending
+  checks, `maintain_test_schema!`), a `schema_migrations` table read in one
+  query, environment protection via `ar_internal_metadata`, and migrations
+  held under an advisory lock (`Grant.with_advisory_lock`). Existing Micrate
+  `.sql` files and the `micrate_db_version` table keep working.
+  `MultiDatabaseMigrator` migrates named connections, shards and schema
+  tenants with bounded parallelism and a skew report.
+- **Types:** PostgreSQL array predicates (`array_contains`, `array_overlaps`,
+  `array_contained_by`, `any`) that bind one array parameter; `JSON::Any`
+  columns (jsonb on PostgreSQL, JSON text on SQLite) with `json_contains`,
+  `json_path` and `json_has_key`; and time-ordered keys via
+  `uuid_version: :v7`.
+- **Queries:** `from` (a subquery, raw SQL or CTE name as the source) and
+  `with` / `with_recursive` common table expressions, with bind order
+  preserved and a depth guard on recursive CTEs.
+- **Associations:** `delegated_type` with predicates and readers that never
+  query, and preloading with one query per stored type.
+- **Testing and logging:** `Grant::TestFixtures` (YAML fixtures, label-hashed
+  ids, one bulk `INSERT` per table), `Grant::QueryLogs` (trailing SQL comment
+  tags, sqlcommenter format), and verbose query logs with the calling source
+  line in debug builds.
+
+Behavior changes:
+
+- A column typed `JSON::Any` now gets `Grant::Converters::JsonDocument` by
+  default; before, such a column did not compile.
+- `Model.find(String)` casts to the key type for UUID primary keys, so
+  invalid UUID text returns `nil` without querying the database.
+- `only(...)` now drops a `from` source and CTEs unless they are named, as in
+  ActiveRecord.
+
 ### ActiveRecord parity, wave 3
 
 Parity moves from 227 to 283 complete features (55.1% to 68.7% of applicable).

@@ -6,6 +6,7 @@ require "./error_translator"
 require "./placeholder_scanner"
 require "./server_version"
 require "./pool_support"
+require "../grant/advisory_lock"
 
 # The Base Adapter specifies the interface that will be used by the model
 # objects to perform actions against a specific database.  Each adapter needs
@@ -451,6 +452,7 @@ abstract class Grant::Adapter::Base
 
   def log(query : String, elapsed_time : Time::Span, params = [] of String) : Nil
     Grant::Logs::SQL.debug { colorize query, Grant::Encryption::LogFilter.redact(query, params), elapsed_time.total_seconds }
+    Grant::Logs.log_verbose(query, elapsed_time)
   end
 
   # remove all rows from a table and reset the counter on the id.
@@ -564,6 +566,7 @@ abstract class Grant::Adapter::Base
       stmt << " FROM #{quote(query.table_name)} #{clause}"
     end
 
+    statement = Grant::QueryLogs.append(statement)
     elapsed_time = Time.measure do
       open(statement, params) do |db|
         db.query statement, args: normalize_bind_values(params) do |rs|
@@ -580,6 +583,7 @@ abstract class Grant::Adapter::Base
     statement = "SELECT EXISTS(SELECT 1 FROM #{table_name} WHERE #{ensure_clause_template(criteria)})"
 
     exists = false
+    statement = Grant::QueryLogs.append(statement)
     elapsed_time = Time.measure do
       open(statement, params) do |db|
         exists = db.query_one?(statement, args: normalize_bind_values(params), as: Bool) || exists
@@ -732,6 +736,7 @@ abstract class Grant::Adapter::Base
     end
     statement = ensure_clause_template(statement)
 
+    statement = Grant::QueryLogs.append(statement)
     elapsed_time = Time.measure do
       open(statement, params) do |db|
         db.exec statement, args: normalize_bind_values(params)
@@ -759,6 +764,7 @@ abstract class Grant::Adapter::Base
     parameters.concat(where_params)
 
     affected = 0_i64
+    statement = Grant::QueryLogs.append(statement)
     elapsed_time = Time.measure do
       open(statement, parameters) do |db|
         result = db.exec(statement, args: normalize_bind_values(parameters))
@@ -784,6 +790,7 @@ abstract class Grant::Adapter::Base
     statement = "DELETE FROM #{quote(table_name)} WHERE #{quote(primary_name)} = ?"
     statement = ensure_clause_template(statement)
     affected = 0_i64
+    statement = Grant::QueryLogs.append(statement)
     elapsed_time = Time.measure do
       open(statement, [value]) do |db|
         result = db.exec(statement, args: normalize_bind_values([value]))
@@ -805,6 +812,7 @@ abstract class Grant::Adapter::Base
   def delete_with_where(table_name : String, where_clause : String, params : Array(DB::Any))
     statement = "DELETE FROM #{quote(table_name)} WHERE #{ensure_clause_template(where_clause)}"
 
+    statement = Grant::QueryLogs.append(statement)
     elapsed_time = Time.measure do
       open(statement, params) do |db|
         db.exec statement, args: normalize_bind_values(params)
@@ -1001,6 +1009,18 @@ abstract class Grant::Adapter::Base
   # Server side advisory (application defined) locks.
   def supports_advisory_locks? : Bool
     false
+  end
+
+  # One non-blocking attempt to take the advisory lock *key* on *connection*
+  # (the session that will keep it). `Grant::AdvisoryLock.synchronize` polls
+  # this and pairs it with `#release_advisory_lock`.
+  def try_advisory_lock(connection : DB::Connection, key : String) : Bool
+    Grant::AdvisoryLock.try_acquire(self, connection, key)
+  end
+
+  # Releases *key* on the *connection* that took it.
+  def release_advisory_lock(connection : DB::Connection, key : String) : Nil
+    Grant::AdvisoryLock.release(self, connection, key)
   end
 
   # Several `ALTER TABLE` changes in one statement.

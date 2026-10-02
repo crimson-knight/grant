@@ -165,6 +165,7 @@ module Grant::QueryCache
       if typed = slot.as?(ValueSlot(T))
         state.entries[key] = slot
         state.record_hit
+        Grant::Logs.log_cached_query(sql, name)
         Grant::Notifications.publish_sql(adapter, sql, binds, Time::Span.zero, name, cached: true)
         stored = typed.value
         return copy ? copy.call(stored) : stored

@@ -1,6 +1,7 @@
 require "./association_registry"
 require "./reflection"
 require "./polymorphic"
+require "./delegated_type"
 require "./association_options"
 
 # Association macros for Grant models — `belongs_to`, `has_one`, `has_many`,
@@ -64,6 +65,7 @@ require "./association_options"
 # See `docs/advanced_associations.md` for the full guide.
 module Grant::Associations
   include Grant::Polymorphic
+  include Grant::DelegatedType
   include Grant::AssociationOptions::DependentCallbacks
   include Grant::AssociationOptions::CounterCache
   include Grant::AssociationOptions::TouchCallbacks

@@ -347,7 +347,7 @@ module Grant::Transactions
           # if the primary key has not been set, then do so
 
           unless fields.includes?({{primary_key.name.stringify}})
-            _uuid = UUID.random
+            _uuid = {% if ann[:uuid_version] == :v7 %}UUID.v7{% else %}UUID.random{% end %}
             @{{primary_key.name.id}} = _uuid
             params << _uuid
             fields << {{primary_key.name.stringify}}

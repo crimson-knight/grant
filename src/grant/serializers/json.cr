@@ -11,9 +11,4 @@ module Grant::Serializers
       klass.from_json(string)
     end
   end
-
-  # JSONB uses the same serialization as JSON
-  # The difference is handled at the database adapter level
-  class JSONB < JSON
-  end
 end

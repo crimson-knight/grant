@@ -652,6 +652,21 @@ module Grant::Scoping
       current_scope.where(primary_name, :eq, id).first
     end
 
+    # A String key is cast to the primary key's type first, so a UUID key is
+    # found by its text in any case (`nil` for text that is not a UUID).
+    def find(id : String)
+      {% begin %}
+      {% pk = @type.instance_vars.find { |ivar| (ann = ivar.annotation(Grant::Column)) && ann[:primary] } %}
+      {% if pk && pk.type.union_types.reject { |type| type == Nil }.first == UUID %}
+        parsed = ::UUID.parse?(id)
+        return nil unless parsed
+        current_scope.where(primary_name, :eq, parsed).first
+      {% else %}
+        current_scope.where(primary_name, :eq, id).first
+      {% end %}
+      {% end %}
+    end
+
     # Finds a record by primary key within the `default_scope`, raising
     # `Grant::Querying::NotFound` when none matches.
     #

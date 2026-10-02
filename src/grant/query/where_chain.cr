@@ -184,6 +184,46 @@ module Grant::Query
       associated(*names)
     end
 
+    # PostgreSQL array columns contain every element of *values*.
+    # ```
+    # Post.where.array_contains(:tags, ["crystal"])
+    # # SQL: WHERE tags @> $1   (one bound array)
+    # ```
+    def array_contains(field : Symbol | String, values : Grant::Columns::SupportedArrayTypes)
+      @query.array_contains(field, values)
+    end
+
+    # PostgreSQL array column shares an element with *values* (`&&`).
+    def array_overlaps(field : Symbol | String, values : Grant::Columns::SupportedArrayTypes)
+      @query.array_overlaps(field, values)
+    end
+
+    # PostgreSQL array column holds *value* (`$1 = ANY(col)`).
+    def any(field : Symbol | String, value : Grant::Columns::Type)
+      @query.array_any(field, value)
+    end
+
+    # JSON column contains *document* (`@>` on PostgreSQL).
+    # ```
+    # User.where.json_contains(:settings, {theme: "dark"})
+    # ```
+    def json_contains(field : Symbol | String, document)
+      @query.json_contains(field, document)
+    end
+
+    # JSON column holds *value* at *path* (`#>>` on PostgreSQL).
+    # ```
+    # User.where.json_path(:settings, "theme", "dark")
+    # ```
+    def json_path(field : Symbol | String, path : String | Array(String), value : String | Int | Float | Bool | Nil)
+      @query.json_path(field, path, value)
+    end
+
+    # JSON object column has the top-level *key*.
+    def json_has_key(field : Symbol | String, key : String)
+      @query.json_has_key(field, key)
+    end
+
     # Allow chaining back to the query builder
     macro method_missing(call)
       @query.{{call}}

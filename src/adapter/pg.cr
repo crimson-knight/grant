@@ -48,6 +48,7 @@ class Grant::Adapter::Pg < Grant::Adapter::Base
       "Array(Float32)" => "REAL[]",
       "Array(Float64)" => "DOUBLE PRECISION[]",
       "Array(Bool)"    => "BOOLEAN[]",
+      "Array(UUID)"    => "UUID[]",
     }
   end
 
@@ -55,6 +56,7 @@ class Grant::Adapter::Pg < Grant::Adapter::Base
   def clear(table_name : String)
     statement = "DELETE FROM #{quote(table_name)}"
 
+    statement = Grant::QueryLogs.append(statement)
     elapsed_time = Time.measure do
       open(statement) do |db|
         db.exec statement
@@ -76,6 +78,7 @@ class Grant::Adapter::Pg < Grant::Adapter::Base
     end
 
     last_id = -1_i64
+    statement = Grant::QueryLogs.append(statement)
     elapsed_time = Time.measure do
       open(statement, params) do |db|
         if lastval
@@ -127,6 +130,7 @@ class Grant::Adapter::Pg < Grant::Adapter::Base
       statement += " ON CONFLICT DO NOTHING"
     end
 
+    statement = Grant::QueryLogs.append(statement)
     elapsed_time = Time.measure do
       open(statement, params) do |db|
         db.exec statement, args: normalize_bind_values(params)
@@ -144,6 +148,7 @@ class Grant::Adapter::Pg < Grant::Adapter::Base
       stmt << " WHERE #{quote(primary_name)}=$#{fields.size + 1}"
     end
 
+    statement = Grant::QueryLogs.append(statement)
     elapsed_time = Time.measure do
       open(statement, params) do |db|
         db.exec statement, args: normalize_bind_values(params)
@@ -157,6 +162,7 @@ class Grant::Adapter::Pg < Grant::Adapter::Base
   def delete(table_name : String, primary_name : String, value)
     statement = "DELETE FROM #{quote(table_name)} WHERE #{quote(primary_name)}=$1"
 
+    statement = Grant::QueryLogs.append(statement)
     elapsed_time = Time.measure do
       open(statement, [value]) do |db|
         db.exec statement, value

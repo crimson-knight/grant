@@ -1,4 +1,5 @@
 require "./table_definition"
+require "./alter_table"
 
 module Grant::Schema
   alias TableName = ::String | Symbol
@@ -28,6 +29,8 @@ module Grant::Schema
   # can rewrite the table. `add_timestamps` with a constant default is
   # metadata-only on PostgreSQL 11+ and can rewrite the table on MySQL.
   module SchemaStatements
+    include AlterStatements
+
     abstract def dialect : Dialect
     abstract def execute(sql : ::String) : Nil
 
@@ -41,6 +44,10 @@ module Grant::Schema
     # * `force`: drop the table first; `:cascade` also cascades (PostgreSQL).
     # * `comment`: a table comment (PostgreSQL, MySQL; SQLite has none).
     # * `options`: raw text appended after the closing parenthesis.
+    #
+    # The block can also declare `t.index`, `t.references`, `t.foreign_key`,
+    # `t.check_constraint`, `t.unique_constraint` and `t.exclusion_constraint`.
+    # Constraints are part of the `CREATE TABLE`; indexes follow it.
     def create_table_statements(name : TableName, id : Bool | Symbol = true, primary_key : ColumnNames? = nil,
                                 if_not_exists : Bool = false, temporary : Bool = false,
                                 force : Bool | Symbol = false, comment : ::String? = nil,
@@ -65,6 +72,10 @@ module Grant::Schema
         lines << line
       end
       lines << "PRIMARY KEY (#{keys.map { |key| dialect.quote(key) }.join(", ")})" if composite
+      table.unique_constraints.each { |constraint| lines << constraint.constraint_sql(dialect) }
+      table.check_constraints.each { |constraint| lines << constraint.constraint_sql(dialect) }
+      table.exclusion_constraints.each { |constraint| lines << constraint.constraint_sql(dialect) }
+      table.foreign_keys.each { |key| lines << key.constraint_sql(dialect) }
 
       statements = [] of ::String
       if force
@@ -90,6 +101,7 @@ module Grant::Schema
           end
         end
       end
+      table.indexes.each { |index| statements.concat index.statements(dialect) }
       statements
     end
 
@@ -251,9 +263,132 @@ module Grant::Schema
       @dialect = Dialect.for(@adapter)
     end
 
+    # True while a `#transaction` block is open.
+    getter? in_transaction : Bool = false
+    @rebuilds_in_transaction = false
+
     def execute(sql : ::String) : Nil
-      @adapter.open(sql) { |db| db.exec sql }
-      @adapter.reset_schema_caches!
+      execute_batch([sql])
+    end
+
+    # Runs *statements* in order on one connection, then drops the cached
+    # catalog. A failed SQLite table rebuild is rolled back and its
+    # `PRAGMA foreign_keys` restored.
+    def execute_batch(statements : Array(::String)) : Nil
+      return if statements.empty?
+      if @in_transaction && statements.any? { |sql| sql.matches?(/\A\s*CREATE\s+(UNIQUE\s+)?INDEX\s+CONCURRENTLY\b/i) || sql.matches?(/\A\s*DROP\s+INDEX\s+CONCURRENTLY\b/i) }
+        raise InvalidDefinition.new("CONCURRENTLY cannot run inside a transaction; use transaction(disable_ddl_transaction: true)")
+      end
+      if @in_transaction && statements.includes?("BEGIN")
+        unless @rebuilds_in_transaction
+          raise InvalidDefinition.new("A SQLite table rebuild cannot run inside a transaction: it must switch foreign key enforcement off first")
+        end
+        # The surrounding transaction was opened with foreign keys already off
+        # (see `#transaction`), so the rebuild's own pragmas and transaction
+        # are left out and it commits or rolls back with the rest.
+        statements = statements.reject { |sql| sql == "BEGIN" || sql == "COMMIT" || sql.starts_with?("PRAGMA foreign_keys") }
+      end
+      begin
+        @adapter.open(statements.first) do |db|
+          begin
+            statements.each { |sql| db.exec sql }
+          rescue ex
+            if dialect.sqlite? && statements.includes?("BEGIN")
+              begin
+                db.exec "ROLLBACK"
+              rescue DB::Error
+                # Best effort: the original error is re-raised below.
+              end
+              begin
+                db.exec "PRAGMA foreign_keys = ON"
+              rescue DB::Error
+                # Best effort: the original error is re-raised below.
+              end
+            end
+            raise ex
+          end
+        end
+      ensure
+        @adapter.reset_schema_caches!
+      end
+    end
+
+    # Runs the block with its statements in one transaction, for databases
+    # with transactional DDL (PostgreSQL, SQLite). `disable_ddl_transaction:
+    # true` runs them without one, which a `CREATE INDEX CONCURRENTLY`
+    # requires. Inside a transaction a concurrent index raises
+    # `InvalidDefinition` instead of failing in the database.
+    #
+    # A SQLite table rebuild (`change_column`, `remove_foreign_key`, ...) must
+    # switch foreign key enforcement off before its transaction begins.
+    # `rebuilds: true` does that for the whole block: foreign keys go off, the
+    # transaction runs with every rebuild joining it, and enforcement goes back
+    # to what it was. Hold one connection around the call
+    # (`Adapter::Base#with_connection`); the migration context does.
+    def transaction(disable_ddl_transaction : Bool = false, rebuilds : Bool = false, &)
+      if disable_ddl_transaction || dialect.mysql?
+        yield self
+      elsif rebuilds && dialect.sqlite?
+        @adapter.with_connection do |_|
+          enforced = @adapter.open { |db| db.scalar("PRAGMA foreign_keys").as(Int).to_i64 != 0 }
+          @adapter.open { |db| db.exec "PRAGMA foreign_keys = OFF" }
+          begin
+            run_in_transaction(true) { yield self }
+          ensure
+            @adapter.open { |db| db.exec "PRAGMA foreign_keys = #{enforced ? "ON" : "OFF"}" }
+          end
+        end
+      else
+        run_in_transaction(false) { yield self }
+      end
+    end
+
+    private def run_in_transaction(rebuilds : Bool, &)
+      Grant::Transaction.run(@adapter, Grant::Transaction::Options.new) do
+        @in_transaction = true
+        @rebuilds_in_transaction = rebuilds
+        begin
+          yield
+        ensure
+          @in_transaction = false
+          @rebuilds_in_transaction = false
+        end
+      end
+    end
+
+    def catalog_sqlite_table(table : ::String) : {::String, Array(::String)}
+      create = nil.as(::String?)
+      indexes = [] of ::String
+      @adapter.open do |db|
+        create = db.query_one?("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?", table, as: ::String?)
+        db.query_each("SELECT sql FROM sqlite_master WHERE type = 'index' AND tbl_name = ? AND sql IS NOT NULL", table) do |rs|
+          indexes << rs.read(::String)
+        end
+      end
+      sql = create || raise InvalidDefinition.new("Table '#{table}' does not exist")
+      {sql, indexes}
+    end
+
+    def lookup_column(table : ::String, column : ::String) : ColumnInfo?
+      return nil unless @adapter.schema.table_exists?(table)
+      @adapter.schema.columns(table).find { |info| info.name == column }
+    end
+
+    def column_present?(table : ::String, column : ::String) : Bool?
+      return false unless @adapter.schema.table_exists?(table)
+      @adapter.schema.columns(table).any? { |info| info.name == column }
+    end
+
+    def lookup_indexes(table : ::String) : Array(IndexInfo)?
+      @adapter.schema.table_exists?(table) ? @adapter.schema.indexes(table) : nil
+    end
+
+    def lookup_foreign_keys(table : ::String) : Array(ForeignKeyInfo)?
+      @adapter.schema.table_exists?(table) ? @adapter.schema.foreign_keys(table) : nil
+    end
+
+    def lookup_primary_key(table : ::String) : Array(::String)?
+      @adapter.schema.table_exists?(table) ? @adapter.schema.primary_key(table) : nil
     end
   end
 
@@ -264,8 +399,40 @@ module Grant::Schema
 
     getter dialect : Dialect
     getter statements = [] of ::String
+    # The `CREATE TABLE` text and index texts `sqlite_master` would hold, for
+    # statements that rebuild a SQLite table: `{"posts" => {create_sql, indexes}}`.
+    getter sqlite_tables = {} of ::String => {::String, Array(::String)}
+    # Catalog answers for guards and default names; nil keys mean unknown.
+    getter known_indexes = {} of ::String => Array(IndexInfo)
+    getter known_foreign_keys = {} of ::String => Array(ForeignKeyInfo)
+    getter known_columns = {} of ::String => Array(ColumnInfo)
+    getter known_primary_keys = {} of ::String => Array(::String)
 
     def initialize(@dialect : Dialect)
+    end
+
+    def catalog_sqlite_table(table : ::String) : {::String, Array(::String)}
+      @sqlite_tables[table]? || super
+    end
+
+    def lookup_indexes(table : ::String) : Array(IndexInfo)?
+      @known_indexes[table]?
+    end
+
+    def lookup_foreign_keys(table : ::String) : Array(ForeignKeyInfo)?
+      @known_foreign_keys[table]?
+    end
+
+    def lookup_primary_key(table : ::String) : Array(::String)?
+      @known_primary_keys[table]?
+    end
+
+    def lookup_column(table : ::String, column : ::String) : ColumnInfo?
+      @known_columns[table]?.try(&.find { |info| info.name == column })
+    end
+
+    def column_present?(table : ::String, column : ::String) : Bool?
+      @known_columns[table]?.try(&.any? { |info| info.name == column })
     end
 
     def execute(sql : ::String) : Nil

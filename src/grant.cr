@@ -23,6 +23,8 @@ module Grant
 end
 
 require "./grant/notifications"
+require "./grant/query_logs"
+require "./grant/log"
 require "./adapter/base"
 require "./grant/sanitization"
 require "./grant/connection_registry"
@@ -34,6 +36,10 @@ require "./grant/base"
 require "./grant/sti"
 require "./grant/schema/introspection"
 require "./grant/schema/schema_statements"
+require "./grant/schema/constraint_catalog"
+require "./grant/schema/model_indexes"
+require "./grant/schema/migration_context"
+require "./grant/schema/multi_database_migrator"
 
 # Large-table / high-scale query toolkit (index hints, IN chunking, streaming,
 # tenant scoping). Required after Grant::Base is fully defined so the toolkit

@@ -44,6 +44,8 @@ module Grant::Schema
     property collation : ::String?
     property? array : Bool
     property? primary_key : Bool
+    # True for PostgreSQL-only native types (`citext`, `inet`, ...).
+    property? pg_only : Bool = false
 
     def initialize(@name : ::String, @type : ColumnKind | ::String, @null : Bool = true,
                    @default : DefaultLiteral | Unset = UNSET, @default_sql : ::String? = nil,
@@ -56,6 +58,9 @@ module Grant::Schema
     # `scale` and `array` applied. A raw SQL type string is used verbatim.
     def sql_type(dialect : Dialect) : ::String
       kind = @type
+      if @pg_only && !dialect.pg?
+        raise UnsupportedOperation.new("The #{kind} type of '#{@name}' is only supported on PostgreSQL")
+      end
       if kind.is_a?(::String)
         raise UnsupportedOperation.new("array: true is only supported on PostgreSQL") if @array && !dialect.pg?
         return @array ? "#{kind}[]" : kind
