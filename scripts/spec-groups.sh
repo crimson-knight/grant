@@ -10,7 +10,9 @@
 # retried; a single file over the limit is reported as a failure.
 #
 # Usage:
-#   scripts/spec-groups.sh [--list] [--only <dir>] [adapter ...]
+#   scripts/spec-groups.sh [--list] [--only <dir>]... [adapter ...]
+#
+# --only may be given more than once to run several directories.
 #
 # Adapters default to $CURRENT_ADAPTER, or sqlite. Each adapter uses the same
 # environment the specs already read (PG_DATABASE_URL, SQLITE_DATABASE_URL,
@@ -21,12 +23,17 @@
 #   SPEC_GROUP_MAX_RSS_GB   per-group memory ceiling in GB (default: 10)
 #   SPEC_GROUP_MAX_FILES    spec files per group (default: 12)
 #   SPEC_GROUP_LOG_DIR      where per-group logs go (default: .crystal-cache/spec-groups)
-#   SPEC_GROUP_INCREMENTAL  1 compiles with --incremental (default), 0 turns it off
+#   SPEC_GROUP_FAILURE_LINES  lines of a failed group's log to print (default: 200)
+#   SPEC_GROUP_INCREMENTAL  1 forces --incremental on, 0 forces it off; unset, it is
+#                           used only when "$CRYSTAL spec --help" lists it (crystal-alpha
+#                           does, stock Crystal does not)
 #   SPEC_GROUP_CACHE        compiler cache layout: "adapter" (default) shares one
 #                           CRYSTAL_CACHE_DIR per adapter; "per-group" gives each
 #                           group its own, so a rerun of that group compiles warm
 #                           (about 190 MB of disk per group)
 #   SPEC_GROUP_CACHE_DIR    root of those caches (default: .crystal-cache/spec-groups-cache)
+#   SPEC_GROUP_LINK_FLAGS   passed as --link-flags (default on Linux: -Wl,--no-export-dynamic,
+#                           so GNU ld does not overflow the symbol version table; see below)
 #
 # Incremental compilation keeps only the last program it compiled, so a cache
 # shared by every group mostly saves parse and macro work (measured on
@@ -43,20 +50,40 @@ log_dir="${SPEC_GROUP_LOG_DIR:-.crystal-cache/spec-groups}"
 cache_mode="${SPEC_GROUP_CACHE:-adapter}"
 cache_root="${SPEC_GROUP_CACHE_DIR:-.crystal-cache/spec-groups-cache}"
 spec_flags=()
-[ "${SPEC_GROUP_INCREMENTAL:-1}" != "0" ] && spec_flags+=(--incremental)
+case "${SPEC_GROUP_INCREMENTAL:-auto}" in
+  0) ;;
+  1) spec_flags+=(--incremental) ;;
+  auto)
+    if "$crystal_bin" spec --help 2>&1 | grep -q -- --incremental; then
+      spec_flags+=(--incremental)
+    fi
+    ;;
+  *) echo "SPEC_GROUP_INCREMENTAL must be 0 or 1, not $SPEC_GROUP_INCREMENTAL" >&2; exit 2 ;;
+esac
+# Crystal links with -rdynamic on Linux, so every symbol goes into .dynsym.
+# GNU ld reads the "@" in Crystal's inherited-method symbols
+# (*ArgumentError@Exception#initialize<String>:Nil) as a symbol version, and
+# the larger groups define more than 32767 of them.
+# Version indexes are 15 bits, so the glibc version references overflow and
+# the binary will not start: "symbol lookup error: undefined symbol: environ,
+# version <some Crystal method name>". Not exporting the symbols avoids it.
+default_link_flags=""
+[ "$(uname -s)" = Linux ] && default_link_flags="-Wl,--no-export-dynamic"
+link_flags="${SPEC_GROUP_LINK_FLAGS-$default_link_flags}"
+[ -n "$link_flags" ] && spec_flags+=("--link-flags=$link_flags")
 case "$cache_mode" in
   adapter|per-group) ;;
   *) echo "SPEC_GROUP_CACHE must be adapter or per-group, not $cache_mode" >&2; exit 2 ;;
 esac
 list_only=false
-only=""
+only=()
 adapters=()
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --list) list_only=true ;;
-    --only) shift; only="${1%/}" ;;
-    -h|--help) sed -n '2,35p' "$0"; exit 0 ;;
+    --only) shift; only+=("${1%/}") ;;
+    -h|--help) sed -n '2,41p' "$0"; exit 0 ;;
     *) adapters+=("$1") ;;
   esac
   shift
@@ -71,7 +98,7 @@ while IFS= read -r dir; do
     dirs+=("$dir")
   fi
 done < <(find spec -type d | sort)
-[ -n "$only" ] && dirs=("$only")
+[ ${#only[@]} -gt 0 ] && dirs=("${only[@]}")
 
 groups=()
 for dir in "${dirs[@]}"; do
@@ -123,12 +150,13 @@ kill_tree() {
   kill "$1" 2>/dev/null
 }
 
-# Runs one group; sets $status, $summary, $peak_gb, $elapsed and $over_limit.
+# Runs one group; sets $status, $summary, $peak_gb, $elapsed, $over_limit and $group_log.
 run_group() {
   local adapter="$1" label="$2" files="$3" log cache runner rss_kb peak_kb=0 started=$SECONDS
   local slug
   slug="$(echo "$label" | tr '/#.' '___')"
   log="$log_dir/${adapter}_$slug.log"
+  group_log="$log"
   cache="$cache_root/$adapter"
   [ "$cache_mode" = "per-group" ] && cache="$cache_root/$adapter/$slug"
   mkdir -p "$cache"
@@ -186,7 +214,15 @@ for adapter in "${adapters[@]}"; do
       status=1
     fi
     printf '%-7s %-40s %-52s %5sGB %4ss\n' "$adapter" "$label" "$summary" "$peak_gb" "$elapsed"
-    [ "$status" -ne 0 ] && failed+=("$adapter $label")
+    if [ "$status" -ne 0 ]; then
+      failed+=("$adapter $label")
+      # Show why: the spec failures, or the end of the log when it never ran.
+      if grep -q '^Failures:' "$group_log"; then
+        sed -n '/^Failures:/,$p' "$group_log" | head -n "${SPEC_GROUP_FAILURE_LINES:-200}" | sed 's/^/    /'
+      else
+        tail -n 40 "$group_log" | sed 's/^/    /'
+      fi
+    fi
   done
 done
 

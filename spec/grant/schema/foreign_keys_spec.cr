@@ -48,7 +48,7 @@ describe "M02b foreign keys" do
 
     before_each do
       statements.drop_table(:m02b_fk_child, :m02b_fk_parent, if_exists: true)
-      statements.create_table(:m02b_fk_parent) { |t| t.string :name }
+      statements.create_table(:m02b_fk_parent, &.string(:name))
       statements.create_table(:m02b_fk_child) do |t|
         t.bigint :m02b_fk_parent_id
         t.string :note, null: false, default: "x"
@@ -87,11 +87,11 @@ describe "M02b foreign keys" do
       SchemaFixture.exec "INSERT INTO m02b_fk_child (m02b_fk_parent_id) VALUES (999)"
       if CURRENT_ADAPTER == "pg"
         statements.add_foreign_key(:m02b_fk_child, :m02b_fk_parent, column: :m02b_fk_parent_id, validate: false)
-        SchemaFixture.adapter.open { |db| db.scalar("SELECT convalidated FROM pg_constraint WHERE conname = 'fk_m02b_fk_child_m02b_fk_parent_id'").should eq false }
+        SchemaFixture.adapter.open { |db| db.scalar("SELECT convalidated FROM pg_constraint WHERE conname = 'fk_m02b_fk_child_m02b_fk_parent_id'").should be_false }
         expect_raises(Exception) { statements.validate_foreign_key(:m02b_fk_child, :m02b_fk_parent, column: :m02b_fk_parent_id) }
         SchemaFixture.exec "DELETE FROM m02b_fk_child"
         statements.validate_foreign_key(:m02b_fk_child, :m02b_fk_parent, column: :m02b_fk_parent_id)
-        SchemaFixture.adapter.open { |db| db.scalar("SELECT convalidated FROM pg_constraint WHERE conname = 'fk_m02b_fk_child_m02b_fk_parent_id'").should eq true }
+        SchemaFixture.adapter.open { |db| db.scalar("SELECT convalidated FROM pg_constraint WHERE conname = 'fk_m02b_fk_child_m02b_fk_parent_id'").should be_true }
       elsif CURRENT_ADAPTER == "mysql"
         expect_raises(Exception) { statements.add_foreign_key(:m02b_fk_child, :m02b_fk_parent, column: :m02b_fk_parent_id) }
       else

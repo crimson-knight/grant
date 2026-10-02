@@ -127,11 +127,11 @@ class W6wmOrder < Grant::Base
 end
 
 private def author_names(relation : Grant::Query::Builder(W6wmAuthor)) : Array(String)
-  relation.order(:id).select.map { |author| author.name.to_s }
+  relation.order(:id).select.map(&.name.to_s)
 end
 
 private def post_titles(relation : Grant::Query::Builder(W6wmPost)) : Array(String)
-  relation.order(:id).select.map { |post| post.title.to_s }
+  relation.order(:id).select.map(&.title.to_s)
 end
 
 describe "where.associated / where.missing with scopes and has_one" do
@@ -149,14 +149,14 @@ describe "where.associated / where.missing with scopes and has_one" do
   end
 
   before_each do
-    {% for model in %w(W6wmReply W6wmReaction W6wmTagging W6wmComment W6wmTag W6wmProfile W6wmPost W6wmAuthor W6wmLine W6wmOrder) %}
+    {% for model in %w[W6wmReply W6wmReaction W6wmTagging W6wmComment W6wmTag W6wmProfile W6wmPost W6wmAuthor W6wmLine W6wmOrder] %}
       {{ model.id }}.clear
     {% end %}
 
     # ann: a published and a draft post; bob: only a draft; cy: no posts.
     ann = W6wmAuthor.create!(name: "ann")
     bob = W6wmAuthor.create!(name: "bob")
-    cy = W6wmAuthor.create!(name: "cy")
+    W6wmAuthor.create!(name: "cy")
     ann_live = W6wmPost.create!(title: "ann live", published: true, score: 5, author_id: ann.id)
     ann_draft = W6wmPost.create!(title: "ann draft", published: false, score: 5, author_id: ann.id)
     bob_draft = W6wmPost.create!(title: "bob draft", published: false, score: 1, author_id: bob.id)

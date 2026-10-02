@@ -152,7 +152,7 @@ describe "nested has_many :through" do
     nt_fixture
     statements = AssociationQueryCounter.statements do
       authors = NtAuthor.includes(:nt_readers).select.to_a
-      authors.map { |author| author.nt_readers.to_a.map(&.name).sort! }.should eq [["ann", "bo"], ["cy"]]
+      authors.map(&.nt_readers.to_a.map(&.name).sort!).should eq [["ann", "bo"], ["cy"]]
     end
     # authors, posts, comments, readers
     statements.size.should eq 4
@@ -160,7 +160,7 @@ describe "nested has_many :through" do
 
   it "preloads the same records the lazy reader returns" do
     nt_fixture
-    lazy = NtAuthor.order(:id).select.to_a.map { |author| author.nt_readers.to_a.map(&.id.not_nil!).sort! }
+    lazy = NtAuthor.order(:id).select.to_a.map(&.nt_readers.to_a.map(&.id.not_nil!).sort!)
     preloaded = NtAuthor.includes(:nt_readers).order(:id).select.to_a.map do |author|
       author.association_loaded?(:nt_readers).should be_true
       author.nt_readers.to_a.map(&.id.not_nil!).sort!
@@ -171,7 +171,7 @@ describe "nested has_many :through" do
   it "preloads a chain of three links" do
     nt_fixture
     statements = AssociationQueryCounter.statements do
-      NtAuthor.includes(:nt_teams).order(:id).select.to_a.map { |author| author.nt_teams.to_a.map(&.name).sort! }.should eq [["blue", "red"], ["red"]]
+      NtAuthor.includes(:nt_teams).order(:id).select.to_a.map(&.nt_teams.to_a.map(&.name).sort!).should eq [["blue", "red"], ["red"]]
     end
     # authors, posts, comments, readers, teams
     statements.size.should eq 5

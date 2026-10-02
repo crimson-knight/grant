@@ -51,7 +51,7 @@ describe "Relation update and update!" do
     updated = RelationUpdateItem.where(:id, :lteq, items[2].id!).update(status: "live")
 
     updated.map(&.id!).should eq(items.first(3).map(&.id!))
-    updated.each { |item| item.status.should eq("live") }
+    updated.each(&.status.should(eq("live")))
     RelationUpdateItem.where(status: "live").count.should eq(3)
     RelationUpdateItem.where(touched_by_callback: true).count.should eq(3)
     RelationUpdateItem.where(status: "draft").count.should eq(1)
@@ -63,7 +63,7 @@ describe "Relation update and update!" do
     updated = RelationUpdateItem.all.update(title: "")
 
     updated.size.should eq(4)
-    updated.each { |item| item.errors.should_not be_empty }
+    updated.each(&.errors.should_not(be_empty))
     RelationUpdateItem.where(title: "").count.should eq(0)
   end
 
@@ -109,7 +109,7 @@ describe "Relation update and update!" do
     updated = RelationUpdateRanked.order(rank: :asc).update(rank: 5000_i64)
 
     updated.size.should eq(1005)
-    updated.map(&.id!).uniq.size.should eq(1005)
+    updated.map(&.id!).uniq!.size.should eq(1005)
     RelationUpdateRanked.where(saves: 1_i64).count.should eq(1005)
   end
 

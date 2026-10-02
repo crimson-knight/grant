@@ -38,7 +38,7 @@ module Grant
         healthy += 1
         last_healthy = entry
       end
-      return nil if healthy == 0
+      return if healthy == 0
       return last_healthy if healthy == 1
 
       wanted = next_index(healthy)
@@ -90,7 +90,7 @@ module Grant
     def pick(entries : Array(ReplicaEntry)) : ReplicaEntry?
       # Start from a rotating offset so equally idle replicas share the load.
       size = entries.size
-      return nil if size == 0
+      return if size == 0
 
       start = (@tie_breaker.add(1) &+ 1) % size
       best = nil
@@ -156,7 +156,7 @@ module Grant
     def pick(entries : Array(ReplicaEntry)) : ReplicaEntry?
       total_weight = 0
       entries.each { |entry| total_weight += entry.weight if entry.healthy? }
-      return nil if total_weight == 0
+      return if total_weight == 0
 
       slot = ((@cursor.add(1) &+ 1) % total_weight).to_i32
       entries.each do |entry|
@@ -228,7 +228,7 @@ module Grant
     # Get next available replica using the strategy. Allocates nothing.
     def next_replica : Grant::Adapter::Base?
       entries = @entries
-      return nil if entries.empty?
+      return if entries.empty?
 
       @strategy.pick(entries).try(&.adapter)
     end
@@ -240,7 +240,7 @@ module Grant
       end
 
       entries = @entries
-      return nil if entries.empty?
+      return if entries.empty?
 
       # All replicas unhealthy: use the one whose last health check was newest.
       best = entries.first

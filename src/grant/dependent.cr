@@ -106,11 +106,11 @@ module Grant::Dependent
     {% if value %}
       {%
         allowed = if kind == :has_many
-                    %w(destroy delete_all nullify restrict restrict_with_exception restrict_with_error destroy_async)
+                    %w[destroy delete_all nullify restrict restrict_with_exception restrict_with_error destroy_async]
                   elsif kind == :has_one
-                    %w(destroy delete nullify restrict restrict_with_exception restrict_with_error destroy_async)
+                    %w[destroy delete nullify restrict restrict_with_exception restrict_with_error destroy_async]
                   else
-                    %w(destroy delete destroy_async)
+                    %w[destroy delete destroy_async]
                   end
       %}
       {% unless value.is_a?(SymbolLiteral) && allowed.includes?(value.id.stringify) %}

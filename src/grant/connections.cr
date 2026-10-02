@@ -45,7 +45,7 @@ module Grant
       writer = ConnectionRegistry.get_adapter(name, :writing) rescue nil
       reader = ConnectionRegistry.get_adapter(name, :reading) rescue writer
 
-      return nil unless writer
+      return unless writer
       {writer: writer, reader: reader || writer}
     end
 

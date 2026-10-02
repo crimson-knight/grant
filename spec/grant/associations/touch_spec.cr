@@ -182,7 +182,7 @@ describe "belongs_to touch:" do
 
   describe "Model.touch_all" do
     it "touches many parents by key with one UPDATE" do
-      blogs = 3.times.map { |i| TchBlog.create!(name: "b#{i}") }.to_a
+      blogs = Array.new(3) { |i| TchBlog.create!(name: "b#{i}") }
       blogs.each { |blog| age(TchBlog, blog.id) }
 
       statements = StatementRecorder.statements do

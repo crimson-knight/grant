@@ -230,7 +230,7 @@ describe "Grant::Encryption Key Rotation" do
 
     it "handles errors gracefully and restores original keys" do
       # Create test data
-      user = RotationTestUser.create!(
+      RotationTestUser.create!(
         name: "Error Test",
         email: "error@example.com",
         ssn: "111-22-3333"
@@ -304,13 +304,13 @@ describe "Grant::Encryption Key Rotation" do
 
     it "rotates only non-deterministic fields correctly" do
       # Create users
-      users = 5.times.map do |i|
+      users = Array.new(5) do |i|
         RotationTestUser.create!(
           name: "ND Test #{i}",
           email: "nd#{i}@example.com",
           ssn: "#{i}00-11-2222"
         ).as(RotationTestUser)
-      end.to_a
+      end
 
       # Configure new keys but keep deterministic key the same
       Grant::Encryption.configure do |config|

@@ -38,10 +38,8 @@ describe "relation finders" do
 
   it "find_sole_by limits the query to two rows" do
     statements = AssociationQueryCounter.statements do
-      begin
-        ConvItem.where(kind: "k1").find_sole_by(status: "draft")
-      rescue Grant::Querying::NotUnique
-      end
+      ConvItem.where(kind: "k1").find_sole_by(status: "draft")
+    rescue Grant::Querying::NotUnique
     end
     statements.size.should eq(1)
     statements.first.should contain("LIMIT 2")

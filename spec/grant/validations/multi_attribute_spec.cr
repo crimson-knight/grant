@@ -37,8 +37,8 @@ require "../../spec_helper"
     validates_size_of :code_a, :code_b, maximum: 3, allow_nil: true
     validates_numericality_of :age, :height, greater_than: 0, allow_nil: true
     validates_format_of :code_a, :code_b, with: /\A[a-z]+\z/, allow_nil: true
-    validates_inclusion_of :role, :kind, in: %w(a b), allow_nil: true
-    validates_exclusion_of :banned, :banned_too, in: %w(x), allow_nil: true
+    validates_inclusion_of :role, :kind, in: %w[a b], allow_nil: true
+    validates_exclusion_of :banned, :banned_too, in: %w[x], allow_nil: true
     validates_absence_of :absent_a, :absent_b
     validates_comparison_of :start_no, :end_no, greater_than: 0, allow_nil: true
     validates_confirmation_of :password, :pin
@@ -57,7 +57,7 @@ end
 
 private def failing_fields(record : V01Multi) : Array(String)
   record.valid?
-  record.errors.map(&.field.to_s).sort
+  record.errors.map(&.field.to_s).sort!
 end
 
 describe "multi-attribute validates_*_of" do

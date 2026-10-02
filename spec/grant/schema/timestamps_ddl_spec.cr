@@ -97,7 +97,7 @@ describe "Timestamp DDL" do
 
     it "adds and removes timestamps on an existing table" do
       statements.drop_table(:m02a_stamps, if_exists: true)
-      statements.create_table(:m02a_stamps) { |t| t.string :name }
+      statements.create_table(:m02a_stamps, &.string(:name))
       if CURRENT_ADAPTER == "sqlite"
         statements.add_timestamps(:m02a_stamps, default: "1970-01-01 00:00:00")
       else

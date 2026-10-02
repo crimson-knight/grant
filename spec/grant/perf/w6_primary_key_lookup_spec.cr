@@ -37,7 +37,7 @@ W6LookupSlug.migrator.drop_and_create
 
 describe "Model.find with a kept statement" do
   before_each do
-    W6LookupNote.unscoped { |query| query.delete_all }
+    W6LookupNote.unscoped(&.delete_all)
     W6LookupPlain.clear
     W6LookupSlug.clear
   end
@@ -132,7 +132,7 @@ describe "Shared empty clause lists" do
 
     base.where!(label: "c")
     base.order!(:label)
-    W6LookupPlain.where(label: "x").or { |query| query.where(label: "y") }
+    W6LookupPlain.where(label: "x").or(&.where(label: "y"))
     W6LookupPlain.where(label: "x").merge(W6LookupPlain.order(:id))
     W6LookupPlain.where(label: "z").unscope(:where).to_a
     W6LookupPlain.order(:id).reorder(:label).reverse_order.to_a

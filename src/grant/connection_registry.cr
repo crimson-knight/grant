@@ -556,7 +556,7 @@ module Grant
       if adapter = @@adapters[key]?
         return adapter
       end
-      return nil unless @@specifications.has_key?(key)
+      return unless @@specifications.has_key?(key)
 
       @@mutex.synchronize do
         # Another fiber may have built it while this one waited for the lock.
@@ -816,7 +816,7 @@ module Grant
     # Grant::ConnectionRegistry.databases # => ["primary", "analytics"]
     # ```
     def self.databases : Array(String)
-      @@specifications.values.map(&.database).uniq
+      @@specifications.values.map(&.database).uniq!
     end
 
     # Returns the `Array(Symbol)` of distinct shard names registered for
@@ -829,7 +829,7 @@ module Grant
       @@specifications.values
         .select { |spec| spec.database == database && spec.shard }
         .compact_map(&.shard)
-        .uniq
+        .uniq!
     end
 
     # Returns one health record per registered connection — an `Array` of

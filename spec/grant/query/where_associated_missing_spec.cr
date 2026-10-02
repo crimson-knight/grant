@@ -2,11 +2,11 @@ require "../../spec_helper"
 require "../../support/where_family_models"
 
 private def author_names(relation : Grant::Query::Builder(WfAuthor)) : Array(String)
-  relation.order(:id).select.map { |author| author.name.to_s }
+  relation.order(:id).select.map(&.name.to_s)
 end
 
 private def post_titles(relation : Grant::Query::Builder(WfPost)) : Array(String)
-  relation.order(:id).select.map { |post| post.title.to_s }
+  relation.order(:id).select.map(&.title.to_s)
 end
 
 describe "where.associated and where.missing" do

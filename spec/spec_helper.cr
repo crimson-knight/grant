@@ -29,7 +29,6 @@ else
 end
 
 require "spec"
-require "../src/grant"
 require "../src/adapter/**"
 require "./spec_models"
 require "./mocks/**"

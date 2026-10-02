@@ -9,7 +9,7 @@ describe "change_column_default via table rebuild" do
 
   insert_empty = ->(table : String) do
     sql = CURRENT_ADAPTER == "mysql" ? "INSERT INTO #{table} () VALUES ()" : "INSERT INTO #{table} DEFAULT VALUES"
-    adapter.open { |db| db.exec sql }
+    adapter.open(&.exec(sql))
   end
 
   column_default = ->(table : String, name : String) do

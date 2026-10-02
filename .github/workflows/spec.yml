@@ -1,10 +1,17 @@
 name: spec
 on:
+  # Branch pushes are checked through their pull request.
   push:
+    branches: [main, master]
   pull_request:
     branches: [main, master]
   schedule:
     - cron: "0 6 * * 6" # Every Saturday 6 AM
+
+# A newer push to the same branch or pull request supersedes a running check.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   formatting:
@@ -12,26 +19,66 @@ jobs:
     steps:
       - name: Download source
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Refresh apt package index
+        # install-crystal apt-installs libevent and friends without updating
+        # the index first, and the runner image's index goes stale.
+        run: sudo apt-get update
       - name: Install Crystal
         uses: crystal-lang/install-crystal@d8ef131ecec0352ce0e39b81b0a6d95def58fe2f # v1
         with:
           crystal: 1.21.0
       - name: Install shards
         run: shards install --frozen
+      - name: Build ameba
+        # Ameba 1.7.0-dev ships no postinstall or executables, so shards
+        # install leaves no bin/ameba; build it from the locked source.
+        run: mkdir -p bin && crystal build lib/ameba/src/cli.cr -o bin/ameba
       - name: Check formatting
         run: crystal tool format --check
       - name: Check linting
         run: ./bin/ameba
+
+  # shard.yml still declares crystal >= 1.6.0, but current Grant does not
+  # compile before 1.19 (it uses Time.instant, added in 1.19.0). This job keeps
+  # the older versions visible without failing the workflow until the owner
+  # decides whether to raise the minimum Crystal version.
+  crystal-compat:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        crystal: [1.14.0, 1.15.1, 1.16.3]
+    steps:
+      - name: Download source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Refresh apt package index
+        # install-crystal apt-installs libevent and friends without updating
+        # the index first, and the runner image's index goes stale.
+        run: sudo apt-get update
+      - name: Install Crystal
+        uses: crystal-lang/install-crystal@d8ef131ecec0352ce0e39b81b0a6d95def58fe2f # v1
+        with:
+          crystal: ${{ matrix.crystal }}
+      - name: Install shards
+        run: shards install --frozen --skip-postinstall --skip-executables
+      - name: Type-check Grant
+        run: crystal build --no-codegen src/grant.cr
 
   sqlite-spec:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        crystal: [1.14.0, 1.15.1, 1.16.3, 1.21.0]
+        # Grant needs Crystal 1.19+ (Time.instant); see crystal-compat below.
+        crystal: [1.21.0]
     steps:
       - name: Download source
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Refresh apt package index
+        # install-crystal apt-installs libevent and friends without updating
+        # the index first, and the runner image's index goes stale.
+        run: sudo apt-get update
       - name: Install Crystal
         uses: crystal-lang/install-crystal@d8ef131ecec0352ce0e39b81b0a6d95def58fe2f # v1
         with:
@@ -39,9 +86,14 @@ jobs:
       - name: Install shards
         run: shards install --frozen --skip-postinstall --skip-executables
       - name: Run tests
-        timeout-minutes: 5
-        run: crystal spec
+        # The whole suite compiled as one program needs about 20 GB of RAM; a
+        # runner has 16 GB. spec-groups.sh compiles one group at a time.
+        timeout-minutes: 60
+        run: scripts/spec-groups.sh sqlite
         env:
+          CRYSTAL: crystal
+          SPEC_GROUP_INCREMENTAL: "0"
+          SPEC_GROUP_MAX_RSS_GB: "13"
           CURRENT_ADAPTER: sqlite
           SQLITE_DATABASE_URL: sqlite3:./grant.db
           SQLITE_REPLICA_URL: sqlite3:./grant_replica.db
@@ -51,7 +103,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        crystal: [1.14.0, 1.15.1, 1.16.3, 1.21.0]
+        # Grant needs Crystal 1.19+ (Time.instant); see crystal-compat below.
+        crystal: [1.21.0]
     services:
       mysql-primary:
         image: mysql:8.0@sha256:7dcddc01f13bab2f15cde676d44d01f61fc9f99fe7785e86196dfc07d358ae2b
@@ -84,16 +137,33 @@ jobs:
     steps:
       - name: Download source
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Refresh apt package index
+        # install-crystal apt-installs libevent and friends without updating
+        # the index first, and the runner image's index goes stale.
+        run: sudo apt-get update
       - name: Install Crystal
         uses: crystal-lang/install-crystal@d8ef131ecec0352ce0e39b81b0a6d95def58fe2f # v1
         with:
           crystal: ${{ matrix.crystal }}
       - name: Install shards
         run: shards install --frozen --skip-postinstall --skip-executables
+      - name: Let the grant user create scratch databases
+        # The schema and task specs create and drop their own databases.
+        run: |
+          mysql -h 127.0.0.1 -P 3306 -u root -ppassword <<'SQL'
+          GRANT ALL PRIVILEGES ON *.* TO 'grant'@'%';
+          FLUSH PRIVILEGES;
+          SELECT VERSION();
+          SQL
       - name: Run tests
-        timeout-minutes: 5
-        run: crystal spec
+        # The whole suite compiled as one program needs about 20 GB of RAM; a
+        # runner has 16 GB. spec-groups.sh compiles one group at a time.
+        timeout-minutes: 60
+        run: scripts/spec-groups.sh mysql
         env:
+          CRYSTAL: crystal
+          SPEC_GROUP_INCREMENTAL: "0"
+          SPEC_GROUP_MAX_RSS_GB: "13"
           CURRENT_ADAPTER: mysql
           MYSQL_DATABASE_URL: mysql://grant:password@localhost:3306/grant_db
           MYSQL_REPLICA_URL: mysql://grant:password@localhost:3307/grant_replica_db
@@ -107,7 +177,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        crystal: [1.16.3, 1.21.0]
+        crystal: [1.21.0]
         mysql:
           - version: "8.0"
             digest: "7dcddc01f13bab2f15cde676d44d01f61fc9f99fe7785e86196dfc07d358ae2b"
@@ -134,6 +204,10 @@ jobs:
     steps:
       - name: Download source
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Refresh apt package index
+        # install-crystal apt-installs libevent and friends without updating
+        # the index first, and the runner image's index goes stale.
+        run: sudo apt-get update
       - name: Install Crystal
         uses: crystal-lang/install-crystal@d8ef131ecec0352ce0e39b81b0a6d95def58fe2f # v1
         with:
@@ -147,7 +221,8 @@ jobs:
         run: |
           mysql -h 127.0.0.1 -P 3306 -u root -ppassword <<'SQL'
           ALTER USER 'grant'@'%' IDENTIFIED WITH caching_sha2_password BY 'password';
-          GRANT ALL PRIVILEGES ON grant_db.* TO 'grant'@'%';
+          -- The schema and task specs create and drop scratch databases.
+          GRANT ALL PRIVILEGES ON *.* TO 'grant'@'%';
           FLUSH PRIVILEGES;
           SELECT user, host, plugin FROM mysql.user WHERE user = 'grant';
           SELECT VERSION();
@@ -156,9 +231,14 @@ jobs:
         run: |
           mysqladmin ping -h 127.0.0.1 -P 3306 -u grant -ppassword | grep "mysqld is alive"
       - name: Run tests
-        timeout-minutes: 5
-        run: crystal spec
+        # The whole suite compiled as one program needs about 20 GB of RAM; a
+        # runner has 16 GB. spec-groups.sh compiles one group at a time.
+        timeout-minutes: 60
+        run: scripts/spec-groups.sh mysql
         env:
+          CRYSTAL: crystal
+          SPEC_GROUP_INCREMENTAL: "0"
+          SPEC_GROUP_MAX_RSS_GB: "13"
           CURRENT_ADAPTER: mysql
           MYSQL_DATABASE_URL: mysql://grant:password@127.0.0.1:3306/grant_db
           MYSQL_REPLICA_URL: mysql://grant:password@127.0.0.1:3306/grant_db
@@ -168,7 +248,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        crystal: [1.14.0, 1.15.1, 1.16.3, 1.21.0]
+        # Grant needs Crystal 1.19+ (Time.instant); see crystal-compat below.
+        crystal: [1.21.0]
     services:
       postgres-primary:
         image: postgres:16@sha256:a3b7f434b2dc57ce85a67e171163eb8ab1a1ebcb39d27484661f26b1dfbe30d6
@@ -199,6 +280,10 @@ jobs:
     steps:
       - name: Download source
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Refresh apt package index
+        # install-crystal apt-installs libevent and friends without updating
+        # the index first, and the runner image's index goes stale.
+        run: sudo apt-get update
       - name: Install Crystal
         uses: crystal-lang/install-crystal@d8ef131ecec0352ce0e39b81b0a6d95def58fe2f # v1
         with:
@@ -206,9 +291,14 @@ jobs:
       - name: Install shards
         run: shards install --frozen --skip-postinstall --skip-executables
       - name: Run tests
-        timeout-minutes: 5
-        run: crystal spec
+        # The whole suite compiled as one program needs about 20 GB of RAM; a
+        # runner has 16 GB. spec-groups.sh compiles one group at a time.
+        timeout-minutes: 60
+        run: scripts/spec-groups.sh pg
         env:
+          CRYSTAL: crystal
+          SPEC_GROUP_INCREMENTAL: "0"
+          SPEC_GROUP_MAX_RSS_GB: "13"
           CURRENT_ADAPTER: pg
           PG_DATABASE_URL: postgres://grant:password@localhost:5432/grant_db
           PG_REPLICA_URL: postgres://grant:password@localhost:5433/grant_replica_db
@@ -216,68 +306,32 @@ jobs:
   sharding-spec:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
-        crystal: [1.16.3, 1.21.0]
+        crystal: [1.21.0]
     services:
-      # Shard 0 - Primary
-      postgres-shard0-primary:
+      # The sharding specs create and drop their own shard databases on this
+      # server (spec/support/w6_c04_support.cr), so one server is enough.
+      postgres:
         image: postgres:16@sha256:a3b7f434b2dc57ce85a67e171163eb8ab1a1ebcb39d27484661f26b1dfbe30d6
         env:
           POSTGRES_USER: grant
           POSTGRES_PASSWORD: password
-          POSTGRES_DB: shard_0
+          POSTGRES_DB: grant_db
         options: >-
           --health-cmd pg_isready
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
         ports:
-          - 5440:5432
-      # Shard 0 - Replica
-      postgres-shard0-replica:
-        image: postgres:16@sha256:a3b7f434b2dc57ce85a67e171163eb8ab1a1ebcb39d27484661f26b1dfbe30d6
-        env:
-          POSTGRES_USER: grant
-          POSTGRES_PASSWORD: password
-          POSTGRES_DB: shard_0
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-        ports:
-          - 5441:5432
-      # Shard 1 - Primary
-      postgres-shard1-primary:
-        image: postgres:16@sha256:a3b7f434b2dc57ce85a67e171163eb8ab1a1ebcb39d27484661f26b1dfbe30d6
-        env:
-          POSTGRES_USER: grant
-          POSTGRES_PASSWORD: password
-          POSTGRES_DB: shard_1
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-        ports:
-          - 5442:5432
-      # Shard 1 - Replica
-      postgres-shard1-replica:
-        image: postgres:16@sha256:a3b7f434b2dc57ce85a67e171163eb8ab1a1ebcb39d27484661f26b1dfbe30d6
-        env:
-          POSTGRES_USER: grant
-          POSTGRES_PASSWORD: password
-          POSTGRES_DB: shard_1
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-        ports:
-          - 5443:5432
+          - 5432:5432
     steps:
       - name: Download source
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Refresh apt package index
+        # install-crystal apt-installs libevent and friends without updating
+        # the index first, and the runner image's index goes stale.
+        run: sudo apt-get update
       - name: Install Crystal
         uses: crystal-lang/install-crystal@d8ef131ecec0352ce0e39b81b0a6d95def58fe2f # v1
         with:
@@ -285,18 +339,11 @@ jobs:
       - name: Install shards
         run: shards install --frozen --skip-postinstall --skip-executables
       - name: Run sharding tests
-        timeout-minutes: 10
-        run: |
-          # Run composite key tests first
-          crystal spec spec/grant/composite_primary_key_spec.cr
-          # TODO: Add more sharding tests as they are developed
+        timeout-minutes: 30
+        run: scripts/spec-groups.sh --only spec/grant/sharding --only spec/grant/composite pg
         env:
+          CRYSTAL: crystal
+          SPEC_GROUP_INCREMENTAL: "0"
+          SPEC_GROUP_MAX_RSS_GB: "13"
           CURRENT_ADAPTER: pg
-          # Primary connection
           PG_DATABASE_URL: postgres://grant:password@localhost:5432/grant_db
-          PG_REPLICA_URL: postgres://grant:password@localhost:5433/grant_replica_db
-          # Shard connections
-          SHARD_0_PRIMARY: postgres://grant:password@localhost:5440/shard_0
-          SHARD_0_REPLICA: postgres://grant:password@localhost:5441/shard_0
-          SHARD_1_PRIMARY: postgres://grant:password@localhost:5442/shard_1
-          SHARD_1_REPLICA: postgres://grant:password@localhost:5443/shard_1

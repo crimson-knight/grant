@@ -24,9 +24,9 @@ private def item_statements(& : ->) : Array(String)
 end
 
 private def tagged!(statements : Array(String), verb : String? = nil) : Nil
-  scoped = verb ? statements.select { |sql| sql.lstrip.upcase.starts_with?(verb) } : statements
+  scoped = verb ? statements.select(&.lstrip.upcase.starts_with?(verb)) : statements
   scoped.should_not be_empty
-  scoped.each { |sql| sql.should end_with(TAG_COMMENT) }
+  scoped.each(&.should(end_with(TAG_COMMENT)))
 end
 
 describe "Grant::QueryLogs on every statement path" do
@@ -69,7 +69,9 @@ describe "Grant::QueryLogs on every statement path" do
   end
 
   it "tags insert_all, insert_all!, upsert_all and the single-row forms" do
-    tagged!(item_statements { W6bQlItem.insert_all([{:sku => "c", :qty => 1}, {:sku => "d", :qty => 2}] of Hash(Symbol, String | Int32), returning: [:id]) }, "INSERT")
+    # MySQL has no INSERT ... RETURNING, so it inserts without asking for ids.
+    returning = CURRENT_ADAPTER == "mysql" ? nil : [:id]
+    tagged!(item_statements { W6bQlItem.insert_all([{:sku => "c", :qty => 1}, {:sku => "d", :qty => 2}] of Hash(Symbol, String | Int32), returning: returning) }, "INSERT")
     tagged!(item_statements { W6bQlItem.insert_all!([{:sku => "e", :qty => 1}] of Hash(Symbol, String | Int32)) }, "INSERT")
     tagged!(item_statements { W6bQlItem.upsert_all([{:id => 1_i64, :sku => "a2", :qty => 9}] of Hash(Symbol, Int64 | String | Int32), unique_by: [:id]) }, "INSERT")
     tagged!(item_statements { W6bQlItem.upsert({:id => 2_i64, :sku => "b2", :qty => 9} of Symbol => Int64 | String | Int32, unique_by: [:id]) }, "INSERT")
@@ -98,6 +100,6 @@ describe "Grant::QueryLogs on every statement path" do
       W6bQlItem.sum(:qty)
     end
     statements.should_not be_empty
-    statements.each { |sql| sql.should_not contain("/*") }
+    statements.each(&.should_not(contain("/*")))
   end
 end

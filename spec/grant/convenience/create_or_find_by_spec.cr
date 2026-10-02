@@ -14,7 +14,7 @@ describe "create_or_find_by" do
 
   it "returns the existing row when the unique index rejects the insert" do
     existing = ConvItem.create!(name: "dup", status: "old")
-    found = ConvItem.create_or_find_by(name: "dup") { |record| record.status = "new" }
+    found = ConvItem.create_or_find_by(name: "dup", &.status=("new"))
     found.id.should eq(existing.id)
     found.status.should eq("old")
     ConvItem.count.should eq(1)

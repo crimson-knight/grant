@@ -217,7 +217,7 @@ describe "Sharding Integration Tests" do
 
       # Re-resolving the same value is stable and deterministic per value.
       Grant::ShardManager.resolve_shard("EdgeCaseModel", tenant_id: 1_i64).should eq(a)
-      [a, b].each { |s| s.to_s.should match(/^shard_\d$/) }
+      [a, b].each(&.to_s.should(match(/^shard_\d$/)))
     end
   end
 
@@ -299,9 +299,9 @@ describe "Sharding Integration Tests" do
         original.current_shard = source_shard
         Grant::ShardManager.with_shard(source_shard) { original.save! }
 
-        destination_tenant_id = (1_i64..10_000_i64).find do |tenant_id|
+        destination_tenant_id = (1_i64..10_000_i64).find! do |tenant_id|
           Grant::ShardManager.resolve_shard("LunaMoveRecord", tenant_id: tenant_id) == target_shard
-        end.not_nil!
+        end
         original.tenant_id = destination_tenant_id
 
         moved = original.move_to_shard(target_shard)

@@ -1,7 +1,7 @@
 require "../../support/schema_fixture"
 
 private def m02b_scalar(sql : String)
-  SchemaFixture.adapter.open { |db| db.scalar(sql) }
+  SchemaFixture.adapter.open(&.scalar(sql))
 end
 
 describe "M02b alter table" do

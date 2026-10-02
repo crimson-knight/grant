@@ -36,8 +36,8 @@ describe Grant::Schema::Dumper do
   describe "the dump" do
     it "lists parents before children and leaves cyclic foreign keys for the end" do
       text = m04_dump
-      text.index("create_table \"m04_dump_accounts\"").not_nil!.should be < text.index("create_table \"m04_dump_memberships\"").not_nil!
-      text.index("create_table \"m04_dump_accounts\"").not_nil!.should be < text.index("create_table \"m04_dump_notes\"").not_nil!
+      text.index!("create_table \"m04_dump_accounts\"").should be < text.index!("create_table \"m04_dump_memberships\"")
+      text.index!("create_table \"m04_dump_accounts\"").should be < text.index!("create_table \"m04_dump_notes\"")
       text.should contain(%(schema.add_foreign_key "m04_dump_cycle_a", "m04_dump_cycle_b", column: "b_id"))
     end
 
@@ -224,8 +224,57 @@ Grant::Schema.define(version: 0, source: "golden/m04_pg.cr") do |schema|
 
   schema.add_foreign_key "m04_dump_cycle_a", "m04_dump_cycle_b", column: "b_id"
 end
+Grant::Schema.define(version: 0, source: "golden/m04_mysql.cr") do |schema|
+  schema.create_table "m04_dump_accounts", id: :bigint, comment: "Customer accounts", force: :cascade do |t|
+    t.string "name", null: false, limit: 80, comment: "Display name"
+    t.decimal "balance", null: false, precision: 12, scale: 2, default_sql: "0.00"
+    t.string "status", null: false, limit: 255, default_sql: "'active'"
+    t.text "notes"
+    t.boolean "active", null: false, default_sql: "1"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["lower(`name`)"], name: "idx_m04_accounts_lower_name", unique: true
+    t.index ["status"], name: "idx_m04_accounts_status"
+    t.unique_constraint ["name", "status"], name: "uniq_m04_name_status"
+    t.check_constraint "(`balance` >= 0)", name: "chk_m04_balance"
+  end
+
+  schema.create_table "m04_dump_memberships", id: false, primary_key: ["account_id", "member_id"], force: :cascade do |t|
+    t.bigint "account_id", null: false
+    t.bigint "member_id", null: false
+    t.string "role", null: false, limit: 255, default_sql: "'member'"
+    t.index ["member_id"]
+    t.foreign_key "m04_dump_accounts", column: "account_id", on_delete: :cascade, on_update: :restrict
+  end
+
+  schema.create_table "m04_dump_notes", id: :bigint, force: :cascade do |t|
+    t.bigint "account_id"
+    t.bigint "parent_id"
+    t.string "slug", limit: 40
+    t.datetime "posted_at", precision: 3
+    t.index ["parent_id"], name: "fk_m04_dump_notes_parent_id"
+    t.index ["posted_at"], name: "idx_m04_notes_posted_desc", order: {"posted_at" => "DESC"}
+    t.index ["account_id"]
+    t.unique_constraint ["slug", "account_id"], name: "idx_m04_notes_slug_account"
+    t.foreign_key "m04_dump_accounts", column: "account_id", on_delete: :cascade
+    t.foreign_key "m04_dump_notes", column: "parent_id", on_delete: :set_null
+  end
+
+  schema.create_table "m04_dump_cycle_a", id: :bigint, force: :cascade do |t|
+    t.bigint "b_id"
+    t.index ["b_id"], name: "fk_m04_dump_cycle_a_b_id"
+  end
+
+  schema.create_table "m04_dump_cycle_b", id: :bigint, force: :cascade do |t|
+    t.bigint "a_id"
+    t.index ["a_id"], name: "fk_m04_dump_cycle_b_a_id"
+    t.foreign_key "m04_dump_cycle_a", column: "a_id"
+  end
+
+  schema.add_foreign_key "m04_dump_cycle_a", "m04_dump_cycle_b", column: "b_id"
+end
 M04_GOLDEN = {
-  "sqlite" => <<-'CR',
+  "sqlite" => <<-CR,
     # This file is auto-generated from the current state of the database. Instead
     # of editing this file, please use the migrations feature of Grant to change
     # the schema, then dump it again.
@@ -280,7 +329,7 @@ M04_GOLDEN = {
       schema.add_foreign_key "m04_dump_cycle_a", "m04_dump_cycle_b", column: "b_id"
     end
     CR
-  "pg" => <<-'CR',
+  "pg" => <<-CR,
     # This file is auto-generated from the current state of the database. Instead
     # of editing this file, please use the migrations feature of Grant to change
     # the schema, then dump it again.
@@ -343,6 +392,64 @@ M04_GOLDEN = {
 
       schema.create_table "m04_dump_cycle_b", id: :bigint, force: :cascade do |t|
         t.bigint "a_id"
+        t.foreign_key "m04_dump_cycle_a", column: "a_id"
+      end
+
+      schema.add_foreign_key "m04_dump_cycle_a", "m04_dump_cycle_b", column: "b_id"
+    end
+    CR
+  "mysql" => <<-CR,
+    # This file is auto-generated from the current state of the database. Instead
+    # of editing this file, please use the migrations feature of Grant to change
+    # the schema, then dump it again.
+    #
+    # Require it from the program that runs the database tasks; Grant::Schema.load
+    # (or Grant::Tasks::Database#schema_load) creates the schema on a fresh database.
+
+    Grant::Schema.define(version: 0) do |schema|
+      schema.create_table "m04_dump_accounts", id: :bigint, comment: "Customer accounts", force: :cascade do |t|
+        t.string "name", null: false, limit: 80, comment: "Display name"
+        t.decimal "balance", null: false, precision: 12, scale: 2, default_sql: "0.00"
+        t.string "status", null: false, limit: 255, default_sql: "'active'"
+        t.text "notes"
+        t.boolean "active", null: false, default_sql: "1"
+        t.datetime "created_at", null: false
+        t.datetime "updated_at", null: false
+        t.index ["lower(`name`)"], name: "idx_m04_accounts_lower_name", unique: true
+        t.index ["status"], name: "idx_m04_accounts_status"
+        t.unique_constraint ["name", "status"], name: "uniq_m04_name_status"
+        t.check_constraint "(`balance` >= 0)", name: "chk_m04_balance"
+      end
+
+      schema.create_table "m04_dump_memberships", id: false, primary_key: ["account_id", "member_id"], force: :cascade do |t|
+        t.bigint "account_id", null: false
+        t.bigint "member_id", null: false
+        t.string "role", null: false, limit: 255, default_sql: "'member'"
+        t.index ["member_id"]
+        t.foreign_key "m04_dump_accounts", column: "account_id", on_delete: :cascade, on_update: :restrict
+      end
+
+      schema.create_table "m04_dump_notes", id: :bigint, force: :cascade do |t|
+        t.bigint "account_id"
+        t.bigint "parent_id"
+        t.string "slug", limit: 40
+        t.datetime "posted_at", precision: 3
+        t.index ["parent_id"], name: "fk_m04_dump_notes_parent_id"
+        t.index ["posted_at"], name: "idx_m04_notes_posted_desc", order: {"posted_at" => "DESC"}
+        t.index ["account_id"]
+        t.unique_constraint ["slug", "account_id"], name: "idx_m04_notes_slug_account"
+        t.foreign_key "m04_dump_accounts", column: "account_id", on_delete: :cascade
+        t.foreign_key "m04_dump_notes", column: "parent_id", on_delete: :set_null
+      end
+
+      schema.create_table "m04_dump_cycle_a", id: :bigint, force: :cascade do |t|
+        t.bigint "b_id"
+        t.index ["b_id"], name: "fk_m04_dump_cycle_a_b_id"
+      end
+
+      schema.create_table "m04_dump_cycle_b", id: :bigint, force: :cascade do |t|
+        t.bigint "a_id"
+        t.index ["a_id"], name: "fk_m04_dump_cycle_b_a_id"
         t.foreign_key "m04_dump_cycle_a", column: "a_id"
       end
 

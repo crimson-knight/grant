@@ -7,7 +7,7 @@ describe "#find_each" do
       Parent.new(name: "role_#{i}").tap(&.save)
     end.map(&.id)
 
-    found_roles = [] of Int64 | Nil
+    found_roles = [] of Int64?
     Parent.find_each do |model|
       found_roles << model.id
     end
@@ -32,7 +32,7 @@ describe "#find_each" do
     created_models.shift
     created_models.shift
 
-    found_models = [] of Int64 | Nil
+    found_models = [] of Int64?
 
     Parent.find_each(offset: 2) do |model|
       found_models << model.id
@@ -49,7 +49,7 @@ describe "#find_each" do
 
     looking_for_ids = created_models[0...5]
 
-    found_models = [] of Int64 | Nil
+    found_models = [] of Int64?
     Parent.find_each("WHERE id IN(#{looking_for_ids.join(",")})") do |model|
       found_models << model.id
     end

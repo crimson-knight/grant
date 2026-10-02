@@ -48,7 +48,7 @@ module Grant::Transactions
     # :nodoc:
     def __partial_update_safe? : Bool
       {% begin %}
-        {% array_columns = @type.instance_vars.select { |ivar| ivar.annotation(Grant::Column) && ivar.type.union_types.any? { |column_type| column_type.name.starts_with?("Array(") } }.map(&.name.stringify) %}
+        {% array_columns = @type.instance_vars.select { |ivar| ivar.annotation(Grant::Column) && ivar.type.union_types.any?(&.name.starts_with?("Array(")) }.map(&.name.stringify) %}
         {% if array_columns.empty? %}
           true
         {% else %}
@@ -121,7 +121,7 @@ module Grant::Transactions
     # User.create({"email" => "ada@example.com"})
     # User.create({"email" => "seed@example.com"}, skip_timestamps: true)
     # ```
-    def create(args, skip_timestamps : Bool = false, context : Symbol | Array(Symbol) | Nil = nil)
+    def create(args, skip_timestamps : Bool = false, context : (Symbol | Array(Symbol))? = nil)
       guard_writes!
       instance = new
       instance.set_attributes(args.to_h.transform_keys(&.to_s))
@@ -158,7 +158,7 @@ module Grant::Transactions
     # ```
     # User.create!({"email" => "ada@example.com"})
     # ```
-    def create!(args, skip_timestamps : Bool = false, context : Symbol | Array(Symbol) | Nil = nil)
+    def create!(args, skip_timestamps : Bool = false, context : (Symbol | Array(Symbol))? = nil)
       guard_writes!
       instance = new
       instance.set_attributes(args.to_h.transform_keys(&.to_s))
@@ -389,7 +389,7 @@ module Grant::Transactions
     {% primary_key = @type.instance_vars.find { |ivar| (ann = ivar.annotation(Grant::Column)) && ann[:primary] } %}
     {% raise raise "A primary key must be defined for #{@type.name}." unless primary_key %}
     {% ann = primary_key.annotation(Grant::Column) %}
-    
+
     # Record-level read-only guard: a record flagged via `#readonly!` (or loaded
     # through a read-only relation) cannot be persisted. Mirrors AR.
     raise Grant::ReadOnlyRecordError.new("#{self.class.name} is marked as read only") if readonly?
@@ -467,7 +467,7 @@ module Grant::Transactions
       else
         self.class.adapter.update(self.class.table_name, self.class.primary_name, fields, params)
       end
-     
+
      Grant::Logs::Model.debug { "Record updated - #{self.class.name} [id: #{@{{primary_key.name.id}}}]" }
     rescue ex : Grant::TenantMismatchError | Grant::NoTenantError | Grant::StatementInvalid | Grant::Transaction::ReadOnlyError
       raise ex
@@ -513,9 +513,9 @@ module Grant::Transactions
     {% primary_key = @type.instance_vars.find { |ivar| (ann = ivar.annotation(Grant::Column)) && ann[:primary] } %}
     {% raise raise "A primary key must be defined for #{@type.name}." unless primary_key %}
     {% ann = primary_key.annotation(Grant::Column) %}
-    
+
     Grant::Logs::Model.debug { "Destroying record - #{self.class.name} [id: #{@{{primary_key.name.id}}}]" }
-    
+
     if self.class.__multitenant?
       affected = self.class.__tenant_write_scope
         .where(self.class.primary_name, :eq, @{{primary_key.name.id}}.as(Grant::Columns::Type))
@@ -527,7 +527,7 @@ module Grant::Transactions
       self.class.adapter.delete(self.class.table_name, self.class.primary_name, @{{primary_key.name.id}})
     end
     @destroyed = true
-    
+
     Grant::Logs::Model.debug { "Record destroyed - #{self.class.name} [id: #{@{{primary_key.name.id}}}]" }
   {% end %}
   end
@@ -561,7 +561,7 @@ module Grant::Transactions
   # user.save                  # => true; UPDATEs the existing row
   # user.save(validate: false) # write regardless of validation state
   # ```
-  def save(*, validate : Bool = true, skip_timestamps : Bool = false, context : Symbol | Array(Symbol) | Nil = nil) : Bool
+  def save(*, validate : Bool = true, skip_timestamps : Bool = false, context : (Symbol | Array(Symbol))? = nil) : Bool
     guard_writes!
     guard_not_destroyed!("save")
     return true if self.class.suppressed?
@@ -670,7 +670,7 @@ module Grant::Transactions
   # user = User.new(email: "ada@example.com")
   # user.save! # => true, or raises Grant::RecordNotSaved
   # ```
-  def save!(*, validate : Bool = true, skip_timestamps : Bool = false, context : Symbol | Array(Symbol) | Nil = nil) : Bool
+  def save!(*, validate : Bool = true, skip_timestamps : Bool = false, context : (Symbol | Array(Symbol))? = nil) : Bool
     save(validate: validate, skip_timestamps: skip_timestamps, context: context) || raise save_failure_error
   end
 
@@ -729,7 +729,7 @@ module Grant::Transactions
   # user.update({"email" => "new@example.com"})
   # user.update({"email" => "seed@example.com"}, skip_timestamps: true)
   # ```
-  def update(args, skip_timestamps : Bool = false, context : Symbol | Array(Symbol) | Nil = nil) : Bool
+  def update(args, skip_timestamps : Bool = false, context : (Symbol | Array(Symbol))? = nil) : Bool
     enlist_transaction_record
     set_attributes(args.to_h.transform_keys(&.to_s))
 
@@ -756,7 +756,7 @@ module Grant::Transactions
   # ```
   # user.update!({"email" => "new@example.com"})
   # ```
-  def update!(args, skip_timestamps : Bool = false, context : Symbol | Array(Symbol) | Nil = nil) : Bool
+  def update!(args, skip_timestamps : Bool = false, context : (Symbol | Array(Symbol))? = nil) : Bool
     enlist_transaction_record
     set_attributes(args.to_h.transform_keys(&.to_s))
 

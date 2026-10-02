@@ -34,7 +34,7 @@ describe "Model.scoping { }" do
   it "makes the relation the current scope for class-level queries" do
     ScopingBlockWidget.scoping(ScopingBlockWidget.where(color: "red")) do
       ScopingBlockWidget.count.should eq 2
-      ScopingBlockWidget.all.map(&.name.to_s).sort.should eq ["a", "b"]
+      ScopingBlockWidget.all.map(&.name.to_s).sort!.should eq ["a", "b"]
       ScopingBlockWidget.where(name: "c").to_a.should be_empty
       ScopingBlockWidget.where(name: "a").first.not_nil!.color.should eq "red"
     end

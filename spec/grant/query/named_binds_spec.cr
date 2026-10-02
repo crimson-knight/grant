@@ -2,7 +2,7 @@ require "../../spec_helper"
 require "../../support/where_family_models"
 
 private def titles(relation : Grant::Query::Builder(WfPost)) : Array(String)
-  relation.order(:id).select.map { |post| post.title.to_s }
+  relation.order(:id).select.map(&.title.to_s)
 end
 
 describe "where with named binds" do

@@ -200,7 +200,7 @@ describe "has_many" do
         courier.save!
       end
 
-      couriers = service.couriers.to_a.sort_by { |courier| courier.courier_id.not_nil! }
+      couriers = service.couriers.to_a.sort_by(&.courier_id.not_nil!)
 
       couriers.size.should eq 3
       couriers[0].courier_id.should eq courier1.courier_id

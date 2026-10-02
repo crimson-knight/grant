@@ -5,7 +5,7 @@ describe "find_or_create_by, find_or_initialize_by" do
     Parent.clear
     Parent.find_or_create_by(name: "name")
     Parent.first!.name.should eq("name")
-    Parent.first!.new_record?.should eq(false)
+    Parent.first!.new_record?.should be_false
   end
 
   it "uses find on find_or_create_by when it exists" do
@@ -19,12 +19,12 @@ describe "find_or_create_by, find_or_initialize_by" do
     Parent.clear
     Parent.create(name: "name")
     parent = Parent.find_or_initialize_by(name: "name")
-    parent.new_record?.should eq(false)
+    parent.new_record?.should be_false
   end
 
   it "initializes with find_or_initialize when not found" do
     Parent.clear
     parent = Parent.find_or_initialize_by(name: "gnome")
-    parent.new_record?.should eq(true)
+    parent.new_record?.should be_true
   end
 end

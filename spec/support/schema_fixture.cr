@@ -3,14 +3,14 @@ require "../spec_helper"
 # Real tables for the schema introspection specs, created with plain DDL so the
 # catalog is read back from a database Grant did not describe itself.
 module SchemaFixture
-  TABLES = %w(m01_memberships m01_posts m01_authors)
+  TABLES = %w[m01_memberships m01_posts m01_authors]
 
   def self.adapter : Grant::Adapter::Base
     Grant::ConnectionRegistry.get_adapter(CURRENT_ADAPTER)
   end
 
   def self.exec(sql : String) : Nil
-    adapter.open { |db| db.exec sql }
+    adapter.open(&.exec(sql))
   end
 
   def self.create! : Nil

@@ -79,7 +79,7 @@ describe "automatic inverse detection" do
     authors = IdAuthor.includes(:id_books).select.to_a
     AssociationQueryCounter.selects do
       authors.each do |author|
-        author.id_books.each { |book| book.id_author.should be(author) }
+        author.id_books.each(&.id_author.should(be(author)))
       end
     end.should eq(0)
   end

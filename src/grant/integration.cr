@@ -41,14 +41,14 @@ module Grant
     # The primary key values as an array, or nil while any is unset.
     def to_key : Array(Grant::Columns::Type)?
       values = primary_key_values.values
-      return nil if values.empty? || values.any?(&.nil?)
+      return if values.empty? || values.any?(Nil)
       values
     end
 
     # The key for URLs: the primary key values joined with `-`, or nil for a
     # record that is not persisted.
     def to_param : String?
-      return nil unless persisted?
+      return unless persisted?
       key = to_key
       key ? key.join('-') : nil
     end

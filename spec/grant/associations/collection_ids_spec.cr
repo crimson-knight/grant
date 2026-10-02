@@ -51,7 +51,7 @@ describe "collection ids reader and writer" do
   describe "ci_item_ids" do
     it "plucks only the key column when the collection is not loaded" do
       owner = CiOwner.create!(name: "o")
-      items = 3.times.map { |i| CiItem.create!(label: "l#{i}", ci_owner_id: owner.id) }.to_a
+      items = Array.new(3) { |i| CiItem.create!(label: "l#{i}", ci_owner_id: owner.id) }
 
       ids = [] of Grant::Columns::Type
       statements = StatementRecorder.statements { ids = owner.ci_item_ids }

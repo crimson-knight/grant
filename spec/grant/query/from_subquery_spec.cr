@@ -102,7 +102,7 @@ describe "from (subquery as table)" do
       relation.sum(:score).should eq(26_i64)
       relation.order(:score).first.not_nil!.label.should eq("b")
       relation.order(:score).limit(2).count.should eq(2_i64)
-      relation.pluck(:label).flatten.map(&.to_s).sort.should eq(["b", "c", "d"])
+      relation.pluck(:label).flatten.map(&.to_s).sort!.should eq(["b", "c", "d"])
       relation.group_by(:team).count.to_s.should contain("blue")
     end
 

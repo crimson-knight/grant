@@ -111,7 +111,7 @@ class Grant::Query::Builder(Model)
       own_join_clauses.reject! { |clause| added.includes?(clause) }
     end
     @distinct = false if current.eager_load_distinct?
-    @notes = current.with(eager_load_joins: [] of Grant::Query::JoinSupport::Clause, eager_load_distinct: false) unless current.eager_load_joins.empty? && !current.eager_load_distinct?
+    @notes = current.with(eager_load_joins: [] of Grant::Query::JoinSupport::Clause, eager_load_distinct: false) if current.eager_load_distinct? || !current.eager_load_joins.empty?
   end
 
   # Drops the LEFT JOIN clauses (`left: true`) or every other join clause.

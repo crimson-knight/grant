@@ -162,11 +162,11 @@ class Grant::Errors
   # errors.where(:name, :too_short, count: 3) # => [Error]
   # errors.where(:name, :blank)               # => []
   # ```
-  def where(field : (String | Symbol), type : Symbol | String | Nil = nil, **options) : Array(Error)
+  def where(field : (String | Symbol), type : Symbol | String? = nil, **options) : Array(Error)
     list = by_attribute[field.to_s]?
     return [] of Error unless list
     return list.dup if type.nil? && options.size == 0
-    list.select { |error| error.match?(field, type, **options) }
+    list.select(&.match?(field, type, **options))
   end
 
   # True when *field* has an error of *type* carrying all of *options*.
@@ -180,7 +180,7 @@ class Grant::Errors
   def of_type(field : (String | Symbol), type : Symbol, **options) : Bool
     list = by_attribute[field.to_s]?
     return false unless list
-    list.any? { |error| error.match?(field, type, **options) }
+    list.any?(&.match?(field, type, **options))
   end
 
   # True when *field* has an error with exactly the message *message* (the
@@ -211,7 +211,7 @@ class Grant::Errors
   def added?(field : (String | Symbol), type : Symbol = :invalid, **options) : Bool
     list = by_attribute[field.to_s]?
     return false unless list
-    list.any? { |error| error.strict_match?(field, type, **options) }
+    list.any?(&.strict_match?(field, type, **options))
   end
 
   # :ditto:
@@ -237,7 +237,7 @@ class Grant::Errors
   # errors.delete(:name)             # removes every error on name
   # errors.delete(:name, :too_short) # removes one type
   # ```
-  def delete(field : (String | Symbol), type : Symbol | String | Nil = nil, **options) : Array(String)
+  def delete(field : (String | Symbol), type : Symbol | String? = nil, **options) : Array(String)
     removed = where(field, type, **options)
     return [] of String if removed.empty?
     messages = removed.compact_map(&.message)
@@ -524,7 +524,7 @@ class Grant::Errors
   #
   # Since we include `Enumerable(Error)`, `map` is inherited,
   # but we override it to ensure it returns `Array(U)` properly.
-  def map(&block : Error -> U) : Array(U) forall U
+  def map(& : Error -> U) : Array(U) forall U
     @errors.map { |e| yield e }
   end
 

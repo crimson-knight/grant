@@ -12,7 +12,7 @@ class Grant::Adapter::Sqlite < Grant::Adapter::Base
     return unless autoincrement_counters?
 
     highest_query = "SELECT COALESCE(MAX(#{quote(primary_key)}), 0) FROM #{quote(table_name)}"
-    highest = open(highest_query) { |conn| conn.scalar(highest_query) }
+    highest = open(highest_query, &.scalar(highest_query))
     statement = "UPDATE sqlite_sequence SET seq = ? WHERE name = ?"
     open(statement, [highest.to_s.to_i64, table_name]) do |conn|
       conn.exec(statement, highest.to_s.to_i64, table_name)
@@ -32,7 +32,7 @@ class Grant::Adapter::Sqlite < Grant::Adapter::Base
   # `sqlite_sequence` exists only once a table declared AUTOINCREMENT.
   private def autoincrement_counters? : Bool
     query = "SELECT 1 FROM sqlite_master WHERE name = 'sqlite_sequence'"
-    !open(query) { |conn| conn.query_one?(query, as: Int64) }.nil?
+    !open(query, &.query_one?(query, as: Int64)).nil?
   end
 
   private def quote_string(value : String) : String

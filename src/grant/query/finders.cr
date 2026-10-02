@@ -106,7 +106,7 @@ module Grant::Query::Finders(Model)
     unquoted = field.delete('"').delete('`')
     column = unquoted
     if dot = unquoted.rindex('.')
-      return nil unless unquoted[0, dot] == Model.table_name
+      return unless unquoted[0, dot] == Model.table_name
       column = unquoted[(dot + 1)..]
     end
     Model.fields.includes?(column) ? column : nil
@@ -137,7 +137,7 @@ module Grant::Query::Finders(Model)
     attrs
   end
 
-  {% for name in %w(build create create! find_or_create_by find_or_create_by! find_or_initialize_by create_or_find_by create_or_find_by! first_or_create first_or_create! first_or_initialize) %}
+  {% for name in %w[build create create! find_or_create_by find_or_create_by! find_or_initialize_by create_or_find_by create_or_find_by! first_or_create first_or_create! first_or_initialize] %}
     # Keyword form; see the relation-level documentation on `Finders`.
     def {{name.id}}(**attrs : Grant::Columns::Type) : Model
       run_{{name.id.gsub(/!$/, "_bang")}}(Grant::Query.model_args(attrs), nil)

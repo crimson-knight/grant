@@ -21,7 +21,7 @@ require "json"
 class Grant::Error
   # The values an error's options can carry. Anything else given to
   # `Grant::Error.value` is stored as its `to_s`.
-  alias Value = Nil | Bool | Int32 | Int64 | Float64 | String | Symbol | Array(String) | Range(Int32, Int32) | Range(Int64, Int64)
+  alias Value = (Bool | Int32 | Int64 | Float64 | String | Symbol | Array(String) | Range(Int32, Int32) | Range(Int64, Int64))?
 
   # The options of an error: the data a message template interpolates and
   # `errors.details` reports.
@@ -33,10 +33,10 @@ class Grant::Error
 
   # What an error's message may be: text, a Symbol naming a translation key, a
   # `MessageProc`, or nothing (generate it from the error's type).
-  alias Message = String | Symbol | MessageProc | Nil
+  alias Message = String | Symbol | MessageProc?
 
   # Converts *value* to something an error can carry.
-  def self.value(value : Nil | Bool | String | Symbol) : Value
+  def self.value(value : Bool | String | Symbol?) : Value
     value
   end
 
@@ -87,7 +87,7 @@ class Grant::Error
 
   # Builds an `Options` hash from a NamedTuple, or nil when it is empty.
   def self.options_from(tuple : NamedTuple) : Options?
-    return nil if tuple.size == 0
+    return if tuple.size == 0
     result = Options.new
     tuple.each { |key, item| result[key] = value(item) }
     result
@@ -95,7 +95,7 @@ class Grant::Error
 
   # Adapts a message Proc that takes a specific model class to the
   # `Grant::Base`-typed `MessageProc` an error stores.
-  def self.wrap_message(message : String | Symbol | Nil) : Message
+  def self.wrap_message(message : String | Symbol?) : Message
     message
   end
 
@@ -183,7 +183,7 @@ class Grant::Error
   def message : String?
     raw = @raw_message
     return raw if raw.is_a?(String)
-    return nil if raw.nil?
+    return if raw.nil?
     cached = @message
     return cached if cached
     @message = generate(raw)
@@ -239,7 +239,7 @@ class Grant::Error
   # error.match?(:name, :too_short)           # by type
   # error.match?(:name, :too_short, count: 3) # by type and options
   # ```
-  def match?(attribute : String | Symbol, type : Symbol | String | Nil = nil, **options) : Bool
+  def match?(attribute : String | Symbol, type : Symbol | String? = nil, **options) : Bool
     return false unless self.attribute == attribute.to_s
     return false unless type.nil? || type_matches?(type)
     return true if options.size == 0
@@ -267,7 +267,7 @@ class Grant::Error
   # A copy that does not share state with this error, optionally moved to
   # another attribute. The options hash is duplicated; the message is
   # resolved on the copy, not carried over.
-  def copy(attribute : String | Symbol | Nil = nil) : Error
+  def copy(attribute : String | Symbol? = nil) : Error
     copy = Error.new(attribute || @field, @raw_message, @type, options: @options.try(&.dup), base: @base)
     copy
   end

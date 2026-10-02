@@ -155,7 +155,7 @@ describe "association autosave and validate:" do
       author.asv_posts.build(title: "Two")
 
       author.save.should be_true
-      AsvPost.where(asv_author_id: author.id).select.map(&.title.to_s).sort.should eq(["One", "Two"])
+      AsvPost.where(asv_author_id: author.id).select.map(&.title.to_s).sort!.should eq(["One", "Two"])
     end
 
     it "keys errors by position with index_errors: true" do
@@ -185,7 +185,7 @@ describe "association autosave and validate:" do
       AsvPost.create!(title: "Two", asv_author_id: author.id)
       author = AsvAuthor.find!(author.id)
       loaded = author.asv_posts.load_target
-      loaded.find { |post| post.id == first.id }.not_nil!.title = "One edited"
+      loaded.find! { |post| post.id == first.id }.title = "One edited"
 
       statements = StatementRecorder.statements { author.save.should be_true }
 

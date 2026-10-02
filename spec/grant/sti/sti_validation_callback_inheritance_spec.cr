@@ -58,7 +58,7 @@ describe "Grant STI validation and callback inheritance" do
             name TEXT,
             callback_mark TEXT
           )
-        SQL
+          SQL
       elsif CURRENT_ADAPTER == "mysql"
         db.exec <<-SQL
           CREATE TABLE grant_sti_inherited_lifecycle_records (
@@ -67,7 +67,7 @@ describe "Grant STI validation and callback inheritance" do
             name TEXT,
             callback_mark TEXT
           )
-        SQL
+          SQL
       else
         db.exec <<-SQL
           CREATE TABLE grant_sti_inherited_lifecycle_records (
@@ -76,7 +76,7 @@ describe "Grant STI validation and callback inheritance" do
             name TEXT,
             callback_mark TEXT
           )
-        SQL
+          SQL
       end
     end
   end

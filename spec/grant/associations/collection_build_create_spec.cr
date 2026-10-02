@@ -126,7 +126,7 @@ describe "collection build, create and create!" do
     it "supports the block form and a Hash" do
       author = BcAuthor.create!(name: "a")
 
-      first = author.bc_books.create(title: "T") { |built| built.pages = 7 }
+      first = author.bc_books.create(title: "T", &.pages=(7))
       second = author.bc_books.create({"title" => "H"})
 
       BcBook.find!(first.id).pages.should eq(7)
@@ -143,7 +143,8 @@ describe "collection build, create and create!" do
 
       created.size.should eq(3)
       BcBook.where(bc_author_id: author.id).count.should eq(3)
-      StatementRecorder.count(statements, "BEGIN").should eq(1)
+      # MySQL opens a transaction with START TRANSACTION, the others with BEGIN.
+      StatementRecorder.count(statements, CURRENT_ADAPTER == "mysql" ? "START TRANSACTION" : "BEGIN").should eq(1)
       StatementRecorder.count(statements, "COMMIT").should eq(1)
     end
 
@@ -174,7 +175,7 @@ describe "collection build, create and create!" do
     it "supports the block form" do
       author = BcAuthor.create!(name: "a")
 
-      book = author.bc_books.create!(title: "T") { |built| built.pages = 9 }
+      book = author.bc_books.create!(title: "T", &.pages=(9))
 
       BcBook.find!(book.id).pages.should eq(9)
     end

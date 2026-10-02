@@ -482,8 +482,8 @@ module LifecycleBench
     io.puts "| Variant | heap MB after each cycle | RSS MB after each cycle |"
     io.puts "| --- | --- | --- |"
     result.list_of_variants.each do |variant|
-      heaps = variant.list_of_rounds.map { |sample| sample.heap_megabytes.round(1) }.join(", ")
-      rss = variant.list_of_rounds.map { |sample| sample.rss_megabytes.round(1) }.join(", ")
+      heaps = variant.list_of_rounds.map(&.heap_megabytes.round(1)).join(", ")
+      rss = variant.list_of_rounds.map(&.rss_megabytes.round(1)).join(", ")
       io.puts "| #{variant.variant} | #{heaps} | #{rss} |"
     end
   end

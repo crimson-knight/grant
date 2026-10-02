@@ -1,4 +1,5 @@
 require "../../spec_helper"
+require "../../support/column_type"
 
 class UuidTypeAccount < Grant::Base
   connection {{ env("CURRENT_ADAPTER") || "sqlite" }}
@@ -63,26 +64,11 @@ describe "UUID columns" do
   end
 
   it "stores a native uuid column on PostgreSQL and text elsewhere" do
-    type = ""
-    UuidTypeAccount.adapter.open do |db|
-      if CURRENT_ADAPTER == "pg"
-        type = db.query_one("SELECT udt_name FROM information_schema.columns WHERE table_name = 'uuid_type_accounts' AND column_name = 'id'", as: String)
-      else
-        db.query("PRAGMA table_info(uuid_type_accounts)") do |rs|
-          rs.each do
-            rs.read(Int32)
-            name = rs.read(String)
-            column_type = rs.read(String)
-            type = column_type if name == "id"
-            rs.read(Int32); rs.read(String?); rs.read(Int32)
-          end
-        end
-      end
-    end
-    if CURRENT_ADAPTER == "pg"
-      type.should eq "uuid"
-    else
-      type.should_not be_empty
+    type = database_column_type(UuidTypeAccount.adapter, "uuid_type_accounts", "id")
+    case CURRENT_ADAPTER
+    when "pg"    then type.should eq "uuid"
+    when "mysql" then type.should eq "char(36)"
+    else              type.should_not be_empty
     end
   end
 
@@ -91,8 +77,8 @@ describe "UUID columns" do
       sleep 2.milliseconds
       UuidTypeEvent.create!(name: "e#{index}")
     end
-    events.each { |event| event.id!.version.v7?.should be_true }
-    events.map(&.id!.to_s).should eq events.map(&.id!.to_s).sort
+    events.each(&.id!.version.v7?.should(be_true))
+    events.map(&.id!.to_s).should eq events.map(&.id!.to_s).sort!
     UuidTypeEvent.find!(events.last.id!).name.should eq "e5"
   end
 

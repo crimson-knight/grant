@@ -35,7 +35,7 @@ describe "per-shard read replicas (#{CURRENT_ADAPTER})" do
   end
 
   after_all do
-    %w(w6_sr_one w6_sr_one_r w6_sr_two w6_sr_two_r).each do |name|
+    %w[w6_sr_one w6_sr_one_r w6_sr_two w6_sr_two_r].each do |name|
       W6C04.remove(name, :writing)
       W6C04.remove(name, :reading)
     end

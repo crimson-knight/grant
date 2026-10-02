@@ -35,7 +35,7 @@ describe "in_batches yielding relations" do
     yielded.size.should eq(3)
     InBatchesItem.where(archived: true).count.should eq(7)
     statements.count(&.starts_with?("SELECT")).should eq(3)
-    statements.select(&.starts_with?("SELECT")).each { |sql| sql.should_not contain("label") }
+    statements.select(&.starts_with?("SELECT")).each(&.should_not(contain("label")))
 
     removed = 0_i64
     InBatchesItem.where(:id, :lteq, ids[4]).in_batches(of: 2) { |batch| removed += batch.delete_all }
@@ -50,8 +50,8 @@ describe "in_batches yielding relations" do
     end
 
     statements.size.should eq(2)
-    statements.each { |sql| sql.should_not contain("OFFSET") }
-    statements.each { |sql| sql.should_not contain("label") }
+    statements.each(&.should_not(contain("OFFSET")))
+    statements.each(&.should_not(contain("label")))
   end
 
   it "supports pluck, count and enumeration on the batch relation" do
@@ -105,7 +105,7 @@ describe "in_batches yielding relations" do
     end
     statements.size.should eq(2)
 
-    InBatchesItem.all.in_batches(of: 3).map { |batch| batch.to_a.size }.to_a.should eq([3, 3, 1])
+    InBatchesItem.all.in_batches(of: 3).map(&.to_a.size).to_a.should eq([3, 3, 1])
   end
 
   it "applies start, finish, cursor and error_on_ignore like find_each" do

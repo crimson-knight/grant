@@ -2,7 +2,7 @@ require "../../spec_helper"
 require "../../support/where_family_models"
 
 private def titles(relation : Grant::Query::Builder(WfPost)) : Array(String)
-  relation.order(:id).select.map { |post| post.title.to_s }
+  relation.order(:id).select.map(&.title.to_s)
 end
 
 describe "merge" do
@@ -77,9 +77,9 @@ describe "merge" do
   end
 
   it "takes the proc form: the block gets an empty relation to fill" do
-    merged = WfPost.where(published: true).merge { |scope| scope.where(published: false) }
+    merged = WfPost.where(published: true).merge(&.where(published: false))
     titles(merged).should eq(["b"])
-    titles(WfPost.where(published: true).merge { |scope| scope.where(score: 3) }).should eq(["c"])
+    titles(WfPost.where(published: true).merge(&.where(score: 3))).should eq(["c"])
   end
 
   it "takes keyword conditions" do

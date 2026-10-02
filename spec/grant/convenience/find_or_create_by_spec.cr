@@ -10,7 +10,7 @@ describe "find_or_create_by and find_or_initialize_by" do
       calls = 0
       first = ConvItem.find_or_create_by(name: "a") { |record| calls += 1; record.status = "new" }
       first.status.should eq("new")
-      again = ConvItem.find_or_create_by(name: "a") { |record| calls += 1 }
+      again = ConvItem.find_or_create_by(name: "a") { |_| calls += 1 }
       again.id.should eq(first.id)
       calls.should eq(1)
     end
@@ -26,7 +26,7 @@ describe "find_or_create_by and find_or_initialize_by" do
     end
 
     it "builds without saving in find_or_initialize_by and runs the block" do
-      item = ConvItem.find_or_initialize_by(name: "z") { |record| record.kind = "blk" }
+      item = ConvItem.find_or_initialize_by(name: "z", &.kind=("blk"))
       item.new_record?.should be_true
       item.kind.should eq("blk")
       ConvItem.count.should eq(0)
@@ -67,7 +67,7 @@ describe "find_or_create_by and find_or_initialize_by" do
 
     it "supports the bang, initialize and block forms" do
       relation = ConvItem.where(status: "active")
-      relation.find_or_create_by!(name: "b") { |record| record.qty = 4 }.qty.should eq(4)
+      relation.find_or_create_by!(name: "b", &.qty=(4)).qty.should eq(4)
       built = relation.find_or_initialize_by(name: "c")
       built.new_record?.should be_true
       built.status.should eq("active")
@@ -87,7 +87,7 @@ describe "find_or_create_by and find_or_initialize_by" do
     it "builds through new and build" do
       relation = ConvItem.where(status: "active")
       relation.build(name: "b").status.should eq("active")
-      relation.new(name: "n") { |record| record.qty = 2 }.qty.should eq(2)
+      relation.new(name: "n", &.qty=(2)).qty.should eq(2)
       relation.create(name: "c").persisted?.should be_true
       relation.create!(name: "d").status.should eq("active")
     end
@@ -100,7 +100,7 @@ describe "find_or_create_by with an attributes hash" do
 
   it "finds, creates and initializes at class level" do
     args = {"name" => "h"} of Symbol | String => Grant::Columns::Type
-    created = ConvItem.find_or_create_by(args) { |record| record.kind = "blk" }
+    created = ConvItem.find_or_create_by(args, &.kind=("blk"))
     created.persisted?.should be_true
     created.kind.should eq("blk")
     ConvItem.find_or_create_by!(args).id.should eq(created.id)
@@ -115,7 +115,7 @@ describe "relation build and after_initialize" do
   before_all { ConvInitItem.migrator.drop_and_create }
 
   it "runs after_initialize after the scope attributes and the block are applied" do
-    built = ConvInitItem.where(status: "live").build(name: "n") { |record| record.status = "blk" }
+    built = ConvInitItem.where(status: "live").build(name: "n", &.status=("blk"))
     built.seen.should eq("n/blk")
     ConvInitItem.where(status: "live").new(name: "m").seen.should eq("m/live")
   end

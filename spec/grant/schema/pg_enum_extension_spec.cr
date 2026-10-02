@@ -25,7 +25,7 @@ describe "M02b PostgreSQL enums, extensions and column types" do
         expect_raises(Grant::Schema::UnsupportedOperation) { rec.create_enum_statements(:status, %w[a]) }
         rec.enable_extension_statements("pgcrypto").should be_empty
         expect_raises(Grant::Schema::UnsupportedOperation) do
-          rec.create_table_statements(:t) { |t| t.citext :email }
+          rec.create_table_statements(:t, &.citext(:email))
         end
       end
     end

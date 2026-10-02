@@ -119,7 +119,7 @@ describe Grant::HealthMonitor do
 
     flaky.failing = true
     expect_raises(Grant::ConnectionFailed) { Grant::ConnectionRegistry.verify!("c02_health", :writing) }
-    Grant::ConnectionRegistry.health_status.find { |row| row[:key] == "c02_health:writing" }.not_nil![:healthy].should be_false
+    Grant::ConnectionRegistry.health_status.find! { |row| row[:key] == "c02_health:writing" }[:healthy].should be_false
     Grant::ConnectionRegistry.get_adapter("c02_health", :writing).same?(primary).should be_true
 
     flaky.failing = false

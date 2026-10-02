@@ -216,7 +216,7 @@ module Grant::Query::Assembler
     # `Grant::UnsupportedIndexHintError`.
     def index_hint_sql : String?
       hints = @query.index_hints
-      return nil if hints.empty?
+      return if hints.empty?
 
       adapter = Model.adapter
       rendered = [] of String

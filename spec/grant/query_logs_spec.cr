@@ -37,7 +37,7 @@ describe Grant::QueryLogs do
       Grant::QueryLogs.tag(:application, "shop")
 
       Grant::QueryLogs.append("SELECT 1").should eq("SELECT 1")
-      widget_statements("SELECT") { QlWidget.all.to_a }.each { |sql| sql.should_not contain("/*") }
+      widget_statements("SELECT") { QlWidget.all.to_a }.each(&.should_not(contain("/*")))
     end
   end
 
@@ -186,7 +186,7 @@ describe Grant::QueryLogs do
           done.send(Grant::QueryLogs.comment)
         end
       end
-      [done.receive, done.receive].compact.sort.should eq(["/*job:a*/", "/*job:b*/"])
+      [done.receive, done.receive].compact.sort!.should eq(["/*job:a*/", "/*job:b*/"])
     end
 
     it "tags the statements issued inside the block only" do

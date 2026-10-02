@@ -81,11 +81,11 @@ describe "Grant default scope on every class and relation entry point" do
   end
 
   it "keeps filters separate from default predicates when OR conditions are chained" do
-    EverywhereScopedRecord.all.map(&.title).sort.should eq(["visible one", "visible three", "visible two"])
+    EverywhereScopedRecord.all.map(&.title).sort!.should eq(["visible one", "visible three", "visible two"])
     EverywhereScopedRecord.where(title: "hidden").select.should be_empty
     EverywhereScopedRecord.where.not(:visible, true).select.should be_empty
     EverywhereScopedRecord.where(title: "missing").or(title: "hidden").select.should be_empty
-    EverywhereScopedRecord.in_alpha.select.map(&.title).sort.should eq(["visible one", "visible two"])
+    EverywhereScopedRecord.in_alpha.select.map(&.title).sort!.should eq(["visible one", "visible two"])
     EverywhereScopedRecord.in_category("beta").select.map(&.title).should eq(["visible three"])
     EverywhereScopedRecord.in_beta.select.map(&.title).should eq(["visible three"])
 
@@ -104,24 +104,24 @@ describe "Grant default scope on every class and relation entry point" do
     EverywhereScopedStiChild.create!(title: "visible child", visible: true)
     EverywhereScopedStiChild.create!(title: "hidden child", visible: false)
 
-    EverywhereScopedStiRecord.all.map(&.title).sort.should eq(["visible child", "visible root"])
+    EverywhereScopedStiRecord.all.map(&.title).sort!.should eq(["visible child", "visible root"])
     EverywhereScopedStiChild.all.map(&.title).should eq(["visible child"])
   end
 
   it "scopes class-level selection, ordering, projection, distinct, grouping, joins, and eager loading" do
     EverywhereScopedRecord.order(id: :desc).reorder(id: :asc).limit(2).offset(1).select.map(&.title).should eq(["visible two", "visible three"])
-    EverywhereScopedRecord.select(:category).select.map(&.category).uniq.sort.should eq(["alpha", "beta"])
-    EverywhereScopedRecord.pluck(:category).map(&.as(String)).uniq.sort.should eq(["alpha", "beta"])
+    EverywhereScopedRecord.select(:category).select.map(&.category).uniq!.sort!.should eq(["alpha", "beta"])
+    EverywhereScopedRecord.pluck(:category).map(&.as(String)).uniq!.sort!.should eq(["alpha", "beta"])
     EverywhereScopedRecord.where(category: "alpha").pluck(:category).uniq.should eq([["alpha"] of Grant::Columns::Type])
     EverywhereScopedRecord.ids.size.should eq(3)
-    EverywhereScopedRecord.distinct.select(:category).select.map(&.category).sort.should eq(["alpha", "beta"])
+    EverywhereScopedRecord.distinct.select(:category).select.map(&.category).sort!.should eq(["alpha", "beta"])
 
     grouped_categories = EverywhereScopedRecord.group_by(:category)
       .having("COUNT(*) > ?", 0_i64)
       .select(:category)
       .select
       .map(&.category)
-      .sort
+      .sort!
     grouped_categories.should eq(["alpha", "beta"])
 
     join_titles = EverywhereScopedRecord
@@ -135,12 +135,12 @@ describe "Grant default scope on every class and relation entry point" do
       .select(:title)
       .select
       .map(&.title)
-      .sort
+      .sort!
     left_join_titles.should eq(["visible one", "visible three", "visible two"])
 
-    EverywhereScopedRecord.includes(:children).select.map(&.title).sort.should eq(["visible one", "visible three", "visible two"])
-    EverywhereScopedRecord.preload(:children).select.map(&.title).sort.should eq(["visible one", "visible three", "visible two"])
-    EverywhereScopedRecord.eager_load(:children).select.map(&.title).sort.should eq(["visible one", "visible three", "visible two"])
+    EverywhereScopedRecord.includes(:children).select.map(&.title).sort!.should eq(["visible one", "visible three", "visible two"])
+    EverywhereScopedRecord.preload(:children).select.map(&.title).sort!.should eq(["visible one", "visible three", "visible two"])
+    EverywhereScopedRecord.eager_load(:children).select.map(&.title).sort!.should eq(["visible one", "visible three", "visible two"])
   end
 
   it "scopes lookups, first and last helpers, and class-level iteration" do

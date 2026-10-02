@@ -24,8 +24,8 @@ describe "around callbacks" do
       record.log.should contain("around_save:before")
       record.log.should contain("around_save:after")
       # Verify order: around_save:before comes before around_save:after
-      before_idx = record.log.index("around_save:before").not_nil!
-      after_idx = record.log.index("around_save:after").not_nil!
+      before_idx = record.log.index!("around_save:before")
+      after_idx = record.log.index!("around_save:after")
       before_idx.should be < after_idx
     end
 
@@ -159,10 +159,10 @@ describe "around callbacks" do
       record.log.should contain("outer:after")
 
       # Verify nesting order
-      outer_before = record.log.index("outer:before").not_nil!
-      inner_before = record.log.index("inner:before").not_nil!
-      inner_after = record.log.index("inner:after").not_nil!
-      outer_after = record.log.index("outer:after").not_nil!
+      outer_before = record.log.index!("outer:before")
+      inner_before = record.log.index!("inner:before")
+      inner_after = record.log.index!("inner:after")
+      outer_after = record.log.index!("outer:after")
 
       outer_before.should be < inner_before
       inner_before.should be < inner_after

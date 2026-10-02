@@ -102,7 +102,7 @@ describe "nested includes" do
         country.ni_cities.size.should eq(2)
         country.ni_cities.each do |city|
           city.ni_streets.size.should eq(2)
-          city.ni_streets.each { |street| street.ni_houses.size.should eq(2) }
+          city.ni_streets.each(&.ni_houses.size.should(eq(2)))
         end
       end
     end.should eq(0)
@@ -154,7 +154,7 @@ describe "nested includes" do
     NiCity.create!(name: "Berlin", ni_country_id: other.id)
 
     plain = NiCountry.includes(:ni_cities).order(:id).select
-    plain.map { |country| country.ni_cities.size }.should eq([2, 1])
+    plain.map(&.ni_cities.size).should eq([2, 1])
 
     relation = NiCountry.includes(:ni_cities).where("ni_cities.name", :eq, "Paris")
     countries = relation.select

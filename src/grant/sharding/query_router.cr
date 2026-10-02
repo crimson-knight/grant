@@ -65,18 +65,18 @@ module Grant::Sharding
     # key order and handed to the resolver's value-based API, which works for
     # every resolver type (hash, range, geo, lookup) and any column name.
     private def resolve_single_shard(shard_keys : Hash(String, Grant::Columns::Type)) : Symbol?
-      return nil if shard_keys.empty?
+      return if shard_keys.empty?
 
       key_names = @shard_config.key_column_names
       # Need all declared keys present to resolve deterministically.
-      return nil unless key_names.all? { |name| shard_keys.has_key?(name) }
+      return unless key_names.all? { |name| shard_keys.has_key?(name) }
 
       values = key_names.map { |name| shard_keys[name] }
 
       # A nil shard-key value can't pin a shard (it's `WHERE col IS NULL`, not a
       # routable point lookup) — fall back to scatter-gather rather than hashing
       # nil to an arbitrary shard.
-      return nil if values.any?(&.nil?)
+      return if values.any?(Nil)
 
       begin
         @shard_config.resolver.resolve_for_values(values)
@@ -98,10 +98,10 @@ module Grant::Sharding
     # shard. The query is read once; nothing here runs per row.
     private def resolve_range_shards(query : Query::Builder(Model)) : Array(Symbol)?
       resolver = @shard_config.resolver.as?(RangeResolver)
-      return nil unless resolver
+      return unless resolver
       key_name = @shard_config.key_column_names.first?
-      return nil unless key_name
-      return nil if query.where_fields.any? { |condition| condition[:join] != :and }
+      return unless key_name
+      return if query.where_fields.any? { |condition| condition[:join] != :and }
 
       pruned = nil.as(Array(Symbol)?)
       query.where_fields.each do |condition|
@@ -118,7 +118,7 @@ module Grant::Sharding
 
     alias KeyBounds = NamedTuple(minimum: Grant::Columns::Type, maximum: Grant::Columns::Type, upper_exclusive: Bool)
 
-    BOUND_COLUMN = %q(["`]?([a-zA-Z_][a-zA-Z0-9_]*)["`]?)
+    BOUND_COLUMN      = %q(["`]?([a-zA-Z_][a-zA-Z0-9_]*)["`]?)
     PAIR_STATEMENT    = /\A\s*#{BOUND_COLUMN}\s*>=\s*\?\s+AND\s+#{BOUND_COLUMN}\s*(<=|<)\s*\?\s*\z/i
     BETWEEN_STATEMENT = /\A\s*#{BOUND_COLUMN}\s+BETWEEN\s+\?\s+AND\s+\?\s*\z/i
 
@@ -127,7 +127,7 @@ module Grant::Sharding
     private def key_bounds(condition : Query::Builder::WhereField, key_name : String) : KeyBounds?
       case condition
       when NamedTuple(join: Symbol, field: String, operator: Symbol, value: Grant::Columns::Type)
-        return nil unless condition[:field] == key_name
+        return unless condition[:field] == key_name
         value = condition[:value]
         case condition[:operator]
         when :gt, :gteq then {minimum: value, maximum: nil, upper_exclusive: false}

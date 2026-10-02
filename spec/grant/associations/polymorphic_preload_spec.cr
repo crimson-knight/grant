@@ -289,7 +289,7 @@ describe "polymorphic association preloading" do
       PpUuidStamp.create!(mark: "stamp", subject_id: doc.id, subject_type: "PpUuidDoc")
 
       docs = PpUuidDoc.includes(:pp_uuid_notes, :pp_uuid_stamp).order(:title).select
-      docs.map { |item| item.pp_uuid_notes.map(&.body).sort! }.should eq([["n1", "n2"], ["n3"]].reverse)
+      docs.map(&.pp_uuid_notes.map(&.body).sort!).should eq([["n1", "n2"], ["n3"]].reverse)
       docs.find! { |item| item.id == doc.id }.pp_uuid_stamp.try(&.mark).should eq("stamp")
 
       notes = PpUuidNote.includes(:subject).order(:id).select
@@ -308,7 +308,7 @@ describe "polymorphic association preloading" do
       note.save!
 
       docs = PpSlugDoc.includes(:pp_slug_notes).order(:id).select
-      docs.map { |item| item.pp_slug_notes.size }.should eq([2, 0])
+      docs.map(&.pp_slug_notes.size).should eq([2, 0])
       PpSlugNote.includes(:subject).select.each { |item| item.subject.try(&.read_attribute("id")).should eq("intro") }
     end
 

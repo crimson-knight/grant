@@ -139,7 +139,7 @@ module Grant
 
     def self.open_payload(token : String, context : String) : Payload?
       json = open(token, context)
-      return nil unless json
+      return unless json
       Payload.from_json(json)
     rescue JSON::ParseException
       nil
@@ -193,7 +193,7 @@ module Grant::SignedId
   # user.signed_id(purpose: :password_reset, expires_in: 1.hour) # 1-hour window
   # user.signed_id(purpose: :invite, expires_at: Time.utc(2030, 1, 1))
   # ```
-  def signed_id(purpose : Symbol | String | Nil = nil, expires_in : Time::Span? = nil, expires_at : Time? = nil) : String
+  def signed_id(purpose : Symbol | String? = nil, expires_in : Time::Span? = nil, expires_at : Time? = nil) : String
     raise ArgumentError.new("Pass either expires_in or expires_at, not both") if expires_in && expires_at
     expiry = expires_at || (expires_in ? Time.utc + expires_in : nil)
 
@@ -232,16 +232,16 @@ module Grant::SignedId
     # User.find_signed(token, purpose: :password_reset)     # => the user
     # User.find_signed("garbage", purpose: :password_reset) # => nil
     # ```
-    def find_signed(signed_id : String, purpose : Symbol | String | Nil = nil) : self?
+    def find_signed(signed_id : String, purpose : Symbol | String? = nil) : self?
       payload = signed_id_payload(signed_id, purpose)
-      return nil unless payload
+      return unless payload
       find_by_signed_key(payload.id)
     end
 
     # Like `find_signed` but raises `Grant::InvalidSignedId` for a bad, forged,
     # expired, or wrong-purpose token and `Grant::RecordNotFound` when the record
     # is gone.
-    def find_signed!(signed_id : String, purpose : Symbol | String | Nil = nil) : self
+    def find_signed!(signed_id : String, purpose : Symbol | String? = nil) : self
       payload = signed_id_payload(signed_id, purpose) || raise Grant::InvalidSignedId.new
       find_by_signed_key(payload.id) || raise Grant::RecordNotFound.new("Couldn't find #{name} with signed id")
     end
@@ -259,7 +259,7 @@ module Grant::SignedId
     # Serializes *payload* to JSON, signs it with HMAC-SHA256, and returns the
     # Base64-url-encoded `{data, signature}` envelope. Low-level building block for
     # `#signed_id`; prefer that method.
-    def generate_signed_token(payload : Hash(String, String | Int64 | Nil)) : String
+    def generate_signed_token(payload : Hash(String, String | Int64?)) : String
       Grant::Signer.envelope(payload.to_json, signed_id_signing_context)
     end
 
@@ -268,7 +268,7 @@ module Grant::SignedId
     # verify or the token is malformed. Does not check purpose/expiry.
     def verify_signed_token(token : String) : Hash(String, JSON::Any)?
       json = Grant::Signer.open(token, signed_id_signing_context)
-      return nil unless json
+      return unless json
       JSON.parse(json).as_h?
     rescue JSON::ParseException
       nil
@@ -288,9 +288,9 @@ module Grant::SignedId
       parts = begin
         Array(String).from_json(key)
       rescue JSON::ParseException
-        return nil
+        return
       end
-      return nil unless parts.size == columns.size
+      return unless parts.size == columns.size
 
       criteria = Grant::ModelArgs.new
       {% begin %}
@@ -315,11 +315,11 @@ module Grant::SignedId
       where(criteria).first
     end
 
-    private def signed_id_payload(token : String, purpose : Symbol | String | Nil) : Grant::Signer::Payload?
+    private def signed_id_payload(token : String, purpose : Symbol | String?) : Grant::Signer::Payload?
       payload = Grant::Signer.open_payload(token, signed_id_signing_context)
-      return nil unless payload
-      return nil unless payload.purpose == (purpose || table_name).to_s
-      return nil if payload.expired?
+      return unless payload
+      return unless payload.purpose == (purpose || table_name).to_s
+      return if payload.expired?
       payload
     end
 

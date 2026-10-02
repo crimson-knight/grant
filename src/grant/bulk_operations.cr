@@ -54,7 +54,7 @@ module Grant::BulkOperations
   # ```
   def insert_all(rows : Array(Hash(K, V)),
                  returning : Array(Symbol)? = nil,
-                 unique_by : Array(Symbol) | String | Nil = nil,
+                 unique_by : (Array(Symbol) | String)? = nil,
                  record_timestamps : Bool? = nil) : Array(self) forall K, V
     __bulk_write(rows, Grant::Bulk::Conflict::Mode::Skip, returning, unique_by, nil, nil, record_timestamps)[0]
   end
@@ -83,7 +83,7 @@ module Grant::BulkOperations
   # ```
   def upsert_all(rows : Array(Hash(K, V)),
                  returning : Array(Symbol)? = nil,
-                 unique_by : Array(Symbol) | String | Nil = nil,
+                 unique_by : (Array(Symbol) | String)? = nil,
                  update_only : Array(Symbol)? = nil,
                  on_duplicate : Grant::Sql::Fragment? = nil,
                  record_timestamps : Bool? = nil) : Array(self) forall K, V
@@ -94,7 +94,7 @@ module Grant::BulkOperations
   # inserted record, or nil when the row was skipped.
   def insert(row : Hash(K, V),
              returning : Array(Symbol)? = nil,
-             unique_by : Array(Symbol) | String | Nil = nil,
+             unique_by : (Array(Symbol) | String)? = nil,
              record_timestamps : Bool? = nil) : self? forall K, V
     __bulk_single(row, Grant::Bulk::Conflict::Mode::Skip, returning, unique_by, nil, nil, record_timestamps)
   end
@@ -112,7 +112,7 @@ module Grant::BulkOperations
   # Takes the options of `upsert_all`. Returns the written record.
   def upsert(row : Hash(K, V),
              returning : Array(Symbol)? = nil,
-             unique_by : Array(Symbol) | String | Nil = nil,
+             unique_by : (Array(Symbol) | String)? = nil,
              update_only : Array(Symbol)? = nil,
              on_duplicate : Grant::Sql::Fragment? = nil,
              record_timestamps : Bool? = nil) : self? forall K, V
@@ -147,20 +147,20 @@ module Grant::BulkOperations
       {% end %}
       end
     {% end %}
-    return nil if value.nil?
+    return if value.nil?
     return value if value.is_a?(Grant::Columns::Type)
     raise ArgumentError.new("Cannot store #{value.class} in #{name}.#{column}; declare a converter for the column")
   end
 
   private def __bulk_single(row : Hash(K, V), mode : Grant::Bulk::Conflict::Mode,
-                            returning : Array(Symbol)?, unique_by : Array(Symbol) | String | Nil,
+                            returning : Array(Symbol)?, unique_by : (Array(Symbol) | String)?,
                             update_only : Array(Symbol)?, on_duplicate : Grant::Sql::Fragment?,
                             record_timestamps : Bool?) : self? forall K, V
     records, affected, last_id = __bulk_write([row], mode, returning, unique_by, update_only, on_duplicate, record_timestamps)
     if record = records.first?
       return record
     end
-    return nil if affected == 0 || (returning && !returning.empty?)
+    return if affected == 0 || (returning && !returning.empty?)
 
     # No RETURNING (MySQL, SQLite before 3.35): rebuild the key from the write.
     key = primary_name
@@ -176,7 +176,7 @@ module Grant::BulkOperations
   # Builds and runs the statements. Returns the returned records, the rows
   # affected, and the last generated id.
   private def __bulk_write(rows : Array(Hash(K, V)), mode : Grant::Bulk::Conflict::Mode,
-                           returning : Array(Symbol)?, unique_by : Array(Symbol) | String | Nil,
+                           returning : Array(Symbol)?, unique_by : (Array(Symbol) | String)?,
                            update_only : Array(Symbol)?, on_duplicate : Grant::Sql::Fragment?,
                            record_timestamps : Bool?) : Tuple(Array(self), Int64, Int64) forall K, V
     guard_writes!
@@ -185,9 +185,9 @@ module Grant::BulkOperations
     end
 
     known = fields
-    keys = rows.first?.try(&.keys.map(&.to_s).sort) || [] of String
+    keys = rows.first?.try(&.keys.map(&.to_s).sort!) || [] of String
     rows.each do |row|
-      if row.keys.map(&.to_s).sort != keys
+      if row.keys.map(&.to_s).sort! != keys
         raise ArgumentError.new("All objects being inserted must have the same keys")
       end
     end
@@ -265,7 +265,7 @@ module Grant::BulkOperations
   end
 
   private def __bulk_conflict(mode : Grant::Bulk::Conflict::Mode, columns : Array(String),
-                              unique_by : Array(Symbol) | String | Nil, update_only : Array(Symbol)?,
+                              unique_by : (Array(Symbol) | String)?, update_only : Array(Symbol)?,
                               on_duplicate : Grant::Sql::Fragment?, record_timestamps : Bool,
                               auto_created : Array(String)) : Grant::Bulk::Conflict
     return Grant::Bulk::Conflict.new(mode) if mode.raise?
@@ -311,9 +311,9 @@ module Grant::BulkOperations
       if returning && !returning.empty?
         raise ArgumentError.new("#{adapter.class} does not support RETURNING on INSERT; omit returning:")
       end
-      return nil
+      return
     end
-    return nil if returning && returning.empty?
+    return if returning && returning.empty?
 
     columns = returning ? returning.map(&.to_s) : [primary_name]
     columns.each do |column|

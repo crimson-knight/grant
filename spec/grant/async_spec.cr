@@ -16,7 +16,7 @@ describe "Async features" do
 
     it "supports error recovery" do
       result = Grant::Async::Result(Int32).new { raise "test error" }
-      recovered = result.on_error { |e| -1 }
+      recovered = result.on_error { |_| -1 }
       recovered.should eq(-1)
     end
 
@@ -48,7 +48,7 @@ describe "Async features" do
       end
 
       values = coordinator.wait_all
-      values.values.sort.should eq([0, 10, 20])
+      values.values.sort!.should eq([0, 10, 20])
     end
 
     it "reports errors from failed operations" do
@@ -103,7 +103,7 @@ describe "Async features" do
       result = Parent.async_all
       parents = result.wait
       parents.size.should eq(2)
-      parents.map(&.name).compact.sort.should eq(["Parent 1", "Parent 2"])
+      parents.compact_map(&.name).sort!.should eq(["Parent 1", "Parent 2"])
     end
 
     it "performs async aggregations" do

@@ -51,7 +51,7 @@ class G01CountingAdapter < G01BareAdapter
 end
 
 # Every predicate, in the order docs/adapter_matrix.md lists them.
-G01_PREDICATES = %w(
+G01_PREDICATES = %w[
   supports_insert_returning? supports_insert_on_duplicate_skip? supports_insert_on_duplicate_update?
   supports_ddl_transactions? supports_partial_index? supports_expression_index?
   supports_check_constraints? supports_foreign_keys? supports_views?
@@ -60,13 +60,13 @@ G01_PREDICATES = %w(
   supports_advisory_locks? supports_bulk_alter? supports_concurrent_connections?
   supports_restart_db_transaction? supports_disable_referential_integrity?
   supports_nulls_not_distinct?
-)
+]
 
 # Answers for each adapter at the versions the specs pin.
 private def capability_answers(adapter : Grant::Adapter::Base) : Hash(String, Bool)
   {% begin %}
     {
-      {% for name in %w(
+      {% for name in %w[
                        supports_insert_returning? supports_insert_on_duplicate_skip? supports_insert_on_duplicate_update?
                        supports_ddl_transactions? supports_partial_index? supports_expression_index?
                        supports_check_constraints? supports_foreign_keys? supports_views?
@@ -75,7 +75,7 @@ private def capability_answers(adapter : Grant::Adapter::Base) : Hash(String, Bo
                        supports_advisory_locks? supports_bulk_alter? supports_concurrent_connections?
                        supports_restart_db_transaction? supports_disable_referential_integrity?
                        supports_nulls_not_distinct?
-                     ) %}
+                     ] %}
         {{ name }} => adapter.{{ name.id }},
       {% end %}
     }
@@ -125,7 +125,7 @@ describe "Grant adapter capability predicates" do
   describe "the base adapter" do
     it "answers false for every predicate an adapter does not override" do
       bare = G01BareAdapter.new("g01_bare", "bare://unused")
-      capability_answers(bare).values.uniq.should eq([false])
+      capability_answers(bare).values.uniq!.should eq([false])
       bare.adapter_name.should eq("G01BareAdapter")
     end
 
@@ -139,7 +139,7 @@ describe "Grant adapter capability predicates" do
   describe "PostgreSQL" do
     it "answers each predicate" do
       answers = capability_answers(pg_at(17))
-      answers.select { |_, value| value }.keys.sort!.should eq(%w(
+      answers.select { |_, value| value }.keys.sort!.should eq(%w[
         supports_advisory_locks? supports_bulk_alter? supports_check_constraints?
         supports_common_table_expressions? supports_comments? supports_concurrent_connections?
         supports_datetime_with_precision? supports_ddl_transactions? supports_disable_referential_integrity?
@@ -147,7 +147,7 @@ describe "Grant adapter capability predicates" do
         supports_insert_on_duplicate_update? supports_insert_returning? supports_json?
         supports_nulls_not_distinct? supports_partial_index? supports_restart_db_transaction?
         supports_views? supports_virtual_columns?
-      ).sort!)
+      ].sort!)
       answers["supports_optimizer_hints?"].should be_false
     end
 
@@ -169,14 +169,14 @@ describe "Grant adapter capability predicates" do
   describe "MySQL" do
     it "answers each predicate on MySQL 8.0.35" do
       answers = capability_answers(mysql_at(8, 0, 35))
-      answers.select { |_, value| value }.keys.sort!.should eq(%w(
+      answers.select { |_, value| value }.keys.sort!.should eq(%w[
         supports_advisory_locks? supports_bulk_alter? supports_check_constraints?
         supports_common_table_expressions? supports_comments? supports_concurrent_connections?
         supports_datetime_with_precision? supports_disable_referential_integrity? supports_explain?
         supports_expression_index? supports_foreign_keys? supports_insert_on_duplicate_skip?
         supports_insert_on_duplicate_update? supports_json? supports_optimizer_hints?
         supports_restart_db_transaction? supports_views? supports_virtual_columns?
-      ).sort!)
+      ].sort!)
       answers["supports_ddl_transactions?"].should be_false
       answers["supports_partial_index?"].should be_false
       answers["supports_insert_returning?"].should be_false
@@ -212,13 +212,13 @@ describe "Grant adapter capability predicates" do
   describe "SQLite" do
     it "answers each predicate on SQLite 3.45" do
       answers = capability_answers(sqlite_at(3, 45))
-      answers.select { |_, value| value }.keys.sort!.should eq(%w(
+      answers.select { |_, value| value }.keys.sort!.should eq(%w[
         supports_check_constraints? supports_common_table_expressions? supports_concurrent_connections?
         supports_datetime_with_precision? supports_ddl_transactions? supports_disable_referential_integrity?
         supports_explain? supports_expression_index? supports_foreign_keys? supports_insert_on_duplicate_skip?
         supports_insert_on_duplicate_update? supports_insert_returning? supports_json?
         supports_partial_index? supports_views? supports_virtual_columns?
-      ).sort!)
+      ].sort!)
       answers["supports_comments?"].should be_false
       answers["supports_advisory_locks?"].should be_false
       answers["supports_bulk_alter?"].should be_false

@@ -13,7 +13,7 @@ module Grant::Schema
     # add_gin_index_statements(:posts, :tags)
     # # => CREATE INDEX "index_posts_on_tags" ON "posts" USING gin ("tags")
     # ```
-    def add_gin_index_statements(table : TableName, columns : ColumnNames, name : ::String | Symbol | Nil = nil,
+    def add_gin_index_statements(table : TableName, columns : ColumnNames, name : ::String | Symbol? = nil,
                                  where : ::String? = nil, opclass = nil, algorithm : Symbol? = nil,
                                  if_not_exists : Bool = false, comment : ::String? = nil) : Array(::String)
       raise UnsupportedOperation.new("GIN indexes are only supported on PostgreSQL") unless dialect.pg?

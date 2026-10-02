@@ -107,7 +107,7 @@ describe "Grant::Encryption Database Integration" do
       # Query by encrypted email
       results = EncryptedUser.where_email("user1@example.com")
       results.size.should eq(2)
-      results.map(&.id.not_nil!).sort.should eq([user1.id.not_nil!, user3.id.not_nil!].sort)
+      results.map(&.id.not_nil!).sort!.should eq([user1.id.not_nil!, user3.id.not_nil!].sort)
 
       # Query by encrypted phone
       found = EncryptedUser.find_by_phone("+1-555-0002")
@@ -230,7 +230,7 @@ describe "Grant::Encryption Database Integration" do
   describe "complex queries" do
     it "combines encrypted and non-encrypted fields in queries" do
       user1 = EncryptedUser.create!(name: "Alice", email: "alice@example.com")
-      user2 = EncryptedUser.create!(name: "Bob", email: "bob@example.com")
+      EncryptedUser.create!(name: "Bob", email: "bob@example.com")
       user3 = EncryptedUser.create!(name: "Alice", email: "alice2@example.com")
 
       # Query by name and encrypted email

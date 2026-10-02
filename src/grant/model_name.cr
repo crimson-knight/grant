@@ -12,7 +12,7 @@
 # ```
 struct Grant::ModelName
   # Nouns whose plural is their singular.
-  UNCOUNTABLE = %w(equipment information rice money species series fish sheep news data metadata)
+  UNCOUNTABLE = %w[equipment information rice money species series fish sheep news data metadata]
 
   IRREGULAR = {
     "person" => "people",
@@ -113,8 +113,8 @@ struct Grant::ModelName
     if plural = IRREGULAR[word]?
       return plural
     end
-    IRREGULAR.each do |singular, plural|
-      return word[0, word.size - singular.size] + plural if word.ends_with?(singular) && singular.size > 3
+    IRREGULAR.each do |singular, irregular_plural|
+      return word[0, word.size - singular.size] + irregular_plural if word.ends_with?(singular) && singular.size > 3
     end
 
     case word

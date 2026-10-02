@@ -60,10 +60,7 @@ module Grant::Testing
 
         [{} of String => DB::Any] # Return empty result for INSERT
       when /^UPDATE (\w+) SET (.*) WHERE (.*)/
-        table_name = $1
-        table = @tables[table_name]? || Table.new
-
-        # Very simple UPDATE - just for testing
+        # Very simple UPDATE - just for testing: rows are not changed
         [] of Row
       when /^DELETE FROM (\w+)/
         table_name = $1
@@ -282,7 +279,7 @@ module Grant::Testing
 
   # Test helpers for virtual sharding
   module ShardingHelpers
-    def with_virtual_shards(count : Int32, &block)
+    def with_virtual_shards(count : Int32, &)
       # Clear any existing virtual shards
       VirtualShardAdapter.clear_all
 
@@ -292,12 +289,12 @@ module Grant::Testing
 
       begin
         # Create virtual shards
-        (0...count).each do |i|
+        (0...count).each do |_|
           shard_name = :"shard_#{i}"
 
           # Create a base adapter (we'll use the virtual one)
           base_adapter = Grant::Adapter::Sqlite.new("test", ":memory:")
-          adapter = VirtualShardAdapter.new(shard_name, base_adapter)
+          VirtualShardAdapter.new(shard_name, base_adapter)
 
           # Register with ConnectionRegistry
           Grant::ConnectionRegistry.establish_connection(
@@ -319,7 +316,7 @@ module Grant::Testing
       end
     end
 
-    def track_shard_queries(&block)
+    def track_shard_queries(&)
       initial_logs = {} of Symbol => Array(NamedTuple(query: String, params: Array(Grant::Columns::Type)))
 
       VirtualShardAdapter.shards.each do |shard, _|
@@ -399,7 +396,7 @@ module Grant::Testing
     end
 
     def total_queries : Int32
-      @queries_by_shard.values.map(&.size).sum
+      @queries_by_shard.values.sum(&.size)
     end
   end
 end

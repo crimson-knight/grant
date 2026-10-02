@@ -97,12 +97,12 @@ describe "has_and_belongs_to_many" do
 
       fresh.persisted?.should be_true
       HbPost::HABTM_HbTags.where(hb_post_id: post.id).count.should eq(2)
-      HbPost.find!(post.id).hb_tags.map(&.label).compact.sort!.should eq(["fresh", "saved"])
+      HbPost.find!(post.id).hb_tags.compact_map(&.label).sort!.should eq(["fresh", "saved"])
     end
 
     it "appends many tags with one INSERT" do
       post = HbPost.create!(title: "p")
-      tags = 3.times.map { |i| HbTag.create!(label: "t#{i}") }.to_a
+      tags = Array.new(3) { |i| HbTag.create!(label: "t#{i}") }
 
       statements = StatementRecorder.statements { post.hb_tags.concat(tags) }
 

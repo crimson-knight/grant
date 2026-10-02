@@ -49,7 +49,7 @@ describe "Relation#update forms" do
       seed_items
       updated = W6ufItem.all.update({"title" => ""})
       updated.size.should eq(4)
-      updated.each { |item| item.errors.should_not be_empty }
+      updated.each(&.errors.should_not(be_empty))
       W6ufItem.where(title: "").count.should eq(0)
     end
 

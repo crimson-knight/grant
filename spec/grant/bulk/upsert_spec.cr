@@ -48,8 +48,14 @@ describe "upsert_all" do
 
   it "uses an on_duplicate fragment as the SET list" do
     BulkItem.insert_all([BulkSupport.item("a", "Old", 10)])
-    BulkItem.upsert_all([BulkSupport.item("a", "Ignored", 5)], unique_by: [:sku],
-      on_duplicate: Grant::Sql.fragment("stock = bulk_items.stock + EXCLUDED.stock"))
+    # The fragment is raw SQL: MySQL names the proposed row with VALUES(), the
+    # others with EXCLUDED.
+    on_duplicate = if CURRENT_ADAPTER == "mysql"
+                     Grant::Sql.fragment("stock = bulk_items.stock + VALUES(stock)")
+                   else
+                     Grant::Sql.fragment("stock = bulk_items.stock + EXCLUDED.stock")
+                   end
+    BulkItem.upsert_all([BulkSupport.item("a", "Ignored", 5)], unique_by: [:sku], on_duplicate: on_duplicate)
 
     item = BulkItem.find_by!(sku: "a")
     item.stock.should eq(15)
@@ -79,9 +85,16 @@ describe "upsert_all" do
 
   it "returns the written records" do
     BulkItem.insert_all([BulkSupport.item("a")])
+    if CURRENT_ADAPTER == "mysql"
+      # MySQL has no RETURNING, so asking for columns is refused up front.
+      expect_raises(ArgumentError, /RETURNING/) do
+        BulkItem.upsert_all([BulkSupport.item("a", "New")], unique_by: [:sku], returning: [:id, :sku])
+      end
+      next
+    end
     records = BulkItem.upsert_all([BulkSupport.item("a", "New"), BulkSupport.item("b")], unique_by: [:sku], returning: [:id, :sku])
 
-    records.map(&.sku).sort.should eq(["a", "b"])
+    records.map(&.sku).sort!.should eq(["a", "b"])
     records.all?(&.id).should be_true
   end
 

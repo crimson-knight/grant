@@ -152,7 +152,8 @@ module Grant::QueryCache
                  name : String?, copy : (T -> T)? = nil, & : -> T) : T forall T
     state = Fiber.current.grant_query_cache
     return yield unless state && state.enabled?
-    return yield unless Grant::Adapter::PoolSupport.idempotent_read?(sql) && !LOCKING_READ.matches?(sql)
+    return yield unless Grant::Adapter::PoolSupport.idempotent_read?(sql)
+    return yield if LOCKING_READ.matches?(sql)
 
     started = generation
     if state.generation != started

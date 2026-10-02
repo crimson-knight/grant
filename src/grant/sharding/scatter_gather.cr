@@ -198,7 +198,7 @@ module Grant::Sharding
     # A page of grouped or DISTINCT rows cannot be rebuilt from per-shard
     # pages: a group or a value can span shards.
     private def guard_page_mergeable!(operation : String) : Nil
-      return unless @query.distinct? || !@query.group_fields.empty?
+      return if @query.group_fields.empty? && !@query.distinct?
 
       raise ScatterAggregateError.new("#{Model.name}: #{operation} over a grouped or DISTINCT relation with LIMIT, OFFSET or ORDER BY across #{@shards.size} shards cannot be merged")
     end
@@ -409,7 +409,7 @@ module Grant::Sharding
     end
 
     private def average_of(total : SumValue, count : Int64) : Float64?
-      return nil if count == 0
+      return if count == 0
       total.to_f64 / count
     end
 

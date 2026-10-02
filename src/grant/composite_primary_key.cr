@@ -222,9 +222,9 @@ module Grant::CompositePrimaryKey
 
   # Get composite key values as hash
   def composite_key_values
-    return nil unless self.class.composite_primary_key?
+    return unless self.class.composite_primary_key?
 
-    ck = self.class.composite_key.not_nil!
+    ck = self.class.composite_key || return
     values = {} of Symbol => Grant::Columns::Type
 
     ck.columns.each do |col|

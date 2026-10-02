@@ -41,34 +41,34 @@ describe "Grant::Query::Builder Enumerable support" do
 
   describe "#map with block" do
     it "transforms records using a block directly on the query builder" do
-      names = Parent.where(name: ["alice", "bob"]).map { |r| r.name }
+      names = Parent.where(name: ["alice", "bob"]).map(&.name)
       names.size.should eq 2
       names.should contain("alice")
       names.should contain("bob")
     end
 
     it "maps to different types" do
-      ids = Parent.where(name: ["alice", "bob"]).map { |r| r.id }
+      ids = Parent.where(name: ["alice", "bob"]).map(&.id)
       ids.size.should eq 2
-      ids.each { |id| id.should_not be_nil }
+      ids.each(&.should_not(be_nil))
     end
   end
 
   describe "#select with block (in-memory filter from Enumerable)" do
     it "filters records in-memory using a block" do
-      results = Parent.where(name: ["alice", "bob", "carol"]).select { |r|
+      results = Parent.where(name: ["alice", "bob", "carol"]).select do |r|
         name = r.name
         name ? name.starts_with?("a") || name.starts_with?("c") : false
-      }
+      end
       results.size.should eq 2
       results.map(&.name).should contain("alice")
       results.map(&.name).should contain("carol")
     end
 
     it "works alongside SQL where clauses" do
-      results = Parent.where(name: ["alice", "bob", "carol"]).select { |r|
+      results = Parent.where(name: ["alice", "bob", "carol"]).select do |r|
         r.name == "bob"
-      }
+      end
       results.size.should eq 1
       results.first.name.should eq "bob"
     end
@@ -88,9 +88,9 @@ describe "Grant::Query::Builder Enumerable support" do
 
   describe "#reject with block" do
     it "filters out records matching the block condition" do
-      results = Parent.where(name: ["alice", "bob", "carol"]).reject { |r|
+      results = Parent.where(name: ["alice", "bob", "carol"]).reject do |r|
         r.name == "carol"
-      }
+      end
       results.size.should eq 2
       results.map(&.name).should_not contain("carol")
     end
@@ -98,17 +98,17 @@ describe "Grant::Query::Builder Enumerable support" do
 
   describe "#count with block" do
     it "counts records matching a block condition" do
-      count = Parent.where(name: ["alice", "bob", "carol"]).count { |r|
+      count = Parent.where(name: ["alice", "bob", "carol"]).count do |r|
         name = r.name
         name ? name.starts_with?("a") : false
-      }
+      end
       count.should eq 1
     end
 
     it "returns 0 when no records match the block" do
-      count = Parent.where(name: ["alice", "bob"]).count { |r|
+      count = Parent.where(name: ["alice", "bob"]).count do |r|
         r.name == "nonexistent"
-      }
+      end
       count.should eq 0
     end
   end
@@ -122,16 +122,16 @@ describe "Grant::Query::Builder Enumerable support" do
 
   describe "#any? with block" do
     it "returns true when at least one record matches the block" do
-      result = Parent.where(name: ["alice", "bob", "carol"]).any? { |r|
+      result = Parent.where(name: ["alice", "bob", "carol"]).any? do |r|
         r.name == "carol"
-      }
+      end
       result.should be_true
     end
 
     it "returns false when no records match the block" do
-      result = Parent.where(name: ["alice", "bob"]).any? { |r|
+      result = Parent.where(name: ["alice", "bob"]).any? do |r|
         r.name == "nonexistent"
-      }
+      end
       result.should be_false
     end
   end
@@ -145,43 +145,43 @@ describe "Grant::Query::Builder Enumerable support" do
 
   describe "#none? with block" do
     it "returns true when no records match the block" do
-      result = Parent.where(name: ["alice", "bob"]).none? { |r|
+      result = Parent.where(name: ["alice", "bob"]).none? do |r|
         r.name == "carol"
-      }
+      end
       result.should be_true
     end
 
     it "returns false when at least one record matches" do
-      result = Parent.where(name: ["alice", "bob"]).none? { |r|
+      result = Parent.where(name: ["alice", "bob"]).none? do |r|
         r.name == "alice"
-      }
+      end
       result.should be_false
     end
   end
 
   describe "#all? with block" do
     it "returns true when all records match the block" do
-      result = Parent.where(name: ["alice", "bob"]).all? { |r|
+      result = Parent.where(name: ["alice", "bob"]).all? do |r|
         name = r.name
         !name.nil? && name.size > 0
-      }
+      end
       result.should be_true
     end
 
     it "returns false when not all records match" do
-      result = Parent.where(name: ["alice", "bob"]).all? { |r|
+      result = Parent.where(name: ["alice", "bob"]).all? do |r|
         r.name == "alice"
-      }
+      end
       result.should be_false
     end
   end
 
   describe "#compact_map" do
     it "maps and removes nil values" do
-      results = Parent.where(name: ["alice", "bob", "carol"]).compact_map { |r|
+      results = Parent.where(name: ["alice", "bob", "carol"]).compact_map do |r|
         name = r.name
         (name && name.starts_with?("a")) ? name.upcase : nil
-      }
+      end
       results.size.should eq 1
       results.first.should eq "ALICE"
     end
@@ -189,9 +189,9 @@ describe "Grant::Query::Builder Enumerable support" do
 
   describe "#flat_map" do
     it "maps and flattens the results" do
-      results = Parent.where(name: ["alice", "bob"]).flat_map { |r|
+      results = Parent.where(name: ["alice", "bob"]).flat_map do |r|
         [r.name, r.name.to_s.upcase]
-      }
+      end
       # 2 records * 2 elements each = 4 elements
       results.size.should eq 4
     end
@@ -220,10 +220,10 @@ describe "Grant::Query::Builder Enumerable support" do
 
   describe "#group_by (Enumerable, with block)" do
     it "groups records by a block into a hash" do
-      groups = Parent.where(name: ["alice", "bob", "carol"]).group_by { |r|
+      groups = Parent.where(name: ["alice", "bob", "carol"]).group_by do |r|
         name = r.name
         (name && name.starts_with?("a")) ? "a_names" : "other"
-      }
+      end
       groups["a_names"].size.should eq 1
       groups["other"].size.should eq 2
     end
@@ -231,10 +231,10 @@ describe "Grant::Query::Builder Enumerable support" do
 
   describe "#partition" do
     it "splits records into two arrays based on a block" do
-      a_names, others = Parent.where(name: ["alice", "bob", "carol"]).partition { |r|
+      a_names, others = Parent.where(name: ["alice", "bob", "carol"]).partition do |r|
         name = r.name
         name ? name.starts_with?("a") : false
-      }
+      end
       a_names.size.should eq 1
       a_names.first.name.should eq "alice"
       others.size.should eq 2
@@ -243,9 +243,9 @@ describe "Grant::Query::Builder Enumerable support" do
 
   describe "#reduce" do
     it "reduces records to a single value" do
-      combined = Parent.where(name: ["alice", "bob"]).reduce("names:") { |acc, r|
+      combined = Parent.where(name: ["alice", "bob"]).reduce("names:") do |acc, r|
         "#{acc} #{r.name}"
-      }
+      end
       combined.should contain("alice")
       combined.should contain("bob")
     end
@@ -253,9 +253,9 @@ describe "Grant::Query::Builder Enumerable support" do
 
   describe "#each_with_object" do
     it "iterates with an accumulator object" do
-      result = Parent.where(name: ["alice", "bob", "carol"]).each_with_object([] of String) { |r, arr|
+      result = Parent.where(name: ["alice", "bob", "carol"]).each_with_object([] of String) do |r, arr|
         arr << (r.name || "unknown").upcase
-      }
+      end
       result.size.should eq 3
       result.should contain("ALICE")
       result.should contain("BOB")
@@ -310,7 +310,7 @@ describe "Grant::Query::Builder Enumerable support" do
     end
 
     it "works with limit + map" do
-      results = Parent.where(name: ["alice", "bob", "carol"]).order(name: :asc).limit(2).map { |r| r.name }
+      results = Parent.where(name: ["alice", "bob", "carol"]).order(name: :asc).limit(2).map(&.name)
       results.size.should eq 2
       results.should eq ["alice", "bob"]
     end
@@ -321,9 +321,9 @@ describe "Grant::Query::Builder Enumerable support" do
     end
 
     it "works with select (filter) after order" do
-      results = Parent.where(name: ["alice", "bob", "carol"]).order(name: :asc).select { |r|
+      results = Parent.where(name: ["alice", "bob", "carol"]).order(name: :asc).select do |r|
         r.name != "bob"
-      }
+      end
       results.size.should eq 2
       results.map(&.name).should eq ["alice", "carol"]
     end

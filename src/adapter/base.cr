@@ -42,12 +42,12 @@ abstract class Grant::Adapter::Base
   @waiting_checkouts = Atomic(Int32).new(0)
   @last_used_ticks = Atomic(Int64).new(Grant::Adapter::PoolSupport.ticks)
 
-  private SQL_KEYWORDS = Set(String).new(%w(
+  private SQL_KEYWORDS = Set(String).new(%w[
     ALTER AND ANY AS ASC COLUMN CONSTRAINT COUNT CREATE DEFAULT DELETE DESC
     DISTINCT DROP ELSE EXISTS FALSE FOREIGN FROM GROUP HAVING IF IN INDEX INNER
     INSERT INTO JOIN LIMIT NOT NULL ON OR ORDER PRIMARY REFERENCES RELEASE RETURNING
     SELECT SET TABLE THEN TRUE UNION UNIQUE UPDATE USING VALUES WHEN WHERE
-  ))
+  ])
 
   def initialize(@name : String, @url : String)
   end
@@ -153,7 +153,7 @@ abstract class Grant::Adapter::Base
       @_database ||= begin
         opened = DB.open(@url)
         limit = @statement_limit
-        opened.setup_connection { |conn| conn.statement_cache_limit = limit } if limit > 0
+        opened.setup_connection(&.statement_cache_limit=(limit)) if limit > 0
         opened
       end
     end
@@ -192,7 +192,7 @@ abstract class Grant::Adapter::Base
     return if stats.max_connections > 0 && stats.idle_connections == 0 &&
               stats.open_connections >= stats.max_connections
 
-    checked_out { |conn| conn.scalar("SELECT 1") }
+    checked_out(&.scalar("SELECT 1"))
   end
 
   # Raises `Grant::ConnectionFailed` unless the server answers `SELECT 1`.
@@ -300,14 +300,12 @@ abstract class Grant::Adapter::Base
 
     alive = 0
     held.each do |connection|
-      begin
-        connection.scalar("SELECT 1")
-        alive += 1
-      rescue ::Exception
-        connection.close
-      ensure
-        connection.release
-      end
+      connection.scalar("SELECT 1")
+      alive += 1
+    rescue ::Exception
+      connection.close
+    ensure
+      connection.release
     end
     alive
   end
@@ -324,7 +322,7 @@ abstract class Grant::Adapter::Base
   # *name* labels the event, usually with the model that issued the statement.
   def open(sql : String? = nil, binds = nil, name : String? = nil, &)
     if sql && Grant::Notifications.subscribed?(Grant::Events::SQL)
-      started = Time.instant
+      started = Time.instant # ameba:disable Lint/UselessAssign (read in the ensure below)
       begin
         return open_routed(sql, binds) { |conn| yield conn }
       ensure
@@ -423,14 +421,12 @@ abstract class Grant::Adapter::Base
     lost_retries = Grant::Adapter::PoolSupport.idempotent_read?(sql) ? Math.min(@retry_attempts, 1) : 0
     attempt = 0
     loop do
-      begin
-        return checked_out(sql, binds) { |conn| yield conn }
-      rescue ex : ::DB::ConnectionLost
-        raise ex if lost_retries == 0
-        lost_retries -= 1
-        sleep Grant::Adapter::PoolSupport.backoff(@retry_delay, attempt)
-        attempt += 1
-      end
+      return checked_out(sql, binds) { |conn| yield conn }
+    rescue ex : ::DB::ConnectionLost
+      raise ex if lost_retries == 0
+      lost_retries -= 1
+      sleep Grant::Adapter::PoolSupport.backoff(@retry_delay, attempt)
+      attempt += 1
     end
   rescue ex : ::Exception
     raise translate_exception(ex, sql, binds)
@@ -442,7 +438,7 @@ abstract class Grant::Adapter::Base
     @last_used_ticks.set(Grant::Adapter::PoolSupport.ticks)
     begin
       yield connection
-    rescue ex : IO::Error
+    rescue IO::Error
       raise ::DB::ConnectionLost.new(connection)
     rescue ex : ::Exception
       if ex.message =~ /client was disconnected/
@@ -475,14 +471,12 @@ abstract class Grant::Adapter::Base
     @waiting_checkouts.add(1)
     begin
       loop do
-        begin
-          connection = database.checkout
-          return connection if usable_after_idle?(connection)
-        rescue ex : ::DB::PoolResourceRefused
-          raise ex if attempt >= @retry_attempts
-          sleep Grant::Adapter::PoolSupport.backoff(@retry_delay, attempt)
-          attempt += 1
-        end
+        connection = database.checkout
+        return connection if usable_after_idle?(connection)
+      rescue ex : ::DB::PoolResourceRefused
+        raise ex if attempt >= @retry_attempts
+        sleep Grant::Adapter::PoolSupport.backoff(@retry_delay, attempt)
+        attempt += 1
       end
     ensure
       @waiting_checkouts.sub(1)
@@ -617,7 +611,7 @@ abstract class Grant::Adapter::Base
     return if names.empty?
 
     disable_referential_integrity do
-      truncate_statements(names).each { |statement| open(statement) { |conn| conn.exec(statement) } }
+      truncate_statements(names).each { |statement| open(statement, &.exec(statement)) }
     end
   end
 
@@ -645,7 +639,7 @@ abstract class Grant::Adapter::Base
 
   # Runs a session control statement (no rows, not reported as a query).
   protected def exec_control_statement(statement : String) : Nil
-    open { |conn| conn.exec(statement) }
+    open(&.exec(statement))
   end
 
   private def restore_referential_integrity : Nil

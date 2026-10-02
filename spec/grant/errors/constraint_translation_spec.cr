@@ -52,7 +52,7 @@ private def create_g01_tables
                    "CREATE TABLE g01_notes (id INTEGER PRIMARY KEY, account_id INTEGER REFERENCES g01_accounts(id), body TEXT NOT NULL DEFAULT '')",
                  ]
                end
-  statements.each { |statement| adapter.open { |db| db.exec statement } }
+  statements.each { |statement| adapter.open(&.exec(statement)) }
 end
 
 describe "Grant constraint and lock error translation" do
@@ -333,7 +333,7 @@ describe "Grant constraint and lock error translation" do
       begin
         adapter.database.using_connection do |_held|
           error = expect_raises(Grant::ConnectionTimeoutError) do
-            adapter.open("SELECT 1") { |db| db.scalar("SELECT 1") }
+            adapter.open("SELECT 1", &.scalar("SELECT 1"))
           end
           error.should be_a(Grant::ConnectionNotEstablished)
           error.cause.should be_a(DB::PoolTimeout)
@@ -360,7 +360,7 @@ describe "Grant constraint and lock error translation" do
       }.each do |state, error_class|
         statement = "DO $$ BEGIN RAISE EXCEPTION 'g01 test' USING ERRCODE = '#{state}'; END $$"
         raised = begin
-          adapter.open(statement) { |db| db.exec statement }
+          adapter.open(statement, &.exec(statement))
           nil
         rescue ex
           ex
@@ -524,7 +524,7 @@ describe "Grant constraint and lock error translation" do
           begin
             statement = "INSERT INTO busy_rows (id) VALUES (1)"
             error = expect_raises(Grant::LockWaitTimeout) do
-              adapter.open_pool_connection(statement) { |db| db.exec statement }
+              adapter.open_pool_connection(statement, &.exec(statement))
             end
             error.cause.should be_a(SQLite3::Exception)
           ensure

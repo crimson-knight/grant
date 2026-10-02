@@ -23,7 +23,7 @@ describe "with_lock" do
     it "returns a non-nil value with its type" do
       account = WithLockSpecAccount.create!(owner: "Ada", balance: 10)
 
-      balance = account.with_lock { |locked| locked.balance }
+      balance = account.with_lock(&.balance)
       balance.should eq(10)
       typeof(balance).should eq(Int32)
     end
@@ -49,9 +49,9 @@ describe "with_lock" do
     it "gives the class-level forms the same generic return" do
       account = WithLockSpecAccount.create!(owner: "Ada", balance: 3)
 
-      WithLockSpecAccount.with_lock(account.id) { |locked| locked.owner }.should eq("Ada")
+      WithLockSpecAccount.with_lock(account.id, &.owner).should eq("Ada")
       WithLockSpecAccount.with_lock(account.id) { |_locked| nil }.should be_nil
-      WithLockSpecAccount.with_lock { |locked| locked.balance }.should eq(3)
+      WithLockSpecAccount.with_lock(&.balance).should eq(3)
     end
   end
 
@@ -61,7 +61,7 @@ describe "with_lock" do
       WithLockSpecAccount.where(id: account.id).update_all(balance: 99)
 
       account.balance.should eq(10)
-      seen = account.with_lock { |locked| locked.balance }
+      seen = account.with_lock(&.balance)
 
       seen.should eq(99)
       account.balance.should eq(99)
@@ -70,14 +70,14 @@ describe "with_lock" do
 
     it "yields the receiver itself" do
       account = WithLockSpecAccount.create!(owner: "Ada")
-      account.with_lock { |locked| locked.same?(account) }.should be_true
+      account.with_lock(&.same?(account)).should be_true
     end
 
     it "takes the lock with one SELECT round trip" do
       account = WithLockSpecAccount.create!(owner: "Ada")
 
       queries = Grant::Spec.capture_queries do
-        account.with_lock { |locked| locked.balance }
+        account.with_lock(&.balance)
       end
 
       selects = queries.select(&.sql.starts_with?("SELECT"))
@@ -90,7 +90,7 @@ describe "with_lock" do
     it "commits the block's writes and rolls them back on an exception" do
       account = WithLockSpecAccount.create!(owner: "Ada", balance: 1)
 
-      account.with_lock { |locked| locked.update!(balance: 2) }
+      account.with_lock(&.update!(balance: 2))
       WithLockSpecAccount.find!(account.id).balance.should eq(2)
 
       expect_raises(Exception, "boom") do
@@ -118,7 +118,7 @@ describe "with_lock" do
 
       statements = TransactionSqlRecorder.record do
         WithLockSpecAccount.transaction do
-          account.with_lock { |locked| locked.balance }
+          account.with_lock(&.balance)
         end
       end
 
@@ -131,7 +131,7 @@ describe "with_lock" do
 
       statements = TransactionSqlRecorder.record do
         WithLockSpecAccount.transaction do
-          account.with_lock(requires_new: true) { |locked| locked.balance }
+          account.with_lock(requires_new: true, &.balance)
         end
       end
 

@@ -18,6 +18,13 @@ class Grant::Adapter::Mysql < Grant::Adapter::Base
     true
   end
 
+  # crystal-mysql's unprepared statements take no bind values, and Grant binds
+  # every value, so a MySQL pool keeps preparing whatever
+  # `prepared_statements:` says.
+  def self.supports_unprepared_statements? : Bool
+    false
+  end
+
   # crystal-mysql defaults its handshake charset to utf8 (utf8mb3), which
   # cannot bind four-byte Unicode such as emoji into MySQL 8 utf8mb4 columns.
   # Keep an explicit caller setting and use a broadly supported utf8mb4
@@ -39,8 +46,10 @@ class Grant::Adapter::Mysql < Grant::Adapter::Base
       "Float64"    => "DOUBLE",
       "UUID"       => "CHAR(36)",
       "Time"       => "TIMESTAMP(6)",
-      "created_at" => "TIMESTAMP(6) NULL DEFAULT CURRENT_TIMESTAMP(6)",
-      "updated_at" => "TIMESTAMP(6) NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6)",
+      # Grant stamps timestamps itself; database defaults would override
+      # record_timestamps = false and touch: false.
+      "created_at" => "TIMESTAMP(6)",
+      "updated_at" => "TIMESTAMP(6)",
     }
   end
 
@@ -71,8 +80,9 @@ class Grant::Adapter::Mysql < Grant::Adapter::Base
     statement = Grant::QueryLogs.append(statement)
     elapsed_time = Time.measure do
       open(statement, params) do |conn|
-        conn.exec statement, args: normalize_bind_values(params)
-        last_id = conn.scalar(last_val()).as(Int64) if lastval
+        # The OK packet already carries the generated id; no second query.
+        result = conn.exec statement, args: normalize_bind_values(params)
+        last_id = result.last_insert_id if lastval
       end
     end
 
@@ -166,10 +176,6 @@ class Grant::Adapter::Mysql < Grant::Adapter::Base
     end
 
     log statement, elapsed_time, params
-  end
-
-  private def last_val : String
-    "SELECT LAST_INSERT_ID()"
   end
 
   # This will update a row in the database.
@@ -362,7 +368,7 @@ class Grant::Adapter::Mysql < Grant::Adapter::Base
   # message prefixes are fixed per error, so they stand in for the code until
   # the driver exposes it. Returns nil for messages Grant does not translate.
   def self.errno_for_message(message : String?) : Int32?
-    return nil unless message
+    return unless message
 
     if message.starts_with?("Duplicate entry")
       1062
@@ -433,13 +439,13 @@ class Grant::Adapter::Mysql < Grant::Adapter::Base
 
   # `USE INDEX (a, b)` / `FORCE INDEX (a)` / `IGNORE INDEX (a)`.
   def index_hint_clause(kind : Symbol, index_names : Array(String)) : String?
-    return nil if index_names.empty?
+    return if index_names.empty?
     keyword = case kind
               when :use    then "USE INDEX"
               when :force  then "FORCE INDEX"
               when :ignore then "IGNORE INDEX"
               else
-                return nil
+                return
               end
     "#{keyword} (#{index_names.map { |n| quote(n) }.join(", ")})"
   end

@@ -130,7 +130,7 @@ describe "has_many :through with source_type" do
 
   it "preloads with one query per hop and the same records as the lazy reader" do
     st_fixture
-    lazy = StTag.order(:id).select.to_a.map { |tag| tag.st_posts.to_a.map(&.title).sort! }
+    lazy = StTag.order(:id).select.to_a.map(&.st_posts.to_a.map(&.title).sort!)
     statements = AssociationQueryCounter.statements do
       StTag.includes(:st_posts).order(:id).select.to_a.map do |tag|
         tag.association_loaded?(:st_posts).should be_true
@@ -144,7 +144,7 @@ describe "has_many :through with source_type" do
   it "preloads two typed sources of one owner without mixing them up" do
     st_fixture
     tags = StTag.includes(:st_posts, :st_photos).order(:id).select.to_a
-    tags.map { |tag| tag.st_posts.to_a.map(&.title).sort! }.should eq [["first", "second"], ["second"]]
+    tags.map(&.st_posts.to_a.map(&.title).sort!).should eq [["first", "second"], ["second"]]
     tags.map { |tag| tag.st_photos.to_a.map(&.caption) }.should eq [["shot"], [] of String]
   end
 

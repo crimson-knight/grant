@@ -2,7 +2,7 @@ require "../../spec_helper"
 require "../../support/where_family_models"
 
 private def rank_labels(relation : Grant::Query::Builder(WfMeasure)) : Array(String)
-  relation.order(:rank).select.map { |measure| measure.label.to_s }
+  relation.order(:rank).select.map(&.label.to_s)
 end
 
 describe "where with a Range" do

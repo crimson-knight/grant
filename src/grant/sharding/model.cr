@@ -114,14 +114,14 @@ module Grant::Sharding
       @current_shard = resolved
     end
 
-    def save(*, validate : Bool = true, skip_timestamps : Bool = false, context : Symbol | Array(Symbol) | Nil = nil) : Bool
+    def save(*, validate : Bool = true, skip_timestamps : Bool = false, context : (Symbol | Array(Symbol))? = nil) : Bool
       within_own_shard do
         ensure_shard_key_unchanged!
         super
       end
     end
 
-    def save!(*, validate : Bool = true, skip_timestamps : Bool = false, context : Symbol | Array(Symbol) | Nil = nil) : Bool
+    def save!(*, validate : Bool = true, skip_timestamps : Bool = false, context : (Symbol | Array(Symbol))? = nil) : Bool
       within_own_shard do
         ensure_shard_key_unchanged!
         super

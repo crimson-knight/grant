@@ -4,7 +4,7 @@ class Grant::Adapter::Pg < Grant::Adapter::Base
   def truncate_tables(names : Array(String)) : Nil
     return if names.empty?
     statement = "TRUNCATE TABLE #{names.join(", ") { |name| quote(name) }} RESTART IDENTITY CASCADE"
-    open(statement) { |conn| conn.exec(statement) }
+    open(statement, &.exec(statement))
   end
 
   def reset_pk_sequence!(table_name : String, primary_key : String = "id") : Nil

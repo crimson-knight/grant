@@ -3,27 +3,27 @@ module Grant::Validators
   # one, otherwise nil (NaN and infinity are not numbers here).
   #
   # :nodoc:
-  def self.numeric_value(value) : Int64 | Float64 | Nil
+  def self.numeric_value(value) : Int64 | Float64?
     nil
   end
 
   # :nodoc:
-  def self.numeric_value(value : Int) : Int64 | Float64 | Nil
+  def self.numeric_value(value : Int) : Int64 | Float64?
     value > Int64::MAX ? value.to_f64 : value.to_i64
   end
 
   # :nodoc:
-  def self.numeric_value(value : Float) : Int64 | Float64 | Nil
+  def self.numeric_value(value : Float) : Int64 | Float64?
     value.finite? ? value.to_f64 : nil
   end
 
   # :nodoc:
-  def self.numeric_value(value : Number) : Int64 | Float64 | Nil
+  def self.numeric_value(value : Number) : Int64 | Float64?
     value.to_f64
   end
 
   # :nodoc:
-  def self.numeric_value(value : String) : Int64 | Float64 | Nil
+  def self.numeric_value(value : String) : Int64 | Float64?
     value.strip.to_i64? || value.strip.to_f64?.try { |float| float.finite? ? float : nil }
   end
 

@@ -4,11 +4,12 @@ module Grant::CompositePrimaryKey::Validation
     return true unless self.class.composite_primary_key?
     return true unless new_record? # Only validate on create
 
-    pk_columns = self.class.composite_key.not_nil!.columns
+    composite_key = self.class.composite_key || return true
+    pk_columns = composite_key.columns
     pk_values = primary_key_values
 
     # Skip validation if any part of the key is nil
-    return true if pk_values.values.any?(&.nil?)
+    return true if pk_values.values.any?(Nil)
 
     # Build WHERE clause
     where_clause = pk_columns.map { |col| "#{self.class.quote(col.to_s)} = ?" }.join(" AND ")
@@ -23,7 +24,8 @@ module Grant::CompositePrimaryKey::Validation
     return true unless self.class.composite_primary_key?
     return true unless new_record? # Only validate on create for non-auto keys
 
-    pk_columns = self.class.composite_key.not_nil!.columns
+    composite_key = self.class.composite_key || return true
+    pk_columns = composite_key.columns
     valid = true
 
     pk_columns.each do |col_sym|
@@ -58,13 +60,13 @@ module Grant::CompositePrimaryKey::Validation
     return true unless self.class.composite_primary_key?
 
     pk_values = primary_key_values
-    !pk_values.values.any?(&.nil?)
+    !pk_values.values.any?(Nil)
   end
 
   # Helper to get a string representation of the composite key
   def composite_key_string : String?
-    return nil unless self.class.composite_primary_key?
-    return nil unless composite_key_complete?
+    return unless self.class.composite_primary_key?
+    return unless composite_key_complete?
 
     pk_values = primary_key_values
     pk_values.map { |k, v| "#{k}=#{v}" }.join(", ")

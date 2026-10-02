@@ -56,12 +56,28 @@ module Grant::Query::Assembler
       if !@query.join_clauses.empty? && field.matches?(/\A[A-Za-z_][A-Za-z0-9_]*\z/)
         "#{quoted_table_name}.#{Model.quote(field)}"
       else
-        field
+        quote_reserved_field(field)
       end
     end
 
+    # Column names that are reserved words in at least one supported dialect,
+    # so a select list, ORDER BY or GROUP BY must quote them (`blob` is reserved on MySQL, `user`
+    # on PostgreSQL). Other names stay bare so expressions pass through.
+    RESERVED_FIELD_NAMES = Set{
+      "all", "and", "as", "asc", "between", "blob", "both", "by", "case", "check",
+      "column", "constraint", "create", "cross", "current_date", "current_time",
+      "current_timestamp", "current_user", "default", "delete", "desc", "distinct",
+      "drop", "else", "end", "except", "exists", "false", "fetch", "for", "foreign",
+      "from", "full", "grant", "group", "having", "in", "index", "inner", "insert",
+      "interval", "intersect", "into", "is", "join", "key", "keys", "leading", "left",
+      "like", "limit", "lock", "natural", "not", "null", "offset", "on", "or", "order",
+      "outer", "primary", "range", "rank", "references", "right", "row", "rows",
+      "select", "set", "table", "then", "to", "trailing", "true", "union", "unique",
+      "update", "user", "using", "values", "when", "where", "window", "with",
+    }
+
     private def quote_reserved_field(field : String) : String
-      field.downcase == "all" ? Model.quote(field) : field
+      RESERVED_FIELD_NAMES.includes?(field.downcase) ? Model.quote(field) : field
     end
 
     # Generates the SELECT keyword with optional DISTINCT modifier.
@@ -91,7 +107,7 @@ module Grant::Query::Assembler
       return @joins if @joins
 
       join_clauses = @query.join_clauses
-      return nil if join_clauses.empty?
+      return if join_clauses.empty?
 
       parts = join_clauses.map do |jc|
         # A raw join carries its whole fragment in `on`.
@@ -120,7 +136,7 @@ module Grant::Query::Assembler
       return @having if @having
 
       having_clauses = @query.having_clauses
-      return nil if having_clauses.empty?
+      return if having_clauses.empty?
 
       parts = having_clauses.map do |hc|
         if !hc[:value].nil?
@@ -153,7 +169,7 @@ module Grant::Query::Assembler
       default_scope = render_where_fields(@query.default_scope_where_fields)
       conditions = render_where_fields(@query.where_fields)
 
-      return nil if default_scope.empty? && conditions.empty?
+      return if default_scope.empty? && conditions.empty?
 
       @where = String.build do |sql|
         sql << "WHERE "
@@ -207,10 +223,10 @@ module Grant::Query::Assembler
       if order_fields.none?
         if use_default_order && Grant.settings.implicit_order
           if @query.group_fields.any? && @query.group_fields.none? { |expression| expression[:field] == Model.primary_name }
-            return nil
+            return
           end
           if @query.distinct? && (select_columns = @query.select_columns) && !select_columns.includes?(Model.primary_name)
-            return nil
+            return
           end
           order_fields = default_order
           if !@query.join_clauses.empty?
@@ -219,7 +235,7 @@ module Grant::Query::Assembler
             end
           end
         else
-          return nil
+          return
         end
       end
 
@@ -266,7 +282,7 @@ module Grant::Query::Assembler
     def group_by
       return @group_by if @group_by
       group_fields = @query.group_fields
-      return nil if group_fields.none?
+      return if group_fields.none?
       group_clauses = group_fields.map do |expression|
         qualify_join_field(expression[:field], Model.quote(Model.table_name))
       end

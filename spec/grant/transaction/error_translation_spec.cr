@@ -21,6 +21,8 @@ describe "Transaction error translation" do
   end
 
   it "translates a constraint failure raised by COMMIT itself" do
+    # MySQL checks every constraint per statement; nothing can fail at COMMIT.
+    pending!("MySQL has no deferred constraints") if CURRENT_ADAPTER == "mysql"
     Parent.connection.execute("DROP TABLE IF EXISTS deferred_translation_children")
     Parent.connection.execute("DROP TABLE IF EXISTS deferred_translation_owners")
     Parent.connection.execute("CREATE TABLE deferred_translation_owners (id INTEGER PRIMARY KEY)")

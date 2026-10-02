@@ -34,7 +34,7 @@ describe Grant::Schema::SchemaStatements do
       pg.create_table_statements(:m02a_f, force: :cascade) { |t| t.integer :n }.first.should eq "DROP TABLE IF EXISTS \"m02a_f\" CASCADE"
       lite = Grant::Schema::RecordingStatements.new(Grant::Schema::Dialect::Sqlite)
       lite.create_table_statements(:m02a_f, force: :cascade) { |t| t.integer :n }.first.should eq "DROP TABLE IF EXISTS \"m02a_f\""
-      lite.create_table_statements(:m02a_f) { |t| t.integer :n }.size.should eq 1
+      lite.create_table_statements(:m02a_f, &.integer(:n)).size.should eq 1
     end
 
     it "supports the id types" do
@@ -95,7 +95,7 @@ describe Grant::Schema::SchemaStatements do
         t.timestamps
       end
       SchemaFixture.adapter.schema.table_exists?(:m02a_live).should be_true
-      expect_raises(Grant::ErrorBase) { statements.create_table(:m02a_live) { |t| t.integer :n } }
+      expect_raises(Grant::ErrorBase) { statements.create_table(:m02a_live, &.integer(:n)) }
       statements.create_table(:m02a_live, if_not_exists: true) { |t| t.integer :n }
       statements.create_table(:m02a_live, force: true) { |t| t.integer :n }
       SchemaFixture.adapter.schema.columns(:m02a_live).map(&.name).should eq ["id", "n"]

@@ -44,7 +44,7 @@ describe "Grant::Logging" do
     it "logs queries with timing information" do
       # Execute a query
       Teacher.clear
-      teacher = Teacher.create(name: "Test Teacher")
+      Teacher.create(name: "Test Teacher")
 
       # Now perform a SELECT query which will go through the executor
       Teacher.all.to_a
@@ -97,7 +97,7 @@ describe "Grant::Logging" do
 
   describe "Model lifecycle logging" do
     it "logs record creation" do
-      teacher = Teacher.create(name: "New Teacher")
+      Teacher.create(name: "New Teacher")
 
       sleep(100.milliseconds)
       messages = backend.messages.join("\n")
@@ -157,7 +157,7 @@ describe "Grant::Logging" do
       enrollment = Enrollment.create(student_id: student.id, klass_id: klass.id)
 
       # Access the belongs_to association
-      loaded_student = enrollment.student
+      enrollment.student
 
       sleep(100.milliseconds)
       messages = backend.messages.join("\n")
@@ -171,7 +171,7 @@ describe "Grant::Logging" do
       teacher = Teacher.create(name: "Test Teacher")
 
       # Access the has_many association
-      klasses = teacher.klasses
+      teacher.klasses
 
       sleep(100.milliseconds)
       messages = backend.messages.join("\n")
@@ -183,11 +183,11 @@ describe "Grant::Logging" do
 
     it "logs association collection queries" do
       teacher = Teacher.create(name: "Test Teacher")
-      klass1 = Klass.create(name: "Math", teacher_id: teacher.id)
-      klass2 = Klass.create(name: "Science", teacher_id: teacher.id)
+      Klass.create(name: "Math", teacher_id: teacher.id)
+      Klass.create(name: "Science", teacher_id: teacher.id)
 
       # Query through association
-      klasses = teacher.klasses.all
+      teacher.klasses.all
 
       sleep(100.milliseconds)
       messages = backend.messages.join("\n")

@@ -2,7 +2,7 @@ require "../../spec_helper"
 require "../../support/where_family_models"
 
 private def titles(relation : Grant::Query::Builder(WfPost)) : Array(String)
-  relation.order(:id).select.map { |post| post.title.to_s }
+  relation.order(:id).select.map(&.title.to_s)
 end
 
 describe "where.not, and relation or / and" do
@@ -149,7 +149,7 @@ describe "where.not, and relation or / and" do
     it "still supports the keyword, string and block forms" do
       titles(WfPost.where(title: "a").or(title: "b")).should eq(["a", "b"])
       titles(WfPost.where(title: "a").or("title = ?", "c")).should eq(["a", "c"])
-      titles(WfPost.where(title: "a").or { |q| q.where(title: "d") }).should eq(["a", "d"])
+      titles(WfPost.where(title: "a").or(&.where(title: "d"))).should eq(["a", "d"])
     end
   end
 

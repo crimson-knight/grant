@@ -35,8 +35,8 @@ describe "Relation immutability" do
       base.where("id > ?", 0),
       base.and(name: "b"),
       base.or(name: "b"),
-      base.or { |q| q.where(name: "b") },
-      base.not { |q| q.where(name: "b") },
+      base.or(&.where(name: "b")),
+      base.not(&.where(name: "b")),
       base.order(:id),
       base.order(name: :desc),
       base.reorder(:name),
@@ -165,8 +165,8 @@ describe "Relation immutability" do
     base = Parent.where(name: "a")
     sql = base.to_sql
 
-    base.or { |q| q.where(name: "b") }
-    base.not { |q| q.where(name: "c") }
+    base.or(&.where(name: "b"))
+    base.not(&.where(name: "c"))
 
     base.to_sql.should eq sql
     base.where_fields.size.should eq 1
@@ -175,8 +175,8 @@ describe "Relation immutability" do
   it "applies or/not blocks that return the relation they built" do
     seed_parents(["a", "b", "c"])
 
-    Parent.where(name: "a").or { |q| q.where(name: "b") }.to_a.compact_map(&.name).sort!.should eq ["a", "b"]
-    Parent.where("name != ?", "zzz").not { |q| q.where(name: "c") }.to_a.compact_map(&.name).sort!.should eq ["a", "b"]
+    Parent.where(name: "a").or(&.where(name: "b")).to_a.compact_map(&.name).sort!.should eq ["a", "b"]
+    Parent.where("name != ?", "zzz").not(&.where(name: "c")).to_a.compact_map(&.name).sort!.should eq ["a", "b"]
   end
 
   it "shares no state between a relation and its copies in either direction" do

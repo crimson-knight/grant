@@ -103,7 +103,7 @@ describe "collection delete, delete_all and destroy strategies" do
 
     it "removes several records with one UPDATE" do
       owner = DsOwner.create!(name: "o")
-      children = 3.times.map { DsChild.create!(ds_owner_id: owner.id, note: "n") }.to_a
+      children = Array.new(3) { DsChild.create!(ds_owner_id: owner.id, note: "n") }
 
       statements = StatementRecorder.statements { owner.ds_plain.delete(children[0], children[1], children[2]) }
 

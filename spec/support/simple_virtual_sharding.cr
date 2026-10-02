@@ -223,7 +223,7 @@ module Grant::Testing
       with_virtual_shards(GENERIC_SHARDS.first(count), &block)
     end
 
-    def with_virtual_shards(shards : Array(Symbol), &block)
+    def with_virtual_shards(shards : Array(Symbol), &)
       VirtualShardAdapter.clear_all
       Grant::HealthMonitor.test_mode = true
 
@@ -249,7 +249,7 @@ module Grant::Testing
       end
     end
 
-    def track_shard_queries(&block)
+    def track_shard_queries(&)
       initial_counts = {} of Symbol => Int32
 
       VirtualShardAdapter.shard_queries.each do |shard, queries|

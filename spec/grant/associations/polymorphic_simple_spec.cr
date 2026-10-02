@@ -34,7 +34,7 @@ end
 # Simple test models to verify compilation
 {% begin %}
   {% adapter_literal = (env("CURRENT_ADAPTER") || "sqlite").id %}
-  
+
   class TestComment < Grant::Base
     connection {{ adapter_literal }}
     table test_comments

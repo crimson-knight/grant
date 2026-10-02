@@ -222,7 +222,7 @@ module Grant::Schema
 
     # Forgets cached catalog data. With *table*, only that table is re-read on
     # its next use. Call it after DDL Grant did not run itself.
-    def reset!(table : String | Symbol | Nil = nil) : Nil
+    def reset!(table : String | Symbol? = nil) : Nil
       name = table.try(&.to_s)
       @mutex.synchronize do
         @tables = nil

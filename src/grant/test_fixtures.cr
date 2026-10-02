@@ -200,7 +200,7 @@ module Grant::TestFixtures
   end
 
   private def self.belongs_to_meta(registration : Registration, key : String)
-    return nil if registration.columns.includes?(key)
+    return if registration.columns.includes?(key)
     meta = Grant::AssociationRegistry.get(registration.model_name, key)
     meta if meta && meta[:type] == :belongs_to
   end
@@ -226,7 +226,7 @@ module Grant::TestFixtures
 
   private def self.delete_all(adapter : Grant::Adapter::Base, registration : Registration) : Nil
     statement = Grant::QueryLogs.append("DELETE FROM #{adapter.quote(registration.table)}")
-    elapsed = Time.measure { adapter.open(statement) { |db| db.exec statement } }
+    elapsed = Time.measure { adapter.open(statement, &.exec(statement)) }
     adapter.log statement, elapsed
   end
 
@@ -235,7 +235,7 @@ module Grant::TestFixtures
   private def self.insert_rows(adapter : Grant::Adapter::Base, registration : Registration, rows : Array(Row)) : Nil
     return if rows.empty?
 
-    now = Time.utc
+    now = Grant::Timestamps.to_microseconds(Time.utc)
     columns = [] of String
     rows.each { |row| row.values.each_key { |key| columns << key unless columns.includes?(key) } }
     ["created_at", "updated_at"].each do |stamp|

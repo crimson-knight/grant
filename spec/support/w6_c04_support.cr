@@ -63,7 +63,7 @@ module W6C04
       DB.open(pg_url("postgres")) { |db| db.exec "DROP DATABASE IF EXISTS #{database_name(name)} WITH (FORCE)" }
     else
       File.delete?(File.join(dir, "#{name}.sqlite3"))
-      %w(-wal -shm).each { |suffix| File.delete?(File.join(dir, "#{name}.sqlite3#{suffix}")) }
+      %w[-wal -shm].each { |suffix| File.delete?(File.join(dir, "#{name}.sqlite3#{suffix}")) }
     end
   end
 
@@ -78,7 +78,7 @@ module W6C04
   def self.exec(name : String, sql : String, *args) : Nil
     params = [] of DB::Any
     args.each { |value| params << value }
-    DB.open(url(name)) { |db| db.exec(sql, args: params) }
+    DB.open(url(name), &.exec(sql, args: params))
   end
 
   # The first column of every row of *sql* in the database *name*, as strings.

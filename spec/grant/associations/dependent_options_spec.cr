@@ -1,4 +1,5 @@
 require "../../spec_helper"
+require "../../support/crystal_compiler"
 
 {% begin %}
   {% adapter_literal = (env("CURRENT_ADAPTER") || "sqlite").id %}
@@ -207,7 +208,7 @@ private def compile_dependent_source(body : String) : Tuple(Bool, String)
   file.close
   begin
     error = IO::Memory.new
-    status = Process.run("crystal-alpha", ["build", "--no-codegen", "--no-color", file.path], error: error, output: Process::Redirect::Close, chdir: repo_root)
+    status = Process.run(spec_crystal_compiler, ["build", "--no-codegen", "--no-color", file.path], error: error, output: Process::Redirect::Close, chdir: repo_root)
     {status.success?, error.to_s}
   ensure
     file.delete
@@ -395,10 +396,10 @@ describe "dependent options" do
 
         owner.destroy.should be_true
 
-        jobs.map(&.association).sort.should eq(["dep_async_card", "dep_async_kids"])
+        jobs.map(&.association).sort!.should eq(["dep_async_card", "dep_async_kids"])
         DepAsyncKid.count.should eq(3)
 
-        kids_job = jobs.find { |job| job.association == "dep_async_kids" }.not_nil!
+        kids_job = jobs.find! { |job| job.association == "dep_async_kids" }
         kids_job.perform.should eq(3)
         DepAsyncKid.count.should eq(0)
         DepAsyncKid.seen.should eq(["dep_async_kids", "dep_async_kids", "dep_async_kids"])
@@ -406,7 +407,7 @@ describe "dependent options" do
         # Running it again finds nothing.
         kids_job.perform.should eq(0)
 
-        jobs.find { |job| job.association == "dep_async_card" }.not_nil!.perform.should eq(1)
+        jobs.find! { |job| job.association == "dep_async_card" }.perform.should eq(1)
         DepAsyncCard.count.should eq(0)
       ensure
         Grant::Dependent.reset_async_destroy_enqueuer
@@ -460,7 +461,9 @@ describe "dependent options" do
       2.times { DepAsyncKid.create!(dep_async_owner_id: owner.id) }
 
       owner.destroy.should be_true
-      20.times do
+      # Wait up to 5 seconds: on a loaded CI runner the fiber can need more
+      # than the 200 ms this allowed before.
+      500.times do
         break if DepAsyncKid.count == 0
         sleep 10.milliseconds
       end

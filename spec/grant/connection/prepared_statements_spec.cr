@@ -3,7 +3,7 @@ require "./pool_spec_support"
 # Runs *count* distinct statements and reports how many prepared statements
 # the (single) pooled connection is caching afterwards.
 private def cached_statements_after(adapter : Grant::Adapter::Base, count : Int32) : Int32
-  count.times { |i| adapter.with_connection { |connection| connection.scalar("SELECT #{i + 1}") } }
+  count.times { |i| adapter.with_connection(&.scalar("SELECT #{i + 1}")) }
   adapter.with_connection(&.statement_cache_size)
 end
 
@@ -28,7 +28,7 @@ describe "prepared statements" do
     cached_statements_after(adapter, 12).should be <= 3
 
     # An evicted statement is simply prepared again.
-    adapter.open { |connection| connection.scalar("SELECT 1") }.should eq 1
+    adapter.open(&.scalar("SELECT 1")).should eq 1
     adapter.with_connection(&.statement_cache_size).should be <= 3
   end
 
@@ -52,7 +52,7 @@ describe "prepared statements" do
 
     adapter.database.prepared_statements_cache?.should be_false
     cached_statements_after(adapter, 5).should eq 0
-    adapter.open { |connection| connection.scalar("SELECT 41 + 1") }.should eq 42
+    adapter.open(&.scalar("SELECT 41 + 1")).should eq 42
   end
 
   it "turns preparing off for PgBouncer-style pooling where the driver supports it" do
@@ -62,12 +62,14 @@ describe "prepared statements" do
       adapter.database.prepared_statements?.should be_false
       cached_statements_after(adapter, 5).should eq 0
     else
-      # SQLite can only prepare, so the flag is ignored rather than breaking queries.
+      # SQLite can only prepare, and crystal-mysql cannot bind values without
+      # preparing, so the flag is ignored rather than breaking queries.
       adapter.database.prepared_statements?.should be_true
     end
 
-    sql = adapter.ensure_clause_template("SELECT CAST(? AS BIGINT) + 1")
-    adapter.open { |connection| connection.query_one(sql, 41, as: Int64) }.should eq 42
+    # MySQL casts to SIGNED (a BIGINT); it has no CAST(... AS BIGINT).
+    sql = adapter.ensure_clause_template(CURRENT_ADAPTER == "mysql" ? "SELECT CAST(? AS SIGNED) + 1" : "SELECT CAST(? AS BIGINT) + 1")
+    adapter.open(&.query_one(sql, 41, as: Int64)).should eq 42
   end
 
   it "forwards the options as URL parameters only when they differ from the defaults" do

@@ -6,12 +6,12 @@ require "../spec_helper"
   class SecureTokenTestModel < Grant::Base
     connection {{ adapter_literal }}
     table secure_token_test_models
-    
-    
+
+
     has_secure_token :auth_token
     has_secure_token :api_key, length: 36, alphabet: :hex
     has_secure_token :invite_code, length: 10, on: :initialize
-    
+
     column id : Int64, primary: true
     column name : String?
     timestamps

@@ -84,7 +84,7 @@ module Grant::Dirty
         {% for ivar in @type.instance_vars %}
           {% if ivar.annotation(Grant::Column) %}
             {% ann = ivar.annotation(Grant::Column) %}
-            {% array = ivar.type.union_types.any? { |column_type| column_type.name.starts_with?("Array(") } %}
+            {% array = ivar.type.union_types.any?(&.name.starts_with?("Array(")) %}
             {% if array && !ann[:converter] %}
               watched << {{ ivar.name.stringify }}
             {% elsif ivar.name.stringify.starts_with?("_serialized_") %}
@@ -107,7 +107,7 @@ module Grant::Dirty
     # columns.
     def __watches_mutations? : Bool
       {% begin %}
-        {% any_array = @type.instance_vars.any? { |ivar| ivar.annotation(Grant::Column) && ivar.type.union_types.any? { |column_type| column_type.name.starts_with?("Array(") } } %}
+        {% any_array = @type.instance_vars.any? { |ivar| ivar.annotation(Grant::Column) && ivar.type.union_types.any?(&.name.starts_with?("Array(")) } %}
         {% any_json = @type.instance_vars.any? { |ivar| (ann = ivar.annotation(Grant::Column)) && ann[:converter] && ann[:converter].stringify == "Grant::Converters::JsonDocument" } %}
         {% if any_array || any_json %}
           true
@@ -377,7 +377,7 @@ module Grant::Dirty
         {% if ivar.annotation(Grant::Column) %}
           {% ann = ivar.annotation(Grant::Column) %}
           {% ivar_name = ivar.name.stringify %}
-          {% array = ivar.type.union_types.any? { |column_type| column_type.name.starts_with?("Array(") } %}
+          {% array = ivar.type.union_types.any?(&.name.starts_with?("Array(")) %}
           {% if array && !ann[:converter] %}
             originals[{{ ivar_name }}] = snapshot_dirty_value(@{{ ivar.name.id }}.as(Grant::Base::DirtyValue))
           {% elsif ivar_name.starts_with?("_serialized_") %}
@@ -402,7 +402,7 @@ module Grant::Dirty
         {% if ivar.annotation(Grant::Column) %}
           {% ann = ivar.annotation(Grant::Column) %}
           {% ivar_name = ivar.name.stringify %}
-          {% array = ivar.type.union_types.any? { |column_type| column_type.name.starts_with?("Array(") } %}
+          {% array = ivar.type.union_types.any?(&.name.starts_with?("Array(")) %}
           {% if array && !ann[:converter] %}
             sync_mutated_value({{ ivar_name }}, @{{ ivar.name.id }}.as(Grant::Base::DirtyValue))
           {% elsif ann[:converter] && !ivar_name.starts_with?("_serialized_") && (ivar.type.union_types.reject { |column_type| column_type == Nil }.any? { |column_type| column_type.name.starts_with?("Hash(") || column_type.name.starts_with?("Array(") || column_type == JSON::Any || (column_type.class? && column_type != String) }) %}

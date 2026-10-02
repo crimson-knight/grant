@@ -179,7 +179,7 @@ module Grant
       return if table_exists?(adapter, dialect)
       sql = "CREATE TABLE IF NOT EXISTS #{dialect.quote(TABLE)} (name VARCHAR(255) NOT NULL PRIMARY KEY, " \
             "applied_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)"
-      adapter.open(sql) { |db| db.exec sql }
+      adapter.open(sql, &.exec(sql))
     end
 
     private def self.table_exists?(adapter : Grant::Adapter::Base, dialect : Grant::Schema::Dialect) : Bool
@@ -201,7 +201,7 @@ module Grant
             else
               "INSERT INTO #{table} (name) VALUES (#{literal}) ON CONFLICT (name) DO NOTHING"
             end
-      affected = adapter.open(sql) { |db| db.exec(sql).rows_affected }
+      affected = adapter.open(sql, &.exec(sql).rows_affected)
       affected > 0
     end
   end

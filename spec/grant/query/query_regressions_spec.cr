@@ -161,7 +161,7 @@ describe "Luna query regressions Q-1 through Q-15" do
   end
 
   it "Q-6 uses exclusive upper bounds in hash and where-chain ranges" do
-    records = 3.times.map { |index| QueryRegressionParent.create!(name: "parent-#{index}") }.to_a
+    records = Array.new(3) { |index| QueryRegressionParent.create!(name: "parent-#{index}") }
     range = records.first.id!...records.last.id!
 
     QueryRegressionParent.where(id: range).order(id: :asc).pluck(:id).should eq([[records[0].id!], [records[1].id!]])
@@ -183,7 +183,7 @@ describe "Luna query regressions Q-1 through Q-15" do
   end
 
   it "Q-8 expands raw bind arrays and checks placeholder counts" do
-    records = 3.times.map { |index| QueryRegressionParent.create!(name: "parent-#{index}") }.to_a
+    records = Array.new(3) { |index| QueryRegressionParent.create!(name: "parent-#{index}") }
     lower_id = records.first.id!
     upper_id = records.last.id!
 

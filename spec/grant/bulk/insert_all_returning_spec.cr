@@ -9,7 +9,7 @@ describe "insert_all returning" do
 
     if BulkItem.adapter.supports_insert_returning?
       records.size.should eq(2)
-      records.map(&.id).compact.sort.should eq(BulkItem.order(:id).select.map(&.id).compact)
+      records.compact_map(&.id).sort!.should eq(BulkItem.order(:id).select.compact_map(&.id))
     else
       records.should be_empty
     end

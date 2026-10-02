@@ -85,8 +85,11 @@ describe "BigDecimal model columns on #{CURRENT_ADAPTER}" do
   end
 
   it "stores nil in a nilable column" do
-    row = W6bPriceRow.create!(price: BigDecimal.new("1"), ratio: BigDecimal.new("0.333333333333"))
-    W6bPriceRow.find!(row.id).ratio.should eq BigDecimal.new("0.333333333333")
+    # A DECIMAL with no precision is DECIMAL(10, 0) on MySQL, so it keeps no
+    # fraction there.
+    ratio = BigDecimal.new(CURRENT_ADAPTER == "mysql" ? "42" : "0.333333333333")
+    row = W6bPriceRow.create!(price: BigDecimal.new("1"), ratio: ratio)
+    W6bPriceRow.find!(row.id).ratio.should eq ratio
     row.update!(ratio: nil)
     W6bPriceRow.find!(row.id).ratio.should be_nil
   end

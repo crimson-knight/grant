@@ -50,7 +50,7 @@ describe "Relation clause components" do
     end
 
     it "runs the trimmed relation" do
-      seed_parents(%w(a b c))
+      seed_parents(%w[a b c])
 
       Parent.where("name != ?", "a").order(:name).limit(1).except(:limit).to_a.compact_map(&.name).should eq ["b", "c"]
       Parent.where("name != ?", "a").order(name: :desc).only(:where).count.should eq 2
@@ -87,7 +87,7 @@ describe "Relation clause components" do
 
   describe "cache_version" do
     it "combines the row count with the newest updated_at in one query" do
-      seed_parents(%w(a b))
+      seed_parents(%w[a b])
       relation = Parent.where("name != ?", "zzz")
 
       version = ""

@@ -38,7 +38,7 @@ module Bench
   def self.resolve_db_url(db_path : String?) : String
     if db_path
       db_path.starts_with?("sqlite3:") ? db_path : "sqlite3:#{db_path}"
-    elsif (env = ENV["SQLITE_DATABASE_URL"]?)
+    elsif env = ENV["SQLITE_DATABASE_URL"]?
       env
     else
       "sqlite3:/tmp/grant_bench.db"
@@ -147,7 +147,7 @@ module Bench
   end
 
   def self.int_opt(opts : Hash(String, String), key : String, default : Int64) : Int64
-    if (raw = opts[key]?)
+    if raw = opts[key]?
       raw.gsub("_", "").to_i64
     else
       default

@@ -274,7 +274,7 @@ class Grant::Query::Builder(Model)
         keys = entries.map(&.[0])
         predicate, values = key_list_predicate(structured_field_sql(foreign_key), keys)
         own_where_fields << {join: join, stmt: predicate, values: values}
-        register_raw_where_column(predicate, foreign_key, equality: keys.none?(&.nil?))
+        register_raw_where_column(predicate, foreign_key, equality: keys.none?(Nil))
       end
       return
     end
@@ -290,9 +290,9 @@ class Grant::Query::Builder(Model)
     type_sql = structured_field_sql(type_column)
     by_type = {} of String => Array(Grant::Columns::Type)
     null_key = false
-    entries.each do |key, type_name|
-      if type_name
-        (by_type[type_name] ||= [] of Grant::Columns::Type) << key
+    entries.each do |key, entry_type|
+      if entry_type
+        (by_type[entry_type] ||= [] of Grant::Columns::Type) << key
       elsif key.nil?
         null_key = true
       else
@@ -302,11 +302,11 @@ class Grant::Query::Builder(Model)
 
     parts = [] of String
     values = [] of Grant::Columns::Type
-    by_type.each do |type_name, keys|
+    by_type.each do |grouped_type, keys|
       predicate, key_values = key_list_predicate(key_sql, keys)
       parts << "(#{predicate} AND #{type_sql} = ?)"
       values.concat(key_values)
-      values << type_name
+      values << grouped_type
     end
     parts << "#{key_sql} IS NULL" if null_key
     predicate = "(#{parts.join(" OR ")})"
@@ -335,7 +335,7 @@ class Grant::Query::Builder(Model)
   # `field IN (?, ?)` for *keys*; a nil key also matches NULL, an empty list
   # matches nothing.
   private def key_list_predicate(field_sql : String, keys : Array(Grant::Columns::Type)) : Tuple(String, Array(Grant::Columns::Type))
-    present = keys.reject(&.nil?)
+    present = keys.reject(&.nil?) # ameba:disable Style/IsAFilter (reject(Nil) would narrow the element type)
     has_nil = present.size != keys.size
     return {has_nil ? "#{field_sql} IS NULL" : "1=0", [] of Grant::Columns::Type} if present.empty?
 
@@ -696,7 +696,7 @@ class Grant::Query::Builder(Model)
       exclude_composite_keys(columns, records)
     else
       ids = records.map(&.primary_key_value)
-      and_in!(columns.first, ids, negated: true) unless ids.all?(&.nil?)
+      and_in!(columns.first, ids, negated: true) unless ids.all?(Nil)
     end
     self
   end

@@ -144,7 +144,7 @@ describe Grant::NestedAttributes do
       posts = NestedAttributePost.where(author_id: author.id).select
       posts.size.should eq(2)
 
-      titles = posts.map(&.title).sort
+      titles = posts.map(&.title).sort!
       titles.should eq(["First NestedAttributePost", "Second NestedAttributePost"])
     end
 

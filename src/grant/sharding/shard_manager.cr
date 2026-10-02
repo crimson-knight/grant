@@ -55,7 +55,7 @@ module Grant
 
     # The shard active for this fiber, or `nil`.
     def self.current_shard : Symbol?
-      return nil unless state = ConnectionState.current?
+      return unless state = ConnectionState.current?
 
       state.pinned_shard
     end
@@ -101,7 +101,7 @@ module Grant
     end
 
     # Execute on specific shard with connection management
-    def self.on_shard(shard : Symbol, database : String, role : Symbol = :primary, &block)
+    def self.on_shard(shard : Symbol, database : String, role : Symbol = :primary, &)
       with_shard(shard) do
         ConnectionRegistry.with_adapter(database, role, shard) do |adapter|
           yield adapter
@@ -110,7 +110,7 @@ module Grant
     end
 
     # Execute on all shards for a model
-    def self.on_all_shards(model_name : String, database : String, role : Symbol = :primary, &block : Symbol, Adapter::Base -> T) forall T
+    def self.on_all_shards(model_name : String, database : String, role : Symbol = :primary, & : Symbol, Adapter::Base -> T) forall T
       shards = shards_for_model(model_name)
       results = {} of Symbol => T
 

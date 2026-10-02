@@ -10,9 +10,9 @@ class Grant::AssociationCollection(Owner, Target)
 
   def initialize(@owner : Owner,
                  @foreign_key : (Symbol | String),
-                 @through : (Symbol | String | Nil) = nil,
-                 @primary_key : (Symbol | String | Nil) = nil,
-                 @inverse_of : (Symbol | String | Nil) = nil,
+                 @through : (Symbol | String)? = nil,
+                 @primary_key : (Symbol | String)? = nil,
+                 @inverse_of : (Symbol | String)? = nil,
                  @scope : (Grant::Query::Builder(Target) -> Grant::Query::Builder(Target))? = nil,
                  @association_name : String? = nil,
                  @loaded_records : Array(Target)? = nil,
@@ -69,7 +69,7 @@ class Grant::AssociationCollection(Owner, Target)
                 scope_clause, scope_params, scope_modifiers = scope_fragments
                 sql = [query, scope_clause, clause, scope_modifiers].reject(&.empty?).join(" ")
                 all_params = [query_owner_key]
-                if (type_column = @type_column) && (type_value = @type_value)
+                if @type_column && (type_value = @type_value)
                   all_params << type_value
                 end
                 scope_params.each { |value| all_params << value }
@@ -96,7 +96,7 @@ class Grant::AssociationCollection(Owner, Target)
     results
   end
 
-  def each(&block : Target ->)
+  def each(& : Target ->)
     all.each { |record| yield record }
   end
 
@@ -353,7 +353,7 @@ class Grant::AssociationCollection(Owner, Target)
   # The primary keys as the target's key type (`Array(Int64)` for an `Int64`
   # key) instead of the `Grant::Columns::Type` union.
   def typed_ids
-    ids.compact_map(&.as?(typeof(Target.new.primary_key_value.not_nil!)))
+    ids.compact_map(&.as?(typeof(Target.new.primary_key_value.not_nil!))) # ameba:disable Lint/NotNil (typeof only, never runs)
   end
 
   # Replaces the collection with the records whose primary keys are *new_ids*.
@@ -456,7 +456,7 @@ class Grant::AssociationCollection(Owner, Target)
 
     found = in_keys(Target.current_scope, Target.primary_name, keys).select
     if found.size != keys.size
-      known = found.map { |record| record.primary_key_value.to_s }
+      known = found.map(&.primary_key_value.to_s)
       missing = keys.reject { |key| known.includes?(key.to_s) }
       raise Grant::RecordNotFound.new("Couldn't find all #{Target.name} with '#{Target.primary_name}': (#{keys.join(", ")}) (found #{found.size} results, but was looking for #{keys.size}). Couldn't find #{Target.name} with #{Target.primary_name} #{missing.join(", ")}")
     end
@@ -817,7 +817,7 @@ class Grant::AssociationCollection(Owner, Target)
 
     if @through
       writer = through_writer
-      remove_join_rows(members.map { |record| record.read_attribute(writer.target_key) }, strategy)
+      remove_join_rows(members.map(&.read_attribute(writer.target_key)), strategy)
     else
       keys = members.map { |record| record.primary_key_value.as(Grant::Columns::Type) }
       relation = in_keys(association_relation, Target.primary_name, keys)
@@ -850,7 +850,7 @@ class Grant::AssociationCollection(Owner, Target)
       # the join rows (with their callbacks) and keeps the targets, which other
       # owners may still link to.
       writer = through_writer
-      remove_join_rows(members.map { |record| record.read_attribute(writer.target_key) }, :destroy)
+      remove_join_rows(members.map(&.read_attribute(writer.target_key)), :destroy)
       removed.concat(members)
     else
       Owner.transaction { members.each { |record| removed << record if record.destroy! } }
@@ -863,7 +863,7 @@ class Grant::AssociationCollection(Owner, Target)
   private def delete_all_through(strategy : Symbol) : Int64
     writer = through_writer
     keys = if @scope
-             association_relation.select.map { |record| record.read_attribute(writer.target_key) }
+             association_relation.select.map(&.read_attribute(writer.target_key))
            end
     remove_join_rows(keys, strategy)
   end
@@ -914,7 +914,7 @@ class Grant::AssociationCollection(Owner, Target)
   # `counter_cache:` column named on the has_many, else the child's
   # `belongs_to` counter cache.
   private def counter_column : String?
-    return nil if @through || @scope
+    return if @through || @scope
     @counter_column || Grant::CounterCache.active_column(Owner.name, Target.name, @foreign_key.to_s)
   end
 
@@ -1065,8 +1065,8 @@ class Grant::AssociationCollection(Owner, Target)
   # The resolved chain of a nested or polymorphic-source `:through`
   # association; `nil` for every other association, which keeps its own keys.
   private def through_chain : Grant::Associations::ThroughChain?
-    return nil unless @through
-    name = @association_name || return nil
+    return unless @through
+    name = @association_name || return
     Grant::Associations::ThroughChain.for(Owner, name)
   end
 

@@ -34,7 +34,7 @@ private def generated_matrix : String
 
   rows = {% begin %}
     [
-      {% for name in %w(
+      {% for name in %w[
                        supports_insert_returning? supports_insert_on_duplicate_skip? supports_insert_on_duplicate_update?
                        supports_ddl_transactions? supports_partial_index? supports_expression_index?
                        supports_check_constraints? supports_foreign_keys? supports_views?
@@ -43,7 +43,7 @@ private def generated_matrix : String
                        supports_advisory_locks? supports_bulk_alter? supports_concurrent_connections?
                        supports_restart_db_transaction? supports_disable_referential_integrity?
                        supports_nulls_not_distinct?
-                     ) %}
+                     ] %}
         { {{ name }}, pg.{{ name.id }}, mysql.{{ name.id }}, sqlite.{{ name.id }} },
       {% end %}
     ]
@@ -62,8 +62,8 @@ end
 describe "docs/adapter_matrix.md" do
   it "lists exactly what the capability predicates answer" do
     document = File.read(MATRIX_PATH)
-    start_index = document.index(START_MARKER).not_nil!
-    end_index = document.index(END_MARKER).not_nil!
+    start_index = document.index!(START_MARKER)
+    end_index = document.index!(END_MARKER)
     table = generated_matrix
 
     if ENV["GRANT_WRITE_ADAPTER_MATRIX"]?

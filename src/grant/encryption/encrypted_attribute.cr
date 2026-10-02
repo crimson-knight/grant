@@ -213,7 +213,7 @@ module Grant::Encryption
 
     # Encrypt a value
     def encrypt(value : String?) : Bytes?
-      return nil if value.nil?
+      return if value.nil?
 
       key = derive_key
       encrypted = Cipher.encrypt(value, key, deterministic)
@@ -225,7 +225,7 @@ module Grant::Encryption
 
     # Decrypt a value
     def decrypt(encrypted : Bytes?, instance_id : UInt64? = nil) : String?
-      return nil if encrypted.nil? || encrypted.empty?
+      return if encrypted.nil? || encrypted.empty?
 
       # Check cache if instance_id provided
       if instance_id && @decrypted_cache.has_key?(instance_id)

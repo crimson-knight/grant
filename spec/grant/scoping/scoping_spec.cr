@@ -171,7 +171,6 @@ describe "Grant::Scoping" do
 
   describe "merge" do
     it "merges query conditions" do
-      query1 = ScopedModel.where(status: "active")
       query2 = ScopedModel.where(published: true)
 
       merged = ScopedModel.merge(query2)
@@ -180,7 +179,6 @@ describe "Grant::Scoping" do
     end
 
     it "uses most restrictive limit" do
-      query1 = ScopedModel.limit(10)
       query2 = ScopedModel.limit(5)
 
       merged = ScopedModel.merge(query2)

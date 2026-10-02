@@ -101,8 +101,8 @@ class Grant::Query::Builder(Model)
 
   # Keeps rows whose JSON column contains the *document* (`settings @> '{"theme":"dark"}'`).
   # *document* is anything that serializes to JSON: a `JSON::Any`, a hash or a
-  # named tuple. On SQLite the containment is expanded into `json_extract`
-  # comparisons; arrays inside the document may hold scalars only there.
+  # named tuple. MySQL runs `JSON_CONTAINS`; on SQLite the containment is
+  # expanded into `json_extract` and `json_each` tests.
   # ```
   # User.where.json_contains(:settings, {theme: "dark"})
   # ```
@@ -145,7 +145,7 @@ class Grant::Query::Builder(Model)
     end
   end
 
-  private def write_json_condition(json : ::JSON::Builder, value : Nil | Bool | String | Symbol | Number | Enum | Time | UUID | ::JSON::Any | ::JSON::Serializable) : Nil
+  private def write_json_condition(json : ::JSON::Builder, value : Bool | String | Symbol | Number | Enum | Time | UUID | ::JSON::Any | ::JSON::Serializable?) : Nil
     value.to_json(json)
   end
 
@@ -164,7 +164,7 @@ class Grant::Query::Builder(Model)
       sqlite_containment(column, ::JSON.parse(json), "$", clauses, binds, 0)
       own_where_fields << {join: join, stmt: "(#{clauses.join(" AND ")})", values: binds}
     in .mysql?
-      raise_unsupported_json
+      own_where_fields << {join: join, stmt: "JSON_CONTAINS(#{column}, CAST(? AS JSON))", values: [json.as(Grant::Columns::Type)]}
     end
   end
 
@@ -186,12 +186,13 @@ class Grant::Query::Builder(Model)
 
   # Keeps rows whose JSON column holds *value* at *path*. The path is a list
   # of keys (array indexes as digits) or a dotted string; the comparison uses
-  # `#>>` on PostgreSQL (text) and `json_extract` on SQLite (typed).
+  # `#>>` on PostgreSQL and `JSON_UNQUOTE(JSON_EXTRACT(...))` on MySQL (both
+  # text) and `json_extract` on SQLite (typed).
   # ```
   # User.where.json_path(:settings, "theme", "dark")
   # User.where.json_path(:settings, %w(notifications email), true)
   # ```
-  def json_path!(field : Symbol | String, path : String | Array(String), value : String | Int | Float | Bool | Nil) : self
+  def json_path!(field : Symbol | String, path : String | Array(String), value : String | Int | Float | Bool?) : self
     column = structured_field_sql(field.to_s)
     segments = path.is_a?(String) ? path.split('.') : path
     raise ArgumentError.new("json_path needs at least one path segment") if segments.empty? || segments.any?(&.empty?)
@@ -200,25 +201,26 @@ class Grant::Query::Builder(Model)
     in .pg?
       predicate, binds = pg_json_path_predicate(column, segments, value)
     in .sqlite?
-      predicate, binds = sqlite_json_path_predicate(column, sqlite_json_path(segments), value)
+      predicate, binds = sqlite_json_path_predicate(column, json_path_expression(segments), value)
     in .mysql?
-      raise_unsupported_json
+      predicate, binds = mysql_json_path_predicate(column, json_path_expression(segments), value)
     end
     own_where_fields << {join: :and, stmt: predicate, values: binds}
     self
   end
 
   # Keeps rows whose JSON object column has the top-level *key*
-  # (`settings ? 'theme'` on PostgreSQL, `json_type(settings, '$."theme"')` on SQLite).
+  # (`settings ? 'theme'` on PostgreSQL, `JSON_CONTAINS_PATH` on MySQL,
+  # `json_type(settings, '$."theme"')` on SQLite).
   def json_has_key!(field : Symbol | String, key : String) : self
     column = structured_field_sql(field.to_s)
     case @db_type
     in .pg?
       own_where_fields << {join: :and, stmt: "#{column} ?? ?", values: [key.as(Grant::Columns::Type)]}
     in .sqlite?
-      own_where_fields << {join: :and, stmt: "json_type(#{column}, ?) IS NOT NULL", values: [sqlite_json_path([key]).as(Grant::Columns::Type)]}
+      own_where_fields << {join: :and, stmt: "json_type(#{column}, ?) IS NOT NULL", values: [json_path_expression([key]).as(Grant::Columns::Type)]}
     in .mysql?
-      raise_unsupported_json
+      own_where_fields << {join: :and, stmt: "JSON_CONTAINS_PATH(#{column}, 'one', ?) = 1", values: [json_path_expression([key]).as(Grant::Columns::Type)]}
     end
     self
   end
@@ -229,7 +231,7 @@ class Grant::Query::Builder(Model)
   end
 
   # :ditto:
-  def json_path(field : Symbol | String, path : String | Array(String), value : String | Int | Float | Bool | Nil) : self
+  def json_path(field : Symbol | String, path : String | Array(String), value : String | Int | Float | Bool?) : self
     dup.json_path!(field, path, value)
   end
 
@@ -272,16 +274,21 @@ class Grant::Query::Builder(Model)
     raise Grant::Schema::UnsupportedOperation.new("#{what} need PostgreSQL array columns; #{@db_type.to_s.upcase} has no array type")
   end
 
-  private def raise_unsupported_json : NoReturn
-    raise Grant::Schema::UnsupportedOperation.new("JSON predicates are supported on PostgreSQL and SQLite only")
-  end
-
   private def pg_json_path_predicate(column : String, segments : Array(String), value) : Tuple(String, Array(Grant::Columns::Type))
     path = segments.as(Grant::Columns::Type)
     if value.nil?
       {"(#{column} #>> ?) IS NULL", [path]}
     else
       {"(#{column} #>> ?) = ?", [path, value.to_s.as(Grant::Columns::Type)]}
+    end
+  end
+
+  # Like PostgreSQL's `#>>`, a JSON null and a missing path both read as NULL.
+  private def mysql_json_path_predicate(column : String, path : String, value) : Tuple(String, Array(Grant::Columns::Type))
+    if value.nil?
+      {"COALESCE(JSON_TYPE(JSON_EXTRACT(#{column}, ?)), 'NULL') = 'NULL'", [path.as(Grant::Columns::Type)]}
+    else
+      {"JSON_UNQUOTE(JSON_EXTRACT(#{column}, ?)) = ?", [path.as(Grant::Columns::Type), value.to_s.as(Grant::Columns::Type)]}
     end
   end
 
@@ -300,8 +307,9 @@ class Grant::Query::Builder(Model)
     end
   end
 
-  # `$.a[0]."b c"` for the segments `a`, `0`, `b c`.
-  private def sqlite_json_path(segments : Array(String)) : String
+  # `$.a[0]."b c"` for the segments `a`, `0`, `b c`: the path syntax SQLite
+  # and MySQL share.
+  private def json_path_expression(segments : Array(String)) : String
     String.build do |io|
       io << '$'
       segments.each { |segment| io << sqlite_json_segment(segment) }
@@ -338,7 +346,8 @@ class Grant::Query::Builder(Model)
         alias_name = "grant_je#{depth}"
         if scalar.is_a?(Hash) || scalar.is_a?(Array)
           inner = [] of String
-          sqlite_containment("#{alias_name}.value", item, "$", inner, binds_for_inner = [] of Grant::Columns::Type, depth + 1)
+          binds_for_inner = [] of Grant::Columns::Type
+          sqlite_containment("#{alias_name}.value", item, "$", inner, binds_for_inner, depth + 1)
           # A bare scalar element is not JSON text, so the CASE keeps the nested
           # tests away from it (they would fail with "malformed JSON").
           kind = scalar.is_a?(Hash) ? "object" : "array"

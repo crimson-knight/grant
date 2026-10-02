@@ -18,10 +18,10 @@ module W6bQualified
     case CURRENT_ADAPTER
     when "pg"
       adapter.open { |db| db.exec "DROP SCHEMA IF EXISTS #{NS} CASCADE" }
-      adapter.open { |db| db.exec "CREATE SCHEMA #{NS}" }
+      adapter.open(&.exec("CREATE SCHEMA #{NS}"))
     when "mysql"
-      adapter.open { |db| db.exec "DROP DATABASE IF EXISTS #{NS}" }
-      adapter.open { |db| db.exec "CREATE DATABASE #{NS}" }
+      adapter.open(&.exec("DROP DATABASE IF EXISTS #{NS}"))
+      adapter.open(&.exec("CREATE DATABASE #{NS}"))
     end
     adapter.reset_schema_caches!
   end
@@ -29,7 +29,7 @@ module W6bQualified
   def self.drop! : Nil
     case CURRENT_ADAPTER
     when "pg"    then adapter.open { |db| db.exec "DROP SCHEMA IF EXISTS #{NS} CASCADE" }
-    when "mysql" then adapter.open { |db| db.exec "DROP DATABASE IF EXISTS #{NS}" }
+    when "mysql" then adapter.open(&.exec("DROP DATABASE IF EXISTS #{NS}"))
     end
   end
 
@@ -37,12 +37,10 @@ module W6bQualified
   # attached to it under NS first.
   def self.scoped(& : -> T) : T forall T
     adapter.with_connection do |connection|
-      begin
-        connection.exec "ATTACH DATABASE ':memory:' AS #{NS}" if CURRENT_ADAPTER == "sqlite"
-        yield
-      ensure
-        connection.exec "DETACH DATABASE #{NS}" if CURRENT_ADAPTER == "sqlite"
-      end
+      connection.exec "ATTACH DATABASE ':memory:' AS #{NS}" if CURRENT_ADAPTER == "sqlite"
+      yield
+    ensure
+      connection.exec "DETACH DATABASE #{NS}" if CURRENT_ADAPTER == "sqlite"
     end
   end
 
@@ -120,7 +118,7 @@ describe "schema-qualified table names and execute (#{CURRENT_ADAPTER})" do
       W6bQualified.adapter.open { |db| db.exec "UPDATE #{W6bQualified::NS}.w6b_items SET note = 'n', created_at = NULL, updated_at = NULL" }
       # The default applies to a row that names no label.
       insert = CURRENT_ADAPTER == "mysql" ? "INSERT INTO #{W6bQualified::NS}.w6b_items () VALUES ()" : "INSERT INTO #{W6bQualified::NS}.w6b_items DEFAULT VALUES"
-      W6bQualified.adapter.open { |db| db.exec insert }
+      W6bQualified.adapter.open(&.exec(insert))
       W6bQualified.scalar("SELECT COUNT(*) FROM #{W6bQualified::NS}.w6b_items WHERE label = 'none'").should eq 1
       W6bQualified.scalar(index_count("w6b_items_qty_idx")).should eq 1
     end

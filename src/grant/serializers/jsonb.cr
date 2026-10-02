@@ -17,7 +17,7 @@ module Grant::Converters
     extend self
 
     def to_db(value : ::JSON::Any?) : Grant::Columns::Type
-      return nil if value.nil?
+      return if value.nil?
       value.to_json
     end
 
@@ -26,7 +26,6 @@ module Grant::Converters
       case value
       when String then ::JSON.parse(value)
       when Slice  then ::JSON.parse(String.new(value))
-      else             nil
       end
     end
 

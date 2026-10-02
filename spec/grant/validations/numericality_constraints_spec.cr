@@ -35,7 +35,7 @@ require "../../spec_helper"
 
     property mode : Symbol = :none
 
-    {% for name in %w(price quantity bounds ceiling score level exact other label ratio) %}
+    {% for name in %w[price quantity bounds ceiling score level exact other label ratio] %}
       def check_{{name.id}}?
         mode == :{{name.id}}
       end
@@ -169,7 +169,7 @@ describe "validates_numericality_of constraints" do
       info = V02nOrder.validators_on(:quantity).first
       info.kind.should eq(:numericality)
       info.option(:greater_than).should eq(0)
-      info.option(:only_integer).should eq(true)
+      info.option(:only_integer).should be_true
       info.conditional?.should be_true
     end
   end

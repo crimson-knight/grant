@@ -131,9 +131,9 @@ module Grant
 
     # The reflection on the through model that produces the target records.
     def source_reflection : Reflection?
-      return nil unless through_ref = through_reflection
-      return nil if through_ref.polymorphic?
-      source_name = @source || return nil
+      return unless through_ref = through_reflection
+      return if through_ref.polymorphic?
+      source_name = @source || return
       Grant::AssociationRegistry.reflection(through_ref.klass.name, source_name)
     end
 
@@ -150,7 +150,7 @@ module Grant
     # Name of the inverse association on the target model (explicit or
     # detected), or `nil`.
     def inverse_name : String?
-      return nil if @inverse_disabled
+      return if @inverse_disabled
       return @inverse_of_name if @inverse_of_name
       Grant::AssociationRegistry.detected_inverse_name(self)
     end
@@ -176,7 +176,7 @@ module Grant::Reflection::ClassMethods
   # declaration order, optionally limited to one *macro*
   # (`:belongs_to`, `:has_one`, `:has_many`).
   def reflect_on_all_associations(macro_name : Symbol? = nil) : Array(Grant::Reflection)
-    reflections = Grant::AssociationRegistry.reflections_for(self.name)
+    reflections = Grant::AssociationRegistry.reflections_for(name)
     return reflections unless macro_name
     reflections.select { |reflection| reflection.macro == macro_name }
   end

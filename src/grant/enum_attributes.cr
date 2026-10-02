@@ -338,7 +338,7 @@ module Grant::EnumAttributes
     macro validates_enum(field, **options)
       {% message = options[:message] || "is not a valid value" %}
       {% allow_nil = options[:allow_nil] || false %}
-      
+
       validate "{{field}} {{message}}" do |model|
         value = model.{{field}}
         {% if allow_nil %}

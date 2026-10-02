@@ -63,8 +63,8 @@ describe "Grant multitenant default scope" do
     tenant_two_id = ScopedTenantRecord.unscoped.where(title: "tenant two").first!.id.not_nil!
 
     Grant::Tenant.with(1_i64) do
-      ScopedTenantRecord.all.map(&.title).sort.should eq(["tenant one", "tenant one other"])
-      ScopedTenantRecord.select(:title).select.map(&.title).sort.should eq(["tenant one", "tenant one other"])
+      ScopedTenantRecord.all.map(&.title).sort!.should eq(["tenant one", "tenant one other"])
+      ScopedTenantRecord.select(:title).select.map(&.title).sort!.should eq(["tenant one", "tenant one other"])
       ScopedTenantRecord.where(title: "tenant two").select.should be_empty
       ScopedTenantRecord.where.not(:tenant_id, 1_i64).select.should be_empty
       ScopedTenantRecord.where(title: "missing").or(title: "tenant two").select.should be_empty
@@ -77,20 +77,20 @@ describe "Grant multitenant default scope" do
         .select
         .map(&.title)
       join_titles.should eq(["tenant one"])
-      ScopedTenantRecord.includes(:children).select.map(&.title).sort.should eq(["tenant one", "tenant one other"])
-      ScopedTenantRecord.preload(:children).select.map(&.title).sort.should eq(["tenant one", "tenant one other"])
-      ScopedTenantRecord.eager_load(:children).select.map(&.title).sort.should eq(["tenant one", "tenant one other"])
+      ScopedTenantRecord.includes(:children).select.map(&.title).sort!.should eq(["tenant one", "tenant one other"])
+      ScopedTenantRecord.preload(:children).select.map(&.title).sort!.should eq(["tenant one", "tenant one other"])
+      ScopedTenantRecord.eager_load(:children).select.map(&.title).sort!.should eq(["tenant one", "tenant one other"])
 
       tenant_count = ScopedTenantRecord.count
       tenant_count.should be_a(Int64)
       tenant_count.should eq(2)
       ScopedTenantRecord.async_count.wait.should eq(2_i64)
-      ScopedTenantRecord.async_all.wait.map(&.title).sort.should eq(["tenant one", "tenant one other"])
+      ScopedTenantRecord.async_all.wait.map(&.title).sort!.should eq(["tenant one", "tenant one other"])
       ScopedTenantRecord.sum(:score).should eq(30.0)
       ScopedTenantRecord.average(:score).should eq(15.0)
       ScopedTenantRecord.minimum(:score).should eq(10_i64)
       ScopedTenantRecord.maximum(:score).should eq(20_i64)
-      ScopedTenantRecord.pluck(:title).map(&.as(String)).sort.should eq(["tenant one", "tenant one other"])
+      ScopedTenantRecord.pluck(:title).map(&.as(String)).sort!.should eq(["tenant one", "tenant one other"])
       ScopedTenantRecord.ids.size.should eq(2)
       ScopedTenantRecord.pick(:title).should eq("tenant one")
 

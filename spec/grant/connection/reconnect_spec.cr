@@ -143,7 +143,7 @@ describe "reconnection and retries" do
       adapter.retry_delay = 1.millisecond
       adapter.refusals = 10
 
-      error = expect_raises(Grant::ConnectionFailed) { adapter.open { |connection| connection.scalar("SELECT 1") } }
+      error = expect_raises(Grant::ConnectionFailed) { adapter.open(&.scalar("SELECT 1")) }
       error.cause.should be_a(DB::ConnectionRefused)
       adapter.attempts.should eq 3
     end
@@ -156,7 +156,7 @@ describe "reconnection and retries" do
 
       finished = Channel(Nil).new
       spawn do
-        adapter.open { |connection| connection.scalar("SELECT 1") }
+        adapter.open(&.scalar("SELECT 1"))
         finished.send(nil)
       end
       Fiber.yield
@@ -215,14 +215,14 @@ describe "reconnection and retries" do
 
     it "reconnect! replaces the pool and the old one is closed" do
       adapter = pooled_adapter
-      adapter.open { |connection| connection.scalar("SELECT 1") }
+      adapter.open(&.scalar("SELECT 1"))
       old_pool = adapter.database
 
       adapter.reconnect!
 
       old_pool.pool.stats.open_connections.should eq 0
       adapter.database.same?(old_pool).should be_false
-      adapter.open { |connection| connection.scalar("SELECT 1") }.should eq 1
+      adapter.open(&.scalar("SELECT 1")).should eq 1
     end
   end
 end

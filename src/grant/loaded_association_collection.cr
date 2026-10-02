@@ -79,7 +79,7 @@ class Grant::LoadedAssociationCollection(Owner, Target)
     @records.last
   end
 
-  def each(&block : Target ->)
+  def each(& : Target ->)
     @records.each { |record| yield record }
   end
 

@@ -106,11 +106,11 @@ describe "Grant::Spec.transactional" do
     insert = "INSERT INTO parents (name, created_at, updated_at) VALUES ('via_adapter', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
 
     Grant::Spec.within_transaction do
-      replica_writer.open { |db| db.exec(insert) }
+      replica_writer.open(&.exec(insert))
     end
 
     writers.each do |writer|
-      count = writer.open { |db| db.scalar("SELECT COUNT(*) FROM parents") }.to_s.to_i64
+      count = writer.open(&.scalar("SELECT COUNT(*) FROM parents")).to_s.to_i64
       count.should eq(0)
     end
   end

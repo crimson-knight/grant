@@ -42,7 +42,7 @@ describe "Grant::Transaction atomicity" do
       end
 
       Parent.count.should eq(2)
-      names = Parent.all.map(&.name.to_s).sort
+      names = Parent.all.map(&.name.to_s).sort!
       names.should eq(["Eve", "Frank"])
     end
   end

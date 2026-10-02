@@ -112,11 +112,11 @@ describe "Grant::EagerLoading" do
         t.association_loaded?(:klasses).should be_true
       end
 
-      t1_loaded = teachers.find { |t| t.name == "Teacher One" }.not_nil!
-      t2_loaded = teachers.find { |t| t.name == "Teacher Two" }.not_nil!
-      t3_loaded = teachers.find { |t| t.name == "Teacher Three" }.not_nil!
+      t1_loaded = teachers.find! { |t| t.name == "Teacher One" }
+      t2_loaded = teachers.find! { |t| t.name == "Teacher Two" }
+      t3_loaded = teachers.find! { |t| t.name == "Teacher Three" }
 
-      t1_loaded.klasses.to_a.map(&.name.to_s).sort.should eq(["T1-ClassA", "T1-ClassB"])
+      t1_loaded.klasses.to_a.map(&.name.to_s).sort!.should eq(["T1-ClassA", "T1-ClassB"])
       t2_loaded.klasses.to_a.map(&.name.to_s).should eq(["T2-ClassA"])
       t3_loaded.klasses.to_a.size.should eq(0)
     end

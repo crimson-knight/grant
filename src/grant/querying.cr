@@ -582,7 +582,7 @@ module Grant::Querying
     # User.exists?(999) # => false
     # User.exists?(nil) # => false
     # ```
-    def exists?(id : IdValue | Nil) : Bool
+    def exists?(id : IdValue?) : Bool
       query = current_scope
       return false if id.nil?
       key = primary_name || raise MissingPrimaryKeyError.new("#{name} has no primary key")
@@ -687,7 +687,7 @@ module Grant::Querying
     end
 
     private def exec_exists(clause : String, params : Array(Grant::Columns::Type)) : Bool
-      self.adapter.exists? quoted_table_name, clause, params
+      adapter.exists? quoted_table_name, clause, params
     end
 
     private def build_find_by_clause(criteria : Grant::ModelArgs)

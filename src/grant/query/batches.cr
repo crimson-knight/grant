@@ -31,7 +31,7 @@ struct Grant::Query::BatchPlan
 
   # The column names as models store them (without any table qualifier).
   def columns : Array(String)
-    fields.map { |field| field.split('.').last }
+    fields.map(&.split('.').last)
   end
 end
 
@@ -422,9 +422,9 @@ module Grant::Query::Batches(Model)
   private def next_page_size(plan : Grant::Query::BatchPlan, position : Grant::Query::BatchPosition) : Int32?
     # A `none` relation matches nothing, including through the lazy iterator
     # forms, which do not pass through the block forms' early return.
-    return nil if position.finished? || is_none?
+    return if position.finished? || is_none?
     remaining = position.remaining
-    return nil if remaining && remaining <= 0
+    return if remaining && remaining <= 0
     remaining ? Math.min(plan.size.to_i64, remaining).to_i32 : plan.size
   end
 

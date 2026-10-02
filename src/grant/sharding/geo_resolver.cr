@@ -9,8 +9,8 @@ module Grant::Sharding
 
       def initialize(@shard : Symbol, countries : Array(String), states : Array(String)? = nil, cities : Array(String)? = nil)
         @countries = countries.map(&.upcase).to_set
-        @states = states.try { |s| s.map(&.upcase).to_set }
-        @cities = cities.try { |c| c.map(&.upcase).to_set }
+        @states = states.try(&.map(&.upcase).to_set)
+        @cities = cities.try(&.map(&.upcase).to_set)
       end
 
       def matches?(country : String?, state : String? = nil, city : String? = nil) : Bool
@@ -78,7 +78,7 @@ module Grant::Sharding
       city = values[2]?.try(&.to_s) if @key_columns.size > 2
 
       # Find first matching region
-      region = @regions.find { |r| r.matches?(country, state, city) }
+      region = @regions.find(&.matches?(country, state, city))
 
       region ? region.shard : @default_shard
     end
@@ -127,7 +127,7 @@ module Grant::Sharding
       macro derive_region_from(association, *fields)
         before_create :set_region_from_{{association.id}}
         before_update :set_region_from_{{association.id}}
-        
+
         private def set_region_from_{{association.id}}
           if related = {{association.id}}
             {% for field in fields %}
@@ -142,16 +142,18 @@ module Grant::Sharding
 
     # Optional context for passing region through the request
     class Context
-      @@current = {} of Symbol => String | Nil
+      @@current = {} of Symbol => String?
 
       def self.with(**attributes, &)
         old = @@current.dup
-        attributes.each do |key, value|
-          @@current[key] = value
+        begin
+          attributes.each do |key, value|
+            @@current[key] = value
+          end
+          yield
+        ensure
+          @@current = old
         end
-        yield
-      ensure
-        @@current = old.not_nil!
       end
 
       def self.get(key : Symbol) : String?

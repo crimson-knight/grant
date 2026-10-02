@@ -266,9 +266,9 @@ module Grant
     # The inverse of a `belongs_to`, when it is a `has_one` on the target
     # (a `has_many` has no single record to point back at).
     private def self.singular_inverse(records : Array(Grant::Base), name : String) : String?
-      owner = records.first? || return nil
-      reflection = Grant::AssociationRegistry.reflection(owner.class.name, name) || return nil
-      inverse = reflection.inverse_of || return nil
+      owner = records.first? || return
+      reflection = Grant::AssociationRegistry.reflection(owner.class.name, name) || return
+      inverse = reflection.inverse_of || return
       inverse.has_one? ? inverse.name : nil
     end
 

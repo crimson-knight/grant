@@ -101,7 +101,7 @@ describe "Relation destroy_all with callbacks" do
 
     statements = capture_sql { DestroyAllOwner.all.destroy_all.should eq(12) }
 
-    statements.select(&.starts_with?("SELECT")).each { |sql| sql.should_not contain("OFFSET") }
+    statements.select(&.starts_with?("SELECT")).each(&.should_not(contain("OFFSET")))
     DestroyAllOwner.pluck(:id).should be_empty
     DestroyAllOwner.transaction_flags.should eq(Array.new(12, true))
   end
@@ -115,7 +115,7 @@ describe "Relation destroy_all with callbacks" do
 
     pages = statements.select { |sql| sql.starts_with?("SELECT") && sql.includes?("destroy_all_owners") && sql.includes?("LIMIT") }
     pages.size.should eq(2)
-    pages.each { |sql| sql.should_not contain("OFFSET") }
+    pages.each(&.should_not(contain("OFFSET")))
     pages.last.should contain(">")
     DestroyAllOwner.events.size.should eq(2010)
     DestroyAllOwner.pluck(:id).should be_empty

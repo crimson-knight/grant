@@ -1,4 +1,5 @@
 require "../../spec_helper"
+require "../../support/column_type"
 require "json"
 
 {% begin %}
@@ -31,24 +32,9 @@ describe "JSON documents: type, store_accessor and in-place mutation" do
   end
 
   describe "type: :jsonb" do
-    it "stores a native jsonb column on PostgreSQL and JSON text on SQLite" do
-      type = ""
-      W6bJsonDoc.adapter.open do |db|
-        if CURRENT_ADAPTER == "pg"
-          type = db.query_one("SELECT udt_name FROM information_schema.columns WHERE table_name = 'w6b_json_docs' AND column_name = 'data'", as: String)
-        else
-          db.query("PRAGMA table_info(w6b_json_docs)") do |rs|
-            rs.each do
-              rs.read(Int32)
-              name = rs.read(String)
-              column_type = rs.read(String)
-              type = column_type if name == "data"
-              rs.read(Int32); rs.read(String?); rs.read(Int32)
-            end
-          end
-        end
-      end
-      type.downcase.should eq(CURRENT_ADAPTER == "pg" ? "jsonb" : "text")
+    it "stores a native jsonb column on PostgreSQL, json on MySQL and JSON text on SQLite" do
+      expected = {"pg" => "jsonb", "mysql" => "json"}[CURRENT_ADAPTER]? || "text"
+      database_column_type(W6bJsonDoc.adapter, "w6b_json_docs", "data").should eq expected
     end
 
     it "round trips a document" do
@@ -166,7 +152,6 @@ describe "JSON documents: type, store_accessor and in-place mutation" do
     it "writes nothing for an unchanged record" do
       doc = W6bJsonDoc.create!(title: "a", data: JSON.parse(%({"a":1})))
       loaded = W6bJsonDoc.find!(doc.id)
-      statements = [] of String
       backend = Log::MemoryBackend.new
       Log.builder.bind("db.*", Log::Severity::Debug, backend)
       begin
@@ -205,6 +190,7 @@ describe "JSON documents: type, store_accessor and in-place mutation" do
       sql = W6bJsonDoc.where(data: {theme: "dark"}).assembler.select.raw_sql
       sql.should contain("@>") if CURRENT_ADAPTER == "pg"
       sql.should contain("json_extract") if CURRENT_ADAPTER == "sqlite"
+      sql.should contain("JSON_CONTAINS") if CURRENT_ADAPTER == "mysql"
     end
 
     it "still treats a name that is not a JSON column as a joined table" do

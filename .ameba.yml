@@ -1,0 +1,133 @@
+# Ameba configuration for Grant. Run with ./bin/ameba (built in CI from lib/ameba).
+
+Excluded:
+  # Installed dependencies (this list replaces Ameba's default, which has lib).
+  - lib/**/*.cr
+  # Disabled specs kept for reference; they are not compiled or run.
+  - spec_disabled/**/*.cr
+
+# Grant writes macro interpolations as `{{x}}`; `crystal tool format` owns layout.
+Lint/WhitespaceAroundMacroExpression:
+  Enabled: false
+
+# Short block parameters such as |k, v| and |e| are idiomatic Crystal and used throughout.
+Naming/BlockParameterName:
+  Enabled: false
+
+# A blockless `any?` asks for a truthy element and `present?` only for a non-empty collection; the rewrite changes behavior for nil or false elements.
+Performance/AnyInsteadOfPresent:
+  Enabled: false
+
+# Specs call not_nil! on values the example has just created; examples keep the shortest form.
+Lint/NotNil:
+  Excluded:
+    - spec/**/*.cr
+    - examples/**/*.cr
+
+# Examples bind results to named variables to show what each call returns.
+Lint/UselessAssign:
+  Excluded:
+    - examples/**/*.cr
+
+# Support and model files required by specs; only *_spec.cr files are spec entry points.
+Lint/SpecFilename:
+  IgnoredPaths:
+    - spec/support/**/*.cr
+    - spec/**/spec_helper.cr
+    - spec/grant/attributes/attribute_models.cr
+    - spec/grant/bulk/bulk_support.cr
+    - spec/grant/connection/pool_spec_support.cr
+    - spec/grant/dirty/dirty_family_models.cr
+    - spec/grant/persistence/persistence_regression_helper.cr
+    - spec/grant/persistence/persistence_regression_models.cr
+    - spec/grant/sti/sti_behavior_models.cr
+    - spec/grant/sti/sti_models.cr
+    - spec/grant/transaction/sql_recorder.cr
+    - spec/mocks/db_mock.cr
+    - spec/spec_models.cr
+
+# Existing query assemblers, adapters and schema code dispatch over many cases; refactoring them is separate work.
+Metrics/CyclomaticComplexity:
+  Excluded:
+    - spec/support/simple_virtual_sharding.cr
+    - src/adapter/mysql.cr
+    - src/adapter/placeholder_scanner.cr
+    - src/adapter/sqlite.cr
+    - src/grant/adapter/schema.cr
+    - src/grant/association_collection.cr
+    - src/grant/associations/has_one_writer.cr
+    - src/grant/bulk_operations.cr
+    - src/grant/commit_callbacks.cr
+    - src/grant/composite_primary_key/transactions.cr
+    - src/grant/connection_management.cr
+    - src/grant/connection_registry.cr
+    - src/grant/locking/optimistic.cr
+    - src/grant/migrator.cr
+    - src/grant/query/aggregations.cr
+    - src/grant/query/assembler/base.cr
+    - src/grant/query/assembler/predicate_renderer.cr
+    - src/grant/query/association_references.cr
+    - src/grant/query/builder.cr
+    - src/grant/query/from_and_with.cr
+    - src/grant/query/sql_expression.cr
+    - src/grant/query/where_composition.cr
+    - src/grant/query_cache.cr
+    - src/grant/sanitization.cr
+    - src/grant/scale/in_chunking.cr
+    - src/grant/schema/alter_table.cr
+    - src/grant/schema/column_info.cr
+    - src/grant/schema/dumper.cr
+    - src/grant/schema/generator.cr
+    - src/grant/schema/index_definition.cr
+    - src/grant/schema/migration.cr
+    - src/grant/schema/schema_statements.cr
+    - src/grant/schema/table_definition.cr
+    - src/grant/schema/table_rebuild.cr
+    - src/grant/schema/verify.cr
+    - src/grant/sharding/query_router.cr
+    - src/grant/sharding/range_resolver.cr
+    - src/grant/sharding/resolvers/time_range_resolver.cr
+    - src/grant/validators.cr
+
+# Renaming these Bool accessors to `?` forms changes Grant's public API; that is the owner's decision.
+Naming/QueryBoolMethods:
+  Excluded:
+    - bench/lifecycle_bench.cr
+    - spec/grant/attributes/store_accessor_spec.cr
+    - spec/grant/callbacks/around_callbacks_spec.cr
+    - spec/grant/callbacks/around_validation_spec.cr
+    - spec/grant/callbacks/proc_conditions_spec.cr
+    - spec/grant/middleware/database_selector_spec.cr
+    - spec/grant/serialized_column_spec.cr
+    - src/grant/async/coordinator.cr
+    - src/grant/connection_context.cr
+    - src/grant/connection_registry.cr
+    - src/grant/database_configurations.cr
+    - src/grant/encryption/config.cr
+    - src/grant/encryption/encrypted_attribute.cr
+    - src/grant/encryption/scheme.cr
+    - src/grant/health_monitor.cr
+    - src/grant/query/assembler/predicate_renderer.cr
+    - src/grant/schema/column_info.cr
+    - src/grant/schema/constraint_catalog.cr
+    - src/grant/schema/table_definition.cr
+    - src/grant/schema/verify.cr
+    - src/grant/settings.cr
+    - src/grant/value_objects.cr
+
+# Renaming get_/set_ methods changes Grant's public API; that is the owner's decision.
+Naming/AccessorMethodName:
+  Excluded:
+    - src/grant/async/promise.cr
+    - src/grant/columns.cr
+    - src/grant/scale/schema_tenant.cr
+    - src/grant/sharding/shard_manager.cr
+
+# WhereChain#is_null and #is_not_null mirror SQL's IS NULL in the public API; renaming them is the owner's decision.
+Naming/PredicateName:
+  Excluded:
+    - src/grant/query/where_chain.cr
+
+# Nested rescues need distinct, descriptive names (probe_error, close_error, source_error).
+Naming/RescuedExceptionsVariableName:
+  Enabled: false

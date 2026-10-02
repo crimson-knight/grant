@@ -104,7 +104,7 @@ module Grant::Validators
         {% end %}
         {% scopes = options[:scope] ? (options[:scope].is_a?(ArrayLiteral) ? options[:scope] : [options[:scope]]) : [] of ASTNode %}
         {% constraint = options[:constraint] %}
-        {% suffix = ([field] + scopes).map { |part| part.id.stringify.gsub(/[^A-Za-z0-9_]/, "_") }.join("_") %}
+        {% suffix = ([field] + scopes).map(&.id.stringify.gsub(/[^A-Za-z0-9_]/, "_")).join("_") %}
         def self.__grant_unique_{{suffix.id}}(table : ::String) : ::Grant::Schema::UniqueConstraintDefinition
           columns = [{{field.id.stringify}}]
           {% for scope_field in scopes %}

@@ -119,7 +119,7 @@ module Grant::Encryption
 
       # Verify HMAC
       expected_hmac = OpenSSL::HMAC.digest(:sha256, mac_key, payload)
-      return nil unless secure_compare(provided_hmac, expected_hmac)
+      return unless secure_compare(provided_hmac, expected_hmac)
 
       # Parse the encrypted payload
       header, iv, ciphertext = parse_encrypted_payload(payload)
@@ -142,7 +142,7 @@ module Grant::Encryption
       String.new(plaintext.to_slice)
     rescue ex : OpenSSL::Cipher::Error
       raise DecryptionError.new("Decryption failed: #{ex.message}")
-    rescue ex : IndexError
+    rescue IndexError
       raise DecryptionError.new("Invalid encrypted data format")
     end
 

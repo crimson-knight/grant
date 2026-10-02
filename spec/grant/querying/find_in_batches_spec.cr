@@ -1,12 +1,15 @@
 require "../../spec_helper"
 
 describe "#find_in_batches" do
+  # Other specs leave Parent rows behind; each example counts from an empty table.
+  before_each { Parent.clear }
+
   it "finds records in batches and yields all the records" do
     model_ids = (0...100).map do |i|
       Parent.new(name: "model_#{i}").tap(&.save)
     end.map(&.id)
 
-    found_models = [] of Int32 | Nil
+    found_models = [] of Int64?
     Parent.find_in_batches(batch_size: 10) do |batch|
       batch.each { |model| found_models << model.id }
       batch.size.should eq 10
@@ -48,7 +51,7 @@ describe "#find_in_batches" do
     created_models.shift
     created_models.shift
 
-    found_models = [] of Int32 | Nil
+    found_models = [] of Int64?
 
     Parent.find_in_batches(offset: 2) do |batch|
       batch.each do |model|

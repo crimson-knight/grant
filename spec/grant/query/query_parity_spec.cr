@@ -12,7 +12,7 @@ describe "Grant::Query::Builder - parity additions" do
       Parent.create!(name: "other")
 
       ids = Parent.where(name: ["ids-a", "ids-b"]).ids
-      ids.map(&.as(Int64)).sort.should eq([a.id, b.id].map(&.as(Int64)).sort)
+      ids.map(&.as(Int64)).sort!.should eq([a.id, b.id].map(&.as(Int64)).sort!)
     end
 
     it "returns all ids when unfiltered" do
@@ -139,7 +139,7 @@ describe "Grant::Query::Builder - parity additions" do
   describe "chainable #find_in_batches" do
     it "yields batches of matching records" do
       Parent.clear
-      5.times { |i| Parent.create!(name: "batch") }
+      5.times { |_| Parent.create!(name: "batch") }
 
       batch_sizes = [] of Int32
       total = 0

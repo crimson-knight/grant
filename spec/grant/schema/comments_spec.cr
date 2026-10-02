@@ -37,7 +37,7 @@ describe "M02b table and column comments" do
 
     before_each do
       statements.drop_table(:m02b_cm, if_exists: true)
-      statements.create_table(:m02b_cm) { |t| t.integer :age }
+      statements.create_table(:m02b_cm, &.integer(:age))
     end
     after_each { statements.drop_table(:m02b_cm, if_exists: true) }
 
@@ -61,7 +61,7 @@ describe "M02b table and column comments" do
     it "sets comments from create_table, add_column and change_table" do
       statements.create_table(:m02b_cm, force: true, comment: "Made") { |t| t.string :name, comment: "Label" }
       statements.add_column(:m02b_cm, :score, :integer, comment: "Points")
-      statements.change_table(:m02b_cm) { |t| t.comment "Changed" }
+      statements.change_table(:m02b_cm, &.comment("Changed"))
       next if CURRENT_ADAPTER == "sqlite"
       schema.table_comment(:m02b_cm).should eq "Changed"
       schema.columns(:m02b_cm).map { |column| {column.name, column.comment} }.reject { |pair| pair[0] == "id" }

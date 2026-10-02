@@ -149,7 +149,7 @@ describe "validates_with" do
   end
 
   it "reports validates_with in validators" do
-    W6VwCounter.validators.select { |info| info.kind == :with }.size.should eq(4)
+    W6VwCounter.validators.count { |info| info.kind == :with }.should eq(4)
   end
 
   it "saves a valid record and raises Grant::RecordInvalid for an invalid one" do

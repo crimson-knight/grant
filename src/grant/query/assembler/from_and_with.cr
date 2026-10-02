@@ -31,7 +31,7 @@ module Grant::Query::Assembler
 
       @with_rendered = true
       tables = @query.common_tables
-      return nil if tables.empty?
+      return if tables.empty?
 
       Grant::Query::CommonTableExpressions.ensure_supported!(Model.adapter)
       entries = tables.map { |table| "#{Model.quote(table.name)} AS (#{table.render.call(self)})" }
@@ -46,7 +46,7 @@ module Grant::Query::Assembler
 
       @from_rendered = true
       render = @query.from_render
-      return nil unless render
+      return unless render
 
       body = render.call(self)
       alias_name = @query.from_alias

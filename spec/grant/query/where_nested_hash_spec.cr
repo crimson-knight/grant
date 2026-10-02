@@ -2,11 +2,11 @@ require "../../spec_helper"
 require "../../support/where_family_models"
 
 private def post_titles(relation : Grant::Query::Builder(WfPost)) : Array(String)
-  relation.order(:id).select.map { |post| post.title.to_s }
+  relation.order(:id).select.map(&.title.to_s)
 end
 
 private def comment_bodies(relation : Grant::Query::Builder(WfComment)) : Array(String)
-  relation.order(:id).select.map { |comment| comment.body.to_s }
+  relation.order(:id).select.map(&.body.to_s)
 end
 
 describe "where with a nested table hash and record values" do

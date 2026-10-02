@@ -177,9 +177,9 @@ describe "Large-table / high-scale toolkit" do
 
       ids = (1..25).map(&.to_i64).to_a
       results = ChunkModel.where(id: ids).in_chunks(of: 10).select
-      results.map(&.id!).sort.should eq(ids)
+      results.map(&.id!).sort!.should eq(ids)
       # de-dup: each pk appears once
-      results.map(&.id!).uniq.size.should eq(results.size)
+      results.map(&.id!).uniq!.size.should eq(results.size)
     end
 
     it "honors ORDER across chunk boundaries (merge-sort)" do
@@ -208,14 +208,14 @@ describe "Large-table / high-scale toolkit" do
     it "concatenates + de-duplicates ids across chunks" do
       (1..25).each { |i| ChunkModel.create(id: i.to_i64, name: "n#{i}", score: i) }
       ids = (1..25).map(&.to_i64).to_a
-      got = ChunkModel.where(id: ids).in_chunks(of: 10).ids.map(&.as(Int64)).sort
+      got = ChunkModel.where(id: ids).in_chunks(of: 10).ids.map(&.as(Int64)).sort!
       got.should eq(ids)
     end
 
     it "chunks pluck across chunks" do
       (1..25).each { |i| ChunkModel.create(id: i.to_i64, name: "n#{i}", score: i) }
       ids = (1..25).map(&.to_i64).to_a
-      names = ChunkModel.where(id: ids).in_chunks(of: 10).pluck(:name).map(&.first.to_s).sort
+      names = ChunkModel.where(id: ids).in_chunks(of: 10).pluck(:name).map(&.first.to_s).sort!
       names.size.should eq(25)
     end
 
@@ -241,7 +241,7 @@ describe "Large-table / high-scale toolkit" do
       ids = (1..12).map(&.to_i64).to_a
       q = ChunkModel.where(id: ids)
       q.should_chunk_in?.should be_true
-      q.select.map(&.id!).sort.should eq(ids)
+      q.select.map(&.id!).sort!.should eq(ids)
     end
 
     it "preserves the per-query in_chunks override across dup" do
@@ -295,7 +295,7 @@ describe "Large-table / high-scale toolkit" do
       end
 
       Grant::Tenant.with(1_i64) do
-        TenantTodo.all.map(&.id!).sort.should eq([1_i64, 2_i64])
+        TenantTodo.all.map(&.id!).sort!.should eq([1_i64, 2_i64])
       end
       Grant::Tenant.with(2_i64) do
         TenantTodo.all.map(&.id!).should eq([3_i64])
@@ -350,7 +350,7 @@ describe "Large-table / high-scale toolkit" do
       Grant::Tenant.with(2_i64) { TenantTodo.create(id: 2_i64, tenant_id: 2_i64, title: "t2") }
 
       # No tenant set, but unscoped sees everything without raising.
-      all_ids = TenantTodo.unscoped.select.map(&.id!).sort
+      all_ids = TenantTodo.unscoped.select.map(&.id!).sort!
       all_ids.should eq([1_i64, 2_i64])
     end
 

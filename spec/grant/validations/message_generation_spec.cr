@@ -54,7 +54,7 @@ describe "message generation" do
       errors = Grant::Errors.new
       errors.add(:name, :invalid, message: "is weird")
       errors.add(:name, :invalid, message: :blank)
-      errors.add(:name, :too_short, message: ->(record : Grant::Base, data : Grant::Error::Options) { "needs #{data[:count]} more" }, count: 2)
+      errors.add(:name, :too_short, message: ->(_record : Grant::Base, data : Grant::Error::Options) { "needs #{data[:count]} more" }, count: 2)
       # (a record is required for Proc messages; the collection below has none)
       errors.first.message.should eq("is weird")
       errors.to_a[1].message.should eq("can't be blank")
@@ -134,7 +134,7 @@ describe "message generation" do
       Grant::I18n.translator = translator
 
       posts = Array.new(50) { V02mPost.new }
-      posts.each { |post| post.errors.add(:title, :blank) }
+      posts.each(&.errors.add(:title, :blank))
       posts.each(&.errors.first.message)
       translator.calls.should be <= 6 # one lookup chain, not fifty
     end

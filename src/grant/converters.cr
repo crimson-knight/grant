@@ -6,7 +6,7 @@ module Grant::Converters
     extend self
 
     def to_db(value : ::UUID?) : Grant::Columns::Type
-      return nil if value.nil?
+      return if value.nil?
       {% if T == String %}
         value.to_s
       {% elsif T == Bytes %}
@@ -23,13 +23,12 @@ module Grant::Converters
       case value
       when String then ::UUID.new(value)
       when Slice  then ::UUID.new(value)
-      else             nil
       end
     end
 
     def from_rs(result : ::DB::ResultSet) : ::UUID?
       value = result.read(T?)
-      return nil if value.nil?
+      return if value.nil?
       {% if T == String || T == Bytes %}
         ::UUID.new value
       {% else %}
@@ -45,7 +44,7 @@ module Grant::Converters
     extend self
 
     def to_db(value : E?) : Grant::Columns::Type
-      return nil if value.nil?
+      return if value.nil?
       {% if T <= Number %}
         value.to_i64
       {% elsif T == String || T == Bytes %}
@@ -61,13 +60,12 @@ module Grant::Converters
       when Int    then E.from_value?(value.to_i64)
       when String then E.parse?(value)
       when Slice  then E.parse?(String.new(value))
-      else             nil
       end
     end
 
     def from_rs(result : ::DB::ResultSet) : E?
       value = result.read(T?)
-      return nil if value.nil?
+      return if value.nil?
       {% if T <= Number %}
         E.from_value? value.to_i64
       {% elsif T == String %}
@@ -89,7 +87,7 @@ module Grant::Converters
     extend self
 
     def to_db(value : M?) : Grant::Columns::Type
-      return nil if value.nil?
+      return if value.nil?
       {% if T == String || T == JSON::Any %}
         value.to_json
       {% elsif T == Bytes %}
@@ -104,13 +102,12 @@ module Grant::Converters
       case value
       when String then M.from_json(value)
       when Slice  then M.from_json(String.new(value))
-      else             nil
       end
     end
 
     def from_rs(result : ::DB::ResultSet) : M?
       value = result.read(T?)
-      return nil if value.nil?
+      return if value.nil?
       {% if T == JSON::Any %}
         M.from_json(value.to_json)
       {% elsif T == String %}

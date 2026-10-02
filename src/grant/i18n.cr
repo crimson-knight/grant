@@ -315,7 +315,7 @@ abstract class Grant::Base
   # BlogPost.model_name.human # => "Blog post"
   # ```
   def self.model_name : Grant::ModelName
-    Grant::ModelName.new(self.name)
+    Grant::ModelName.new(name)
   end
 
   # The display name of *attribute*: the `attributes.<model>.<attribute>`
@@ -325,6 +325,6 @@ abstract class Grant::Base
   # User.human_attribute_name(:first_name) # => "First name"
   # ```
   def self.human_attribute_name(attribute : Symbol | String) : String
-    Grant::I18n.human_attribute_name(self.name, attribute.to_s)
+    Grant::I18n.human_attribute_name(name, attribute.to_s)
   end
 end

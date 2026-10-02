@@ -99,7 +99,7 @@ describe "read replica routing" do
   it "registers a replica idempotently: the same key replaces it and closes the old pool" do
     balancer = Grant::ConnectionRegistry.get_load_balancer("c02_rr_reader").not_nil!
     old = Grant::ConnectionRegistry.get_adapter("c02_rr_reader", :reading)
-    old.open { |connection| connection.scalar("SELECT 1") }
+    old.open(&.scalar("SELECT 1"))
     old_pool = old.database
 
     register_readers

@@ -7,25 +7,25 @@ require "../src/grant/sharding"
 class User < Grant::Base
   include Grant::Sharding::Model
   shards_by :id, strategy: :hash, count: 4
-  
+
   has_many orders : Order
   has_many addresses : Address
 end
 
 class Order < Grant::Base
   include Grant::Sharding::Model
-  shards_by :user_id, strategy: :hash, count: 4  # Same as User!
-  
+  shards_by :user_id, strategy: :hash, count: 4 # Same as User!
+
   belongs_to user : User
   has_many order_items : OrderItem
 end
 
 class OrderItem < Grant::Base
   include Grant::Sharding::Model
-  shards_by :user_id, strategy: :hash, count: 4  # Denormalized from Order
-  
+  shards_by :user_id, strategy: :hash, count: 4 # Denormalized from Order
+
   belongs_to order : Order
-  column user_id : Int64  # Denormalized for sharding
+  column user_id : Int64 # Denormalized for sharding
 end
 
 # Pattern 2: Application-level joins for cross-shard data
@@ -34,13 +34,13 @@ class ProductView
   def self.get_user_product_history(user_id : Int64)
     # Step 1: Get user's orders (single shard query)
     orders = Order.where(user_id: user_id).select
-    
+
     # Step 2: Collect product IDs
-    product_ids = orders.map(&.product_id).uniq
-    
+    product_ids = orders.map(&.product_id).uniq!
+
     # Step 3: Fetch products (might be on different shard)
     products = Product.where(id: product_ids).select
-    
+
     # Step 4: Join in application
     orders.map do |order|
       product = products.find { |p| p.id == order.product_id }
@@ -55,22 +55,22 @@ class OrderService
     # Instead of distributed transaction:
     # DB.transaction do
     #   order.update!(status: "completed")      # Shard 1
-    #   inventory.decrement!(quantity)          # Shard 2  
+    #   inventory.decrement!(quantity)          # Shard 2
     #   user.add_points!(100)                   # Shard 3
     # end
-    
+
     # Use event-driven approach:
     order = Order.find(order_id)
     order.status = "completed"
     order.save!
-    
+
     # Emit events for other systems
     EventBus.publish("order.completed", {
       order_id: order_id,
-      user_id: order.user_id,
-      items: order.items.map(&.to_h)
+      user_id:  order.user_id,
+      items:    order.items.map(&.to_h),
     })
-    
+
     # Other services handle their updates asynchronously
     # If they fail, they can be retried
   end
@@ -80,17 +80,17 @@ end
 class DenormalizedOrder < Grant::Base
   include Grant::Sharding::Model
   shards_by :user_id, strategy: :hash, count: 4
-  
+
   # Order data
   column id : Int64, primary: true
   column user_id : Int64
   column total : Float64
-  
+
   # Denormalized user data (avoid join)
   column user_name : String
   column user_email : String
   column user_country : String
-  
+
   # Denormalized product data (avoid join)
   column product_names : Array(String)
   column product_skus : Array(String)
@@ -100,7 +100,7 @@ end
 class AnalyticsService
   # Don't run analytics on sharded operational data
   # Use read replicas or data warehouse
-  
+
   def self.daily_revenue_report
     # This would run on a read replica or data warehouse
     # that aggregates data from all shards
@@ -138,7 +138,7 @@ class BatchProcessor
     ShardManager.with_shard(User.shard_for_id(user_id)) do
       user = User.find(user_id)
       orders = user.orders
-      
+
       DB.transaction do
         orders.each do |order|
           order.process!
@@ -159,9 +159,9 @@ class EventualConsistencyProcessor
       from_user.points -= points
       from_user.save!
     rescue
-      return false  # Failed to deduct
+      return false # Failed to deduct
     end
-    
+
     # Step 2: Add points (might fail)
     begin
       to_user = User.find(to_user_id)
@@ -176,7 +176,7 @@ class EventualConsistencyProcessor
       end
       return false
     end
-    
+
     true
   end
 end

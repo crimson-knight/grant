@@ -28,15 +28,15 @@ require "../../spec_helper"
 # Answers in German for the "de" locale and in English for everything else.
 class W6IGermanTranslator < Grant::I18n::Translator
   TABLE = {
-    "de.errors.messages.too_short"                      => "ist zu kurz (mindestens %{count} Zeichen)",
-    "de.errors.messages.too_long"                       => "ist zu lang (hoechstens %{count} Zeichen)",
-    "de.errors.messages.wrong_length"                   => "hat die falsche Laenge (%{count} Zeichen erwartet)",
-    "de.errors.messages.invalid_email"                  => "ist keine gueltige E-Mail-Adresse",
-    "de.errors.messages.invalid_url"                    => "ist keine gueltige URL",
-    "de.errors.messages.greater_than_or_equal_to"       => "muss mindestens %{count} sein",
-    "de.errors.messages.greater_than"                   => "muss groesser als %{count} sein",
-    "de.errors.format"                                  => "%{attribute}: %{message}",
-    "de.attributes.w6_i_profile.nick"                   => "Spitzname",
+    "de.errors.messages.too_short"                            => "ist zu kurz (mindestens %{count} Zeichen)",
+    "de.errors.messages.too_long"                             => "ist zu lang (hoechstens %{count} Zeichen)",
+    "de.errors.messages.wrong_length"                         => "hat die falsche Laenge (%{count} Zeichen erwartet)",
+    "de.errors.messages.invalid_email"                        => "ist keine gueltige E-Mail-Adresse",
+    "de.errors.messages.invalid_url"                          => "ist keine gueltige URL",
+    "de.errors.messages.greater_than_or_equal_to"             => "muss mindestens %{count} sein",
+    "de.errors.messages.greater_than"                         => "muss groesser als %{count} sein",
+    "de.errors.format"                                        => "%{attribute}: %{message}",
+    "de.attributes.w6_i_profile.nick"                         => "Spitzname",
     "de.errors.models.w6_i_profile.attributes.nick.too_short" => "ist fuer einen Spitznamen zu kurz",
   }
 

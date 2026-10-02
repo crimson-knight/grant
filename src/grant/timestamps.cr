@@ -27,9 +27,19 @@ module Grant::Timestamps
   UPDATED_COLUMNS = {"updated_at", "updated_on"}
 
   # The one clock every stamping path reads: the current time in the
-  # configured default timezone.
+  # configured default timezone, truncated to microseconds.
+  #
+  # Linux clocks report nanoseconds, while PostgreSQL and MySQL `TIMESTAMP(6)`
+  # store microseconds. Truncating here keeps the stamp a record holds in
+  # memory equal to the one the database reads back.
   def self.current_time : Time
-    Time.local(Grant.settings.default_timezone)
+    to_microseconds(Time.local(Grant.settings.default_timezone))
+  end
+
+  # Drops the sub-microsecond part of *time*.
+  def self.to_microseconds(time : Time) : Time
+    excess = time.nanosecond % 1_000
+    excess.zero? ? time : time - excess.nanoseconds
   end
 
   @@overrides = {} of String => Bool

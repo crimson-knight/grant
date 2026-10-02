@@ -5,7 +5,7 @@ private def m04_seed_adapter : Grant::Adapter::Base
 end
 
 private def m04_reset_seeds : Nil
-  m04_seed_adapter.open { |db| db.exec "DROP TABLE IF EXISTS grant_seeds" }
+  m04_seed_adapter.open(&.exec("DROP TABLE IF EXISTS grant_seeds"))
   m04_seed_adapter.open { |db| db.exec "DROP TABLE IF EXISTS m04_seed_items" }
   m04_seed_adapter.reset_schema_caches!
   Grant::Seeds.clear_definitions!

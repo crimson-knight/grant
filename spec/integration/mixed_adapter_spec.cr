@@ -58,8 +58,8 @@ describe "SQLite and PostgreSQL in one process" do
     end
 
     before_each do
-      C03LocalNote.adapter.open { |db| db.exec "DELETE FROM c03_mixed_notes" }
-      C03ServerNote.adapter.open { |db| db.exec "DELETE FROM c03_mixed_notes" }
+      C03LocalNote.adapter.open(&.exec("DELETE FROM c03_mixed_notes"))
+      C03ServerNote.adapter.open(&.exec("DELETE FROM c03_mixed_notes"))
     end
 
     after_all do
@@ -114,8 +114,8 @@ describe "SQLite and PostgreSQL in one process" do
       server_sql = seen[C03ServerNote.adapter.name].select(&.includes?("c03_mixed_notes"))
       local_sql.should_not be_empty
       server_sql.should_not be_empty
-      local_sql.each { |sql| sql.should_not match(/\$\d/) }
-      server_sql.each { |sql| sql.should_not contain "?" }
+      local_sql.each(&.should_not(match(/\$\d/)))
+      server_sql.each(&.should_not(contain("?")))
       server_sql.any?(&.match(/\$\d/)).should be_true
     end
 

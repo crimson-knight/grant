@@ -184,7 +184,7 @@ class Grant::Query::Builder(Model)
   # Order.calculate(:sum, :cents)
   # Order.group(:status).calculate(:count)
   # ```
-  def calculate(operation : Grant::Calculation | Symbol, column : Symbol | String | Nil = nil) : CalculationResult
+  def calculate(operation : Grant::Calculation | Symbol, column : Symbol | String? = nil) : CalculationResult
     calculation = operation.is_a?(Symbol) ? Grant::Calculation.from_symbol(operation) : operation
     if calculation.count?
       return column ? count(column) : count

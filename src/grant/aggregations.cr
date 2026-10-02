@@ -19,7 +19,7 @@ module Grant::Aggregations
 
     # Generic aggregate, like ActiveRecord's `calculate`. See
     # `Grant::Query::Builder#calculate`.
-    def calculate(operation : Grant::Calculation | Symbol, column : Symbol | String | Nil = nil)
+    def calculate(operation : Grant::Calculation | Symbol, column : Symbol | String? = nil)
       current_scope.calculate(operation, column)
     end
 
@@ -281,7 +281,7 @@ module Grant::Aggregations
       # Add updated_at if model has it
       {% if Model.instance_vars.select { |ivar| ivar.annotation(Grant::Column) && ivar.name == "updated_at" }.size > 0 %}
         set_parts << "#{Model.quote("updated_at")} = ?"
-        values << Time.local(Grant.settings.default_timezone)
+        values << Grant::Timestamps.current_time
       {% end %}
 
       sql = build_sql do |s|

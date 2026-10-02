@@ -13,8 +13,8 @@ module Grant::Schema
 
     # Adds an index on *columns*; see `SchemaStatements#add_index` for the
     # options. The index is created right after the table.
-    def index(columns : ColumnNames, name : ::String | Symbol | Nil = nil, unique : Bool = false, where : ::String? = nil,
-              using : ::String | Symbol | Nil = nil, order = nil,
+    def index(columns : ColumnNames, name : ::String | Symbol? = nil, unique : Bool = false, where : ::String? = nil,
+              using : ::String | Symbol? = nil, order = nil,
               opclass = nil,
               include covering : ColumnNames? = nil, length = nil,
               comment : ::String? = nil) : IndexDefinition
@@ -25,31 +25,31 @@ module Grant::Schema
 
     # Adds a foreign key from this table to *to_table*.
     def foreign_key(to_table : TableName, column : ColumnNames? = nil, primary_key : ColumnNames? = nil,
-                    name : ::String | Symbol | Nil = nil, on_delete : Symbol? = nil, on_update : Symbol? = nil,
-                    deferrable : Bool | Symbol | Nil = nil) : ForeignKeyDefinition
+                    name : ::String | Symbol? = nil, on_delete : Symbol? = nil, on_update : Symbol? = nil,
+                    deferrable : Bool | Symbol? = nil) : ForeignKeyDefinition
       definition = ForeignKeyDefinition.build(@name, to_table, column, primary_key, name, on_delete, on_update, deferrable)
       @foreign_keys << definition
       definition
     end
 
     # Adds `CHECK (expression)`.
-    def check_constraint(expression : ::String, name : ::String | Symbol | Nil = nil) : CheckConstraintDefinition
+    def check_constraint(expression : ::String, name : ::String | Symbol? = nil) : CheckConstraintDefinition
       definition = CheckConstraintDefinition.new(@name, expression, name.try(&.to_s))
       @check_constraints << definition
       definition
     end
 
     # Adds `UNIQUE (columns)`.
-    def unique_constraint(columns : ColumnNames, name : ::String | Symbol | Nil = nil,
-                          deferrable : Bool | Symbol | Nil = nil) : UniqueConstraintDefinition
+    def unique_constraint(columns : ColumnNames, name : ::String | Symbol? = nil,
+                          deferrable : Bool | Symbol? = nil) : UniqueConstraintDefinition
       definition = UniqueConstraintDefinition.new(@name, IndexDefinition.to_names(columns), name.try(&.to_s), deferrable)
       @unique_constraints << definition
       definition
     end
 
     # Adds an exclusion constraint (PostgreSQL only).
-    def exclusion_constraint(expression : ::String, using : ::String | Symbol | Nil = nil, where : ::String? = nil,
-                             name : ::String | Symbol | Nil = nil, deferrable : Bool | Symbol | Nil = nil) : ExclusionConstraintDefinition
+    def exclusion_constraint(expression : ::String, using : ::String | Symbol? = nil, where : ::String? = nil,
+                             name : ::String | Symbol? = nil, deferrable : Bool | Symbol? = nil) : ExclusionConstraintDefinition
       definition = ExclusionConstraintDefinition.new(@name, expression, using.try(&.to_s), where, name.try(&.to_s), deferrable)
       @exclusion_constraints << definition
       definition
@@ -96,11 +96,11 @@ module Grant::Schema
     private def add_reference_foreign_key(name : ::String, column_name : ::String, options : Bool | NamedTuple) : Nil
       to_table = Grant::CounterCache.pluralize(name)
       column = column_name
-      primary_key = nil.as(::String | Symbol | Nil)
-      key_name = nil.as(::String | Symbol | Nil)
+      primary_key = nil.as(::String | Symbol?)
+      key_name = nil.as(::String | Symbol?)
       on_delete = nil.as(Symbol?)
       on_update = nil.as(Symbol?)
-      deferrable = nil.as(Bool | Symbol | Nil)
+      deferrable = nil.as(Bool | Symbol?)
       unless options.is_a?(Bool)
         to_table = options[:to_table]?.try(&.to_s) || to_table
         column = options[:column]?.try(&.to_s) || column

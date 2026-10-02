@@ -264,7 +264,7 @@ class Grant::Query::Builder(Model)
     case strategy
     in .or_expansion? then true
     in .row_value?    then false
-    in .auto?         then tuples.any? { |tuple| tuple.any?(&.nil?) }
+    in .auto?         then tuples.any?(&.any?(Nil))
     end
   end
 

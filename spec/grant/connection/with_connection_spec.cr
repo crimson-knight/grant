@@ -13,7 +13,12 @@ describe "with_connection" do
     C02Support.adapter_class # touch
     Grant::ConnectionRegistry.get_adapter("c02_pin", :writing).open do |connection|
       connection.exec "DROP TABLE IF EXISTS c02_pinned_items"
-      connection.exec CURRENT_ADAPTER == "pg" ? "CREATE TABLE c02_pinned_items (id BIGSERIAL PRIMARY KEY, name TEXT)" : "CREATE TABLE c02_pinned_items (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)"
+      create_table = case CURRENT_ADAPTER
+                     when "pg"    then "CREATE TABLE c02_pinned_items (id BIGSERIAL PRIMARY KEY, name TEXT)"
+                     when "mysql" then "CREATE TABLE c02_pinned_items (id BIGINT AUTO_INCREMENT PRIMARY KEY, name TEXT)"
+                     else              "CREATE TABLE c02_pinned_items (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)"
+                     end
+      connection.exec create_table
     end
   end
 
@@ -28,12 +33,12 @@ describe "with_connection" do
     adapter = Grant::ConnectionRegistry.get_adapter("c02_pin", :writing)
 
     adapter.with_connection do |raw|
-      raw.exec "CREATE TEMP TABLE c02_scratch (id INTEGER)"
+      raw.exec "CREATE TEMPORARY TABLE c02_scratch (id INTEGER)"
       # Without the pin these would check out other connections, which cannot see the temp table.
-      adapter.open { |connection| connection.exec "INSERT INTO c02_scratch VALUES (1)" }
-      adapter.open { |connection| connection.exec "INSERT INTO c02_scratch VALUES (2)" }
-      adapter.open { |connection| connection.scalar("SELECT COUNT(*) FROM c02_scratch") }.should eq 2
-      adapter.open { |connection| connection.same?(raw) }.should be_true
+      adapter.open(&.exec("INSERT INTO c02_scratch VALUES (1)"))
+      adapter.open(&.exec("INSERT INTO c02_scratch VALUES (2)"))
+      adapter.open(&.scalar("SELECT COUNT(*) FROM c02_scratch")).should eq 2
+      adapter.open(&.same?(raw)).should be_true
       adapter.pool_stat.busy.should eq 1
     end
   end
@@ -41,7 +46,7 @@ describe "with_connection" do
   it "releases the connection when the block ends, and when it raises" do
     adapter = Grant::ConnectionRegistry.get_adapter("c02_pin", :writing)
 
-    adapter.with_connection { |raw| raw.scalar("SELECT 1") }
+    adapter.with_connection(&.scalar("SELECT 1"))
     adapter.pool_stat.busy.should eq 0
     adapter.pinned_connection?.should be_nil
 
@@ -54,7 +59,7 @@ describe "with_connection" do
     adapter = Grant::ConnectionRegistry.get_adapter("c02_pin", :writing)
 
     adapter.with_connection do |outer|
-      adapter.with_connection { |inner| inner.same?(outer).should be_true }
+      adapter.with_connection(&.same?(outer).should(be_true))
       adapter.pool_stat.busy.should eq 1
     end
   end
@@ -76,7 +81,7 @@ describe "with_connection" do
       seen = nil
       C02PinnedItem.transaction do
         C02PinnedItem.create!(name: "kept")
-        seen = C02PinnedItem.adapter.open { |connection| connection.same?(raw) }
+        seen = C02PinnedItem.adapter.open(&.same?(raw))
       end
       seen.should be_true
 
@@ -94,7 +99,7 @@ describe "with_connection" do
 
   it "routes Grant operations through the pinned connection with Model.with_connection" do
     C02PinnedItem.with_connection do |raw|
-      raw.exec "CREATE TEMP TABLE c02_model_scratch (id INTEGER)"
+      raw.exec "CREATE TEMPORARY TABLE c02_model_scratch (id INTEGER)"
       C02PinnedItem.connection.execute("INSERT INTO c02_model_scratch VALUES (1)")
       C02PinnedItem.connection.execute("INSERT INTO c02_model_scratch VALUES (2)")
       C02PinnedItem.connection.select_value("SELECT COUNT(*) FROM c02_model_scratch").should eq 2
@@ -107,12 +112,12 @@ describe "with_connection" do
 
   it "is available on the raw connection facade and the pool handle" do
     Grant.connection("c02_pin").with_connection do |raw|
-      raw.exec "CREATE TEMP TABLE c02_facade_scratch (id INTEGER)"
+      raw.exec "CREATE TEMPORARY TABLE c02_facade_scratch (id INTEGER)"
       Grant.connection("c02_pin").execute("INSERT INTO c02_facade_scratch VALUES (1)")
       Grant.connection("c02_pin").select_value("SELECT COUNT(*) FROM c02_facade_scratch").should eq 1
     end
 
-    C02PinnedItem.connection_pool.with_connection { |raw| raw.scalar("SELECT 1") }.should eq 1
+    C02PinnedItem.connection_pool.with_connection(&.scalar("SELECT 1")).should eq 1
   end
 
   it "keeps a second fiber waiting on the checkout timeout while the pool is exhausted by pins" do
@@ -124,12 +129,10 @@ describe "with_connection" do
 
     adapter.with_connection do |_|
       spawn do
-        begin
-          adapter.open { |connection| connection.scalar("SELECT 1") }
-          blocked.send(nil)
-        rescue ex
-          blocked.send(ex)
-        end
+        adapter.open(&.scalar("SELECT 1"))
+        blocked.send(nil)
+      rescue ex
+        blocked.send(ex)
       end
       blocked.receive.should be_a(Grant::ConnectionTimeoutError)
     end
@@ -156,7 +159,9 @@ describe "configured role names" do
     connection.adapter(:master).same?(writer).should be_true
     connection.adapter(:replica).same?(reader).should be_true
     connection.adapter.same?(reader).should be_true
-    connection.execute("SELECT 1")
+    # execute is for statements without rows; MySQL's driver refuses a SELECT
+    # there, so it runs DO, MySQL's row-less expression statement.
+    connection.execute(CURRENT_ADAPTER == "mysql" ? "DO 1" : "SELECT 1")
     connection.select_value("SELECT 1").should eq 1
 
     connection.transaction { connection.select_value("SELECT 1") }.should eq 1

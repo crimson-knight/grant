@@ -139,10 +139,10 @@ module Grant::QueryLogs
   # The comment for a statement issued now, or `nil` when tagging is off or
   # no tag has a value.
   def self.comment : String?
-    return nil unless @@enabled
+    return unless @@enabled
 
     pairs = collect_pairs
-    return nil if pairs.empty?
+    return if pairs.empty?
 
     body = case @@format
            in .legacy?

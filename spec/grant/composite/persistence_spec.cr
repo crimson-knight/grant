@@ -124,11 +124,11 @@ describe "composite primary key persistence" do
 
     it "touch bumps updated_at on its own row only, with both predicates" do
       item = CkPersistItem.create!(shop_id: 1_i64, order_id: 1_i64, quantity: 1)
-      other = CkPersistItem.create!(shop_id: 1_i64, order_id: 2_i64, quantity: 1)
+      CkPersistItem.create!(shop_id: 1_i64, order_id: 2_i64, quantity: 1)
       other_stamp = CkPersistItem.find!({1_i64, 2_i64}).updated_at
 
       statements = capture_statements { item.touch.should be_true }
-      update = statements.find(&.starts_with?("UPDATE")).not_nil!
+      update = statements.find!(&.starts_with?("UPDATE"))
       where_part(update).should contain("shop_id")
       where_part(update).should contain("order_id")
       CkPersistItem.find!({1_i64, 2_i64}).updated_at.should eq other_stamp
@@ -161,7 +161,7 @@ describe "composite primary key persistence" do
       CkPersistItem.create!(shop_id: 2_i64, order_id: 1_i64)
 
       statements = capture_statements { item.destroy.should be_true }
-      delete = statements.find(&.starts_with?("DELETE")).not_nil!
+      delete = statements.find!(&.starts_with?("DELETE"))
       where_part(delete).should contain("shop_id")
       where_part(delete).should contain("order_id")
 
@@ -187,7 +187,7 @@ describe "composite primary key persistence" do
       CkPersistItem.where(shop_id: 1_i64, order_id: 1_i64).update_all(quantity: 99)
 
       statements = capture_statements { item.reload }
-      read_sql = statements.find(&.starts_with?("SELECT")).not_nil!
+      read_sql = statements.find!(&.starts_with?("SELECT"))
       where_part(read_sql).should contain("shop_id")
       where_part(read_sql).should contain("order_id")
 

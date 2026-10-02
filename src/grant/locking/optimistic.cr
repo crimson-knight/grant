@@ -114,7 +114,7 @@ module Grant::Locking::Optimistic
 
     # Capture lock_version before saving an existing record so __check_lock_version
     # can compare against it in the before_update callback.
-    def save(*, validate : Bool = true, skip_timestamps : Bool = false, context : Symbol | Array(Symbol) | Nil = nil)
+    def save(*, validate : Bool = true, skip_timestamps : Bool = false, context : (Symbol | Array(Symbol))? = nil)
       @lock_version_was = __locking_version unless new_record?
       super
     end
@@ -128,22 +128,20 @@ module Grant::Locking::Optimistic
     __locking_version != lock_version_was
   end
 
-  def with_optimistic_retry(max_retries : Int32 = self.class.lock_conflict_max_retries, &block)
+  def with_optimistic_retry(max_retries : Int32 = self.class.lock_conflict_max_retries, &)
     retry_count = 0
 
     loop do
-      begin
-        yield
-        break
-      rescue ex : StaleObjectError
-        retry_count += 1
-        if retry_count > max_retries
-          raise ex
-        end
-
-        reload
-        @lock_conflict_retry_count = retry_count
+      yield
+      break
+    rescue ex : StaleObjectError
+      retry_count += 1
+      if retry_count > max_retries
+        raise ex
       end
+
+      reload
+      @lock_conflict_retry_count = retry_count
     end
 
     @lock_conflict_retry_count = 0
@@ -168,7 +166,7 @@ module Grant::Locking::Optimistic
       end
     end
 
-    set_timestamps(mode: :update) unless skip_timestamps || !self.class.record_timestamps?
+    set_timestamps(mode: :update) if self.class.record_timestamps? && !skip_timestamps
 
     fields = self.class.content_fields.dup
     params = content_values

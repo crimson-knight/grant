@@ -16,16 +16,16 @@ private def serial_key : String
 end
 
 private def run(statement : String) : Nil
-  adapter.open { |db| db.exec(statement) }
+  adapter.open(&.exec(statement))
 end
 
 private def count(table : String) : Int64
-  adapter.open { |db| db.scalar("SELECT COUNT(*) FROM #{table}") }.to_s.to_i64
+  adapter.open(&.scalar("SELECT COUNT(*) FROM #{table}")).to_s.to_i64
 end
 
 private def insert_author(name : String) : Int64
   run "INSERT INTO o01_authors (name) VALUES ('#{name}')"
-  adapter.open { |db| db.scalar("SELECT MAX(id) FROM o01_authors") }.to_s.to_i64
+  adapter.open(&.scalar("SELECT MAX(id) FROM o01_authors")).to_s.to_i64
 end
 
 describe "Adapter test helpers" do
@@ -33,7 +33,9 @@ describe "Adapter test helpers" do
     run "DROP TABLE IF EXISTS o01_books"
     run "DROP TABLE IF EXISTS o01_authors"
     run "CREATE TABLE o01_authors (id #{serial_key}, name VARCHAR(50))"
-    run "CREATE TABLE o01_books (id #{serial_key}, author_id BIGINT NOT NULL REFERENCES o01_authors (id), title VARCHAR(50))"
+    # A table-level FOREIGN KEY clause: MySQL 8.0 parses and ignores an
+    # inline column REFERENCES clause.
+    run "CREATE TABLE o01_books (id #{serial_key}, author_id BIGINT NOT NULL, title VARCHAR(50), FOREIGN KEY (author_id) REFERENCES o01_authors (id))"
   end
 
   after_all do

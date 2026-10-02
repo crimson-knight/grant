@@ -120,19 +120,19 @@ describe "StatementInvalid carries the statement on every path (#{CURRENT_ADAPTE
     it "still names the statement that failed" do
       adapter = Grant::ConnectionRegistry.get_adapter("w6_sql", :primary)
 
-      w6_failure("missing_col") { adapter.open { |db| db.scalar(sql) } }
+      w6_failure("missing_col") { adapter.open(&.scalar(sql)) }
     end
 
     it "names it inside a transaction, a pinned connection and a rolled back block" do
       adapter = Grant::ConnectionRegistry.get_adapter("w6_sql", :primary)
 
-      w6_failure("missing_col") { W6SqlThing.transaction { adapter.open { |db| db.scalar(sql) } } }
-      w6_failure("missing_col") { adapter.with_connection { |_| adapter.open { |db| db.scalar(sql) } } }
+      w6_failure("missing_col") { W6SqlThing.transaction { adapter.open(&.scalar(sql)) } }
+      w6_failure("missing_col") { adapter.with_connection { |_| adapter.open(&.scalar(sql)) } }
     end
 
     it "names the statement of the last failing call, not an earlier one" do
       adapter = Grant::ConnectionRegistry.get_adapter("w6_sql", :primary)
-      adapter.open { |db| db.scalar("SELECT 1") }
+      adapter.open(&.scalar("SELECT 1"))
 
       error = w6_failure("w6_sql_things") { adapter.open { |db| db.exec("UPDATE w6_sql_things SET missing_col = 1") } }
       error.sql.to_s.should contain "UPDATE"
@@ -141,7 +141,7 @@ describe "StatementInvalid carries the statement on every path (#{CURRENT_ADAPTE
     it "keeps an explicit statement over the last one built" do
       adapter = Grant::ConnectionRegistry.get_adapter("w6_sql", :primary)
 
-      error = w6_failure("explicit label") { adapter.open("explicit label") { |db| db.scalar(sql) } }
+      error = w6_failure("explicit label") { adapter.open("explicit label", &.scalar(sql)) }
       error.sql.should eq "explicit label"
     end
   end

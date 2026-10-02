@@ -38,7 +38,7 @@ describe "Implicit ordering" do
     end
 
     it "still orders first, last and find_each by the primary key" do
-      seed_parents(%w(c a b))
+      seed_parents(%w[c a b])
       ids = Parent.order(:id).to_a.map(&.id)
 
       Parent.first.try(&.id).should eq ids.first
@@ -63,7 +63,7 @@ describe "Implicit ordering" do
     end
 
     it "keeps an explicit ORDER BY untouched" do
-      seed_parents(%w(c a b))
+      seed_parents(%w[c a b])
 
       Parent.order(:name).first.try(&.name).should eq "a"
       Parent.order(name: :desc).first.try(&.name).should eq "c"
@@ -73,7 +73,7 @@ describe "Implicit ordering" do
 
   describe "the legacy flag" do
     it "restores ORDER BY primary key DESC when Grant.settings.implicit_order is true" do
-      seed_parents(%w(a b))
+      seed_parents(%w[a b])
 
       begin
         Grant.settings.implicit_order = true
@@ -97,7 +97,7 @@ describe "Implicit ordering" do
     end
 
     it "drives first and last, with the primary key as tiebreaker" do
-      seed_parents(%w(c a b a))
+      seed_parents(%w[c a b a])
 
       ImplicitOrderParent.first.try(&.name).should eq "a"
       ImplicitOrderParent.last.try(&.name).should eq "c"
@@ -120,15 +120,15 @@ describe "Implicit ordering" do
     end
 
     it "drives find_each and find_in_batches" do
-      seed_parents(%w(c a b d e))
+      seed_parents(%w[c a b d e])
 
       seen = [] of String?
       ImplicitOrderParent.where("name != ?", "zzz").find_each(batch_size: 2) { |parent| seen << parent.name }
-      seen.should eq %w(a b c d e)
+      seen.should eq %w[a b c d e]
 
       seen = [] of String?
       ImplicitOrderParent.find_each(batch_size: 2) { |parent| seen << parent.name }
-      seen.should eq %w(a b c d e)
+      seen.should eq %w[a b c d e]
 
       batches = [] of Array(String?)
       ImplicitOrderParent.where("name != ?", "zzz").find_in_batches(batch_size: 2) { |batch| batches << batch.map(&.name) }
@@ -141,7 +141,7 @@ describe "Implicit ordering" do
     end
 
     it "yields to an explicit order" do
-      seed_parents(%w(c a b))
+      seed_parents(%w[c a b])
 
       ImplicitOrderParent.order(name: :desc).first.try(&.name).should eq "c"
       ImplicitOrderParent.order(name: :desc).last.try(&.name).should eq "a"

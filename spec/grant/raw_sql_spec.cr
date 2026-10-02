@@ -240,21 +240,19 @@ describe "ActiveRecord-style raw SQL" do
   end
 
   it "blocks Grant.connection writes inside a write-preventing model context" do
-    begin
-      expect_raises(Grant::Transaction::ReadOnlyError) do
-        RawSqlParityRecord.while_preventing_writes do
-          Grant.connection(CURRENT_ADAPTER).execute(
-            "INSERT INTO raw_sql_parity_records (id, label, active) VALUES (?, ?, ?)",
-            [99_i64, "blocked", true]
-          )
-        end
+    expect_raises(Grant::Transaction::ReadOnlyError) do
+      RawSqlParityRecord.while_preventing_writes do
+        Grant.connection(CURRENT_ADAPTER).execute(
+          "INSERT INTO raw_sql_parity_records (id, label, active) VALUES (?, ?, ?)",
+          [99_i64, "blocked", true]
+        )
       end
-    ensure
-      Grant.connection(CURRENT_ADAPTER).execute(
-        "DELETE FROM raw_sql_parity_records WHERE id = ?",
-        [99_i64]
-      )
     end
+  ensure
+    Grant.connection(CURRENT_ADAPTER).execute(
+      "DELETE FROM raw_sql_parity_records WHERE id = ?",
+      [99_i64]
+    )
   end
 
   it "exposes ActiveRecord-shaped sanitization class methods" do

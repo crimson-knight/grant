@@ -77,7 +77,7 @@ describe Grant::Preloader do
       authors.each do |author|
         author.pl_posts.size.should eq(2)
         author.pl_badge.should_not be_nil
-        author.pl_posts.each { |post| post.pl_comments.size.should eq(1) }
+        author.pl_posts.each(&.pl_comments.size.should(eq(1)))
       end
     end.should eq(0)
   end
@@ -136,7 +136,7 @@ describe Grant::Preloader do
       Grant.settings.in_clause_limit = 2
       statements = AssociationQueryCounter.statements { Grant::Preloader.new(authors, :pl_posts).call }
       statements.size.should eq(3)
-      authors.each { |author| author.pl_posts.size.should eq(2) }
+      authors.each(&.pl_posts.size.should(eq(2)))
     ensure
       Grant.settings.in_clause_limit = original
     end

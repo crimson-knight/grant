@@ -198,7 +198,7 @@ describe Grant::Tasks::Database do
     it "migrates an existing database and never seeds or reloads it" do
       M04Tasks.with_tasks(**m04_options) do |tasks|
         tasks.prepare
-        tasks.adapter.open { |db| db.exec "DELETE FROM m04_task_widgets" }
+        tasks.adapter.open(&.exec("DELETE FROM m04_task_widgets"))
 
         tasks.prepare
         tasks.version.should eq 20260101000003_i64

@@ -37,7 +37,7 @@ describe "Grant::Query::Builder collection baseline (pre-Enumerable)" do
 
   describe "#map (already exists on Builder)" do
     it "transforms query results" do
-      names = Parent.where(name: ["alice", "bob"]).map { |r| r.name }
+      names = Parent.where(name: ["alice", "bob"]).map(&.name)
       names.size.should eq 2
       names.should contain("alice")
       names.should contain("bob")
@@ -119,23 +119,23 @@ describe "Grant::Query::Builder collection baseline (pre-Enumerable)" do
   # Users must currently call .all before collection methods
   describe ".all workaround pattern" do
     it "requires .all before .select with block" do
-      results = Parent.where(name: ["alice", "bob", "carol"]).to_a.select { |r|
+      results = Parent.where(name: ["alice", "bob", "carol"]).to_a.select do |r|
         r.name == "alice" || r.name == "bob"
-      }
+      end
       results.size.should eq 2
     end
 
     it "requires .all before .count with block" do
-      count = Parent.where(name: ["alice", "bob", "carol"]).to_a.count { |r|
+      count = Parent.where(name: ["alice", "bob", "carol"]).to_a.count do |r|
         r.name == "alice"
-      }
+      end
       count.should eq 1
     end
 
     it "requires .all before .any? with block" do
-      result = Parent.where(name: ["alice", "bob", "carol"]).to_a.any? { |r|
+      result = Parent.where(name: ["alice", "bob", "carol"]).to_a.any? do |r|
         r.name == "carol"
-      }
+      end
       result.should be_true
     end
 
@@ -162,10 +162,10 @@ describe "Grant::Query::Builder collection baseline (pre-Enumerable)" do
     end
 
     it "requires .all before .partition" do
-      a_names, others = Parent.where(name: ["alice", "bob", "carol"]).to_a.partition { |r|
+      a_names, others = Parent.where(name: ["alice", "bob", "carol"]).to_a.partition do |r|
         name = r.name
         name ? name.starts_with?("a") : false
-      }
+      end
       a_names.size.should eq 1
       others.size.should eq 2
     end

@@ -116,8 +116,8 @@ module Grant::Schema
       end
     end
 
-    COLUMN_TYPES = %w(string text integer smallint tinyint bigint boolean float double decimal datetime timestamp
-      time date binary json jsonb uuid hstore citext inet cidr macaddr ltree money)
+    COLUMN_TYPES = %w[string text integer smallint tinyint bigint boolean float double decimal datetime timestamp
+      time date binary json jsonb uuid hstore citext inet cidr macaddr ltree money]
 
     # Parses *name* and *attributes* into a `Plan`.
     def self.parse(name : ::String, attributes : Array(::String) = [] of ::String) : Plan
@@ -220,10 +220,10 @@ module Grant::Schema
 
     # `{attributes, table}` of `<prefix>a_b<separator>table`, or nil.
     private def self.split_on(name : ::String, prefix : ::String, separator : ::String) : {::String, ::String}?
-      return nil unless name.starts_with?(prefix)
+      return unless name.starts_with?(prefix)
       body = name[prefix.size..]
       head, found, tail = body.rpartition(separator)
-      return nil if found.empty? || tail.empty?
+      return if found.empty? || tail.empty?
       {head, tail}
     end
 

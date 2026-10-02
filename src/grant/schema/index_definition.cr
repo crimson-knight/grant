@@ -112,8 +112,8 @@ module Grant::Schema
     end
 
     # Builds the definition from the common `add_index` arguments.
-    def self.build(table : TableName, columns : ColumnNames, name : ::String | Symbol | Nil = nil, unique : Bool = false,
-                   where : ::String? = nil, using : ::String | Symbol | Nil = nil,
+    def self.build(table : TableName, columns : ColumnNames, name : ::String | Symbol? = nil, unique : Bool = false,
+                   where : ::String? = nil, using : ::String | Symbol? = nil,
                    order = nil,
                    opclass = nil,
                    include covering : ColumnNames? = nil, length = nil,

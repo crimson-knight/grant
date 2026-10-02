@@ -102,7 +102,7 @@ describe "nested attributes" do
       ]
 
       author.save.should be_true
-      NatPost.where(nat_author_id: author.id).select.map { |post| post.title.to_s }.should eq(["keep me"])
+      NatPost.where(nat_author_id: author.id).select.map(&.title.to_s).should eq(["keep me"])
     end
 
     it "accepts the name of an instance method" do
@@ -110,7 +110,7 @@ describe "nested attributes" do
       author.nat_notes_attributes = [{text: ""}, {text: "real"}]
 
       author.save.should be_true
-      NatNote.where(nat_author_id: author.id).select.map { |note| note.text.to_s }.should eq(["real"])
+      NatNote.where(nat_author_id: author.id).select.map(&.text.to_s).should eq(["real"])
     end
   end
 
@@ -138,7 +138,7 @@ describe "nested attributes" do
 
     it "resolves all ids with one IN query" do
       author = NatAuthor.create!(name: "a")
-      posts = 3.times.map { |i| NatPost.create!(nat_author_id: author.id, title: "p#{i}", body: "b") }.to_a
+      posts = Array.new(3) { |i| NatPost.create!(nat_author_id: author.id, title: "p#{i}", body: "b") }
       author = NatAuthor.find!(author.id)
 
       statements = StatementRecorder.statements do
@@ -147,7 +147,7 @@ describe "nested attributes" do
 
       StatementRecorder.count(statements, "SELECT", "nat_posts").should eq(1)
       author.save.should be_true
-      NatPost.where(nat_author_id: author.id).select.map { |post| post.title.to_s }.sort.should eq(["edited p0", "edited p1", "edited p2"])
+      NatPost.where(nat_author_id: author.id).select.map(&.title.to_s).sort!.should eq(["edited p0", "edited p1", "edited p2"])
     end
 
     it "does not load the whole association to save an update" do

@@ -91,7 +91,7 @@ describe "Sharded query routing over two real SQLite shard files" do
 
   it "counts and plucks across shards" do
     S02RoutedThing.count.should eq 10_i64
-    S02RoutedThing.order(id: :asc).pluck(:id).map(&.as(Int64)).sort.should eq (1_i64..10_i64).to_a
+    S02RoutedThing.order(id: :asc).pluck(:id).map(&.as(Int64)).sort!.should eq (1_i64..10_i64).to_a
   end
 
   it "builds SQL for the adapter of the shard it runs on" do

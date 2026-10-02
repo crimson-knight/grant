@@ -46,7 +46,7 @@ describe "Lazy Model.all" do
     seed_parents(["a", "b", "c"])
 
     Parent.all.size.should eq 3
-    Parent.all.map(&.name).compact.sort!.should eq ["a", "b", "c"]
+    Parent.all.compact_map(&.name).sort!.should eq ["a", "b", "c"]
     Parent.all.to_a.size.should eq 3
     Parent.all.select.size.should eq 3
     Parent.all.reduce(0) { |sum, _| sum + 1 }.should eq 3

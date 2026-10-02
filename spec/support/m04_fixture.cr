@@ -6,7 +6,7 @@ require "../spec_helper"
 # reference, check and unique constraints, and on PostgreSQL enums, arrays,
 # jsonb/gin, operator classes, INCLUDE, deferrable keys and exclusions.
 module M04Fixture
-  TABLES = %w(m04_dump_cycle_a m04_dump_cycle_b m04_dump_notes m04_dump_memberships m04_dump_accounts m04_dump_pg)
+  TABLES = %w[m04_dump_cycle_a m04_dump_cycle_b m04_dump_notes m04_dump_memberships m04_dump_accounts m04_dump_pg]
   # Every table that is not the fixture's is left out of the dump.
   ONLY_FIXTURE = [/\A(?!m04_dump_)/] of (String | Regex)
 
@@ -81,7 +81,7 @@ module M04Fixture
       t.index :posted_at, name: "idx_m04_notes_posted_desc", order: :desc
       t.foreign_key :m04_dump_notes, column: :parent_id, on_delete: :set_null
     end
-    s.create_table(:m04_dump_cycle_a) { |t| t.bigint :b_id }
+    s.create_table(:m04_dump_cycle_a, &.bigint(:b_id))
     s.create_table(:m04_dump_cycle_b) do |t|
       t.bigint :a_id
       t.foreign_key :m04_dump_cycle_a, column: :a_id
@@ -115,7 +115,7 @@ module M04Fixture
         lines << "col #{table}.#{c.name} #{c.sql_type} null=#{c.null?} default=#{c.default.inspect} pk=#{c.primary_key_position} comment=#{c.comment.inspect}"
       end
       schema.indexes(table).sort_by(&.name).each { |i| lines << "idx #{table}.#{i.name} #{i.columns} unique=#{i.unique?} where=#{i.where.inspect}" }
-      schema.foreign_keys(table).sort_by { |k| k.columns.join(",") }.each do |k|
+      schema.foreign_keys(table).sort_by(&.columns.join(",")).each do |k|
         lines << "fk #{table} #{k.columns} -> #{k.to_table}#{k.primary_key_columns} del=#{k.on_delete} upd=#{k.on_update}"
       end
       schema.check_constraints(table).each { |c| lines << "chk #{table} #{c.name} #{c.expression}" }

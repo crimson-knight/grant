@@ -15,7 +15,7 @@ require "./registry"
 # sqlite3 shard, diff upstream perform_exec against this patch and re-apply.
 class SQLite3::Statement
   protected def perform_exec(args : Enumerable) : DB::ExecResult
-    LibSQLite3.reset(self.to_unsafe)
+    LibSQLite3.reset(to_unsafe)
     args.each_with_index(1) do |arg, index|
       bind_arg(index, arg)
     end
@@ -34,7 +34,7 @@ class SQLite3::Statement
     # Always reset the statement so SQLite decrements nVdbeActive even when
     # the step returned an error code.  This prevents "SQL statements in
     # progress" on a subsequent COMMIT/ROLLBACK on the same connection.
-    LibSQLite3.reset(self.to_unsafe)
+    LibSQLite3.reset(to_unsafe)
   end
 end
 
@@ -104,11 +104,11 @@ class Grant::Adapter::Sqlite < Grant::Adapter::Base
   # returns nil and takes the general parser.
   private def parse_canonical_time(text : String) : Time?
     size = text.bytesize
-    return nil if size < 19 || size == 20 || size > 29
+    return if size < 19 || size == 20 || size > 29
 
     bytes = text.to_unsafe
-    return nil unless bytes[4] == '-'.ord && bytes[7] == '-'.ord && bytes[10] == ' '.ord &&
-                      bytes[13] == ':'.ord && bytes[16] == ':'.ord
+    return unless bytes[4] == '-'.ord && bytes[7] == '-'.ord && bytes[10] == ' '.ord &&
+                  bytes[13] == ':'.ord && bytes[16] == ':'.ord
 
     year = canonical_digits(bytes, 0, 4)
     month = canonical_digits(bytes, 5, 2)
@@ -116,15 +116,15 @@ class Grant::Adapter::Sqlite < Grant::Adapter::Base
     hour = canonical_digits(bytes, 11, 2)
     minute = canonical_digits(bytes, 14, 2)
     second = canonical_digits(bytes, 17, 2)
-    return nil if year < 0 || month < 0 || day < 0 || hour < 0 || minute < 0 || second < 0
+    return if year < 0 || month < 0 || day < 0 || hour < 0 || minute < 0 || second < 0
 
     nanosecond = 0
     if size > 19
-      return nil unless bytes[19] == '.'.ord
+      return unless bytes[19] == '.'.ord
 
       fraction_digits = size - 20
       fraction = canonical_digits(bytes, 20, fraction_digits)
-      return nil if fraction < 0
+      return if fraction < 0
 
       nanosecond = fraction
       (9 - fraction_digits).times { nanosecond *= 10 }
@@ -207,10 +207,10 @@ class Grant::Adapter::Sqlite < Grant::Adapter::Base
   # SQLite opens (and creates) a file on connect, so the only database it can
   # report missing is one whose directory does not exist.
   protected def connect_failure_kind(ex : ::DB::ConnectionRefused) : Kind?
-    return nil if Sqlite.memory_url?(url) || !url.starts_with?("sqlite")
+    return if Sqlite.memory_url?(url) || !url.starts_with?("sqlite")
 
     path = url.sub(/\Asqlite3?:(?:\/\/)?/, "").split('?').first
-    return nil if path.empty?
+    return if path.empty?
 
     Dir.exists?(File.dirname(path)) ? nil : Kind::NoDatabase
   end
@@ -302,7 +302,7 @@ class Grant::Adapter::Sqlite < Grant::Adapter::Base
   # that names the constraint type (extended codes are not enabled by the
   # driver). The message prefixes are SQLite's own fixed, untranslated text.
   def self.error_kind(code : Int32?, message : String? = nil) : Kind?
-    return nil unless code
+    return unless code
 
     case code
     when 2067, 1555 then return Kind::Unique
@@ -419,7 +419,7 @@ class Grant::Adapter::Sqlite < Grant::Adapter::Base
         end
       end
     end
-    return nil if unique.nil?
+    return if unique.nil?
     raise ArgumentError.new("Index #{index_name.inspect} is not unique") unless unique
     raise ArgumentError.new("Index #{index_name.inspect} is partial; pass the column names to unique_by instead") if partial
 
@@ -563,12 +563,11 @@ class Grant::Adapter::Sqlite < Grant::Adapter::Base
   end
 
   def index_hint_clause(kind : Symbol, index_names : Array(String)) : String?
-    return nil if index_names.empty?
+    return if index_names.empty?
+    # :ignore has no SQLite equivalent, so it yields nil.
     case kind
     when :use, :force
       "INDEXED BY #{quote(index_names.first)}"
-    else # :ignore — no SQLite equivalent
-      nil
     end
   end
 
@@ -697,14 +696,14 @@ class Grant::Adapter::Sqlite < Grant::Adapter::Base
 
   # A key that omits the parent columns refers to the parent's primary key.
   private def sqlite_referenced_columns(parent : String, named : Array(String?)) : Array(String)
-    return named.compact if named.none?(&.nil?)
+    return named.compact if named.none?(Nil)
     parent_key = catalog_columns(parent).select(&.primary_key?).sort_by!(&.primary_key_position).map(&.name)
     named.each_with_index.map { |name, index| name || parent_key[index]? || "" }.to_a
   end
 
   private def sqlite_index_info(table_name : String, index_name : String, unique : Bool,
                                 create_sql : String?, columns : Array(String?)) : Grant::Schema::IndexInfo
-    expression = columns.any?(&.nil?)
+    expression = columns.any?(Nil)
     names = columns
     if expression
       pieces = sqlite_index_pieces(create_sql)

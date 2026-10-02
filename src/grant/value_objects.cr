@@ -117,7 +117,7 @@ module Grant::ValueObjects
       {% actual_constructor = constructor %}
       {% actual_allow_nil = allow_nil %}
     {% end %}
-    
+
     {% method_name = name.id %}
     {% klass = actual_class_name.id %}
     {% mapping_hash = actual_mapping %}
@@ -129,7 +129,7 @@ module Grant::ValueObjects
     # Register a compile-time marker so later declarations can include every
     # aggregation on this model in metadata and dispatch methods.
     GRANT_AGGREGATION_META_{{method_name_string.upcase.id}} = true
-    
+
     # Store aggregation metadata
     class_getter _{{method_name}}_aggregation_meta = Grant::ValueObjects::AggregationMeta.new(
       {{method_name.stringify}},
@@ -138,25 +138,25 @@ module Grant::ValueObjects
       {% if actual_constructor %}true{% else %}false{% end %},
       {{actual_allow_nil}}
     )
-    
+
     # Register all columns that are part of this aggregation
     {% for column_name, attr_name in mapping_hash %}
       # Store all as strings and convert when needed
       column {{column_name.id}} : String?
     {% end %}
-    
+
     # Instance variable to cache the value object
     @[JSON::Field(ignore: true)]
     @[YAML::Field(ignore: true)]
     @_cached_{{method_name}} : {{klass}}?
-    
+
     # Define getter method
     def {{method_name}} : {{klass}}?
       # Return cached value if columns haven't changed
       if @_cached_{{method_name}} && !{{method_name}}_changed?
         return @_cached_{{method_name}}
       end
-      
+
       # Check if all required columns have values
       {% if actual_allow_nil %}
         # If allow_nil is true, return nil if all columns are nil
@@ -177,7 +177,7 @@ module Grant::ValueObjects
         grant_{{column_name.id}}_value = @{{column_name.id}}
         return nil if grant_{{column_name.id}}_value.nil?
       {% end %}
-      
+
       # Build the value object
       @_cached_{{method_name}} = {% if actual_constructor %}
         # Use custom constructor
@@ -196,12 +196,12 @@ module Grant::ValueObjects
         )
       {% end %}
     end
-    
+
     # Define setter method
     def {{method_name}}=(value : {{klass}}?)
       # Track changes for dirty tracking
       old_value = {{method_name}}
-      
+
       if value.nil?
         {% for column_name, attr_name in mapping_hash %}
           write_attribute({{column_name.stringify}}, nil)
@@ -211,14 +211,14 @@ module Grant::ValueObjects
           write_attribute({{column_name.stringify}}, value.{{attr_name.id}}.to_s)
         {% end %}
       end
-      
+
       # Clear cache
       @_cached_{{method_name}} = nil
-      
+
       # Track aggregation change
       track_aggregation_change({{method_name.stringify}}, old_value, value)
     end
-    
+
     # Check if the aggregation has changed
     def {{method_name}}_changed? : Bool
       changed = false
@@ -227,7 +227,7 @@ module Grant::ValueObjects
       {% end %}
       changed
     end
-    
+
     # Get the previous value of the aggregation
     def {{method_name}}_was : {{klass}}?
       {% for column_name, attr_name in mapping_hash %}
@@ -261,18 +261,18 @@ module Grant::ValueObjects
     end
 
     # Add to list of aggregations for introspection
-    
+
     # Add validation support
     validate "{{method_name}} value object validation" do |instance|
       # Skip validation if allow_nil and value is nil
       {% if actual_allow_nil %}
         next true if instance.{{method_name}}.nil?
       {% end %}
-      
+
       # Try to build the value object - will raise if invalid
       begin
         value = instance.{{method_name}}
-        
+
         # If value object has a validate method, call it
         if value.responds_to?(:validate)
           vo_errors = value.validate
@@ -411,7 +411,7 @@ module Grant::ValueObjects
       {% end %}
       aggregations
     end
-    
+
     # Track aggregation changes
     protected def track_aggregation_change(name : String, old_value, new_value)
       # Convert value objects to strings for storage
@@ -420,7 +420,7 @@ module Grant::ValueObjects
       return if old_str == new_str
       aggregation_changes[name] = {old_str, new_str}
     end
-    
+
     # Returns `true` if any backing column of the aggregation named *name* has
     # unsaved changes. Backs the generated per-aggregation `#<name>_changed?`
     # predicate.
@@ -444,7 +444,7 @@ module Grant::ValueObjects
         false
       end
     end
-    
+
     # Returns the previous (pre-change) value of the aggregation named *name*, or
     # its current value if unchanged. Backs the generated `#<name>_was` accessor.
     def aggregation_was(name : String)
@@ -454,7 +454,7 @@ module Grant::ValueObjects
         read_aggregation(name)
       end
     end
-    
+
     # Returns the value object for the aggregation named *name* (the same result
     # as calling the generated `#<name>` getter), or `nil` for an unknown name.
     # Dynamic counterpart to the named getters.
@@ -471,7 +471,7 @@ module Grant::ValueObjects
         nil
       end
     end
-    
+
     # Assigns *value* to the aggregation named *name* (the same as calling the
     # generated `#<name>=` setter), writing through to the backing columns.
     # Dynamic counterpart to the named setters.
@@ -486,13 +486,13 @@ module Grant::ValueObjects
       {% end %}
       end
     end
-    
+
     # Clear aggregation changes after save
     # TODO: Fix callback registration in value objects
     # after_save do
     #   @aggregation_changes.clear if @aggregation_changes
     # end
-    
+
     # Mass-assigns *args*, routing keys that name an aggregation through
     # `write_aggregation` (so a value object can be set directly) and all other
     # keys through the normal `write_attribute` path. Overrides the base

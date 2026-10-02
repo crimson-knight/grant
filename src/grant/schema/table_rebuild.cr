@@ -48,12 +48,12 @@ module Grant::Schema
       close = Scanner.matching_paren(create_sql, open) || raise InvalidDefinition.new("Cannot read the definition of '#{@table}'")
       @suffix = create_sql[(close + 1)..].strip
       @items = Scanner.split_items(create_sql[(open + 1)...close]).map { |text| classify(text) }
-      @original_columns = column_items.map { |item| item.name_or_empty.downcase }
+      @original_columns = column_items.map(&.name_or_empty.downcase)
     end
 
     # Names of the column items, in order.
     def column_names : Array(::String)
-      column_items.map { |item| item.name_or_empty }
+      column_items.map(&.name_or_empty)
     end
 
     def add_column(text : ::String) : Nil
@@ -301,17 +301,17 @@ module Grant::Schema
 
       # The `DEFAULT ...` clause of a column item, or nil.
       def self.default_clause(text : ::String) : ::String?
-        match = text.match(/\sDEFAULT\s+/i) || return nil
+        match = text.match(/\sDEFAULT\s+/i) || return
         start = match.begin(0)
         index = match.end(0)
-        return nil if index >= text.size
+        return if index >= text.size
         char = text[index]
         stop = if char == '('
-                 (matching_paren(text, index) || return nil) + 1
+                 (matching_paren(text, index) || return) + 1
                elsif char == '\'' || char == '"'
                  close = index + 1
                  loop do
-                   close = text.index(char, close) || return nil
+                   close = text.index(char, close) || return
                    # A doubled quote is an escaped quote, not the end.
                    break unless text[close + 1]? == char
                    close += 2

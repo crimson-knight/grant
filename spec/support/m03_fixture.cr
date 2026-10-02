@@ -4,10 +4,10 @@ require "file_utils"
 # Helpers for the M03 migration runner specs: a clean database, contexts over
 # it, a second database, and a scratch directory of migration files.
 module M03Fixture
-  TABLES = %w(m03_users m03_posts m03_tags m03_comments m03_widgets m03_micrate_users m03_micrate_posts m03_atomic
+  TABLES = %w[m03_users m03_posts m03_tags m03_comments m03_widgets m03_micrate_users m03_micrate_posts m03_atomic
     m03_sql_one m03_sql_two m03_lock_rows m03_tenant_items m03_a m03_b m03_c m03_d m03_join_a_m03_join_b
-    m03_joins m03_revert m03_dry)
-  TRACKING = %w(schema_migrations micrate_db_version ar_internal_metadata)
+    m03_joins m03_revert m03_dry]
+  TRACKING = %w[schema_migrations micrate_db_version ar_internal_metadata]
 
   def self.adapter : Grant::Adapter::Base
     Grant::ConnectionRegistry.get_adapter(CURRENT_ADAPTER)
@@ -15,7 +15,7 @@ module M03Fixture
 
   def self.reset!(target : Grant::Adapter::Base = adapter) : Nil
     (TABLES + TRACKING).each do |table|
-      target.open { |db| db.exec "DROP TABLE IF EXISTS #{table}" }
+      target.open(&.exec("DROP TABLE IF EXISTS #{table}"))
     end
     target.reset_schema_caches!
   end
@@ -51,8 +51,8 @@ module M03Fixture
     name = "m03_second_#{Random::Secure.hex(4)}"
     case CURRENT_ADAPTER
     when "pg"
-      adapter.open { |db| db.exec "DROP DATABASE IF EXISTS #{name}" }
-      adapter.open { |db| db.exec "CREATE DATABASE #{name}" }
+      adapter.open(&.exec("DROP DATABASE IF EXISTS #{name}"))
+      adapter.open(&.exec("CREATE DATABASE #{name}"))
       url = ADAPTER_URL.sub(/\/[^\/?]+(\?|\z)/, "/#{name}\\1")
       second = Grant::Adapter::Pg.new(name: name, url: url)
       begin
@@ -60,18 +60,18 @@ module M03Fixture
       ensure
         second.disconnect!
         adapter.open { |db| db.exec "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '#{name}' AND pid <> pg_backend_pid()" }
-        adapter.open { |db| db.exec "DROP DATABASE IF EXISTS #{name}" }
+        adapter.open(&.exec("DROP DATABASE IF EXISTS #{name}"))
       end
     when "mysql"
-      adapter.open { |db| db.exec "DROP DATABASE IF EXISTS #{name}" }
-      adapter.open { |db| db.exec "CREATE DATABASE #{name}" }
+      adapter.open(&.exec("DROP DATABASE IF EXISTS #{name}"))
+      adapter.open(&.exec("CREATE DATABASE #{name}"))
       url = ADAPTER_URL.sub(/\/[^\/?]+(\?|\z)/, "/#{name}\\1")
       second = Grant::Adapter::Mysql.new(name: name, url: url)
       begin
         yield second
       ensure
         second.disconnect!
-        adapter.open { |db| db.exec "DROP DATABASE IF EXISTS #{name}" }
+        adapter.open(&.exec("DROP DATABASE IF EXISTS #{name}"))
       end
     when "sqlite"
       path = File.join(Dir.tempdir, "#{name}.sqlite3")

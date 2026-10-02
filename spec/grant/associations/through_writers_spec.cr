@@ -77,7 +77,7 @@ describe "has_many :through writers" do
 
     it "inserts many join rows with one INSERT statement" do
       post = TwPost.create!(title: "p")
-      tags = 3.times.map { |i| TwTag.create!(label: "t#{i}") }.to_a
+      tags = Array.new(3) { |i| TwTag.create!(label: "t#{i}") }
 
       statements = StatementRecorder.statements { post.tw_tags.append(tags[0], tags[1], tags[2]) }
 

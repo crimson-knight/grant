@@ -32,7 +32,7 @@ describe Grant::Notifications do
     it "reports writes issued through the adapter" do
       events = collect(Grant::Events::SQL) { Parent.create!(name: "written") }
 
-      insert = events.find! { |candidate| candidate.sql.starts_with?("INSERT") }
+      insert = events.find!(&.sql.starts_with?("INSERT"))
       insert.sql.should contain("parents")
       insert.binds.should contain("written")
     end
@@ -56,7 +56,7 @@ describe Grant::Notifications do
         Parent.where(name: "summed").pluck_as(name: String)
       end
 
-      aggregate = events.find! { |candidate| candidate.sql.includes?("SUM(") }
+      aggregate = events.find!(&.sql.includes?("SUM("))
       aggregate.binds.should eq(["summed"] of Grant::Columns::Type)
       aggregate.name.should eq("Parent")
       plucked = events.find! { |candidate| candidate.sql.includes?("parents") && !candidate.sql.includes?("SUM(") }
@@ -121,7 +121,7 @@ describe Grant::Notifications do
       BehaviorAdminPersona.create!(name: "admin")
 
       from_root = collect(Grant::Events::Instantiation) { BehaviorPersona.all.to_a }
-      from_root.map(&.class_name).sort.should eq(["BehaviorAdminPersona", "BehaviorPersona"])
+      from_root.map(&.class_name).sort!.should eq(["BehaviorAdminPersona", "BehaviorPersona"])
 
       from_subclass = collect(Grant::Events::Instantiation) { BehaviorAdminPersona.all.to_a }
       from_subclass.map(&.class_name).should eq(["BehaviorAdminPersona"])

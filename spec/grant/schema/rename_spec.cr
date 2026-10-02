@@ -1,7 +1,7 @@
 require "../../support/schema_fixture"
 
 private def m02b_rename_scalar(sql : String)
-  SchemaFixture.adapter.open { |db| db.scalar(sql) }
+  SchemaFixture.adapter.open(&.scalar(sql))
 end
 
 describe "M02b renames" do
@@ -74,7 +74,7 @@ describe "M02b renames" do
     end
 
     it "renames a column inside change_table" do
-      statements.change_table(:m02b_rn) { |t| t.rename :city, :town }
+      statements.change_table(:m02b_rn, &.rename(:city, :town))
       schema.columns(:m02b_rn).map(&.name).should eq ["id", "name", "town"]
     end
 

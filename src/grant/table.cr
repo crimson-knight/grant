@@ -29,11 +29,11 @@ module Grant::Tables
     end
 
     def quoted_table_name : String
-      self.adapter.quote(table_name)
+      adapter.quote(table_name)
     end
 
     def quote(column_name) : String
-      self.adapter.quote(column_name)
+      adapter.quote(column_name)
     end
 
     # Returns the name of the table for `self`

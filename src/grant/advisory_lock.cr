@@ -162,7 +162,7 @@ module Grant
     end
 
     private def self.sqlite_lock_path(adapter : Grant::Adapter::Base, key : String) : String?
-      file = sqlite_database_file(adapter) || return nil
+      file = sqlite_database_file(adapter) || return
       "#{file}.grant-lock-#{Digest::MD5.hexdigest(key)[0, 12]}"
     end
 

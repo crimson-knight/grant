@@ -33,7 +33,7 @@ require "../../spec_helper"
     # Skipped when any unless: term holds.
     validates_length_of :name, minimum: 3, allow_nil: true, unless: [:admin?, ->(r : V01Conditional) { r.trial? }]
     # Combined if: and unless: lists.
-    validates_inclusion_of :plan, in: %w(pro free), if: [:active?], unless: [:admin?]
+    validates_inclusion_of :plan, in: %w[pro free], if: [:active?], unless: [:admin?]
     # validate :method with arrays
     validate :must_not_be_reserved, if: [:active?, ->(r : V01Conditional) { !r.name.nil? }], unless: [:admin?]
 

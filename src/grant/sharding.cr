@@ -56,7 +56,7 @@ module Grant::Sharding
   module Model
     macro included
       class_property sharding_config : Grant::Sharding::ShardConfig?
-      
+
       extend Grant::Sharding::Model::ClassMethods
 
       # Override adapter to use sharded connection
@@ -81,7 +81,7 @@ module Grant::Sharding
           super
         end
       end
-      
+
       # :nodoc:
       def self.__sharded_model? : Bool
         !sharding_config.nil?
@@ -120,13 +120,13 @@ module Grant::Sharding
         Grant::ShardManager.guard_shard_swap!(shard)
         Grant::Sharding::ShardedQuery({{@type}}).new(self, shard)
       end
-      
+
       # Query on all shards
       def self.on_all_shards
         Grant::ShardManager.guard_shard_swap!
         Grant::Sharding::MultiShardQuery({{@type}}).new(self)
       end
-      
+
       # Execute a block on all shards
       def self.on_all_shards(&block)
         if config = sharding_config
@@ -141,7 +141,7 @@ module Grant::Sharding
           yield # Not sharded, just execute the block
         end
       end
-      
+
       # Iterate through all records across all shards in batches, one shard
       # after another, in keyset batches (see `find_each_shard`).
       def self.find_each(batch_size : Int32 = 1000, &block : {{@type}} ->)
@@ -217,13 +217,13 @@ module Grant::Sharding
       {% else %}
         {% raise "Unsupported sharding strategy: #{strategy}" %}
       {% end %}
-      
+
       # Register with ShardManager
       Grant::ShardManager.register(
         {{@type.name.stringify}},
         self.sharding_config.not_nil!
       )
-      
+
       # Override query builder to use sharded version
       # :nodoc:
       def self.__builder
@@ -231,7 +231,7 @@ module Grant::Sharding
         # Instead, we'll default to sqlite for now - the actual adapter will be determined
         # when the query is executed with proper shard context
         db_type = Grant::Query::Builder::DbType::Sqlite
-        
+
         Grant::Sharding::ShardedQueryBuilder({{@type}}).new(db_type, :and, self.sharding_config)
       end
     end

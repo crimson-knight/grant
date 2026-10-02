@@ -6,24 +6,24 @@ require "../spec_helper"
   class SecureUser < Grant::Base
     connection {{ adapter_literal }}
     table secure_users
-    
+
     include Grant::SignedId
     include Grant::TokenFor
-    
+
     # Define secure tokens
     has_secure_token :auth_token
     has_secure_token :password_reset_token, length: 36
     has_secure_token :api_key, alphabet: :hex, length: 32
-    
+
     # Define token_for generators
     generates_token_for :password_reset, expires_in: 15.minutes do
       password_salt
     end
-    
+
     generates_token_for :email_confirmation, expires_in: 24.hours do
       email
     end
-    
+
     column id : Int64, primary: true
     column name : String?
     column email : String?
