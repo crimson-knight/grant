@@ -405,64 +405,71 @@ module Grant::Encryption
         {% raise "encrypts #{attr_name}: previous: must be an array literal of schemes" %}
       {% end %}
 
-      # Register the encrypted attribute
-      class_getter {{attr}}_encrypted_attribute : Grant::Encryption::EncryptedAttribute =
-        Grant::Encryption::EncryptedAttribute.new(
-          self,
-          {{attr_name}},
-          {{deterministic}},
-          {% if typed %}
-            ->(record : Grant::Base, value : String?) do
-              record.as({{@type}}).{{attr}} = value.try { |text| Grant::Encryption::Serializer.load(text, {{base}}) }
-              nil
-            end,
-            column_name: {{attr_name}},
-          {% else %}
-            ->(record : Grant::Base, value : String?) do
-              record.as({{@type}}).{{attr}} = value
-            end,
-          {% end %}
-          options: Grant::Encryption::EncryptedAttribute::Options.new(
-            downcase: {{downcase ? true : false}},
-            ignore_case: {{ignore_case ? true : false}},
-            compress: {{compress ? true : false}},
-            compress_threshold: {{compress_threshold}},
-            support_unencrypted_data: {{support_unencrypted_data}},
-            previous: [
-              {% if previous %}
-                {% for scheme in previous %}
-                  Grant::Encryption::Scheme.build(
-                    deterministic: {{scheme[:deterministic] ? true : false}},
-                    key: {{scheme[:key]}},
-                    salt: {{scheme[:salt]}}
-                  ),
-                {% end %}
-              {% end %}
-            ] of Grant::Encryption::Scheme,
-            transparent: {{typed}},
-            type_name: {{typed ? base.stringify : "String"}}
-          ),
-          {% if lazy_on %}
-            unsealer: ->(record : Grant::Base) do
-              record.as({{@type}}).__unseal_{{attr}}
-              nil
-            end,
-          {% end %}
-          plain_reader: ->(record : Grant::Base) do
+      # Register the encrypted attribute. It starts as `nil` and is built on
+      # first use: a subclass's copy of a class variable with a non-nil
+      # initializer can be left zeroed (see Grant::ConnectionManagement), and a
+      # nil start is correct even then.
+      @@{{attr}}_encrypted_attribute : Grant::Encryption::EncryptedAttribute? = nil
+
+      def self.{{attr}}_encrypted_attribute : Grant::Encryption::EncryptedAttribute
+        @@{{attr}}_encrypted_attribute ||=
+          Grant::Encryption::EncryptedAttribute.new(
+            self,
+            {{attr_name}},
+            {{deterministic}},
             {% if typed %}
-              record.as({{@type}}).{{attr}}.try { |value| Grant::Encryption::Serializer.dump(value) }
+              ->(record : Grant::Base, value : String?) do
+                record.as({{@type}}).{{attr}} = value.try { |text| Grant::Encryption::Serializer.load(text, {{base}}) }
+                nil
+              end,
+              column_name: {{attr_name}},
             {% else %}
-              record.as({{@type}}).{{attr}}
+              ->(record : Grant::Base, value : String?) do
+                record.as({{@type}}).{{attr}} = value
+              end,
             {% end %}
-          end,
-          {% if typed %}
-            stored_reader: nil
-          {% else %}
-            stored_reader: ->(record : Grant::Base) do
-              record.read_attribute({{attr_name + "_encrypted"}}).as?(String)
-            end
-          {% end %}
-        )
+            options: Grant::Encryption::EncryptedAttribute::Options.new(
+              downcase: {{downcase ? true : false}},
+              ignore_case: {{ignore_case ? true : false}},
+              compress: {{compress ? true : false}},
+              compress_threshold: {{compress_threshold}},
+              support_unencrypted_data: {{support_unencrypted_data}},
+              previous: [
+                {% if previous %}
+                  {% for scheme in previous %}
+                    Grant::Encryption::Scheme.build(
+                      deterministic: {{scheme[:deterministic] ? true : false}},
+                      key: {{scheme[:key]}},
+                      salt: {{scheme[:salt]}}
+                    ),
+                  {% end %}
+                {% end %}
+              ] of Grant::Encryption::Scheme,
+              transparent: {{typed}},
+              type_name: {{typed ? base.stringify : "String"}}
+            ),
+            {% if lazy_on %}
+              unsealer: ->(record : Grant::Base) do
+                record.as({{@type}}).__unseal_{{attr}}
+                nil
+              end,
+            {% end %}
+            plain_reader: ->(record : Grant::Base) do
+              {% if typed %}
+                record.as({{@type}}).{{attr}}.try { |value| Grant::Encryption::Serializer.dump(value) }
+              {% else %}
+                record.as({{@type}}).{{attr}}
+              {% end %}
+            end,
+            {% if typed %}
+              stored_reader: nil
+            {% else %}
+              stored_reader: ->(record : Grant::Base) do
+                record.read_attribute({{attr_name + "_encrypted"}}).as?(String)
+              end
+            {% end %}
+          )
+      end
 
       # Store in registry
       Grant::Encryption::EncryptedAttributeRegistry.register(

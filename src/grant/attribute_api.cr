@@ -1,3 +1,12 @@
+# Metadata `attribute` records for each declared attribute. Declared outside
+# `Grant::AttributeApi` so the name does not enter every model's namespace.
+alias Grant::AttributeDefinition = NamedTuple(
+  name: String,
+  type: String,
+  virtual: Bool,
+  has_default: Bool,
+  has_converter: Bool)
+
 # # Attribute API
 #
 # The Attribute API provides a flexible way to define custom attributes with
@@ -32,13 +41,20 @@
 module Grant::AttributeApi
   # Use macro to define attribute storage at the class level
   macro included
-    # Storage for attribute definitions - using a simpler approach
-    class_property attribute_definitions = {} of String => NamedTuple(
-      name: String,
-      type: String,
-      virtual: Bool,
-      has_default: Bool,
-      has_converter: Bool)
+    # Starts as `nil` and is built on first use. A class variable with a
+    # non-nil initializer is copied into each subclass, and the compiler can
+    # leave a subclass's copy zeroed (see `Grant::ConnectionManagement`); a nil
+    # start is correct even then.
+    @@attribute_definitions : Hash(String, Grant::AttributeDefinition)? = nil
+
+    # Storage for attribute definitions
+    def self.attribute_definitions : Hash(String, Grant::AttributeDefinition)
+      @@attribute_definitions ||= {} of String => Grant::AttributeDefinition
+    end
+
+    def self.attribute_definitions=(definitions : Hash(String, Grant::AttributeDefinition)) : Hash(String, Grant::AttributeDefinition)
+      @@attribute_definitions = definitions
+    end
   end
 
   # Define a custom attribute
@@ -51,7 +67,7 @@ module Grant::AttributeApi
       {% cast = options[:cast] %}
 
       # Store attribute metadata
-      @@attribute_definitions[{{name.stringify}}] = {
+      self.attribute_definitions[{{name.stringify}}] = {
         name: {{name.stringify}},
         type: {{type.stringify}},
         virtual: {{virtual}},

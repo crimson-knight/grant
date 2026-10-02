@@ -504,13 +504,17 @@ module Grant::Polymorphic
       {{options.keys.map(&.stringify)}} of String, {{options.values.map(&.stringify)}} of String)
 
     # Store association metadata
-    class_getter _{{name.id}}_association_meta = {
-      type: :belongs_to,
-      polymorphic: true,
-      foreign_key: {{foreign_key.id.stringify}},
-      type_column: {{type_column.id.stringify}},
-      primary_key: {{primary_key ? primary_key_name : "id"}}
-    }
+    # A method, not a class variable: it holds no state, and a class variable
+    # copied into a subclass can be left zeroed (see Grant::ConnectionManagement).
+    def self._{{name.id}}_association_meta
+      {
+        type: :belongs_to,
+        polymorphic: true,
+        foreign_key: {{foreign_key.id.stringify}},
+        type_column: {{type_column.id.stringify}},
+        primary_key: {{primary_key ? primary_key_name : "id"}}
+      }
+    end
 
     # Handle optional validation
     {% unless options[:optional] %}
@@ -621,13 +625,17 @@ module Grant::Polymorphic
     end
 
     # Store association metadata
-    class_getter _{{method_name.id}}_association_meta = {
-      type: :has_many,
-      polymorphic_as: {{poly_as.id.stringify}},
-      target_class_name: {{class_name.id.stringify}},
-      foreign_key: {{foreign_key.id.stringify}},
-      type_column: {{type_column.id.stringify}}
-    }
+    # A method, not a class variable: it holds no state, and a class variable
+    # copied into a subclass can be left zeroed (see Grant::ConnectionManagement).
+    def self._{{method_name.id}}_association_meta
+      {
+        type: :has_many,
+        polymorphic_as: {{poly_as.id.stringify}},
+        target_class_name: {{class_name.id.stringify}},
+        foreign_key: {{foreign_key.id.stringify}},
+        type_column: {{type_column.id.stringify}}
+      }
+    end
 
     _grant_register_reflection({{method_name.id.stringify}}, :has_many, {{class_name.id}}, {{foreign_key.id.stringify}}, {{primary_key_name}},
       {{type_column.id.stringify}}, {{poly_as.id.stringify}}, nil, nil, {{options[:dependent]}}, {{inverse_of ? inverse_of.id.stringify : nil}}, {{options[:inverse_of] == false}},
@@ -748,13 +756,17 @@ module Grant::Polymorphic
     end
 
     # Store association metadata
-    class_getter _{{method_name.id}}_association_meta = {
-      type: :has_one,
-      polymorphic_as: {{poly_as.id.stringify}},
-      target_class_name: {{class_name.id.stringify}},
-      foreign_key: {{foreign_key.id.stringify}},
-      type_column: {{type_column.id.stringify}}
-    }
+    # A method, not a class variable: it holds no state, and a class variable
+    # copied into a subclass can be left zeroed (see Grant::ConnectionManagement).
+    def self._{{method_name.id}}_association_meta
+      {
+        type: :has_one,
+        polymorphic_as: {{poly_as.id.stringify}},
+        target_class_name: {{class_name.id.stringify}},
+        foreign_key: {{foreign_key.id.stringify}},
+        type_column: {{type_column.id.stringify}}
+      }
+    end
 
     _grant_register_reflection({{method_name.id.stringify}}, :has_one, {{class_name.id}}, {{foreign_key.id.stringify}}, {{primary_key_name}},
       {{type_column.id.stringify}}, {{poly_as.id.stringify}}, nil, nil, {{options[:dependent]}}, {{inverse_of ? inverse_of.id.stringify : nil}}, {{options[:inverse_of] == false}},
