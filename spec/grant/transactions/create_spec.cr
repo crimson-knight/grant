@@ -54,7 +54,7 @@ describe "#create!" do
   end
 
   it "does not save but raise an exception" do
-    expect_raises(Grant::RecordNotSaved, "Parent") do
+    expect_raises(Grant::RecordInvalid, "Validation failed") do
       Parent.create!(name: "")
     end
   end

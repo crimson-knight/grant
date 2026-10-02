@@ -18,7 +18,7 @@ describe "Grant::EagerLoading" do
       query = Klass.includes(students: :enrollments)
       query.includes_associations.size.should eq(1)
       nested = query.includes_associations.first
-      nested.should be_a(Hash(Symbol, Array(Symbol)))
+      nested.should be_a(Hash(Symbol, Array(Grant::Includes)))
     end
   end
 

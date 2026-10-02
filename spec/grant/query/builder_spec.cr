@@ -1,6 +1,8 @@
 require "./spec_helper"
 
 describe Grant::Query::Builder(Model) do
+  around_each { |example| with_legacy_implicit_order(example) }
+
   it "stores where_fields" do
     query = builder.where(name: "bob").where(age: 23)
     expected = [{join: :and, field: "name", operator: :eq, value: "bob"}, {join: :and, field: "age", operator: :eq, value: 23}]

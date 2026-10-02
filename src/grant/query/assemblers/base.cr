@@ -311,6 +311,11 @@ module Grant::Query::Assembler
             output << chars[index]
             break if chars[index - 1] == '*' && chars[index] == '/'
           end
+        elsif char == '?' && index + 1 < chars.size && chars[index + 1] == '?'
+          # `??` is the escape for a literal `?` (PostgreSQL's JSONB `?`, `?|`
+          # and `?&` operators), matching `Adapter::Base#ensure_clause_template`.
+          output << '?'
+          index += 1
         elsif char == '?'
           raise ArgumentError.new("Do not mix ? and numbered placeholders in one query clause") if dollar_style
           raise ArgumentError.new("Raw query placeholder count does not match bind values") if question_count >= values.size
@@ -356,7 +361,7 @@ module Grant::Query::Assembler
       order_fields = @query.order_fields
 
       if order_fields.none?
-        if use_default_order
+        if use_default_order && Grant.settings.implicit_order
           if @query.group_fields.any? && @query.group_fields.none? { |expression| expression[:field] == Model.primary_name }
             return nil
           end
@@ -441,6 +446,21 @@ module Grant::Query::Assembler
           s << offset
         end
         sql = "SELECT COUNT(*) FROM (#{distinct_rows_sql}) AS grant_distinct_rows"
+      elsif (@query.limit || @query.offset) && @query.group_fields.empty?
+        # COUNT(*) yields one row, so a LIMIT/OFFSET on it would drop that row.
+        # Count the rows the limited relation returns instead.
+        limited_rows_sql = build_sql do |s|
+          s << "SELECT 1"
+          s << from_clause
+          s << joins
+          s << where
+          s << having
+          s << order(use_default_order: false)
+          # SQLite and MySQL reject OFFSET without LIMIT; Int64::MAX is unbounded.
+          s << (limit || "LIMIT #{Int64::MAX}")
+          s << offset
+        end
+        sql = "SELECT COUNT(*) FROM (#{limited_rows_sql}) AS grant_limited_rows"
       else
         sql = build_sql do |s|
           s << "SELECT COUNT(*)"

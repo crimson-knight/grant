@@ -97,21 +97,6 @@ module Grant::Sharding
     end
   end
 
-  # Helper for time-based range sharding
-  class TimeRangeResolver < RangeResolver
-    def initialize(@key_columns : Array(Symbol), time_ranges : Array(NamedTuple(from: Time, to: Time, shard: Symbol)))
-      # Convert time ranges to string ranges for composite IDs
-      string_ranges = time_ranges.map do |range|
-        {
-          min:   range[:from].to_s("%Y_%m_%d_000000"),
-          max:   range[:to].to_s("%Y_%m_%d_999999"),
-          shard: range[:shard],
-        }
-      end
-      super(@key_columns, string_ranges)
-    end
-  end
-
   # Module for composite ID generation
   module CompositeId
     # Generate a time-based composite ID

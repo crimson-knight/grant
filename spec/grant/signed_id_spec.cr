@@ -107,13 +107,13 @@ describe Grant::SignedId do
 end
 
 # Setup table
-adapter = Grant::Connections[CURRENT_ADAPTER]
-if adapter.is_a?(Grant::Adapter::Base)
-  adapter.exec("DROP TABLE IF EXISTS signed_id_test_models")
+signed_id_adapter = Grant::Connections[CURRENT_ADAPTER]
+if signed_id_adapter.is_a?(Grant::Adapter::Base)
+  signed_id_adapter.open(&.exec("DROP TABLE IF EXISTS signed_id_test_models"))
 
   case CURRENT_ADAPTER
   when "sqlite"
-    adapter.exec(<<-SQL)
+    signed_id_adapter.open(&.exec(<<-SQL))
       CREATE TABLE signed_id_test_models (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT,
@@ -122,7 +122,7 @@ if adapter.is_a?(Grant::Adapter::Base)
       )
     SQL
   when "pg"
-    adapter.exec(<<-SQL)
+    signed_id_adapter.open(&.exec(<<-SQL))
       CREATE TABLE signed_id_test_models (
         id BIGSERIAL PRIMARY KEY,
         name VARCHAR,
@@ -131,7 +131,7 @@ if adapter.is_a?(Grant::Adapter::Base)
       )
     SQL
   when "mysql"
-    adapter.exec(<<-SQL)
+    signed_id_adapter.open(&.exec(<<-SQL))
       CREATE TABLE signed_id_test_models (
         id BIGINT PRIMARY KEY AUTO_INCREMENT,
         name VARCHAR(255),

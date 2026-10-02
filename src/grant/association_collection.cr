@@ -11,7 +11,37 @@ class Grant::AssociationCollection(Owner, Target)
                  @association_name : String? = nil,
                  @loaded_records : Array(Target)? = nil,
                  @through_delete_all : Proc(Int64)? = nil,
-                 @through_source : String? = nil)
+                 @through_source : String? = nil,
+                 @strict_loading_option : Bool? = nil,
+                 @automatic_inverse : Bool = true,
+                 @type_column : String? = nil,
+                 @type_value : String? = nil)
+  end
+
+  # True when the records of this association are cached on the owner.
+  def loaded? : Bool
+    !@loaded_records.nil?
+  end
+
+  # Forgets the cached records so the next read queries again.
+  def reset : self
+    @loaded_records = nil
+    if association_name = @association_name
+      owner.reset_association(association_name)
+    end
+    self
+  end
+
+  # Discards the cached records and loads them again with one query.
+  def reload : self
+    reset
+    all
+    self
+  end
+
+  # Loads the records if they are not loaded yet and returns them.
+  def load_target : Array(Target)
+    all
   end
 
   def all(clause = "", params = [] of DB::Any) : Array(Target)
@@ -27,6 +57,9 @@ class Grant::AssociationCollection(Owner, Target)
                 scope_clause, scope_params, scope_modifiers = scope_fragments
                 sql = [query, scope_clause, clause, scope_modifiers].reject(&.empty?).join(" ")
                 all_params = [owner_key]
+                if (type_column = @type_column) && (type_value = @type_value)
+                  all_params << type_value
+                end
                 scope_params.each { |value| all_params << value }
                 params.each { |value| all_params << value.as(Grant::Columns::Type) }
                 Target.raw_all(sql, all_params)
@@ -35,8 +68,10 @@ class Grant::AssociationCollection(Owner, Target)
 
     Grant::Logs::Association.info { "Loaded has_many association - #{Owner.name} [#{Target.name}] [fk: #{@foreign_key}] - #{results.size} records (#{duration.total_milliseconds}ms)" }
 
-    if inverse = @inverse_of
-      results.each { |record| record.set_loaded_association(inverse.to_s, owner) }
+    inverse = inverse_name
+    results.each do |record|
+      record.set_loaded_association(inverse, owner) if inverse
+      owner._adopt_strict_loading(record, true)
     end
     if clause.empty? && params.empty?
       loaded_records = results.dup
@@ -161,6 +196,9 @@ class Grant::AssociationCollection(Owner, Target)
     record = Target.new
     record.set_attributes(attrs.to_h.transform_keys(&.to_s))
     record.set_attributes({@foreign_key.to_s => owner_key}) if !@through && !owner_key.nil?
+    if (type_column = @type_column) && (type_value = @type_value)
+      record.set_attributes({type_column => type_value})
+    end
     @loaded_records.try do |records|
       records << record unless records.includes?(record)
       sync_loaded_association
@@ -189,6 +227,12 @@ class Grant::AssociationCollection(Owner, Target)
     if key_changed && !owner_key.nil?
       record.write_attribute(@foreign_key.to_s, owner_key)
     end
+    if (type_column = @type_column) && (type_value = @type_value)
+      if record.read_attribute(type_column) != type_value
+        record.write_attribute(type_column, type_value)
+        key_changed = true
+      end
+    end
     record.save! if owner.persisted? && (key_changed || !record.persisted?)
     @loaded_records.try { |records| records << record unless records.includes?(record) }
     sync_loaded_association
@@ -214,6 +258,9 @@ class Grant::AssociationCollection(Owner, Target)
       next unless associated_record
 
       associated_record.write_attribute(@foreign_key.to_s, nil)
+      if type_column = @type_column
+        associated_record.write_attribute(type_column, nil)
+      end
       associated_record.save!
       removed << associated_record
       @loaded_records.try(&.delete(associated_record))
@@ -263,7 +310,7 @@ class Grant::AssociationCollection(Owner, Target)
     if @through
       delete_all
     else
-      all.each { |record| delete(record) }
+      all.dup.each { |record| delete(record) }
     end
     @loaded_records.try(&.clear)
     sync_loaded_association
@@ -297,10 +344,21 @@ class Grant::AssociationCollection(Owner, Target)
   private getter owner
 
   private def set_inverse(record : Target) : Target
-    if inverse = @inverse_of
-      record.set_loaded_association(inverse.to_s, owner)
+    if inverse = inverse_name
+      record.set_loaded_association(inverse, owner)
     end
+    owner._adopt_strict_loading(record, true)
     record
+  end
+
+  # The explicit `inverse_of:` name, or the inverse detected from the models'
+  # keys (see `Grant::Reflection#inverse_of`).
+  private def inverse_name : String?
+    if explicit = @inverse_of
+      explicit.to_s
+    elsif @automatic_inverse && (association_name = @association_name)
+      owner._association_inverse(association_name)
+    end
   end
 
   private def sync_loaded_association : Nil
@@ -312,7 +370,7 @@ class Grant::AssociationCollection(Owner, Target)
   end
 
   private def ensure_lazy_loading_allowed : Nil
-    owner.assert_association_can_lazy_load!(@association_name || Target.name)
+    owner.assert_association_can_lazy_load!(@association_name || Target.name, @strict_loading_option)
   end
 
   private def owner_key : Grant::Columns::Type
@@ -341,7 +399,11 @@ class Grant::AssociationCollection(Owner, Target)
       subquery = "SELECT #{source_key} FROM #{join_table} WHERE #{join_owner_key} = ?"
       relation.where("#{Target.quote(target_key)} IN (#{subquery})", owner_key)
     else
-      relation.where(@foreign_key.to_s, :eq, owner_key)
+      relation = relation.where(@foreign_key.to_s, :eq, owner_key)
+      if (type_column = @type_column) && (type_value = @type_value)
+        relation = relation.where(type_column, :eq, type_value)
+      end
+      relation
     end
   end
 
@@ -400,7 +462,12 @@ class Grant::AssociationCollection(Owner, Target)
 
   private def query : String
     if @through.nil?
-      "WHERE #{Target.quote(Target.table_name)}.#{Target.quote(@foreign_key.to_s)} = ?"
+      type_predicate = if type_column = @type_column
+                         " AND #{Target.quote(Target.table_name)}.#{Target.quote(type_column)} = ?"
+                       else
+                         ""
+                       end
+      "WHERE #{Target.quote(Target.table_name)}.#{Target.quote(@foreign_key.to_s)} = ?#{type_predicate}"
     else
       through_metadata, source_metadata = through_associations
       join_model = through_metadata[:target_class]

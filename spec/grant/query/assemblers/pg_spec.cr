@@ -4,6 +4,8 @@ require "../spec_helper"
         (env("CURRENT_ADAPTER") || "sqlite").id == "sqlite" ||
         (env("CURRENT_ADAPTER") || "sqlite").id == "mysql" %}
   describe Grant::Query::Assembler::Pg(Model) do
+    around_each { |example| with_legacy_implicit_order(example) }
+
     context "count" do
       it "counts for where/count queries" do
         sql = "select count(*) from table where \"name\" = $1"

@@ -28,6 +28,39 @@ module Grant
     # Per-query override: `.in_chunks(of: n)`. See `docs/large_tables.md`.
     property in_clause_limit : Int32 = 1000
 
+    # When true, `Grant::StatementInvalid#binds` holds each bind value (cut to
+    # 64 characters, at most 20 kept) instead of `[FILTERED]`. Leave it off in
+    # production so an exception message or log line cannot leak a secret;
+    # turn it on while configuring a development environment.
+    property? capture_statement_bind_values : Bool = false
+
+    # Role name that `connected_to(role: ...)` treats as the writer. `:primary`,
+    # the role of a model that never chose one, is an alias of it.
+    getter writing_role : Symbol = :writing
+
+    # Role name that `connected_to(role: ...)` treats as the reader. Switching to
+    # it prevents writes, as in ActiveRecord.
+    getter reading_role : Symbol = :reading
+
+    def writing_role=(role : Symbol)
+      raise ArgumentError.new("writing_role must differ from reading_role (got #{role.inspect})") if role == @reading_role
+      @writing_role = role
+    end
+
+    def reading_role=(role : Symbol)
+      raise ArgumentError.new("reading_role must differ from writing_role (got #{role.inspect})") if role == @writing_role
+      @reading_role = role
+    end
+
+    # Legacy implicit ordering. When `true`, an unordered SELECT gets
+    # `ORDER BY <primary key> DESC` appended (Grant's behavior before the
+    # relation-core rework). When `false` (the default), unordered relations
+    # carry no `ORDER BY`, like ActiveRecord; `first`, `last`, the ordinal
+    # finders and `find_each` still order by `implicit_order_column`s and the
+    # primary key. The flag exists for one release so apps that depended on
+    # the newest-first default can opt back in.
+    property implicit_order : Bool = false
+
     def index_hint_mode=(mode : Symbol)
       unless {:warn, :strict, :ignore}.includes?(mode)
         raise ArgumentError.new("index_hint_mode must be :warn, :strict, or :ignore (got #{mode.inspect})")

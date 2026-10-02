@@ -4,7 +4,7 @@ module Grant
   #
   # In the default `:warn` mode this is never raised — the query is re-run
   # without the hint instead (hints change the query plan, never the results).
-  class UnsupportedIndexHintError < Exception
+  class UnsupportedIndexHintError < Grant::ErrorBase
   end
 end
 
@@ -33,8 +33,9 @@ class Grant::Query::Builder(Model)
   # User.where(tenant_id: t).use_index("idx_users_tenant").to_a
   # ```
   def use_index(*names : String) : self
-    @index_hints << Grant::Query::IndexHint.new(:use, names.to_a)
-    self
+    copy = chain_copy
+    copy.own_index_hints << Grant::Query::IndexHint.new(:use, names.to_a)
+    copy
   end
 
   # Force the planner to use the named index (MySQL `FORCE INDEX`). On SQLite
@@ -46,8 +47,9 @@ class Grant::Query::Builder(Model)
   # User.where(tenant_id: t).force_index("idx_users_tenant").to_a
   # ```
   def force_index(*names : String) : self
-    @index_hints << Grant::Query::IndexHint.new(:force, names.to_a)
-    self
+    copy = chain_copy
+    copy.own_index_hints << Grant::Query::IndexHint.new(:force, names.to_a)
+    copy
   end
 
   # Tell the planner to avoid the named index (MySQL `IGNORE INDEX`). SQLite and
@@ -58,8 +60,9 @@ class Grant::Query::Builder(Model)
   # User.where(status: "active").ignore_index("idx_users_status").to_a
   # ```
   def ignore_index(*names : String) : self
-    @index_hints << Grant::Query::IndexHint.new(:ignore, names.to_a)
-    self
+    copy = chain_copy
+    copy.own_index_hints << Grant::Query::IndexHint.new(:ignore, names.to_a)
+    copy
   end
 
   # Returns `true` when this query carries one or more index hints (added via
@@ -89,8 +92,8 @@ class Grant::Query::Builder(Model)
   # plain.index_hints? # => false
   # ```
   protected def without_index_hints : self
-    copy = dup
-    copy.index_hints.clear
+    copy = chain_copy
+    copy.clear_index_hints
     copy
   end
 

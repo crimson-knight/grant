@@ -1,4 +1,5 @@
 require "./association_registry"
+require "./reflection"
 require "./polymorphic"
 require "./association_options"
 
@@ -105,9 +106,14 @@ module Grant::Associations
   # post.user = some_user
   # post.user_id # => some_user.id
   # ```
-  macro belongs_to(model, **options)
+  macro belongs_to(model, scope = nil, **options)
     {% if options[:polymorphic] %}
-      belongs_to_polymorphic({{model}}, {% for key, value in options %}{{key.id}}: {{value}}, {% end %})
+      {% if options[:foreign_key].is_a?(TypeDeclaration) %}
+        column {{options[:foreign_key]}}
+        belongs_to_polymorphic({{model}}, foreign_key_declared: true, {% for key, value in options %}{% if key.stringify == "foreign_key" %}foreign_key: {{value.var.stringify}}, {% else %}{{key.id}}: {{value}}, {% end %}{% end %})
+      {% else %}
+        belongs_to_polymorphic({{model}}, {% for key, value in options %}{{key.id}}: {{value}}, {% end %})
+      {% end %}
     {% else %}
     {% if model.is_a? TypeDeclaration %}
       {% method_name = model.var %}
@@ -133,14 +139,23 @@ module Grant::Associations
     {% inverse_of_bt = options[:inverse_of] %}
 
     @[Grant::Relationship(target: {{class_name.id}}, type: :belongs_to,
-      primary_key: {{primary_key.id}}, foreign_key: {{foreign_key.id}})]
+      primary_key: {{primary_key.id}}, foreign_key: {{foreign_key.id}}, scope: {{scope}})]
     def {{method_name.id}} : {{class_name.id}}?
       if association_loaded?({{method_name.stringify}})
         get_loaded_association({{method_name.stringify}}).as({{class_name.id}}?)
       else
-        assert_association_can_lazy_load!({{method_name.stringify}})
-        if parent = {{class_name.id}}.where({{primary_key_name}}, :eq, {{foreign_key.id}}).first
+        assert_association_can_lazy_load!({{method_name.stringify}}, {{options[:strict_loading]}})
+        relation = {{class_name.id}}.where({{primary_key_name}}, :eq, {{foreign_key.id}})
+        {% if scope.is_a?(ProcLiteral) %}
+          {% if scope.args.empty? %}
+            relation = relation.{{scope.body}}
+          {% else %}
+            relation = {{scope}}.call(relation)
+          {% end %}
+        {% end %}
+        if parent = relation.first
           Grant::Logs::Association.debug { "Loaded belongs_to association - #{self.class.name}.#{{{method_name.stringify}}} [#{{{class_name.id.stringify}}}] [fk: #{{{foreign_key.id.stringify}}} = #{{{foreign_key.id}}}]" }
+          _adopt_strict_loading(parent, false)
         {% if inverse_of_bt %}
           parent.set_loaded_association({{inverse_of_bt.id.stringify}}, self)
         {% end %}
@@ -151,20 +166,24 @@ module Grant::Associations
       end
     end
 
+    def reset_{{method_name.id}} : Nil
+      reset_association({{method_name.stringify}})
+    end
+
+    def reload_{{method_name.id}} : {{class_name.id}}?
+      reload_association({{method_name.stringify}})
+      {{method_name.id}}
+    end
+
     def {{method_name.id}}! : {{class_name.id}}
       if association_loaded?({{method_name.stringify}})
         foreign_value = read_attribute({{foreign_key_name}})
         foreign_value_text = foreign_value.nil? ? "NULL" : foreign_value.to_s
         get_loaded_association({{method_name.stringify}}).as({{class_name.id}}?) || raise Grant::Querying::NotFound.new("No {{class_name.id}} found where #{{{primary_key_name}}} is #{foreign_value_text}")
       else
-        assert_association_can_lazy_load!({{method_name.stringify}})
         foreign_value = read_attribute({{foreign_key_name}})
         foreign_value_text = foreign_value.nil? ? "NULL" : foreign_value.to_s
-        result = {{class_name.id}}.where({{primary_key_name}}, :eq, {{foreign_key.id}}).first || raise Grant::Querying::NotFound.new("No {{class_name.id}} found where #{{{primary_key_name}}} is #{foreign_value_text}")
-      {% if inverse_of_bt %}
-        result.set_loaded_association({{inverse_of_bt.id.stringify}}, self)
-      {% end %}
-        result
+        {{method_name.id}} || raise Grant::Querying::NotFound.new("No {{class_name.id}} found where #{{{primary_key_name}}} is #{foreign_value_text}")
       end
     end
 
@@ -197,6 +216,9 @@ module Grant::Associations
 
     # Populate the runtime association registry so reflection works.
     _grant_register_association({{method_name.id.stringify}}, :belongs_to, {{class_name.id}}, {{foreign_key.id.stringify}}, {{primary_key.id.stringify}}, nil)
+    _grant_register_reflection({{method_name.id.stringify}}, :belongs_to, {{class_name.id}}, {{foreign_key.id.stringify}}, {{primary_key.id.stringify}},
+      nil, nil, nil, nil, {{options[:dependent]}}, {{inverse_of_bt ? inverse_of_bt.id.stringify : nil}}, {{options[:inverse_of] == false}},
+      {{scope ? true : false}}, false, {{options[:strict_loading]}}, {{options.keys.map(&.stringify)}} of String, {{options.values.map(&.stringify)}} of String)
 
     # Handle optional validation
     {% unless options[:optional] %}
@@ -272,7 +294,7 @@ module Grant::Associations
   # user.profile! # => Profile  (raises Grant::Querying::NotFound if absent)
   # user.avatar   # => Avatar? (joined through profiles)
   # ```
-  macro has_one(model, **options)
+  macro has_one(model, scope = nil, **options)
     {% if options[:as] %}
       has_one_polymorphic({{model}}, {{options[:as]}}, {% for key, value in options %}{{key.id}}: {{value}}, {% end %})
     {% elsif options[:through] %}
@@ -290,14 +312,22 @@ module Grant::Associations
       {% foreign_key_name = foreign_key.stringify.gsub(/:/, "").gsub(/"/, "") %}
       {% primary_key_name = primary_key.stringify.gsub(/:/, "").gsub(/"/, "") %}
       {% source = options[:source] || method_name %}
+      # `through:` names an association on this model (ActiveRecord form). A
+      # name that is not an association is read as the join table, the older
+      # form, which only supports the lazy reader.
+      {% through_is_association = false %}
+      {% for candidate in @type.methods %}
+        {% if candidate.name.stringify == through.id.stringify && candidate.annotation(Grant::Relationship) %}
+          {% through_is_association = true %}
+        {% end %}
+      {% end %}
 
       @[Grant::Relationship(target: {{class_name.id}}, type: :has_one,
-        primary_key: {{primary_key.id}}, foreign_key: {{foreign_key.id}})]
+        primary_key: {{primary_key.id}}, foreign_key: {{foreign_key.id}},
+        through: {{through.id}}, source: {{source.id}}, through_association: {{through_is_association}},
+        scope: {{scope}})]
 
-      # Returns the associated record through an intermediate table.
-      #
-      # Uses a JOIN query through the `{{through.id}}` table to find
-      # the single `{{class_name.id}}` record.
+      # Returns the associated record through an intermediate association.
       #
       # ```
       # record = owner.{{method_name.id}}
@@ -306,37 +336,58 @@ module Grant::Associations
         if association_loaded?({{method_name.stringify}})
           get_loaded_association({{method_name.stringify}}).as({{class_name.id}}?)
         else
-          assert_association_can_lazy_load!({{method_name.stringify}})
-          # Build JOIN query through the intermediate table
-          # e.g. SELECT avatars.* FROM avatars
-          #      JOIN profiles ON profiles.avatar_id = avatars.id
-          #      WHERE profiles.user_id = ? LIMIT 1
-          #
-          # The join key is the FK on the join model that references the target.
-          # When an explicit `source:` is given it names that association on the
-          # join model, so the FK is `<source>_id`. Otherwise it derives from
-          # the target class name (or a custom non-"id" primary_key).
-          {% if options[:source] %}
-            key = {{source.id.stringify}} + "_id"
+          assert_association_can_lazy_load!({{method_name.stringify}}, {{options[:strict_loading]}})
+          {% if through_is_association %}
+            # Two IN-style queries (join rows, then the target) through the same
+            # loader `includes` uses, so the lazy and preloaded results agree.
+            _eager_batch_load([self] of Grant::Base, {{method_name.stringify}})
+            get_loaded_association({{method_name.stringify}}).as({{class_name.id}}?)
           {% else %}
-            key = {{primary_key.id.stringify}} == "id" ? "#{{{class_name.id}}.to_s.underscore}_id" : {{primary_key.id.stringify}}
+            # Build JOIN query through the intermediate table
+            # e.g. SELECT avatars.* FROM avatars
+            #      JOIN profiles ON profiles.avatar_id = avatars.id
+            #      WHERE profiles.user_id = ? LIMIT 1
+            #
+            # The join key is the FK on the join model that references the target.
+            # When an explicit `source:` is given it names that association on the
+            # join model, so the FK is `<source>_id`. Otherwise it derives from
+            # the target class name (or a custom non-"id" primary_key).
+            {% if options[:source] %}
+              key = {{source.id.stringify}} + "_id"
+            {% else %}
+              key = {{primary_key.id.stringify}} == "id" ? "#{{{class_name.id}}.to_s.underscore}_id" : {{primary_key.id.stringify}}
+            {% end %}
+            sql = String.build do |s|
+              s << "JOIN #{{{through.id.stringify}}} ON #{{{through.id.stringify}}}.#{key} = #{{{class_name.id}}.table_name}.#{{{class_name.id}}.primary_name} "
+              s << "WHERE #{{{through.id.stringify}}}.#{{{foreign_key.id.stringify}}} = ?"
+            end
+            owner_key = {% if options[:primary_key] %}self.read_attribute({{primary_key_name}}){% else %}self.read_attribute(self.class.primary_name){% end %}
+            result = {{class_name.id}}.first(sql, [owner_key])
+            if result
+              Grant::Logs::Association.debug { "Loaded has_one :through association - #{self.class.name}.#{{{method_name.stringify}}} [#{{{class_name.id.stringify}}}] [through: #{{{through.id.stringify}}}]" }
+              _adopt_strict_loading(result, false)
+            end
+            result
           {% end %}
-          sql = String.build do |s|
-            s << "JOIN #{{{through.id.stringify}}} ON #{{{through.id.stringify}}}.#{key} = #{{{class_name.id}}.table_name}.#{{{class_name.id}}.primary_name} "
-            s << "WHERE #{{{through.id.stringify}}}.#{{{foreign_key.id.stringify}}} = ?"
-          end
-          owner_key = {% if options[:primary_key] %}self.read_attribute({{primary_key_name}}){% else %}self.read_attribute(self.class.primary_name){% end %}
-          result = {{class_name.id}}.first(sql, [owner_key])
-          if result
-            Grant::Logs::Association.debug { "Loaded has_one :through association - #{self.class.name}.#{{{method_name.stringify}}} [#{{{class_name.id.stringify}}}] [through: #{{{through.id.stringify}}}]" }
-          end
-          result
         end
       end
 
-      # Returns the associated record through an intermediate table, raising if not found.
+      # Returns the associated record through an intermediate association, raising if not found.
       def {{method_name}}! : {{class_name}}
         {{method_name}} || raise Grant::Querying::NotFound.new("No #{{{class_name.id.stringify}}} found through #{{{through.id.stringify}}} for #{self.class.name}")
+      end
+
+      def reset_{{method_name.id}} : Nil
+        reset_association({{method_name.stringify}})
+      end
+
+      def reload_{{method_name.id}} : {{class_name.id}}?
+        {% if through_is_association %}
+          reload_association({{method_name.stringify}})
+        {% else %}
+          reset_association({{method_name.stringify}})
+        {% end %}
+        {{method_name.id}}
       end
 
       # Store association metadata
@@ -349,7 +400,10 @@ module Grant::Associations
       }
 
       # Populate the runtime association registry so reflection works.
-      _grant_register_association({{method_name.id.stringify}}, :has_one, {{class_name.id}}, {{foreign_key.id.stringify}}, {{primary_key.id.stringify}}, {{through.id.stringify}})
+      _grant_register_association({{method_name.id.stringify}}, :has_one, {{class_name.id}}, {{foreign_key.id.stringify}}, {{primary_key.id.stringify}}, {{through.id.stringify}}, {{source.id.stringify}})
+      _grant_register_reflection({{method_name.id.stringify}}, :has_one, {{class_name.id}}, {{foreign_key.id.stringify}}, {{primary_key.id.stringify}},
+        nil, nil, {{through.id.stringify}}, {{source.id.stringify}}, nil, nil, {{options[:inverse_of] == false}},
+        {{scope ? true : false}}, false, {{options[:strict_loading]}}, {{options.keys.map(&.stringify)}} of String, {{options.values.map(&.stringify)}} of String)
     {% else %}
     {% if model.is_a? TypeDeclaration %}
       {% method_name = model.var %}
@@ -370,7 +424,7 @@ module Grant::Associations
     {% primary_key_name = primary_key.stringify.gsub(/:/, "").gsub(/"/, "") %}
 
     @[Grant::Relationship(target: {{class_name.id}}, type: :has_one,
-      primary_key: {{primary_key.id}}, foreign_key: {{foreign_key.id}})]
+      primary_key: {{primary_key.id}}, foreign_key: {{foreign_key.id}}, scope: {{scope}})]
 
     {% inverse_of = options[:inverse_of] %}
 
@@ -382,17 +436,30 @@ module Grant::Associations
         {% end %}
         loaded
       else
-        assert_association_can_lazy_load!({{method_name.stringify}})
+        assert_association_can_lazy_load!({{method_name.stringify}}, {{options[:strict_loading]}})
         owner_key = {% if options[:primary_key] %}self.read_attribute({{primary_key_name}}){% else %}self.read_attribute(self.class.primary_name){% end %}
-        result = {{class_name.id}}.where({{foreign_key_name}}, :eq, owner_key).first
+        relation = {{class_name.id}}.where({{foreign_key_name}}, :eq, owner_key)
+        {% if scope.is_a?(ProcLiteral) %}
+          {% if scope.args.empty? %}
+            relation = relation.{{scope.body}}
+          {% else %}
+            relation = {{scope}}.call(relation)
+          {% end %}
+        {% end %}
+        result = relation.first
         set_loaded_association({{method_name.stringify}}, result)
         if result
           {% if options[:autosave] %}
             @_{{method_name.id}}_for_autosave = result
           {% end %}
           Grant::Logs::Association.debug { "Loaded has_one association - #{self.class.name}.#{{{method_name.stringify}}} [#{{{class_name.id.stringify}}}] [fk: #{{{foreign_key.id.stringify}}} = #{owner_key}]" }
+          _adopt_strict_loading(result, false)
           {% if inverse_of %}
             result.set_loaded_association({{inverse_of.id.stringify}}, self)
+          {% elsif options[:inverse_of] != false %}
+            if detected_inverse = _association_inverse({{method_name.stringify}})
+              result.set_loaded_association(detected_inverse, self)
+            end
           {% end %}
         end
         result
@@ -400,17 +467,12 @@ module Grant::Associations
     end
 
     def {{method_name}}! : {{class_name}}
-      if association_loaded?({{method_name.stringify}})
-        get_loaded_association({{method_name.stringify}}).as({{class_name.id}}?) || raise Grant::Querying::NotFound.new("No {{class_name.id}} found")
-      else
-        assert_association_can_lazy_load!({{method_name.stringify}})
-        owner_value = {% if options[:primary_key] %}self.read_attribute({{primary_key_name}}){% else %}self.read_attribute(self.class.primary_name){% end %}
-        result = {{class_name.id}}.where({{foreign_key_name}}, :eq, owner_value).first || raise Grant::Querying::NotFound.new("No {{class_name.id}} found where #{{{foreign_key_name}}} = #{owner_value}")
-      {% if inverse_of %}
-        result.set_loaded_association({{inverse_of.id.stringify}}, self)
-      {% end %}
-        result
-      end
+      was_loaded = association_loaded?({{method_name.stringify}})
+      result = {{method_name}}
+      return result if result
+      raise Grant::Querying::NotFound.new("No {{class_name.id}} found") if was_loaded
+      owner_value = {% if options[:primary_key] %}self.read_attribute({{primary_key_name}}){% else %}self.read_attribute(self.class.primary_name){% end %}
+      raise Grant::Querying::NotFound.new("No {{class_name.id}} found where #{{{foreign_key_name}}} = #{owner_value}")
     end
 
     def {{method_name}}=(child : {{class_name.id}}?)
@@ -421,6 +483,15 @@ module Grant::Associations
       end
       set_loaded_association({{method_name.stringify}}, child)
       @_{{method_name.id}}_for_autosave = child
+    end
+
+    def reset_{{method_name.id}} : Nil
+      reset_association({{method_name.stringify}})
+    end
+
+    def reload_{{method_name.id}} : {{class_name.id}}?
+      reload_association({{method_name.stringify}})
+      {{method_name.id}}
     end
 
     # Store association metadata
@@ -434,6 +505,9 @@ module Grant::Associations
 
     # Populate the runtime association registry so reflection works.
     _grant_register_association({{method_name.id.stringify}}, :has_one, {{class_name.id}}, {{foreign_key.id.stringify}}, {{primary_key.id.stringify}}, nil)
+    _grant_register_reflection({{method_name.id.stringify}}, :has_one, {{class_name.id}}, {{foreign_key.id.stringify}}, {{primary_key.id.stringify}},
+      nil, nil, nil, nil, {{options[:dependent]}}, {{inverse_of ? inverse_of.id.stringify : nil}}, {{options[:inverse_of] == false}},
+      {{scope ? true : false}}, false, {{options[:strict_loading]}}, {{options.keys.map(&.stringify)}} of String, {{options.values.map(&.stringify)}} of String)
 
     # Handle dependent option
     {% if options[:dependent] %}
@@ -601,10 +675,14 @@ module Grant::Associations
     {% source = options[:source] || singular_name.id %}
     @[Grant::Relationship(target: {{class_name.id}}, through: {{through.id}}, type: :has_many,
       primary_key: {{primary_key.id}}, foreign_key: {{foreign_key.id}}, source: {{source.id}},
-      owner_primary_key: {{primary_key.id}})]
+      owner_primary_key: {{primary_key.id}}, scope: {{scope}})]
     def {{method_name.id}}
       {% if scope %}
-        scope_proc = ->(q : Grant::Query::Builder({{class_name.id}})) { q.{{scope.body}} }
+        {% if scope.args.empty? %}
+          scope_proc = ->(q : Grant::Query::Builder({{class_name.id}})) { q.{{scope.body}} }
+        {% else %}
+          scope_proc = {{scope}}
+        {% end %}
       {% else %}
         scope_proc = nil
       {% end %}
@@ -630,9 +708,20 @@ module Grant::Associations
       end
       Grant::AssociationCollection(self, {{class_name.id}}).new(
         self, {{foreign_key}}, {{through}}, {{options[:primary_key] ? primary_key : nil}},
-        {{inverse_of}}, scope_proc, {{method_name.stringify}}, loaded_records, through_delete_all,
-        {{through ? source.id.stringify : nil}}
+        {{inverse_of ? inverse_of : nil}}, scope_proc, {{method_name.stringify}}, loaded_records, through_delete_all,
+        {{through ? source.id.stringify : nil}},
+        strict_loading_option: {{options[:strict_loading]}},
+        automatic_inverse: {{options[:inverse_of] != false && !through}}
       )
+    end
+
+    def reset_{{method_name.id}} : Nil
+      reset_association({{method_name.stringify}})
+    end
+
+    def reload_{{method_name.id}}
+      reload_association({{method_name.stringify}})
+      {{method_name.id}}
     end
 
     # Collection of associated primary keys, e.g. `user.post_ids`.
@@ -680,6 +769,9 @@ module Grant::Associations
 
     # Populate the runtime association registry so reflection works.
     _grant_register_association({{method_name.id.stringify}}, :has_many, {{class_name.id}}, {{foreign_key.id.stringify}}, {{primary_key.id.stringify}}, {{through ? through.id.stringify : nil}}, {{through ? source.id.stringify : nil}})
+    _grant_register_reflection({{method_name.id.stringify}}, :has_many, {{class_name.id}}, {{foreign_key.id.stringify}}, {{primary_key.id.stringify}},
+      nil, nil, {{through ? through.id.stringify : nil}}, {{through ? source.id.stringify : nil}}, {{options[:dependent]}}, {{inverse_of ? inverse_of.id.stringify : nil}}, {{options[:inverse_of] == false}},
+      {{scope ? true : false}}, false, {{options[:strict_loading]}}, {{options.keys.map(&.stringify)}} of String, {{options.values.map(&.stringify)}} of String)
 
     # Handle dependent option
     {% if options[:dependent] %}
@@ -729,6 +821,24 @@ module Grant::Associations
   # ```
   macro association_metadata(name)
     self.class._{{name.id}}_association_meta
+  end
+
+  # Records the full `Grant::Reflection` of an association so
+  # `reflect_on_association` can describe it. Emitted by every association
+  # macro, polymorphic ones included.
+  macro _grant_register_reflection(name, macro_name, target_class, foreign_key, primary_key, type_column, polymorphic_as, through, source, dependent, inverse_of, inverse_disabled, scoped, polymorphic, strict_loading, option_keys, option_values)
+    Grant::AssociationRegistry.register_reflection(
+      Grant::Reflection.new(
+        {{@type.name.stringify}}, {{name}}, {{macro_name}}, {{target_class.id}}, {{target_class.id}}.name,
+        {{foreign_key}}, {{primary_key}},
+        foreign_type: {{type_column}}, polymorphic_as: {{polymorphic_as}},
+        through: {{through}}, source: {{source}}, dependent: {{dependent}},
+        inverse_of_name: {{inverse_of}}, inverse_disabled: {{inverse_disabled}},
+        scoped: {{scoped}}, polymorphic: {{polymorphic}}, strict_loading_option: {{strict_loading}},
+        options: { {% for key, index in option_keys %}{{key}} => {{option_values[index]}}, {% end %} } of String => String
+      ),
+      {{@type}}
+    )
   end
 
   # Registers association metadata into the runtime `AssociationRegistry` so that

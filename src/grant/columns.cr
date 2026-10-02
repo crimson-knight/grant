@@ -161,7 +161,7 @@ module Grant::Columns
         {% else %}
           # Store the raw value for dirty tracking
           raw_value = @{{column.name.id}}
-          dirty_tracking_hashes[0][{{column_name}}] = raw_value.is_a?(Grant::Base::DirtyValue) ? raw_value : raw_value.to_s.as(Grant::Base::DirtyValue)
+          dirty_tracking_hashes[0][{{column_name}}] = baseline_dirty_value({{column_name}}, raw_value.is_a?(Grant::Base::DirtyValue) ? raw_value : raw_value.to_s.as(Grant::Base::DirtyValue))
         {% end %}
       {% end %}
     end
@@ -246,6 +246,39 @@ module Grant::Columns
       will_save_change_to_attribute?({{decl.var.stringify}}, from: from, to: to)
     end
 
+    # Thin delegators to the name-keyed methods in `Grant::Dirty`.
+    def saved_change_to_{{decl.var.id}}?(*, from = Grant::Dirty::UNFILTERED, to = Grant::Dirty::UNFILTERED) : Bool
+      saved_change_to_attribute?({{decl.var.stringify}}, from: from, to: to)
+    end
+
+    def saved_change_to_{{decl.var.id}} : Tuple(Grant::Base::DirtyValue, Grant::Base::DirtyValue)?
+      saved_change_to_attribute({{decl.var.stringify}})
+    end
+
+    def {{decl.var.id}}_previously_changed?(*, from = Grant::Dirty::UNFILTERED, to = Grant::Dirty::UNFILTERED) : Bool
+      saved_change_to_attribute?({{decl.var.stringify}}, from: from, to: to)
+    end
+
+    def {{decl.var.id}}_previously_was : Grant::Base::DirtyValue
+      attribute_previously_was({{decl.var.stringify}})
+    end
+
+    def {{decl.var.id}}_in_database : Grant::Base::DirtyValue
+      attribute_in_database({{decl.var.stringify}})
+    end
+
+    def {{decl.var.id}}_change_to_be_saved : Tuple(Grant::Base::DirtyValue, Grant::Base::DirtyValue)?
+      attribute_change_to_be_saved({{decl.var.stringify}})
+    end
+
+    def restore_{{decl.var.id}}! : Nil
+      restore_attribute!({{decl.var.stringify}})
+    end
+
+    def {{decl.var.id}}_will_change! : Nil
+      attribute_will_change!({{decl.var.stringify}})
+    end
+
     {% if nilable || primary %}
       def {{decl.var.id}}=(value : {{not_nilable_type}}?)
         # Dirty tracking compares assignments against the initialized baseline.
@@ -310,6 +343,7 @@ module Grant::Columns
       # user.{{decl.var.id}}_changed? # => true
       # ```
       def {{decl.var.id}}_changed? : Bool
+        refresh_dirty
         ensure_dirty_tracking_initialized
         dirty_tracking_hashes[1].has_key?({{decl.var.stringify}})
       end
@@ -325,6 +359,7 @@ module Grant::Columns
       # user.{{decl.var.id}}_was # => original_value
       # ```
       def {{decl.var.id}}_was : {{not_nilable_type}}?
+        refresh_dirty
         ensure_dirty_tracking_initialized
         if dirty_tracking_hashes[1].has_key?({{decl.var.stringify}})
           dirty_tracking_hashes[1][{{decl.var.stringify}}][0].as({{not_nilable_type}}?)
@@ -343,6 +378,7 @@ module Grant::Columns
       # user.{{decl.var.id}}_change # => {"old value", "new value"}
       # ```
       def {{decl.var.id}}_change : Tuple({{not_nilable_type}}?, {{not_nilable_type}}?)?
+        refresh_dirty
         ensure_dirty_tracking_initialized
         if change = dirty_tracking_hashes[1][{{decl.var.stringify}}]?
           {change[0].as({{not_nilable_type}}?), change[1].as({{not_nilable_type}}?)}
@@ -425,6 +461,7 @@ module Grant::Columns
       # user.{{decl.var.id}}_changed? # => true
       # ```
       def {{decl.var.id}}_changed? : Bool
+        refresh_dirty
         ensure_dirty_tracking_initialized
         dirty_tracking_hashes[1].has_key?({{decl.var.stringify}})
       end
@@ -440,6 +477,7 @@ module Grant::Columns
       # user.{{decl.var.id}}_was # => original_value
       # ```
       def {{decl.var.id}}_was : {{type.id}}
+        refresh_dirty
         ensure_dirty_tracking_initialized
         if dirty_tracking_hashes[1].has_key?({{decl.var.stringify}})
           dirty_tracking_hashes[1][{{decl.var.stringify}}][0].as({{type.id}})
@@ -458,6 +496,7 @@ module Grant::Columns
       # user.{{decl.var.id}}_change # => {"old value", "new value"}
       # ```
       def {{decl.var.id}}_change : Tuple({{type.id}}, {{type.id}})?
+        refresh_dirty
         ensure_dirty_tracking_initialized
         if change = dirty_tracking_hashes[1][{{decl.var.stringify}}]?
           {change[0].as({{type.id}}), change[1].as({{type.id}})}
@@ -666,7 +705,7 @@ module Grant::Columns
       {% else %}
         # Store the raw value for dirty tracking
         raw_value = @{{column.name.id}}
-        dirty_tracking_hashes[0][{{column_name}}] = raw_value.is_a?(Grant::Base::DirtyValue) ? raw_value : raw_value.to_s.as(Grant::Base::DirtyValue)
+        dirty_tracking_hashes[0][{{column_name}}] = baseline_dirty_value({{column_name}}, raw_value.is_a?(Grant::Base::DirtyValue) ? raw_value : raw_value.to_s.as(Grant::Base::DirtyValue))
       {% end %}
     {% end %}
   end

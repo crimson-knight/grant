@@ -1,10 +1,13 @@
 module Grant::Querying
   alias IdValue = Int32 | Int64 | Float32 | Float64 | String
 
-  class NotFound < Exception
+  # Raised by `first!`, `take!`, `sole`, the ordinal bang finders and friends
+  # when no record matches.
+  class NotFound < Grant::RecordNotFound
   end
 
-  class NotUnique < Exception
+  # Raised by `sole`/`find_sole_by` when more than one record matches.
+  class NotUnique < Grant::ErrorBase
   end
 
   class ScopedRawSqlError < Grant::ErrorBase
@@ -184,9 +187,9 @@ module Grant::Querying
               clean_clause = clean_clause[6..-1] # Remove "WHERE " prefix
             end
             if params.empty?
-              query.where(clean_clause)
+              query = query.where(clean_clause)
             else
-              query.where(clean_clause, params.first)
+              query = query.where(clean_clause, params.first)
             end
           end
           query.select
@@ -228,15 +231,12 @@ module Grant::Querying
               clean_clause = clean_clause[6..-1] # Remove "WHERE " prefix
             end
             if params.empty?
-              query.where(clean_clause)
+              query = query.where(clean_clause)
             else
-              query.where(clean_clause, params.first)
+              query = query.where(clean_clause, params.first)
             end
           end
-          if query.order_fields.empty?
-            query.order_fields << {field: primary_name, direction: Grant::Query::Builder::Sort::Ascending}
-          end
-          query.limit(1).select.first?
+          query.first
         end
       else
         all([clause.strip, "LIMIT 1"].join(" "), params, false).first?
@@ -337,9 +337,9 @@ module Grant::Querying
               clean_clause = clean_clause[6..-1] # Remove "WHERE " prefix
             end
             if params.empty?
-              query.where(clean_clause)
+              query = query.where(clean_clause)
             else
-              query.where(clean_clause, params.first)
+              query = query.where(clean_clause, params.first)
             end
           end
           results = query.select.to_a
@@ -513,7 +513,8 @@ module Grant::Querying
       loop do
         ordered_clause = clause.strip
         unless ordered_clause.upcase.includes?("ORDER BY")
-          order_clause = "ORDER BY #{quote(primary_name)} ASC"
+          order_columns = (implicit_order_columns + [primary_name]).uniq
+          order_clause = "ORDER BY #{order_columns.map { |column| "#{quote(column)} ASC" }.join(", ")}"
           ordered_clause = [ordered_clause, order_clause].reject(&.empty?).join(" ")
         end
         results = all "#{ordered_clause} LIMIT ? OFFSET ?", params + [limit, offset], false
@@ -662,6 +663,7 @@ module Grant::Querying
     {% end %}
 
     self.new_record = false
+    clear_loaded_associations
     ensure_dirty_tracking_initialized
     original_attributes, changed_attributes, previous_changes = dirty_tracking_hashes
     original_attributes.clear

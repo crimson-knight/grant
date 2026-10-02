@@ -23,7 +23,7 @@ describe "custom select" do
       model.save!
     end
 
-    viewmodel = ArticleViewModel.all
+    viewmodel = ArticleViewModel.all.to_a
     viewmodel.first.articlebody.should eq "The Article Body"
     viewmodel.first.commentbody.should eq "The Comment Body"
   end

@@ -1,18 +1,12 @@
 module Grant::Locking
-  class LockWaitTimeoutError < Exception
-    def initialize(message = "Lock wait timeout exceeded")
-      super(message)
-    end
-  end
+  # Historical names for the statement errors the adapters raise. They are the
+  # same classes as `Grant::LockWaitTimeout` and `Grant::Deadlocked`.
+  alias LockWaitTimeoutError = Grant::LockWaitTimeout
+  alias DeadlockError = Grant::Deadlocked
 
-  class LockNotAvailableError < Exception
+  # Raised when a lock mode cannot be expressed on the current adapter.
+  class LockNotAvailableError < Grant::ErrorBase
     def initialize(message = "Could not obtain lock")
-      super(message)
-    end
-  end
-
-  class DeadlockError < Exception
-    def initialize(message = "Deadlock detected")
       super(message)
     end
   end

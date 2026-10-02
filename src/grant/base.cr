@@ -4,6 +4,7 @@ require "./loaded_association_collection"
 require "./associations"
 require "./callbacks"
 require "./columns"
+require "./dirty"
 require "./columns_helpers"
 require "./query/executors/base"
 require "./query/**"
@@ -55,6 +56,7 @@ abstract class Grant::Base
   include Associations
   include Callbacks
   include Columns
+  include Dirty
   include Tables
   include Transactions
   include Validators
@@ -83,6 +85,7 @@ abstract class Grant::Base
   # Auto-register class for polymorphic associations will be handled in the main inherited macro
 
   extend Columns::ClassMethods
+  extend Dirty::ClassMethods
   extend Tables::ClassMethods
   extend Grant::Migrator::ClassMethods
 
@@ -189,16 +192,28 @@ abstract class Grant::Base
   end
 
   macro inherited
-    # Connection settings belong to each model class. Copy the parent values
-    # when a subclass is declared so a later `connects_to` on another model
-    # cannot change this class's database, role map, or shard map.
-    self.database_name = {{@type.superclass}}.database_name
-    self.connection_config = {{@type.superclass}}.connection_config.dup
-    inherited_shard_config = {} of Symbol => Hash(Symbol, String)
-    {{@type.superclass}}.shard_config.each do |shard, config|
-      inherited_shard_config[shard] = config.dup
+    # Connection settings belong to each model class and resolve through the
+    # superclass chain when read, so a `connects_to` on a parent (usually an
+    # abstract class) reaches subclasses declared before and after it.
+    # :nodoc:
+    def self.default_database_name : String
+      @@own_default_database_name || {{@type.superclass}}.default_database_name
     end
-    self.shard_config = inherited_shard_config
+
+    # :nodoc:
+    def self.connection_config : Hash(Symbol, String)
+      @@own_connection_config || {{@type.superclass}}.connection_config
+    end
+
+    # :nodoc:
+    def self.shard_config : Hash(Symbol, Hash(Symbol, String))
+      @@own_shard_config || {{@type.superclass}}.shard_config
+    end
+
+    # :nodoc:
+    def self.__connection_owned_by?(owner : String) : Bool
+      owner == {{@type.name.stringify}} || {{@type.superclass}}.__connection_owned_by?(owner)
+    end
 
     # Keep this method concrete per model. A shared class method invoked through
     # `Grant::Base.class` gives `self` a union of model classes; dispatching a
@@ -226,19 +241,17 @@ abstract class Grant::Base
 
       if !_unscoped? && _has_default_scope?
         query = apply_default_scope(query)
-        query.default_scope_where_fields.concat(query.where_fields)
-        query.where_fields.clear
+        query = query.promote_where_to_default_scope
       end
 
       if __sti_model? && !sti_root_class?
         names = sti_names_for_query
-        if names.size == 1
-          query.where(inheritance_column, :eq, names.first)
-        else
-          query.where(inheritance_column, :in, names)
-        end
-        query.default_scope_where_fields.concat(query.where_fields)
-        query.where_fields.clear
+        query = if names.size == 1
+                  query.where(inheritance_column, :eq, names.first)
+                else
+                  query.where(inheritance_column, :in, names)
+                end
+        query = query.promote_where_to_default_scope
       end
 
       query
@@ -347,6 +360,12 @@ abstract class Grant::Base
       @[JSON::Field(ignore: true)]
       @[YAML::Field(ignore: true)]
       @previous_changes : Hash(String, Tuple(DirtyValue, DirtyValue))?
+
+      # Attributes flagged by `attribute_will_change!`; their pending change is
+      # re-read on demand so in-place edits after the flag are reflected.
+      @[JSON::Field(ignore: true)]
+      @[YAML::Field(ignore: true)]
+      @forced_changes : Set(String)?
     {% else %}
       # Deeper subclass (STI): regenerate per-subclass JSON/YAML serializers so
       # they see this concrete model's own (inherited + added) column ivars,
@@ -359,6 +378,11 @@ abstract class Grant::Base
 
     # Auto-register for polymorphic associations
     Grant::Polymorphic.register_polymorphic_type({{@type.name.stringify}}, {{@type}})
+
+    # The names flagged by `attribute_will_change!`, created on first use.
+    private def forced_change_names : Set(String)
+      @forced_changes ||= Set(String).new
+    end
 
     # Ensure dirty tracking hashes are initialized
     private def ensure_dirty_tracking_initialized
@@ -511,8 +535,7 @@ abstract class Grant::Base
     # user.changed? # => false
     # ```
     def changed? : Bool
-      ensure_dirty_tracking_initialized
-      !dirty_tracking_hashes[1].empty?
+      has_changes_to_save?
     end
     
     # Returns a hash of all changed attributes with their original and new values.
@@ -531,6 +554,7 @@ abstract class Grant::Base
     # # => {"name" => {"John", "Jane"}, "age" => {25, 26}}
     # ```
     def changes
+      refresh_dirty
       ensure_dirty_tracking_initialized
       dirty_tracking_hashes[1].dup
     end
@@ -545,6 +569,7 @@ abstract class Grant::Base
     # user.changed_attributes # => ["name", "email"]
     # ```
     def changed_attributes
+      refresh_dirty
       ensure_dirty_tracking_initialized
       dirty_tracking_hashes[1].keys
     end
@@ -588,6 +613,7 @@ abstract class Grant::Base
     # user.attribute_changed?("email") # => false
     # ```
     def attribute_changed?(name : String | Symbol) : Bool
+      refresh_dirty
       ensure_dirty_tracking_initialized
       dirty_tracking_hashes[1].has_key?(name.to_s)
     end
@@ -605,6 +631,7 @@ abstract class Grant::Base
     # user.attribute_was(:email)  # => "john@example.com" (unchanged)
     # ```
     def attribute_was(name : String | Symbol)
+      refresh_dirty
       ensure_dirty_tracking_initialized
       name_str = name.to_s
       if dirty_tracking_hashes[1].has_key?(name_str)
@@ -627,10 +654,8 @@ abstract class Grant::Base
     #   end
     # end
     # ```
-    def saved_change_to_attribute?(name : String | Symbol) : Bool
-      ensure_dirty_tracking_initialized
-      dirty_tracking_hashes[2].has_key?(name.to_s)
-    end
+    # `saved_change_to_attribute?`, `saved_change_to_attribute` and the other
+    # after-save readers live in `Grant::Dirty`.
 
     # Returns `true` when *name* has a pending change that the next save will
     # write. Optional `from:` and `to:` filters compare against the original and
@@ -664,6 +689,7 @@ abstract class Grant::Base
     end
 
     private def current_attribute_change(name : String | Symbol)
+      refresh_dirty
       ensure_dirty_tracking_initialized
       dirty_tracking_hashes[1][name.to_s]?
     end
@@ -716,6 +742,7 @@ abstract class Grant::Base
     # user.age # => 25
     # ```
     def restore_attributes(attributes : Array(String)? = nil)
+      refresh_dirty
       ensure_dirty_tracking_initialized
       attrs = attributes || dirty_tracking_hashes[1].keys
       
@@ -730,11 +757,13 @@ abstract class Grant::Base
       # Clear the changes for the attributes being restored
       attrs.each do |attr|
         dirty_tracking_hashes[1].delete(attr)
+        @forced_changes.try &.delete(attr)
       end
       
-      # Restore the values using write_attribute
+      # Restore the values using write_attribute; a snapshot is written so the
+      # restored column never aliases the stored baseline.
       changes_to_restore.each do |attr, change|
-        write_attribute(attr, change[0])
+        write_attribute(attr, snapshot_dirty_value(change[0]))
         # Remove the change that write_attribute just added
         dirty_tracking_hashes[1].delete(attr)
       end
@@ -742,9 +771,11 @@ abstract class Grant::Base
     
     # Clear dirty state after save
     private def clear_dirty_state
+      refresh_dirty
       ensure_dirty_tracking_initialized
       @previous_changes = dirty_tracking_hashes[1].dup
       dirty_tracking_hashes[1].clear
+      @forced_changes.try &.clear
       dirty_tracking_hashes[0].clear
       @new_record = false
       
@@ -758,13 +789,16 @@ abstract class Grant::Base
       ensure_dirty_tracking_initialized
       attribute_names.each do |attribute_name|
         dirty_tracking_hashes[1].delete(attribute_name)
-        dirty_tracking_hashes[0][attribute_name] = read_attribute(attribute_name).as(DirtyValue)
+        @forced_changes.try &.delete(attribute_name)
+        # A watched column keeps a copy, so a later in-place edit of the live
+        # value is still detected.
+        dirty_tracking_hashes[0][attribute_name] = baseline_dirty_value(attribute_name, read_attribute(attribute_name).as(DirtyValue))
       end
     end
     
     # This will be overridden in each model to capture all column values
     protected def capture_original_attributes
-      # Implemented in each model via macro
+      capture_mutation_baselines
     end
   end
 end

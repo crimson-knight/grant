@@ -7,7 +7,7 @@ describe Grant::Query::BuilderMethods do
         review1 = Review.create(name: "one")
         review2 = Review.create(name: "two")
 
-        found = Review.where(id: [review1.id, review2.id]).select
+        found = Review.where(id: [review1.id, review2.id]).order(id: :desc).select
         found[0].id.should eq review2.id
         found[1].id.should eq review1.id
       end
@@ -16,7 +16,7 @@ describe Grant::Query::BuilderMethods do
         review1 = Review.create(name: "one")
         review2 = Review.create(name: "two")
 
-        found = Review.where(name: ["one", "two"]).and(id: [review1.id, review2.id]).select
+        found = Review.where(name: ["one", "two"]).and(id: [review1.id, review2.id]).order(id: :desc).select
         found[0].id.should eq review2.id
         found[1].id.should eq review1.id
       end
@@ -25,11 +25,11 @@ describe Grant::Query::BuilderMethods do
         review1 = Review.create(name: "one")
         review2 = Review.create(name: "two")
 
-        found = Review.where(id: [1001, 1002]).or(name: ["one", "two"]).select
+        found = Review.where(id: [1001, 1002]).or(name: ["one", "two"]).order(id: :desc).select
         found[0].id.should eq review2.id
         found[1].id.should eq review1.id
 
-        found = Review.where(name: ["one", "two"]).or(id: [1001, 1002]).select
+        found = Review.where(name: ["one", "two"]).or(id: [1001, 1002]).order(id: :desc).select
         found[0].id.should eq review2.id
         found[1].id.should eq review1.id
       end
@@ -38,14 +38,14 @@ describe Grant::Query::BuilderMethods do
         Review.create(name: "one")
         Review.create(name: "two")
 
-        found = Review.where(id: [1001, 1002]).select
+        found = Review.where(id: [1001, 1002]).order(id: :desc).select
         found.size.should eq 0
       end
       it "correctly queries string fields" do
         review1 = Review.create(name: "one")
         review2 = Review.create(name: "two")
 
-        found = Review.where(name: ["one", "two"]).select
+        found = Review.where(name: ["one", "two"]).order(id: :desc).select
         found[0].id.should eq review2.id
         found[1].id.should eq review1.id
       end
@@ -55,7 +55,7 @@ describe Grant::Query::BuilderMethods do
         review1 = Review.create(name: "one", downvotes: 99)
         review2 = Review.create(name: "two", downvotes: -4)
 
-        found = Review.where(downvotes: [99, -4]).select
+        found = Review.where(downvotes: [99, -4]).order(id: :desc).select
         found[0].id.should eq review2.id
         found[1].id.should eq review1.id
       end
@@ -67,7 +67,7 @@ describe Grant::Query::BuilderMethods do
           Review.create(name: "one", published: true)
           review2 = Review.create(name: "two", published: false)
 
-          found = Review.where(published: [false]).select
+          found = Review.where(published: [false]).order(id: :desc).select
 
           found.size.should eq 1
           found[0].id.should eq review2.id
@@ -78,7 +78,7 @@ describe Grant::Query::BuilderMethods do
           Review.create(name: "one", published: true)
           review2 = Review.create(name: "two", published: false)
 
-          found = Review.where(published: [false]).select
+          found = Review.where(published: [false]).order(id: :desc).select
           found.size.should eq 1
           found[0].id.should eq review2.id
         end

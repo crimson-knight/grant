@@ -51,14 +51,14 @@ module Grant::STI
 
   # Raised when a `type` value in the database does not map to a registered
   # STI subclass.
-  class SubclassNotFound < Exception; end
+  class SubclassNotFound < Grant::ErrorBase; end
 
   # Raised when code attempts to write the inheritance column directly on a
   # persisted record. Use `becomes!` to change a record's type.
-  class ImmutableTypeError < Exception; end
+  class ImmutableTypeError < Grant::ErrorBase; end
 
   # Raised when an STI type cast / conversion fails.
-  class TypeCastingError < Exception; end
+  class TypeCastingError < Grant::ErrorBase; end
 
   # Hook invoked when a root model does `include Grant::STI`.
   #
@@ -142,15 +142,8 @@ module Grant::STI
 
     macro inherited
       # STI descendants share the root model's connection configuration and
-      # table. Keep their database/role/shard settings isolated from later
-      # configuration changes on unrelated model classes.
-      self.database_name = {{@type.superclass}}.database_name
-      self.connection_config = {{@type.superclass}}.connection_config.dup
-      inherited_shard_config = {} of Symbol => Hash(Symbol, String)
-      {{@type.superclass}}.shard_config.each do |shard, config|
-        inherited_shard_config[shard] = config.dup
-      end
-      self.shard_config = inherited_shard_config
+      # table; the connection settings resolve through the superclass chain in
+      # the base `inherited` macro.
 
       # Register every descendant for runtime type resolution. NOTE the escaped
       # interpolation below: this is a `macro inherited` nested inside `macro
@@ -286,6 +279,13 @@ module Grant::STI
     # ```
     def base_class
       sti_root
+    end
+
+    # The name stored in the type column of a polymorphic association pointing
+    # at this class: the STI root's name, so every member of the hierarchy is
+    # found through one association (ActiveRecord's `polymorphic_name`).
+    def polymorphic_name : String
+      sti_root.name
     end
 
     # Resolves a `type` column value (*type_name*) to its registered subclass and

@@ -117,7 +117,7 @@ module Grant::Transactions
         if instance.errors.empty?
           instance.errors << Grant::Error.new(:base, "Save was halted before the record was persisted.")
         end
-        raise Grant::RecordNotSaved.new(self.name, instance)
+        raise instance.save_failure_error
       end
 
       instance
@@ -166,7 +166,7 @@ module Grant::Transactions
           end
         end
       {% end %}
-    rescue ex : Grant::Transaction::ReadOnlyError
+    rescue ex : Grant::Transaction::ReadOnlyError | Grant::StatementInvalid
       raise ex
     rescue err
       raise DB::Error.new(err.message, cause: err)
@@ -210,7 +210,7 @@ module Grant::Transactions
           end
         end
       {% end %}
-    rescue ex : Grant::Transaction::ReadOnlyError
+    rescue ex : Grant::Transaction::ReadOnlyError | Grant::StatementInvalid
       raise ex
     rescue err
       raise DB::Error.new(err.message, cause: err)
@@ -252,7 +252,7 @@ module Grant::Transactions
           end
         end
       {% end %}
-    rescue ex : Grant::Transaction::ReadOnlyError
+    rescue ex : Grant::Transaction::ReadOnlyError | Grant::StatementInvalid
       raise ex
     rescue err
       raise DB::Error.new(err.message, cause: err)
@@ -340,7 +340,7 @@ module Grant::Transactions
         end
       {% end %}
     {% end %}
-  rescue err : DB::Error
+  rescue err : DB::Error | Grant::StatementInvalid
     Grant::Logs::Model.error { "Failed to create record - #{self.class.name} - #{err.message}" }
     raise err
   rescue err
@@ -410,7 +410,7 @@ module Grant::Transactions
       end
      
      Grant::Logs::Model.info { "Record updated - #{self.class.name} [id: #{@{{primary_key.name.id}}}]" }
-    rescue ex : Grant::TenantMismatchError | Grant::NoTenantError
+    rescue ex : Grant::TenantMismatchError | Grant::NoTenantError | Grant::StatementInvalid
       raise ex
     rescue err
       Grant::Logs::Model.error { "Failed to update record - #{self.class.name} [id: #{@{{primary_key.name.id}}}] - #{err.message}" }
@@ -482,13 +482,14 @@ module Grant::Transactions
     {% raise raise "A primary key must be defined for #{@type.name}." unless primary_key %}
     {% ann = primary_key.annotation(Grant::Column) %}
 
+    @last_save_failed_validation = false
+    @last_save_statement_error = nil
     save_succeeded = true
     save_failed = false
     failure_message : String? = nil
-    save_transaction = Grant::Transaction::Options.new(
-      requires_new: Grant::Transaction.in_explicit_transaction? &&
-        Grant::Transaction.current_connection?(self.class.adapter).nil?
-    )
+    # A save always gets its own savepoint when nested so a failed save undoes
+    # only its own partial writes.
+    save_transaction = Grant::Transaction::Options.new(requires_new: true)
 
     self.class.transaction(save_transaction) do
       enlist_transaction_record
@@ -497,6 +498,7 @@ module Grant::Transactions
         if validate
           validation_context = (@{{primary_key.name.id}} && !new_record?) ? :update : :create
           unless valid?(context: validation_context)
+            @last_save_failed_validation = true
             save_succeeded = false
             next
           end
@@ -524,8 +526,9 @@ module Grant::Transactions
           run_commit_callbacks if responds_to?(:run_commit_callbacks) && !around_halted?
         end
         save_succeeded = !around_halted?
-      rescue ex : DB::Error | Grant::Callbacks::Abort
+      rescue ex : DB::Error | Grant::StatementInvalid | Grant::Callbacks::Abort
         save_failed = true
+        @last_save_statement_error = ex if ex.is_a?(Grant::StatementInvalid)
         if message = ex.message
           errors << Grant::Error.new(:base, message)
         end
@@ -566,7 +569,35 @@ module Grant::Transactions
   # user.save! # => true, or raises Grant::RecordNotSaved
   # ```
   def save!(*, validate : Bool = true, skip_timestamps : Bool = false) : Bool
-    save(validate: validate, skip_timestamps: skip_timestamps) || raise Grant::RecordNotSaved.new(self.class.name, self)
+    save(validate: validate, skip_timestamps: skip_timestamps) || raise save_failure_error
+  end
+
+  # True while the most recent `#save` on this record stopped at validation, so
+  # the bang methods can raise `Grant::RecordInvalid` rather than the more
+  # general `Grant::RecordNotSaved`.
+  @[JSON::Field(ignore: true)]
+  @[YAML::Field(ignore: true)]
+  @last_save_failed_validation : Bool = false
+
+  # The database error that stopped the most recent `#save`, already
+  # translated (`Grant::RecordNotUnique`, `Grant::InvalidForeignKey`, ...).
+  @[JSON::Field(ignore: true)]
+  @[YAML::Field(ignore: true)]
+  @last_save_statement_error : Grant::StatementInvalid?
+
+  # The exception the bang methods raise for the most recent failed save:
+  # `Grant::RecordInvalid` for a validation failure, `Grant::RecordNotSaved`
+  # for anything else (a callback abort, a database error recorded on the
+  # record). Its message is always safe to build, even when no error was
+  # recorded on the record.
+  #
+  # :nodoc:
+  def save_failure_error : Grant::RecordNotSaved
+    if @last_save_failed_validation
+      Grant::RecordInvalid.new(self)
+    else
+      Grant::RecordNotSaved.new(self.class.name, self, @last_save_statement_error)
+    end
   end
 
   # Assigns the given keyword attributes to the record and saves it, returning
@@ -660,7 +691,7 @@ module Grant::Transactions
   # user.update_attribute!(:email, "new@example.com") # => true, or raises
   # ```
   def update_attribute!(name : Symbol | String, value) : Bool
-    update_attribute(name, value) || raise Grant::RecordNotSaved.new(self.class.name, self)
+    update_attribute(name, value) || raise save_failure_error
   end
 
   # Updates the given columns directly in the database, **skipping validations,
@@ -748,6 +779,9 @@ module Grant::Transactions
       begin
         self.class.adapter.update(self.class.table_name, self.class.primary_name, fields, params)
         Grant::Logs::Model.info { "Columns updated - #{self.class.name} [id: #{@{{primary_key.name.id}}}]" }
+      rescue err : Grant::StatementInvalid
+        Grant::Logs::Model.error { "Failed to update_columns - #{self.class.name} [id: #{persisted_primary_key}] - #{err.message}" }
+        raise err
       rescue err
         Grant::Logs::Model.error { "Failed to update_columns - #{self.class.name} [id: #{persisted_primary_key}] - #{err.message}" }
         raise DB::Error.new(err.message, cause: err)
@@ -972,7 +1006,7 @@ module Grant::Transactions
         run_commit_callbacks if responds_to?(:run_commit_callbacks)
       end
       return false if around_halted?
-    rescue ex : DB::Error | Grant::Callbacks::Abort
+    rescue ex : DB::Error | Grant::StatementInvalid | Grant::Callbacks::Abort
       if message = ex.message
         Log.error { "Destroy Exception: #{message}" }
         errors << Grant::Error.new(:base, message)

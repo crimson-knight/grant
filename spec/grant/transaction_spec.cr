@@ -37,14 +37,31 @@ describe Grant::Transaction do
       Parent.count.should eq(0)
     end
 
-    it "supports nested transactions with savepoints" do
+    it "joins the parent for a plain nested block (Rollback swallowed without undo)" do
       Parent.clear
 
       Parent.transaction do
-        parent1 = Parent.create!(name: "Parent 1")
+        Parent.create!(name: "Parent 1")
 
         Parent.transaction do
-          parent2 = Parent.create!(name: "Parent 2")
+          Parent.create!(name: "Parent 2")
+          raise Grant::Transaction::Rollback.new
+        end
+
+        Parent.count.should eq(2)
+      end
+
+      Parent.count.should eq(2)
+    end
+
+    it "supports nested savepoints with requires_new" do
+      Parent.clear
+
+      Parent.transaction do
+        Parent.create!(name: "Parent 1")
+
+        Parent.transaction(requires_new: true) do
+          Parent.create!(name: "Parent 2")
           raise Grant::Transaction::Rollback.new
         end
 
@@ -55,7 +72,7 @@ describe Grant::Transaction do
       Parent.first!.name.should eq("Parent 1")
     end
 
-    it "supports requires_new option" do
+    it "rolls a requires_new savepoint back with the outer transaction" do
       Parent.clear
 
       expect_raises(Exception, "Outer transaction error") do
@@ -70,9 +87,7 @@ describe Grant::Transaction do
         end
       end
 
-      # Inner transaction should have committed independently
-      Parent.count.should eq(1)
-      Parent.first!.name.should eq("Inner")
+      Parent.count.should eq(0)
     end
 
     it "detects if transaction is open" do
