@@ -12,7 +12,7 @@ module Grant::Query::Executor
       results = [] of Scalar
 
       adapter = Model.adapter
-      adapter.open do |db|
+      adapter.open(@sql, @args, Model.name) do |db|
         db.query @sql, args: adapter.normalize_bind_values(@args) do |record_set|
           record_set.each do
             results << record_set.read(Scalar)

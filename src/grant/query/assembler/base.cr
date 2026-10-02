@@ -22,13 +22,6 @@ module Grant::Query::Assembler
 
     # Convenience methods support
     abstract def pluck_sql(fields : Array(String)) : String
-    abstract def insert_all_sql(attributes : Array(Hash(String, Grant::Columns::Type)),
-                                returning : Array(Symbol)?,
-                                unique_by : Array(Symbol)?) : String
-    abstract def upsert_all_sql(attributes : Array(Hash(String, Grant::Columns::Type)),
-                                returning : Array(Symbol)?,
-                                unique_by : Array(Symbol)?,
-                                update_only : Array(Symbol)?) : String
     abstract def touch_all(fields : Tuple, time : Time) : Int64
 
     def where_clause(where_fields = @query.where_fields)

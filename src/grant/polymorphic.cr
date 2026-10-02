@@ -60,6 +60,10 @@ module Grant::Polymorphic
     # Grant::Polymorphic.load_polymorphic("Post", 1_i64) # => Post? with id 1
     # ```
     def self.load_polymorphic(type_name : String, id : Grant::Columns::Type) : Grant::Base?
+      # A stored key is never an array; narrowing keeps `find` on its
+      # single-key overload instead of the `find(ids : Array)` one.
+      return nil if id.is_a?(Array)
+
       case type_name
       {% for name, klass in REGISTERED_TYPES %}
       when {{name}}
@@ -522,6 +526,9 @@ module Grant::Polymorphic
   #
   # Options: `class_name:` sets the target class, `foreign_key:` / `type_column:`
   # override the derived `<poly_as>_id` / `<poly_as>_type` column names.
+  # `dependent:` also picks how `delete`, `delete_all` and `clear` remove
+  # records, and `before_add:` / `after_add:` / `before_remove:` /
+  # `after_remove:` work as on `has_many`.
   #
   # ```
   # class Post < Grant::Base
@@ -569,13 +576,25 @@ module Grant::Polymorphic
           loaded_records = loaded_data.map(&.as({{class_name.id}}))
         end
       end
+      {% if options[:before_add] || options[:after_add] || options[:before_remove] || options[:after_remove] %}
+        callbacks = Grant::AssociationCallbacks({{class_name.id}}).new(
+          {% if options[:before_add] %}before_add: _grant_association_hook({{options[:before_add]}}, {{class_name}}),{% end %}
+          {% if options[:after_add] %}after_add: _grant_association_hook({{options[:after_add]}}, {{class_name}}),{% end %}
+          {% if options[:before_remove] %}before_remove: _grant_association_hook({{options[:before_remove]}}, {{class_name}}),{% end %}
+          {% if options[:after_remove] %}after_remove: _grant_association_hook({{options[:after_remove]}}, {{class_name}}),{% end %}
+        )
+      {% else %}
+        callbacks = nil
+      {% end %}
       Grant::AssociationCollection(self, {{class_name.id}}).new(
         self, {{foreign_key.id.stringify}}, nil, {{options[:primary_key] ? primary_key_name : nil}},
         {{inverse_of ? inverse_of.id.stringify : nil}}, nil, {{method_name.stringify}}, loaded_records, nil, nil,
         strict_loading_option: {{options[:strict_loading]}},
         automatic_inverse: false,
         type_column: {{type_column.id.stringify}},
-        type_value: self.class.polymorphic_name
+        type_value: self.class.polymorphic_name,
+        dependent: {{options[:dependent].is_a?(SymbolLiteral) ? options[:dependent] : nil}},
+        callbacks: callbacks
       )
     end
 

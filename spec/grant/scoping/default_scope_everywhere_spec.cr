@@ -168,7 +168,7 @@ describe "Grant default scope on every class and relation entry point" do
     batch_sizes.should eq([2, 1])
 
     yielded_batches = [] of Int32
-    EverywhereScopedRecord.in_batches(of: 2) { |batch| yielded_batches << batch.size }
+    EverywhereScopedRecord.in_batches(of: 2) { |batch| yielded_batches << batch.to_a.size }
     yielded_batches.should eq([2, 1])
 
     streamed_titles = [] of String

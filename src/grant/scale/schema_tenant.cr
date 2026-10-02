@@ -107,6 +107,7 @@ module Grant
       selected_adapter.open do |connection|
         connection.exec("DROP SCHEMA IF EXISTS #{selected_adapter.quote(schema)}#{cascade_sql}")
       end
+      selected_adapter.forget_schema_cache(schema)
     end
 
     # Lists non-system schemas, excluding `public`, `information_schema`, and
@@ -139,6 +140,15 @@ module Grant
     # Returns the schema active on the current fiber, or `nil` outside a block.
     def self.current_schema : String?
       current_context.try(&.schema)
+    end
+
+    # The active schema when this fiber's schema-tenant block runs on
+    # *adapter*, otherwise `nil`. Unlike `current_connection?` it never raises.
+    # :nodoc:
+    def self.current_schema_for?(adapter : Grant::Adapter::Base) : String?
+      context = current_context
+      return nil unless context && context.adapter.same?(adapter)
+      context.schema
     end
 
     # Returns the current pinned connection for *adapter*. An active schema

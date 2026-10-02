@@ -43,9 +43,9 @@ describe "Grant::Query::Builder - Modifiers" do
       query.order_fields[1][:direction].should eq Grant::Query::Builder::Sort::Ascending
     end
 
-    it "is a no-op when no orders set" do
+    it "reverses the primary key order when no orders set" do
       query = builder.reverse_order
-      query.order_fields.should be_empty
+      query.order_fields.should eq([{field: "id", direction: Grant::Query::Builder::Sort::Descending}])
     end
   end
 
@@ -57,9 +57,11 @@ describe "Grant::Query::Builder - Modifiers" do
       field.should eq({join: :and, field: "name", operator: :eq, value: "alice"})
     end
 
-    it "clears all where conditions" do
+    it "keeps conditions on other columns" do
       query = builder.where(name: "bob").where(age: 25).rewhere(name: "alice")
-      query.where_fields.size.should eq 1
+      query.where_fields.size.should eq 2
+      query.where_fields.should contain({join: :and, field: "age", operator: :eq, value: 25})
+      query.where_fields.should contain({join: :and, field: "name", operator: :eq, value: "alice"})
     end
   end
 

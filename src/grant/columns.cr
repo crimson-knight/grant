@@ -61,38 +61,6 @@ module Grant::Columns
     end
   end
 
-  # Marks one or more columns as read-only. Read-only columns are writable when
-  # a record is first created, but are excluded from subsequent normal `UPDATE`
-  # statements. Direct writes via `update_columns` raise for read-only columns.
-  # Mirrors ActiveRecord's `attr_readonly`.
-  #
-  # ```
-  # class User < Grant::Base
-  #   column login : String
-  #   attr_readonly :login
-  # end
-  # ```
-  macro attr_readonly(*fields)
-    # Accumulate declared read-only columns in a per-class constant so multiple
-    # `attr_readonly` calls (and inheritance) compose correctly. Each call
-    # redefines `self.readonly_attributes` to return the full, deduplicated set.
-    {% if @type.has_constant?(:GRANT_READONLY_ATTRIBUTES) %}
-      {% for field in fields %}
-        {% GRANT_READONLY_ATTRIBUTES << field.id.stringify %}
-      {% end %}
-    {% else %}
-      GRANT_READONLY_ATTRIBUTES = [
-        {% for field in fields %}
-          {{ field.id.stringify }},
-        {% end %}
-      ] of String
-    {% end %}
-
-    def self.readonly_attributes : Array(String)
-      GRANT_READONLY_ATTRIBUTES.uniq
-    end
-  end
-
   def content_values : Array(Grant::Columns::Type)
     parsed_params = [] of Type
     {% for column in @type.instance_vars.select { |ivar| (ann = ivar.annotation(Grant::Column)) && !ann[:primary] } %}
@@ -142,7 +110,10 @@ module Grant::Columns
             {% end %}
         {% end %}
         else
-          # Skip
+          # Not a mapped column: a computed `select` expression. Read it so the
+          # columns after it stay aligned, and keep it as an extra attribute.
+          value = result.read
+          store_extra_attribute(col, value.is_a?(Grant::Columns::Type) ? value : value.to_s)
         end
       end
     {% end %}
@@ -230,6 +201,12 @@ module Grant::Columns
     @[Grant::Column(column_type: {{column_type}}, converter: {{converter}}, auto: {{auto}}, primary: {{primary}}, nilable: {{nilable}}, setter_type: {{not_nilable_type}})]
     @{{decl.var}} : {{decl.type}}? {% unless decl.value.is_a? Nop %} = {{decl.value}} {% end %}
 
+    # The value assigned by mass assignment before conversion, when it
+    # differed from the converted value; otherwise the current value.
+    def {{decl.var.id}}_before_type_cast : Grant::Columns::Type
+      attribute_before_type_cast({{decl.var.stringify}})
+    end
+
     def will_save_change_to_{{decl.var.id}}? : Bool
       will_save_change_to_attribute?({{decl.var.stringify}})
     end
@@ -281,6 +258,7 @@ module Grant::Columns
 
     {% if nilable || primary %}
       def {{decl.var.id}}=(value : {{not_nilable_type}}?)
+        __guard_readonly_attribute!({{decl.var.stringify}})
         # Dirty tracking compares assignments against the initialized baseline.
         ensure_dirty_tracking_initialized
 
@@ -313,6 +291,7 @@ module Grant::Columns
           end
         end
 
+        discard_before_type_cast({{decl.var.stringify}})
         @{{decl.var.id}} = value
       end
 
@@ -404,6 +383,7 @@ module Grant::Columns
       end
     {% else %}
       def {{decl.var.id}}=(value : {{type.id}})
+        __guard_readonly_attribute!({{decl.var.stringify}})
         # Dirty tracking compares assignments against the initialized baseline.
         ensure_dirty_tracking_initialized
 
@@ -436,6 +416,7 @@ module Grant::Columns
           end
         end
 
+        discard_before_type_cast({{decl.var.stringify}})
         @{{decl.var.id}} = value
       end
 
@@ -555,6 +536,10 @@ module Grant::Columns
   end
 
   def set_attributes(hash : Hash(String | Symbol, T)) : self forall T
+    if self.class.has_attribute_aliases?
+      hash = hash.transform_keys { |key| self.class.resolve_attribute_alias(key.to_s).as(String | Symbol) }
+    end
+
     {% for column in @type.instance_vars.select { |ivar| (ann = ivar.annotation(Grant::Column)) && (!ann[:primary] || (ann[:primary] && ann[:auto] == false)) } %}
       {% ann = column.annotation(Grant::Column) %}
       {% if ann[:nilable] == true %}
@@ -573,6 +558,11 @@ module Grant::Columns
           error = Grant::ConversionError.new({{column.name.stringify}}, "Expected {{column.id}} to be {{setter_type}} but got #{typeof(val)}.")
         else
           self.{{column}} = val
+          # Keep the raw input only when conversion changed it.
+          raw_input = hash[{{column.stringify}}]
+          if raw_input.is_a?(Grant::Columns::Type) && raw_input != val
+            capture_before_type_cast({{column.stringify}}, raw_input)
+          end
         end
 
         errors << error if error
@@ -588,6 +578,7 @@ module Grant::Columns
   # assignment. Keeping this at the column boundary applies both the declared
   # conversion and the generated dirty-tracking setter.
   def assign_mass_assignment_column(attribute_name : String, value : Grant::Columns::Type) : Nil
+    attribute_name = self.class.resolve_attribute_alias(attribute_name)
     return if Grant::Columns::VirtualAttributeRegistry.assign(self, attribute_name, value)
 
     {% begin %}
@@ -604,6 +595,7 @@ module Grant::Columns
           converted_value = Grant::Type.convert_type(value, {{setter_type}})
           if converted_value.is_a?({{setter_type}})
             self.{{column.name.id}} = converted_value
+            capture_before_type_cast({{column.name.stringify}}, value) if value != converted_value
           else
             errors << Grant::ConversionError.new({{column.name.stringify}}, "Expected {{column.name.id}} to be {{setter_type}} but got #{typeof(converted_value)}.")
           end

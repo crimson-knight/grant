@@ -1,6 +1,7 @@
 require "json"
 require "base64"
 require "openssl/hmac"
+require "./signed_id"
 
 # Data-invalidating, expiring tokens for a model record, in the style of Rails'
 # `generates_token_for`.
@@ -14,11 +15,12 @@ require "openssl/hmac"
 # stops working the moment the password (or its salt) changes.
 #
 # This module is **opt-in** — `include Grant::TokenFor` in models that need it.
-# Each purpose is declared with `generates_token_for`. The signing secret is read
-# from `GRANT_SIGNING_SECRET`.
+# Each purpose is declared with `generates_token_for`. The signing secret comes
+# from `Grant::TokenFor.configure` (read once at the app boundary), falling back
+# to `GRANT_SIGNING_SECRET`.
 #
 # ```
-# ENV["GRANT_SIGNING_SECRET"] = "a-long-random-secret"
+# Grant::TokenFor.configure { |c| c.secret = "a-long-random-secret" }
 #
 # class User < Grant::Base
 #   include Grant::TokenFor
@@ -41,6 +43,19 @@ require "openssl/hmac"
 # User.find_by_token_for(:password_reset, token) # => nil (data changed)
 # ```
 module Grant::TokenFor
+  # Configures the signing keys shared with `Grant::SignedId`. Call it once at
+  # the app boundary.
+  #
+  # ```
+  # Grant::TokenFor.configure do |c|
+  #   c.secret = ENV["APP_SECRET"]
+  #   c.previous_secrets = [ENV["OLD_APP_SECRET"]] # verify-only, for rotation
+  # end
+  # ```
+  def self.configure(& : Grant::SigningConfig ->) : Nil
+    yield Grant::Signer.config
+  end
+
   macro included
     extend ClassMethods
 
@@ -137,102 +152,71 @@ module Grant::TokenFor
     # User.find_by_token_for(:password_reset, token) # => the user (until salt changes)
     # ```
     def find_by_token_for(purpose : Symbol, token : String) : self?
-      payload = verify_token_for_payload(token)
-      return nil unless payload
+      record_for_token(purpose, token)
+    end
 
-      # Check purpose
-      return nil unless payload["purpose"]?.try(&.as_s) == purpose.to_s
-
-      # Check expiration
-      if expires_at = payload["expires_at"]?
-        return nil if !expires_at.raw.nil? && expires_at.as_i64 < Time.utc.to_unix
-      end
-
-      # Find record
-      id = payload["id"]?.try(&.as_s)
-      return nil unless id
-
-      # IDs are encoded as strings in the token payload. Restore integer
-      # bindings before querying so PostgreSQL and SQLite compare like types.
-      record = find(id.to_i64? || id)
-      return nil unless record
-
-      # Verify data hasn't changed
-      definition = token_for_definitions[purpose]?
-      return nil unless definition
-
-      current_data = definition.block.call(record)
-      stored_data = payload["data"]?.try(&.as_s)
-
-      return nil unless current_data == stored_data
-
-      record
-    rescue
-      nil
+    # Like `find_by_token_for` but raises `Grant::InvalidToken` when the token is
+    # malformed, forged, expired, for another purpose, or invalidated by a change
+    # to the record's data, and `Grant::RecordNotFound` when the record is gone.
+    #
+    # ```
+    # User.find_by_token_for!(:password_reset, token) # => the user, or raises
+    # ```
+    def find_by_token_for!(purpose : Symbol, token : String) : self
+      payload = token_for_payload(purpose, token) || raise Grant::InvalidToken.new
+      record = find_token_record(payload) || raise Grant::RecordNotFound.new("Couldn't find #{name} for token")
+      token_data_current?(purpose, record, payload) ? record : raise Grant::InvalidToken.new
     end
 
     # Serializes *payload* to JSON, signs it with HMAC-SHA256, and returns the
     # Base64-url-encoded envelope. Low-level building block for
-    # `#generate_token_for`; prefer that. Requires `GRANT_SIGNING_SECRET`.
+    # `#generate_token_for`; prefer that.
     def generate_token_for_payload(payload : Hash(String, String | Int64 | Nil)) : String
-      json = payload.to_json
-      signature = generate_token_signature(json)
-
-      data = {
-        "data"      => Base64.urlsafe_encode(json, padding: false),
-        "signature" => signature,
-      }
-
-      Base64.urlsafe_encode(data.to_json, padding: false)
+      Grant::Signer.envelope(payload.to_json, token_for_signing_context)
     end
 
     # Verifies a token produced by `generate_token_for_payload` and returns its
     # decoded payload, or `nil` if the signature does not verify or the token is
     # malformed. Does not check purpose/expiry/data — `find_by_token_for` layers
-    # those on top. Requires `GRANT_SIGNING_SECRET`.
+    # those on top.
     def verify_token_for_payload(token : String) : Hash(String, JSON::Any)?
-      # Decode outer wrapper
-      wrapper_json = String.new(Base64.decode(token))
-      wrapper = JSON.parse(wrapper_json)
-
-      # Extract data and signature
-      data = wrapper["data"].as_s
-      signature = wrapper["signature"].as_s
-
-      # Decode and verify
-      json = String.new(Base64.decode(data))
-
-      # Verify signature
-      expected_signature = generate_token_signature(json)
-      return nil unless secure_token_compare(signature, expected_signature)
-
-      JSON.parse(json).as_h
-    rescue
+      json = Grant::Signer.open(token, token_for_signing_context)
+      return nil unless json
+      JSON.parse(json).as_h?
+    rescue JSON::ParseException
       nil
     end
 
-    private def generate_token_signature(data : String) : String
-      secret = token_signing_secret
-      Base64.urlsafe_encode(
-        OpenSSL::HMAC.digest(:sha256, secret, data),
-        padding: false
-      )
+    private def token_for_payload(purpose : Symbol, token : String) : Grant::Signer::Payload?
+      payload = Grant::Signer.open_payload(token, token_for_signing_context)
+      return nil unless payload
+      return nil unless payload.purpose == purpose.to_s
+      return nil if payload.expired?
+      return nil unless token_for_definitions[purpose]?
+      payload
     end
 
-    private def token_signing_secret : String
-      # In a real app, this should come from environment or config
-      ENV["GRANT_SIGNING_SECRET"]? || raise "GRANT_SIGNING_SECRET not set"
+    private def find_token_record(payload : Grant::Signer::Payload) : self?
+      # IDs are encoded as strings in the token payload. Restore integer
+      # bindings before querying so PostgreSQL and SQLite compare like types.
+      find(payload.id.to_i64? || payload.id)
     end
 
-    private def secure_token_compare(a : String, b : String) : Bool
-      return false unless a.bytesize == b.bytesize
+    private def token_data_current?(purpose : Symbol, record : self, payload : Grant::Signer::Payload) : Bool
+      definition = token_for_definitions[purpose]
+      definition.block.call(record) == payload.data
+    end
 
-      result = 0_u8
-      a.bytes.zip(b.bytes) do |byte_a, byte_b|
-        result |= byte_a ^ byte_b
-      end
+    private def token_for_signing_context : String
+      "token_for/#{table_name}"
+    end
 
-      result == 0
+    private def record_for_token(purpose : Symbol, token : String) : self?
+      payload = token_for_payload(purpose, token)
+      return nil unless payload
+      record = find_token_record(payload)
+      return nil unless record
+      token_data_current?(purpose, record, payload) ? record : nil
     end
   end
 end

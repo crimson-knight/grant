@@ -26,7 +26,7 @@ class Grant::Query::Builder(Model)
     Model.mark_write_operation
 
     adapter = Model.adapter
-    adapter.open do |db|
+    adapter.open(sql, string_assembler.numbered_parameters, Model.name) do |db|
       db.exec(sql, args: adapter.normalize_bind_values(string_assembler.numbered_parameters))
     end
   end
@@ -103,7 +103,7 @@ class Grant::Query::Builder(Model)
     params = builder_assembler.numbered_parameters
 
     adapter = Model.adapter
-    adapter.open do |db|
+    adapter.open(sql, params, Model.name) do |db|
       db.exec(sql, args: adapter.normalize_bind_values(params)).rows_affected
     end
   end

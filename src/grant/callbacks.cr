@@ -1,3 +1,5 @@
+require "./validation"
+
 # Lifecycle callbacks for Grant models (ActiveRecord-compatible).
 #
 # Including this module (done automatically by `Grant::Base`) gives every model
@@ -74,6 +76,14 @@
 #
 #   private def alert_finance; end
 # end
+# ```
+#
+# Conditions may also be an Array (`if: [:paid?, ->(o : Order) { o.total > 0 }]`,
+# every `if:` term must hold and no `unless:` term may). Validation callbacks
+# additionally take `on:` (a context or an Array of contexts):
+#
+# ```
+# before_validation :normalize_slug, on: [:create, :publish]
 # ```
 #
 # ## Halting
@@ -153,17 +163,20 @@ module Grant::Callbacks
   end
 
   {% for name in CALLBACK_NAMES %}
-    macro {{name.id}}(*callbacks, if condition = nil, unless unless_condition = nil, &block)
+    macro {{name.id}}(*callbacks, if condition = nil, unless unless_condition = nil, on on_context = nil, &block)
+      {% unless name.includes?("validation") %}
+        \{% on_context.raise "`on:` is only supported on before_validation, after_validation and around_validation" if on_context %}
+      {% end %}
       \{% for callback in callbacks %}
-        \{% if condition || unless_condition %}
-          \{% CALLBACKS[{{name}}] << {callback: callback, if: condition, unless: unless_condition} %}
+        \{% if condition || unless_condition || on_context %}
+          \{% CALLBACKS[{{name}}] << {callback: callback, if: condition, unless: unless_condition, on: on_context} %}
         \{% else %}
           \{% CALLBACKS[{{name}}] << callback %}
         \{% end %}
       \{% end %}
       \{% if block.is_a? Block %}
-        \{% if condition || unless_condition %}
-          \{% CALLBACKS[{{name}}] << {callback: block, if: condition, unless: unless_condition} %}
+        \{% if condition || unless_condition || on_context %}
+          \{% CALLBACKS[{{name}}] << {callback: block, if: condition, unless: unless_condition, on: on_context} %}
         \{% else %}
           \{% CALLBACKS[{{name}}] << block %}
         \{% end %}
@@ -186,10 +199,13 @@ module Grant::Callbacks
           \{% callback = callback_data[:callback] %}
           \{% condition = callback_data[:if] %}
           \{% unless_condition = callback_data[:unless] %}
-          # `if:`/`unless:` accept either a Symbol (instance method name) or a
-          # Proc/lambda that receives the record. Symbols resolve to a bare
-          # method call in instance context; Procs/Calls are invoked with `self`.
-          if (\{% if condition %}\{% if condition.is_a?(SymbolLiteral) %}\{{condition.id}}\{% else %}(\{{condition}}).call(self)\{% end %}\{% else %}true\{% end %}) && !(\{% if unless_condition %}\{% if unless_condition.is_a?(SymbolLiteral) %}\{{unless_condition.id}}\{% else %}(\{{unless_condition}}).call(self)\{% end %}\{% else %}false\{% end %})
+          \{% on_context = callback_data[:on] %}
+          # `if:`/`unless:` accept a Symbol (instance method name), a
+          # Proc/lambda that receives the record, or an Array of them (all
+          # `if:` terms must hold, no `unless:` term may). `on:` restricts a
+          # validation callback to the running validation context(s). See
+          # `Grant::Conditions.met?`.
+          if Grant::Conditions.met?(nil, \{{condition}}, \{{unless_condition}}, \{{on_context}})
             \{% if callback.is_a? Block %}
               begin
                 \{{callback.body}}
@@ -233,17 +249,20 @@ module Grant::Callbacks
   # end
   # ```
   {% for name in AROUND_CALLBACK_NAMES %}
-    macro {{name.id}}(*callbacks, if condition = nil, unless unless_condition = nil, &block)
+    macro {{name.id}}(*callbacks, if condition = nil, unless unless_condition = nil, on on_context = nil, &block)
+      {% unless name.includes?("validation") %}
+        \{% on_context.raise "`on:` is only supported on before_validation, after_validation and around_validation" if on_context %}
+      {% end %}
       \{% for callback in callbacks %}
-        \{% if condition || unless_condition %}
-          \{% AROUND_CALLBACKS[{{name}}] << {callback: callback, if: condition, unless: unless_condition} %}
+        \{% if condition || unless_condition || on_context %}
+          \{% AROUND_CALLBACKS[{{name}}] << {callback: callback, if: condition, unless: unless_condition, on: on_context} %}
         \{% else %}
           \{% AROUND_CALLBACKS[{{name}}] << callback %}
         \{% end %}
       \{% end %}
       \{% if block.is_a? Block %}
-        \{% if condition || unless_condition %}
-          \{% AROUND_CALLBACKS[{{name}}] << {callback: block, if: condition, unless: unless_condition} %}
+        \{% if condition || unless_condition || on_context %}
+          \{% AROUND_CALLBACKS[{{name}}] << {callback: block, if: condition, unless: unless_condition, on: on_context} %}
         \{% else %}
           \{% AROUND_CALLBACKS[{{name}}] << block %}
         \{% end %}
@@ -303,9 +322,10 @@ module Grant::Callbacks
             \{% callback = callback_data[:callback] %}
             \{% condition = callback_data[:if] %}
             \{% unless_condition = callback_data[:unless] %}
+            \{% on_context = callback_data[:on] %}
 
-            # See `__{{name.id}}` above: Symbol => method call, Proc/lambda => .call(self).
-            if (\{% if condition %}\{% if condition.is_a?(SymbolLiteral) %}\{{condition.id}}\{% else %}(\{{condition}}).call(self)\{% end %}\{% else %}true\{% end %}) && !(\{% if unless_condition %}\{% if unless_condition.is_a?(SymbolLiteral) %}\{{unless_condition.id}}\{% else %}(\{{unless_condition}}).call(self)\{% end %}\{% else %}false\{% end %})
+            # See `__{{name.id}}` above and `Grant::Conditions.met?`.
+            if Grant::Conditions.met?(nil, \{{condition}}, \{{unless_condition}}, \{{on_context}})
               \{% if callback.is_a? Block %}
                 %chain << Proc(Nil).new do
                   %called = false

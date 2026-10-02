@@ -11,9 +11,14 @@ require "./query/**"
 require "./query_extensions"
 require "./enum_attributes"
 require "./convenience_methods"
+require "./bulk_operations"
 require "./settings"
 require "./table"
 require "./transactions"
+require "./timestamps"
+require "./readonly"
+require "./counters"
+require "./record_copy"
 require "./transaction"
 require "./locking"
 require "./locking/pessimistic"
@@ -47,6 +52,8 @@ require "./async"
 require "./aggregations"
 require "./value_objects"
 require "./encryption"
+require "./attributes"
+require "./integration"
 
 # Grant::Base is the base class for your model objects.
 abstract class Grant::Base
@@ -59,6 +66,9 @@ abstract class Grant::Base
   include Dirty
   include Tables
   include Transactions
+  include Timestamps
+  include Readonly
+  include RecordCopy
   include Validators
   include ValidationHelpers
   include Migrator
@@ -74,12 +84,34 @@ abstract class Grant::Base
   include NestedAttributes
   include ValueObjects
   include Encryption::Model
+  include Attributes
+  include Integration
   include Locking::Pessimistic
   include Transaction
 
   # Make secure token macros available
-  macro has_secure_token(name, length = 24, alphabet = :base58)
-    Grant::SecureToken.has_secure_token({{ name }}, {{ length }}, {{ alphabet }})
+  macro has_secure_token(name, length = 24, alphabet = :base58, on = :create)
+    Grant::SecureToken.has_secure_token({{ name }}, {{ length }}, {{ alphabet }}, {{ on }})
+
+    # Token columns are credentials: `inspect` prints them as [FILTERED].
+    {% if @type.has_constant?(:GRANT_SECURE_TOKEN_COLUMNS) %}
+      {% token_columns = @type.constant(:GRANT_SECURE_TOKEN_COLUMNS) %}
+      {% token_columns << name.id.stringify %}
+    {% else %}
+      {% token_columns = [name.id.stringify] %}
+      GRANT_SECURE_TOKEN_COLUMNS = {{ token_columns }}
+    {% end %}
+
+    def self.secure_token_column?(name : String) : Bool
+      case name
+      {% for token_column in token_columns %}
+      when {{ token_column }}
+        true
+      {% end %}
+      else
+        false
+      end
+    end
   end
 
   # Auto-register class for polymorphic associations will be handled in the main inherited macro
@@ -92,6 +124,9 @@ abstract class Grant::Base
   extend Querying::ClassMethods
   extend Query::BuilderMethods
   extend Grant::Transactions::ClassMethods
+  extend Grant::Timestamps::ClassMethods
+  extend Grant::Readonly::ClassMethods
+  extend Grant::Counters::ClassMethods
   extend Grant::Transaction::ClassMethods
   extend Integrators
   extend Select
@@ -100,6 +135,8 @@ abstract class Grant::Base
   extend Grant::Async::ClassMethods
   extend Grant::Aggregations::ClassMethods
   extend ValueObjects::ClassMethods
+  extend Attributes::ClassMethods
+  extend Integration::ClassMethods
 
   # Make normalization macro available
   macro normalizes(attribute, **options, &block)
@@ -191,7 +228,87 @@ abstract class Grant::Base
     !(new_record? || destroyed?)
   end
 
+  # True once the record is destroyed. A destroyed record is frozen against
+  # further persistence: `save`, `update`, `touch` and friends raise
+  # `Grant::RecordDestroyedError`. Mirrors ActiveRecord's `frozen?` after
+  # `destroy`.
+  def frozen? : Bool
+    destroyed?
+  end
+
+  # The primary key value that identifies this record, or `nil` when it has none
+  # yet (a new record). Composite keys yield an array of their parts.
+  #
+  # :nodoc:
+  def __identity_key : Grant::Columns::Type | Array(Grant::Columns::Type)
+    {% if @type.abstract? %}
+      nil
+    {% elsif @type.instance_vars.select { |ivar| (ann = ivar.annotation(Grant::Column)) && ann[:primary] }.size > 1 %}
+      parts = primary_key_values.values
+      parts.any?(&.nil?) ? nil : parts
+    {% else %}
+      primary_key_value.as(Grant::Columns::Type)
+    {% end %}
+  end
+
+  # The class that scopes identity: the STI root for single table inheritance
+  # hierarchies, otherwise the record's own class.
+  #
+  # :nodoc:
+  def __identity_class_name : String
+    {% if @type.abstract? %}
+      self.class.name
+    {% elsif @type.ancestors.any? { |ancestor| ancestor.stringify == "Grant::STI" } %}
+      self.class.sti_root.name
+    {% else %}
+      self.class.name
+    {% end %}
+  end
+
+  # Two records are equal when they are the same object, or when they belong to
+  # the same table (the same class, or the same STI hierarchy) and share a
+  # present primary key. Records without a primary key (new records) are only
+  # equal to themselves. Mirrors ActiveRecord's `==`.
+  #
+  # ```
+  # User.find!(1) == User.find!(1) # => true
+  # User.new == User.new           # => false
+  # ```
+  def ==(other : Grant::Base) : Bool
+    return true if same?(other)
+    key = __identity_key
+    return false if key.nil?
+    return false unless __identity_class_name == other.__identity_class_name
+    key == other.__identity_key
+  end
+
+  # Hashes by class and primary key so equal records collapse in a `Set`,
+  # `uniq` and as `Hash` keys. A record without a primary key hashes by
+  # identity, and so changes hash once it is saved (as in ActiveRecord).
+  def hash(hasher)
+    key = __identity_key
+    if key.nil?
+      super
+    else
+      hasher = __identity_class_name.hash(hasher)
+      key.hash(hasher)
+    end
+  end
+
+  # The names of this class and its model superclasses, nearest first. Used to
+  # match `no_touching` / `suppress` blocks declared on a parent class.
+  #
+  # :nodoc:
+  def self.__lineage_names : Array(String)
+    [] of String
+  end
+
   macro inherited
+    # :nodoc:
+    def self.__lineage_names : Array(String)
+      [{{@type.name.stringify}}] + {{@type.superclass}}.__lineage_names
+    end
+
     # Connection settings belong to each model class and resolve through the
     # superclass chain when read, so a `connects_to` on a parent (usually an
     # abstract class) reaches subclasses declared before and after it.
@@ -466,6 +583,32 @@ abstract class Grant::Base
       def initialize
         ensure_dirty_tracking_initialized
         establish_initial_dirty_baseline
+        __after_initialize
+      end
+
+      # Builds a new (unsaved) record from keyword arguments and yields it
+      # before `after_initialize` runs, so the block can set further attributes.
+      # Values assigned in the block count as changes, like any later setter.
+      #
+      # ```
+      # user = User.new(email: "a@example.com") { |u| u.name = "Ada" }
+      # ```
+      def initialize(**args, &)
+        ensure_dirty_tracking_initialized
+        set_attributes(args.to_h.transform_keys(&.to_s))
+        establish_initial_dirty_baseline
+        yield self
+        __after_initialize
+      end
+
+      # :ditto:
+      #
+      # Attributes-hash form of the initializer block.
+      def initialize(args : Grant::ModelArgs, &)
+        ensure_dirty_tracking_initialized
+        set_attributes(args.transform_keys(&.to_s))
+        establish_initial_dirty_baseline
+        yield self
         __after_initialize
       end
 

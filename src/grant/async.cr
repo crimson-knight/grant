@@ -21,10 +21,12 @@ module Grant
       end
 
       # Async sum
-      def async_sum(column : Symbol | String) : AsyncResult(Float64)
+      def async_sum(column : Symbol | String) : AsyncResult(Grant::Query::Builder::SumValue)
         query = current_scope
-        AsyncResult(Float64).new do
-          query.sum(column)
+        AsyncResult(Grant::Query::Builder::SumValue).new do
+          result = query.sum(column)
+          raise ArgumentError.new("async_sum on a grouped scope returns a Hash per group") if result.is_a?(Hash)
+          result
         end
       end
 
@@ -32,7 +34,9 @@ module Grant
       def async_avg(column : Symbol | String) : AsyncResult(Float64?)
         query = current_scope
         AsyncResult(Float64?).new do
-          query.avg(column)
+          result = query.avg(column)
+          raise ArgumentError.new("async_avg on a grouped scope returns a Hash per group") if result.is_a?(Hash)
+          result
         end
       end
 
@@ -40,7 +44,9 @@ module Grant
       def async_min(column : Symbol | String) : AsyncResult(Grant::Columns::Type)
         query = current_scope
         AsyncResult(Grant::Columns::Type).new do
-          query.min(column)
+          result = query.min(column)
+          raise ArgumentError.new("async_min on a grouped scope returns a Hash per group") if result.is_a?(Hash)
+          result
         end
       end
 
@@ -48,7 +54,9 @@ module Grant
       def async_max(column : Symbol | String) : AsyncResult(Grant::Columns::Type)
         query = current_scope
         AsyncResult(Grant::Columns::Type).new do
-          query.max(column)
+          result = query.max(column)
+          raise ArgumentError.new("async_max on a grouped scope returns a Hash per group") if result.is_a?(Hash)
+          result
         end
       end
 

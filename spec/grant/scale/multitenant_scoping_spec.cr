@@ -302,4 +302,32 @@ describe "Grant multitenant default scope" do
     end
     ScopedTenantRecord.unscoped.count.should eq(1)
   end
+
+  it "does not let an upsert overwrite another tenant's row on a key collision" do
+    tenant_two_id = ScopedTenantRecord.unscoped.where(title: "tenant two").first!.id.not_nil!
+    rows = [] of Hash(String | Symbol, Grant::Columns::Type)
+    rows << {"id" => tenant_two_id, "title" => "stolen", "category" => "alpha", "score" => 1_i64} of String | Symbol => Grant::Columns::Type
+
+    Grant::Tenant.with(1_i64) do
+      ScopedTenantRecord.upsert_all(rows, returning: [] of Symbol)
+      ScopedTenantRecord.upsert_all(rows, returning: [] of Symbol, update_only: [:title])
+    end
+
+    untouched = ScopedTenantRecord.unscoped.where(id: tenant_two_id).first!
+    untouched.title.should eq("tenant two")
+    untouched.tenant_id.should eq(2_i64)
+    untouched.score.should eq(100_i64)
+  end
+
+  it "lets an unscoped upsert update any tenant's row deliberately" do
+    tenant_two_id = ScopedTenantRecord.unscoped.where(title: "tenant two").first!.id.not_nil!
+    rows = [] of Hash(String | Symbol, Grant::Columns::Type)
+    rows << {"id" => tenant_two_id, "tenant_id" => 2_i64, "title" => "admin rename", "category" => "beta", "score" => 100_i64} of String | Symbol => Grant::Columns::Type
+
+    Grant::Tenant.with(1_i64) do
+      ScopedTenantRecord.unscoped { ScopedTenantRecord.upsert_all(rows, returning: [] of Symbol) }
+    end
+
+    ScopedTenantRecord.unscoped.where(id: tenant_two_id).first!.title.should eq("admin rename")
+  end
 end

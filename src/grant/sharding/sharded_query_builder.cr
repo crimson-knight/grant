@@ -189,8 +189,7 @@ module Grant::Sharding
 
       # Reverse order fields
       @order_fields.each do |order|
-        direction = order[:direction] == Sort::Ascending ? Sort::Descending : Sort::Ascending
-        new_builder.order_fields << {field: order[:field], direction: direction}
+        new_builder.order_fields << Grant::Query::OrderSupport.reverse(order)
       end
 
       # Preserve shard settings

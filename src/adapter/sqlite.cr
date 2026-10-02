@@ -1,6 +1,7 @@
 require "./base"
 require "sqlite3"
 require "../grant/sqlite_version_check"
+require "../grant/schema/column_info"
 
 # Patch SQLite3::Statement so that perform_exec always calls sqlite3_reset in
 # its ensure clause.  SQLite does NOT decrement db->nVdbeActive when
@@ -45,6 +46,23 @@ class Grant::Adapter::Sqlite < Grant::Adapter::Base
 
   def sqlite? : Bool
     true
+  end
+
+  # SQLite runs in the application's process, so there is no server to keep
+  # connections warm for.
+  def self.server_adapter? : Bool
+    false
+  end
+
+  # Each connection to `:memory:` is its own empty database, so a pool of
+  # more than one would silently split the data.
+  def self.single_connection_url?(url : String) : Bool
+    memory_url?(url)
+  end
+
+  # The SQLite driver only prepares statements.
+  def self.supports_unprepared_statements? : Bool
+    false
   end
 
   # SQLite stores Grant timestamps as text and UUID columns as CHAR(36).
@@ -300,6 +318,50 @@ class Grant::Adapter::Sqlite < Grant::Adapter::Base
     last_id
   end
 
+  # SQLite's `sqlite3_bind_parameter` cap since 3.32 is 32,766.
+  def bulk_bind_limit : Int32
+    32_766
+  end
+
+  # Reads the key columns of a plain unique index. Expression indexes have no
+  # column name and cannot be an `ON CONFLICT` target, so they raise.
+  def unique_index_columns(table_name : String, index_name : String) : Array(String)?
+    unique = nil
+    partial = false
+    open do |db|
+      db.query("PRAGMA index_list(#{quote(table_name)})") do |rs|
+        rs.each do
+          rs.read(Int64)
+          name = rs.read(String)
+          is_unique = rs.read(Int64) == 1
+          rs.read(String)
+          is_partial = rs.read(Int64) == 1
+          if name == index_name
+            unique = is_unique
+            partial = is_partial
+          end
+        end
+      end
+    end
+    return nil if unique.nil?
+    raise ArgumentError.new("Index #{index_name.inspect} is not unique") unless unique
+    raise ArgumentError.new("Index #{index_name.inspect} is partial; pass the column names to unique_by instead") if partial
+
+    columns = [] of String
+    open do |db|
+      db.query("PRAGMA index_info(#{quote(index_name)})") do |rs|
+        rs.each do
+          rs.read(Int64)
+          rs.read(Int64)
+          column = rs.read(String?)
+          raise ArgumentError.new("Index #{index_name.inspect} is an expression index; pass the column names to unique_by instead") unless column
+          columns << column
+        end
+      end
+    end
+    columns
+  end
+
   def import(table_name : String, primary_name : String, auto : Bool, fields, model_array, **options)
     params = [] of Grant::Columns::Type
 
@@ -430,4 +492,177 @@ class Grant::Adapter::Sqlite < Grant::Adapter::Base
       nil
     end
   end
+
+  # SQLite has no information_schema. Every catalog query joins `sqlite_master`
+  # with the `pragma_*` table-valued functions, so all tables are answered by
+  # one statement per kind instead of one PRAGMA per table. *namespace* is
+  # ignored: only the main database is inspected.
+  private CATALOG_TABLE_FILTER = "m.type = 'table' AND m.name NOT LIKE 'sqlite\\_%' ESCAPE '\\'"
+
+  def catalog_tables(namespace : String? = nil) : Array(String)
+    names = [] of String
+    catalog_query("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite\\_%' ESCAPE '\\' ORDER BY name") do |rs|
+      names << rs.read(String)
+    end
+    names
+  end
+
+  def catalog_columns(table : String? = nil, namespace : String? = nil) : Array(Grant::Schema::ColumnInfo)
+    sql = String.build do |io|
+      io << "SELECT m.name, p.cid, p.name, p.type, p.\"notnull\", p.dflt_value, p.pk "
+      io << "FROM sqlite_master m JOIN pragma_table_xinfo(m.name) p "
+      io << "WHERE #{CATALOG_TABLE_FILTER} AND p.hidden <> 1"
+      io << " AND m.name = ?" if table
+      io << " ORDER BY m.name, p.cid"
+    end
+    args = table ? [table.as(DB::Any)] : [] of DB::Any
+
+    rows = [] of {String, Int32, String, String, Bool, String?, Int32}
+    key_size = Hash(String, Int32).new(0)
+    catalog_query(sql, args) do |rs|
+      table_name = rs.read(String)
+      cid = rs.read(Int64).to_i
+      name = rs.read(String)
+      type = rs.read(String?) || ""
+      not_null = rs.read(Int64) != 0
+      default = rs.read(String?)
+      key_position = rs.read(Int64).to_i
+      key_size[table_name] += 1 if key_position > 0
+      rows << {table_name, cid, name, type, not_null, default, key_position}
+    end
+
+    rows.map do |table_name, cid, name, type, not_null, default, key_position|
+      # A lone INTEGER PRIMARY KEY is the rowid alias: it auto-increments and
+      # can never be NULL even though PRAGMA reports notnull = 0.
+      rowid_alias = key_position == 1 && key_size[table_name] == 1 && type.upcase == "INTEGER"
+      Grant::Schema::ColumnInfo.new(table_name, name, type, !(not_null || rowid_alias), default,
+        key_position, rowid_alias, cid + 1)
+    end
+  end
+
+  def catalog_indexes(table : String? = nil, namespace : String? = nil) : Array(Grant::Schema::IndexInfo)
+    sql = String.build do |io|
+      io << "SELECT m.name, il.name, il.\"unique\", il.partial, ii.name, im.sql "
+      io << "FROM sqlite_master m JOIN pragma_index_list(m.name) il "
+      io << "JOIN pragma_index_xinfo(il.name) ii ON ii.key = 1 "
+      io << "LEFT JOIN sqlite_master im ON im.type = 'index' AND im.name = il.name "
+      io << "WHERE #{CATALOG_TABLE_FILTER} AND il.origin <> 'pk'"
+      io << " AND m.name = ?" if table
+      io << " ORDER BY m.name, il.name, ii.seqno"
+    end
+    args = table ? [table.as(DB::Any)] : [] of DB::Any
+
+    indexes = [] of Grant::Schema::IndexInfo
+    current = nil.as({String, String, Bool, String?, Array(String?)}?)
+    flush = -> {
+      if entry = current
+        indexes << sqlite_index_info(*entry)
+      end
+    }
+    catalog_query(sql, args) do |rs|
+      table_name = rs.read(String)
+      index_name = rs.read(String)
+      unique = rs.read(Int64) != 0
+      rs.read(Int64) # partial: derived from the CREATE INDEX text below
+      column = rs.read(String?)
+      create_sql = rs.read(String?)
+      if (entry = current) && entry[0] == table_name && entry[1] == index_name
+        entry[4] << column
+      else
+        flush.call
+        current = {table_name, index_name, unique, create_sql, [column] of String?}
+      end
+    end
+    flush.call
+    indexes
+  end
+
+  def catalog_foreign_keys(table : String? = nil, namespace : String? = nil) : Array(Grant::Schema::ForeignKeyInfo)
+    sql = String.build do |io|
+      io << "SELECT m.name, fk.id, fk.\"table\", fk.\"from\", fk.\"to\", fk.on_update, fk.on_delete "
+      io << "FROM sqlite_master m JOIN pragma_foreign_key_list(m.name) fk "
+      io << "WHERE #{CATALOG_TABLE_FILTER}"
+      io << " AND m.name = ?" if table
+      io << " ORDER BY m.name, fk.id, fk.seq"
+    end
+    args = table ? [table.as(DB::Any)] : [] of DB::Any
+
+    keys = [] of Grant::Schema::ForeignKeyInfo
+    current = nil.as({String, Int64, String, Array(String), Array(String?), String, String}?)
+    flush = -> {
+      if entry = current
+        keys << Grant::Schema::ForeignKeyInfo.new(entry[0], nil, entry[3], entry[2],
+          sqlite_referenced_columns(entry[2], entry[4]),
+          Grant::Schema::ReferentialAction.parse(entry[5]), Grant::Schema::ReferentialAction.parse(entry[6]))
+      end
+    }
+    catalog_query(sql, args) do |rs|
+      table_name = rs.read(String)
+      id = rs.read(Int64)
+      to_table = rs.read(String)
+      from = rs.read(String)
+      to = rs.read(String?)
+      on_update = rs.read(String)
+      on_delete = rs.read(String)
+      if (entry = current) && entry[0] == table_name && entry[1] == id
+        entry[3] << from
+        entry[4] << to
+      else
+        flush.call
+        current = {table_name, id, to_table, [from], [to] of String?, on_update, on_delete}
+      end
+    end
+    flush.call
+    keys
+  end
+
+  # A key that omits the parent columns refers to the parent's primary key.
+  private def sqlite_referenced_columns(parent : String, named : Array(String?)) : Array(String)
+    return named.compact if named.none?(&.nil?)
+    parent_key = catalog_columns(parent).select(&.primary_key?).sort_by!(&.primary_key_position).map(&.name)
+    named.each_with_index.map { |name, index| name || parent_key[index]? || "" }.to_a
+  end
+
+  private def sqlite_index_info(table_name : String, index_name : String, unique : Bool,
+                                create_sql : String?, columns : Array(String?)) : Grant::Schema::IndexInfo
+    expression = columns.any?(&.nil?)
+    names = columns
+    if expression
+      pieces = sqlite_index_pieces(create_sql)
+      names = columns.map_with_index { |column, index| column || pieces[index]? || "(expression)" }
+    end
+    where = create_sql.try { |text| text[/\sWHERE\s+(.*)\z/mi, 1]?.try(&.strip) }
+    Grant::Schema::IndexInfo.new(table_name, index_name, names.compact, unique, where, expression)
+  end
+
+  # The comma separated entries between the parentheses of a CREATE INDEX.
+  private def sqlite_index_pieces(create_sql : String?) : Array(String)
+    return [] of String unless create_sql
+    start = create_sql.index('(')
+    return [] of String unless start
+    pieces = [] of String
+    depth = 0
+    from = start + 1
+    create_sql.each_char_with_index do |char, index|
+      next if index <= start
+      case char
+      when '('
+        depth += 1
+      when ')'
+        if depth == 0
+          pieces << create_sql[from...index]
+          break
+        end
+        depth -= 1
+      when ','
+        if depth == 0
+          pieces << create_sql[from...index]
+          from = index + 1
+        end
+      end
+    end
+    pieces.map(&.strip.sub(/\s+(?:ASC|DESC)\z/i, ""))
+  end
 end
+
+require "./sqlite_test_helpers"

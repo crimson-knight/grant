@@ -22,6 +22,7 @@ module Grant
   annotation Table; end
 end
 
+require "./grant/notifications"
 require "./adapter/base"
 require "./grant/sanitization"
 require "./grant/connection_registry"
@@ -31,6 +32,7 @@ require "./grant/connection_manager"
 require "./grant/target"
 require "./grant/base"
 require "./grant/sti"
+require "./grant/schema/introspection"
 
 # Large-table / high-scale query toolkit (index hints, IN chunking, streaming,
 # tenant scoping). Required after Grant::Base is fully defined so the toolkit
