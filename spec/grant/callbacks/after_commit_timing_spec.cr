@@ -254,7 +254,7 @@ describe "after_commit / after_rollback timing (AR semantics)" do
       CommitTimingModel.transaction do
         CommitTimingModel.new(name: "kept").save
 
-        CommitTimingModel.transaction do
+        CommitTimingModel.transaction(requires_new: true) do
           CommitTimingModel.new(name: "undone").save
           raise Grant::Transaction::Rollback.new
         end
@@ -269,9 +269,9 @@ describe "after_commit / after_rollback timing (AR semantics)" do
   end
 
   # -------------------------------------------------------------------------
-  # 8. requires_new: true — independent inner transaction on its own connection
+  # 8. independent: true — independent inner transaction on its own connection
   #
-  # NOTE: SQLite is single-writer, so an inner requires_new transaction cannot
+  # NOTE: SQLite is single-writer, so an inner independent transaction cannot
   # WRITE to the same database while the outer transaction holds its write
   # lock (the inner INSERT gets SQLITE_BUSY and save returns false).  These
   # specs therefore exercise the callback-scoping semantics with a write-free
@@ -280,14 +280,14 @@ describe "after_commit / after_rollback timing (AR semantics)" do
   # callbacks prematurely.  Inner-write durability semantics are only
   # observable on PG/MySQL.
   # -------------------------------------------------------------------------
-  describe "requires_new inner transactions" do
+  describe "independent inner transactions" do
     it "does NOT fire the outer transaction's callbacks when the inner one commits" do
       outer_fired_after_inner_commit = false
 
       CommitTimingModel.transaction do
         CommitTimingModel.new(name: "outer-rec").save
 
-        CommitTimingModel.transaction(requires_new: true) do
+        CommitTimingModel.transaction(independent: true) do
           # no-op inner body: its COMMIT must not touch the outer's queue
         end
 
@@ -304,7 +304,7 @@ describe "after_commit / after_rollback timing (AR semantics)" do
         CommitTimingModel.transaction do
           CommitTimingModel.new(name: "outer-doomed").save
 
-          CommitTimingModel.transaction(requires_new: true) do
+          CommitTimingModel.transaction(independent: true) do
             # inner commits independently; outer's callbacks must survive it
           end
 

@@ -7,20 +7,21 @@ module Grant::Query::Executor
 
     def run : Hash(Array(Grant::Columns::Type), Int64)
       log @sql, @args
-      results = {} of Array(Grant::Columns::Type) => Int64
 
       adapter = Model.adapter
-      adapter.open do |db|
-        db.query @sql, args: adapter.normalize_bind_values(@args) do |rows|
-          rows.each do
-            key = [] of Grant::Columns::Type
-            @group_count.times { key << rows.read(Grant::Columns::Type) }
-            results[key] = rows.read(Int64)
+      Grant::QueryCache.fetch(adapter, @sql, @args, Model.name, ->(cached : Hash(Array(Grant::Columns::Type), Int64)) { cached.dup }) do
+        results = {} of Array(Grant::Columns::Type) => Int64
+        adapter.open(@sql, @args, Model.name) do |db|
+          db.query @sql, args: adapter.normalize_bind_values(@args) do |rows|
+            rows.each do
+              key = [] of Grant::Columns::Type
+              @group_count.times { key << rows.read(Grant::Columns::Type) }
+              results[key] = rows.read(Int64)
+            end
           end
         end
+        results
       end
-
-      results
     end
   end
 end

@@ -68,7 +68,10 @@ module Grant::ConvenienceMethods(Model)
   def pluck(*fields : Symbol | String) : Array(Array(Grant::Columns::Type))
     return [] of Array(Grant::Columns::Type) if is_none?
 
-    field_names = fields.to_a.map(&.to_s)
+    field_names = fields.to_a.map { |field| resolve_column_alias(field.to_s) }
+    field_names.each do |name|
+      Grant::Query::SqlExpression.validate!(name, "pluck expression") unless Grant::Query::SqlExpression.identifier?(name)
+    end
 
     if should_chunk_in?
       return chunked_pluck(field_names)
@@ -114,104 +117,7 @@ module Grant::ConvenienceMethods(Model)
     limit(1).pluck(*fields).first?
   end
 
-  # Processes matching records in batches, yielding each batch as an Array.
-  #
-  # Uses primary-key cursor pagination (not OFFSET), so it stays efficient and
-  # stable on large tables when the relation uses its primary-key order. A
-  # custom order uses deterministic offset pages so the requested sort is kept.
-  # The caller's relation is never mutated.
-  #
-  # - *of*: maximum records per batch (default `1000`).
-  # - *start* / *finish*: inclusive lower/upper primary-key bounds to scan.
-  # - *order*: `:asc` (default) or `:desc` primary-key direction.
-  # - *load*, *error_on_ignore*: accepted for ActiveRecord signature parity.
-  #
-  # Yields each batch as an `Array(Model)`.
-  #
-  # ```
-  # User.where(active: true).in_batches(of: 500) do |batch|
-  #   puts "processing #{batch.size} users"
-  # end
-  #
-  # # Only ids 1_000..2_000, newest first:
-  # User.all.in_batches(of: 100, start: 1_000, finish: 2_000, order: :desc) do |batch|
-  #   batch.each { |u| process(u) }
-  # end
-  # ```
-  def in_batches(of batch_size : Int32 = 1000, start : Int64? = nil, finish : Int64? = nil, load : Bool = false, error_on_ignore : Bool = false, order : Symbol = :asc, &block : Array(Model) -> _)
-    raise ArgumentError.new("Batch size must be greater than zero") unless batch_size > 0
-
-    primary_key = Model.primary_name
-    base_relation = self.dup
-
-    primary_order = base_relation.order_fields.find { |field| field[:field] == primary_key }
-    ascending = if primary_order
-                  primary_order[:direction] == Grant::Query::Builder::Sort::Ascending
-                else
-                  order != :desc
-                end
-
-    custom_order = base_relation.order_fields.any? { |field| field[:field] != primary_key }
-    if base_relation.order_fields.empty?
-      base_relation.order({primary_key => ascending ? :asc : :desc})
-    elsif custom_order && base_relation.order_fields.none? { |field| field[:field] == primary_key }
-      base_relation.order({primary_key => :asc})
-    end
-
-    if start
-      base_relation = base_relation.where(primary_key, ascending ? :gteq : :lteq, start.as(Grant::Columns::Type))
-    end
-
-    if finish
-      base_relation = base_relation.where(primary_key, ascending ? :lteq : :gteq, finish.as(Grant::Columns::Type))
-    end
-
-    if custom_order
-      base_offset = base_relation.offset || 0_i64
-      processed = 0_i64
-      remaining = base_relation.limit
-
-      loop do
-        break if remaining == 0
-
-        current_batch_size = remaining ? Math.min(batch_size.to_i64, remaining) : batch_size.to_i64
-        batch_relation = base_relation.dup
-        batch_relation.offset(base_offset + processed).limit(current_batch_size)
-        records = batch_relation.select
-        break if records.empty?
-
-        yield records
-        processed += records.size
-        remaining -= records.size if remaining
-        break if records.size < current_batch_size
-      end
-    else
-      cursor_operator = ascending ? :gt : :lt
-      cursor_id : Grant::Columns::Type? = nil
-      remaining = base_relation.limit
-
-      loop do
-        break if remaining == 0
-
-        current_batch_size = remaining ? Math.min(batch_size.to_i64, remaining) : batch_size.to_i64
-        batch_relation = base_relation.dup
-        if current_id = cursor_id
-          batch_relation = batch_relation.where(primary_key, cursor_operator, current_id)
-          batch_relation.offset(nil)
-        end
-        records = batch_relation.limit(current_batch_size).select
-        break if records.empty?
-
-        yield records
-        remaining -= records.size if remaining
-        break if records.size < current_batch_size || remaining == 0
-
-        cursor_id = records.last.read_attribute(primary_key).as(Grant::Columns::Type)
-      end
-    end
-  end
-
-  # Attaches a SQL comment to this query and returns the relation for chaining.
+  # Returns a copy of this relation carrying a SQL comment.
   #
   # The *comment* is emitted as an inline `/* ... */` comment in the generated
   # SQL (see `annotation_comment`), which is handy for tracing a query back to
@@ -223,8 +129,15 @@ module Grant::ConvenienceMethods(Model)
   # # => SELECT ... FROM users WHERE active = ? /* dashboard#index */
   # ```
   def annotate(comment : String) : self
+    copy = chain_copy
+    copy.set_query_annotation(comment)
+    copy
+  end
+
+  # :nodoc:
+  protected def set_query_annotation(comment : String) : Nil
+    reset_load_state
     @query_annotation = comment
-    self
   end
 
   # Returns the SQL comment fragment for this query's annotation, sanitized.
@@ -240,170 +153,10 @@ module Grant::ConvenienceMethods(Model)
   end
 end
 
-# Class methods for bulk operations
-module Grant::BulkOperations
-  # Bulk insert records
-  def insert_all(attributes : Array(Hash(String | Symbol, Grant::Columns::Type)),
-                 returning : Array(Symbol)? = nil,
-                 unique_by : Array(Symbol)? = nil,
-                 record_timestamps : Bool = true) : Array(self)
-    guard_writes!
-    builder = __builder
-
-    # Transform all keys to strings and ensure proper types
-    string_attributes = attributes.map do |attrs|
-      attrs.transform_keys(&.to_s).transform_values { |v| v.as(Grant::Columns::Type) }
-    end
-
-    string_attributes = __apply_tenant_to_bulk_attributes(string_attributes)
-    return [] of self if string_attributes.empty?
-
-    # Add timestamps if needed
-    if record_timestamps
-      now = Time.utc.as(Grant::Columns::Type)
-      timestamp_columns = self.fields
-      string_attributes = string_attributes.map do |attrs|
-        new_attrs = attrs.dup
-        new_attrs["created_at"] ||= now if timestamp_columns.includes?("created_at")
-        new_attrs["updated_at"] ||= now if timestamp_columns.includes?("updated_at")
-        new_attrs
-      end
-    end
-
-    # Create a query builder to get assembler
-    assembler = builder.assembler
-    sql = assembler.insert_all_sql(
-      attributes: string_attributes,
-      returning: returning,
-      unique_by: unique_by
-    )
-
-    records = [] of self
-
-    mark_write_operation
-    adapter.open do |db|
-      if adapter.mysql?
-        raise ArgumentError.new("MySQL does not support insert_all returning columns") if returning
-        db.exec(sql, args: adapter.normalize_bind_values(assembler.numbered_parameters))
-      else
-        db.query(sql, args: adapter.normalize_bind_values(assembler.numbered_parameters)) do |rs|
-          rs.each do
-            record = self.new
-            # Populate record from result set if returning was specified
-            if returning
-              returning.each do |field|
-                value = read_column_value(rs, field.to_s)
-                record.write_attribute(field.to_s, value)
-              end
-            end
-            records << record
-          end
-        end
-      end
-    end
-
-    records
-  end
-
-  # Bulk upsert records
-  def upsert_all(attributes : Array(Hash(String | Symbol, Grant::Columns::Type)),
-                 returning : Array(Symbol)? = nil,
-                 unique_by : Array(Symbol)? = nil,
-                 update_only : Array(Symbol)? = nil,
-                 record_timestamps : Bool = true) : Array(self)
-    guard_writes!
-    builder = __builder
-
-    # Transform all keys to strings and ensure proper types
-    string_attributes = attributes.map do |attrs|
-      attrs.transform_keys(&.to_s).transform_values { |v| v.as(Grant::Columns::Type) }
-    end
-
-    string_attributes = __apply_tenant_to_bulk_attributes(string_attributes)
-    return [] of self if string_attributes.empty?
-
-    # Add timestamps if needed
-    if record_timestamps
-      now = Time.utc.as(Grant::Columns::Type)
-      timestamp_columns = self.fields
-      string_attributes = string_attributes.map do |attrs|
-        new_attrs = attrs.dup
-        new_attrs["created_at"] ||= now if timestamp_columns.includes?("created_at")
-        new_attrs["updated_at"] = now if timestamp_columns.includes?("updated_at")
-        new_attrs
-      end
-    end
-
-    # Create a query builder to get assembler
-    assembler = builder.assembler
-    sql = assembler.upsert_all_sql(
-      attributes: string_attributes,
-      returning: returning,
-      unique_by: unique_by,
-      update_only: update_only
-    )
-
-    records = [] of self
-
-    mark_write_operation
-    adapter.open do |db|
-      if adapter.mysql?
-        raise ArgumentError.new("MySQL does not support upsert_all returning columns") if returning
-        db.exec(sql, args: adapter.normalize_bind_values(assembler.numbered_parameters))
-      else
-        db.query(sql, args: adapter.normalize_bind_values(assembler.numbered_parameters)) do |rs|
-          rs.each do
-            record = self.new
-            # Populate record from result set if returning was specified
-            if returning
-              returning.each do |field|
-                value = read_column_value(rs, field.to_s)
-                record.write_attribute(field.to_s, value)
-              end
-            end
-            records << record
-          end
-        end
-      end
-    end
-
-    records
-  end
-
-  private def read_column_value(rs, column_name : String)
-    column = column_for_attribute(column_name)
-    return nil unless column
-
-    case column.column_type.name
-    when "String"
-      rs.read(String?)
-    when "Int32"
-      rs.read(Int32?)
-    when "Int64"
-      rs.read(Int64?)
-    when "Float32"
-      rs.read(Float32?)
-    when "Float64"
-      rs.read(Float64?)
-    when "Bool"
-      rs.read(Bool?)
-    when "Time"
-      rs.read(Time?)
-    else
-      rs.read(String?)
-    end
-  end
-end
-
 # Include in query builder
 class Grant::Query::Builder(Model)
   include Grant::ConvenienceMethods(Model)
 
   @query_annotation : String?
   @_cached_assembler : Grant::Query::Assembler::Base(Model)?
-end
-
-# Include in Base
-abstract class Grant::Base
-  extend Grant::BulkOperations
 end

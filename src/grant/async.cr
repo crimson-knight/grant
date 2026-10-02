@@ -21,10 +21,12 @@ module Grant
       end
 
       # Async sum
-      def async_sum(column : Symbol | String) : AsyncResult(Float64)
+      def async_sum(column : Symbol | String) : AsyncResult(Grant::Query::Builder::SumValue)
         query = current_scope
-        AsyncResult(Float64).new do
-          query.sum(column)
+        AsyncResult(Grant::Query::Builder::SumValue).new do
+          result = query.sum(column)
+          raise ArgumentError.new("async_sum on a grouped scope returns a Hash per group") if result.is_a?(Hash)
+          result
         end
       end
 
@@ -32,7 +34,9 @@ module Grant
       def async_avg(column : Symbol | String) : AsyncResult(Float64?)
         query = current_scope
         AsyncResult(Float64?).new do
-          query.avg(column)
+          result = query.avg(column)
+          raise ArgumentError.new("async_avg on a grouped scope returns a Hash per group") if result.is_a?(Hash)
+          result
         end
       end
 
@@ -40,7 +44,9 @@ module Grant
       def async_min(column : Symbol | String) : AsyncResult(Grant::Columns::Type)
         query = current_scope
         AsyncResult(Grant::Columns::Type).new do
-          query.min(column)
+          result = query.min(column)
+          raise ArgumentError.new("async_min on a grouped scope returns a Hash per group") if result.is_a?(Hash)
+          result
         end
       end
 
@@ -48,7 +54,9 @@ module Grant
       def async_max(column : Symbol | String) : AsyncResult(Grant::Columns::Type)
         query = current_scope
         AsyncResult(Grant::Columns::Type).new do
-          query.max(column)
+          result = query.max(column)
+          raise ArgumentError.new("async_max on a grouped scope returns a Hash per group") if result.is_a?(Hash)
+          result
         end
       end
 
@@ -64,10 +72,41 @@ module Grant
       def async_pick(column : Symbol | String) : AsyncResult(Grant::Columns::Type?)
         query = current_scope
         if query.order_fields.empty?
-          query.order_fields << {field: primary_name, direction: Grant::Query::Builder::Sort::Ascending}
+          query.own_order_fields << {field: primary_name, direction: Grant::Query::Builder::Sort::Ascending}
         end
         AsyncResult(Grant::Columns::Type?).new do
           query.pick(column).try(&.first)
+        end
+      end
+
+      # Async average, ActiveRecord's name for `async_avg`
+      def async_average(column : Symbol | String) : AsyncResult(Float64?)
+        async_avg(column)
+      end
+
+      # Async primary keys of the current scope
+      def async_ids : AsyncResult(Array(Grant::Columns::Type))
+        query = current_scope
+        AsyncResult(Array(Grant::Columns::Type)).new do
+          query.ids
+        end
+      end
+
+      # Async existence check of the current scope
+      def async_exists? : AsyncResult(Bool)
+        query = current_scope
+        AsyncResult(Bool).new do
+          query.exists?
+        end
+      end
+
+      # Async `find_by_sql`: hydrates the rows of *sql* as this model on a
+      # background fiber. Raw SQL gets no default scope, so a scoped model
+      # raises unless the call sits inside `unscoped { }`, as `find_by_sql`.
+      def async_find_by_sql(sql : String, binds : Array(Grant::Columns::Type) = [] of Grant::Columns::Type) : AsyncResult(Array(self))
+        ensure_raw_sql_unscoped!
+        AsyncResult(Array(self)).new do
+          unscoped { |_| find_by_sql(sql, binds) }
         end
       end
 
@@ -201,30 +240,38 @@ module Grant
       end
 
       # Async sum
-      def async_sum(column : Symbol | String) : AsyncResult(Float64)
-        AsyncResult(Float64).new do
-          sum(column)
+      def async_sum(column : Symbol | String) : AsyncResult(Grant::Query::Builder::SumValue)
+        AsyncResult(Grant::Query::Builder::SumValue).new do
+          result = sum(column)
+          raise ArgumentError.new("async_sum on a grouped relation returns a Hash per group") if result.is_a?(Hash)
+          result
         end
       end
 
       # Async avg
       def async_avg(column : Symbol | String) : AsyncResult(Float64?)
         AsyncResult(Float64?).new do
-          avg(column)
+          result = avg(column)
+          raise ArgumentError.new("async_avg on a grouped relation returns a Hash per group") if result.is_a?(Hash)
+          result
         end
       end
 
       # Async min
       def async_min(column : Symbol | String) : AsyncResult(Grant::Columns::Type)
         AsyncResult(Grant::Columns::Type).new do
-          min(column)
+          result = min(column)
+          raise ArgumentError.new("async_min on a grouped relation returns a Hash per group") if result.is_a?(Hash)
+          result
         end
       end
 
       # Async max
       def async_max(column : Symbol | String) : AsyncResult(Grant::Columns::Type)
         AsyncResult(Grant::Columns::Type).new do
-          max(column)
+          result = max(column)
+          raise ArgumentError.new("async_max on a grouped relation returns a Hash per group") if result.is_a?(Hash)
+          result
         end
       end
 
@@ -233,6 +280,18 @@ module Grant
         AsyncResult(Bool).new do
           exists?
         end
+      end
+
+      # Async primary keys of the relation
+      def async_ids : AsyncResult(Array(Grant::Columns::Type))
+        AsyncResult(Array(Grant::Columns::Type)).new do
+          ids
+        end
+      end
+
+      # Async average, ActiveRecord's name for `async_avg`
+      def async_average(column : Symbol | String) : AsyncResult(Float64?)
+        async_avg(column)
       end
 
       # Async delete
@@ -288,7 +347,7 @@ module Grant
       # Async pick
       def async_pick(column : Symbol | String) : AsyncResult(Grant::Columns::Type?)
         AsyncResult(Grant::Columns::Type?).new do
-          pick(column)
+          pick(column).try(&.first?)
         end
       end
     end

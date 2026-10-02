@@ -3,16 +3,16 @@ require "../../spec_helper"
 describe "Grant::Validators::BuiltIn" do
   describe "validates_numericality_of" do
     it "validates numeric values" do
-      product = NumericProduct.new(price: 10.5, quantity: 5.0)
+      product = NumericProduct.new(price: 10.5, quantity: 5)
       product.valid?.should be_true
 
       product.price = nil
       product.valid?.should be_false
-      product.errors.first.message.not_nil!.should contain("greater than 0")
+      product.errors.first.message.not_nil!.should eq("is not a number")
     end
 
     it "validates greater_than constraint" do
-      product = NumericProduct.new(price: 0.5, quantity: 5.0)
+      product = NumericProduct.new(price: 0.5, quantity: 5)
       product.valid?.should be_true # 0.5 > 0
 
       product.price = -1.0
@@ -24,11 +24,11 @@ describe "Grant::Validators::BuiltIn" do
     end
 
     it "validates only_integer option" do
-      product = NumericProduct.new(price: 10.5, quantity: 5.5)
+      product = NumericProduct.new(price: 10.5, quantity: "5.5")
       product.valid?.should be_false
       product.errors.map(&.message.not_nil!).should contain("must be an integer")
 
-      product.quantity = 5.0
+      product.quantity = 5
       product.valid?.should be_true
     end
 
@@ -47,7 +47,7 @@ describe "Grant::Validators::BuiltIn" do
 
       order.status = "completed"
       order.valid?.should be_false # total required when completed
-      order.errors.first.message.not_nil!.should contain("greater than 0")
+      order.errors.first.message.not_nil!.should eq("is not a number")
 
       order.total = 100.0
       order.valid?.should be_true
@@ -96,7 +96,7 @@ describe "Grant::Validators::BuiltIn" do
     it "validates minimum length" do
       post = LengthPost.new(title: "Hi", body: "This is long enough body")
       post.valid?.should be_false
-      post.errors.first.message.not_nil!.should contain("at least 3 characters")
+      post.errors.first.message.not_nil!.should contain("minimum is 3 characters")
 
       post.title = "Hello"
       post.valid?.should be_true
@@ -105,13 +105,13 @@ describe "Grant::Validators::BuiltIn" do
     it "validates maximum length" do
       post = LengthPost.new(title: "A very long title that exceeds maximum", body: "Long enough body text")
       post.valid?.should be_false
-      post.errors.first.message.not_nil!.should contain("at most 20 characters")
+      post.errors.first.message.not_nil!.should contain("maximum is 20 characters")
     end
 
     it "validates exact length" do
       code = ExactLengthCode.new(code: "ABC")
       code.valid?.should be_false
-      code.errors.first.message.not_nil!.should contain("exactly 4 characters")
+      code.errors.first.message.not_nil!.should contain("should be 4 characters")
 
       code.code = "ABCD"
       code.valid?.should be_true
@@ -193,10 +193,10 @@ describe "Grant::Validators::BuiltIn" do
       profile.errors.size.should eq(4)
 
       error_messages = profile.errors.map(&.message.not_nil!)
-      error_messages.should contain("must be at least 3 characters")
+      error_messages.should contain("is too short (minimum is 3 characters)")
       error_messages.should contain("is not a valid email")
       error_messages.should contain("must be less than 120")
-      error_messages.should contain("must be at most 500 characters")
+      error_messages.should contain("is too long (maximum is 500 characters)")
     end
   end
 end
@@ -209,7 +209,7 @@ class NumericProduct < Grant::Base
 
   column id : Int64, primary: true
   column price : Float64?
-  column quantity : Float64?
+  column quantity : Int32?
 
   validates_numericality_of :price, greater_than: 0
   validates_numericality_of :quantity, only_integer: true

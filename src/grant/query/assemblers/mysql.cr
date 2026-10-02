@@ -10,6 +10,21 @@ module Grant::Query::Assembler
       "?"
     end
 
+    # MySQL has no NULLS FIRST/LAST, so an `ISNULL(column)` term goes first (1
+    # for NULL): descending puts NULLs first, ascending puts them last.
+    protected def nulls_ordering_sql(field : String, keyword : String, first : Bool) : String
+      "ISNULL(#{field}) #{first ? "DESC" : "ASC"}, #{field} #{keyword}"
+    end
+
+    protected def text_cast_type : String
+      "CHAR"
+    end
+
+    # Adding a double turns the DECIMAL result into a DOUBLE on every version.
+    protected def double_cast_sql(expression : String) : String
+      "(#{expression} + 0e0)"
+    end
+
     # MySQL supports `EXPLAIN`; `EXPLAIN ANALYZE` is available on 8.0.18+. If the
     # server is older, `explain(analyze: true)` degrades gracefully (the base
     # `explain` rescues the error and returns its message).
@@ -26,6 +41,7 @@ module Grant::Query::Assembler
       end.join(", ")
 
       build_sql do |s|
+        s << with_clause
         s << "#{select_keyword} #{select_fields}"
         s << from_clause
         s << joins
@@ -36,81 +52,6 @@ module Grant::Query::Assembler
         s << limit
         s << offset
       end
-    end
-
-    # Generate SQL for insert_all operation
-    def insert_all_sql(attributes : Array(Hash(String, Grant::Columns::Type)),
-                       returning : Array(Symbol)?,
-                       unique_by : Array(Symbol)?) : String
-      return "" if attributes.empty?
-
-      # Get column names from first hash
-      columns = attributes.first.keys
-      column_list = columns.join(", ")
-
-      # Build values list
-      values_list = attributes.map do |attrs|
-        values = columns.map do |col|
-          add_parameter(attrs[col])
-        end
-        "(#{values.join(", ")})"
-      end.join(", ")
-
-      sql = "INSERT INTO #{table_name} (#{column_list}) VALUES #{values_list}"
-
-      # MySQL uses INSERT IGNORE for conflict handling
-      if unique_by && !unique_by.empty?
-        sql = "INSERT IGNORE INTO #{table_name} (#{column_list}) VALUES #{values_list}"
-      end
-
-      # MySQL doesn't support RETURNING clause
-      # Would need to use LAST_INSERT_ID() or similar
-
-      sql
-    end
-
-    # Generate SQL for upsert_all operation
-    def upsert_all_sql(attributes : Array(Hash(String, Grant::Columns::Type)),
-                       returning : Array(Symbol)?,
-                       unique_by : Array(Symbol)?,
-                       update_only : Array(Symbol)?) : String
-      return "" if attributes.empty?
-
-      # Get column names from first hash
-      columns = attributes.first.keys
-      column_list = columns.join(", ")
-
-      # Build values list
-      values_list = attributes.map do |attrs|
-        values = columns.map do |col|
-          add_parameter(attrs[col])
-        end
-        "(#{values.join(", ")})"
-      end.join(", ")
-
-      sql = "INSERT INTO #{table_name} (#{column_list}) VALUES #{values_list}"
-
-      # MySQL uses ON DUPLICATE KEY UPDATE
-      sql += " ON DUPLICATE KEY UPDATE "
-
-      # Determine which columns to update
-      update_columns = if update_only && !update_only.empty?
-                         update_only.map(&.to_s)
-                       else
-                         # Update all columns except primary key
-                         excluded = [Model.primary_name]
-                         excluded += unique_by.map(&.to_s) if unique_by
-                         columns.reject { |col| excluded.includes?(col) }
-                       end
-
-      # Build update assignments
-      updates = update_columns.map do |col|
-        "#{col} = VALUES(#{col})"
-      end
-
-      sql += updates.join(", ")
-
-      sql
     end
   end
 end

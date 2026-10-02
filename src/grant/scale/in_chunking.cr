@@ -1,3 +1,13 @@
+module Grant::Query::InChunks
+  # Runs *work* in one transaction on *adapter*, as `Model.transaction` does.
+  # `Transaction.run` yields, so every call site gets its own copy of the
+  # transaction machinery; going through a `Proc` here keeps a single copy for
+  # all models and the chunked write terminals.
+  def self.in_transaction(adapter : Grant::Adapter::Base, work : Proc(Nil)) : Nil
+    Grant::Transaction.run(adapter, Grant::Transaction::Options.new) { work.call }
+  end
+end
+
 class Grant::Query::Builder(Model)
   # Per-query override of `Grant.settings.in_clause_limit`. When set, a
   # `where(col: array)` whose array exceeds this size is split into chunks of
@@ -19,8 +29,15 @@ class Grant::Query::Builder(Model)
   # ```
   def in_chunks(of size : Int32) : self
     raise ArgumentError.new("in_chunks size must be positive") if size <= 0
+    copy = chain_copy
+    copy.set_in_chunk_size(size)
+    copy
+  end
+
+  # :nodoc:
+  protected def set_in_chunk_size(size : Int32) : Nil
+    reset_load_state
     @in_chunk_size = size
-    self
   end
 
   # The effective IN-chunk size (per-query override or global setting).
@@ -100,8 +117,8 @@ class Grant::Query::Builder(Model)
           f
         end
       end
-      chunk_query.where_fields.clear
-      new_fields.each { |f| chunk_query.where_fields << f }
+      chunk_query.clear_where_fields
+      new_fields.each { |f| chunk_query.own_where_fields << f }
       yield chunk_query
     end
   end
@@ -127,6 +144,9 @@ class Grant::Query::Builder(Model)
   protected def chunked_select : Array(Model)
     requested_limit = @limit
     has_order = !@order_fields.empty?
+    if @order_fields.any? { |term| term[:direction].raw? }
+      raise ArgumentError.new("Raw ORDER BY expressions cannot be merged across chunked IN queries")
+    end
 
     collected = [] of Model
     seen = Set(Grant::Columns::Type).new
@@ -134,14 +154,14 @@ class Grant::Query::Builder(Model)
 
     each_in_chunk do |chunk_query|
       # Drop offset on chunks (offset across chunks is ambiguous; applied last).
-      chunk_query.offset(nil)
+      chunk_query.offset!(nil)
       # If a limit is set, each chunk need only fetch up to that many rows when
       # there is no global ordering (early-stop optimization). With ordering we
       # must fetch each chunk's limit-worth to merge correctly.
       if requested_limit
-        chunk_query.limit(requested_limit)
+        chunk_query.limit!(requested_limit)
       else
-        chunk_query.limit(nil)
+        chunk_query.limit!(nil)
       end
 
       records = chunk_query.select_single
@@ -179,8 +199,8 @@ class Grant::Query::Builder(Model)
   protected def chunked_count : Int64
     total = 0_i64
     each_in_chunk do |chunk_query|
-      chunk_query.limit(nil)
-      chunk_query.offset(nil)
+      chunk_query.limit!(nil)
+      chunk_query.offset!(nil)
       total += chunk_query.count_single
     end
     total
@@ -191,8 +211,8 @@ class Grant::Query::Builder(Model)
     seen = Set(Grant::Columns::Type).new
     result = [] of Grant::Columns::Type
     each_in_chunk do |chunk_query|
-      chunk_query.limit(nil)
-      chunk_query.offset(nil)
+      chunk_query.limit!(nil)
+      chunk_query.offset!(nil)
       chunk_query.ids_single.each do |id|
         next if seen.includes?(id)
         seen << id
@@ -218,8 +238,8 @@ class Grant::Query::Builder(Model)
   protected def chunked_pluck(field_names : Array(String)) : Array(Array(Grant::Columns::Type))
     result = [] of Array(Grant::Columns::Type)
     each_in_chunk do |chunk_query|
-      chunk_query.limit(nil)
-      chunk_query.offset(nil)
+      chunk_query.limit!(nil)
+      chunk_query.offset!(nil)
       result.concat(chunk_query.pluck_single(field_names))
     end
     result
@@ -231,13 +251,13 @@ class Grant::Query::Builder(Model)
   # returns the summed rows_affected.
   protected def chunked_update_all(assignments : Array(Tuple(String, Grant::Columns::Type))) : Int64
     total = 0_i64
-    Model.transaction do
+    Grant::Query::InChunks.in_transaction(Model.transaction_adapter, -> {
       each_in_chunk do |chunk_query|
-        chunk_query.limit(nil)
-        chunk_query.offset(nil)
+        chunk_query.limit!(nil)
+        chunk_query.offset!(nil)
         total += chunk_query.update_all_single(assignments)
       end
-    end
+    })
     total
   end
 
@@ -245,13 +265,13 @@ class Grant::Query::Builder(Model)
   # returns the summed rows_affected.
   protected def chunked_delete_all : Int64
     total = 0_i64
-    Model.transaction do
+    Grant::Query::InChunks.in_transaction(Model.transaction_adapter, -> {
       each_in_chunk do |chunk_query|
-        chunk_query.limit(nil)
-        chunk_query.offset(nil)
+        chunk_query.limit!(nil)
+        chunk_query.offset!(nil)
         total += chunk_query.delete_all_single
       end
-    end
+    })
     total
   end
 
@@ -266,7 +286,7 @@ class Grant::Query::Builder(Model)
         va = a.read_attribute(of[:field])
         vb = b.read_attribute(of[:field])
         c = compare_values(va, vb)
-        c = -c if of[:direction] == Grant::Query::Builder::Sort::Descending
+        c = -c if of[:direction].sorts_descending?
         if c != 0
           cmp = c
           break

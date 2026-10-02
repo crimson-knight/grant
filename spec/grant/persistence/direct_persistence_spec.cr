@@ -28,7 +28,7 @@ describe "Grant direct persistence regressions T6" do
 
     record.name_changed?.should be_false
     record.note_changed?.should be_true
-    record.changed_attributes.should eq(["note"])
+    record.changed.should eq(["note"])
     T6PersistenceRecord.find!(record.id).name.should eq("direct")
     T6PersistenceRecord.find!(record.id).note.should eq("saved")
   end

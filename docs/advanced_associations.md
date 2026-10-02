@@ -33,18 +33,63 @@ end
 category.destroy! # => Sets category_id = NULL on all articles
 ```
 
-### dependent: :restrict
+### dependent: :delete / :delete_all
 
-Prevents deletion of the parent record if any associated records exist.
+Deletes the associated rows with one SQL `DELETE` and no callbacks. `has_many` spells it `:delete_all`, `has_one` and `belongs_to` spell it `:delete`.
+
+### dependent: :restrict_with_error
+
+Prevents deletion of the parent record if any associated records exist. `destroy` returns `false` and the parent gets an error on `:base`. `:restrict` is the older spelling of the same behavior.
 
 ```crystal
 class Team < Grant::Base
-  has_many :members, dependent: :restrict
+  has_many :members, dependent: :restrict_with_error
 end
 
-# Raises error if trying to destroy team with members
-team.destroy! # => Raises Grant::RecordNotDestroyed if members exist
+team.destroy # => false
+team.errors.full_messages # => ["Cannot delete record because of dependent members"]
 ```
+
+### dependent: :restrict_with_exception
+
+Raises `Grant::Associations::RestrictError` (also reachable as `Grant::DeleteRestrictionError`) instead of adding an error.
+
+### dependent: :destroy_async
+
+Hands the destroy of the dependents to a queue once the parent's destroy commits. One job covers the whole association of one owner; it destroys the dependents in batches, does nothing while the owner row still exists, and is safe to run twice.
+
+```crystal
+class Author < Grant::Base
+  has_many :posts, dependent: :destroy_async
+end
+
+# The default runs each job in a new fiber. Replace it to use a job system:
+Grant::Dependent.async_destroy_enqueuer = ->(job : Grant::Dependent::AsyncDestroyJob) do
+  MyQueue.push(job.owner_class, job.association, job.key)
+  nil
+end
+
+# In the worker:
+Grant::Dependent::AsyncDestroyJob.new(owner_class, association, key).perform
+```
+
+### belongs_to dependent
+
+`belongs_to :author, dependent: :destroy` destroys the parent after the child is destroyed, `:delete` removes it with one `DELETE`, and `:destroy_async` queues the destroy. As in ActiveRecord this is rarely right when other records share the parent.
+
+### destroyed_by_association
+
+A record destroyed by `dependent: :destroy` can tell in its own callbacks which association did it:
+
+```crystal
+class Post < Grant::Base
+  after_destroy { skip_notification if destroyed_by_association }
+end
+```
+
+### Unknown values and has_many :through
+
+A `dependent:` value the association type does not support is a compile error. On `has_many ..., through:` the option acts on the join records, never on the associated records.
 
 ## Optional Associations
 
@@ -90,10 +135,14 @@ class Comment < Grant::Base
 end
 ```
 
+With `counter_cache: true` the column is the pluralized model name plus `_count` (`Category` gives `categories_count`).
+
 The counter cache:
 - Increments when a record is created
 - Decrements when a record is destroyed
-- Updates when the association changes
+- Moves from one parent to the other when the association changes
+- Changes with atomic `col = COALESCE(col, 0) + n` SQL, and adjusts a parent that is already loaded in memory
+- Follows `has_many` `delete`, `delete_all` and `clear`, which change foreign keys without callbacks
 
 ```crystal
 blog = Blog.create!(title: "My Blog", posts_count: 0)
@@ -102,6 +151,18 @@ blog.reload.posts_count # => 1
 
 post.destroy!
 blog.reload.posts_count # => 0
+```
+
+`counter_cache: {column: :posts_count, active: false}` records the counter without maintaining it, for the time a counter is being introduced.
+
+`has_many :posts` reads the cached column for `size` when the association is not loaded. Name the column on the `has_many` with `counter_cache: :posts_total` when it differs.
+
+Repair or adjust a counter directly:
+
+```crystal
+Blog.reset_counters(blog.id, :posts) # one UPDATE with a correlated COUNT(*) subquery
+Blog.increment_counter(:posts_count, blog.id)
+Blog.decrement_counter(:posts_count, blog.id, by: 2)
 ```
 
 ## Touch
@@ -121,6 +182,8 @@ class Comment < Grant::Base
   belongs_to :post, touch: :last_commented_at
 end
 ```
+
+The parent is touched by key with one `UPDATE` and is not loaded (unless it has `after_touch` callbacks or touches its own parent). A save that changed nothing touches nothing, and moving a child to another parent touches both the old and the new one.
 
 ## Autosave
 
@@ -146,9 +209,28 @@ order.save! # => Also saves line_items, invoice, and customer
 
 ### How Autosave Works
 
-1. **For new records**: Autosave will create the associated records when the parent is saved
-2. **For existing records**: Autosave leaves persisted associated records unchanged; save those records directly after editing them
-3. **Validation**: If any associated record fails validation, the entire save operation fails
+| Option | Effect on `owner.save` |
+| ------ | ---------------------- |
+| unset | New records are validated and saved with the owner. |
+| `autosave: true` | Also saves changed records and destroys the ones marked with `mark_for_destruction`. |
+| `autosave: false` | Never saves the associated records. |
+
+1. **Validation** (`validate:`, on by default for `has_many`): before anything is written, the new (or, with `autosave: true`, changed) records are validated. With `autosave: true` their errors are copied onto the owner as `posts.title`; without it the owner gets one `posts` "is invalid" error. `index_errors: true` keys them by position (`posts[0].title`). An invalid record makes `owner.save` return `false` and nothing is saved.
+2. **Saving**: `belongs_to` targets are saved before the owner, `has_one` and `has_many` targets after it has its key. Only new or changed records are touched; loaded records that did not change cost nothing.
+3. **Records built on the association** (`owner.posts.build`) are saved with the owner.
+
+```crystal
+class Blog < Grant::Base
+  has_many :posts, autosave: true, index_errors: true
+end
+
+blog.posts.first.mark_for_destruction # destroyed, and dropped from the target, on blog.save
+blog.posts.build(title: "")
+blog.save # => false
+blog.errors["posts[1].title"] # => ["can't be blank"]
+```
+
+`belongs_to :author, default: ->(post : Post) { Author.current }` fills a missing key before validation on create, and `post.author_changed?` / `post.author_previously_changed?` report the foreign key's dirty state.
 
 ### Autosave with has_many
 
@@ -186,7 +268,7 @@ comment.save! # Also saves the new author
 
 ### Important Notes
 
-- Autosave only works with records assigned via the association setter
+- Autosave works on the records the association holds in memory: assigned, built, appended or loaded
 - Direct manipulation of foreign keys bypasses autosave
 - Autosave respects validation and wraps the owner plus associated saves in a transaction
 - New `belongs_to` targets are saved before the owner; `has_one` and `has_many` targets are saved after the owner has its key
@@ -229,7 +311,7 @@ end
 Most association options are implemented using Grant's callback system:
 - `dependent` options use `before_destroy` or `after_destroy` callbacks
 - `counter_cache` uses `after_create`, `after_destroy`, and `before_update` callbacks
-- `touch` uses `after_save` and `after_destroy` callbacks
+- `touch` uses `after_save`, `after_destroy` and `after_touch` callbacks
 - `autosave` saves `belongs_to` records before the owner and `has_one`/`has_many` records after the owner, in a transaction
 
 ### Performance Considerations

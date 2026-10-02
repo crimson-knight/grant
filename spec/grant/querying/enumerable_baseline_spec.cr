@@ -61,7 +61,7 @@ describe "Grant::Query::Builder collection baseline (pre-Enumerable)" do
 
   describe "#all" do
     it "returns all matching records" do
-      results = Parent.where(name: ["alice", "bob"]).all
+      results = Parent.where(name: ["alice", "bob"]).to_a
       results.size.should eq 2
     end
   end
@@ -119,50 +119,50 @@ describe "Grant::Query::Builder collection baseline (pre-Enumerable)" do
   # Users must currently call .all before collection methods
   describe ".all workaround pattern" do
     it "requires .all before .select with block" do
-      results = Parent.where(name: ["alice", "bob", "carol"]).all.select { |r|
+      results = Parent.where(name: ["alice", "bob", "carol"]).to_a.select { |r|
         r.name == "alice" || r.name == "bob"
       }
       results.size.should eq 2
     end
 
     it "requires .all before .count with block" do
-      count = Parent.where(name: ["alice", "bob", "carol"]).all.count { |r|
+      count = Parent.where(name: ["alice", "bob", "carol"]).to_a.count { |r|
         r.name == "alice"
       }
       count.should eq 1
     end
 
     it "requires .all before .any? with block" do
-      result = Parent.where(name: ["alice", "bob", "carol"]).all.any? { |r|
+      result = Parent.where(name: ["alice", "bob", "carol"]).to_a.any? { |r|
         r.name == "carol"
       }
       result.should be_true
     end
 
     it "requires .all before .min_by" do
-      result = Parent.where(name: ["alice", "bob", "carol"]).all.min_by { |r| r.name || "" }
+      result = Parent.where(name: ["alice", "bob", "carol"]).to_a.min_by { |r| r.name || "" }
       result.name.should eq "alice"
     end
 
     it "requires .all before .max_by" do
-      result = Parent.where(name: ["alice", "bob", "carol"]).all.max_by { |r| r.name || "" }
+      result = Parent.where(name: ["alice", "bob", "carol"]).to_a.max_by { |r| r.name || "" }
       result.name.should eq "carol"
     end
 
     it "requires .all before .sort_by" do
-      results = Parent.where(name: ["carol", "alice", "bob"]).all.sort_by { |r| r.name || "" }
+      results = Parent.where(name: ["carol", "alice", "bob"]).to_a.sort_by { |r| r.name || "" }
       results.map(&.name).should eq ["alice", "bob", "carol"]
     end
 
     it "requires .all before .reduce" do
-      total = Parent.where(name: ["alice", "bob", "carol"]).all.reduce("") { |acc, r| acc + (r.name || "") }
+      total = Parent.where(name: ["alice", "bob", "carol"]).to_a.reduce("") { |acc, r| acc + (r.name || "") }
       total.should contain("alice")
       total.should contain("bob")
       total.should contain("carol")
     end
 
     it "requires .all before .partition" do
-      a_names, others = Parent.where(name: ["alice", "bob", "carol"]).all.partition { |r|
+      a_names, others = Parent.where(name: ["alice", "bob", "carol"]).to_a.partition { |r|
         name = r.name
         name ? name.starts_with?("a") : false
       }

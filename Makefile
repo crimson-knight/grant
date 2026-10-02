@@ -10,9 +10,12 @@ AUTH_SCRIPT  := ./scripts/mysql-auth-test.sh
 MYSQL_TEST_COMPOSE_PROJECT ?= grant-full-green
 MYSQL_TEST_HOST_PORT ?= 3316
 
-.PHONY: help mysql-spec mysql-auth-test mysql-auth-up mysql-auth-down mysql-auth-ping \
+.PHONY: help spec mysql-spec mysql-auth-test mysql-auth-up mysql-auth-down mysql-auth-ping \
         mysql-auth-pubkey mysql-auth-config mysql-auth-matrix \
         mysql-auth-8011-amd64
+
+spec: ## Run specs one directory per process (ADAPTERS="sqlite pg")
+	CRYSTAL=$${CRYSTAL:-crystal} ./scripts/spec-groups.sh $(ADAPTERS)
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \

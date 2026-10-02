@@ -52,112 +52,26 @@ module Grant::Sharding
     end
   end
 
-  # Built-in hash sharding resolver
-  class HashResolver < ShardResolver
-    getter shard_count : Int32
-    getter shard_prefix : String
-
-    @shards : Array(Symbol)
-
-    def initialize(@key_columns : Array(Symbol), @shard_count : Int32, @shard_prefix : String = "shard")
-      # Crystal doesn't support dynamic symbol creation, so we need to handle known shard counts
-      @shards = case @shard_count
-                when 1
-                  [:shard_0]
-                when 2
-                  [:shard_0, :shard_1]
-                when 3
-                  [:shard_0, :shard_1, :shard_2]
-                when 4
-                  [:shard_0, :shard_1, :shard_2, :shard_3]
-                when 8
-                  [:shard_0, :shard_1, :shard_2, :shard_3, :shard_4, :shard_5, :shard_6, :shard_7]
-                when 16
-                  [:shard_0, :shard_1, :shard_2, :shard_3, :shard_4, :shard_5, :shard_6, :shard_7,
-                   :shard_8, :shard_9, :shard_10, :shard_11, :shard_12, :shard_13, :shard_14, :shard_15]
-                else
-                  raise "Unsupported shard count: #{@shard_count}. Supported counts are: 1, 2, 3, 4, 8, 16"
-                end
-    end
-
-    def resolve(model : Grant::Base) : Symbol
-      values = @key_columns.map { |col| model.read_attribute(col.to_s) }
-      resolve_for_values(values)
-    end
-
-    def resolve_for_keys(**keys) : Symbol
-      values = @key_columns.map { |col| keys[col]? || raise "Missing shard key: #{col}" }
-      resolve_for_values(values)
-    end
-
-    def all_shards : Array(Symbol)
-      @shards
-    end
-
-    def resolve_for_values(values : Array) : Symbol
-      # Create composite key string
-      key = values.map(&.to_s).join(":")
-
-      # Use hash function for even distribution
-      hash_value = key.hash
-
-      # Determine shard number
-      shard_num = hash_value.abs % @shard_count
-
-      # Return the shard symbol from our pre-defined array
-      @shards[shard_num]
-    end
-  end
-
-  # Range-based sharding resolver - TODO: implement with proper type handling
-
-  # Lookup-based sharding resolver (for geographic, etc)
-  class LookupResolver < ShardResolver
-    getter lookup_table : Hash(String, Symbol)
-    getter default_shard : Symbol?
-
-    def initialize(@key_column : Symbol, @lookup_table : Hash(String, Symbol), @default_shard : Symbol? = nil)
-    end
-
-    def resolve(model : Grant::Base) : Symbol
-      value = model.read_attribute(@key_column.to_s).to_s
-      @lookup_table[value]? || @default_shard || raise "No shard found for value: #{value}"
-    end
-
-    def resolve_for_keys(**keys) : Symbol
-      value = keys[@key_column]?.try(&.to_s) || raise "Missing shard key: #{@key_column}"
-      @lookup_table[value]? || @default_shard || raise "No shard found for value: #{value}"
-    end
-
-    def resolve_for_values(values : Array) : Symbol
-      value = values.first?.try(&.to_s) || raise "Missing shard key: #{@key_column}"
-      @lookup_table[value]? || @default_shard || raise "No shard found for value: #{value}"
-    end
-
-    def all_shards : Array(Symbol)
-      shards = @lookup_table.values.uniq
-      if default = @default_shard
-        shards << default
-      end
-      shards
-    end
-  end
-
   # Module to include in models for sharding support
   module Model
     macro included
       class_property sharding_config : Grant::Sharding::ShardConfig?
       
-      # Track which shard this instance came from/belongs to
-      property current_shard : Symbol?
-      
+      extend Grant::Sharding::Model::ClassMethods
+
       # Override adapter to use sharded connection
       def self.adapter : Grant::Adapter::Base
         if config = sharding_config
           # For class-level queries, we need context to determine shard
           # This would typically come from query builder context
-          if shard = Grant::ShardManager.current_shard
-            Grant::ConnectionRegistry.get_adapter(database_name, current_role, shard)
+          # `ShardManager.with_shard` wins; otherwise the shard of a
+          # `connected_to(shard:)` block that applies to this class.
+          if shard = Grant::ShardManager.current_shard || current_shard
+            adapter_for_shard(shard)
+          elsif shard_config.has_key?(:default)
+            # A shard named :default, declared with `connects_to(shards:)`,
+            # serves a sharded model while no shard is active.
+            adapter_for_shard(:default)
           else
             # No shard context - this is an error for sharded models
             raise "No shard context for sharded model #{name}. Use .on_shard or ensure shard key is provided."
@@ -168,6 +82,19 @@ module Grant::Sharding
         end
       end
       
+      # :nodoc:
+      def self.__sharded_model? : Bool
+        !sharding_config.nil?
+      end
+
+      # A transaction on a sharded model runs on the active shard's connection,
+      # the one `adapter` resolves, so its statements join the transaction.
+      #
+      # :nodoc:
+      def self.transaction_adapter : Grant::Adapter::Base
+        sharding_config ? adapter : super
+      end
+
       # Bare class-level count for sharded models.
       #
       # The default Grant::Querying#count hits `adapter` directly, which raises
@@ -190,20 +117,23 @@ module Grant::Sharding
 
       # Query on specific shard
       def self.on_shard(shard : Symbol)
+        Grant::ShardManager.guard_shard_swap!(shard)
         Grant::Sharding::ShardedQuery({{@type}}).new(self, shard)
       end
       
       # Query on all shards
       def self.on_all_shards
+        Grant::ShardManager.guard_shard_swap!
         Grant::Sharding::MultiShardQuery({{@type}}).new(self)
       end
       
       # Execute a block on all shards
       def self.on_all_shards(&block)
         if config = sharding_config
+          Grant::ShardManager.guard_shard_swap!
           shards = Grant::ShardManager.shards_for_model(self.name)
           shards.each do |shard|
-            Grant::ShardManager.with_shard(shard) do
+            Grant::ShardManager.route_to(shard) do
               yield
             end
           end
@@ -212,36 +142,13 @@ module Grant::Sharding
         end
       end
       
-      # Iterate through all records across all shards in batches
+      # Iterate through all records across all shards in batches, one shard
+      # after another, in keyset batches (see `find_each_shard`).
       def self.find_each(batch_size : Int32 = 1000, &block : {{@type}} ->)
-        if config = sharding_config
-          shards = Grant::ShardManager.shards_for_model(self.name)
-          shards.each do |shard|
-            Grant::ShardManager.with_shard(shard) do
-              offset = 0_i64
-              loop do
-                batch = limit(batch_size).offset(offset).select
-                break if batch.empty?
-                
-                batch.each do |record|
-                  record.current_shard = shard
-                  yield record
-                end
-                
-                offset += batch_size
-              end
-            end
-          end
+        if sharding_config
+          find_each_shard(batch_size: batch_size) { |record| yield record }
         else
-          # Not sharded - use regular batch processing
-          offset = 0_i64
-          loop do
-            batch = limit(batch_size).offset(offset).select
-            break if batch.empty?
-            
-            batch.each { |record| yield record }
-            offset += batch_size
-          end
+          current_scope.find_each(batch_size: batch_size) { |record| yield record }
         end
       end
     end
@@ -253,8 +160,24 @@ module Grant::Sharding
           key_columns: [{% for col in columns %} {{col.id.symbolize}}, {% end %}],
           resolver: Grant::Sharding::HashResolver.new(
             [{% for col in columns %} {{col.id.symbolize}}, {% end %}],
-            {{options[:count] || 4}},
-            {{options[:prefix] || "shard"}}.to_s
+            {% if options[:shards] %}
+              {{options[:shards]}}
+            {% else %}
+              {{options[:count] || 4}},
+              {{options[:prefix] || "shard"}}.to_s
+            {% end %}
+          )
+        )
+      {% elsif strategy == :lookup %}
+        {% unless options[:lookup] %}
+          {% raise "Lookup sharding requires :lookup option" %}
+        {% end %}
+        self.sharding_config = Grant::Sharding::ShardConfig.new(
+          key_columns: [{% for col in columns %} {{col.id.symbolize}}, {% end %}],
+          resolver: Grant::Sharding::LookupResolver.new(
+            [{% for col in columns %} {{col.id.symbolize}}, {% end %}],
+            {{options[:lookup]}}.to_h,
+            {{options[:default_shard]}}.as(Symbol?)
           )
         )
       {% elsif strategy == :range %}
@@ -313,26 +236,13 @@ module Grant::Sharding
       end
     end
 
-    # Determine shard for a model instance
-    def determine_shard : Symbol
-      if shard = @current_shard
-        return shard
-      end
-
-      if config = self.class.sharding_config
-        @current_shard = config.resolver.resolve(self)
-        @current_shard.not_nil!
-      else
-        raise "Model #{self.class.name} is not configured for sharding"
-      end
-    end
-
     # Copy a persisted record to another shard, then remove the source copy.
     # Cross-database transactions are not available, so a failed source delete
     # triggers a compensating delete on the destination. If compensation also
     # fails, the raised error reports that both copies may need reconciliation.
     def move_to_shard(target_shard : Symbol, from_shard : Symbol? = nil)
       raise "Cannot move an unpersisted record" unless persisted?
+      Grant::ShardManager.guard_shard_swap!(target_shard)
 
       config = self.class.sharding_config || raise "Model #{self.class.name} is not configured for sharding"
       raise ArgumentError.new("Unknown target shard #{target_shard} for #{self.class.name}") unless config.resolver.all_shards.includes?(target_shard)
@@ -351,18 +261,19 @@ module Grant::Sharding
       end
       destination_record.write_attribute(self.class.primary_name, read_attribute(self.class.primary_name))
       destination_record.current_shard = target_shard
+      self.current_shard = source_shard
 
-      Grant::ShardManager.with_shard(target_shard) do
+      Grant::ShardManager.route_to(target_shard) do
         destination_record.save!
       end
 
       begin
-        Grant::ShardManager.with_shard(source_shard) do
+        Grant::ShardManager.route_to(source_shard) do
           destroy!
         end
       rescue source_error
         begin
-          Grant::ShardManager.with_shard(target_shard) do
+          Grant::ShardManager.route_to(target_shard) do
             destination_record.destroy!
           end
         rescue compensation_error
@@ -376,20 +287,6 @@ module Grant::Sharding
       end
 
       destination_record
-    end
-
-    # Ensure we're on the correct shard before operations
-    macro before_save
-      if self.class.sharding_config
-        determine_shard
-        Grant::ShardManager.set_current_shard(@current_shard)
-      end
-    end
-
-    macro after_save
-      if self.class.sharding_config
-        Grant::ShardManager.set_current_shard(nil)
-      end
     end
   end
 
@@ -453,5 +350,10 @@ end
 require "./sharding/shard_manager"
 require "./sharding/query_router"
 require "./sharding/sharded_query_builder"
+require "./sharding/scatter_gather"
+require "./sharding/model"
 require "./sharding/range_resolver"
+require "./sharding/resolvers/hash_resolver"
+require "./sharding/resolvers/lookup_resolver"
+require "./sharding/resolvers/time_range_resolver"
 require "./sharding/geo_resolver"

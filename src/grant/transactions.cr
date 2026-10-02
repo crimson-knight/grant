@@ -1,6 +1,32 @@
 require "./exceptions"
 
+module Grant
+  # Raised when a destroyed record is asked to write to the database again
+  # (`save`, `update`, `touch`, `update_columns`, `increment!`, `destroy`).
+  # A destroyed record is frozen: it stays readable but can no longer persist.
+  #
+  # Mirrors the `FrozenError` ActiveRecord raises for a destroyed record.
+  class RecordDestroyedError < ErrorBase
+    def initialize(model_name : String, action : String)
+      super("Cannot #{action} a destroyed #{model_name}")
+    end
+  end
+end
+
 module Grant::Transactions
+  # Opt-out macro: `partial_updates false` makes `save` write every column of
+  # an existing record again, as older Grant versions did.
+  macro partial_updates(value)
+    def self.partial_updates? : Bool
+      {{ value }}
+    end
+  end
+
+  # Raises `Grant::RecordDestroyedError` for a destroyed record.
+  private def guard_not_destroyed!(action : String) : Nil
+    raise Grant::RecordDestroyedError.new(self.class.name, action) if destroyed?
+  end
+
   # Instance-level write guard: raises Grant::Transaction::ReadOnlyError
   # when the model class has prevent_writes active for the current fiber.
   private def guard_writes!
@@ -8,6 +34,30 @@ module Grant::Transactions
   end
 
   module ClassMethods
+    # True unless the model declared `partial_updates false`. When true an
+    # `UPDATE` writes only the columns that changed.
+    def partial_updates? : Bool
+      true
+    end
+
+    # False when the model has an `Array` column that in-place mutation
+    # detection does not watch: `post.tags << "x"` never reaches dirty
+    # tracking, so a partial update could silently drop it. Such models keep
+    # writing every column until they declare `detect_mutation`.
+    #
+    # :nodoc:
+    def __partial_update_safe? : Bool
+      {% begin %}
+        {% array_columns = @type.instance_vars.select { |ivar| ivar.annotation(Grant::Column) && ivar.type.union_types.any? { |column_type| column_type.name.starts_with?("Array(") } }.map(&.name.stringify) %}
+        {% if array_columns.empty? %}
+          true
+        {% else %}
+          watched = mutation_detected_attributes
+          {{ array_columns }}.all? { |column_name| watched.includes?(column_name) }
+        {% end %}
+      {% end %}
+    end
+
     # Deletes **every** row from the model's table with a single `DELETE FROM`.
     #
     # This bypasses callbacks and validations entirely — it issues one SQL
@@ -71,11 +121,11 @@ module Grant::Transactions
     # User.create({"email" => "ada@example.com"})
     # User.create({"email" => "seed@example.com"}, skip_timestamps: true)
     # ```
-    def create(args, skip_timestamps : Bool = false)
+    def create(args, skip_timestamps : Bool = false, context : Symbol | Array(Symbol) | Nil = nil)
       guard_writes!
       instance = new
       instance.set_attributes(args.to_h.transform_keys(&.to_s))
-      instance.save(skip_timestamps: skip_timestamps)
+      instance.save(skip_timestamps: skip_timestamps, context: context)
       instance
     end
 
@@ -108,16 +158,16 @@ module Grant::Transactions
     # ```
     # User.create!({"email" => "ada@example.com"})
     # ```
-    def create!(args, skip_timestamps : Bool = false)
+    def create!(args, skip_timestamps : Bool = false, context : Symbol | Array(Symbol) | Nil = nil)
       guard_writes!
       instance = new
       instance.set_attributes(args.to_h.transform_keys(&.to_s))
 
-      unless instance.save(skip_timestamps: skip_timestamps)
+      unless instance.save(skip_timestamps: skip_timestamps, context: context)
         if instance.errors.empty?
           instance.errors << Grant::Error.new(:base, "Save was halted before the record was persisted.")
         end
-        raise Grant::RecordNotSaved.new(self.name, instance)
+        raise instance.save_failure_error
       end
 
       instance
@@ -166,7 +216,7 @@ module Grant::Transactions
           end
         end
       {% end %}
-    rescue ex : Grant::Transaction::ReadOnlyError
+    rescue ex : Grant::Transaction::ReadOnlyError | Grant::StatementInvalid
       raise ex
     rescue err
       raise DB::Error.new(err.message, cause: err)
@@ -210,7 +260,7 @@ module Grant::Transactions
           end
         end
       {% end %}
-    rescue ex : Grant::Transaction::ReadOnlyError
+    rescue ex : Grant::Transaction::ReadOnlyError | Grant::StatementInvalid
       raise ex
     rescue err
       raise DB::Error.new(err.message, cause: err)
@@ -252,36 +302,11 @@ module Grant::Transactions
           end
         end
       {% end %}
-    rescue ex : Grant::Transaction::ReadOnlyError
+    rescue ex : Grant::Transaction::ReadOnlyError | Grant::StatementInvalid
       raise ex
     rescue err
       raise DB::Error.new(err.message, cause: err)
     end
-  end
-
-  # Sets the record's `created_at` and/or `updated_at` columns to *time*
-  # (default: now in the configured default timezone).
-  #
-  # This is a low-level helper invoked automatically by `#save`; you rarely call
-  # it directly. With `mode: :create` both timestamps are set; with
-  # `mode: :update` only `updated_at` is touched. Columns that the model doesn't
-  # declare are skipped. Sub-second precision is preserved.
-  #
-  # ```
-  # user.set_timestamps                           # create mode: sets both
-  # user.set_timestamps(mode: :update)            # only updated_at
-  # user.set_timestamps(to: Time.utc(2020, 1, 1)) # pin a specific time
-  # ```
-  def set_timestamps(*, to time = Time.local(Grant.settings.default_timezone), mode = :create)
-    {% if @type.instance_vars.select { |ivar| ivar.annotation(Grant::Column) && ivar.type == Time? }.map(&.name.stringify).includes? "created_at" %}
-      if mode == :create
-        @created_at = time
-      end
-    {% end %}
-
-    {% if @type.instance_vars.select { |ivar| ivar.annotation(Grant::Column) && ivar.type == Time? }.map(&.name.stringify).includes? "updated_at" %}
-      @updated_at = time
-    {% end %}
   end
 
   private def __create(skip_timestamps : Bool = false)
@@ -297,7 +322,7 @@ module Grant::Transactions
 
       Grant::Logs::Model.debug { "Creating record - #{self.class.name}" }
 
-      set_timestamps unless skip_timestamps
+      set_timestamps unless skip_timestamps || !self.class.record_timestamps?
       fields = self.class.content_fields.dup
       params = content_values
 
@@ -322,7 +347,7 @@ module Grant::Transactions
           # if the primary key has not been set, then do so
 
           unless fields.includes?({{primary_key.name.stringify}})
-            _uuid = UUID.random
+            _uuid = {% if ann[:uuid_version] == :v7 %}UUID.v7{% else %}UUID.random{% end %}
             @{{primary_key.name.id}} = _uuid
             params << _uuid
             fields << {{primary_key.name.stringify}}
@@ -340,7 +365,9 @@ module Grant::Transactions
         end
       {% end %}
     {% end %}
-  rescue err : DB::Error
+  rescue err : Grant::Transaction::ReadOnlyError
+    raise err
+  rescue err : DB::Error | Grant::StatementInvalid
     Grant::Logs::Model.error { "Failed to create record - #{self.class.name} - #{err.message}" }
     raise err
   rescue err
@@ -351,7 +378,7 @@ module Grant::Transactions
 
     {% begin %}
       {% primary_key = @type.instance_vars.find { |ivar| (ann = ivar.annotation(Grant::Column)) && ann[:primary] } %}
-      Grant::Logs::Model.info { "Record created - #{self.class.name} [id: #{@{{primary_key.name.id}}}]" }
+      Grant::Logs::Model.debug { "Record created - #{self.class.name} [id: #{@{{primary_key.name.id}}}]" }
     {% end %}
   end
 
@@ -369,14 +396,43 @@ module Grant::Transactions
 
     Grant::Logs::Model.debug { "Updating record - #{self.class.name} [id: #{@{{primary_key.name.id}}}]" }
 
-    set_timestamps(mode: :update) unless skip_timestamps
-      fields = self.class.content_fields.dup
-      params = content_values + [@{{primary_key.name.id}}]
+    fields = self.class.content_fields.dup
+    params = content_values + [@{{primary_key.name.id}}]
 
-    # Do not update created_at on update
-    if created_at_index = fields.index("created_at")
-      fields.delete_at created_at_index
-      params.delete_at created_at_index
+    if self.class.partial_updates? && self.class.__partial_update_safe?
+      changed_columns = __changed_column_names
+      if changed_columns.empty?
+        Grant::Logs::Model.debug { "Skipping update, nothing changed - #{self.class.name} [id: #{@{{primary_key.name.id}}}]" }
+        return
+      end
+      if !skip_timestamps && self.class.record_timestamps?
+        set_timestamps(mode: :update)
+        params = content_values + [@{{primary_key.name.id}}]
+        self.class.update_timestamp_columns.each { |column_name| changed_columns << column_name unless changed_columns.includes?(column_name) }
+      end
+      # Keep only the columns that changed (plus the update timestamp).
+      kept_fields = [] of String
+      kept_params = [] of Grant::Columns::Type
+      fields.each_with_index do |field_name, index|
+        if changed_columns.includes?(field_name)
+          kept_fields << field_name
+          kept_params << params[index]
+        end
+      end
+      kept_params << @{{primary_key.name.id}}
+      fields = kept_fields
+      params = kept_params
+    elsif !skip_timestamps && self.class.record_timestamps?
+      set_timestamps(mode: :update)
+      params = content_values + [@{{primary_key.name.id}}]
+    end
+
+    # Do not update creation timestamps on update
+    Grant::Timestamps::CREATED_COLUMNS.each do |created_column|
+      if created_index = fields.index(created_column)
+        fields.delete_at created_index
+        params.delete_at created_index
+      end
     end
 
     # Exclude any columns declared with `attr_readonly` — they are writable on
@@ -387,6 +443,9 @@ module Grant::Transactions
         params.delete_at readonly_index
       end
     end
+
+    # Nothing left to write (only readonly or creation columns changed).
+    return if fields.empty?
 
     begin
       if self.class.__multitenant?
@@ -409,8 +468,8 @@ module Grant::Transactions
         self.class.adapter.update(self.class.table_name, self.class.primary_name, fields, params)
       end
      
-     Grant::Logs::Model.info { "Record updated - #{self.class.name} [id: #{@{{primary_key.name.id}}}]" }
-    rescue ex : Grant::TenantMismatchError | Grant::NoTenantError
+     Grant::Logs::Model.debug { "Record updated - #{self.class.name} [id: #{@{{primary_key.name.id}}}]" }
+    rescue ex : Grant::TenantMismatchError | Grant::NoTenantError | Grant::StatementInvalid | Grant::Transaction::ReadOnlyError
       raise ex
     rescue err
       Grant::Logs::Model.error { "Failed to update record - #{self.class.name} [id: #{@{{primary_key.name.id}}}] - #{err.message}" }
@@ -424,6 +483,29 @@ module Grant::Transactions
   # the update itself.
   protected def __update_with_optimistic_lock(skip_timestamps : Bool = false) : Bool
     false
+  end
+
+  # The write scope narrowed to this record's own row. Models keyed by a
+  # composite primary key or `query_constraints` override it to carry every key
+  # column (see `Grant::CompositePrimaryKey::Transactions`).
+  protected def __row_key_scope
+    scope = self.class.__multitenant? ? self.class.__tenant_write_scope : self.class.unscoped
+    scope.where(self.class.primary_name, :eq, primary_key_value.as(Grant::Columns::Type))
+  end
+
+  # Names of the columns a partial update must write: everything dirty tracking
+  # reports as changed, plus serialized columns whose raw value no longer
+  # matches what was loaded (an object mutated in place is only re-serialized
+  # by a `before_save` hook, so setters never saw it).
+  private def __changed_column_names : Array(String)
+    names = changed
+    baselines = @original_attributes
+    self.class.content_fields.each do |column_name|
+      next unless column_name.starts_with?("_serialized_")
+      next if names.includes?(column_name)
+      names << column_name unless baselines.try(&.[column_name]?) == read_attribute(column_name).as(Grant::Base::DirtyValue)
+    end
+    names
   end
 
   private def __destroy
@@ -446,7 +528,7 @@ module Grant::Transactions
     end
     @destroyed = true
     
-    Grant::Logs::Model.info { "Record destroyed - #{self.class.name} [id: #{@{{primary_key.name.id}}}]" }
+    Grant::Logs::Model.debug { "Record destroyed - #{self.class.name} [id: #{@{{primary_key.name.id}}}]" }
   {% end %}
   end
 
@@ -462,6 +544,10 @@ module Grant::Transactions
   # - `validate: false` skips validations (the record is written even if
   #   invalid). Callbacks still run.
   # - `skip_timestamps: true` leaves `created_at`/`updated_at` untouched.
+  # - `context:` (a Symbol or an Array of Symbols) selects the validation
+  #   context; it defaults to `:create` for a new record and `:update`
+  #   otherwise. Validators declared `on: :publish` run for
+  #   `save(context: :publish)`, alongside those with no `on:`.
   #
   # ```
   # class User < Grant::Base
@@ -475,28 +561,35 @@ module Grant::Transactions
   # user.save                  # => true; UPDATEs the existing row
   # user.save(validate: false) # write regardless of validation state
   # ```
-  def save(*, validate : Bool = true, skip_timestamps : Bool = false) : Bool
+  def save(*, validate : Bool = true, skip_timestamps : Bool = false, context : Symbol | Array(Symbol) | Nil = nil) : Bool
     guard_writes!
+    guard_not_destroyed!("save")
+    return true if self.class.suppressed?
     {% begin %}
     {% primary_key = @type.instance_vars.find { |ivar| (ann = ivar.annotation(Grant::Column)) && ann[:primary] } %}
     {% raise raise "A primary key must be defined for #{@type.name}." unless primary_key %}
     {% ann = primary_key.annotation(Grant::Column) %}
 
+    @last_save_failed_validation = false
+    @last_save_statement_error = nil
     save_succeeded = true
     save_failed = false
     failure_message : String? = nil
-    save_transaction = Grant::Transaction::Options.new(
-      requires_new: Grant::Transaction.in_explicit_transaction? &&
-        Grant::Transaction.current_connection?(self.class.adapter).nil?
-    )
+    # A save always gets its own savepoint when nested so a failed save undoes
+    # only its own partial writes.
+    save_transaction = Grant::Transaction::Options.new(requires_new: true, lazy_begin: true)
+
+    # Which operation a failed save's after_rollback belongs to, for `on:`.
+    save_rollback_action = (@{{primary_key.name.id}} && !new_record?) ? Grant::CommitCallbacks::ACTION_UPDATE : Grant::CommitCallbacks::ACTION_CREATE
 
     self.class.transaction(save_transaction) do
       enlist_transaction_record
 
       begin
         if validate
-          validation_context = (@{{primary_key.name.id}} && !new_record?) ? :update : :create
-          unless valid?(context: validation_context)
+          save_context = context || ((@{{primary_key.name.id}} && !new_record?) ? :update : :create)
+          unless valid?(context: save_context)
+            @last_save_failed_validation = true
             save_succeeded = false
             next
           end
@@ -524,8 +617,20 @@ module Grant::Transactions
           run_commit_callbacks if responds_to?(:run_commit_callbacks) && !around_halted?
         end
         save_succeeded = !around_halted?
-      rescue ex : DB::Error | Grant::Callbacks::Abort
+      rescue ex : DB::Error | Grant::StatementInvalid | Grant::Callbacks::Abort
+        # A deferred BEGIN that could not be sent is a failure of the
+        # transaction itself, not of the save: it propagates exactly as an
+        # eager BEGIN failure always did.
+        if (state = Grant::Transaction.current_state?) && state.begin_failed?
+          # `__create` and `__update` wrap a translated Grant error in a
+          # `DB::Error`; hand back the original so callers see what an eager
+          # BEGIN failure raised.
+          original = ex.cause
+          raise(original.is_a?(Grant::ErrorBase) ? original : ex)
+        end
+
         save_failed = true
+        @last_save_statement_error = ex.is_a?(Grant::StatementInvalid) ? ex : ex.cause.as?(Grant::StatementInvalid)
         if message = ex.message
           errors << Grant::Error.new(:base, message)
         end
@@ -533,7 +638,7 @@ module Grant::Transactions
         clear_commit_callbacks if responds_to?(:clear_commit_callbacks)
         Grant::Transaction.enqueue_pending_callback(
           Proc(Nil).new { },
-          Proc(Nil).new { after_rollback if responds_to?(:after_rollback) }
+          Proc(Nil).new { dispatch_rollback_callbacks(save_rollback_action) }
         )
         raise Grant::Transaction::Rollback.new
       end
@@ -565,8 +670,36 @@ module Grant::Transactions
   # user = User.new(email: "ada@example.com")
   # user.save! # => true, or raises Grant::RecordNotSaved
   # ```
-  def save!(*, validate : Bool = true, skip_timestamps : Bool = false) : Bool
-    save(validate: validate, skip_timestamps: skip_timestamps) || raise Grant::RecordNotSaved.new(self.class.name, self)
+  def save!(*, validate : Bool = true, skip_timestamps : Bool = false, context : Symbol | Array(Symbol) | Nil = nil) : Bool
+    save(validate: validate, skip_timestamps: skip_timestamps, context: context) || raise save_failure_error
+  end
+
+  # True while the most recent `#save` on this record stopped at validation, so
+  # the bang methods can raise `Grant::RecordInvalid` rather than the more
+  # general `Grant::RecordNotSaved`.
+  @[JSON::Field(ignore: true)]
+  @[YAML::Field(ignore: true)]
+  @last_save_failed_validation : Bool = false
+
+  # The database error that stopped the most recent `#save`, already
+  # translated (`Grant::RecordNotUnique`, `Grant::InvalidForeignKey`, ...).
+  @[JSON::Field(ignore: true)]
+  @[YAML::Field(ignore: true)]
+  @last_save_statement_error : Grant::StatementInvalid?
+
+  # The exception the bang methods raise for the most recent failed save:
+  # `Grant::RecordInvalid` for a validation failure, `Grant::RecordNotSaved`
+  # for anything else (a callback abort, a database error recorded on the
+  # record). Its message is always safe to build, even when no error was
+  # recorded on the record.
+  #
+  # :nodoc:
+  def save_failure_error : Grant::RecordNotSaved
+    if @last_save_failed_validation
+      Grant::RecordInvalid.new(self)
+    else
+      Grant::RecordNotSaved.new(self.class.name, self, @last_save_statement_error)
+    end
   end
 
   # Assigns the given keyword attributes to the record and saves it, returning
@@ -596,11 +729,11 @@ module Grant::Transactions
   # user.update({"email" => "new@example.com"})
   # user.update({"email" => "seed@example.com"}, skip_timestamps: true)
   # ```
-  def update(args, skip_timestamps : Bool = false) : Bool
+  def update(args, skip_timestamps : Bool = false, context : Symbol | Array(Symbol) | Nil = nil) : Bool
     enlist_transaction_record
     set_attributes(args.to_h.transform_keys(&.to_s))
 
-    save(skip_timestamps: skip_timestamps)
+    save(skip_timestamps: skip_timestamps, context: context)
   end
 
   # Assigns the given keyword attributes and saves the record, **raising**
@@ -623,11 +756,11 @@ module Grant::Transactions
   # ```
   # user.update!({"email" => "new@example.com"})
   # ```
-  def update!(args, skip_timestamps : Bool = false) : Bool
+  def update!(args, skip_timestamps : Bool = false, context : Symbol | Array(Symbol) | Nil = nil) : Bool
     enlist_transaction_record
     set_attributes(args.to_h.transform_keys(&.to_s))
 
-    save!(skip_timestamps: skip_timestamps)
+    save!(skip_timestamps: skip_timestamps, context: context)
   end
 
   # Updates a single attribute and persists the record, **skipping validations**
@@ -660,7 +793,7 @@ module Grant::Transactions
   # user.update_attribute!(:email, "new@example.com") # => true, or raises
   # ```
   def update_attribute!(name : Symbol | String, value) : Bool
-    update_attribute(name, value) || raise Grant::RecordNotSaved.new(self.class.name, self)
+    update_attribute(name, value) || raise save_failure_error
   end
 
   # Updates the given columns directly in the database, **skipping validations,
@@ -684,6 +817,19 @@ module Grant::Transactions
     update_columns(args.to_h)
   end
 
+  # Updates a single column directly in the database, skipping validations,
+  # callbacks and timestamps. Singular form of `#update_columns`; returns `true`
+  # on success.
+  #
+  # ```
+  # user.update_column(:email, "direct@example.com")
+  # ```
+  def update_column(name : Symbol | String, value : Grant::Columns::Type) : Bool
+    columns = Grant::ModelArgs.new
+    columns[name] = value
+    update_columns(columns)
+  end
+
   # Updates the given columns directly in the database (hash form). See the
   # keyword-argument overload above; *args* is a `Grant::ModelArgs`
   # (`Hash(String | Symbol, Grant::Columns::Type)`).
@@ -693,6 +839,7 @@ module Grant::Transactions
   # ```
   def update_columns(args : Grant::ModelArgs) : Bool
     guard_writes!
+    guard_not_destroyed!("update columns of")
     __ensure_current_tenant!
     raise Grant::ReadOnlyRecordError.new("#{self.class.name} is marked as read only") if readonly?
     raise "Cannot update columns on a new record object" unless persisted?
@@ -747,7 +894,10 @@ module Grant::Transactions
 
       begin
         self.class.adapter.update(self.class.table_name, self.class.primary_name, fields, params)
-        Grant::Logs::Model.info { "Columns updated - #{self.class.name} [id: #{@{{primary_key.name.id}}}]" }
+        Grant::Logs::Model.debug { "Columns updated - #{self.class.name} [id: #{@{{primary_key.name.id}}}]" }
+      rescue err : Grant::StatementInvalid
+        Grant::Logs::Model.error { "Failed to update_columns - #{self.class.name} [id: #{persisted_primary_key}] - #{err.message}" }
+        raise err
       rescue err
         Grant::Logs::Model.error { "Failed to update_columns - #{self.class.name} [id: #{persisted_primary_key}] - #{err.message}" }
         raise DB::Error.new(err.message, cause: err)
@@ -794,8 +944,17 @@ module Grant::Transactions
   # user.increment!(:login_count)        # +1 and UPDATE
   # user.increment!(:login_count, by: 3) # +3 and UPDATE
   # ```
-  def increment!(field : Symbol | String, by = 1) : self
+  #
+  # Pass `touch: true` to refresh `updated_at` in the same `UPDATE` statement,
+  # or a column name (or names) to refresh those as well:
+  #
+  # ```
+  # user.increment!(:login_count, touch: true)
+  # user.increment!(:login_count, touch: :last_seen_at)
+  # ```
+  def increment!(field : Symbol | String, by = 1, touch : Bool | Symbol | Array(Symbol) = false) : self
     guard_writes!
+    guard_not_destroyed!("increment")
     raise Grant::ReadOnlyRecordError.new("#{self.class.name} is marked as read only") if readonly?
     __ensure_current_tenant!
     enlist_transaction_record
@@ -823,16 +982,13 @@ module Grant::Transactions
             else
               self.class.unscoped
             end
-    assembler = query.where(self.class.primary_name, :eq, primary_key_value).assembler
-    where_clause = assembler.where || raise Grant::Querying::MissingWhereClauseError.new("Increment query has no WHERE clause")
-
-    self.class.mark_write_operation
-    affected = self.class.adapter.increment_with_where(
-      self.class.table_name,
-      attribute_name,
-      by.as(Grant::Columns::Type),
-      where_clause,
-      assembler.numbered_parameters
+    touch_time = Grant::Timestamps.current_time
+    touched_columns = self.class.__counter_touch_columns(touch)
+    affected = self.class.__apply_counter_update(
+      query.where(self.class.primary_name, :eq, primary_key_value),
+      {attribute_name => by},
+      touch,
+      touch_time
     )
     if affected == 0 && self.class.__multitenant? && !self.class._unscoped?
       row_is_in_scope = self.class.__tenant_write_scope
@@ -843,7 +999,8 @@ module Grant::Transactions
       end
     end
 
-    clear_dirty_tracking_for([attribute_name])
+    touched_columns.each { |column_name| write_attribute(column_name, touch_time) }
+    clear_dirty_tracking_for([attribute_name] + touched_columns)
     self
   end
 
@@ -867,8 +1024,8 @@ module Grant::Transactions
   # user = User.find!(1)
   # user.decrement!(:login_count) # -1 and UPDATE
   # ```
-  def decrement!(field : Symbol | String, by = 1) : self
-    increment!(field, -by)
+  def decrement!(field : Symbol | String, by = 1, touch : Bool | Symbol | Array(Symbol) = false) : self
+    increment!(field, -by, touch)
   end
 
   # Flips the in-memory boolean value of *field* **without persisting**. Returns
@@ -959,6 +1116,7 @@ module Grant::Transactions
   # ```
   def destroy : Bool
     guard_writes!
+    guard_not_destroyed!("destroy")
     enlist_transaction_record
     # Record-level read-only guard. Mirrors ActiveRecord's ReadOnlyRecord.
     raise Grant::ReadOnlyRecordError.new("#{self.class.name} is marked as read only") if readonly?
@@ -972,7 +1130,7 @@ module Grant::Transactions
         run_commit_callbacks if responds_to?(:run_commit_callbacks)
       end
       return false if around_halted?
-    rescue ex : DB::Error | Grant::Callbacks::Abort
+    rescue ex : DB::Error | Grant::StatementInvalid | Grant::Callbacks::Abort
       if message = ex.message
         Log.error { "Destroy Exception: #{message}" }
         errors << Grant::Error.new(:base, message)
@@ -1018,22 +1176,27 @@ module Grant::Transactions
   # user.touch                # bumps updated_at only
   # user.touch(:last_seen_at) # bumps updated_at and last_seen_at
   # ```
-  def touch(*fields) : Bool
+  def touch(*fields, time : Time = Grant::Timestamps.current_time) : Bool
     guard_writes!
+    guard_not_destroyed!("touch")
     raise "Cannot touch on a new record object" unless persisted?
     raise Grant::ReadOnlyRecordError.new("#{self.class.name} is marked as read only") if readonly?
     __ensure_current_tenant!
     enlist_transaction_record
 
-    touch_time = Time.local(Grant.settings.default_timezone)
+    return true if self.class.no_touching?
+
+    touch_time = time
     touch_fields = [] of String
 
-    {% if @type.instance_vars.any? { |ivar| ivar.annotation(Grant::Column) && ivar.name.stringify == "updated_at" && (ivar.type == Time? || ivar.type == Time) } %}
-      if self.class.readonly_attributes.includes?("updated_at")
-        raise Grant::ReadOnlyRecordError.new("#{self.class.name}#updated_at is read only")
-      end
-      self.updated_at = touch_time
-      touch_fields << "updated_at"
+    {% for ivar in @type.instance_vars %}
+      {% if ivar.annotation(Grant::Column) && ["updated_at", "updated_on"].includes?(ivar.name.stringify) && ivar.type == Time? %}
+        if self.class.readonly_attributes.includes?({{ ivar.name.stringify }})
+          raise Grant::ReadOnlyRecordError.new("#{self.class.name}#" + {{ ivar.name.stringify }} + " is read only")
+        end
+        @{{ ivar.name.id }} = Grant::Timestamps.stamp({{ ivar.name.stringify }}, touch_time, self.class.timestamp_precision)
+        touch_fields << {{ ivar.name.stringify }}
+      {% end %}
     {% end %}
 
     {% begin %}
@@ -1044,7 +1207,7 @@ module Grant::Transactions
               if self.class.readonly_attributes.includes?({{time_field.stringify}})
                 raise Grant::ReadOnlyRecordError.new("#{self.class.name}#" + {{time_field.stringify}} + " is read only")
               end
-              self.{{time_field.id}} = touch_time
+              self.{{time_field.id}} = Grant::Timestamps.stamp({{time_field.stringify}}, touch_time, self.class.timestamp_precision)
               touch_fields << {{time_field.stringify}} unless touch_fields.includes?({{time_field.stringify}})
           {% end %}
         else

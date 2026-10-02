@@ -51,14 +51,14 @@ module Grant::STI
 
   # Raised when a `type` value in the database does not map to a registered
   # STI subclass.
-  class SubclassNotFound < Exception; end
+  class SubclassNotFound < Grant::ErrorBase; end
 
   # Raised when code attempts to write the inheritance column directly on a
   # persisted record. Use `becomes!` to change a record's type.
-  class ImmutableTypeError < Exception; end
+  class ImmutableTypeError < Grant::ErrorBase; end
 
   # Raised when an STI type cast / conversion fails.
-  class TypeCastingError < Exception; end
+  class TypeCastingError < Grant::ErrorBase; end
 
   # Hook invoked when a root model does `include Grant::STI`.
   #
@@ -127,30 +127,24 @@ module Grant::STI
 
       type_col = inheritance_column
       type_value = base.read_attribute(type_col)
-      if type_value.nil? || type_value.to_s == sti_name
-        return base
-      end
-
-      klass = find_sti_class(type_value.to_s)
-      Grant::STI.rehome_to_subclass(base, klass).as(self)
+      record = if type_value.nil? || type_value.to_s == sti_name
+                 base
+               else
+                 Grant::STI.rehome_to_subclass(base, find_sti_class(type_value.to_s)).as(self)
+               end
+      Grant::STI.publish_instantiation(record)
+      record
     end
 
     # :nodoc: allocate a plain root instance (the root itself is concrete).
     protected def self.allocate_root_instance : self
-      new
+      Grant::Scoping.hydrating { new }
     end
 
     macro inherited
       # STI descendants share the root model's connection configuration and
-      # table. Keep their database/role/shard settings isolated from later
-      # configuration changes on unrelated model classes.
-      self.database_name = {{@type.superclass}}.database_name
-      self.connection_config = {{@type.superclass}}.connection_config.dup
-      inherited_shard_config = {} of Symbol => Hash(Symbol, String)
-      {{@type.superclass}}.shard_config.each do |shard, config|
-        inherited_shard_config[shard] = config.dup
-      end
-      self.shard_config = inherited_shard_config
+      # table; the connection settings resolve through the superclass chain in
+      # the base `inherited` macro.
 
       # Register every descendant for runtime type resolution. NOTE the escaped
       # interpolation below: this is a `macro inherited` nested inside `macro
@@ -180,26 +174,23 @@ module Grant::STI
       # Descendant-only columns are not in this subclass's SELECT, so they stay
       # nil (the documented base-query limitation, applied at each level).
       def self.from_rs(result : ::DB::ResultSet) : self
-        model = new
+        model = Grant::Scoping.hydrating { new }
         model.new_record = false
         model.from_rs result
         model.after_find if model.responds_to?(:after_find)
 
         type_value = model.read_attribute(inheritance_column)
-        if type_value.nil? || type_value.to_s == sti_name
-          return model
+        record = model
+        unless type_value.nil? || type_value.to_s == sti_name
+          klass = find_sti_class(type_value.to_s)
+          # Only re-home to a *descendant* of this class. A row of an unrelated
+          # type can only appear here via `unscoped` (which drops the type
+          # filter); such a row is returned typed as the queried class with its
+          # shared columns, since the result collection is `Array(self)`.
+          record = Grant::STI.rehome_to_subclass(model, klass).as(self) if klass <= self
         end
-
-        klass = find_sti_class(type_value.to_s)
-        # Only re-home to a *descendant* of this class. A row of an unrelated
-        # type can only appear here via `unscoped` (which drops the type
-        # filter); such a row is returned typed as the queried class with its
-        # shared columns, since the result collection is `Array(self)`.
-        if klass <= self
-          Grant::STI.rehome_to_subclass(model, klass).as(self)
-        else
-          model
-        end
+        Grant::STI.publish_instantiation(record)
+        record
       end
 
     end
@@ -286,6 +277,13 @@ module Grant::STI
     # ```
     def base_class
       sti_root
+    end
+
+    # The name stored in the type column of a polymorphic association pointing
+    # at this class: the STI root's name, so every member of the hierarchy is
+    # found through one association (ActiveRecord's `polymorphic_name`).
+    def polymorphic_name : String
+      sti_root.name
     end
 
     # Resolves a `type` column value (*type_name*) to its registered subclass and
@@ -389,12 +387,12 @@ module Grant::STI
         col = klass.inheritance_column
         pk_name = self.class.primary_name
         sql = "UPDATE #{self.class.quoted_table_name} SET #{self.class.quote(col)} = ? WHERE #{self.class.quote(pk_name)} = ?"
-        sql = self.class.adapter.ensure_clause_template(sql)
+        sql = Grant::QueryLogs.append(self.class.adapter.ensure_clause_template(sql))
         params = [klass.sti_name.as(Grant::Columns::Type), primary_key_value.as(Grant::Columns::Type)]
 
         self.class.mark_write_operation
         adapter = self.class.adapter
-        adapter.open do |db|
+        adapter.open(sql, params, self.class.name) do |db|
           db.exec(sql, args: adapter.normalize_bind_values(params))
         end
 
@@ -497,6 +495,15 @@ module Grant::STI
       end
     end
 
+    # :nodoc:
+    # Publishes `Events::Instantiation` for a record an STI reader built, named
+    # after its final (possibly re-homed) class.
+    def self.publish_instantiation(record : Grant::Base) : Nil
+      Grant::Notifications.instrument(Grant::Events::Instantiation) do
+        Grant::Events::Instantiation.new(record.class.name)
+      end
+    end
+
     # Re-homes an already-loaded base (root) instance onto a correctly-typed
     # subclass instance, preserving the loaded (persisted, non-dirty) state.
     #
@@ -513,10 +520,13 @@ module Grant::STI
         instance.new_record = false
         instance._sti_type_mutable = true
         # Copy every field the subclass shares with the loaded base instance,
-        # preserving nil and false.
-        {{kl}}.fields.each do |f|
-          if base.class.fields.includes?(f)
-            instance.write_attribute(f, base.read_attribute(f))
+        # preserving nil and false. These are loaded values, so an
+        # `attr_readonly` column must not trip the assignment guard.
+        instance.__assigning_loaded_attributes do
+          {{kl}}.fields.each do |f|
+            if base.class.fields.includes?(f)
+              instance.write_attribute(f, base.read_attribute(f))
+            end
           end
         end
         instance._sti_type_mutable = false

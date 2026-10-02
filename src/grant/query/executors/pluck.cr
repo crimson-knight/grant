@@ -13,17 +13,22 @@ module Grant::Query::Executor
 
       begin
         adapter = Model.adapter
-        adapter.open do |db|
-          db.query @sql, args: adapter.normalize_bind_values(@args) do |rs|
-            rs.each do
-              row = [] of Grant::Columns::Type
-              @fields.each do |field|
-                # Read values in order - rs.read advances to next column automatically
-                row << rs.read(Grant::Columns::Type)
+        copy = ->(cached : Array(Array(Grant::Columns::Type))) { cached.map(&.dup) }
+        results = Grant::QueryCache.fetch(adapter, @sql, @args, Model.name, copy) do
+          rows = [] of Array(Grant::Columns::Type)
+          adapter.open(@sql, @args, Model.name) do |db|
+            db.query @sql, args: adapter.normalize_bind_values(@args) do |rs|
+              rs.each do
+                row = [] of Grant::Columns::Type
+                @fields.each do |field|
+                  # Read values in order - rs.read advances to next column automatically
+                  row << rs.read(Grant::Columns::Type)
+                end
+                rows << row
               end
-              results << row
             end
           end
+          rows
         end
 
         duration = Time.instant - start_time

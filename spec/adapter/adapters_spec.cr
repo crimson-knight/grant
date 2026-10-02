@@ -36,6 +36,10 @@ describe Grant::Connections do
       expect_raises(Exception, "Adapter with name 'mysql2' has already been registered.") do
         Grant::Connections << Grant::Adapter::Pg.new(name: "mysql2", url: "mysql://localhost:3306/test")
       end
+    ensure
+      # The URL is unreachable; leaving it registered breaks every later file
+      # that opens all registered connections (Grant::Spec.within_transaction).
+      Grant::ConnectionRegistry.remove_connection("mysql2", :primary)
     end
 
     it "should assign the correct connections to a model" do

@@ -1,6 +1,8 @@
 require "./base"
 require "sqlite3"
 require "../grant/sqlite_version_check"
+require "../grant/schema/column_info"
+require "./registry"
 
 # Patch SQLite3::Statement so that perform_exec always calls sqlite3_reset in
 # its ensure clause.  SQLite does NOT decrement db->nVdbeActive when
@@ -38,10 +40,30 @@ end
 
 # Sqlite implementation of the Adapter
 class Grant::Adapter::Sqlite < Grant::Adapter::Base
+  # :nodoc:
+  alias Kind = Grant::Adapter::ErrorTranslator::Kind
+
   QUOTING_CHAR = '"'
 
   def sqlite? : Bool
     true
+  end
+
+  # SQLite runs in the application's process, so there is no server to keep
+  # connections warm for.
+  def self.server_adapter? : Bool
+    false
+  end
+
+  # Each connection to `:memory:` is its own empty database, so a pool of
+  # more than one would silently split the data.
+  def self.single_connection_url?(url : String) : Bool
+    memory_url?(url)
+  end
+
+  # The SQLite driver only prepares statements.
+  def self.supports_unprepared_statements? : Bool
+    false
   end
 
   # SQLite stores Grant timestamps as text and UUID columns as CHAR(36).
@@ -51,6 +73,10 @@ class Grant::Adapter::Sqlite < Grant::Adapter::Base
 
   def normalize_bind_value(value : UUID) : String
     value.to_s
+  end
+
+  protected def bind_value_needs_normalization?(value) : Bool
+    value.is_a?(Time) || value.is_a?(UUID) || super
   end
 
   def read_time(result : DB::ResultSet) : Time
@@ -63,14 +89,255 @@ class Grant::Adapter::Sqlite < Grant::Adapter::Base
   end
 
   private def parse_time(text : String) : Time
+    if parsed = parse_canonical_time(text)
+      return parsed
+    end
+
     format = text.includes?(".") ? "%F %H:%M:%S.%N" : SQLite3::DATE_FORMAT_SECOND
     Time.parse(text, format, location: SQLite3::TIME_ZONE)
   end
 
-  def initialize(@name : String, @url : String)
-    super
+  # Reads the text Grant itself stores, `YYYY-MM-DD HH:MM:SS` with an optional
+  # fraction of up to nine digits, straight from its bytes. `Time.parse` walks
+  # a format string for every value and dominates the cost of reading a row
+  # with timestamps. Anything else (another layout, an out-of-range field)
+  # returns nil and takes the general parser.
+  private def parse_canonical_time(text : String) : Time?
+    size = text.bytesize
+    return nil if size < 19 || size == 20 || size > 29
+
+    bytes = text.to_unsafe
+    return nil unless bytes[4] == '-'.ord && bytes[7] == '-'.ord && bytes[10] == ' '.ord &&
+                      bytes[13] == ':'.ord && bytes[16] == ':'.ord
+
+    year = canonical_digits(bytes, 0, 4)
+    month = canonical_digits(bytes, 5, 2)
+    day = canonical_digits(bytes, 8, 2)
+    hour = canonical_digits(bytes, 11, 2)
+    minute = canonical_digits(bytes, 14, 2)
+    second = canonical_digits(bytes, 17, 2)
+    return nil if year < 0 || month < 0 || day < 0 || hour < 0 || minute < 0 || second < 0
+
+    nanosecond = 0
+    if size > 19
+      return nil unless bytes[19] == '.'.ord
+
+      fraction_digits = size - 20
+      fraction = canonical_digits(bytes, 20, fraction_digits)
+      return nil if fraction < 0
+
+      nanosecond = fraction
+      (9 - fraction_digits).times { nanosecond *= 10 }
+    end
+
+    Time.local(year, month, day, hour, minute, second, nanosecond: nanosecond, location: SQLite3::TIME_ZONE)
+  rescue ArgumentError
+    nil
+  end
+
+  # The decimal number in *count* ASCII digits at *offset*, or -1 when one of
+  # the bytes is not a digit.
+  private def canonical_digits(bytes : Pointer(UInt8), offset : Int32, count : Int32) : Int32
+    value = 0
+    count.times do |index|
+      digit = bytes[offset + index].to_i32 - '0'.ord
+      return -1 if digit < 0 || digit > 9
+      value = value * 10 + digit
+    end
+    value
+  end
+
+  # PRAGMAs applied to every connection unless the URL or `pragmas` says
+  # otherwise. Foreign keys are enforced (SQLite leaves them off), a busy
+  # connection waits five seconds instead of failing at once, and WAL with
+  # `synchronous=normal` is the fast, still crash-safe journal mode. WAL needs
+  # a local filesystem with shared memory (not a network mount) and writes
+  # `-wal` and `-shm` files next to the database that backups must include, so
+  # everything except `foreign_keys` is applied only to file databases.
+  DEFAULT_PRAGMAS = {
+    "foreign_keys" => "1",
+    "journal_mode" => "wal",
+    "busy_timeout" => "5000",
+    "synchronous"  => "normal",
+  }
+
+  # Builds the adapter. *pragmas* overrides the defaults for this connection,
+  # for example `pragmas: {journal_mode: "delete"}`; a value written in the URL
+  # query still wins over both.
+  def initialize(name : String, url : String, pragmas : NamedTuple? = nil)
+    overrides = {} of String => String
+    pragmas.try(&.to_h.each { |key, value| overrides[key.to_s] = value.to_s })
+    super(name, Sqlite.url_with_pragmas(url, overrides))
     # Check SQLite version on first connection
     Grant::SQLiteVersionCheck.ensure_supported!
+  end
+
+  # Returns *url* with the default PRAGMA parameters and *overrides* appended
+  # for every key the URL query does not already set.
+  def self.url_with_pragmas(url : String, overrides : Hash(String, String) = {} of String => String) : String
+    base, _, query = url.partition('?')
+    present = Set(String).new
+    query.split('&') do |pair|
+      key = pair.partition('=')[0]
+      present << key unless key.empty?
+    end
+
+    memory = memory_url?(url)
+    additions = [] of String
+    DEFAULT_PRAGMAS.each do |key, default|
+      next if present.includes?(key)
+      value = overrides[key]? || ((memory && key != "foreign_keys") ? nil : default)
+      additions << "#{key}=#{value}" if value
+    end
+    overrides.each do |key, value|
+      next if present.includes?(key) || DEFAULT_PRAGMAS.has_key?(key)
+      additions << "#{key}=#{value}"
+    end
+    return url if additions.empty?
+
+    query.empty? ? "#{base}?#{additions.join('&')}" : "#{base}?#{query}&#{additions.join('&')}"
+  end
+
+  # True for `:memory:` and `mode=memory` databases, which have no file to
+  # journal and live only as long as one connection.
+  def self.memory_url?(url : String) : Bool
+    url.includes?(":memory:") || url.includes?("mode=memory")
+  end
+
+  # SQLite opens (and creates) a file on connect, so the only database it can
+  # report missing is one whose directory does not exist.
+  protected def connect_failure_kind(ex : ::DB::ConnectionRefused) : Kind?
+    return nil if Sqlite.memory_url?(url) || !url.starts_with?("sqlite")
+
+    path = url.sub(/\Asqlite3?:(?:\/\/)?/, "").split('?').first
+    return nil if path.empty?
+
+    Dir.exists?(File.dirname(path)) ? nil : Kind::NoDatabase
+  end
+
+  def adapter_name : String
+    "SQLite"
+  end
+
+  # The database file, or `:memory:`.
+  def current_database : String
+    file = open { |db| db.scalar("SELECT file FROM pragma_database_list WHERE name = 'main'").as(String) }
+    file.empty? ? ":memory:" : file
+  end
+
+  # SQLite's version is that of the linked library, so no query is needed.
+  protected def fetch_database_version : Grant::ServerVersion
+    Grant::ServerVersion.parse(Grant::SQLiteVersionCheck.version_string)
+  end
+
+  # `RETURNING` arrived in SQLite 3.35.
+  def supports_insert_returning? : Bool
+    database_version.at_least?(3, 35)
+  end
+
+  def supports_insert_on_duplicate_skip? : Bool
+    true
+  end
+
+  def supports_insert_on_duplicate_update? : Bool
+    true
+  end
+
+  def supports_ddl_transactions? : Bool
+    true
+  end
+
+  def supports_partial_index? : Bool
+    true
+  end
+
+  def supports_expression_index? : Bool
+    true
+  end
+
+  def supports_check_constraints? : Bool
+    true
+  end
+
+  def supports_foreign_keys? : Bool
+    true
+  end
+
+  def supports_views? : Bool
+    true
+  end
+
+  def supports_datetime_with_precision? : Bool
+    true
+  end
+
+  # The JSON functions are built in from SQLite 3.38.
+  def supports_json? : Bool
+    database_version.at_least?(3, 38)
+  end
+
+  def supports_common_table_expressions? : Bool
+    true
+  end
+
+  # Generated columns arrived in SQLite 3.31.
+  def supports_virtual_columns? : Bool
+    database_version.at_least?(3, 31)
+  end
+
+  def supports_explain? : Bool
+    true
+  end
+
+  # An in-memory database belongs to a single connection.
+  def supports_concurrent_connections? : Bool
+    !Sqlite.memory_url?(url)
+  end
+
+  def supports_disable_referential_integrity? : Bool
+    true
+  end
+
+  # SQLite reports the primary result code plus, for constraints, a message
+  # that names the constraint type (extended codes are not enabled by the
+  # driver). The message prefixes are SQLite's own fixed, untranslated text.
+  def self.error_kind(code : Int32?, message : String? = nil) : Kind?
+    return nil unless code
+
+    case code
+    when 2067, 1555 then return Kind::Unique
+    when 787        then return Kind::ForeignKey
+    when 1299       then return Kind::NotNull
+    end
+
+    case code & 0xFF
+    when 5, 6 then Kind::LockWaitTimeout
+    when 8    then Kind::ReadOnly
+    when 9    then Kind::QueryCanceled
+    when 14   then Kind::NoDatabase
+    when 18   then Kind::ValueTooLong
+    when 19
+      if message.nil?
+        nil
+      elsif message.starts_with?("UNIQUE constraint failed") || message.starts_with?("PRIMARY KEY must be unique")
+        Kind::Unique
+      elsif message.starts_with?("FOREIGN KEY constraint failed")
+        Kind::ForeignKey
+      elsif message.starts_with?("NOT NULL constraint failed")
+        Kind::NotNull
+      end
+    end
+  end
+
+  def translate_exception(ex : ::Exception, sql : String? = nil, binds = nil) : ::Exception
+    if ex.is_a?(SQLite3::Exception)
+      if kind = Sqlite.error_kind(ex.code, ex.message)
+        return Grant::Adapter::ErrorTranslator.build(kind, ex.message, sql, binds, ex)
+      end
+      return Grant::StatementInvalid.new(ex.message, sql, binds, ex)
+    end
+
+    super
   end
 
   module Schema
@@ -90,8 +357,9 @@ class Grant::Adapter::Sqlite < Grant::Adapter::Base
   def clear(table_name : String)
     statement = "DELETE FROM #{quote(table_name)}"
 
+    statement = Grant::QueryLogs.append(statement)
     elapsed_time = Time.measure do
-      open do |db|
+      open(statement) do |db|
         db.exec statement
       end
     end
@@ -100,25 +368,74 @@ class Grant::Adapter::Sqlite < Grant::Adapter::Base
   end
 
   def insert(table_name : String, fields, params, lastval) : Int64
-    statement = String.build do |stmt|
-      stmt << "INSERT INTO #{quote(table_name)} ("
-      stmt << fields.map { |name| "#{quote(name)}" }.join(", ")
-      stmt << ") VALUES ("
-      stmt << fields.map { |_name| "?" }.join(", ")
-      stmt << ")"
+    statement = cached_insert_statement(table_name, fields) do
+      String.build do |stmt|
+        stmt << "INSERT INTO #{quote(table_name)} ("
+        stmt << fields.map { |name| "#{quote(name)}" }.join(", ")
+        stmt << ") VALUES ("
+        stmt << fields.map { |_name| "?" }.join(", ")
+        stmt << ")"
+      end
     end
 
     last_id = -1_i64
+    statement = Grant::QueryLogs.append(statement)
     elapsed_time = Time.measure do
-      open do |db|
-        db.exec statement, args: normalize_bind_values(params)
-        last_id = db.scalar(last_val()).as(Int64) if lastval
+      open(statement, params) do |db|
+        # The driver reports the new rowid with the insert, so no second
+        # statement is needed to read it.
+        result = db.exec statement, args: normalize_bind_values(params)
+        last_id = result.last_insert_id if lastval
       end
     end
 
     log statement, elapsed_time, params
 
     last_id
+  end
+
+  # SQLite's `sqlite3_bind_parameter` cap since 3.32 is 32,766.
+  def bulk_bind_limit : Int32
+    32_766
+  end
+
+  # Reads the key columns of a plain unique index. Expression indexes have no
+  # column name and cannot be an `ON CONFLICT` target, so they raise.
+  def unique_index_columns(table_name : String, index_name : String) : Array(String)?
+    unique = nil
+    partial = false
+    open do |db|
+      db.query("PRAGMA index_list(#{quote(table_name)})") do |rs|
+        rs.each do
+          rs.read(Int64)
+          name = rs.read(String)
+          is_unique = rs.read(Int64) == 1
+          rs.read(String)
+          is_partial = rs.read(Int64) == 1
+          if name == index_name
+            unique = is_unique
+            partial = is_partial
+          end
+        end
+      end
+    end
+    return nil if unique.nil?
+    raise ArgumentError.new("Index #{index_name.inspect} is not unique") unless unique
+    raise ArgumentError.new("Index #{index_name.inspect} is partial; pass the column names to unique_by instead") if partial
+
+    columns = [] of String
+    open do |db|
+      db.query("PRAGMA index_info(#{quote(index_name)})") do |rs|
+        rs.each do
+          rs.read(Int64)
+          rs.read(Int64)
+          column = rs.read(String?)
+          raise ArgumentError.new("Index #{index_name.inspect} is an expression index; pass the column names to unique_by instead") unless column
+          columns << column
+        end
+      end
+    end
+    columns
   end
 
   def import(table_name : String, primary_name : String, auto : Bool, fields, model_array, **options)
@@ -156,8 +473,9 @@ class Grant::Adapter::Sqlite < Grant::Adapter::Base
       end
     end
 
+    statement = Grant::QueryLogs.append(statement)
     elapsed_time = Time.measure do
-      open do |db|
+      open(statement, params) do |db|
         db.exec statement, args: normalize_bind_values(params)
       end
     end
@@ -177,8 +495,9 @@ class Grant::Adapter::Sqlite < Grant::Adapter::Base
       stmt << " WHERE #{quote(primary_name)}=?"
     end
 
+    statement = Grant::QueryLogs.append(statement)
     elapsed_time = Time.measure do
-      open do |db|
+      open(statement, params) do |db|
         db.exec statement, args: normalize_bind_values(params)
       end
     end
@@ -190,8 +509,9 @@ class Grant::Adapter::Sqlite < Grant::Adapter::Base
   def delete(table_name : String, primary_name : String, value)
     statement = "DELETE FROM #{quote(table_name)} WHERE #{quote(primary_name)}=?"
 
+    statement = Grant::QueryLogs.append(statement)
     elapsed_time = Time.measure do
-      open do |db|
+      open(statement, [value]) do |db|
         db.exec statement, normalize_bind_value(value)
       end
     end
@@ -251,4 +571,179 @@ class Grant::Adapter::Sqlite < Grant::Adapter::Base
       nil
     end
   end
+
+  # SQLite has no information_schema. Every catalog query joins `sqlite_master`
+  # with the `pragma_*` table-valued functions, so all tables are answered by
+  # one statement per kind instead of one PRAGMA per table. *namespace* is
+  # ignored: only the main database is inspected.
+  private CATALOG_TABLE_FILTER = "m.type = 'table' AND m.name NOT LIKE 'sqlite\\_%' ESCAPE '\\'"
+
+  def catalog_tables(namespace : String? = nil) : Array(String)
+    names = [] of String
+    catalog_query("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite\\_%' ESCAPE '\\' ORDER BY name") do |rs|
+      names << rs.read(String)
+    end
+    names
+  end
+
+  def catalog_columns(table : String? = nil, namespace : String? = nil) : Array(Grant::Schema::ColumnInfo)
+    sql = String.build do |io|
+      io << "SELECT m.name, p.cid, p.name, p.type, p.\"notnull\", p.dflt_value, p.pk "
+      io << "FROM sqlite_master m JOIN pragma_table_xinfo(m.name) p "
+      io << "WHERE #{CATALOG_TABLE_FILTER} AND p.hidden <> 1"
+      io << " AND m.name = ?" if table
+      io << " ORDER BY m.name, p.cid"
+    end
+    args = table ? [table.as(DB::Any)] : [] of DB::Any
+
+    rows = [] of {String, Int32, String, String, Bool, String?, Int32}
+    key_size = Hash(String, Int32).new(0)
+    catalog_query(sql, args) do |rs|
+      table_name = rs.read(String)
+      cid = rs.read(Int64).to_i
+      name = rs.read(String)
+      type = rs.read(String?) || ""
+      not_null = rs.read(Int64) != 0
+      default = rs.read(String?)
+      key_position = rs.read(Int64).to_i
+      key_size[table_name] += 1 if key_position > 0
+      rows << {table_name, cid, name, type, not_null, default, key_position}
+    end
+
+    rows.map do |table_name, cid, name, type, not_null, default, key_position|
+      # A lone INTEGER PRIMARY KEY is the rowid alias: it auto-increments and
+      # can never be NULL even though PRAGMA reports notnull = 0.
+      rowid_alias = key_position == 1 && key_size[table_name] == 1 && type.upcase == "INTEGER"
+      Grant::Schema::ColumnInfo.new(table_name, name, type, !(not_null || rowid_alias), default,
+        key_position, rowid_alias, cid + 1)
+    end
+  end
+
+  def catalog_indexes(table : String? = nil, namespace : String? = nil) : Array(Grant::Schema::IndexInfo)
+    sql = String.build do |io|
+      io << "SELECT m.name, il.name, il.\"unique\", il.partial, ii.name, im.sql "
+      io << "FROM sqlite_master m JOIN pragma_index_list(m.name) il "
+      io << "JOIN pragma_index_xinfo(il.name) ii ON ii.key = 1 "
+      io << "LEFT JOIN sqlite_master im ON im.type = 'index' AND im.name = il.name "
+      io << "WHERE #{CATALOG_TABLE_FILTER} AND il.origin <> 'pk'"
+      io << " AND m.name = ?" if table
+      io << " ORDER BY m.name, il.name, ii.seqno"
+    end
+    args = table ? [table.as(DB::Any)] : [] of DB::Any
+
+    indexes = [] of Grant::Schema::IndexInfo
+    current = nil.as({String, String, Bool, String?, Array(String?)}?)
+    flush = -> {
+      if entry = current
+        indexes << sqlite_index_info(*entry)
+      end
+    }
+    catalog_query(sql, args) do |rs|
+      table_name = rs.read(String)
+      index_name = rs.read(String)
+      unique = rs.read(Int64) != 0
+      rs.read(Int64) # partial: derived from the CREATE INDEX text below
+      column = rs.read(String?)
+      create_sql = rs.read(String?)
+      if (entry = current) && entry[0] == table_name && entry[1] == index_name
+        entry[4] << column
+      else
+        flush.call
+        current = {table_name, index_name, unique, create_sql, [column] of String?}
+      end
+    end
+    flush.call
+    indexes
+  end
+
+  def catalog_foreign_keys(table : String? = nil, namespace : String? = nil) : Array(Grant::Schema::ForeignKeyInfo)
+    sql = String.build do |io|
+      io << "SELECT m.name, fk.id, fk.\"table\", fk.\"from\", fk.\"to\", fk.on_update, fk.on_delete "
+      io << "FROM sqlite_master m JOIN pragma_foreign_key_list(m.name) fk "
+      io << "WHERE #{CATALOG_TABLE_FILTER}"
+      io << " AND m.name = ?" if table
+      io << " ORDER BY m.name, fk.id, fk.seq"
+    end
+    args = table ? [table.as(DB::Any)] : [] of DB::Any
+
+    keys = [] of Grant::Schema::ForeignKeyInfo
+    current = nil.as({String, Int64, String, Array(String), Array(String?), String, String}?)
+    flush = -> {
+      if entry = current
+        keys << Grant::Schema::ForeignKeyInfo.new(entry[0], nil, entry[3], entry[2],
+          sqlite_referenced_columns(entry[2], entry[4]),
+          Grant::Schema::ReferentialAction.parse(entry[5]), Grant::Schema::ReferentialAction.parse(entry[6]))
+      end
+    }
+    catalog_query(sql, args) do |rs|
+      table_name = rs.read(String)
+      id = rs.read(Int64)
+      to_table = rs.read(String)
+      from = rs.read(String)
+      to = rs.read(String?)
+      on_update = rs.read(String)
+      on_delete = rs.read(String)
+      if (entry = current) && entry[0] == table_name && entry[1] == id
+        entry[3] << from
+        entry[4] << to
+      else
+        flush.call
+        current = {table_name, id, to_table, [from], [to] of String?, on_update, on_delete}
+      end
+    end
+    flush.call
+    keys
+  end
+
+  # A key that omits the parent columns refers to the parent's primary key.
+  private def sqlite_referenced_columns(parent : String, named : Array(String?)) : Array(String)
+    return named.compact if named.none?(&.nil?)
+    parent_key = catalog_columns(parent).select(&.primary_key?).sort_by!(&.primary_key_position).map(&.name)
+    named.each_with_index.map { |name, index| name || parent_key[index]? || "" }.to_a
+  end
+
+  private def sqlite_index_info(table_name : String, index_name : String, unique : Bool,
+                                create_sql : String?, columns : Array(String?)) : Grant::Schema::IndexInfo
+    expression = columns.any?(&.nil?)
+    names = columns
+    if expression
+      pieces = sqlite_index_pieces(create_sql)
+      names = columns.map_with_index { |column, index| column || pieces[index]? || "(expression)" }
+    end
+    where = create_sql.try { |text| text[/\sWHERE\s+(.*)\z/mi, 1]?.try(&.strip) }
+    Grant::Schema::IndexInfo.new(table_name, index_name, names.compact, unique, where, expression)
+  end
+
+  # The comma separated entries between the parentheses of a CREATE INDEX.
+  private def sqlite_index_pieces(create_sql : String?) : Array(String)
+    return [] of String unless create_sql
+    start = create_sql.index('(')
+    return [] of String unless start
+    pieces = [] of String
+    depth = 0
+    from = start + 1
+    create_sql.each_char_with_index do |char, index|
+      next if index <= start
+      case char
+      when '('
+        depth += 1
+      when ')'
+        if depth == 0
+          pieces << create_sql[from...index]
+          break
+        end
+        depth -= 1
+      when ','
+        if depth == 0
+          pieces << create_sql[from...index]
+          from = index + 1
+        end
+      end
+    end
+    pieces.map(&.strip.sub(/\s+(?:ASC|DESC)\z/i, ""))
+  end
 end
+
+require "./sqlite_test_helpers"
+
+Grant::Adapter::Registry.register(Grant::Adapter::Sqlite, "sqlite3", "sqlite")

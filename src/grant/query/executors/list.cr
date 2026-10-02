@@ -13,12 +13,18 @@ module Grant::Query::Executor
 
       begin
         adapter = Model.adapter
-        adapter.open do |db|
-          db.query @sql, args: adapter.normalize_bind_values(@args) do |record_set|
-            record_set.each do
-              results << Model.from_rs record_set
+        copy = ->(rows : Array(Model)) { rows.map(&.clone.as(Model)) }
+        results = Grant::QueryCache.fetch(adapter, @sql, @args, Model.name, copy) do
+          rows = [] of Model
+          adapter.open(@sql, @args, Model.name) do |db|
+            db.query @sql, args: adapter.normalize_bind_values(@args) do |record_set|
+              plan = Model.__column_plan(record_set, adapter)
+              record_set.each do
+                rows << Model.from_rs(record_set, plan)
+              end
             end
           end
+          rows
         end
 
         duration = Time.instant - start_time

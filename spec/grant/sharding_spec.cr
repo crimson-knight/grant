@@ -2,7 +2,7 @@ require "../spec_helper"
 require "../support/simple_virtual_sharding"
 
 # Set up a test connection for sharding tests
-Grant::Connections << Grant::Adapter::Sqlite.new(name: "test", url: "sqlite::memory:")
+Grant::Connections << Grant::Adapter::Sqlite.new(name: "test", url: "sqlite3::memory:")
 
 # Test model for sharding
 class ShardedUser < Grant::Base

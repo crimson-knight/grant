@@ -1,5 +1,6 @@
 require "./promise"
 require "./errors"
+require "./limiter"
 
 module Grant
   module Async
@@ -10,14 +11,25 @@ module Grant
       @completed : Atomic(Bool)
       @started_at : Time::Instant
 
-      def initialize(&block : -> T)
+      # Starts *block* on a new fiber. At most `Grant.settings.async_pool_size`
+      # async blocks run at once; the rest wait for a slot. A result started
+      # from inside another async fiber, and the chained results of `then`,
+      # `map` and `flat_map` (*limited* false), take no slot, because they
+      # wait on work that already holds one and could otherwise deadlock.
+      def initialize(limited : Bool = true, &block : -> T)
         @completed = Atomic(Bool).new(false)
         @promise = Promise(T).new
         @started_at = Time.instant
+        origin = Fiber.current
+        limited = false if origin.grant_async_origin
         @fiber = spawn do
           begin
             Async::Metrics.track_operation do
-              result = block.call
+              result = if limited
+                         Limiter.current.run { Grant::Notifications.async_from(origin) { block.call } }
+                       else
+                         Grant::Notifications.async_from(origin) { block.call }
+                       end
               @promise.resolve(result)
             end
           rescue e
@@ -71,7 +83,7 @@ module Grant
 
       # Chain operations
       def then(&block : T -> U) : Result(U) forall U
-        Result(U).new do
+        Result(U).new(limited: false) do
           value = wait
           block.call(value)
         end
@@ -79,7 +91,7 @@ module Grant
 
       # Map the result
       def map(&block : T -> U) : Result(U) forall U
-        Result(U).new do
+        Result(U).new(limited: false) do
           value = wait
           block.call(value)
         end
@@ -87,7 +99,7 @@ module Grant
 
       # Flat map for chaining async operations
       def flat_map(&block : T -> Result(U)) : Result(U) forall U
-        Result(U).new do
+        Result(U).new(limited: false) do
           value = wait
           block.call(value).wait
         end

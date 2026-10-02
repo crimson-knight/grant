@@ -22,17 +22,33 @@ module Grant
   annotation Table; end
 end
 
+require "./grant/notifications"
+require "./grant/query_logs"
+require "./grant/log"
 require "./adapter/base"
 require "./grant/sanitization"
 require "./grant/connection_registry"
 require "./grant/result"
 require "./grant/connection"
+require "./grant/connection_manager"
 require "./grant/target"
 require "./grant/base"
 require "./grant/sti"
+require "./grant/schema/introspection"
+require "./grant/schema/schema_statements"
+require "./grant/schema/constraint_catalog"
+require "./grant/schema/model_indexes"
+require "./grant/schema/migration_context"
+require "./grant/schema/multi_database_migrator"
+require "./grant/schema/generator"
+require "./grant/schema/loader"
+require "./grant/seeds"
+require "./grant/tasks/database"
 
 # Large-table / high-scale query toolkit (index hints, IN chunking, streaming,
 # tenant scoping). Required after Grant::Base is fully defined so the toolkit
 # can reopen the builder and include the tenant-scoping macros into Base.
 require "./grant/scale"
+require "./grant/middleware/query_cache"
+require "./grant/database_configurations"
 require "./grant/parity"

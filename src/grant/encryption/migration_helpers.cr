@@ -1,136 +1,89 @@
 module Grant::Encryption
-  # Helpers for migrating data to/from encrypted columns
+  # Helpers for migrating data to/from encrypted columns.
+  #
+  # Every helper walks the table in keyset batches (`WHERE pk > last ORDER BY
+  # pk LIMIT n`), so a batch costs the same at row one and row a million and a
+  # row whose value changes cannot be skipped or visited twice. Values are read
+  # and written as raw column text, one bound `UPDATE ... CASE` statement per
+  # batch inside a per-batch transaction: no model instances, validations,
+  # callbacks or timestamps. All of them are idempotent, so an interrupted run can be
+  # restarted.
   module MigrationHelpers
-    # Encrypt existing data in a column
-    # Example:
-    #   Grant::Encryption::MigrationHelpers.encrypt_column(
-    #     User,
-    #     :ssn,
-    #     batch_size: 1000
-    #   )
+    alias RawRow = Tuple(Grant::Columns::Type, String?, String?)
+
+    # Encrypts the plaintext held in a column.
+    #
+    # For a transparent attribute (`encrypts ssn : String`) the plaintext is in
+    # the attribute's own column and is replaced in place. For the
+    # `<attr>_encrypted` form the plaintext is read from *source_column*
+    # (default: a column named like the attribute, which the model does not
+    # declare) and the ciphertext is written to `<attr>_encrypted`. Rows that
+    # already hold ciphertext are skipped. Plaintext for non-String types must
+    # be in `Grant::Encryption::Serializer` form. Returns the number of rows
+    # processed.
+    #
+    # ```
+    # Grant::Encryption::MigrationHelpers.encrypt_column(User, :ssn, batch_size: 1000)
+    # ```
     def self.encrypt_column(
       model_class : Grant::Base.class,
       attribute : Symbol,
       batch_size : Int32 = 100,
       progress : Bool = true,
-    )
+      source_column : Symbol? = nil,
+    ) : Int32
       attribute_str = attribute.to_s
-      encrypted_column = "#{attribute_str}_encrypted"
-
-      # Verify the model has the encrypted attribute
-      unless model_class.encrypted_attributes.has_key?(attribute_str)
-        raise ArgumentError.new("#{model_class} does not have encrypted attribute #{attribute}")
-      end
-
-      # Get total count
-      total = model_class.count
+      encrypted_attr = encrypted_attribute_for(model_class, attribute_str)
+      destination = encrypted_attr.column_name
+      source = (source_column || (encrypted_attr.transparent? ? destination : attribute)).to_s
       processed = 0
 
-      Grant::Log.info { "Encrypting #{total} records..." } if progress
-
-      # Process in batches
-      offset = 0
-      loop do
-        records = model_class.limit(batch_size).offset(offset).select
-        break if records.empty?
-
-        records.each do |record|
-          # Skip if already encrypted
-          if record.read_attribute(encrypted_column)
-            processed += 1
-            next
-          end
-
-          # Get the unencrypted value
-          unencrypted_value = record.read_attribute(attribute_str)
-          next if unencrypted_value.nil?
-
-          # Encrypt and set the value directly
-          encrypted_value = Grant::Encryption.encrypt(
-            unencrypted_value.as(String),
-            model_class.name,
-            attribute_str,
-            model_class.encrypted_attributes[attribute_str].deterministic
-          )
-          record.write_attribute("#{attribute_str}_encrypted", encrypted_value)
-          record.save!(validate: false)
-
+      each_batch(model_class, source, destination, batch_size, progress, "Encrypting") do |rows|
+        changes = [] of Tuple(Grant::Columns::Type, String)
+        rows.each do |key, plain, current|
           processed += 1
+          next if plain.nil?
+          next if encrypted_payload?(current) || (source == destination && encrypted_payload?(plain))
+          changes << {key, encrypted_attr.seal(plain)}
         end
-
-        if progress
-          percent = (processed.to_f / total * 100).round(2)
-          Grant::Log.info { "Progress: #{processed}/#{total} (#{percent}%)" }
-        end
-
-        offset += batch_size
+        write_batch(model_class, destination, changes)
       end
 
       Grant::Log.info { "Encryption complete!" } if progress
       processed
     end
 
-    # Decrypt data back to plain column (for rollback)
-    # Example:
-    #   Grant::Encryption::MigrationHelpers.decrypt_column(
-    #     User,
-    #     :ssn,
-    #     target_column: :ssn_plain
-    #   )
+    # Decrypts an encrypted column back to plaintext (a rollback). The
+    # plaintext goes to *target_column*: for a transparent attribute the
+    # attribute's own column by default; for the `<attr>_encrypted` form a
+    # column named like the attribute, which must exist in the table. Rows
+    # that do not hold ciphertext are skipped. Returns the number of rows
+    # processed.
+    #
+    # ```
+    # Grant::Encryption::MigrationHelpers.decrypt_column(User, :ssn, target_column: :ssn_plain)
+    # ```
     def self.decrypt_column(
       model_class : Grant::Base.class,
       attribute : Symbol,
       target_column : Symbol? = nil,
       batch_size : Int32 = 100,
       progress : Bool = true,
-    )
+    ) : Int32
       attribute_str = attribute.to_s
-      encrypted_column = "#{attribute_str}_encrypted"
-      target = target_column || attribute
-
-      # Verify the model has the encrypted attribute
-      unless model_class.encrypted_attributes.has_key?(attribute_str)
-        raise ArgumentError.new("#{model_class} does not have encrypted attribute #{attribute}")
-      end
-
-      # Get total count
-      total = model_class.count
+      encrypted_attr = encrypted_attribute_for(model_class, attribute_str)
+      source = encrypted_attr.column_name
+      target = (target_column || (encrypted_attr.transparent? ? source : attribute)).to_s
       processed = 0
 
-      Grant::Log.info { "Decrypting #{total} records..." } if progress
-
-      # Process in batches
-      offset = 0
-      loop do
-        records = model_class.limit(batch_size).offset(offset).select
-        break if records.empty?
-
-        records.each do |record|
-          # Get the encrypted value
-          encrypted_value = record.read_attribute("#{attribute_str}_encrypted")
-          next if encrypted_value.nil?
-
-          # Decrypt the value
-          decrypted_value = Grant::Encryption.decrypt(
-            encrypted_value.as(String),
-            model_class.name,
-            attribute_str
-          )
-          next if decrypted_value.nil?
-
-          # Write to target column
-          record.write_attribute(target.to_s, decrypted_value)
-          record.save!(validate: false)
-
+      each_batch(model_class, source, target, batch_size, progress, "Decrypting") do |rows|
+        changes = [] of Tuple(Grant::Columns::Type, String)
+        rows.each do |key, stored, _current|
+          next if stored.nil? || !encrypted_payload?(stored)
+          changes << {key, encrypted_attr.open(stored)}
           processed += 1
         end
-
-        if progress
-          percent = (processed.to_f / total * 100).round(2)
-          Grant::Log.info { "Progress: #{processed}/#{total} (#{percent}%)" }
-        end
-
-        offset += batch_size
+        write_batch(model_class, target, changes)
       end
 
       Grant::Log.info { "Decryption complete!" } if progress
@@ -154,6 +107,10 @@ module Grant::Encryption
     #       deterministic: old_deterministic_key
     #     }
     #   )
+    #
+    # With `Config.primary_keys = [new, old]` and `previous:` schemes a rotation
+    # needs no maintenance window (reads fall back to the old keys); run this
+    # afterwards to move the remaining rows to the new key.
     def self.rotate_encryption(
       model_class : Grant::Base.class,
       attribute : Symbol,
@@ -161,9 +118,10 @@ module Grant::Encryption
       old_salt : String? = nil,
       batch_size : Int32 = 100,
       progress : Bool = true,
-    )
+    ) : Int32
       attribute_str = attribute.to_s
-      encrypted_attr = model_class.encrypted_attributes[attribute_str]
+      encrypted_attr = encrypted_attribute_for(model_class, attribute_str)
+      column = encrypted_attr.column_name
 
       # Capture current settings; rotation passes them explicitly rather than
       # swapping process-wide keys while application fibers may be encrypting.
@@ -173,29 +131,19 @@ module Grant::Encryption
       previous_salt = old_salt || current_salt
       previous_primary = KeyProvider.decode_key(old_keys[:primary])
       previous_deterministic = old_keys[:deterministic].try { |key| KeyProvider.decode_key(key) }
-
-      # Get total count
-      total = model_class.count
       processed = 0
 
-      Grant::Log.info { "Rotating encryption keys for #{total} records..." } if progress
-
-      # Process in batches
-      offset = 0
-      loop do
-        records = model_class.limit(batch_size).offset(offset).select
-        break if records.empty?
-
-        records.each do |record|
-          encrypted_value = record.read_attribute("#{attribute_str}_encrypted")
-          next if encrypted_value.nil?
+      each_batch(model_class, column, column, batch_size, progress, "Rotating encryption keys for") do |rows|
+        changes = [] of Tuple(Grant::Columns::Type, String)
+        rows.each do |key, stored, _current|
+          next if stored.nil?
 
           # First try the old configuration. If it fails, accept ciphertext
           # already rotated with the current configuration so interrupted
           # batches can resume safely.
           decrypted = begin
             Grant::Encryption.decrypt_with_keys(
-              encrypted_value.as(String),
+              stored,
               model_class.name,
               attribute_str,
               previous_primary,
@@ -204,7 +152,7 @@ module Grant::Encryption
             )
           rescue ex : Cipher::DecryptionError
             Grant::Encryption.decrypt_with_keys(
-              encrypted_value.as(String),
+              stored,
               model_class.name,
               attribute_str,
               current_primary,
@@ -214,7 +162,7 @@ module Grant::Encryption
           end
 
           # Re-encrypt with new keys
-          new_encrypted = Grant::Encryption.encrypt_with_keys(
+          changes << {key, Grant::Encryption.encrypt_with_keys(
             decrypted,
             model_class.name,
             attribute_str,
@@ -222,39 +170,46 @@ module Grant::Encryption
             current_primary,
             current_deterministic,
             current_salt
-          )
-
-          record.write_attribute("#{attribute_str}_encrypted", new_encrypted)
-          record.save!(validate: false)
-
+          )}
           processed += 1
         end
-
-        if progress
-          percent = (processed.to_f / total * 100).round(2)
-          Grant::Log.info { "Progress: #{processed}/#{total} (#{percent}%)" }
-        end
-
-        offset += batch_size
+        write_batch(model_class, column, changes)
       end
 
       Grant::Log.info { "Key rotation complete!" } if progress
       processed
     end
 
-    # Generate migration code for adding encrypted columns
+    # Generate migration code for adding an encrypted column. A transparent
+    # attribute needs its own column widened to text; the `<attr>_encrypted`
+    # form needs the extra column (indexed when deterministic).
     # Example:
     #   puts Grant::Encryption::MigrationHelpers.generate_migration(User, :ssn)
     def self.generate_migration(model_class : Grant::Base.class, attribute : Symbol) : String
       table_name = model_class.table_name
-      column_name = "#{attribute}_encrypted"
+      encrypted_attr = encrypted_attribute_for(model_class, attribute.to_s)
+      column_name = encrypted_attr.column_name
+
+      prepare = if encrypted_attr.transparent?
+                  <<-PREPARE
+                  # Store ciphertext as text in the existing column
+                  alter_table :#{table_name} do
+                    change_column :#{column_name}, :text
+                    #{encrypted_attr.deterministic ? "add_index :#{column_name}" : "# not deterministic: not queryable, so not indexed"}
+                  end
+                  PREPARE
+                else
+                  <<-PREPARE
+                  # Add encrypted column for #{attribute}
+                  alter_table :#{table_name} do
+                    add_column :#{column_name}, :text
+                    #{encrypted_attr.deterministic ? "add_index :#{column_name}" : "# not deterministic: not queryable, so not indexed"}
+                  end
+                  PREPARE
+                end
 
       <<-MIGRATION
-      # Add encrypted column for #{attribute}
-      alter_table :#{table_name} do
-        add_column :#{column_name}, :text
-        add_index :#{column_name} if deterministic # Only for deterministic encryption
-      end
+      #{prepare}
 
       # Encrypt existing data
       Grant::Encryption::MigrationHelpers.encrypt_column(
@@ -263,10 +218,106 @@ module Grant::Encryption
       )
 
       # Optional: Remove original column after verification
-      # alter_table :#{table_name} do
-      #   drop_column :#{attribute}
-      # end
+      #{encrypted_attr.transparent? ? "# (nothing to drop: the value was encrypted in place)" : "# alter_table :#{table_name} do\n      #   drop_column :#{attribute}\n      # end"}
       MIGRATION
+    end
+
+    private def self.encrypted_attribute_for(model_class : Grant::Base.class, attribute_name : String) : EncryptedAttribute
+      model_class.encrypted_query_attribute(attribute_name) ||
+        raise ArgumentError.new("#{model_class} does not have encrypted attribute #{attribute_name}")
+    end
+
+    private def self.encrypted_payload?(text : String?) : Bool
+      return false if text.nil? || text.empty?
+      Cipher.encrypted_payload?(Base64.decode(text))
+    rescue Base64::Error
+      false
+    end
+
+    # Yields the table's rows in primary-key order, *batch_size* at a time, as
+    # `{key, first_column_text, second_column_text}` (one query per batch,
+    # `WHERE pk > last`). *current* may equal *source*.
+    private def self.each_batch(
+      model_class : Grant::Base.class,
+      source : String,
+      current : String,
+      batch_size : Int32,
+      progress : Bool,
+      verb : String,
+      & : Array(RawRow) ->
+    ) : Nil
+      raise ArgumentError.new("batch_size must be positive") unless batch_size > 0
+
+      key_column = model_class.primary_name
+      total = model_class.count
+      Grant::Log.info { "#{verb} #{total} records..." } if progress
+
+      seen = 0
+      last : Grant::Columns::Type = nil
+      first = true
+      adapter = model_class.adapter
+      names = source == current ? [key_column, source] : [key_column, source, current]
+
+      loop do
+        relation = model_class.order({key_column => :asc}).limit(batch_size)
+        relation = relation.where(key_column, :gt, last) unless first
+        assembler = relation.assembler
+        sql = assembler.pluck_sql(names)
+        arguments = assembler.numbered_parameters
+
+        rows = [] of RawRow
+        adapter.open(sql, arguments, model_class.name) do |db|
+          db.query(sql, args: adapter.normalize_bind_values(arguments)) do |result|
+            result.each do
+              key = result.read.as(Grant::Columns::Type)
+              plain = result.read(String?)
+              other = names.size == 3 ? result.read(String?) : plain
+              rows << {key, plain, other}
+            end
+          end
+        end
+        break if rows.empty?
+
+        model_class.transaction { yield rows }
+
+        seen += rows.size
+        last = rows.last[0]
+        first = false
+        if progress
+          percent = total > 0 ? (seen.to_f / total * 100).round(2) : 100.0
+          Grant::Log.info { "Progress: #{seen}/#{total} (#{percent}%)" }
+        end
+        break if rows.size < batch_size
+      end
+    end
+
+    # Rows written per statement. Each row binds three values, which keeps a
+    # statement under SQLite's historical 999-variable limit.
+    WRITE_CHUNK_SIZE = 300
+
+    # Writes a batch with one bound statement per `WRITE_CHUNK_SIZE` rows:
+    # `UPDATE t SET col = CASE pk WHEN ? THEN ? ... END WHERE pk IN (?, ...)`.
+    # The rows get different values, so a plain `update_all` cannot express it.
+    private def self.write_batch(model_class : Grant::Base.class, column : String, changes : Array(Tuple(Grant::Columns::Type, String))) : Nil
+      return if changes.empty?
+
+      model_class.guard_writes!
+      adapter = model_class.adapter
+      quoted_key = model_class.quote(model_class.primary_name)
+      quoted_column = model_class.quote(column)
+
+      changes.each_slice(WRITE_CHUNK_SIZE) do |chunk|
+        assembler = model_class.order({model_class.primary_name => :asc}).assembler
+        branches = chunk.map { |(key, value)| "WHEN #{assembler.add_parameter(key)} THEN #{assembler.add_parameter(value)}" }
+        keys = chunk.map { |(key, _)| assembler.add_parameter(key) }
+        sql = "UPDATE #{model_class.quoted_table_name} SET #{quoted_column} = CASE #{quoted_key} #{branches.join(" ")} END WHERE #{quoted_key} IN (#{keys.join(", ")})"
+        arguments = assembler.numbered_parameters
+
+        model_class.mark_write_operation
+        adapter.open(sql, arguments, model_class.name) do |db|
+          db.exec(sql, args: adapter.normalize_bind_values(arguments))
+        end
+      end
     end
   end
 end

@@ -16,8 +16,10 @@ module Grant::Query::Executor
         start_time = Time.instant
         begin
           adapter = Model.adapter
-          result = adapter.open do |db|
-            db.query_one?(@sql, args: adapter.normalize_bind_values(@args), as: Scalar) || @default
+          result = Grant::QueryCache.fetch(adapter, @sql, @args, Model.name) do
+            adapter.open(@sql, @args, Model.name) do |db|
+              db.query_one?(@sql, args: adapter.normalize_bind_values(@args), as: Scalar) || @default
+            end
           end
 
           duration = Time.instant - start_time

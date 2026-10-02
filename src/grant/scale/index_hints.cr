@@ -4,7 +4,7 @@ module Grant
   #
   # In the default `:warn` mode this is never raised — the query is re-run
   # without the hint instead (hints change the query plan, never the results).
-  class UnsupportedIndexHintError < Exception
+  class UnsupportedIndexHintError < Grant::ErrorBase
   end
 end
 
@@ -20,7 +20,7 @@ end
 
 class Grant::Query::Builder(Model)
   # Index hints attached to this query, rendered per-adapter in the FROM clause.
-  getter index_hints : Array(Grant::Query::IndexHint) = [] of Grant::Query::IndexHint
+  getter index_hints : Array(Grant::Query::IndexHint) = Grant::Query::EmptyClauses::INDEX_HINTS
 
   # Suggest the query planner *consider* the named index(es).
   #
@@ -33,8 +33,9 @@ class Grant::Query::Builder(Model)
   # User.where(tenant_id: t).use_index("idx_users_tenant").to_a
   # ```
   def use_index(*names : String) : self
-    @index_hints << Grant::Query::IndexHint.new(:use, names.to_a)
-    self
+    copy = chain_copy
+    copy.own_index_hints << Grant::Query::IndexHint.new(:use, names.to_a)
+    copy
   end
 
   # Force the planner to use the named index (MySQL `FORCE INDEX`). On SQLite
@@ -46,8 +47,9 @@ class Grant::Query::Builder(Model)
   # User.where(tenant_id: t).force_index("idx_users_tenant").to_a
   # ```
   def force_index(*names : String) : self
-    @index_hints << Grant::Query::IndexHint.new(:force, names.to_a)
-    self
+    copy = chain_copy
+    copy.own_index_hints << Grant::Query::IndexHint.new(:force, names.to_a)
+    copy
   end
 
   # Tell the planner to avoid the named index (MySQL `IGNORE INDEX`). SQLite and
@@ -58,8 +60,9 @@ class Grant::Query::Builder(Model)
   # User.where(status: "active").ignore_index("idx_users_status").to_a
   # ```
   def ignore_index(*names : String) : self
-    @index_hints << Grant::Query::IndexHint.new(:ignore, names.to_a)
-    self
+    copy = chain_copy
+    copy.own_index_hints << Grant::Query::IndexHint.new(:ignore, names.to_a)
+    copy
   end
 
   # Returns `true` when this query carries one or more index hints (added via
@@ -89,8 +92,8 @@ class Grant::Query::Builder(Model)
   # plain.index_hints? # => false
   # ```
   protected def without_index_hints : self
-    copy = dup
-    copy.index_hints.clear
+    copy = chain_copy
+    copy.clear_index_hints
     copy
   end
 
@@ -135,6 +138,62 @@ class Grant::Query::Builder(Model)
   end
 end
 
+module Grant::Query::OptimizerHint
+  # Removes comment markers from *hint* until none remain, so text such as
+  # `"**//"` cannot re-form a terminator once the inner `*/` is gone.
+  def self.sanitize(hint : String) : String
+    cleaned = hint
+    loop do
+      stripped = cleaned.gsub("*/", "").gsub("/*", "")
+      break if stripped == cleaned
+      cleaned = stripped
+    end
+    cleaned.strip
+  end
+end
+
+class Grant::Query::Builder(Model)
+  # Optimizer hints placed in a `/*+ ... */` comment right after `SELECT`. Kept
+  # as an array that is replaced, never mutated, so copies share it safely.
+  @optimizer_hints : Array(String) = Grant::Query::EmptyClauses::OPTIMIZER_HINTS
+
+  # The hints in the order they were added.
+  def optimizer_hint_list : Array(String)
+    @optimizer_hints
+  end
+
+  # Adds optimizer hints, rendered as `SELECT /*+ hint hint */ ...`. MySQL reads
+  # them as optimizer hints (`MAX_EXECUTION_TIME(1000)`), PostgreSQL with
+  # `pg_hint_plan` reads them as plan hints, and SQLite ignores the comment.
+  #
+  # Comment markers are stripped from each hint so a hint cannot end the comment
+  # early and inject SQL. Blank hints are dropped. `unscope(:optimizer_hints)`
+  # removes them. Returns `self`.
+  #
+  # ```
+  # Post.optimizer_hints("MAX_EXECUTION_TIME(1000)").select
+  # # => SELECT /*+ MAX_EXECUTION_TIME(1000) */ ... FROM posts
+  # ```
+  def optimizer_hints!(*hints : String) : self
+    add_optimizer_hints(hints.map { |hint| Grant::Query::OptimizerHint.sanitize(hint) }.reject(&.empty?))
+  end
+
+  # Appends already sanitized hints (from a merged or scoped relation).
+  #
+  # :nodoc:
+  def add_optimizer_hints(cleaned : Array(String)) : self
+    return self if cleaned.empty?
+
+    reset_load_state
+    @optimizer_hints = @optimizer_hints | cleaned
+    self
+  end
+
+  def optimizer_hints(*hints : String) : self
+    chain_copy.optimizer_hints!(*hints)
+  end
+end
+
 # Assembler-side rendering of the FROM clause with any index hint, via virtual
 # dispatch on the adapter (no hard-coded adapter constants).
 module Grant::Query::Assembler
@@ -143,6 +202,10 @@ module Grant::Query::Assembler
     # adapter to render them; an adapter that cannot honor a hint returns nil and
     # the hint degrades per `Grant.settings.index_hint_mode`.
     def from_clause : String
+      if source = from_source_sql
+        return "FROM #{source}"
+      end
+
       hint = index_hint_sql
       quoted_table = table_name.downcase == "select" ? Model.quote(table_name) : table_name
       hint ? "FROM #{quoted_table} #{hint}" : "FROM #{quoted_table}"

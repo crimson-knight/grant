@@ -9,18 +9,19 @@ module Grant::Query::Executor
       log @sql, @args
 
       raise "No default provided" if @default.nil?
-      results = [] of Scalar
 
       adapter = Model.adapter
-      adapter.open do |db|
-        db.query @sql, args: adapter.normalize_bind_values(@args) do |record_set|
-          record_set.each do
-            results << record_set.read(Scalar)
+      Grant::QueryCache.fetch(adapter, @sql, @args, Model.name, ->(values : Array(Scalar)) { values.dup }) do
+        results = [] of Scalar
+        adapter.open(@sql, @args, Model.name) do |db|
+          db.query @sql, args: adapter.normalize_bind_values(@args) do |record_set|
+            record_set.each do
+              results << record_set.read(Scalar)
+            end
           end
         end
+        results
       end
-
-      results
     end
 
     delegate :to_i, :to_s, to: :run

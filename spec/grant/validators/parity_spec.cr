@@ -333,14 +333,14 @@ describe "Validation parity" do
       m = LengthDetailsModel.new
       m.code = "ab"
       m.valid?.should be_false
-      m.errors.details["code"].should eq([{:error => :too_short}])
+      m.errors.details["code"].should eq([{:error => :too_short, :count => 4}])
     end
 
     it "exposes :comparison for comparison failures" do
       m = ComparisonModel.new
       m.age = 5
       m.valid?.should be_false
-      m.errors.details["age"].should eq([{:error => :comparison}])
+      m.errors.details["age"].should eq([{:error => :greater_than_or_equal_to, :count => 18, :value => 5}])
     end
 
     it "falls back to :invalid when no type was provided" do

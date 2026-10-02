@@ -385,10 +385,8 @@ describe Grant::Errors do
       errors.add(:name, "can't be blank")
 
       json = errors.to_json
-      json.should contain("\"field\"")
-      json.should contain("\"name\"")
-      json.should contain("\"message\"")
-      json.should contain("can't be blank")
+      json.should eq(%({"name":["can't be blank"]}))
+      errors.to_json_list.should contain("\"field\"")
     end
   end
 

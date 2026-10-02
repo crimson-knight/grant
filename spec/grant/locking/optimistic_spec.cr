@@ -167,7 +167,9 @@ describe Grant::Locking::Optimistic do
           attempts += 1
           # Always fail
           other = OptimisticModel.find!(model.id)
+          other.value = (other.value || 0) + 1
           other.save!
+          model.value = (model.value || 0) + 100
           model.save!
         end
       rescue Grant::Locking::Optimistic::StaleObjectError
@@ -208,8 +210,11 @@ describe Grant::Locking::Optimistic do
       begin
         # Force stale error
         other = OptimisticModel.find!(model.id)
+        other.name = "Changed elsewhere"
         other.save!
+        model.name = "Changed here"
         model.save!
+        fail "expected a stale object error"
       rescue ex : Grant::Locking::Optimistic::StaleObjectError
         ex.record_class.should eq("OptimisticModel")
         ex.record_id.should eq(model.id.to_s)

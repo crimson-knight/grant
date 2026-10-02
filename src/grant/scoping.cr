@@ -69,6 +69,71 @@ module Grant::Scoping
     end
   end
 
+  # :nodoc:
+  abstract class ScopeEntry
+  end
+
+  # :nodoc:
+  class RelationEntry(Model) < ScopeEntry
+    getter relation : Grant::Query::Builder(Model)
+
+    def initialize(@relation : Grant::Query::Builder(Model))
+    end
+  end
+
+  # Marks an `unscoped { }` block: it hides every outer `scoping { }` relation
+  # of the model until the block ends, as ActiveRecord's `unscoped` does.
+  # :nodoc:
+  class UnscopedEntry < ScopeEntry
+  end
+
+  # A copy of the relation the innermost `Model.scoping { }` block of the
+  # current fiber made the current scope for *model*, or `nil` outside such a
+  # block. It is a copy because class-level query methods change the scope they
+  # get in place.
+  # The stack lives in a slot on the fiber, so no lock is taken and other
+  # fibers never see it.
+  def self.current_relation(model : Model.class) : Grant::Query::Builder(Model)? forall Model
+    stacks = Fiber.current.grant_scoping_stacks
+    return unless stacks
+    stack = stacks[model.name]?
+    return if stack.nil? || stack.empty?
+    stack.last.as?(RelationEntry(Model)).try(&.relation.dup)
+  end
+
+  # Runs *block* with *relation* as the current scope of *model*, restoring the
+  # previous scope afterwards, also when the block raises.
+  def self.with_relation(model : Model.class, relation : Grant::Query::Builder(Model), & : -> T) : T forall Model, T
+    push_entry(model.name, RelationEntry(Model).new(relation)) { yield }
+  end
+
+  # Runs *block* with no `scoping { }` relation in effect for the model named
+  # *model_name*; used by the block form of `unscoped`.
+  #
+  # :nodoc:
+  def self.without_relation(model_name : String, & : -> T) : T forall T
+    stacks = Fiber.current.grant_scoping_stacks
+    # Nothing to hide: skip the allocation on the common path.
+    return yield unless stacks && stacks.has_key?(model_name)
+
+    push_entry(model_name, UnscopedEntry.new) { yield }
+  end
+
+  private def self.push_entry(model_name : String, entry : ScopeEntry, & : -> T) : T forall T
+    stacks = (Fiber.current.grant_scoping_stacks ||= {} of String => Array(ScopeEntry))
+    stack = (stacks[model_name] ||= [] of ScopeEntry)
+    stack << entry
+    begin
+      yield
+    ensure
+      stack.pop
+      if stack.empty?
+        stacks.delete(model_name)
+        Fiber.current.grant_scoping_stacks = nil if stacks.empty?
+      end
+    end
+  end
+
   macro included
     macro inherited
       def self._unscoped? : Bool
@@ -102,13 +167,23 @@ module Grant::Scoping
     # Each model gets a relation subtype so calls like `Post.published.recent`
     # can resolve all of that model's scope methods at compile time.
     class BuildNamedScopeRelation < Grant::Query::Builder({{@type}})
-      def {{name.id}}(*args)
+      # Relation methods return copies, and a copy keeps this subtype, so the
+      # result of a scope body is normally already the relation to hand back.
+      # A body that returns some other builder is converted, keeping its clauses.
+      def self.adopt(result : Grant::Query::Builder({{@type}})) : BuildNamedScopeRelation
+        return result if result.is_a?(BuildNamedScopeRelation)
+
+        relation = new(result.db_type, result.boolean_operator)
+        result.copy_state_to(relation)
+        relation
+      end
+
+      def {{name.id}}(*args) : BuildNamedScopeRelation
         {% if body.args.size > 0 && body.args.first.restriction.stringify.includes?("Grant::Query::Builder") %}
-          ({{body}}).call(self, *args)
+          BuildNamedScopeRelation.adopt(({{body}}).call(self, *args))
         {% else %}
-          merge_builder(({{body}}).call(*args))
+          BuildNamedScopeRelation.adopt(chain_copy.merge_builder(({{body}}).call(*args)))
         {% end %}
-        self
       end
     end
 
@@ -118,11 +193,31 @@ module Grant::Scoping
       query = BuildNamedScopeRelation.new(current_query.db_type, current_query.boolean_operator)
       current_query.copy_state_to(query)
       {% if body.args.size > 0 && body.args.first.restriction.stringify.includes?("Grant::Query::Builder") %}
-        ({{body}}).call(query, *args)
+        BuildNamedScopeRelation.adopt(({{body}}).call(query, *args))
       {% else %}
-        query.merge_builder(({{body}}).call(*args))
+        BuildNamedScopeRelation.adopt(query.merge_builder(({{body}}).call(*args)))
       {% end %}
-      query
+    end
+  end
+
+  # Declares the column(s) that order an unordered relation for `first`,
+  # `last`, the ordinal finders (`second`, `third`, ...) and `find_each`,
+  # ahead of the primary key. Without it those use the primary key alone.
+  # Plain `all`/`where` relations stay unordered.
+  #
+  # ```
+  # class Event < Grant::Base
+  #   column id : Int64, primary: true
+  #   column created_at : Time
+  #   implicit_order_column :created_at
+  # end
+  #
+  # Event.first # ORDER BY created_at ASC, id ASC LIMIT 1
+  # Event.last  # ORDER BY created_at DESC, id DESC LIMIT 1
+  # ```
+  macro implicit_order_column(*columns)
+    def self.implicit_order_columns : Array(String)
+      [{% for column in columns %}{{column.id.stringify}}, {% end %}] of String
     end
   end
 
@@ -213,6 +308,14 @@ module Grant::Scoping
       attributes
     end
 
+    # The column an upsert must match before it may update an existing row, so
+    # a conflicting row that belongs to another tenant is left alone. Nil for
+    # models without tenancy.
+    # :nodoc:
+    def __bulk_tenant_guard_column : String?
+      nil
+    end
+
     # Fallback for Grant::Base itself. Concrete model classes generate their
     # own version in Grant::Base's inherited hook so default scopes and STI
     # filters use a builder specialized for that model.
@@ -229,6 +332,23 @@ module Grant::Scoping
       query = Grant::Query::Builder(self).new(db_type)
 
       query
+    end
+
+    # Makes *relation* this model's current scope for the block, so class-level
+    # queries (`where`, `all`, `count`, `first`, ...) start from it instead of the
+    # model's own scope, as ActiveRecord's `Model.scoping`. The previous scope is
+    # restored when the block ends, also when it raises. The scope is local to
+    # the calling fiber; fibers spawned inside the block do not inherit it.
+    # `unscoped` ignores it. Returns the block's value.
+    #
+    # ```
+    # Post.scoping(Post.where(published: true)) do
+    #   Post.count        # counts published posts
+    #   Post.where(id: 1) # AND published
+    # end
+    # ```
+    def scoping(relation : Grant::Query::Builder(self), & : -> T) : T forall T
+      Grant::Scoping.with_relation(self, relation) { yield }
     end
 
     # Block form of `unscoped`: runs *block* with the default scope disabled for
@@ -260,7 +380,7 @@ module Grant::Scoping
       query = Grant::Query::Builder(self).new(db_type)
 
       begin
-        yield query
+        Grant::Scoping.without_relation(name) { yield query }
       ensure
         self._unscoped = old_unscoped
       end
@@ -272,7 +392,7 @@ module Grant::Scoping
     # from an unscoped base.
     #
     # ```
-    # Post.unscoped.all                # every row, default scope ignored
+    # Post.unscoped.all.to_a           # every row, default scope ignored
     # Post.unscoped.where(id: 1).first # chain like any builder
     # Post.unscoped.delete_all         # bypass soft-delete scope to purge
     # ```
@@ -303,34 +423,34 @@ module Grant::Scoping
 
       # Merge where conditions
       other_scope.where_fields.each do |field|
-        current.where_fields << field
+        current.own_where_fields << field
       end
 
       # Merge order fields
       other_scope.order_fields.each do |field|
-        current.order_fields << field
+        current.own_order_fields << field
       end
 
       # Merge group fields
       other_scope.group_fields.each do |field|
-        current.group_fields << field
+        current.own_group_fields << field
       end
 
       # Use the most restrictive limit
       if other_limit = other_scope.limit
         if current_limit = current.limit
-          current.limit(Math.min(current_limit, other_limit))
+          current.limit!(Math.min(current_limit, other_limit))
         else
-          current.limit(other_limit)
+          current.limit!(other_limit)
         end
       end
 
       # Use the largest offset
       if other_offset = other_scope.offset
         if current_offset = current.offset
-          current.offset(Math.max(current_offset, other_offset))
+          current.offset!(Math.max(current_offset, other_offset))
         else
-          current.offset(other_offset)
+          current.offset!(other_offset)
         end
       end
 
@@ -350,46 +470,50 @@ module Grant::Scoping
       end
 
       def where(**kwargs) : Grant::Query::Builder(self)
-        current_scope.where(**kwargs)
+        current_scope.where!(**kwargs)
       end
 
       def where(matches) : Grant::Query::Builder(self)
-        current_scope.where(matches)
+        current_scope.where!(matches)
       end
 
       def where(field : Symbol | String, operator : Symbol, value : Grant::Columns::Type) : Grant::Query::Builder(self)
-        current_scope.where(field, operator, value)
+        current_scope.where!(field, operator, value)
       end
 
       def where(stmt : String) : Grant::Query::Builder(self)
-        current_scope.where(stmt)
+        current_scope.where!(stmt)
       end
 
       def where(stmt : String, value : Nil) : Grant::Query::Builder(self)
-        current_scope.where(stmt, value)
+        current_scope.where!(stmt, value)
       end
 
       def where(stmt : String, values : Array) : Grant::Query::Builder(self)
-        current_scope.where(stmt, values)
+        current_scope.where!(stmt, values)
       end
 
       def where(stmt : String, value : Grant::Columns::Type) : Grant::Query::Builder(self)
-        current_scope.where(stmt, value)
+        current_scope.where!(stmt, value)
       end
 
       def where(stmt : String, first, second, *rest) : Grant::Query::Builder(self)
         values = [] of Grant::Columns::Type
         values << first.as(Grant::Columns::Type) << second.as(Grant::Columns::Type)
         rest.each { |value| values << value.as(Grant::Columns::Type) }
-        current_scope.where(stmt, values)
+        current_scope.where!(stmt, values)
       end
     {% else %}
+      # `current_scope` builds a fresh relation on every call that nothing else
+      # references, so chain methods can use their in-place bang variants here
+      # and skip a copy.
+      {% in_place = %w(order lock group_by reorder reverse_order rewhere reselect regroup joins left_joins distinct having none includes preload eager_load limit offset unscope or).includes?(method_name.id.stringify) %}
       def {{method_name.id}}(*args, **kwargs)
-        current_scope.{{method_name.id}}(*args, **kwargs)
+        current_scope.{{method_name.id}}{% if in_place %}!{% end %}(*args, **kwargs)
       end
 
       def {{method_name.id}}(*args, **kwargs, &block)
-        current_scope.{{method_name.id}}(*args, **kwargs) do |*yield_args|
+        current_scope.{{method_name.id}}{% if in_place %}!{% end %}(*args, **kwargs) do |*yield_args|
           yield *yield_args
         end
       end
@@ -432,16 +556,37 @@ module Grant::Scoping
     override_query_method delete_all
     override_query_method destroy_all
     override_query_method delete
+
     override_query_method touch_all
 
-    # Returns all records of this model, honoring the `default_scope`. Equivalent
-    # to `current_scope.select`.
+    # Deletes the row with primary key *id* with one `DELETE`, skipping callbacks.
+    # Returns the number of rows deleted.
+    def delete(id : Grant::Querying::IdValue) : Int64
+      delete([id])
+    end
+
+    # Deletes the rows with the given primary keys with one `DELETE ... IN`,
+    # skipping callbacks. Returns the number of rows deleted.
+    def delete(ids : Array) : Int64
+      guard_writes!
+      return 0_i64 if ids.empty?
+
+      mark_write_operation
+      current_scope.where({primary_name => ids}).delete_all
+    end
+
+    # Returns a lazy relation over this model, honoring the `default_scope`.
+    # No SQL runs until the relation is iterated or a terminal method is
+    # called, so it chains like any relation. Use `to_a` (or `select`) for an
+    # `Array`, and `all(clause, params)` for the raw-SQL form.
     #
     # ```
-    # Post.all # => Array(Post), default scope applied
+    # Post.all                        # => relation, nothing executed yet
+    # Post.all.where(published: true) # still lazy
+    # Post.all.to_a                   # => Array(Post), default scope applied
     # ```
-    def all
-      current_scope.select
+    def all : Grant::Query::Builder(self)
+      current_scope
     end
 
     # Executes the `current_scope` (with default scope) and returns the matching
@@ -454,17 +599,47 @@ module Grant::Scoping
       current_scope.select
     end
 
-    def select(*columns : Symbol)
+    def select(*columns : Symbol | String)
       current_scope.select(*columns)
     end
 
-    # Returns one matching record, or up to *count* records, from the current scope.
+    # Returns one matching record, or up to *count* records, from the current
+    # scope, with no `ORDER BY`.
     def take : self?
-      current_scope.first
+      current_scope.take
     end
 
     def take(count : Int32) : Array(self)
-      current_scope.first(count)
+      current_scope.take(count)
+    end
+
+    # Like `take`, but raises `Grant::Querying::NotFound` when there is no row.
+    def take! : self
+      current_scope.take!
+    end
+
+    # Returns the last *count* records of the current scope in ascending order.
+    def last(count : Int32) : Array(self)
+      current_scope.last(count)
+    end
+
+    {% for name in %w(second third fourth fifth forty_two second_to_last third_to_last) %}
+      # Returns the {{name.id.gsub(/_/, " ")}} record of the current scope, or `nil`.
+      def {{name.id}} : self?
+        current_scope.{{name.id}}
+      end
+
+      # Like `{{name.id}}`, but raises `Grant::Querying::NotFound` when missing.
+      def {{name.id}}! : self
+        current_scope.{{name.id}}!
+      end
+    {% end %}
+
+    # Column names that order an unordered relation for `first`, `last`, the
+    # ordinal finders and `find_each`, ahead of the primary key. Empty unless
+    # the model declares `implicit_order_column`.
+    def implicit_order_columns : Array(String)
+      [] of String
     end
 
     # Finds a record by primary key within the `default_scope`, or `nil` if none
@@ -474,7 +649,27 @@ module Grant::Scoping
     # Post.find(1) # => Post? (respecting default scope)
     # ```
     def find(id)
+      if id.is_a?(Int32 | Int64) && __plain_lookup?
+        return __find_with_kept_statement(id)
+      end
+
       current_scope.where(primary_name, :eq, id).first
+    end
+
+    # A String key is cast to the primary key's type first, so a UUID key is
+    # found by its text in any case (`nil` for text that is not a UUID).
+    def find(id : String)
+      {% begin %}
+      {% pk = @type.instance_vars.find { |ivar| (ann = ivar.annotation(Grant::Column)) && ann[:primary] } %}
+      {% if pk && pk.type.union_types.reject { |type| type == Nil }.first == UUID %}
+        parsed = ::UUID.parse?(id)
+        return nil unless parsed
+        current_scope.where(primary_name, :eq, parsed).first
+      {% else %}
+        return __find_with_kept_statement(id) if __plain_lookup?
+        current_scope.where(primary_name, :eq, id).first
+      {% end %}
+      {% end %}
     end
 
     # Finds a record by primary key within the `default_scope`, raising
@@ -486,5 +681,47 @@ module Grant::Scoping
     def find!(id)
       find(id) || raise Grant::Querying::NotFound.new("No #{self.name} found where #{primary_name} = #{id}")
     end
+
+    # Returns the records with the given primary keys in the order of *ids*,
+    # using one `SELECT ... WHERE pk IN (...)` within the `default_scope`. Keys
+    # with no record are skipped; use `find!` to raise instead.
+    #
+    # ```
+    # Post.find([3, 1, 2]) # => [post3, post1, post2]
+    # Post.find(3, 1)      # => [post3, post1]
+    # ```
+    def find(ids : Array)
+      current_scope.find(ids)
+    end
+
+    # :ditto:
+    def find(first, second, *rest)
+      current_scope.find([first, second, *rest])
+    end
+
+    # Like `find(ids)`, but raises `Grant::Querying::NotFound` naming every key
+    # with no record.
+    def find!(ids : Array)
+      current_scope.find!(ids)
+    end
+
+    # :ditto:
+    def find!(first, second, *rest)
+      current_scope.find!([first, second, *rest])
+    end
   end
+end
+
+class Grant::Query::Builder(Model)
+  # Makes this relation the current scope of its model for the block; see
+  # `Grant::Base.scoping`.
+  def scoping(& : -> T) : T forall T
+    Model.scoping(self) { yield }
+  end
+end
+
+class Fiber
+  # Fiber-local stacks of `scoping { }` relations, keyed by model name.
+  # :nodoc:
+  property grant_scoping_stacks : Hash(String, Array(Grant::Scoping::ScopeEntry))?
 end

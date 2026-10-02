@@ -12,6 +12,7 @@ module Grant::Query::Assembler
     @having : String?
     @joins : String?
     @lock : String?
+    @predicate_renderer : Grant::Query::Assembler::PredicateRenderer?
 
     def initialize(@query : Builder(Model))
       @numbered_parameters = [] of Grant::Columns::Type
@@ -69,7 +70,14 @@ module Grant::Query::Assembler
     # select_keyword # => "SELECT" or "SELECT DISTINCT"
     # ```
     def select_keyword : String
-      @query.distinct? ? "SELECT DISTINCT" : "SELECT"
+      @query.distinct? ? "#{select_prefix} DISTINCT" : select_prefix
+    end
+
+    # `SELECT`, followed by the relation's optimizer hints as one
+    # `/*+ ... */` comment when it has any.
+    def select_prefix : String
+      hints = @query.optimizer_hint_list
+      hints.empty? ? "SELECT" : "SELECT /*+ #{hints.join(" ")} */"
     end
 
     # Generates JOIN clauses from the query builder's join_clauses array.
@@ -86,6 +94,9 @@ module Grant::Query::Assembler
       return nil if join_clauses.empty?
 
       parts = join_clauses.map do |jc|
+        # A raw join carries its whole fragment in `on`.
+        next jc[:on] if jc[:type] == :raw
+
         join_type = case jc[:type]
                     when :inner then "INNER JOIN"
                     when :left  then "LEFT JOIN"
@@ -130,10 +141,10 @@ module Grant::Query::Assembler
       # Prepend the query annotation (sanitized SQL comment) to the executed
       # statement so it appears in the wire SQL, not just `.raw_sql` inspection.
       if comment = @query.annotation_comment
-        "#{comment} #{sql}"
-      else
-        sql
+        sql = "#{comment} #{sql}"
       end
+      # Trailing tag comment from `Grant::QueryLogs` (no-op while it is off).
+      Grant::QueryLogs.append(sql)
     end
 
     def where
@@ -156,198 +167,36 @@ module Grant::Query::Assembler
       end
     end
 
+    # The renderer for this assembler's model, built once. It takes the model's
+    # name, table and columns as plain values and its quoting as a proc, so
+    # rendering is shared by every model (see `PredicateRenderer`). Quoting goes
+    # through `Model.quote` when a column is rendered, as it did before the
+    # renderer existed: building the renderer must not resolve the model's
+    # adapter, which a sharded model only has inside a shard context.
+    private def predicate_renderer : Grant::Query::Assembler::PredicateRenderer
+      renderer = @predicate_renderer ||= Grant::Query::Assembler::PredicateRenderer.new(
+        Model.name, Model.table_name, Model.fields,
+        ->(name : String) : String { Model.quote(name) },
+        ->(value : Grant::Columns::Type) : String { add_parameter(value) },
+        ->(name : String) : Nil { add_aggregate_field(name); nil },
+        @query.join_clauses)
+      renderer.join_clauses = @query.join_clauses
+      renderer.rendering_where_group = @rendering_where_group
+      renderer
+    end
+
     private def render_where_fields(fields : Array(Grant::Query::WhereField)) : String
-      String.build do |sql|
-        fields.each_with_index do |expression, index|
-          sql << " #{expression[:join].to_s.upcase} " unless index == 0
-
-          if expression[:field]?.nil?
-            clause = case expression
-                     when NamedTuple(join: Symbol, stmt: String, values: Array(Grant::Columns::Type))
-                       bind_raw_statement(expression[:stmt], expression[:values])
-                     else
-                       expr = expression.as(NamedTuple(join: Symbol, stmt: String, value: Grant::Columns::Type))
-                       value = expr[:value]
-                       bind_raw_statement(expr[:stmt], value.nil? ? [] of Grant::Columns::Type : [value])
-                     end
-            sql << clause
-          else
-            expr = expression.as(NamedTuple(join: Symbol, field: String, operator: Symbol, value: Grant::Columns::Type))
-            field = structured_field_sql(expr[:field])
-            add_aggregate_field(field)
-
-            value = encrypted_query_value(expr[:field], expr[:value])
-            if value.nil?
-              case expr[:operator]
-              when :eq
-                sql << "#{field} IS NULL"
-              when :neq, :ltgt
-                sql << "#{field} IS NOT NULL"
-              else
-                raise ArgumentError.new("Operator #{expr[:operator].inspect} does not support nil values")
-              end
-            else
-              if value.is_a?(Array)
-                array = value.as(Array)
-                if array.empty?
-                  sql << (expr[:operator] == :nin ? "1=1" : "1=0")
-                else
-                  placeholders = array.map { |item| add_parameter(item.as(Grant::Columns::Type)) }
-                  sql << "#{field} #{sql_operator(expr[:operator])} (#{placeholders.join(",")})"
-                end
-              else
-                sql << "#{field} #{sql_operator(expr[:operator])} #{add_parameter(value)}"
-              end
-            end
-          end
-        end
-      end
+      predicate_renderer.render_where_fields(fields)
     end
 
     private def structured_field_sql(field : String) : String
-      parts = field.split('.')
-      unless parts.size.in?(1..2) && parts.all?(&.matches?(/\A[A-Za-z_][A-Za-z0-9_]*\z/))
-        raise ArgumentError.new("Invalid query field #{field.inspect}")
-      end
-
-      column = parts.last
-      qualifier = parts.first if parts.size == 2
-      encrypted_attribute = if qualifier.nil? || qualifier == Model.table_name
-                              Grant::Encryption::EncryptedAttributeRegistry.for(Model.name)[column]?
-                            end
-      valid_column = if qualifier.nil? || qualifier == Model.table_name
-                       Model.fields.includes?(column) || !encrypted_attribute.nil?
-                     elsif @query.join_clauses.any? { |join| join[:table] == qualifier }
-                       if association = Grant::AssociationRegistry.get(Model.name, qualifier)
-                         association[:target_class].fields.includes?(column)
-                       else
-                         Model.fields.includes?(column)
-                       end
-                     else
-                       false
-                     end
-
-      unless valid_column
-        raise ArgumentError.new("Unknown query field #{field.inspect} for #{Model.name}")
-      end
-
-      column_name = encrypted_attribute.try(&.column_name) || column
-
-      if qualifier
-        "#{Model.quote(qualifier)}.#{Model.quote(column_name)}"
-      elsif !@query.join_clauses.empty?
-        "#{Model.quote(Model.table_name)}.#{Model.quote(column_name)}"
-      else
-        Model.quote(column_name)
-      end
-    end
-
-    private def encrypted_query_value(field : String, value : Grant::Columns::Type) : Grant::Columns::Type
-      parts = field.split('.')
-      return value unless parts.size == 1 || parts.first == Model.table_name
-
-      attribute_name = parts.last
-      encrypted_attribute = Grant::Encryption::EncryptedAttributeRegistry.for(Model.name)[attribute_name]?
-      return value unless encrypted_attribute
-      unless encrypted_attribute.deterministic
-        raise ArgumentError.new("Cannot query non-deterministic encrypted field: #{attribute_name}")
-      end
-
-      case value
-      when Nil
-        nil
-      when String
-        Grant::Encryption.encrypt(value, Model.name, attribute_name, true)
-      when Array(String)
-        value.map { |item| Grant::Encryption.encrypt(item, Model.name, attribute_name, true) }
-      else
-        raise ArgumentError.new("Encrypted field #{attribute_name.inspect} can only be queried with String values")
-      end
+      predicate_renderer.structured_field_sql(field)
     end
 
     # Rewrites raw-clause placeholders to this assembler's local bind numbering
     # and rejects mismatched argument counts before the driver sees the SQL.
     private def bind_raw_statement(statement : String, values : Array(Grant::Columns::Type)) : String
-      output = String::Builder.new
-      chars = statement.chars
-      dollar_tokens = {} of Int32 => String
-      dollar_indices = [] of Int32
-      question_count = 0
-      dollar_style = false
-      index = 0
-      quote : Char? = nil
-
-      while index < chars.size
-        char = chars[index]
-
-        if current_quote = quote
-          output << char
-          if char == current_quote
-            if index + 1 < chars.size && chars[index + 1] == current_quote
-              output << chars[index + 1]
-              index += 1
-            else
-              quote = nil
-            end
-          elsif char == '\\' && index + 1 < chars.size
-            output << chars[index + 1]
-            index += 1
-          end
-        elsif char == '\'' || char == '"'
-          quote = char
-          output << char
-        elsif char == '-' && index + 1 < chars.size && chars[index + 1] == '-'
-          output << char << chars[index + 1]
-          index += 1
-          while index + 1 < chars.size && chars[index + 1] != '\n'
-            output << chars[index + 1]
-            index += 1
-          end
-        elsif char == '/' && index + 1 < chars.size && chars[index + 1] == '*'
-          output << char << chars[index + 1]
-          index += 1
-          while index + 1 < chars.size
-            index += 1
-            output << chars[index]
-            break if chars[index - 1] == '*' && chars[index] == '/'
-          end
-        elsif char == '?'
-          raise ArgumentError.new("Do not mix ? and numbered placeholders in one query clause") if dollar_style
-          raise ArgumentError.new("Raw query placeholder count does not match bind values") if question_count >= values.size
-          output << add_parameter(values[question_count])
-          question_count += 1
-        elsif char == '$' && index + 1 < chars.size && chars[index + 1].number?
-          raise ArgumentError.new("Do not mix ? and numbered placeholders in one query clause") if question_count > 0
-          dollar_style = true
-          number_start = index + 1
-          number_end = number_start
-          while number_end < chars.size && chars[number_end].number?
-            number_end += 1
-          end
-          parameter_index = chars[number_start...number_end].join.to_i
-          unless parameter_index.in?(1..values.size)
-            raise ArgumentError.new("Raw query placeholder count does not match bind values")
-          end
-          dollar_indices << parameter_index unless dollar_indices.includes?(parameter_index)
-          token = dollar_tokens[parameter_index] ||= add_parameter(values[parameter_index - 1])
-          output << token
-          index = number_end - 1
-        else
-          output << char
-        end
-
-        index += 1
-      end
-
-      if dollar_style
-        unless dollar_indices.size == values.size && values.size.times.all? { |number| dollar_indices.includes?(number + 1) }
-          raise ArgumentError.new("Raw query placeholder count does not match bind values")
-        end
-      elsif question_count != values.size
-        raise ArgumentError.new("Raw query placeholder count does not match bind values")
-      end
-
-      output.to_s
+      predicate_renderer.bind_raw_statement(statement, values)
     end
 
     def order(use_default_order = true)
@@ -356,7 +205,7 @@ module Grant::Query::Assembler
       order_fields = @query.order_fields
 
       if order_fields.none?
-        if use_default_order
+        if use_default_order && Grant.settings.implicit_order
           if @query.group_fields.any? && @query.group_fields.none? { |expression| expression[:field] == Model.primary_name }
             return nil
           end
@@ -374,20 +223,44 @@ module Grant::Query::Assembler
         end
       end
 
-      order_clauses = order_fields.map do |expression|
-        field = qualify_join_field(expression[:field], Model.quote(Model.table_name))
-        next unless field
-
-        add_aggregate_field field
-
-        if expression[:direction] == Builder::Sort::Ascending
-          "#{field} ASC"
-        else
-          "#{field} DESC"
-        end
-      end.compact
+      order_clauses = order_fields.map { |expression| render_order_term(expression) }
 
       @order = "ORDER BY #{order_clauses.join ", "}"
+    end
+
+    # Renders one ORDER BY term. A raw term is emitted as written; a column term
+    # is qualified when joins are present and gets its direction and NULL
+    # placement.
+    protected def render_order_term(expression : NamedTuple(field: String, direction: Builder::Sort)) : String
+      direction = expression[:direction]
+      return expression[:field] if direction.raw?
+
+      field = order_field_sql(expression[:field])
+      add_aggregate_field field
+      keyword = direction.sorts_descending? ? "DESC" : "ASC"
+      case direction.nulls_placement
+      when :first then nulls_ordering_sql(field, keyword, first: true)
+      when :last  then nulls_ordering_sql(field, keyword, first: false)
+      else             "#{field} #{keyword}"
+      end
+    end
+
+    # `table.column` is checked against the model's table and the joined tables,
+    # then quoted; anything else follows the ordinary join qualification.
+    private def order_field_sql(field : String) : String
+      parts = field.split('.')
+      return qualify_join_field(field, Model.quote(Model.table_name)) unless parts.size == 2 && Grant::Query::SqlExpression.identifier?(field)
+
+      unless parts[0] == Model.table_name || Grant::Query::JoinSupport.joins?(@query.join_clauses, parts[0])
+        raise ArgumentError.new("Unknown query table #{parts[0].inspect} in ORDER BY for #{Model.name}")
+      end
+      "#{Model.quote(parts[0])}.#{Model.quote(parts[1])}"
+    end
+
+    # PostgreSQL and SQLite order NULLs natively; the MySQL assembler overrides
+    # this because MySQL has no NULLS FIRST/LAST.
+    protected def nulls_ordering_sql(field : String, keyword : String, first : Bool) : String
+      "#{field} #{keyword} NULLS #{first ? "FIRST" : "LAST"}"
     end
 
     def group_by
@@ -414,9 +287,7 @@ module Grant::Query::Assembler
     end
 
     def lock
-      @lock ||= if lock_mode = @query.lock_mode
-                  lock_mode.to_sql(Model.adapter)
-                end
+      @lock ||= (@query.lock_sql(Model.adapter) if @query.locked?)
     end
 
     def log(*stuff)
@@ -428,6 +299,8 @@ module Grant::Query::Assembler
     end
 
     def count : (Executor::MultiValue(Model, Int64) | Executor::Value(Model, Int64))
+      # Rendered first so its binds lead; the wrapped forms put it outermost.
+      with_sql = with_clause
       if @query.distinct?
         distinct_rows_sql = build_sql do |s|
           s << "SELECT DISTINCT #{field_list}"
@@ -440,16 +313,34 @@ module Grant::Query::Assembler
           s << limit
           s << offset
         end
-        sql = "SELECT COUNT(*) FROM (#{distinct_rows_sql}) AS grant_distinct_rows"
+        sql = [with_sql, "#{select_prefix} COUNT(*) FROM (#{distinct_rows_sql}) AS grant_distinct_rows"].compact.join(" ")
+      elsif (@query.limit || @query.offset) && @query.group_fields.empty?
+        # COUNT(*) yields one row, so a LIMIT/OFFSET on it would drop that row.
+        # Count the rows the limited relation returns instead.
+        limited_rows_sql = build_sql do |s|
+          s << "SELECT 1"
+          s << from_clause
+          s << joins
+          s << where
+          s << having
+          s << order(use_default_order: false)
+          # SQLite and MySQL reject OFFSET without LIMIT; Int64::MAX is unbounded.
+          s << (limit || "LIMIT #{Int64::MAX}")
+          s << offset
+        end
+        sql = [with_sql, "#{select_prefix} COUNT(*) FROM (#{limited_rows_sql}) AS grant_limited_rows"].compact.join(" ")
       else
         sql = build_sql do |s|
-          s << "SELECT COUNT(*)"
+          s << with_sql
+          s << "#{select_prefix} COUNT(*)"
           s << from_clause
           s << joins
           s << where
           s << group_by
           s << having
-          s << order(use_default_order: false)
+          # An ungrouped COUNT(*) returns one row, so ORDER BY is meaningless,
+          # and PostgreSQL rejects an ORDER BY column outside any GROUP BY.
+          s << order(use_default_order: false) unless @query.group_fields.empty?
           s << limit
           s << offset
         end
@@ -465,7 +356,8 @@ module Grant::Query::Assembler
       end
 
       sql = build_sql do |s|
-        s << "SELECT #{group_expressions.join(", ")}, COUNT(*)"
+        s << with_clause
+        s << "#{select_prefix} #{group_expressions.join(", ")}, COUNT(*)"
         s << from_clause
         s << joins
         s << where
@@ -481,6 +373,7 @@ module Grant::Query::Assembler
 
     def first(n : Int32 = 1) : Executor::List(Model)
       sql = build_sql do |s|
+        s << with_clause
         s << "#{select_keyword} #{field_list}"
         s << from_clause
         s << joins
@@ -512,7 +405,7 @@ module Grant::Query::Assembler
       start_time = Time.instant
       begin
         adapter = Model.adapter
-        result = adapter.open do |db|
+        result = adapter.open(sql, numbered_parameters, Model.name) do |db|
           db.exec sql, args: adapter.normalize_bind_values(numbered_parameters)
         end
 
@@ -543,6 +436,7 @@ module Grant::Query::Assembler
       end
 
       sql = build_sql do |s|
+        s << with_clause
         s << "#{select_keyword} #{field_list}"
         s << from_clause
         s << joins
@@ -572,6 +466,7 @@ module Grant::Query::Assembler
       source = "(#{statement}) AS #{Model.quote(Model.table_name)}"
 
       sql = build_sql do |s|
+        s << with_clause
         s << "#{select_keyword} #{fields} FROM #{source}"
         s << joins
         s << where
@@ -596,6 +491,7 @@ module Grant::Query::Assembler
     # statement that `explain` wraps.
     def explain_select_sql : String
       build_sql do |s|
+        s << with_clause
         s << "#{select_keyword} #{field_list}"
         s << from_clause
         s << joins
@@ -622,7 +518,7 @@ module Grant::Query::Assembler
       begin
         rows = [] of String
         adapter = Model.adapter
-        adapter.open do |db|
+        adapter.open(sql, params, Model.name) do |db|
           db.query(sql, args: adapter.normalize_bind_values(params)) do |rs|
             rs.each do
               cells = [] of String
@@ -642,8 +538,9 @@ module Grant::Query::Assembler
 
     def exists? : Executor::Value(Model, Bool)
       sql = build_sql do |s|
+        s << with_clause
         s << "SELECT EXISTS(SELECT 1 "
-        s << "FROM #{table_name} "
+        s << (from_source_sql ? from_clause : "FROM #{table_name} ")
         s << joins
         s << where
         s << ")"
@@ -653,11 +550,20 @@ module Grant::Query::Assembler
     end
 
     def touch_all(fields : Tuple, time : Time) : Int64
-      set_parts = ["#{Model.quote("updated_at")} = #{add_parameter(time)}"]
+      # The update timestamp columns the model declares (`updated_at`,
+      # `updated_on`), `updated_at` when it declares none; values follow the
+      # same stamping rules as a save (date-only `*_on`, `precision:`).
+      precision = Model.timestamp_precision
+      update_columns = Model.update_timestamp_columns
+      update_columns = ["updated_at"] if update_columns.empty?
+      set_parts = update_columns.map do |column_name|
+        "#{Model.quote(column_name)} = #{add_parameter(Grant::Timestamps.stamp(column_name, time, precision))}"
+      end
 
       # Add any additional fields to touch
       fields.each do |field|
-        set_parts << "#{Model.quote(field.to_s)} = #{add_parameter(time)}"
+        next if update_columns.includes?(field.to_s)
+        set_parts << "#{Model.quote(field.to_s)} = #{add_parameter(Grant::Timestamps.stamp(field.to_s, time, precision))}"
       end
 
       where_clause = if limited_or_joined_write?
@@ -676,7 +582,7 @@ module Grant::Query::Assembler
       start_time = Time.instant
       begin
         adapter = Model.adapter
-        rows_affected = adapter.open do |db|
+        rows_affected = adapter.open(sql, numbered_parameters, Model.name) do |db|
           db.exec(sql, args: adapter.normalize_bind_values(numbered_parameters)).rows_affected
         end
 
@@ -770,10 +676,8 @@ module Grant::Query::Assembler
       end
     end
 
-    OPERATORS = {"eq": "=", "gteq": ">=", "lteq": "<=", "neq": "!=", "ltgt": "<>", "gt": ">", "lt": "<", "ngt": "!>", "nlt": "!<", "in": "IN", "nin": "NOT IN", "like": "LIKE", "nlike": "NOT LIKE"}
-
     def sql_operator(operator : Symbol) : String
-      OPERATORS[operator.to_s]? || operator.to_s
+      Grant::Query::Assembler::PredicateRenderer::OPERATORS[operator.to_s]? || operator.to_s
     end
   end
 end

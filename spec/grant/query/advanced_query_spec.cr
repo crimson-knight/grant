@@ -13,14 +13,13 @@ describe "Advanced Query Interface" do
       merged.where_fields[1].should eq({join: :and, field: "locked", operator: :eq, value: true})
     end
 
-    it "uses other query's order when merging" do
+    it "appends the other query's order when merging, like ActiveRecord" do
       query1 = AdvancedQueryParent.order(name: :asc)
       query2 = AdvancedQueryParent.order(id: :desc)
 
       merged = query1.merge(query2)
 
-      merged.order_fields.size.should eq(1)
-      merged.order_fields[0][:field].should eq("id")
+      merged.order_fields.map { |term| term[:field] }.should eq(["name", "id"])
     end
 
     it "merges group fields without duplicates" do
@@ -50,7 +49,7 @@ describe "Advanced Query Interface" do
       copy = original.dup
 
       # Modify copy
-      copy.where(locked: true)
+      copy = copy.where(locked: true)
 
       # Original should be unchanged
       original.where_fields.size.should eq(1)

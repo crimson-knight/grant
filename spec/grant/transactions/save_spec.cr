@@ -198,7 +198,7 @@ describe "#save!" do
   it "does not create but raise an exception" do
     parent = Parent.new
 
-    expect_raises(Grant::RecordNotSaved, "Parent") do
+    expect_raises(Grant::RecordInvalid, "Validation failed") do
       parent.save!
     end
   end

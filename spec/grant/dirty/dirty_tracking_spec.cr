@@ -9,7 +9,7 @@ describe "Grant::Dirty" do
       parent.name = "Updated"
       parent.name_changed?.should be_true
       parent.changed?.should be_true
-      parent.changed_attributes.should eq(["name"])
+      parent.changed.should eq(["name"])
     end
     
     it "returns false when attribute hasn't changed" do
@@ -47,8 +47,8 @@ describe "Grant::Dirty" do
       parent.created_at = Time.utc(2023, 1, 1)
       
       parent.changed?.should be_true
-      parent.changed_attributes.should contain("name")
-      parent.changed_attributes.should contain("created_at")
+      parent.changed.should contain("name")
+      parent.changed.should contain("created_at")
       
       changes = parent.changes
       changes["name"].should eq({"John", "Jane"})
