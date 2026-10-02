@@ -117,6 +117,16 @@ describe "association preload dispatch and writer dispatch" do
       end.should eq(0)
     end
 
+    it "raises PreloadNotEnabledError for a model nothing enabled" do
+      loner = P02Loner.create!(name: "unenabled")
+      Grant::AssociationLoader.enabled?(P02Loner).should be_false
+      error = expect_raises(Grant::PreloadNotEnabledError) do
+        Grant::AssociationLoader.batch_load([loner] of Grant::Base, "anything")
+      end
+      error.model_name.should eq("P02Loner")
+      error.should be_a(Grant::ErrorBase)
+    end
+
     it "is idempotent" do
       Grant::AssociationLoader.enable(P02Team)
       Grant::AssociationLoader.enable(P02Team)
