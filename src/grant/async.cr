@@ -310,7 +310,7 @@ module Grant
 
       # Async touch_all
       def async_touch_all(*fields : Symbol) : AsyncResult(Int64)
-        time = Time.utc
+        time = Grant::Timestamps.current_time
         AsyncResult(Int64).new do
           touch_all(*fields, time: time)
         end

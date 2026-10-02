@@ -235,7 +235,7 @@ module Grant::TestFixtures
   private def self.insert_rows(adapter : Grant::Adapter::Base, registration : Registration, rows : Array(Row)) : Nil
     return if rows.empty?
 
-    now = Time.utc
+    now = Grant::Timestamps.to_microseconds(Time.utc)
     columns = [] of String
     rows.each { |row| row.values.each_key { |key| columns << key unless columns.includes?(key) } }
     ["created_at", "updated_at"].each do |stamp|
