@@ -461,7 +461,9 @@ describe "dependent options" do
       2.times { DepAsyncKid.create!(dep_async_owner_id: owner.id) }
 
       owner.destroy.should be_true
-      20.times do
+      # Wait up to 5 seconds: on a loaded CI runner the fiber can need more
+      # than the 200 ms this allowed before.
+      500.times do
         break if DepAsyncKid.count == 0
         sleep 10.milliseconds
       end

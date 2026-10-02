@@ -914,10 +914,13 @@ module Grant::Schema
       arguments
     end
 
+    # crystal-mysql connects over TCP whenever the URL names a host, while the
+    # MySQL tools read `localhost` as "use the Unix socket". `--protocol=TCP`
+    # makes the tools reach the same server the adapter does.
     def mysql_arguments : Array(::String)
       arguments = [] of ::String
       if host = @host
-        arguments << "--host=#{host}"
+        arguments << "--host=#{host}" << "--protocol=TCP"
       end
       if port = @port
         arguments << "--port=#{port}"
