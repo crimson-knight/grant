@@ -13,7 +13,11 @@ module Grant::Schema
   end
 
   # A Crystal value usable as a SQL column default.
-  alias DefaultLiteral = ::String | Int8 | Int16 | Int32 | Int64 | Float32 | Float64 | BigDecimal | Bool | ::Time | Nil
+  alias DefaultLiteral = ::String | Int8 | Int16 | Int32 | Int64 | Float32 | Float64 | BigDecimal | Bool | ::Time?
+
+  # A MySQL column default that is a literal: a single-quoted string (quotes
+  # doubled or backslash-escaped inside) or a signed decimal number.
+  MYSQL_LITERAL_DEFAULT = /\A(?:'(?:[^'\\]|''|\\.)*'|[-+]?\d+(?:\.\d+)?)\z/
 
   # The SQL flavor a schema statement is written in. Statements are built from
   # a dialect alone, so the SQL for every adapter can be asserted without a
@@ -68,11 +72,14 @@ module Grant::Schema
 
     # Renders a SQL expression default. PostgreSQL takes it verbatim; MySQL and
     # SQLite need parentheses around anything that is not a bare
-    # `CURRENT_TIMESTAMP` style keyword.
+    # `CURRENT_TIMESTAMP` style keyword. On MySQL a plain string or number
+    # literal stays bare, because a parenthesized one becomes an expression
+    # default (`DEFAULT_GENERATED`) instead of the literal the catalog reported.
     def default_expression(expression : String) : String
       return expression if pg?
       trimmed = expression.strip
       return trimmed if trimmed.starts_with?('(') && trimmed.ends_with?(')')
+      return trimmed if mysql? && trimmed.matches?(MYSQL_LITERAL_DEFAULT)
       bare = mysql? ? /\A(CURRENT_TIMESTAMP|CURRENT_DATE|CURRENT_TIME|NOW|LOCALTIMESTAMP|LOCALTIME)(\(\d*\))?\z/i : /\ACURRENT_(TIMESTAMP|DATE|TIME)\z/i
       trimmed.matches?(bare) ? trimmed : "(#{trimmed})"
     end
@@ -220,7 +227,7 @@ module Grant::Schema
               in .sqlite? then CRYSTAL_SQLITE
               end
       found = table[name]?
-      return nil unless found
+      return unless found
       array ? "Array(#{found})" : found
     end
 

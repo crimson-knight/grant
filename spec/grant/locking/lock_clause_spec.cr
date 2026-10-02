@@ -1,4 +1,5 @@
 require "../../spec_helper"
+require "../../support/crystal_compiler"
 
 {% begin %}
 {% adapter_literal = (env("CURRENT_ADAPTER") || "sqlite").id %}
@@ -45,8 +46,7 @@ describe "Relation#lock with a clause or false" do
     end
 
     it "does not compile for a value built at runtime" do
-      compiler = Process.find_executable("crystal-alpha")
-      pending!("crystal-alpha is not on PATH") unless compiler
+      compiler = spec_crystal_compiler
 
       root = File.expand_path("../../..", __DIR__)
       source = File.tempfile("lock_clause_runtime", ".cr", dir: root) do |file|
@@ -91,9 +91,12 @@ describe "Relation#lock with a clause or false" do
     end
 
     it "runs on the database (rows come back either way)" do
+      # A raw clause is sent as written. FOR NO KEY UPDATE is PostgreSQL's own
+      # lock mode, which MySQL does not have, so MySQL runs a clause of its own.
+      clause = CURRENT_ADAPTER == "mysql" ? Grant::Locking.clause("FOR UPDATE NOWAIT") : LOCK_CLAUSE_SPEC_NO_KEY
       item = LockClauseSpecItem.create!(label: "a")
       LockClauseSpecItem.transaction do
-        LockClauseSpecItem.where(id: item.id).lock(LOCK_CLAUSE_SPEC_NO_KEY).first!.label.should eq("a")
+        LockClauseSpecItem.where(id: item.id).lock(clause).first!.label.should eq("a")
       end
     end
   end

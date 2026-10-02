@@ -1,4 +1,5 @@
 require "../../spec_helper"
+require "../../support/column_type"
 
 class JsonbTypeDoc < Grant::Base
   connection {{ env("CURRENT_ADAPTER") || "sqlite" }}
@@ -18,24 +19,9 @@ describe "JSON document columns" do
     JsonbTypeDoc.migrator.drop_and_create
   end
 
-  it "uses a native jsonb column on PostgreSQL and text on SQLite" do
-    type = ""
-    JsonbTypeDoc.adapter.open do |db|
-      if CURRENT_ADAPTER == "pg"
-        type = db.query_one("SELECT udt_name FROM information_schema.columns WHERE table_name = 'jsonb_type_docs' AND column_name = 'settings'", as: String)
-      else
-        db.query("PRAGMA table_info(jsonb_type_docs)") do |rs|
-          rs.each do
-            rs.read(Int32)
-            name = rs.read(String)
-            column_type = rs.read(String)
-            type = column_type if name == "settings"
-            rs.read(Int32); rs.read(String?); rs.read(Int32)
-          end
-        end
-      end
-    end
-    type.downcase.should eq(CURRENT_ADAPTER == "pg" ? "jsonb" : "text")
+  it "uses a native jsonb column on PostgreSQL, json on MySQL and text on SQLite" do
+    expected = {"pg" => "jsonb", "mysql" => "json"}[CURRENT_ADAPTER]? || "text"
+    database_column_type(JsonbTypeDoc.adapter, "jsonb_type_docs", "settings").should eq expected
   end
 
   it "round trips nested documents, scalars and NULL through the database" do
@@ -81,11 +67,11 @@ describe "JSON document columns" do
 
     it "json_path compares the value at a path" do
       jsonb_titles(JsonbTypeDoc.where.json_path(:settings, "theme", "dark")).should eq ["dark"]
-      jsonb_titles(JsonbTypeDoc.where.json_path(:settings, %w(ui lang), "de")).should eq ["light"]
+      jsonb_titles(JsonbTypeDoc.where.json_path(:settings, %w[ui lang], "de")).should eq ["light"]
       jsonb_titles(JsonbTypeDoc.where.json_path(:settings, "ui.lang", "en")).should eq ["dark"]
       jsonb_titles(JsonbTypeDoc.where.json_path(:settings, "size", 14)).should eq ["light"]
       jsonb_titles(JsonbTypeDoc.where.json_path(:settings, "beta", true)).should eq ["dark"]
-      jsonb_titles(JsonbTypeDoc.where.json_path(:settings, %w(tags 0), "b")).should eq ["light"]
+      jsonb_titles(JsonbTypeDoc.where.json_path(:settings, %w[tags 0], "b")).should eq ["light"]
     end
 
     it "json_has_key matches a top-level key" do
@@ -111,6 +97,7 @@ describe "JSON document columns" do
       sql = JsonbTypeDoc.where.json_contains(:settings, {theme: "dark"}).assembler.select.raw_sql
       sql.should contain("@>") if CURRENT_ADAPTER == "pg"
       sql.should contain("json_extract") if CURRENT_ADAPTER == "sqlite"
+      sql.should contain("JSON_CONTAINS") if CURRENT_ADAPTER == "mysql"
       path_sql = JsonbTypeDoc.where.json_path(:settings, "theme", "dark").assembler.select.raw_sql
       path_sql.should contain("#>>") if CURRENT_ADAPTER == "pg"
     end

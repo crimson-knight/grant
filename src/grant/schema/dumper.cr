@@ -44,7 +44,7 @@ module Grant::Schema
     # `id:` of `create_table`: `:bigint`, `:integer`, `:smallint`, `:uuid`, or false.
     getter id : Bool | Symbol
     # `primary_key:` of `create_table`: a custom auto key name or composite columns.
-    getter primary_key : ::String | Array(::String) | Nil
+    getter primary_key : (::String | Array(::String))?
     # Foreign keys that cannot be declared with the table because they point
     # at a table created later (cycles); they follow as `add_foreign_key`.
     getter deferred_foreign_keys = [] of ForeignKeyDefinition
@@ -52,7 +52,7 @@ module Grant::Schema
     getter explicit_names = Set(::String).new
 
     def initialize(@name : ::String, @definition : TableDefinition, @comment : ::String? = nil,
-                   @id : Bool | Symbol = true, @primary_key : ::String | Array(::String) | Nil = nil)
+                   @id : Bool | Symbol = true, @primary_key : (::String | Array(::String))? = nil)
     end
 
     # Replays the table on *statements*.
@@ -187,8 +187,8 @@ module Grant::Schema
       definition.unique_constraints.each { |unique| @io << "    " << unique_line(table, unique) << '\n' }
       definition.check_constraints.each { |check| @io << "    " << check_line(table, check) << '\n' }
       definition.exclusion_constraints.each { |exclusion| @io << "    " << exclusion_line(table, exclusion) << '\n' }
-      definition.foreign_keys.each do |key|
-        @io << "    t.foreign_key " << key.to_table.inspect << foreign_key_options(key, table.name).join << '\n'
+      definition.foreign_keys.each do |foreign_key|
+        @io << "    t.foreign_key " << foreign_key.to_table.inspect << foreign_key_options(foreign_key, table.name).join << '\n'
       end
       @io << "  end\n"
     end
@@ -269,7 +269,7 @@ module Grant::Schema
   # :nodoc:
   class CatalogExtras
     record Check, expression : ::String, name : ::String?
-    record Unique, columns : Array(::String), name : ::String?, deferrable : Bool | Symbol | Nil
+    record Unique, columns : Array(::String), name : ::String?, deferrable : Bool | Symbol?
     record Exclusion, definition : ::String, name : ::String
     record IndexText, sql : ::String, comment : ::String?
 
@@ -278,6 +278,9 @@ module Grant::Schema
     getter exclusions = Hash(::String, Array(Exclusion)).new
     getter table_comments = Hash(::String, ::String).new
     getter index_texts = Hash({::String, ::String}, IndexText).new
+    # `{table, index name}` => column => "DESC", for catalogs that report key
+    # order per column instead of as `CREATE INDEX` text (MySQL).
+    getter index_orders = Hash({::String, ::String}, Hash(::String, ::String)).new
     # `{table, foreign key name}` => `true` or `:deferred`.
     getter deferrable_keys = Hash({::String, ::String}, Bool | Symbol).new
 
@@ -434,6 +437,17 @@ module Grant::Schema
         end
       end
 
+      # COLLATION is "D" for a descending key part (MySQL 8+).
+      query(<<-SQL) do |rs|
+        SELECT CAST(TABLE_NAME AS CHAR), CAST(INDEX_NAME AS CHAR), CAST(COLUMN_NAME AS CHAR)
+        FROM information_schema.STATISTICS
+        WHERE TABLE_SCHEMA = DATABASE() AND COLLATION = 'D' AND COLUMN_NAME IS NOT NULL
+        ORDER BY TABLE_NAME, INDEX_NAME, SEQ_IN_INDEX
+        SQL
+        index = {rs.read(::String), rs.read(::String)}
+        (@index_orders[index] ||= {} of ::String => ::String)[rs.read(::String)] = "DESC"
+      end
+
       query("SELECT CAST(TABLE_NAME AS CHAR), CAST(TABLE_COMMENT AS CHAR) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_COMMENT <> ''") do |rs|
         table = rs.read(::String)
         @table_comments[table] = rs.read(::String)
@@ -562,7 +576,7 @@ module Grant::Schema
     end
 
     # `{id:, primary_key:, skipped column}` for the `create_table` call.
-    private def primary_key_form(infos : Array(ColumnInfo)) : {Bool | Symbol, ::String | Array(::String) | Nil, ::String?}
+    private def primary_key_form(infos : Array(ColumnInfo)) : {Bool | Symbol, (::String | Array(::String))?, ::String?}
       keys = infos.select(&.primary_key?).sort_by!(&.primary_key_position)
       return {false, nil, nil} if keys.empty?
       if keys.size > 1
@@ -610,7 +624,8 @@ module Grant::Schema
     # `nextval`, or nil.
     private def serial_type(info : ColumnInfo) : ::String?
       default = info.default
-      return nil unless @dialect.pg? && default && default.starts_with?("nextval(") && !info.primary_key?
+      return if info.primary_key? || !@dialect.pg?
+      return unless default && default.starts_with?("nextval(")
       case info.sql_type
       when "bigint"   then "BIGSERIAL"
       when "smallint" then "SMALLSERIAL"
@@ -699,6 +714,8 @@ module Grant::Schema
         covering = [] of ::String
         if text
           using, orders, classes, covering = index_options(text.sql, info)
+        elsif descending = extras.index_orders[{table.name, info.name}]?
+          orders = descending
         end
         table.definition.indexes << IndexDefinition.new(table.name, info.columns.map { |column| unwrap_expression(column) }, info.name, info.unique?, info.where,
           using, orders, classes, covering, {} of ::String => Int32, nil, false, text.try(&.comment))
