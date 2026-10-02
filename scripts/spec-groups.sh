@@ -23,6 +23,7 @@
 #   SPEC_GROUP_MAX_RSS_GB   per-group memory ceiling in GB (default: 10)
 #   SPEC_GROUP_MAX_FILES    spec files per group (default: 12)
 #   SPEC_GROUP_LOG_DIR      where per-group logs go (default: .crystal-cache/spec-groups)
+#   SPEC_GROUP_FAILURE_LINES  lines of a failed group's log to print (default: 200)
 #   SPEC_GROUP_INCREMENTAL  1 forces --incremental on, 0 forces it off; unset, it is
 #                           used only when "$CRYSTAL spec --help" lists it (crystal-alpha
 #                           does, stock Crystal does not)
@@ -69,7 +70,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --list) list_only=true ;;
     --only) shift; only+=("${1%/}") ;;
-    -h|--help) sed -n '2,38p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,39p' "$0"; exit 0 ;;
     *) adapters+=("$1") ;;
   esac
   shift
@@ -136,12 +137,13 @@ kill_tree() {
   kill "$1" 2>/dev/null
 }
 
-# Runs one group; sets $status, $summary, $peak_gb, $elapsed and $over_limit.
+# Runs one group; sets $status, $summary, $peak_gb, $elapsed, $over_limit and $group_log.
 run_group() {
   local adapter="$1" label="$2" files="$3" log cache runner rss_kb peak_kb=0 started=$SECONDS
   local slug
   slug="$(echo "$label" | tr '/#.' '___')"
   log="$log_dir/${adapter}_$slug.log"
+  group_log="$log"
   cache="$cache_root/$adapter"
   [ "$cache_mode" = "per-group" ] && cache="$cache_root/$adapter/$slug"
   mkdir -p "$cache"
@@ -199,7 +201,15 @@ for adapter in "${adapters[@]}"; do
       status=1
     fi
     printf '%-7s %-40s %-52s %5sGB %4ss\n' "$adapter" "$label" "$summary" "$peak_gb" "$elapsed"
-    [ "$status" -ne 0 ] && failed+=("$adapter $label")
+    if [ "$status" -ne 0 ]; then
+      failed+=("$adapter $label")
+      # Show why: the spec failures, or the end of the log when it never ran.
+      if grep -q '^Failures:' "$group_log"; then
+        sed -n '/^Failures:/,$p' "$group_log" | head -n "${SPEC_GROUP_FAILURE_LINES:-200}" | sed 's/^/    /'
+      else
+        tail -n 40 "$group_log" | sed 's/^/    /'
+      fi
+    fi
   done
 done
 
