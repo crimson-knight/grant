@@ -76,7 +76,7 @@ class Grant::Adapter::Sqlite < Grant::Adapter::Base
   end
 
   protected def bind_value_needs_normalization?(value) : Bool
-    value.is_a?(Time) || value.is_a?(UUID)
+    value.is_a?(Time) || value.is_a?(UUID) || super
   end
 
   def read_time(result : DB::ResultSet) : Time

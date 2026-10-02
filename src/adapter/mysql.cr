@@ -211,8 +211,8 @@ class Grant::Adapter::Mysql < Grant::Adapter::Base
     value.to_s
   end
 
-  def normalize_bind_value(value)
-    value
+  protected def bind_value_needs_normalization?(value) : Bool
+    value.is_a?(UUID) || super
   end
 
   def supports_lock_mode?(mode : Grant::Locking::LockMode) : Bool

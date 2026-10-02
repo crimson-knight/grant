@@ -1,4 +1,5 @@
 require "../grant"
+require "big"
 require "db"
 require "colorize"
 require "../grant/error_taxonomy"
@@ -66,9 +67,10 @@ abstract class Grant::Adapter::Base
   end
 
   # True for a value `normalize_bind_value` converts. An adapter that converts
-  # some types overrides this to say which.
+  # more types overrides this and adds them to `super`. Every adapter converts
+  # `BigDecimal`, `Int8` and `Int16` (see `Grant::Converters::Decimal`).
   protected def bind_value_needs_normalization?(value) : Bool
-    false
+    value.is_a?(::BigDecimal) || value.is_a?(::Int8) || value.is_a?(::Int16)
   end
 
   # The INSERT statements built so far, by table and column list. A model
