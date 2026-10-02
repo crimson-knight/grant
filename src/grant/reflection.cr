@@ -11,6 +11,18 @@ module Grant
     end
   end
 
+  # Raised when association loading reaches records of a model that was never
+  # enabled for it (see `Grant::AssociationLoader.enable`). `includes`,
+  # `preload`, `eager_load`, and `Grant::Preloader` enable the models they load
+  # for, so this signals a loader called around them.
+  class PreloadNotEnabledError < Grant::ErrorBase
+    getter model_name : String
+
+    def initialize(@model_name : String)
+      super("Associations cannot be loaded on #{@model_name}: enable the model with Grant::AssociationLoader.enable(#{@model_name}) or load through includes/preload/eager_load")
+    end
+  end
+
   # A nested association specification accepted by `includes`, `preload`, and
   # `eager_load`: a bare association name, or a name mapped to the associations
   # to load on the records it produces, to any depth.

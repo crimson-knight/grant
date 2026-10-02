@@ -11,23 +11,65 @@ class Fiber
   property grant_hydrating : Int32 = 0
 end
 
+# The clauses of a relation, copied out so a model of the same table can merge
+# them without the merge knowing this relation's model type. Folding a parent
+# class's scope into a subclass relation through `Builder(Model)` on both
+# sides would instantiate the merge once per pair of models.
+# :nodoc:
+class Grant::Query::ForeignRelation
+  getter where_fields : Array(Grant::Query::WhereField)
+  getter order_fields : Array(NamedTuple(field: String, direction: Grant::Query::Builder::Sort))
+  getter group_fields : Array(NamedTuple(field: String))
+  getter join_clauses : Array(NamedTuple(type: Symbol, table: String, on: String))
+  getter having_clauses : Array(NamedTuple(stmt: String, value: Grant::Columns::Type))
+  getter includes_associations : Array(Grant::Includes)
+  getter preload_associations : Array(Grant::Includes)
+  getter eager_load_associations : Array(Grant::Includes)
+  getter index_hints : Array(Grant::Query::IndexHint)
+  getter select_columns : Array(String)?
+  getter limit : Int64?
+  getter offset : Int64?
+  getter? distinct : Bool
+  getter? none : Bool
+  getter? readonly : Bool
+  getter? strict_loading : Bool
+  getter optimizer_hints : Array(String)
+  getter create_with_defaults : Hash(String, Grant::Columns::Type)
+  getter lock_mode : Grant::Locking::LockMode?
+  getter lock_clause : Grant::Locking::Clause?
+
+  def initialize(@where_fields, @order_fields, @group_fields, @join_clauses, @having_clauses,
+                 @includes_associations, @preload_associations, @eager_load_associations,
+                 @index_hints, @select_columns, @limit, @offset, @distinct, @none, @readonly,
+                 @strict_loading, @optimizer_hints, @create_with_defaults, @lock_mode, @lock_clause)
+  end
+end
+
 abstract class Grant::Scoping::ScopeEntry
-  # Folds the entry's relation into *target*, a relation over another model of
-  # the same table.
+  # The entry's relation as clauses a relation over another model of the same
+  # table can merge, or nil when the entry hides the scope instead.
   # :nodoc:
-  abstract def merge_into(target : Grant::Query::Builder) : Nil
+  abstract def foreign_relation : Grant::Query::ForeignRelation?
 end
 
 class Grant::Scoping::RelationEntry(Model) < Grant::Scoping::ScopeEntry
-  def merge_into(target : Grant::Query::Builder) : Nil
-    target.merge_foreign_relation!(@relation)
+  def foreign_relation : Grant::Query::ForeignRelation?
+    other = @relation
+    Grant::Query::ForeignRelation.new(
+      other.where_fields, other.order_fields, other.group_fields, other.join_clauses,
+      other.having_clauses, other.includes_associations, other.preload_associations,
+      other.eager_load_associations, other.index_hints, other.select_columns.try(&.dup),
+      other.limit, other.offset, other.distinct?, other.is_none?, other.readonly?,
+      other.strict_loading?, other.optimizer_hint_list, other.create_with_attributes,
+      other.lock_mode, other.lock_clause)
   end
 end
 
 class Grant::Scoping::UnscopedEntry < Grant::Scoping::ScopeEntry
   # An `unscoped { }` block hides the scope of the model it names, and with it
   # whatever a parent class scoped.
-  def merge_into(target : Grant::Query::Builder) : Nil
+  def foreign_relation : Grant::Query::ForeignRelation?
+    nil
   end
 end
 
@@ -60,7 +102,9 @@ module Grant::Scoping
       stack = stacks[name]?
       next if stack.nil? || stack.empty?
 
-      stack.last.merge_into(target)
+      if foreign = stack.last.foreign_relation
+        target.merge_foreign_relation!(foreign)
+      end
       break
     end
     target
@@ -104,7 +148,7 @@ class Grant::Query::Builder(Model)
   # as `merge` would. Default-scope clauses are not copied; this model has its
   # own.
   # :nodoc:
-  def merge_foreign_relation!(other : Grant::Query::Builder) : self
+  def merge_foreign_relation!(other : Grant::Query::ForeignRelation) : self
     staged = Grant::Query::Builder(Model).new(@db_type)
     staged.own_where_fields.concat(other.where_fields)
     staged.own_order_fields.concat(other.order_fields)
@@ -115,15 +159,15 @@ class Grant::Query::Builder(Model)
     staged.own_preload_associations.concat(other.preload_associations)
     staged.own_eager_load_associations.concat(other.eager_load_associations)
     staged.own_index_hints.concat(other.index_hints)
-    staged.select_columns = other.select_columns.try(&.dup)
+    staged.select_columns = other.select_columns
     staged.limit!(other.limit) if other.limit
     staged.offset!(other.offset) if other.offset
     staged.distinct! if other.distinct?
-    staged.none! if other.is_none?
+    staged.none! if other.none?
     staged.readonly! if other.readonly?
     staged.strict_loading! if other.strict_loading?
-    staged.add_optimizer_hints(other.optimizer_hint_list)
-    staged.adopt_create_with_defaults(other.create_with_attributes)
+    staged.add_optimizer_hints(other.optimizer_hints)
+    staged.adopt_create_with_defaults(other.create_with_defaults)
     if mode = other.lock_mode
       staged.lock!(mode)
     elsif clause = other.lock_clause

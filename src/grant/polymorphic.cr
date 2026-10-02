@@ -147,6 +147,7 @@ module Grant::Polymorphic
           [] of Grant::Base
         {% else %}
           return [] of Grant::Base if ids.empty?
+          Grant::AssociationLoader.enable({{klass}})
           key_column = primary_key || {{klass}}.primary_name || raise Grant::Querying::MissingPrimaryKeyError.new("#{{{klass}}.name} has no primary key")
           Grant::AssociationLoader.where_in({{klass}}.current_scope, key_column, ids).select.map(&.as(Grant::Base))
         {% end %}
@@ -485,20 +486,18 @@ module Grant::Polymorphic
       target
     end
 
-    Grant::AssociationRegistry.register_writer(
-      {{@type.name.stringify}}, {{name.id.stringify}},
-      ->(owner : Grant::Base, value : Grant::AssociationRegistry::AssociationValue) : Bool {
-        if value.nil?
-          owner.as({{@type}}).{{name.id}} = nil
-          true
-        elsif associated = value.as?(Grant::Base)
-          owner.as({{@type}}).{{name.id}} = associated
-          true
-        else
-          false
-        end
-      }
-    )
+    # Reached from mass assignment through `_grant_assign_association`.
+    def _grant_write_assoc_{{name.id}}(value : Grant::AssociationRegistry::AssociationValue) : Bool
+      if value.nil?
+        self.{{name.id}} = nil
+        true
+      elsif associated = value.as?(Grant::Base)
+        self.{{name.id}} = associated
+        true
+      else
+        false
+      end
+    end
 
     _grant_register_reflection({{name.id.stringify}}, :belongs_to, Grant::Base, {{foreign_key.id.stringify}}, {{primary_key ? primary_key_name : "id"}},
       {{type_column.id.stringify}}, nil, nil, nil, nil, nil, false, false, true, {{options[:strict_loading]}},

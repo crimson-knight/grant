@@ -71,7 +71,7 @@ class Grant::AssociationLoader
     records.group_by(&.class).each_value do |group|
       pending = group.reject(&.association_loaded?(name))
       next if pending.empty?
-      unless pending.first._eager_batch_load(pending, name)
+      unless batch_load(pending, name)
         raise Grant::AssociationNotFoundError.new(pending.first.class.name, name)
       end
     end

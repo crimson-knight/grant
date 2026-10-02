@@ -1,3 +1,13 @@
+module Grant::Query::InChunks
+  # Runs *work* in one transaction on *adapter*, as `Model.transaction` does.
+  # `Transaction.run` yields, so every call site gets its own copy of the
+  # transaction machinery; going through a `Proc` here keeps a single copy for
+  # all models and the chunked write terminals.
+  def self.in_transaction(adapter : Grant::Adapter::Base, work : Proc(Nil)) : Nil
+    Grant::Transaction.run(adapter, Grant::Transaction::Options.new) { work.call }
+  end
+end
+
 class Grant::Query::Builder(Model)
   # Per-query override of `Grant.settings.in_clause_limit`. When set, a
   # `where(col: array)` whose array exceeds this size is split into chunks of
@@ -241,13 +251,13 @@ class Grant::Query::Builder(Model)
   # returns the summed rows_affected.
   protected def chunked_update_all(assignments : Array(Tuple(String, Grant::Columns::Type))) : Int64
     total = 0_i64
-    Model.transaction do
+    Grant::Query::InChunks.in_transaction(Model.transaction_adapter, -> {
       each_in_chunk do |chunk_query|
         chunk_query.limit!(nil)
         chunk_query.offset!(nil)
         total += chunk_query.update_all_single(assignments)
       end
-    end
+    })
     total
   end
 
@@ -255,13 +265,13 @@ class Grant::Query::Builder(Model)
   # returns the summed rows_affected.
   protected def chunked_delete_all : Int64
     total = 0_i64
-    Model.transaction do
+    Grant::Query::InChunks.in_transaction(Model.transaction_adapter, -> {
       each_in_chunk do |chunk_query|
         chunk_query.limit!(nil)
         chunk_query.offset!(nil)
         total += chunk_query.delete_all_single
       end
-    end
+    })
     total
   end
 
