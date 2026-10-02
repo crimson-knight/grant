@@ -76,7 +76,7 @@ module Grant::Counters
         set_values << time
       end
 
-      sql = "UPDATE #{quoted_table_name} SET #{set_clause.join(", ")} #{where_clause}"
+      sql = Grant::QueryLogs.append("UPDATE #{quoted_table_name} SET #{set_clause.join(", ")} #{where_clause}")
       values = if adapter.postgres?
                  where_parameters + set_values
                else

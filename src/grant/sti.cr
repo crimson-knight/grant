@@ -387,7 +387,7 @@ module Grant::STI
         col = klass.inheritance_column
         pk_name = self.class.primary_name
         sql = "UPDATE #{self.class.quoted_table_name} SET #{self.class.quote(col)} = ? WHERE #{self.class.quote(pk_name)} = ?"
-        sql = self.class.adapter.ensure_clause_template(sql)
+        sql = Grant::QueryLogs.append(self.class.adapter.ensure_clause_template(sql))
         params = [klass.sti_name.as(Grant::Columns::Type), primary_key_value.as(Grant::Columns::Type)]
 
         self.class.mark_write_operation

@@ -67,6 +67,18 @@ module Grant::Type
     result.read(Time?).try &.in(Grant.settings.default_timezone)
   end
 
+  # Converts a `DB::ResultSet` to `Array(Time)` (PostgreSQL `timestamp[]`).
+  def from_rs(result : DB::ResultSet, t : Array(Time).class) : Array(Time)
+    zone = Grant.settings.default_timezone
+    result.read(Array(Time)).map(&.in(zone))
+  end
+
+  # Converts a `DB::ResultSet` to `Array(Time)?`.
+  def from_rs(result : DB::ResultSet, t : Array(Time)?.class) : Array(Time)?
+    zone = Grant.settings.default_timezone
+    result.read(Array(Time)?).try(&.map(&.in(zone)))
+  end
+
   def from_rs(result : DB::ResultSet, t : Time.class, adapter : Grant::Adapter::Base) : Time
     adapter.read_time(result).in(Grant.settings.default_timezone)
   end

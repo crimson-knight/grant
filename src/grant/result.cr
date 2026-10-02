@@ -18,7 +18,7 @@ module Grant
     alias CoreValue = DB::Any | Int8 | Int16 | UInt8 | UInt16 | UInt32 | UUID | JSON::Any | Time::Span |
                       Array(String) | Array(Int8) | Array(Int16) | Array(Int32) | Array(Int64) |
                       Array(UInt8) | Array(UInt16) | Array(UInt32) | Array(UInt64) |
-                      Array(Float32) | Array(Float64) | Array(Bool) | Array(UUID) | Array(JSON::Any)
+                      Array(Float32) | Array(Float64) | Array(Bool) | Array(UUID) | Array(Time) | Array(JSON::Any)
 
     alias Value = CoreValue | Char | UInt64
 

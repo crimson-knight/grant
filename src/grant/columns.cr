@@ -18,7 +18,7 @@ class Grant::ColumnPlan
 end
 
 module Grant::Columns
-  alias SupportedArrayTypes = Array(String) | Array(Int16) | Array(Int32) | Array(Int64) | Array(Float32) | Array(Float64) | Array(Bool) | Array(UUID) | Array(BigDecimal)
+  alias SupportedArrayTypes = Array(String) | Array(Int16) | Array(Int32) | Array(Int64) | Array(Float32) | Array(Float64) | Array(Bool) | Array(UUID) | Array(Time) | Array(BigDecimal)
   alias Type = DB::Any | SupportedArrayTypes | UUID | BigDecimal | Int8 | Int16
 
   # Virtual attributes can participate in model mass assignment without
@@ -212,6 +212,13 @@ module Grant::Columns
     {% converter = "Grant::Converters::Decimal".id if converter == nil && not_nilable_type.resolve == BigDecimal %}
     # Int8, Int16 and limited integers are bound and read as Int64 (drivers have nothing narrower).
     {% converter = parse_type("Grant::Converters::SmallInteger(#{not_nilable_type.resolve.id})") if converter == nil && !primary_option && (not_nilable_type.resolve == Int8 || not_nilable_type.resolve == Int16 || (options[:limit] && (not_nilable_type.resolve == Int32 || not_nilable_type.resolve == Int64))) %}
+    {% if not_nilable_type.resolve == JSON::Any %}
+      {% Grant::JsonStoreAccessor::JSON_COLUMNS["#{@type.name}##{decl.var}"] = true %}
+    {% end %}
+    # `type: :jsonb` spells the same JSON document column out; it is only valid on a JSON::Any column.
+    {% if options[:type] != nil && (options[:type] != :jsonb || not_nilable_type.resolve != JSON::Any) %}
+      {% raise "The column #{@type.name}##{decl.var} has `type: #{options[:type]}`; only `type: :jsonb` on a JSON::Any column is supported" %}
+    {% end %}
     {% primary = (options[:primary] && !options[:primary].nil?) ? options[:primary] : false %}
     # An explicit `auto:` on a primary key wins. Without one, only integer and
     # UUID keys default to `auto: true`, since only they can be generated on

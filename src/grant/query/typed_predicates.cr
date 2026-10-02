@@ -1,5 +1,6 @@
 require "json"
 require "./builder"
+require "../schema/gin_index"
 
 # Predicates for database-specific column types: PostgreSQL arrays and JSON
 # documents (jsonb on PostgreSQL, JSON text on SQLite).
@@ -41,6 +42,43 @@ class Grant::Query::Builder(Model)
     self
   end
 
+  # Keeps rows whose array column has a number of elements that compares to
+  # *length* by *operator* (`:eq`, `:ne`, `:lt`, `:lte`, `:gt`, `:gte`;
+  # `cardinality(tags) >= $1`). An empty array counts as 0 and a NULL column
+  # never matches. The length is bound, not interpolated.
+  # ```
+  # Post.where.array_length(:tags, 3)
+  # Post.where.array_length(:tags, 0, :gt)
+  # ```
+  def array_length!(field : Symbol | String, length : Int, operator : Symbol = :eq) : self
+    require_array_support("array_length")
+    sql_operator = ARRAY_LENGTH_OPERATORS[operator]? || raise ArgumentError.new("Unknown array_length operator #{operator.inspect}; use #{ARRAY_LENGTH_OPERATORS.keys.join(", ")}")
+    predicate = "cardinality(#{structured_field_sql(field.to_s)}) #{sql_operator} ?"
+    own_where_fields << {join: :and, stmt: predicate, values: [length.to_i32.as(Grant::Columns::Type)]}
+    self
+  end
+
+  # Appends *value* to the array column of every matching row, in one
+  # `UPDATE ... SET tags = array_append(tags, $1)`. Returns the rows changed.
+  # A NULL column becomes a one-element array.
+  # ```
+  # Post.where(id: 1).array_append_all(:tags, "crystal")
+  # ```
+  def array_append_all(field : Symbol | String, value : Grant::Columns::Type) : Int64
+    array_rewrite_all(field, "array_append", value)
+  end
+
+  # Removes every occurrence of *value* from the array column of every matching
+  # row (`array_remove(tags, $1)`). Returns the rows changed.
+  def array_remove_all(field : Symbol | String, value : Grant::Columns::Type) : Int64
+    array_rewrite_all(field, "array_remove", value)
+  end
+
+  # :ditto:
+  def array_length(field : Symbol | String, length : Int, operator : Symbol = :eq) : self
+    dup.array_length!(field, length, operator)
+  end
+
   # :ditto:
   def array_contains(field : Symbol | String, values : Grant::Columns::SupportedArrayTypes) : self
     dup.array_contains!(field, values)
@@ -69,20 +107,45 @@ class Grant::Query::Builder(Model)
   # User.where.json_contains(:settings, {theme: "dark"})
   # ```
   def json_contains!(field : Symbol | String, document) : self
-    column = structured_field_sql(field.to_s)
+    add_json_containment(:and, field.to_s, document)
+    self
+  end
+
+  # `where(settings: {theme: "dark"})` on a JSON column: the same containment
+  # as `json_contains`, joined with *join* (`:and` or `:or`). Called by `where`
+  # when the value is a hash or named tuple and the key names a JSON column.
+  #
+  # :nodoc:
+  def add_json_containment(join : Symbol, field : String, document) : Nil
+    column = structured_field_sql(field)
     json = document.to_json
     case @db_type
     in .pg?
-      own_where_fields << {join: :and, stmt: "#{column} @> ?::jsonb", values: [json.as(Grant::Columns::Type)]}
+      own_where_fields << {join: join, stmt: "#{column} @> ?::jsonb", values: [json.as(Grant::Columns::Type)]}
     in .sqlite?
       clauses = [] of String
       binds = [] of Grant::Columns::Type
-      sqlite_containment(column, ::JSON.parse(json), "$", clauses, binds)
-      own_where_fields << {join: :and, stmt: "(#{clauses.join(" AND ")})", values: binds}
+      sqlite_containment(column, ::JSON.parse(json), "$", clauses, binds, 0)
+      own_where_fields << {join: join, stmt: "(#{clauses.join(" AND ")})", values: binds}
     in .mysql?
       raise_unsupported_json
     end
-    self
+  end
+
+  # True when *field* is a `JSON::Any` column of the model.
+  #
+  # :nodoc:
+  def json_document_column?(field : String) : Bool
+    {% begin %}
+      case field
+      {% for ivar in Model.instance_vars %}
+        {% if ivar.annotation(Grant::Column) && ivar.type.union_types.any? { |member| member == JSON::Any } %}
+      when {{ ivar.name.stringify }} then true
+        {% end %}
+      {% end %}
+      else false
+      end
+    {% end %}
   end
 
   # Keeps rows whose JSON column holds *value* at *path*. The path is a list
@@ -137,6 +200,28 @@ class Grant::Query::Builder(Model)
   # :ditto:
   def json_has_key(field : Symbol | String, key : String) : self
     dup.json_has_key!(field, key)
+  end
+
+  ARRAY_LENGTH_OPERATORS = {eq: "=", ne: "<>", lt: "<", lte: "<=", gt: ">", gte: ">="}
+
+  private def array_rewrite_all(field : Symbol | String, function : String, value : Grant::Columns::Type) : Int64
+    require_array_support(function)
+    return 0_i64 if is_none?
+
+    Model.guard_writes!
+    raise ArgumentError.new("#{function} cannot chunk an IN list") if should_chunk_in?
+    structured_field_sql(field.to_s)
+    column = Model.quote(field.to_s)
+
+    built = assembler
+    placeholder = built.add_parameter(value)
+    sql = Grant::QueryLogs.append(built.update_all_fragment_sql("#{column} = #{function}(#{column}, #{placeholder})"))
+    Model.mark_write_operation
+
+    adapter = Model.adapter
+    adapter.open(sql, built.numbered_parameters, Model.name) do |db|
+      db.exec(sql, args: adapter.normalize_bind_values(built.numbered_parameters)).rows_affected
+    end
   end
 
   private def add_array_predicate(field : Symbol | String, operator : String, values : Grant::Columns::SupportedArrayTypes) : self
@@ -194,7 +279,11 @@ class Grant::Query::Builder(Model)
   end
 
   # Expands `col @> document` into one json_extract / json_each test per leaf.
-  private def sqlite_containment(column : String, document : ::JSON::Any, path : String, clauses : Array(String), binds : Array(Grant::Columns::Type)) : Nil
+  # An array in *document* needs, for each of its items, an element of the stored
+  # array that contains it: a scalar item compares by type and value, an object
+  # or array item recurses over the element's JSON text, under its own
+  # `json_each` alias (*depth* keeps the aliases of nested arrays apart).
+  private def sqlite_containment(column : String, document : ::JSON::Any, path : String, clauses : Array(String), binds : Array(Grant::Columns::Type), depth : Int32) : Nil
     case raw = document.raw
     when Hash
       if raw.empty?
@@ -203,20 +292,29 @@ class Grant::Query::Builder(Model)
       end
       raw.each do |key, child|
         raise ArgumentError.new("Invalid JSON key #{key.inspect}") if key.includes?('"')
-        sqlite_containment(column, child, "#{path}.\"#{key}\"", clauses, binds)
+        sqlite_containment(column, child, "#{path}.\"#{key}\"", clauses, binds, depth)
       end
     when Array
       clauses << "json_type(#{column}, ?) = 'array'"
       binds << path
       raw.each do |item|
         scalar = item.raw
+        alias_name = "grant_je#{depth}"
         if scalar.is_a?(Hash) || scalar.is_a?(Array)
-          raise Grant::Schema::UnsupportedOperation.new("SQLite json_contains cannot match objects or arrays inside an array")
+          inner = [] of String
+          sqlite_containment("#{alias_name}.value", item, "$", inner, binds_for_inner = [] of Grant::Columns::Type, depth + 1)
+          # A bare scalar element is not JSON text, so the CASE keeps the nested
+          # tests away from it (they would fail with "malformed JSON").
+          kind = scalar.is_a?(Hash) ? "object" : "array"
+          clauses << "EXISTS (SELECT 1 FROM json_each(#{column}, ?) AS #{alias_name} WHERE CASE WHEN #{alias_name}.type = '#{kind}' THEN (#{inner.join(" AND ")}) ELSE 0 END)"
+          binds << path
+          binds.concat(binds_for_inner)
+        else
+          clauses << "EXISTS (SELECT 1 FROM json_each(#{column}, ?) AS #{alias_name} WHERE #{alias_name}.type = ? AND #{alias_name}.value IS ?)"
+          binds << path
+          binds << sqlite_json_type(scalar)
+          binds << sqlite_json_value(scalar)
         end
-        clauses << "EXISTS (SELECT 1 FROM json_each(#{column}, ?) WHERE json_each.type = ? AND json_each.value IS ?)"
-        binds << path
-        binds << sqlite_json_type(scalar)
-        binds << sqlite_json_value(scalar)
       end
     when Nil
       clauses << "json_type(#{column}, ?) = 'null'"

@@ -27,7 +27,9 @@
 # value (a `Hash`, `Array`, `JSON::Any` or other object) are watched only when
 # the model opts in, because each check re-serializes the value. Scalar and
 # `String` columns are never snapshotted: every change to them goes through
-# their setter.
+# their setter. A `JSON::Any` column is the exception to the opt-in: like
+# ActiveRecord's json and jsonb types it is always watched (its stored text is
+# kept as the baseline and compared when dirty state is read).
 #
 # ```
 # class Post < Grant::Base
@@ -90,7 +92,7 @@ module Grant::Dirty
                 watched << {{ ivar.name.stringify }}
               end
             {% elsif ann[:converter] && (ivar.type.union_types.reject { |column_type| column_type == Nil }.any? { |column_type| column_type.name.starts_with?("Hash(") || column_type.name.starts_with?("Array(") || column_type == JSON::Any || (column_type.class? && column_type != String) }) %}
-              if names && (names.empty? || names.includes?({{ ivar.name.stringify }}))
+              if {{ ann[:converter].stringify == "Grant::Converters::JsonDocument" }} || (names && (names.empty? || names.includes?({{ ivar.name.stringify }})))
                 watched << {{ ivar.name.stringify }}
               end
             {% end %}
@@ -106,7 +108,8 @@ module Grant::Dirty
     def __watches_mutations? : Bool
       {% begin %}
         {% any_array = @type.instance_vars.any? { |ivar| ivar.annotation(Grant::Column) && ivar.type.union_types.any? { |column_type| column_type.name.starts_with?("Array(") } } %}
-        {% if any_array %}
+        {% any_json = @type.instance_vars.any? { |ivar| (ann = ivar.annotation(Grant::Column)) && ann[:converter] && ann[:converter].stringify == "Grant::Converters::JsonDocument" } %}
+        {% if any_array || any_json %}
           true
         {% else %}
           !mutation_detection_columns.nil?
@@ -382,7 +385,7 @@ module Grant::Dirty
               originals[{{ ivar_name }}] = @{{ ivar.name.id }}.as(Grant::Base::DirtyValue)
             end
           {% elsif ann[:converter] && (ivar.type.union_types.reject { |column_type| column_type == Nil }.any? { |column_type| column_type.name.starts_with?("Hash(") || column_type.name.starts_with?("Array(") || column_type == JSON::Any || (column_type.class? && column_type != String) }) %}
-            if names && (names.empty? || names.includes?({{ ivar_name }}))
+            if {{ ann[:converter].stringify == "Grant::Converters::JsonDocument" }} || (names && (names.empty? || names.includes?({{ ivar_name }})))
               originals[{{ ivar_name }}] = {{ ann[:converter] }}.to_db(@{{ ivar.name.id }}).as(Grant::Base::DirtyValue)
             end
           {% end %}
@@ -405,7 +408,7 @@ module Grant::Dirty
           {% elsif ann[:converter] && !ivar_name.starts_with?("_serialized_") && (ivar.type.union_types.reject { |column_type| column_type == Nil }.any? { |column_type| column_type.name.starts_with?("Hash(") || column_type.name.starts_with?("Array(") || column_type == JSON::Any || (column_type.class? && column_type != String) }) %}
             # A converter-backed mutable value (a Hash, JSON document...):
             # compare its stored form with the baseline taken at load or save.
-            if names && (names.empty? || names.includes?({{ ivar_name }}))
+            if {{ ann[:converter].stringify == "Grant::Converters::JsonDocument" }} || (names && (names.empty? || names.includes?({{ ivar_name }})))
               sync_mutated_value({{ ivar_name }}, {{ ann[:converter] }}.to_db(@{{ ivar.name.id }}).as(Grant::Base::DirtyValue))
             end
           {% end %}
