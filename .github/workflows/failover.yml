@@ -1,6 +1,7 @@
 name: Connection Failover Tests
 on:
   push:
+    branches: [main, master]
     paths:
       - 'src/grant/connection_management.cr'
       - 'src/grant/connection_registry.cr'
@@ -20,6 +21,11 @@ on:
       - 'spec/**/*connection*'
       - 'scripts/spec-groups.sh'
       - '.github/workflows/failover.yml'
+
+# A newer push to the same branch or pull request supersedes a running check.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 # The connection specs (failover, reconnect, pool, replica routing) live in
 # spec/grant/connection. They create any extra databases they need on the

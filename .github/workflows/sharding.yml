@@ -1,6 +1,7 @@
 name: Sharding Tests
 on:
   push:
+    branches: [main, master]
     paths:
       - 'src/grant/sharding/**'
       - 'src/grant/sharding.cr'
@@ -24,6 +25,11 @@ on:
       - 'spec/**/*composite*'
       - 'scripts/spec-groups.sh'
       - '.github/workflows/sharding.yml'
+
+# A newer push to the same branch or pull request supersedes a running check.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 # The sharding specs (spec/grant/sharding) create and drop their own shard
 # databases on the server of PG_DATABASE_URL, or SQLite files on the other
