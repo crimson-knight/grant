@@ -272,7 +272,7 @@ end
 
       adapter.open do |connection|
         connection.exec(<<-SQL)
-        CREATE TEMP TABLE schema_tenant_account_id_map (
+        CREATE TEMPORARY TABLE schema_tenant_account_id_map (
           tenant_id text NOT NULL,
           old_id bigint NOT NULL,
           new_id bigint NOT NULL,

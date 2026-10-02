@@ -99,7 +99,7 @@ describe "with_connection" do
 
   it "routes Grant operations through the pinned connection with Model.with_connection" do
     C02PinnedItem.with_connection do |raw|
-      raw.exec "CREATE TEMP TABLE c02_model_scratch (id INTEGER)"
+      raw.exec "CREATE TEMPORARY TABLE c02_model_scratch (id INTEGER)"
       C02PinnedItem.connection.execute("INSERT INTO c02_model_scratch VALUES (1)")
       C02PinnedItem.connection.execute("INSERT INTO c02_model_scratch VALUES (2)")
       C02PinnedItem.connection.select_value("SELECT COUNT(*) FROM c02_model_scratch").should eq 2
@@ -112,7 +112,7 @@ describe "with_connection" do
 
   it "is available on the raw connection facade and the pool handle" do
     Grant.connection("c02_pin").with_connection do |raw|
-      raw.exec "CREATE TEMP TABLE c02_facade_scratch (id INTEGER)"
+      raw.exec "CREATE TEMPORARY TABLE c02_facade_scratch (id INTEGER)"
       Grant.connection("c02_pin").execute("INSERT INTO c02_facade_scratch VALUES (1)")
       Grant.connection("c02_pin").select_value("SELECT COUNT(*) FROM c02_facade_scratch").should eq 1
     end
@@ -159,7 +159,9 @@ describe "configured role names" do
     connection.adapter(:master).same?(writer).should be_true
     connection.adapter(:replica).same?(reader).should be_true
     connection.adapter.same?(reader).should be_true
-    connection.execute("SELECT 1")
+    # execute is for statements without rows; MySQL's driver refuses a SELECT
+    # there, so it runs DO, MySQL's row-less expression statement.
+    connection.execute(CURRENT_ADAPTER == "mysql" ? "DO 1" : "SELECT 1")
     connection.select_value("SELECT 1").should eq 1
 
     connection.transaction { connection.select_value("SELECT 1") }.should eq 1
