@@ -2,9 +2,9 @@
 
 Excluded:
   # Installed dependencies (this list replaces Ameba's default, which has lib).
-  - lib/**
+  - lib/**/*.cr
   # Disabled specs kept for reference; they are not compiled or run.
-  - spec_disabled/**
+  - spec_disabled/**/*.cr
 
 # Grant writes macro interpolations as `{{x}}`; `crystal tool format` owns layout.
 Lint/WhitespaceAroundMacroExpression:
