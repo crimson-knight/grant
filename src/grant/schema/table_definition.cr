@@ -93,7 +93,7 @@ module Grant::Schema
     # The `DEFAULT ...` clause, or nil when the column has no default.
     def default_clause(dialect : Dialect) : ::String?
       if expression = @default_sql
-        return "DEFAULT #{dialect.default_expression(expression)}"
+        return "DEFAULT #{dialect.default_expression(expression, sql_type(dialect))}"
       end
       value = @default
       return nil if value.is_a?(Unset)

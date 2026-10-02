@@ -23,7 +23,20 @@ module M04Fixture
   end
 
   def self.drop! : Nil
-    statements.drop_table(:m04_dump_cycle_a, :m04_dump_cycle_b, :m04_dump_notes, :m04_dump_memberships, :m04_dump_accounts, :m04_dump_pg, if_exists: true, cascade: true)
+    drop_all = -> { statements.drop_table(:m04_dump_cycle_a, :m04_dump_cycle_b, :m04_dump_notes, :m04_dump_memberships, :m04_dump_accounts, :m04_dump_pg, if_exists: true, cascade: true) }
+    if CURRENT_ADAPTER == "mysql"
+      # MySQL ignores CASCADE; the cyclic keys need foreign key checks off, on one connection.
+      adapter.with_connection do |connection|
+        connection.exec "SET FOREIGN_KEY_CHECKS = 0"
+        begin
+          drop_all.call
+        ensure
+          connection.exec "SET FOREIGN_KEY_CHECKS = 1"
+        end
+      end
+    else
+      drop_all.call
+    end
     adapter.open { |db| db.exec "DROP TYPE IF EXISTS m04_mood CASCADE" } if pg?
     adapter.reset_schema_caches!
   end
@@ -39,7 +52,11 @@ module M04Fixture
       t.text :notes
       t.boolean :active, null: false, default: true
       t.timestamps
-      t.index :status, name: "idx_m04_accounts_status", where: "status <> 'closed'"
+      if CURRENT_ADAPTER == "mysql"
+        t.index :status, name: "idx_m04_accounts_status"
+      else
+        t.index :status, name: "idx_m04_accounts_status", where: "status <> 'closed'"
+      end
       t.index "lower(name)", name: "idx_m04_accounts_lower_name", unique: true
       t.check_constraint "balance >= 0", name: "chk_m04_balance"
       t.unique_constraint [:name, :status], name: "uniq_m04_name_status"

@@ -88,6 +88,11 @@ describe "M02b indexes" do
     after_each { statements.drop_table(:m02b_ix, if_exists: true) }
 
     it "round trips a unique partial index through introspection" do
+      if CURRENT_ADAPTER == "mysql"
+        # MySQL has no partial indexes; asking for one is refused before SQL is sent.
+        expect_raises(Grant::Schema::UnsupportedOperation) { statements.add_index(:m02b_ix, :email, unique: true, where: "deleted_at IS NULL") }
+        next
+      end
       statements.add_index(:m02b_ix, :email, unique: true, where: "deleted_at IS NULL")
       info = schema.indexes(:m02b_ix).find! { |index| index.name == "index_m02b_ix_on_email" }
       info.unique?.should be_true

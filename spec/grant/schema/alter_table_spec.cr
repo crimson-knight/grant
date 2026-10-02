@@ -110,7 +110,7 @@ describe "M02b alter table" do
 
     it "changes a column type and keeps the data" do
       statements.change_column(:m02b_at, :score, :bigint)
-      m02b_scalar("SELECT SUM(score) FROM m02b_at").to_s.to_i.should eq 15
+      m02b_scalar("SELECT SUM(score) FROM m02b_at").to_s.to_f.to_i.should eq 15
       schema.columns(:m02b_at).find!(&.name.== "score").sql_type.downcase.should contain(CURRENT_ADAPTER == "sqlite" ? "bigint" : "bigint")
     end
 

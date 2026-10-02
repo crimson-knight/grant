@@ -44,13 +44,15 @@ module SchemaFixture
     exec "CREATE UNIQUE INDEX index_m01_posts_on_author_id_and_title ON m01_posts (author_id, title)"
     exec "CREATE INDEX index_m01_posts_on_score ON m01_posts (score)"
     exec "CREATE INDEX index_m01_authors_on_lower_email ON m01_authors ((lower(email)))" unless CURRENT_ADAPTER == "mysql"
+    # MySQL refuses SET NULL on a column of the primary key.
+    delete_action = CURRENT_ADAPTER == "mysql" ? "RESTRICT" : "SET NULL"
     exec <<-SQL
       CREATE TABLE m01_memberships (
         author_id BIGINT NOT NULL,
         group_id BIGINT NOT NULL,
         role VARCHAR(20),
         PRIMARY KEY (author_id, group_id),
-        FOREIGN KEY (author_id) REFERENCES m01_authors (id) ON UPDATE CASCADE ON DELETE SET NULL
+        FOREIGN KEY (author_id) REFERENCES m01_authors (id) ON UPDATE CASCADE ON DELETE #{delete_action}
       )
       SQL
     adapter.reset_schema_caches!

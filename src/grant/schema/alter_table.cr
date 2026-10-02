@@ -267,11 +267,11 @@ module Grant::Schema
       case dialect
       in .pg?
         concurrently = algorithm == :concurrently ? "CONCURRENTLY " : ""
-        ["DROP INDEX #{concurrently}#{if_exists ? "IF EXISTS " : ""}#{dialect.quote(index_name)}"]
+        ["DROP INDEX #{concurrently}#{if_exists ? "IF EXISTS " : ""}#{dialect.quote(Naming.in_schema_of(table, index_name))}"]
       in .mysql?
         ["DROP INDEX #{dialect.quote(index_name)} ON #{dialect.quote(table.to_s)}"]
       in .sqlite?
-        ["DROP INDEX #{if_exists ? "IF EXISTS " : ""}#{dialect.quote(index_name)}"]
+        ["DROP INDEX #{if_exists ? "IF EXISTS " : ""}#{dialect.quote(Naming.in_schema_of(table, index_name))}"]
       end
     end
 
@@ -282,7 +282,7 @@ module Grant::Schema
       dialect = self.dialect
       case dialect
       in .pg?
-        ["ALTER INDEX #{dialect.quote(old.to_s)} RENAME TO #{dialect.quote(new.to_s)}"]
+        ["ALTER INDEX #{dialect.quote(Naming.in_schema_of(table, old))} RENAME TO #{dialect.quote(new.to_s)}"]
       in .mysql?
         ["ALTER TABLE #{dialect.quote(table.to_s)} RENAME INDEX #{dialect.quote(old.to_s)} TO #{dialect.quote(new.to_s)}"]
       in .sqlite?
@@ -449,16 +449,19 @@ module Grant::Schema
       dialect = self.dialect
       old_name = old.to_s
       new_name = new.to_s
+      # PostgreSQL and SQLite rename within the schema: the new name is bare.
+      bare_new = new_name.rpartition('.').last
       result = case dialect
                in .mysql?        then ["RENAME TABLE #{dialect.quote(old_name)} TO #{dialect.quote(new_name)}"]
-               in .pg?, .sqlite? then ["ALTER TABLE #{dialect.quote(old_name)} RENAME TO #{dialect.quote(new_name)}"]
+               in .pg?, .sqlite? then ["ALTER TABLE #{dialect.quote(old_name)} RENAME TO #{dialect.quote(bare_new)}"]
                end
       if dialect.pg?
         keys = lookup_primary_key(old_name) || ["id"]
+        old_bare = old_name.rpartition('.').last
         if keys.size == 1
-          result << "ALTER SEQUENCE IF EXISTS #{dialect.quote("#{old_name}_#{keys.first}_seq")} RENAME TO #{dialect.quote("#{new_name}_#{keys.first}_seq")}"
+          result << "ALTER SEQUENCE IF EXISTS #{dialect.quote(Naming.in_schema_of(old_name, "#{old_bare}_#{keys.first}_seq"))} RENAME TO #{dialect.quote("#{bare_new}_#{keys.first}_seq")}"
         end
-        result << "ALTER INDEX IF EXISTS #{dialect.quote("#{old_name}_pkey")} RENAME TO #{dialect.quote("#{new_name}_pkey")}"
+        result << "ALTER INDEX IF EXISTS #{dialect.quote(Naming.in_schema_of(old_name, "#{old_bare}_pkey"))} RENAME TO #{dialect.quote("#{bare_new}_pkey")}"
       end
       (lookup_indexes(old_name) || [] of IndexInfo).each do |index|
         next unless index.name == Naming.index_name(old_name, index.columns)
@@ -668,13 +671,13 @@ module Grant::Schema
       in .mysql?
         step.clauses << "ADD COLUMN #{column_sql}"
       in .sqlite?
-        if !definition.null && definition.default.is_a?(Unset) && definition.default_sql.nil? && !definition.primary_key?
-          raise UnsupportedOperation.new("SQLite cannot add NOT NULL column '#{table}.#{definition.name}' without a default; pass null: true or a default:")
-        end
+        # SQLite refuses ADD COLUMN ... NOT NULL without a default, so that
+        # case rebuilds the table (it succeeds while the table is empty).
+        needs_rebuild = !definition.null && definition.default.is_a?(Unset) && definition.default_sql.nil? && !definition.primary_key?
         column_sql += " PRIMARY KEY" if definition.primary_key?
         column_sql += " #{inline_reference.inline_sql(dialect)}" if inline_reference
         step.native << "ALTER TABLE #{dialect.quote(table)} ADD COLUMN #{column_sql}"
-        step.rebuild = definition.primary_key? || !definition.default_sql.nil?
+        step.rebuild = needs_rebuild || definition.primary_key? || !definition.default_sql.nil?
         step.edit = ->(rebuild : TableRebuild) { rebuild.add_column(column_sql) }
       end
       step
@@ -718,7 +721,10 @@ module Grant::Schema
         current = lookup_column(table, name)
         nullable = null.nil? ? (current ? current.null? : true) : null
         definition.null = nullable
-        step.clauses << "MODIFY COLUMN #{definition.to_sql(dialect)}"
+        # MODIFY restates the whole column, so a default the caller did not
+        # name would be lost; carry the current one over (it is SQL text).
+        kept = current.try(&.default) if definition.default.is_a?(Unset) && definition.default_sql.nil?
+        step.clauses << "MODIFY COLUMN #{definition.to_sql(dialect)}#{" DEFAULT #{mysql_default_text(kept)}" if kept}"
       in .sqlite?
         step.rebuild = true
         step.edit = ->(rebuild : TableRebuild) do
@@ -744,7 +750,30 @@ module Grant::Schema
     # :nodoc:
     def step_change_column_default(table : ::String, name : ::String, to : DefaultLiteral | Unset, default_sql : ::String?) : AlterStep
       step = AlterStep.new
-      change_column_default_statements(table, name, to, default_sql).each { |sql| step.post << sql }
+      dialect = self.dialect
+      unless dialect.sqlite?
+        change_column_default_sql(table, name, to, default_sql).each { |sql| step.post << sql }
+        return step
+      end
+      raise InvalidDefinition.new("change_column_default needs to: or default_sql:") if default_sql.nil? && to.is_a?(Unset)
+      step.rebuild = true
+      step.edit = ->(rebuild : TableRebuild) do
+        rebuild.change_column(name) do |old|
+          text = old
+          if previous = TableRebuild::Scanner.default_clause(old)
+            text = old.sub(previous, "")
+          end
+          if expression = default_sql
+            "#{text} DEFAULT #{dialect.default_expression(expression)}"
+          elsif to.nil?
+            text
+          elsif to.is_a?(Unset)
+            text
+          else
+            "#{text} DEFAULT #{dialect.quote_literal(to)}"
+          end
+        end
+      end
       step
     end
 
@@ -994,7 +1023,7 @@ module Grant::Schema
 
     private def recreate_index_statements(info : IndexInfo, columns : Array(::String), name : ::String, table : ::String = info.table_name) : Array(::String)
       definition = IndexDefinition.new(table, columns, name, info.unique?, info.where)
-      ["DROP INDEX #{dialect.quote(info.name)}", definition.to_sql(dialect)]
+      ["DROP INDEX #{dialect.quote(Naming.in_schema_of(table, info.name))}", definition.to_sql(dialect)]
     end
 
     private def resolve_foreign_key_name(table : ::String, to_table : TableName?, column : ColumnNames?) : ::String
@@ -1016,13 +1045,19 @@ module Grant::Schema
       raise UnsupportedOperation.new("#{operation} is only supported on PostgreSQL") unless dialect.pg?
     end
 
+    # A catalog default (`ColumnInfo#default`) as a MySQL `DEFAULT` operand: a
+    # literal as it is, anything else as an expression.
+    private def mysql_default_text(text : ::String) : ::String
+      text.matches?(/\A(?:'(?:[^']|'')*'|-?\d+(?:\.\d+)?|NULL|TRUE|FALSE)\z/i) ? text : dialect.default_expression(text)
+    end
+
     # MySQL restates a whole column to change one property of it.
     private def mysql_column_sql(info : ColumnInfo, null : Bool, comment : ::String? = nil) : ::String
       String.build do |io|
         io << dialect.quote(info.name) << ' ' << info.sql_type
         io << " NOT NULL" unless null
         if value = info.default
-          io << " DEFAULT " << dialect.quote_literal(value)
+          io << " DEFAULT " << mysql_default_text(value)
         end
         io << " AUTO_INCREMENT" if info.auto_increment?
         text = comment || info.comment

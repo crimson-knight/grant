@@ -47,7 +47,8 @@ describe Grant::Schema::Dumper do
       text.should contain(%(t.string "name", null: false, limit: 80))
       text.should contain(%(primary_key: ["account_id", "member_id"]))
       text.should contain(%(t.index ["member_id"]\n))
-      text.should contain(%(t.index ["status"], name: "idx_m04_accounts_status", where: ))
+      # MySQL has no partial indexes, so the fixture's status index is a plain one there.
+      text.should contain(%(t.index ["status"], name: "idx_m04_accounts_status"#{CURRENT_ADAPTER == "mysql" ? "" : ", where: "}))
       text.should contain(%(t.unique_constraint ["name", "status"], name: "uniq_m04_name_status"))
       text.should contain(%(t.check_constraint ))
       text.should contain(%(name: "chk_m04_balance"))

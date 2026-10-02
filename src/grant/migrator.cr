@@ -80,9 +80,27 @@ module Grant::Migrator
       end
     end
 
-    def drop_and_create
+    # Drops and creates the table. Refuses (`Grant::Schema::ProtectedEnvironmentError`)
+    # when the database recorded a protected environment such as production in
+    # `ar_internal_metadata`, unless `force: true`. With *environment* the
+    # check also applies to a database that recorded none, and a database
+    # that belongs to another environment raises
+    # `Grant::Schema::EnvironmentMismatchError`.
+    def drop_and_create(force : Bool = false, environment : String? = nil,
+                        protected_environments : Array(String) = Grant::Schema::InternalMetadata::DEFAULT_PROTECTED)
+      check_protected_environment!(force, environment, protected_environments)
       drop
       create
+    end
+
+    private def check_protected_environment!(force : Bool, environment : String?, protected_environments : Array(String)) : Nil
+      return if force
+      metadata = Grant::Schema::InternalMetadata.new(Model.adapter)
+      if environment
+        metadata.check_protected_environments!(environment, protected_environments, false)
+      elsif (stored = metadata.environment) && protected_environments.includes?(stored)
+        raise Grant::Schema::ProtectedEnvironmentError.new(stored)
+      end
     end
 
     def drop_sql(if_exists : Bool = true, cascade : Bool = false)
@@ -250,6 +268,13 @@ module Grant::Migrator
       list
     end
 
+    # The created_at/updated_at type with the `precision:` of the `timestamps`
+    # macro: fractional digits on PostgreSQL and MySQL (SQLite stores text).
+    private def stamped_type(type : String, precision : Int32?) : String
+      return type if precision.nil? || dialect.sqlite?
+      dialect.mysql? ? type.gsub("(6)", "(#{precision})") : type.sub(/\ATIMESTAMP(\(\d+\))?/i, "TIMESTAMP(#{precision})")
+    end
+
     # One column definition line, without its trailing newline.
     private def column_line(name : String, key : String, verbatim : String?, timestamp : Bool, nilable : Bool,
                             null : Bool?, primary : Bool, limit : Int32?, precision : Int32?, scale : Int32?,
@@ -257,7 +282,7 @@ module Grant::Migrator
       type = if verbatim
                verbatim
              elsif timestamp
-               native_type(name)
+               stamped_type(native_type(name), precision)
              else
                Grant::Schema::TypeCatalog.refine(dialect, key, native_type(key), limit, precision, scale)
              end
@@ -273,7 +298,7 @@ module Grant::Migrator
         # MySQL's timestamp types already carry an explicit `NULL`.
         type = type.includes?(" NULL DEFAULT") ? type.sub(" NULL DEFAULT", " NOT NULL DEFAULT") : "#{type} NOT NULL"
       end
-      default = default_sql ? " DEFAULT #{dialect.default_expression(default_sql)}" : literal_default
+      default = default_sql ? " DEFAULT #{dialect.default_expression(default_sql, type)}" : literal_default
       line = "#{Model.adapter.quote(name)} #{type}#{default}"
       line += " COMMENT #{dialect.quote_literal(comment)}" if comment && dialect.mysql?
       line

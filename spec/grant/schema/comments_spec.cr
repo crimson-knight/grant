@@ -18,7 +18,7 @@ describe "M02b table and column comments" do
       my = Grant::Schema::RecordingStatements.new(Grant::Schema::Dialect::Mysql)
       my.known_columns["users"] = [Grant::Schema::ColumnInfo.new("users", "age", "int", false, "0")]
       my.change_column_comment_statements(:users, :age, "Years")
-        .should eq ["ALTER TABLE `users` MODIFY COLUMN `age` int NOT NULL DEFAULT '0' COMMENT 'Years'"]
+        .should eq ["ALTER TABLE `users` MODIFY COLUMN `age` int NOT NULL DEFAULT 0 COMMENT 'Years'"]
       expect_raises(Grant::Schema::UnsupportedOperation) do
         Grant::Schema::RecordingStatements.new(Grant::Schema::Dialect::Mysql).change_column_comment_statements(:users, :age, "Years")
       end
