@@ -647,8 +647,9 @@ module Grant::Encryption
         Grant::Columns::VirtualAttributeRegistry.register(
           {{@type.name.stringify}},
           {{attr_name}},
-          ->(record : Grant::Base, value : Grant::Columns::Type) do
+          ->(record : Grant::Base, value : Grant::Columns::Type) : Nil do
             record.as({{@type}}).{{attr}} = Grant::Columns::VirtualAttributeRegistry.string_value(value)
+            nil
           end
         )
 
