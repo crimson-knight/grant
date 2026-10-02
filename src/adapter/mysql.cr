@@ -46,8 +46,10 @@ class Grant::Adapter::Mysql < Grant::Adapter::Base
       "Float64"    => "DOUBLE",
       "UUID"       => "CHAR(36)",
       "Time"       => "TIMESTAMP(6)",
-      "created_at" => "TIMESTAMP(6) NULL DEFAULT CURRENT_TIMESTAMP(6)",
-      "updated_at" => "TIMESTAMP(6) NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6)",
+      # Grant stamps timestamps itself; database defaults would override
+      # record_timestamps = false and touch: false.
+      "created_at" => "TIMESTAMP(6)",
+      "updated_at" => "TIMESTAMP(6)",
     }
   end
 
@@ -78,8 +80,9 @@ class Grant::Adapter::Mysql < Grant::Adapter::Base
     statement = Grant::QueryLogs.append(statement)
     elapsed_time = Time.measure do
       open(statement, params) do |conn|
-        conn.exec statement, args: normalize_bind_values(params)
-        last_id = conn.scalar(last_val()).as(Int64) if lastval
+        # The OK packet already carries the generated id; no second query.
+        result = conn.exec statement, args: normalize_bind_values(params)
+        last_id = result.last_insert_id if lastval
       end
     end
 
@@ -173,10 +176,6 @@ class Grant::Adapter::Mysql < Grant::Adapter::Base
     end
 
     log statement, elapsed_time, params
-  end
-
-  private def last_val : String
-    "SELECT LAST_INSERT_ID()"
   end
 
   # This will update a row in the database.

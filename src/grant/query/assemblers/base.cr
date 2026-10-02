@@ -56,12 +56,12 @@ module Grant::Query::Assembler
       if !@query.join_clauses.empty? && field.matches?(/\A[A-Za-z_][A-Za-z0-9_]*\z/)
         "#{quoted_table_name}.#{Model.quote(field)}"
       else
-        field
+        quote_reserved_field(field)
       end
     end
 
     # Column names that are reserved words in at least one supported dialect,
-    # so a select list must quote them (`blob` is reserved on MySQL, `user`
+    # so a select list, ORDER BY or GROUP BY must quote them (`blob` is reserved on MySQL, `user`
     # on PostgreSQL). Other names stay bare so expressions pass through.
     RESERVED_FIELD_NAMES = Set{
       "all", "and", "as", "asc", "between", "blob", "both", "by", "case", "check",
