@@ -32,7 +32,7 @@ jobs:
       - name: Build ameba
         # Ameba 1.7.0-dev ships no postinstall or executables, so shards
         # install leaves no bin/ameba; build it from the locked source.
-        run: crystal build lib/ameba/src/cli.cr -o bin/ameba
+        run: mkdir -p bin && crystal build lib/ameba/src/cli.cr -o bin/ameba
       - name: Check formatting
         run: crystal tool format --check
       - name: Check linting
