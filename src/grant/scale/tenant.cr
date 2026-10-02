@@ -111,7 +111,11 @@ module Grant::Scale::MultiTenancy
   # ```
   macro multitenant(column)
     # Records the tenant column for diagnostics / introspection.
-    class_getter multitenant_column : String = {{ column.id.stringify }}
+    # A method, not a class variable a subclass would copy (and could leave
+    # zeroed, see Grant::ConnectionManagement).
+    def self.multitenant_column : String
+      {{ column.id.stringify }}
+    end
 
     # :nodoc:
     def self.__multitenant? : Bool

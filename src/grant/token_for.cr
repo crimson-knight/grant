@@ -59,7 +59,14 @@ module Grant::TokenFor
   macro included
     extend ClassMethods
 
-    class_getter token_for_definitions = {} of Symbol => TokenForDefinition
+    # Starts as `nil` and is built on first use: a subclass's copy of a class
+    # variable with a non-nil initializer can be left zeroed (see
+    # Grant::ConnectionManagement), and a nil start is correct even then.
+    @@token_for_definitions : Hash(Symbol, TokenForDefinition)? = nil
+
+    def self.token_for_definitions : Hash(Symbol, TokenForDefinition)
+      @@token_for_definitions ||= {} of Symbol => TokenForDefinition
+    end
 
     # Internal record of one `generates_token_for` declaration: its expiry and the
     # proc that derives the invalidation data from a record.

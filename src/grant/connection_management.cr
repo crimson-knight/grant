@@ -138,6 +138,59 @@ module Grant::ConnectionManagement
     end
   end
 
+  # Replica lag state for every model, keyed by model class name and
+  # database/shard, so each model keeps the separate trackers it had when this
+  # state was per class.
+  #
+  # It lives on this module, outside `macro included`, and is read only from
+  # this module's own class methods. That makes it one set of class variables,
+  # initialized when Grant loads. A class variable declared in `macro included`
+  # is copied into every model class instead, and the compiler can leave a
+  # model's copy without its initializer: when it first types the model while
+  # typing an instance variable initializer such as `@pet = Pet.new` in an Amber
+  # controller, the copy stays zeroed memory, so the first `save` locked a null
+  # mutex and crashed.
+  @@replica_lag_trackers = {} of {String, String} => ReplicaLagTracker
+  @@replica_lag_thresholds = {} of String => Time::Span
+  @@replica_lag_mutex = Mutex.new
+
+  # Yields the tracker of *model_name* for the database/shard *key*, creating it
+  # on first use. The tracker is used under the registry lock, because the
+  # read/write splitter reads it on every query.
+  #
+  # :nodoc:
+  def self.with_replica_lag_tracker(model_name : String, key : String, & : ReplicaLagTracker -> T) : T forall T
+    @@replica_lag_mutex.synchronize do
+      tracker_key = {model_name, key}
+      tracker = @@replica_lag_trackers[tracker_key]? || begin
+        threshold = @@replica_lag_thresholds[model_name]? || default_replica_lag_threshold
+        @@replica_lag_trackers[tracker_key] = ReplicaLagTracker.new(lag_threshold: threshold)
+      end
+      yield tracker
+    end
+  end
+
+  # The lag threshold a model uses until it sets its own.
+  #
+  # :nodoc:
+  def self.default_replica_lag_threshold : Time::Span
+    2.seconds
+  end
+
+  # :nodoc:
+  def self.replica_lag_threshold(model_name : String) : Time::Span
+    @@replica_lag_mutex.synchronize do
+      @@replica_lag_thresholds[model_name]? || default_replica_lag_threshold
+    end
+  end
+
+  # :nodoc:
+  def self.store_replica_lag_threshold(model_name : String, threshold : Time::Span) : Time::Span
+    @@replica_lag_mutex.synchronize do
+      @@replica_lag_thresholds[model_name] = threshold
+    end
+  end
+
   macro included
     # Connection configuration. Each class keeps only the values declared on
     # itself and resolves the rest through its superclass at use time, so a
@@ -254,21 +307,22 @@ module Grant::ConnectionManagement
       end
     end
 
-    # Enhanced replica lag tracking per database/shard. The same lock protects
-    # tracker lookup and mutation because adapter lookups read this state often.
-    @@replica_lag_trackers = {} of String => ReplicaLagTracker
-    @@replica_lag_trackers_mutex = Mutex.new
-
-    private def self.with_replica_lag_tracker(key : String, &block : ReplicaLagTracker -> T) : T forall T
-      @@replica_lag_trackers_mutex.synchronize do
-        tracker = @@replica_lag_trackers[key]? || ReplicaLagTracker.new(lag_threshold: replica_lag_threshold)
-        @@replica_lag_trackers[key] = tracker
-        yield tracker
-      end
+    # Replica lag tracking per model and database/shard. The trackers and the
+    # threshold live in `Grant::ConnectionManagement` itself, not in class
+    # variables declared here: see `ConnectionManagement.with_replica_lag_tracker`.
+    private def self.with_replica_lag_tracker(key : String, & : ReplicaLagTracker -> T) : T forall T
+      Grant::ConnectionManagement.with_replica_lag_tracker(name, key) { |tracker| yield tracker }
     end
 
-    # Connection behavior configuration
-    class_property replica_lag_threshold : Time::Span = 2.seconds
+    # How stale a replica may be before reads return to the primary. Each model
+    # class has its own value, `2.seconds` until set.
+    def self.replica_lag_threshold : Time::Span
+      Grant::ConnectionManagement.replica_lag_threshold(name)
+    end
+
+    def self.replica_lag_threshold=(threshold : Time::Span) : Time::Span
+      Grant::ConnectionManagement.store_replica_lag_threshold(name, threshold)
+    end
 
     # Values declared through the setters below. Only a declared value is
     # pushed to the connection registry, so the defaults never override what

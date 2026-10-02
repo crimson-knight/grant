@@ -242,7 +242,12 @@ module Grant::Scoping
   # Post.unscoped.all # all rows, scope bypassed
   # ```
   macro default_scope(&block)
-    class_getter? _has_default_scope : Bool = true
+    # A method rather than `class_getter? ... = true`: a subclass's copy of that
+    # class variable can be left zeroed (`false`), which would silently drop
+    # the scope (see Grant::ConnectionManagement).
+    def self._has_default_scope? : Bool
+      true
+    end
 
     def self.apply_default_scope(query : Grant::Query::Builder(Model)) forall Model
       query.{{block.body}}

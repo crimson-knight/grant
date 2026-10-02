@@ -25,6 +25,21 @@ Fixes:
   before Crystal 1.21.0 (crystal-lang/crystal#16879) rejected that with
   `unexpected token: "SPACE"`, so Grant compiled only on 1.21. The expansion
   is unchanged.
+- The first `save` in a generated Amber V2 app no longer crashes with
+  `Invalid memory access ... at address 0x10`. Each model class had its own
+  copy of the replica-lag tracker mutex, declared in `macro included`. When a
+  model is first built in an instance variable initializer (`@pet = Pet.new`
+  in a scaffold controller), Crystal creates the model's copy of each
+  inherited class variable before it reads class variable initializers, and
+  that copy is never initialized. The tracker registry, its mutex and
+  `replica_lag_threshold` now live on `Grant::ConnectionManagement`, one set
+  for every model, still kept per model and database/shard. The same flaw
+  dropped a `default_scope` on a subclass of the declaring model and could
+  zero other inherited class-level settings, so `_has_default_scope?`,
+  `multitenant_column` and the association metadata are now methods, and
+  `attribute_definitions`, `token_for_definitions`, `lock_optimistically`,
+  the aggregation metadata and the encrypted-attribute registry start as `nil`
+  and are built on first use.
 
 ### ActiveRecord parity, wave 6b: performance and schema
 

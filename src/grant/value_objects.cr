@@ -130,14 +130,21 @@ module Grant::ValueObjects
     # aggregation on this model in metadata and dispatch methods.
     GRANT_AGGREGATION_META_{{method_name_string.upcase.id}} = true
 
-    # Store aggregation metadata
-    class_getter _{{method_name}}_aggregation_meta = Grant::ValueObjects::AggregationMeta.new(
-      {{method_name.stringify}},
-      {{actual_class_name.stringify}},
-      { {% for key, value in mapping_hash %}{{key.stringify}} => {{value}},{% end %} },
-      {% if actual_constructor %}true{% else %}false{% end %},
-      {{actual_allow_nil}}
-    )
+    # Store aggregation metadata. It starts as `nil` and is built on first use:
+    # a subclass's copy of a class variable with a non-nil initializer can be
+    # left zeroed (see Grant::ConnectionManagement), and a nil start is correct
+    # even then.
+    @@_{{method_name}}_aggregation_meta : Grant::ValueObjects::AggregationMeta? = nil
+
+    def self._{{method_name}}_aggregation_meta : Grant::ValueObjects::AggregationMeta
+      @@_{{method_name}}_aggregation_meta ||= Grant::ValueObjects::AggregationMeta.new(
+        {{method_name.stringify}},
+        {{actual_class_name.stringify}},
+        { {% for key, value in mapping_hash %}{{key.stringify}} => {{value}},{% end %} },
+        {% if actual_constructor %}true{% else %}false{% end %},
+        {{actual_allow_nil}}
+      )
+    end
 
     # Register all columns that are part of this aggregation
     {% for column_name, attr_name in mapping_hash %}

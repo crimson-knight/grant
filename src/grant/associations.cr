@@ -261,13 +261,17 @@ module Grant::Associations
     end
 
     # Store association metadata
-    class_getter _{{method_name.id}}_association_meta = {
-      type: :belongs_to,
-      target_class_name: {{class_name.id.stringify}},
-      foreign_key: {{foreign_key.id.stringify}},
-      primary_key: {{primary_key.id.stringify}},
-      through: nil
-    }
+    # A method, not a class variable: it holds no state, and a class variable
+    # copied into a subclass can be left zeroed (see Grant::ConnectionManagement).
+    def self._{{method_name.id}}_association_meta
+      {
+        type: :belongs_to,
+        target_class_name: {{class_name.id.stringify}},
+        foreign_key: {{foreign_key.id.stringify}},
+        primary_key: {{primary_key.id.stringify}},
+        through: nil
+      }
+    end
 
     # Populate the runtime association registry so reflection works.
     _grant_register_association({{method_name.id.stringify}}, :belongs_to, {{class_name.id}}, {{foreign_key.id.stringify}}, {{primary_key.id.stringify}}, nil)
@@ -471,13 +475,17 @@ module Grant::Associations
       end
 
       # Store association metadata
-      class_getter _{{method_name.id}}_association_meta = {
-        type: :has_one,
-        target_class_name: {{class_name.id.stringify}},
-        foreign_key: {{foreign_key.id.stringify}},
-        primary_key: {{primary_key.id.stringify}},
-        through: {{through.id.stringify}}
-      }
+      # A method, not a class variable: it holds no state, and a class variable
+      # copied into a subclass can be left zeroed (see Grant::ConnectionManagement).
+      def self._{{method_name.id}}_association_meta
+        {
+          type: :has_one,
+          target_class_name: {{class_name.id.stringify}},
+          foreign_key: {{foreign_key.id.stringify}},
+          primary_key: {{primary_key.id.stringify}},
+          through: {{through.id.stringify}}
+        }
+      end
 
       # Populate the runtime association registry so reflection works.
       _grant_register_association({{method_name.id.stringify}}, :has_one, {{class_name.id}}, {{foreign_key.id.stringify}}, {{primary_key.id.stringify}}, {{through.id.stringify}}, {{source.id.stringify}})
@@ -585,13 +593,17 @@ module Grant::Associations
     end
 
     # Store association metadata
-    class_getter _{{method_name.id}}_association_meta = {
-      type: :has_one,
-      target_class_name: {{class_name.id.stringify}},
-      foreign_key: {{foreign_key.id.stringify}},
-      primary_key: {{primary_key.id.stringify}},
-      through: nil
-    }
+    # A method, not a class variable: it holds no state, and a class variable
+    # copied into a subclass can be left zeroed (see Grant::ConnectionManagement).
+    def self._{{method_name.id}}_association_meta
+      {
+        type: :has_one,
+        target_class_name: {{class_name.id.stringify}},
+        foreign_key: {{foreign_key.id.stringify}},
+        primary_key: {{primary_key.id.stringify}},
+        through: nil
+      }
+    end
 
     # Populate the runtime association registry so reflection works.
     _grant_register_association({{method_name.id.stringify}}, :has_one, {{class_name.id}}, {{foreign_key.id.stringify}}, {{primary_key.id.stringify}}, nil)
@@ -908,13 +920,17 @@ module Grant::Associations
     {% end %}
 
     # Store association metadata
-    class_getter _{{method_name.id}}_association_meta = {
-      type: :has_many,
-      target_class_name: {{class_name.id.stringify}},
-      foreign_key: {{foreign_key.id.stringify}},
-      primary_key: {{primary_key.id.stringify}},
-      through: {{through ? through.id.stringify : nil}}
-    }
+    # A method, not a class variable: it holds no state, and a class variable
+    # copied into a subclass can be left zeroed (see Grant::ConnectionManagement).
+    def self._{{method_name.id}}_association_meta
+      {
+        type: :has_many,
+        target_class_name: {{class_name.id.stringify}},
+        foreign_key: {{foreign_key.id.stringify}},
+        primary_key: {{primary_key.id.stringify}},
+        through: {{through ? through.id.stringify : nil}}
+      }
+    end
 
     # Populate the runtime association registry so reflection works.
     _grant_register_association({{method_name.id.stringify}}, :has_many, {{class_name.id}}, {{foreign_key.id.stringify}}, {{primary_key.id.stringify}}, {{through ? through.id.stringify : nil}}, {{through ? source.id.stringify : nil}})

@@ -75,7 +75,19 @@ module Grant::Locking::Optimistic
 
     # Set to false to stop checking and bumping the version (ActiveRecord's
     # `lock_optimistically`); the column then behaves like any other.
-    class_property lock_optimistically : Bool = true
+    # `nil` means the default, `true`. A `Bool = true` class variable would be
+    # copied into each subclass, and a copy left zeroed would read `false` (see
+    # Grant::ConnectionManagement).
+    @@lock_optimistically : Bool? = nil
+
+    def self.lock_optimistically : Bool
+      setting = @@lock_optimistically
+      setting.nil? ? true : setting
+    end
+
+    def self.lock_optimistically=(value : Bool) : Bool
+      @@lock_optimistically = value
+    end
 
     def self.locking_enabled? : Bool
       lock_optimistically
