@@ -139,9 +139,111 @@ module Grant::Schema
         end
       when "Time"
         precision && !dialect.sqlite? ? "#{base.sub(/\(\d+\)/, "")}(#{precision})" : base
+      when "Int8", "Int16", "Int32", "Int64"
+        limit ? integer_type(dialect, limit) : base
+      when "Bytes"
+        dialect.mysql? ? sized(base, {255 => "TINYBLOB", 65_535 => "BLOB", 16_777_215 => "MEDIUMBLOB"}, "LONGBLOB", limit) : base
       else
         base
       end
+    end
+
+    # The Crystal type that carries each native type name, per dialect, for
+    # tools that turn a database column back into a model column (the
+    # reverse of `lookup`). PostgreSQL extension types (`hstore`, `citext`,
+    # `ltree`) and the network and money types have no Crystal type of their
+    # own: they arrive as their text form, so a model declares them as `String`
+    # with `column_type: "citext"` (the type is then emitted verbatim).
+    CRYSTAL_PG = {
+      "smallint" => "Int16", "int2" => "Int16", "integer" => "Int32", "int" => "Int32", "int4" => "Int32",
+      "bigint" => "Int64", "int8" => "Int64", "real" => "Float32", "float4" => "Float32",
+      "double precision" => "Float64", "float8" => "Float64", "numeric" => "BigDecimal", "decimal" => "BigDecimal",
+      "boolean" => "Bool", "bool" => "Bool", "text" => "String", "character varying" => "String",
+      "varchar" => "String", "character" => "String", "char" => "String", "bpchar" => "String", "name" => "String",
+      "bytea" => "Bytes", "date" => "Time", "timestamp" => "Time", "timestamptz" => "Time",
+      "timestamp without time zone" => "Time", "timestamp with time zone" => "Time", "time" => "Time",
+      "uuid" => "UUID", "json" => "JSON::Any", "jsonb" => "JSON::Any",
+      "hstore" => "String", "citext" => "String", "ltree" => "String", "inet" => "String", "cidr" => "String",
+      "macaddr" => "String", "money" => "String",
+    }
+
+    CRYSTAL_MYSQL = {
+      "tinyint" => "Int8", "smallint" => "Int16", "mediumint" => "Int32", "int" => "Int32", "integer" => "Int32",
+      "bigint" => "Int64", "float" => "Float32", "double" => "Float64", "decimal" => "BigDecimal",
+      "varchar" => "String", "char" => "String", "text" => "String", "tinytext" => "String",
+      "mediumtext" => "String", "longtext" => "String", "blob" => "Bytes", "tinyblob" => "Bytes",
+      "mediumblob" => "Bytes", "longblob" => "Bytes", "date" => "Time", "datetime" => "Time",
+      "timestamp" => "Time", "time" => "Time", "json" => "JSON::Any",
+    }
+
+    CRYSTAL_SQLITE = {
+      "integer" => "Int64", "int" => "Int32", "tinyint" => "Int8", "smallint" => "Int16", "bigint" => "Int64",
+      "real" => "Float64", "float" => "Float32", "double" => "Float64", "numeric" => "BigDecimal",
+      "decimal" => "BigDecimal", "boolean" => "Bool", "text" => "String", "varchar" => "String",
+      "char" => "String", "blob" => "Bytes", "date" => "Time", "datetime" => "Time", "timestamp" => "Time",
+      "time" => "Time", "json" => "JSON::Any",
+    }
+
+    # The extension a PostgreSQL native type needs (`CREATE EXTENSION`), or nil
+    # for the types built into the server.
+    EXTENSIONS = {"hstore" => "hstore", "citext" => "citext", "ltree" => "ltree"}
+
+    # The extension that provides the PostgreSQL type *native*, or nil.
+    def self.extension_for(native : ::String) : ::String?
+      EXTENSIONS[native.strip.downcase]?
+    end
+
+    # Returns the Crystal type name for the native type *native* of *dialect*
+    # (`"numeric(12, 2)"` is `"BigDecimal"`, `"integer[]"` is `"Array(Int32)"`),
+    # or nil when no Crystal type is mapped.
+    def self.crystal_type(dialect : Dialect, native : ::String) : ::String?
+      name = native.strip.downcase
+      array = dialect.pg? && name.ends_with?("[]")
+      name = name.rchop("[]") if array
+      return "Bool" if dialect.mysql? && name.delete(' ') == "tinyint(1)"
+      name = name.sub(/\s*\(.*\)/, "").strip
+      table = case dialect
+              in .pg?     then CRYSTAL_PG
+              in .mysql?  then CRYSTAL_MYSQL
+              in .sqlite? then CRYSTAL_SQLITE
+              end
+      found = table[name]?
+      return nil unless found
+      array ? "Array(#{found})" : found
+    end
+
+    # The integer type for ActiveRecord's byte-width *limit* (1 to 8).
+    def self.integer_type(dialect : Dialect, limit : Int32) : ::String
+      case dialect
+      in .pg?
+        raise InvalidDefinition.new("No integer type has limit: #{limit}") unless 1 <= limit <= 8
+        limit <= 2 ? "SMALLINT" : (limit <= 4 ? "INTEGER" : "BIGINT")
+      in .mysql?
+        case limit
+        when 1    then "TINYINT"
+        when 2    then "SMALLINT"
+        when 3    then "MEDIUMINT"
+        when 4    then "INT"
+        when 5..8 then "BIGINT"
+        else           raise InvalidDefinition.new("No integer type has limit: #{limit}")
+        end
+      in .sqlite?
+        case limit
+        when 1    then "TINYINT"
+        when 2    then "SMALLINT"
+        when 3, 4 then "INTEGER"
+        when 5..8 then "BIGINT"
+        else           raise InvalidDefinition.new("No integer type has limit: #{limit}")
+        end
+      end
+    end
+
+    # The first of MySQL's size *steps* that holds *limit*, else *largest*;
+    # *default* without a limit.
+    def self.sized(default : ::String, steps : Hash(Int32, ::String), largest : ::String, limit : Int32?) : ::String
+      return default unless limit
+      steps.each { |max, type| return type if limit <= max }
+      largest
     end
   end
 end
