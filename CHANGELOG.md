@@ -2,6 +2,97 @@
 
 ## Unreleased
 
+### ActiveRecord parity, wave 6b: performance and schema
+
+Parity moves from 370 to 382 complete features (89.8% to 92.7% of applicable).
+Two performance batches undo most of the cost the parity work added, and
+three batches close schema, type, logging and MySQL gaps.
+
+- **Runtime:** rows hydrate by ordinal through a column plan built once per
+  result set. Find by primary key reuses a kept statement. Dirty tracking is
+  lazy, so a record that is never changed allocates no tracking hashes. On
+  SQLite (`bench/lifecycle_bench.cr`, 2,000 records), heap per operation is
+  now below the pre-parity release (origin/main):
+  - find: 1.6 KB, against 5.2 KB;
+  - 100-row page: 27 KB, against 60 KB;
+  - load of 2,000 rows: 1.29 MB, against 3.40 MB.
+
+  Mean time is lower too (find 4.0 µs against 5.4 µs; load 1.13 ms against
+  2.46 ms).
+- **Fewer statements:** a create runs BEGIN, INSERT, COMMIT. SQLite reads the
+  new id from the insert result instead of running
+  `SELECT LAST_INSERT_ROWID()`. A clean save runs no SQL.
+- **Compile memory:** association preloading is reachable only from
+  `includes`, `preload`, `eager_load` and `Grant::Preloader`. Association
+  writers are per-model methods reached only from mass assignment. WHERE
+  predicates render through one model-independent renderer. Inherited
+  scoping no longer instantiates per pair of models. Two measurements:
+  - 200 associated models with one query: 13.4 GB to 1.7 GB of semantic
+    compile memory;
+  - `association_regressions_spec.cr` debug build: 9.7 GB to 6.9 GB.
+
+  `docs/compile_memory.md` has the method and the remaining targets.
+- **Schema and types:** BigDecimal columns (`precision:`, `scale:`), Int8,
+  Int16 and Bytes columns, and `limit:` on integer columns. Opt-in
+  `constraint:` on `belongs_to` and `validates_uniqueness_of` makes
+  `Model.migrator.create` emit FOREIGN KEY and UNIQUE.
+  `Grant::Schema::TypeCatalog` is new.
+- **PostgreSQL arrays and JSON:** `Array(Time)` columns,
+  `where.array_length`, `array_append_all`/`array_remove_all` and GIN index
+  helpers. `store_accessor` on JSON columns, `type: :jsonb`, and the
+  `where(data: {a: 1})` containment shorthand.
+- **Encryption:** `encrypts ..., lazy: true` decrypts on first read.
+- **Query logs:** raw `exec`/`query`/`scalar`, counters,
+  `insert_all`/`upsert_all` and the cache-version query are tagged. Verbose
+  logs label writes by model.
+- **Migrations:** on SQLite, `change_column_default` and NOT NULL
+  `add_timestamps` rebuild the table. `ar_internal_metadata` protects
+  `drop_and_create`. Schema-qualified names work across all three databases.
+  MySQL catalog reads are fixed, and advisory locks, migrations and
+  introspection are verified against a live MySQL 9.2 server.
+
+Not met:
+- `bench/relation_chain.cr` is 2.57x (target 1.5x).
+- The compile-memory slope is 19.5 MB per queried model (target 7.7).
+- The one-model debug build needs 1.8 GB (target 1.3 GB).
+
+Behavior changes:
+
+- Per-record write logs ("Record created", "Record updated", "Record
+  destroyed", "Columns updated") are logged at debug instead of info.
+- A save sends BEGIN with its first statement; a save that runs no
+  statement publishes no transaction events.
+- Calling `Grant::AssociationLoader.load_associations` or `batch_load`
+  directly on a model never loaded through
+  `includes`/`preload`/`eager_load` raises `Grant::PreloadNotEnabledError`;
+  call `Grant::AssociationLoader.enable(Model)` first.
+- `Grant::Columns::Type` gains BigDecimal, Int8, Int16, `Array(BigDecimal)`
+  and `Array(Time)`; `DirtyValue` gains `Array(Time)`.
+- Int32/Int64 columns with `limit:` read through
+  `Grant::Converters::SmallInteger`. A PostgreSQL DSL `integer limit:`
+  outside 1..8 raises `InvalidDefinition`.
+- JSON::Any columns are always watched for in-place mutation.
+- A column `type:` other than `:jsonb` on a JSON::Any column is a compile
+  error.
+- Raw `Model.exec`/`query`/`scalar` and `Grant.connection` calls write the
+  SQL log entry at debug.
+- Verbose log labels for adapter writes use the model name instead of the
+  table name.
+- `Schema::ColumnInfo#default` on MySQL is SQL text: string and temporal
+  literals come back quoted.
+- On SQLite, `change_column_default` and NOT NULL `add_timestamps` rebuild
+  the table instead of raising `UnsupportedOperation`.
+- `Model.migrator.drop_and_create` raises
+  `Grant::Schema::ProtectedEnvironmentError` in a recorded protected
+  environment unless `force: true`.
+- `where(json_column: {...})` raises `ArgumentError` for a value with no
+  JSON form instead of failing to compile. A custom type must include
+  `JSON::Serializable` to be used there (`json_contains` still accepts any
+  `to_json`).
+- MySQL `change_column` keeps the current default, and
+  `CURRENT_TIMESTAMP` defaults on `DATETIME(n)` render
+  `CURRENT_TIMESTAMP(n)`.
+
 ### ActiveRecord parity, wave 6a
 
 Parity moves from 320 to 370 complete features (77.7% to 89.8% of applicable).
