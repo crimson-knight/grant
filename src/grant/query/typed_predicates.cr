@@ -111,14 +111,50 @@ class Grant::Query::Builder(Model)
     self
   end
 
-  # `where(settings: {theme: "dark"})` on a JSON column: the same containment
-  # as `json_contains`, joined with *join* (`:and` or `:or`). Called by `where`
-  # when the value is a hash or named tuple and the key names a JSON column.
+  # The containment `json_contains` adds, joined with *join* (`:and` or `:or`).
   #
   # :nodoc:
   def add_json_containment(join : Symbol, field : String, document) : Nil
+    add_json_containment_text(join, field, document.to_json)
+  end
+
+  # `where(settings: {theme: "dark"})` on a JSON column: the same containment
+  # as `json_contains`, joined with *join*. Called by `where` when the value is
+  # a hash or named tuple and the key names a JSON column.
+  #
+  # `where` instantiates this for every nested hash, also for one that names a
+  # joined table (`where(posts: {id: 1_i64..})`), whose values may have no JSON
+  # form. So the document is written value by value instead of with `to_json`,
+  # and a value that is not JSON raises `ArgumentError` when it is used.
+  #
+  # :nodoc:
+  def add_json_condition(join : Symbol, field : String, conditions : Hash | NamedTuple) : Nil
+    json = ::JSON.build { |builder| write_json_condition(builder, conditions) }
+    add_json_containment_text(join, field, json)
+  end
+
+  private def write_json_condition(json : ::JSON::Builder, value : Hash | NamedTuple) : Nil
+    json.object do
+      value.each { |key, item| json.field(key.to_s) { write_json_condition(json, item) } }
+    end
+  end
+
+  private def write_json_condition(json : ::JSON::Builder, value : Array | Tuple) : Nil
+    json.array do
+      value.each { |item| write_json_condition(json, item) }
+    end
+  end
+
+  private def write_json_condition(json : ::JSON::Builder, value : Nil | Bool | String | Symbol | Number | Enum | Time | UUID | ::JSON::Any | ::JSON::Serializable) : Nil
+    value.to_json(json)
+  end
+
+  private def write_json_condition(json : ::JSON::Builder, value) : Nil
+    raise ArgumentError.new("A #{value.class} cannot be part of a JSON document condition")
+  end
+
+  private def add_json_containment_text(join : Symbol, field : String, json : String) : Nil
     column = structured_field_sql(field)
-    json = document.to_json
     case @db_type
     in .pg?
       own_where_fields << {join: join, stmt: "#{column} @> ?::jsonb", values: [json.as(Grant::Columns::Type)]}
