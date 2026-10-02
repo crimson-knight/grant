@@ -1,0 +1,27 @@
+name: release
+# Guards a release tag. It publishes nothing: it fails loudly when the tag,
+# shard.yml, CHANGELOG.md and the declared minimum Crystal disagree, or when
+# Grant does not build and pass the SQLite suite on that minimum.
+# The checklist is in docs/RELEASING.md.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  release-metadata:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Check tag, shard.yml version and CHANGELOG.md
+        # Tag must be "v" + shard.yml version; CHANGELOG.md must have that
+        # version's section with "Minimum Crystal: <shard.yml floor>".
+        env:
+          TAG: ${{ github.ref_name }}
+        run: scripts/crystal-floor.sh release-check "$TAG"
+
+  minimum-crystal:
+    uses: ./.github/workflows/minimum-crystal.yml

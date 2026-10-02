@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+Minimum Crystal: 1.21.0
+
+### Minimum Crystal version
+
+Behavior changes:
+
+- **Grant now requires Crystal 1.21.0 or newer** (shard.yml
+  `crystal: ">= 1.21.0, < 2.0.0"`, previously `>= 1.6.0`). Grant already
+  failed to compile on older Crystal, for two reasons:
+  - it calls `Time.instant`, added in Crystal 1.19.0;
+  - its macros put a macro variable right before a macro tag
+    (`%result{% else %}` in `src/grant/callbacks.cr`). Parsers before
+    Crystal 1.21.0 (crystal-lang/crystal#16879) reject that with
+    `unexpected token: "SPACE"`; 1.19.2 and 1.20.3 included.
+
+  Apps on Crystal 1.6 through 1.20 must upgrade Crystal or stay on an older
+  Grant release. CI now builds and runs the SQLite suite on the declared
+  minimum, and checks that the minor version below it does not compile
+  (`docs/RELEASING.md`).
+
 ### ActiveRecord parity, wave 6b: performance and schema
 
 Parity moves from 370 to 382 complete features (89.8% to 92.7% of applicable).

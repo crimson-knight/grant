@@ -33,25 +33,35 @@ jobs:
         # Ameba 1.7.0-dev ships no postinstall or executables, so shards
         # install leaves no bin/ameba; build it from the locked source.
         run: mkdir -p bin && crystal build lib/ameba/src/cli.cr -o bin/ameba
+      - name: Check runtime dependencies' Crystal floors
+        # No runtime dependency may need a newer Crystal than shard.yml declares.
+        run: scripts/crystal-floor.sh check-deps
       - name: Check formatting
         run: crystal tool format --check
       - name: Check linting
         run: ./bin/ameba
 
-  # shard.yml still declares crystal >= 1.6.0, but current Grant does not
-  # compile before 1.19 (it uses Time.instant, added in 1.19.0). This job keeps
-  # the older versions visible without failing the workflow until the owner
-  # decides whether to raise the minimum Crystal version.
-  crystal-compat:
+  # The floor is the minimum Crystal in shard.yml (scripts/crystal-floor.sh
+  # reads it; no workflow repeats the number). This job builds Grant and runs
+  # the SQLite suite on exactly that version, so a change that needs a newer
+  # Crystal fails here. See docs/RELEASING.md.
+  minimum-crystal:
+    uses: ./.github/workflows/minimum-crystal.yml
+
+  # Informational: the latest patch of the minor version below the floor
+  # should NOT compile. If it does, the floor may be higher than necessary.
+  below-minimum:
     runs-on: ubuntu-latest
     continue-on-error: true
-    strategy:
-      fail-fast: false
-      matrix:
-        crystal: [1.14.0, 1.15.1, 1.16.3]
     steps:
       - name: Download source
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Find the release below the floor
+        id: below
+        run: |
+          version=$(scripts/crystal-floor.sh below)
+          echo "Below the floor: $version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
       - name: Refresh apt package index
         # install-crystal apt-installs libevent and friends without updating
         # the index first, and the runner image's index goes stale.
@@ -59,18 +69,28 @@ jobs:
       - name: Install Crystal
         uses: crystal-lang/install-crystal@d8ef131ecec0352ce0e39b81b0a6d95def58fe2f # v1
         with:
-          crystal: ${{ matrix.crystal }}
+          crystal: ${{ steps.below.outputs.version }}
       - name: Install shards
-        run: shards install --frozen --skip-postinstall --skip-executables
-      - name: Type-check Grant
-        run: crystal build --no-codegen src/grant.cr
+        # Ameba (development only) declares crystal ~> 1.19; this job only
+        # type-checks Grant, so dependency Crystal constraints are not enforced.
+        run: shards install --frozen --skip-postinstall --skip-executables --ignore-crystal-version
+      - name: Expect Grant not to compile
+        env:
+          BELOW: ${{ steps.below.outputs.version }}
+        run: |
+          crystal --version
+          if crystal build --no-codegen src/grant.cr; then
+            echo "::warning::Grant compiles on Crystal $BELOW, below the declared floor $(scripts/crystal-floor.sh floor). The floor in shard.yml may be higher than necessary."
+            exit 1
+          fi
+          echo "Grant does not compile on Crystal $BELOW, as expected for the declared floor."
 
   sqlite-spec:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        # Grant needs Crystal 1.19+ (Time.instant); see crystal-compat below.
+        # Latest Crystal; minimum-crystal covers the floor from shard.yml.
         crystal: [1.21.0]
     steps:
       - name: Download source
@@ -103,7 +123,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Grant needs Crystal 1.19+ (Time.instant); see crystal-compat below.
+        # Latest Crystal; minimum-crystal covers the floor from shard.yml.
         crystal: [1.21.0]
     services:
       mysql-primary:
@@ -248,7 +268,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Grant needs Crystal 1.19+ (Time.instant); see crystal-compat below.
+        # Latest Crystal; minimum-crystal covers the floor from shard.yml.
         crystal: [1.21.0]
     services:
       postgres-primary:
