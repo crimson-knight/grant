@@ -8,10 +8,10 @@ Grant::Connections << Grant::Adapter::Sqlite.new(name: "sqlite", url: "sqlite3:/
 class Product < Grant::Base
   connection sqlite
   table products
-  
+
   # Include optimistic locking - adds lock_version column
   include Grant::Locking::Optimistic
-  
+
   column id : Int64, primary: true, auto: true
   column name : String
   column price : Float64
@@ -45,13 +45,13 @@ end
 puts "\n=== Example 3: Nested Transactions ==="
 Product.transaction do
   Product.create!(name: "Monitor", price: 299.99, stock: 15)
-  
+
   # This nested transaction will be rolled back
   Product.transaction do
     Product.create!(name: "Temporary Product", price: 1.99, stock: 1)
     raise Grant::Transaction::Rollback.new
   end
-  
+
   puts "Products after nested rollback: #{Product.count}"
 end
 
@@ -63,7 +63,7 @@ Product.transaction do
   # Lock the record for update
   locked_laptop = Product.where(id: laptop.id).lock.first!
   puts "Locked laptop: #{locked_laptop.name} (stock: #{locked_laptop.stock})"
-  
+
   # Update with confidence that no one else can modify it
   locked_laptop.stock -= 1
   locked_laptop.save!
@@ -73,7 +73,7 @@ end
 # Example 5: Block-based Pessimistic Locking
 puts "\n=== Example 5: Block-based Locking ==="
 Product.with_lock(laptop.id) do |product|
-  product.price *= 0.9  # 10% discount
+  product.price *= 0.9 # 10% discount
   product.save!
   puts "Applied discount. New price: $#{product.price}"
 end
@@ -105,14 +105,14 @@ retry_count = 0
 
 mouse.with_optimistic_retry(max_retries: 3) do
   retry_count += 1
-  
+
   # Simulate another update happening
   if retry_count == 1
     other = Product.find!(mouse.id)
     other.stock += 10
     other.save!
   end
-  
+
   mouse.stock -= 5
   mouse.save!
 end
@@ -134,7 +134,7 @@ Product.transaction do
   # Exclusive lock (FOR UPDATE)
   Product.where(name: "Laptop").lock(Grant::Locking::LockMode::Update).first
   puts "Acquired exclusive lock"
-  
+
   # Shared lock (FOR SHARE) - only in PostgreSQL/MySQL
   if Product.adapter.supports_lock_mode?(Grant::Locking::LockMode::Share)
     Product.where(name: "Mouse").lock(Grant::Locking::LockMode::Share).first
@@ -148,7 +148,7 @@ puts "Outside transaction: #{Product.transaction_open?}"
 
 Product.transaction do
   puts "Inside transaction: #{Product.transaction_open?}"
-  
+
   Product.transaction do
     puts "Inside nested transaction: #{Product.transaction_open?}"
   end

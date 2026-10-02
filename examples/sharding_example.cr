@@ -5,35 +5,35 @@ require "../src/grant/sharding"
 class User < Grant::Base
   connection "primary"
   table users
-  
+
   include Grant::Sharding::Model
-  
+
   # Shard users across 4 shards using hash strategy
   shards_by :id, strategy: :hash, count: 4
-  
+
   column id : Int64, primary: true
   column name : String
   column email : String
   column created_at : Time = Time.utc
-  
+
   has_many orders : Order
 end
 
 class Order < Grant::Base
   connection "primary"
   table orders
-  
+
   include Grant::Sharding::Model
-  
+
   # Shard orders by user_id to keep user data together
   shards_by :user_id, strategy: :hash, count: 4
-  
+
   column id : Int64, primary: true
   column user_id : Int64
   column total : Float64
   column status : String
   column created_at : Time = Time.utc
-  
+
   belongs_to user : User
 end
 
@@ -41,7 +41,7 @@ end
 class Tenant < Grant::Base
   connection "primary"
   table tenants
-  
+
   # Tenants table is not sharded - it's the control plane
   column id : Int64, primary: true
   column name : String
@@ -52,12 +52,12 @@ end
 class TenantData < Grant::Base
   connection "primary"
   table tenant_data
-  
+
   include Grant::Sharding::Model
-  
+
   # Shard by tenant_id for data isolation
   shards_by :tenant_id, strategy: :hash, count: 8
-  
+
   column id : Int64, primary: true
   column tenant_id : Int64
   column key : String
@@ -69,24 +69,24 @@ end
 class Event < Grant::Base
   connection "primary"
   table events
-  
+
   include Grant::Sharding::Model
   extend Grant::Sharding::CompositeId
-  
+
   # Shard by composite ID with time prefix
   shards_by :id, strategy: :range, ranges: [
     {min: "2024_01", max: "2024_06_99", shard: :shard_2024_h1},
     {min: "2024_07", max: "2024_12_99", shard: :shard_2024_h2},
-    {min: "2025_01", max: "2025_12_99", shard: :shard_2025}
+    {min: "2025_01", max: "2025_12_99", shard: :shard_2025},
   ]
-  
+
   column id : String, primary: true
   column event_type : String
   column metadata : JSON::Any?
   column created_at : Time = Time.utc
-  
+
   before_create :generate_id
-  
+
   private def generate_id
     self.id ||= Event.generate_composite_id("EVT")
   end
@@ -96,20 +96,20 @@ end
 class RegionalCustomer < Grant::Base
   connection "primary"
   table regional_customers
-  
+
   include Grant::Sharding::Model
   include Grant::Sharding::RegionDetermination::ExplicitRegion
-  
+
   # Shard by location
   shards_by [:country, :state], strategy: :geo,
     regions: [
       {shard: :shard_us_west, countries: ["US"], states: ["CA", "OR", "WA"]},
       {shard: :shard_us_east, countries: ["US"], states: ["NY", "NJ", "FL"]},
       {shard: :shard_eu, countries: ["GB", "DE", "FR", "IT"]},
-      {shard: :shard_apac, countries: ["JP", "AU", "SG", "CN"]}
+      {shard: :shard_apac, countries: ["JP", "AU", "SG", "CN"]},
     ],
     default_shard: :shard_global
-  
+
   column id : Int64, primary: true
   column email : String
   column country : String
@@ -155,7 +155,7 @@ Grant::ShardManager.with_shard(shard) do
     user = User.find!(user_id)
     user.name = "Updated Name"
     user.save!
-    
+
     # Create related order on same shard
     Order.create!(
       user_id: user_id,

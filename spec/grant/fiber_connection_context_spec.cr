@@ -18,8 +18,8 @@ describe "Grant::ConnectionManagement fiber-local connection_context" do
     #   fiber_b sets its own context and checks it is :reading, then signals main
     #   main checks fiber_a's context is still :primary
 
-    fiber_a_entered  = Channel(Nil).new
-    fiber_b_entered  = Channel(Nil).new
+    fiber_a_entered = Channel(Nil).new
+    fiber_b_entered = Channel(Nil).new
     fiber_a_finished = Channel(Nil).new
 
     role_seen_by_a = nil.as(Symbol?)

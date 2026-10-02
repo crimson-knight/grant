@@ -38,8 +38,8 @@ describe Grant::Query::BuilderMethods do
     it "chains where + or-block and returns only matching rows" do
       Review.clear
       r_alice = Review.create(name: "alice", downvotes: 5)
-      r_bob   = Review.create(name: "bob",   downvotes: 10)
-      _r_eve  = Review.create(name: "eve",   downvotes: 20)
+      r_bob = Review.create(name: "bob", downvotes: 10)
+      _r_eve = Review.create(name: "eve", downvotes: 20)
 
       # WHERE downvotes = 5 OR (name = 'bob' AND downvotes = 10)
       found = Review.where(downvotes: 5).or { |q| q.where(name: "bob").where(downvotes: 10) }.select
@@ -53,9 +53,9 @@ describe Grant::Query::BuilderMethods do
   describe "not { } block with parameterized conditions" do
     it "excludes rows matching parameterized conditions inside the block" do
       Review.clear
-      _r1 = Review.create(name: "banned",  downvotes: 0)
-      r2  = Review.create(name: "good",    downvotes: 0)
-      r3  = Review.create(name: "neutral", downvotes: 0)
+      _r1 = Review.create(name: "banned", downvotes: 0)
+      r2 = Review.create(name: "good", downvotes: 0)
+      r3 = Review.create(name: "neutral", downvotes: 0)
 
       # WHERE downvotes >= 0 AND NOT (name = 'banned')
       found = Review.where.gteq(:downvotes, 0).not { |q| q.where(name: "banned") }.select
@@ -68,8 +68,8 @@ describe Grant::Query::BuilderMethods do
     it "excludes rows matching multiple ANDed parameterized conditions" do
       Review.clear
       _r1 = Review.create(name: "banned", downvotes: 5)
-      r2  = Review.create(name: "banned", downvotes: 99)  # different downvotes — NOT excluded
-      r3  = Review.create(name: "good",   downvotes: 5)   # different name — NOT excluded
+      r2 = Review.create(name: "banned", downvotes: 99) # different downvotes — NOT excluded
+      r3 = Review.create(name: "good", downvotes: 5)    # different name — NOT excluded
 
       # WHERE downvotes >= 0 AND NOT (name = 'banned' AND downvotes = 5)
       found = Review.where.gteq(:downvotes, 0).not { |q| q.where(name: "banned").where(downvotes: 5) }.select
@@ -84,9 +84,9 @@ describe Grant::Query::BuilderMethods do
     it "assembles a three-part query and returns only the matching result set" do
       Review.clear
       r_a = Review.create(name: "alice", downvotes: 1)
-      r_b = Review.create(name: "bob",   downvotes: 2)
+      r_b = Review.create(name: "bob", downvotes: 2)
       r_c = Review.create(name: "carol", downvotes: 3)
-      _r_d = Review.create(name: "dave",  downvotes: 4)
+      _r_d = Review.create(name: "dave", downvotes: 4)
 
       # WHERE name = 'alice' OR (name = 'bob' AND downvotes = 2) OR (name = 'carol' AND downvotes = 3)
       found = Review

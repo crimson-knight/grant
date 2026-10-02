@@ -118,7 +118,7 @@ module Grant::Sharding
 
     alias KeyBounds = NamedTuple(minimum: Grant::Columns::Type, maximum: Grant::Columns::Type, upper_exclusive: Bool)
 
-    BOUND_COLUMN = %q(["`]?([a-zA-Z_][a-zA-Z0-9_]*)["`]?)
+    BOUND_COLUMN      = %q(["`]?([a-zA-Z_][a-zA-Z0-9_]*)["`]?)
     PAIR_STATEMENT    = /\A\s*#{BOUND_COLUMN}\s*>=\s*\?\s+AND\s+#{BOUND_COLUMN}\s*(<=|<)\s*\?\s*\z/i
     BETWEEN_STATEMENT = /\A\s*#{BOUND_COLUMN}\s+BETWEEN\s+\?\s+AND\s+\?\s*\z/i
 

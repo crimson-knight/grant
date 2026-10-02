@@ -1,211 +1,148 @@
+require "sqlite3"
 require "../src/grant"
+require "../src/grant/sharding"
+require "../src/adapter/sqlite"
 
-# Example sharding implementations for Grant ORM
+# Sharding strategies in Grant, one model per strategy.
+#
+# Every shard here is its own SQLite file, so the example runs anywhere:
+#
+#   crystal run examples/sharding_examples.cr
+#
+# In production each shard is a separate database server; register its URL
+# with `Grant::ConnectionRegistry.establish_connection(shard: ...)` the same way.
 
-# 1. Simple Hash Sharding by User ID
-class User < Grant::Base
-  table users
+EXAMPLE_DATABASE  = "sharding_examples"
+EXAMPLE_DIRECTORY = File.join(Dir.tempdir, "grant_sharding_examples")
+
+# 1. Hash sharding: rows spread evenly over :shard_0 ... :shard_3 by user id.
+class ShardedUser < Grant::Base
+  connection "sharding_examples"
+  table sharded_users
+  include Grant::Sharding::Model
+
+  shards_by :id, strategy: :hash, count: 4
+
   column id : Int64, primary: true
   column email : String
   column country : String
-  column created_at : Time
-  
-  # Hash sharding across 4 shards
-  shards_by :id, strategy: :hash, count: 4
-  
-  connects_to shards: {
-    shard_0: {
-      writing: ENV["USER_SHARD_0_PRIMARY_URL"],
-      reading: ENV["USER_SHARD_0_REPLICA_URL"]
-    },
-    shard_1: {
-      writing: ENV["USER_SHARD_1_PRIMARY_URL"],
-      reading: ENV["USER_SHARD_1_REPLICA_URL"]
-    },
-    shard_2: {
-      writing: ENV["USER_SHARD_2_PRIMARY_URL"],
-      reading: ENV["USER_SHARD_2_REPLICA_URL"]
-    },
-    shard_3: {
-      writing: ENV["USER_SHARD_3_PRIMARY_URL"],
-      reading: ENV["USER_SHARD_3_REPLICA_URL"]
-    }
-  }
 end
 
-# 2. Multi-tenant Sharding with Composite Keys
-class TenantData < Grant::Base
-  table tenant_data
-  
-  # Composite key sharding - ensures all data for a tenant stays together
-  shards_by :tenant_id, strategy: :hash, count: 8
-  
+# 2. Lookup sharding: each tenant is placed on a named shard; unknown tenants
+#    go to the default shard.
+class TenantRecord < Grant::Base
+  connection "sharding_examples"
+  table tenant_records
+  include Grant::Sharding::Model
+
+  shards_by :tenant_id, strategy: :lookup,
+    lookup: {"1" => :shard_0, "2" => :shard_1},
+    default_shard: :shard_2
+
   column id : Int64, primary: true
   column tenant_id : Int64
-  column data_type : String
-  column value : JSON::Any
-  
-  # Ensure queries always include tenant_id for proper routing
-  default_scope { where(tenant_id: Current.tenant_id) }
+  column value : String
 end
 
-# 3. Time-based Sharding for High-Volume Event Data
-class Event < Grant::Base
-  table events
+# 3. Time-range sharding: events are placed by the half-year they happened in.
+#    `from` is inclusive and `to` is exclusive.
+class ShardedEvent < Grant::Base
+  connection "sharding_examples"
+  table sharded_events
+  include Grant::Sharding::Model
+
+  shards_by :created_at, strategy: :time_range, ranges: [
+    {from: Time.utc(2026, 1, 1), to: Time.utc(2026, 7, 1), shard: :shard_0},
+    {from: Time.utc(2026, 7, 1), to: Time.utc(2027, 1, 1), shard: :shard_1},
+  ]
+
   column id : Int64, primary: true
-  column user_id : Int64
   column event_type : String
-  column payload : JSON::Any
   column created_at : Time
-  
-  # Monthly sharding - new shard each month
-  shards_by :created_at, strategy: :monthly do
-    # Automatically creates shards like: events_2024_01, events_2024_02, etc.
-    retention 6.months # Automatically archive/drop old shards
-  end
-  
-  # Query examples:
-  # Event.where(created_at: Time.utc(2024, 1, 15)).select # Routes to events_2024_01
-  # Event.in_month(2024, 1).where(event_type: "login").select # Explicit month
 end
 
-# 4. Geographic Sharding for Compliance
+# 4. Geographic sharding: personal data stays in the region its country
+#    belongs to; every other country goes to the default shard.
 class PersonalData < Grant::Base
+  connection "sharding_examples"
   table personal_data
+  include Grant::Sharding::Model
+
+  shards_by :country, strategy: :geo,
+    regions: [
+      {shard: :shard_0, countries: ["DE", "FR", "IT", "ES", "NL", "BE", "PL"], states: nil, cities: nil},
+      {shard: :shard_1, countries: ["US"], states: nil, cities: nil},
+      {shard: :shard_2, countries: ["JP", "SG", "KR", "IN"], states: nil, cities: nil},
+    ],
+    default_shard: :shard_3
+
   column id : Int64, primary: true
   column user_id : Int64
+  column country : String
   column data_classification : String
-  column country_code : String
-  column data : JSON::Any
-  
-  # Geographic sharding for GDPR compliance
-  shards_by :country_code, strategy: :geographic do
-    region :eu, countries: ["DE", "FR", "IT", "ES", "NL", "BE", "PL"], {
-      writing: ENV["EU_PRIMARY_URL"],
-      reading: ENV["EU_REPLICA_URL"]
-    }
-    
-    region :us, countries: ["US"], {
-      writing: ENV["US_PRIMARY_URL"],
-      reading: ENV["US_REPLICA_URL"]
-    }
-    
-    region :asia, countries: ["JP", "SG", "KR", "CN", "IN"], {
-      writing: ENV["ASIA_PRIMARY_URL"],
-      reading: ENV["ASIA_REPLICA_URL"]
-    }
-    
-    # Default region for other countries
-    default_region :global, {
-      writing: ENV["GLOBAL_PRIMARY_URL"],
-      reading: ENV["GLOBAL_REPLICA_URL"]
-    }
-  end
 end
 
-# 5. Advanced: Consistent Hashing for Dynamic Scaling
-class Session < Grant::Base
-  table sessions
-  column id : String, primary: true
-  column user_id : Int64
-  column data : JSON::Any
-  column expires_at : Time
-  
-  # Consistent hashing allows adding/removing shards with minimal reshuffling
-  shards_by :id, strategy: :consistent_hash do
-    virtual_nodes 150 # More virtual nodes = better distribution
-    
-    nodes({
-      cache_1: ENV["SESSION_CACHE_1_URL"],
-      cache_2: ENV["SESSION_CACHE_2_URL"],
-      cache_3: ENV["SESSION_CACHE_3_URL"]
-    })
-  end
-  
-  # Add a new cache node dynamically
-  def self.add_cache_node(name : Symbol, url : String)
-    shard_config.add_node(name, url)
-  end
-end
+SCHEMA = [
+  "CREATE TABLE IF NOT EXISTS sharded_users (id INTEGER PRIMARY KEY, email TEXT NOT NULL, country TEXT NOT NULL)",
+  "CREATE TABLE IF NOT EXISTS tenant_records (id INTEGER PRIMARY KEY, tenant_id INTEGER NOT NULL, value TEXT NOT NULL)",
+  "CREATE TABLE IF NOT EXISTS sharded_events (id INTEGER PRIMARY KEY, event_type TEXT NOT NULL, created_at TEXT NOT NULL)",
+  "CREATE TABLE IF NOT EXISTS personal_data (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, country TEXT NOT NULL, data_classification TEXT NOT NULL)",
+]
 
-# 6. Custom Sharding Logic
-class GameScore < Grant::Base
-  table game_scores
-  column id : Int64, primary: true
-  column player_id : Int64
-  column game_id : Int64
-  column score : Int32
-  column achieved_at : Time
-  
-  # Custom sharding based on game and player
-  shards_by do |score|
-    # Shard by game_id to keep leaderboards together
-    # But also consider player activity for hot partition avoidance
-    game_shard = score.game_id % 4
-    player_activity = Redis.new.get("player:#{score.player_id}:activity").to_i
-    
-    if player_activity > 1000 # High-activity players
-      :"shard_hot_#{game_shard}"
-    else
-      :"shard_regular_#{game_shard}"
-    end
+# Creates one SQLite file per shard and registers it as that shard's primary.
+Dir.mkdir_p(EXAMPLE_DIRECTORY)
+[:shard_0, :shard_1, :shard_2, :shard_3].each do |shard|
+  path = File.join(EXAMPLE_DIRECTORY, "#{shard}.db")
+  File.delete?(path)
+  url = "sqlite3:#{path}"
+  DB.open(url) do |db|
+    SCHEMA.each { |statement| db.exec(statement) }
   end
+  Grant::ConnectionRegistry.establish_connection(
+    database: EXAMPLE_DATABASE,
+    adapter: Grant::Adapter::Sqlite,
+    url: url,
+    role: :primary,
+    shard: shard
+  )
 end
-
-# Usage Examples
 
 puts "=== Sharding Examples ==="
 
-# 1. Creating records - automatically routed to correct shard
-user = User.create(email: "user@example.com", country: "US")
-puts "User #{user.id} created on shard: #{user.current_shard}"
+# Writes are routed by the shard key: no shard is named by the caller.
+user = ShardedUser.new(email: "user@example.com", country: "US")
+user.id = 42_i64
+user.save!
+puts "User #{user.id} saved on #{user.current_shard}"
 
-# 2. Finding records - automatically determines shard from ID
-found_user = User.find(user.id)
-puts "Found user on shard: #{found_user.current_shard}"
+# Queries without a shard key fan out to every shard and merge the result.
+puts "Users across all shards: #{ShardedUser.count}"
 
-# 3. Cross-shard queries
-all_users_count = User.on_all_shards.count
-puts "Total users across all shards: #{all_users_count}"
+# A query can also be pinned to one shard.
+on_shard = ShardedUser.on_shard(user.determine_shard).where(country: "US").all
+puts "US users on #{user.current_shard}: #{on_shard.size}"
 
-# 4. Shard-specific queries
-shard_0_users = User.on_shard(:shard_0).where(country: "US").select
-puts "US users on shard_0: #{shard_0_users.size}"
-
-# 5. Parallel shard aggregation
-country_counts = User.on_all_shards.parallel do |shard|
-  group_by(:country).count
-end.merge_results
-puts "Users by country: #{country_counts}"
-
-# 6. Geographic routing
-eu_data = PersonalData.create(
-  user_id: 123,
-  country_code: "DE",
-  data_classification: "PII",
-  data: {"name" => "Hans Schmidt"}
-)
-puts "EU data stored in: #{eu_data.current_shard}"
-
-# 7. Time-based routing
-event = Event.create(
-  user_id: user.id,
-  event_type: "login",
-  payload: {"ip" => "1.2.3.4"},
-  created_at: Time.utc
-)
-puts "Event stored in monthly shard: #{event.current_shard}"
-
-# 8. Resharding example
-puts "\n=== Resharding Example ==="
-Session.shard_config.nodes.each do |name, url|
-  puts "Current node: #{name} -> #{url}"
+# Or a block can run with one shard active.
+Grant::ShardManager.with_shard(:shard_0) do
+  puts "Users on shard_0: #{ShardedUser.where(country: "US").count}"
 end
 
-# Add new node
-Session.add_cache_node(:cache_4, ENV["SESSION_CACHE_4_URL"])
-puts "Added cache_4 node"
+record = TenantRecord.new(tenant_id: 2_i64, value: "settings")
+record.id = 1_i64
+record.save!
+puts "Tenant 2 data saved on #{record.current_shard}"
 
-# Show redistribution
-affected_keys = Session.shard_config.affected_keys_for_new_node(:cache_4)
-puts "Keys that moved to new node: #{affected_keys.size}"
+event = ShardedEvent.new(event_type: "login", created_at: Time.utc(2026, 8, 15))
+event.id = 1_i64
+event.save!
+puts "August event saved on #{event.current_shard}"
+
+personal = PersonalData.new(user_id: 42_i64, country: "DE", data_classification: "PII")
+personal.id = 1_i64
+personal.save!
+puts "German personal data saved on #{personal.current_shard}"
+
+# Every record of every shard, read in keyset batches.
+ShardedUser.find_each_shard(batch_size: 100) do |each_user|
+  puts "#{each_user.email} lives on #{each_user.current_shard}"
+end

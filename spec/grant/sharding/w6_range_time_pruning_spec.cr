@@ -59,8 +59,8 @@ end
 describe "time-range shard pruning (#{CURRENT_ADAPTER})" do
   before_all do
     events_ddl = ["CREATE TABLE w6_time_events (#{W6C04.id_column}, created_at #{W6C04.pg? ? "TIMESTAMP" : "TEXT"} NOT NULL, label TEXT)"]
-    {w6_h1: [Time.utc(2024, 2, 10), Time.utc(2024, 6, 30, 23, 59, 59)],
-     w6_h2: [Time.utc(2024, 7, 1), Time.utc(2024, 12, 15)],
+    {w6_h1:      [Time.utc(2024, 2, 10), Time.utc(2024, 6, 30, 23, 59, 59)],
+     w6_h2:      [Time.utc(2024, 7, 1), Time.utc(2024, 12, 15)],
      w6_current: [Time.utc(2025, 1, 1), Time.utc(2025, 5, 5)]}.each do |shard, times|
       W6C04.provision("w6_time_#{shard}", events_ddl)
       W6C04.establish("w6_time", "w6_time_#{shard}", :primary, shard)
