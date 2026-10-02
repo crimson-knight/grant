@@ -21,7 +21,9 @@
 #   SPEC_GROUP_MAX_RSS_GB   per-group memory ceiling in GB (default: 10)
 #   SPEC_GROUP_MAX_FILES    spec files per group (default: 12)
 #   SPEC_GROUP_LOG_DIR      where per-group logs go (default: .crystal-cache/spec-groups)
-#   SPEC_GROUP_INCREMENTAL  1 compiles with --incremental (default), 0 turns it off
+#   SPEC_GROUP_INCREMENTAL  1 forces --incremental on, 0 forces it off; unset, it is
+#                           used only when "$CRYSTAL spec --help" lists it (crystal-alpha
+#                           does, stock Crystal does not)
 #   SPEC_GROUP_CACHE        compiler cache layout: "adapter" (default) shares one
 #                           CRYSTAL_CACHE_DIR per adapter; "per-group" gives each
 #                           group its own, so a rerun of that group compiles warm
@@ -43,7 +45,16 @@ log_dir="${SPEC_GROUP_LOG_DIR:-.crystal-cache/spec-groups}"
 cache_mode="${SPEC_GROUP_CACHE:-adapter}"
 cache_root="${SPEC_GROUP_CACHE_DIR:-.crystal-cache/spec-groups-cache}"
 spec_flags=()
-[ "${SPEC_GROUP_INCREMENTAL:-1}" != "0" ] && spec_flags+=(--incremental)
+case "${SPEC_GROUP_INCREMENTAL:-auto}" in
+  0) ;;
+  1) spec_flags+=(--incremental) ;;
+  auto)
+    if "$crystal_bin" spec --help 2>&1 | grep -q -- --incremental; then
+      spec_flags+=(--incremental)
+    fi
+    ;;
+  *) echo "SPEC_GROUP_INCREMENTAL must be 0 or 1, not $SPEC_GROUP_INCREMENTAL" >&2; exit 2 ;;
+esac
 case "$cache_mode" in
   adapter|per-group) ;;
   *) echo "SPEC_GROUP_CACHE must be adapter or per-group, not $cache_mode" >&2; exit 2 ;;
@@ -56,7 +67,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --list) list_only=true ;;
     --only) shift; only="${1%/}" ;;
-    -h|--help) sed -n '2,35p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,36p' "$0"; exit 0 ;;
     *) adapters+=("$1") ;;
   esac
   shift
