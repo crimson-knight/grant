@@ -1,4 +1,5 @@
 require "../../spec_helper"
+require "../../support/crystal_compiler"
 require "../../../src/grant/spec_support/*"
 
 {% begin %}
@@ -69,7 +70,7 @@ describe "locking_column and lock_optimistically" do
       ledger = LockingColumnSpecLedger.create!(title: "v0")
 
       queries = Grant::Spec.capture_queries { ledger.update!(title: "v1") }
-      update = queries.find(&.sql.starts_with?("UPDATE")).not_nil!
+      update = queries.find!(&.sql.starts_with?("UPDATE"))
       update.sql.should contain("revision")
       update.sql.should_not contain("lock_version")
     end
@@ -100,8 +101,7 @@ describe "locking_column and lock_optimistically" do
     end
 
     it "refuses to be declared after the include, where the default column already exists" do
-      compiler = Process.find_executable("crystal-alpha")
-      pending!("crystal-alpha is not on PATH") unless compiler
+      compiler = spec_crystal_compiler
 
       root = File.expand_path("../../..", __DIR__)
       source = File.tempfile("locking_column_late", ".cr", dir: root) do |file|

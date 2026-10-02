@@ -1,4 +1,5 @@
 require "../../spec_helper"
+require "../../support/crystal_compiler"
 
 class V01StrongPasswordValidator < Grant::EachValidator
   def validate_each(record, attribute, value)
@@ -30,7 +31,7 @@ end
     validates :name, :email, presence: true, length: {min: 2, max: 40}
     validates :email, format: {with: /@/}, allow_nil: true
     validates :password, v01_strong_password: true, allow_nil: true
-    validates :status, inclusion: %w(new open), allow_nil: true
+    validates :status, inclusion: %w[new open], allow_nil: true
     validates :code, length: 3, format: /\A[a-z]+\z/, allow_nil: true
     validates :age, numericality: {greater_than: 0, only_integer: true}, allow_nil: true
     validates :nickname, length: 2..5, allow_blank: true
@@ -58,7 +59,7 @@ describe "validates (unified macro)" do
   it "expands presence and length for several fields at once" do
     record = V01Unified.new
     record.valid?.should be_false
-    record.errors.map(&.field.to_s).sort.should eq(["email", "email", "name", "name"].sort)
+    record.errors.map(&.field.to_s).sort!.should eq(["email", "email", "name", "name"].sort)
     record.errors.map(&.type).uniq!.should contain(:blank)
     record.errors.map(&.message).should contain("can't be blank")
   end
@@ -68,7 +69,7 @@ describe "validates (unified macro)" do
     record.name = "A"
     record.email = "@" * 41
     record.valid?.should be_false
-    record.errors.map(&.field.to_s).sort.should eq(["email", "name"])
+    record.errors.map(&.field.to_s).sort!.should eq(["email", "name"])
     record.errors.map(&.message).uniq!.should eq(["is too short (minimum is 2 characters)", "is too long (maximum is 40 characters)"])
   end
 
@@ -161,7 +162,7 @@ describe "validates (unified macro)" do
       file.close
       begin
         error = IO::Memory.new
-        status = Process.run("crystal-alpha", ["build", "--no-codegen", "--no-color", file.path], error: error, output: Process::Redirect::Close, chdir: repo_root)
+        status = Process.run(spec_crystal_compiler, ["build", "--no-codegen", "--no-color", file.path], error: error, output: Process::Redirect::Close, chdir: repo_root)
         {status.success?, error.to_s}
       ensure
         file.delete

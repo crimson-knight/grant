@@ -1,4 +1,5 @@
 require "../../spec_helper"
+require "../../support/crystal_compiler"
 require "../../../src/grant/sharding"
 
 describe Grant::Sharding::HashResolver do
@@ -38,7 +39,7 @@ describe Grant::Sharding::HashResolver do
     it "hashes composite keys in order with a separator" do
       resolver = Grant::Sharding::HashResolver.new([:a, :b], 7)
       resolver.resolve_for_values([5_i64, "abc"]).should eq(:shard_5)
-      resolver.resolve_for_values(["ab", "c"]).should_not eq(nil)
+      resolver.resolve_for_values(["ab", "c"]).should_not be_nil
       Grant::Sharding::HashResolver.stable_hash("ab").should_not eq(Grant::Sharding::HashResolver.stable_hash("a"))
     end
 
@@ -47,7 +48,7 @@ describe Grant::Sharding::HashResolver do
       source = File.expand_path("../../support/sharding_hash_probe.cr", __DIR__)
       begin
         build_output = IO::Memory.new
-        status = Process.run("crystal-alpha", ["build", source, "-o", probe], output: build_output, error: build_output)
+        status = Process.run(spec_crystal_compiler, ["build", source, "-o", probe], output: build_output, error: build_output)
         status.success?.should be_true, build_output.to_s
 
         outputs = Array(String).new(3) do
@@ -58,17 +59,17 @@ describe Grant::Sharding::HashResolver do
 
         outputs.uniq.size.should eq(1)
         expected = <<-OUT
-        1=shard_1
-        2=shard_6
-        42=shard_0
-        -7=shard_1
-        1000000007=shard_3
-        alice=shard_1
-        bob=shard_2
-        hello world=shard_2
-        composite=shard_5
+          1=shard_1
+          2=shard_6
+          42=shard_0
+          -7=shard_1
+          1000000007=shard_3
+          alice=shard_1
+          bob=shard_2
+          hello world=shard_2
+          composite=shard_5
 
-        OUT
+          OUT
         outputs.first.should eq(expected)
       ensure
         File.delete(probe) if File.exists?(probe)

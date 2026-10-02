@@ -1,4 +1,5 @@
 require "../../spec_helper"
+require "../../support/crystal_compiler"
 
 # Association options are checked while the macro expands, so a typo fails the
 # build instead of being ignored. Each case compiles a small program with
@@ -33,7 +34,7 @@ private def compile_association_source(body : String) : Tuple(Bool, String)
   file.close
   begin
     error = IO::Memory.new
-    status = Process.run("crystal-alpha", ["build", "--no-codegen", "--no-color", file.path], error: error, output: Process::Redirect::Close, chdir: repo_root)
+    status = Process.run(spec_crystal_compiler, ["build", "--no-codegen", "--no-color", file.path], error: error, output: Process::Redirect::Close, chdir: repo_root)
     {status.success?, error.to_s}
   ensure
     file.delete
@@ -48,7 +49,7 @@ describe "association option validation" do
       has_many :ov_things, class_name: OvThing, foreign_key: :ov_owner_id, primary_key: :id, singular: :ov_thing, dependent: :delete_all, autosave: true, validate: true, index_errors: true, strict_loading: true, inverse_of: false, before_add: :noop, after_add: :noop, before_remove: :noop, after_remove: :noop, counter_cache: true
       has_many :ov_relayed, through: :ov_things, source: :ov_twin, class_name: OvThing
       def noop(record : OvThing); end
-    CR
+      CR
     ok.should be_true, output
   end
 
@@ -117,7 +118,7 @@ describe "association option validation" do
       has_many :ov_c, class_name: OvThing, foreign_key: :ov_owner_id, dependent: :nullify
       has_one :ov_d, class_name: OvThing, foreign_key: :ov_owner_id, dependent: :delete
       belongs_to :ov_e, class_name: OvOwner, foreign_key: ov_e_id : Int64?, dependent: :destroy, optional: true
-    CR
+      CR
     ok.should be_true, output
   end
 end
