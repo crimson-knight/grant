@@ -10,7 +10,9 @@
 # retried; a single file over the limit is reported as a failure.
 #
 # Usage:
-#   scripts/spec-groups.sh [--list] [--only <dir>] [adapter ...]
+#   scripts/spec-groups.sh [--list] [--only <dir>]... [adapter ...]
+#
+# --only may be given more than once to run several directories.
 #
 # Adapters default to $CURRENT_ADAPTER, or sqlite. Each adapter uses the same
 # environment the specs already read (PG_DATABASE_URL, SQLITE_DATABASE_URL,
@@ -60,14 +62,14 @@ case "$cache_mode" in
   *) echo "SPEC_GROUP_CACHE must be adapter or per-group, not $cache_mode" >&2; exit 2 ;;
 esac
 list_only=false
-only=""
+only=()
 adapters=()
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --list) list_only=true ;;
-    --only) shift; only="${1%/}" ;;
-    -h|--help) sed -n '2,36p' "$0"; exit 0 ;;
+    --only) shift; only+=("${1%/}") ;;
+    -h|--help) sed -n '2,38p' "$0"; exit 0 ;;
     *) adapters+=("$1") ;;
   esac
   shift
@@ -82,7 +84,7 @@ while IFS= read -r dir; do
     dirs+=("$dir")
   fi
 done < <(find spec -type d | sort)
-[ -n "$only" ] && dirs=("$only")
+[ ${#only[@]} -gt 0 ] && dirs=("${only[@]}")
 
 groups=()
 for dir in "${dirs[@]}"; do
