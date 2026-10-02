@@ -1,6 +1,6 @@
 # Renders WHERE predicates for the assemblers. Nothing here depends on the
-# model type: the assembler passes in the model's name, table, columns, adapter
-# and how to bind parameters, so one copy of this code serves every model and SQL
+# model type: the assembler passes in the model's name, table, columns, and how
+# to quote identifiers and bind parameters, so one copy of this code serves every model and SQL
 # dialect instead of one per `Assembler::Base(Model)` instantiation.
 class Grant::Query::Assembler::PredicateRenderer
   OPERATORS = {"eq": "=", "gteq": ">=", "lteq": "<=", "neq": "!=", "ltgt": "<>", "gt": ">", "lt": "<", "ngt": "!>", "nlt": "!<", "in": "IN", "nin": "NOT IN", "like": "LIKE", "nlike": "NOT LIKE"}
@@ -21,8 +21,13 @@ class Grant::Query::Assembler::PredicateRenderer
   # Records a column the predicate references, like `add_aggregate_field`.
   alias RecordField = Proc(String, Nil)
 
+  # Quotes one identifier, like `Model.quote`. It is called only when a
+  # predicate names a column, so rendering a raw statement never resolves the
+  # model's adapter (a sharded model has none outside a shard context).
+  alias QuoteIdentifier = Proc(String, String)
+
   def initialize(@model_name : String, @table_name : String, @fields : Array(String),
-                 @adapter : Grant::Adapter::Base, @bind_parameter : BindParameter,
+                 @quote_identifier : QuoteIdentifier, @bind_parameter : BindParameter,
                  @record_field : RecordField,
                  @join_clauses : Array(NamedTuple(type: Symbol, table: String, on: String)))
   end
@@ -120,11 +125,11 @@ class Grant::Query::Assembler::PredicateRenderer
     column_name = encrypted_attribute.try(&.column_name) || column
 
     if qualifier
-      "#{@adapter.quote(qualifier)}.#{@adapter.quote(column_name)}"
+      "#{@quote_identifier.call(qualifier)}.#{@quote_identifier.call(column_name)}"
     elsif !@join_clauses.empty? || @rendering_where_group
-      "#{@adapter.quote(@table_name)}.#{@adapter.quote(column_name)}"
+      "#{@quote_identifier.call(@table_name)}.#{@quote_identifier.call(column_name)}"
     else
-      @adapter.quote(column_name)
+      @quote_identifier.call(column_name)
     end
   end
 

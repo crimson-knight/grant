@@ -168,11 +168,15 @@ module Grant::Query::Assembler
     end
 
     # The renderer for this assembler's model, built once. It takes the model's
-    # name, table, columns and adapter as plain values, so rendering is shared
-    # by every model (see `PredicateRenderer`).
+    # name, table and columns as plain values and its quoting as a proc, so
+    # rendering is shared by every model (see `PredicateRenderer`). Quoting goes
+    # through `Model.quote` when a column is rendered, as it did before the
+    # renderer existed: building the renderer must not resolve the model's
+    # adapter, which a sharded model only has inside a shard context.
     private def predicate_renderer : Grant::Query::Assembler::PredicateRenderer
       renderer = @predicate_renderer ||= Grant::Query::Assembler::PredicateRenderer.new(
-        Model.name, Model.table_name, Model.fields, Model.adapter,
+        Model.name, Model.table_name, Model.fields,
+        ->(name : String) : String { Model.quote(name) },
         ->(value : Grant::Columns::Type) : String { add_parameter(value) },
         ->(name : String) : Nil { add_aggregate_field(name); nil },
         @query.join_clauses)
