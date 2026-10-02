@@ -16,6 +16,9 @@ end
 
 W6_PERF_STATEMENT_LOG = W6PerfStatementLog.new
 
+# The statement that opens a transaction: MySQL sends START TRANSACTION.
+W6_PERF_BEGIN = CURRENT_ADAPTER == "mysql" ? "START TRANSACTION" : "BEGIN"
+
 private def w6_perf_statements(& : ->) : Array(String)
   W6_PERF_STATEMENT_LOG.list_of_statements.clear
   Log.builder.bind("db", Log::Severity::Debug, W6_PERF_STATEMENT_LOG)
@@ -75,7 +78,7 @@ describe "Statement counts of the persistence paths" do
       end
 
       statements.size.should eq(3)
-      statements[0].should start_with("BEGIN")
+      statements[0].should start_with(W6_PERF_BEGIN)
       statements[1].should start_with("INSERT INTO")
       statements[2].should eq("COMMIT")
       person.not_nil!.id.should_not be_nil
@@ -94,7 +97,7 @@ describe "Statement counts of the persistence paths" do
       person = W6PerfPerson.new(name: "built")
       statements = w6_perf_statements { person.save.should be_true }
 
-      statements.map(&.split(' ').first).should eq(["BEGIN", "INSERT", "COMMIT"])
+      statements.map(&.split(' ').first).should eq([W6_PERF_BEGIN.split(' ').first, "INSERT", "COMMIT"])
     end
   end
 
@@ -155,7 +158,7 @@ describe "Statement counts of the persistence paths" do
       statements = w6_perf_statements { loaded.save.should be_true }
 
       statements.size.should eq(3)
-      statements[0].should start_with("BEGIN")
+      statements[0].should start_with(W6_PERF_BEGIN)
       statements[1].should start_with("UPDATE")
       statements[2].should eq("COMMIT")
       W6PerfPerson.find!(loaded.id).name.should eq("After")
@@ -168,7 +171,7 @@ describe "Statement counts of the persistence paths" do
 
       statements = w6_perf_statements { loaded.save.should be_true }
 
-      statements.first.should start_with("BEGIN")
+      statements.first.should start_with(W6_PERF_BEGIN)
       statements.last.should eq("COMMIT")
       statements.count(&.starts_with?("INSERT INTO")).should eq(1)
       W6PerfPerson.count.should eq(1)
@@ -212,7 +215,7 @@ describe "Statement counts of the persistence paths" do
 
       committed.should be_true
       statements.size.should eq(2)
-      statements[0].should start_with("BEGIN")
+      statements[0].should start_with(W6_PERF_BEGIN)
       statements[1].should eq("COMMIT")
     end
 
@@ -224,7 +227,7 @@ describe "Statement counts of the persistence paths" do
         end
       end
 
-      statements.count(&.starts_with?("BEGIN")).should eq(1)
+      statements.count(&.starts_with?(W6_PERF_BEGIN)).should eq(1)
       statements.count(&.==("COMMIT")).should eq(1)
       statements.count(&.starts_with?("INSERT INTO")).should eq(2)
     end

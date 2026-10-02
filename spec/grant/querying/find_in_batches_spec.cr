@@ -1,6 +1,9 @@
 require "../../spec_helper"
 
 describe "#find_in_batches" do
+  # Other specs leave Parent rows behind; each example counts from an empty table.
+  before_each { Parent.clear }
+
   it "finds records in batches and yields all the records" do
     model_ids = (0...100).map do |i|
       Parent.new(name: "model_#{i}").tap(&.save)

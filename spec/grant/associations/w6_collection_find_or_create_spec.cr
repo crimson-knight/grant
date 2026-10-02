@@ -48,8 +48,9 @@ describe "association collection find_or_create_by family" do
     W6cPost.migrator.drop_and_create
     W6cTag.migrator.drop_and_create
     W6cLink.migrator.drop_and_create
-    # The unique index makes create_or_find_by race-safe.
-    W6cPost.exec("CREATE UNIQUE INDEX IF NOT EXISTS w6c_posts_slug_unique ON w6c_posts (slug)")
+    # The unique index makes create_or_find_by race-safe. The table was just
+    # recreated, so no IF NOT EXISTS (which MySQL does not accept here).
+    W6cPost.exec("CREATE UNIQUE INDEX w6c_posts_slug_unique ON w6c_posts (slug)")
   end
 
   before_each do
