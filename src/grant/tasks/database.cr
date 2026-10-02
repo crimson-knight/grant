@@ -45,6 +45,10 @@ module Grant
       getter db_dir : ::String
       getter schema_format : Schema::SchemaFormat
       getter tracking : Schema::Tracking
+      # False for a database configured with `database_tasks: false`: the
+      # create, drop, migrate, schema, seed and combined tasks do nothing for
+      # it, as `rails db:*` skips such a database.
+      getter? database_tasks : Bool
 
       @migrations : Array(Schema::MigrationEntry)?
       @adapter : Grant::Adapter::Base?
@@ -56,7 +60,8 @@ module Grant
                      @migration_paths : Array(::String) = [] of ::String, @seed_path : ::String = Seeds::DEFAULT_PATH,
                      @db_dir : ::String = "db", @schema_format : Schema::SchemaFormat = Schema.format,
                      @protected_environments : Array(::String) = Schema::InternalMetadata::DEFAULT_PROTECTED,
-                     @tracking : Schema::Tracking = Schema::Tracking::Grant, @output : IO? = nil)
+                     @tracking : Schema::Tracking = Schema::Tracking::Grant, @output : IO? = nil,
+                     @database_tasks : Bool = true)
         @adapter = adapter
       end
 
@@ -69,7 +74,13 @@ module Grant
 
       # The tasks of one entry of a `Grant::DatabaseConfigurations`.
       def self.for_config(config : Grant::DatabaseConfig, **options) : Database
-        new(config.url, config.env, config.name, **options)
+        new(config.url, config.env, config.name, **options, database_tasks: config.database_tasks?)
+      end
+
+      # The tasks of every database *configurations* lists for its environment,
+      # leaving out replicas and databases with `database_tasks: false`.
+      def self.for_configurations(configurations : Grant::DatabaseConfigurations, **options) : Array(Database)
+        configurations.task_configs.map { |config| for_config(config, **options) }
       end
 
       # The adapter of the target database, opened on first use.
@@ -111,6 +122,7 @@ module Grant
       # `charset:` and `collation:` (default `utf8mb4`).
       def create(encoding : ::String? = nil, template : ::String? = nil, charset : ::String? = nil,
                  collation : ::String? = nil) : Bool
+        return false unless database_tasks?
         return false if exists?
         case adapter_kind
         in .sqlite?
@@ -134,6 +146,7 @@ module Grant
       # `Grant::Schema::ProtectedEnvironmentError` in a protected environment
       # unless *force*.
       def drop(force : Bool = false) : Bool
+        return false unless database_tasks?
         guard!(force)
         drop_database
       end
@@ -142,6 +155,7 @@ module Grant
       # and recreating the file; an in-memory database loses its tables).
       # Guarded like `drop`.
       def purge(force : Bool = false) : Nil
+        return unless database_tasks?
         guard!(force)
         if sqlite? && sqlite_path == ":memory:"
           drop_all_tables
@@ -164,12 +178,14 @@ module Grant
       # file in every environment but production-like ones: pass `dump: false`
       # to skip. Returns the versions that ran.
       def migrate(target : Int64? = nil, dump : Bool = false) : Array(Int64)
+        return [] of Int64 unless database_tasks?
         ran = migration_context.migrate(target)
         schema_dump if dump && !ran.empty?
         ran
       end
 
       def rollback(step : Int32 = 1, dump : Bool = false) : Array(Int64)
+        return [] of Int64 unless database_tasks?
         ran = migration_context.rollback(step)
         schema_dump if dump && !ran.empty?
         ran
@@ -188,6 +204,7 @@ module Grant
 
       # Writes the schema file for `schema_format` to *path* and returns the path.
       def schema_dump(path : ::String = schema_path) : ::String
+        return path unless database_tasks?
         FileUtils.mkdir_p(File.dirname(path))
         File.open(path, "w") do |file|
           if @schema_format.sql?
@@ -201,6 +218,7 @@ module Grant
 
       # Writes the SQL structure file (whatever `schema_format` is).
       def structure_dump(path : ::String = File.join(@db_dir, Schema::SchemaFormat::Sql.file_name(@name))) : ::String
+        return path unless database_tasks?
         FileUtils.mkdir_p(File.dirname(path))
         File.open(path, "w") { |file| Schema::Dumper.dump_structure(adapter, file, @tracking) }
         path
@@ -212,6 +230,7 @@ module Grant
       # registered migrations hold up to the schema's version are recorded as
       # applied. Guarded unless *force* or the database is empty.
       def schema_load(path : ::String = schema_path, force : Bool = false) : Int64
+        return 0_i64 unless database_tasks?
         raise Schema::SchemaFileMissing.new(path) unless File.exists?(path) || Schema.definition_for(path)
         loader = Schema::Loader.new(adapter, @environment, @protected_environments, @tracking, known_versions, force)
         loader.load(path)
@@ -222,6 +241,7 @@ module Grant
       # Runs the seeds file registered for `seed_path`. Returns how many
       # `Seeds.define` blocks ran.
       def seed(path : ::String = @seed_path) : Int32
+        return 0 unless database_tasks?
         Seeds.run(path, adapter)
       end
 
@@ -229,6 +249,7 @@ module Grant
 
       # Creates the database, loads the schema and seeds it (`db:setup`).
       def setup(seed : Bool = true) : Nil
+        return unless database_tasks?
         created = create
         schema_load(force: created)
         self.seed if seed
@@ -236,6 +257,7 @@ module Grant
 
       # Drops and sets the database up again (`db:reset`). Guarded like `drop`.
       def reset(force : Bool = false, seed : Bool = true) : Nil
+        return unless database_tasks?
         drop(force)
         setup(seed)
       end
@@ -244,6 +266,7 @@ module Grant
       # migrated; a new one is created, loaded from the schema file (or migrated
       # when there is none) and seeded.
       def prepare(seed : Bool = true) : Nil
+        return unless database_tasks?
         if exists?
           migrate
         else
@@ -264,6 +287,7 @@ module Grant
       # counters. *except* tables are kept. Returns the tables emptied.
       # Guarded like `drop`.
       def truncate_all(except : Array(::String) = [] of ::String, force : Bool = false) : Array(::String)
+        return [] of ::String unless database_tasks?
         guard!(force)
         keep = [Schema::SchemaMigration::TABLE, Schema::SchemaMigration::MICRATE_TABLE, Schema::InternalMetadata::TABLE]
         adapter.schema.reset!

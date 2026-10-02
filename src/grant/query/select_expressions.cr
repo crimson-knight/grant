@@ -56,20 +56,12 @@ class Grant::Query::Builder(Model)
   def select!(*columns : Symbol | String) : self
     reset_load_state
     @select_columns = columns.map do |column|
-      column.is_a?(String) ? Grant::Query::SqlExpression.validate!(column, "SELECT expression") : column.to_s
+      column.is_a?(String) ? Grant::Query::SqlExpression.validate!(column, "SELECT expression") : resolve_column_alias(column.to_s)
     end.to_a
     self
   end
 
   def select(*columns : Symbol | String) : self
-    chain_copy.select!(*columns)
-  end
-
-  def reselect!(*columns : String) : self
-    select!(*columns)
-  end
-
-  def reselect(*columns : String) : self
     chain_copy.select!(*columns)
   end
 end

@@ -104,6 +104,12 @@ module Grant::Locking::Optimistic
     @[YAML::Field(ignore: true)]
     @lock_conflict_retry_count : Int32?
 
+    # True when the last update found nothing to write and so left the version
+    # alone.
+    @[JSON::Field(ignore: true)]
+    @[YAML::Field(ignore: true)]
+    @lock_write_skipped : Bool?
+
     class_property lock_conflict_max_retries : Int32 = 0
 
     # Capture lock_version before saving an existing record so __check_lock_version
@@ -150,10 +156,36 @@ module Grant::Locking::Optimistic
     return false unless self.class.locking_enabled?
     raise Grant::ReadOnlyRecordError.new("#{self.class.name} is marked as read only") if readonly?
 
+    # Like the plain update path, write only what changed. A clean record issues
+    # no SQL at all, neither bumping the lock version nor `updated_at`.
+    changed_columns = nil
+    @lock_write_skipped = false
+    if self.class.partial_updates? && self.class.__partial_update_safe?
+      changed_columns = __changed_column_names
+      if changed_columns.empty?
+        @lock_write_skipped = true
+        return true
+      end
+    end
+
     set_timestamps(mode: :update) unless skip_timestamps || !self.class.record_timestamps?
 
     fields = self.class.content_fields.dup
     params = content_values
+
+    if changed_columns
+      kept_fields = [] of String
+      kept_params = [] of Grant::Columns::Type
+      stamped = skip_timestamps || !self.class.record_timestamps? ? [] of String : self.class.update_timestamp_columns
+      fields.each_with_index do |field, index|
+        if changed_columns.includes?(field) || stamped.includes?(field) || field == self.class.locking_column
+          kept_fields << field
+          kept_params << params[index]
+        end
+      end
+      fields = kept_fields
+      params = kept_params
+    end
 
     Grant::Timestamps::CREATED_COLUMNS.each do |created_column|
       if created_index = fields.index(created_column)
@@ -247,6 +279,7 @@ module Grant::Locking::Optimistic
 
   private def __increment_lock_version
     return unless self.class.locking_enabled?
+    return if @lock_write_skipped
     self.__locking_version = lock_version_was + 1
     @lock_version_was = __locking_version
   end

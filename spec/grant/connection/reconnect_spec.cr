@@ -205,7 +205,12 @@ describe "reconnection and retries" do
       adapter.retry_attempts = 0
 
       adapter.active?.should be_false
-      expect_raises(Grant::ConnectionFailed) { adapter.verify! }
+      # SQLite has no server to refuse: a file in a missing directory is a missing database.
+      if CURRENT_ADAPTER == "sqlite"
+        expect_raises(Grant::NoDatabaseError) { adapter.verify! }
+      else
+        expect_raises(Grant::ConnectionFailed) { adapter.verify! }
+      end
     end
 
     it "reconnect! replaces the pool and the old one is closed" do

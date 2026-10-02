@@ -125,11 +125,12 @@ describe "enum_attribute options" do
     EnoGuarded.find!(guarded.id).stage.should eq(EnoGuarded::Stage::Open)
   end
 
-  it "only assigns in memory for a new record" do
+  it "inserts a new record, like update! does" do
     post = EnoPost.new(title: "n")
     post.status_archived!
     post.status.should eq(EnoPost::Status::Archived)
-    post.new_record?.should be_true
+    post.new_record?.should be_false
+    EnoPost.find!(post.id).status.should eq(EnoPost::Status::Archived)
   end
 
   it "assigns in memory with assign_<member>" do
@@ -158,7 +159,7 @@ describe "enum_attribute options" do
 
   it "exposes the name-to-value mapping" do
     EnoPost.status_mapping.should eq({"draft" => EnoPost::Status::Draft, "published" => EnoPost::Status::Published, "archived" => EnoPost::Status::Archived})
-    EnoPost.statuses.should eq(EnoPost::Status.values)
+    EnoPost.statuses.values.should eq(EnoPost::Status.values)
   end
 
   it "raises for an unknown name without validate:" do

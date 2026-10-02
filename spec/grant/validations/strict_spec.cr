@@ -48,7 +48,7 @@ describe "strict: option" do
   it "applies to every validates_*_of macro" do
     user = strict_user
     user.email = "too long for this"
-    expect_raises(Grant::StrictValidationFailed, /Email must be at most 5 characters/) { user.valid? }
+    expect_raises(Grant::StrictValidationFailed, /Email is too long \(maximum is 5 characters\)/) { user.valid? }
   end
 
   it "raises a custom exception class when given one" do

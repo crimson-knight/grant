@@ -35,12 +35,11 @@ class Grant::Query::Builder(Model)
   # receiver to have the same concrete Builder subtype. Mutates the receiver;
   # callers pass a relation they own (a copy or a fresh one).
   def merge_builder(other : Grant::Query::Builder(Model)) : self
-    own_where_fields.concat(other.where_fields)
-
-    if other.order_fields.any?
-      clear_order_fields
-      own_order_fields.concat(other.order_fields)
-    end
+    # Same rules as `merge`: an equality on a column the other relation also
+    # constrains replaces ours, and its ORDER BY is appended.
+    merge_unscopes!(other)
+    merge_where_fields!(other)
+    merge_order!(other)
 
     other.group_fields.each do |field|
       own_group_fields << field unless group_fields.includes?(field)

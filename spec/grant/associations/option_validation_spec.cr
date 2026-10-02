@@ -18,6 +18,7 @@ private def compile_association_source(body : String) : Tuple(Bool, String)
       table ov_things
       column id : Int64, primary: true
       column ov_owner_id : Int64?
+      belongs_to :ov_twin, class_name: OvThing, foreign_key: ov_twin_id : Int64?, optional: true
     end
 
     class OvOwner < Grant::Base
@@ -45,7 +46,7 @@ describe "association option validation" do
       belongs_to :ov_parent, class_name: OvOwner, foreign_key: ov_parent_id : Int64?, primary_key: id, optional: true, touch: true, inverse_of: false, strict_loading: true, autosave: true, validate: true, index_errors: true
       has_one :ov_single, class_name: OvThing, foreign_key: :ov_owner_id, primary_key: :id, dependent: :destroy, autosave: true, validate: true, strict_loading: true, inverse_of: false
       has_many :ov_things, class_name: OvThing, foreign_key: :ov_owner_id, primary_key: :id, singular: :ov_thing, dependent: :delete_all, autosave: true, validate: true, index_errors: true, strict_loading: true, inverse_of: false, before_add: :noop, after_add: :noop, before_remove: :noop, after_remove: :noop, counter_cache: true
-      has_many :ov_relayed, through: :ov_things, source: :ov_thing, class_name: OvThing
+      has_many :ov_relayed, through: :ov_things, source: :ov_twin, class_name: OvThing
       def noop(record : OvThing); end
     CR
     ok.should be_true, output

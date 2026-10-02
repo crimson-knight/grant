@@ -135,16 +135,21 @@ class Grant::Query::Builder(Model)
   getter? is_none : Bool = false
   getter? strict_loading : Bool = false
 
+  # Copy-on-write bookkeeping: one bit per array ivar (see `own_*`). A set bit
+  # means the array may be referenced by another relation and must be copied
+  # before it is written to. Declared next to the Bool flags so they pack into
+  # one word (every chain step copies the whole relation).
+  @shared_arrays : UInt16 = 0_u16
+
+  # Declared here, beside the other flags, so it packs into the same word; the
+  # reader and writer are in `readonly.cr`.
+  @readonly : Bool = false
+
   # Memoized result of `load`. Cleared by every mutation and by `reset`.
   @records : Array(Model)?
 
   # Memoized `cache_version`, cleared together with `@records`.
   @cache_version : String?
-
-  # Copy-on-write bookkeeping: one bit per array ivar (see `own_*`). A set bit
-  # means the array may be referenced by another relation and must be copied
-  # before it is written to.
-  @shared_arrays : UInt16 = 0_u16
 
   ALL_ARRAYS_SHARED = 0x3FF_u16
 
@@ -324,7 +329,7 @@ class Grant::Query::Builder(Model)
   # User.where(:email, :like, "%@example.com")
   # ```
   def where!(field : (Symbol | String), operator : Symbol, value : Grant::Columns::Type) : self
-    and!(field: field.to_s, operator: operator, value: value)
+    and!(field: resolve_column_alias(field.to_s), operator: operator, value: value)
   end
 
   # Adds a raw SQL condition *stmt*, ANDed onto the query.
@@ -635,7 +640,7 @@ class Grant::Query::Builder(Model)
   # User.order(:email) # => ORDER BY email ASC
   # ```
   def order!(field : Symbol) : self
-    own_order_fields << {field: field.to_s, direction: Sort::Ascending}
+    own_order_fields << {field: resolve_column_alias(field.to_s), direction: Sort::Ascending}
 
     self
   end
@@ -677,7 +682,7 @@ class Grant::Query::Builder(Model)
         direction = Sort::Descending
       end
 
-      own_order_fields << {field: field.to_s, direction: direction}
+      own_order_fields << {field: resolve_column_alias(field.to_s), direction: direction}
     end
 
     self
@@ -782,9 +787,20 @@ class Grant::Query::Builder(Model)
     self
   end
 
-  # Adds INNER JOINs for multiple association names at once.
-  def joins!(*associations : Symbol) : self
+  # Adds INNER JOINs for several association names at once, optionally with
+  # nested associations, resolved through the association registry from the
+  # model each level reaches. A has_many chain multiplies rows; pair it with
+  # `distinct` when the parent rows are wanted once. A table reached through two
+  # different paths is joined under an alias.
+  #
+  # ```
+  # User.joins(posts: :comments)
+  # User.joins(posts: [:comments, {likes: :user}])
+  # User.joins(:comments, posts: :comments) # comments, then comments_posts
+  # ```
+  def joins!(*associations : Symbol, **nested) : self
     associations.each { |assoc| joins!(assoc) }
+    add_join_clauses(Grant::Query::JoinSupport.resolve_nested(Model, nested, :inner, @join_clauses)) unless nested.empty?
     self
   end
 
@@ -817,9 +833,11 @@ class Grant::Query::Builder(Model)
     self
   end
 
-  # Adds LEFT JOINs for multiple association names at once.
-  def left_joins!(*associations : Symbol) : self
+  # Adds LEFT JOINs for several association names at once, optionally with
+  # nested associations.
+  def left_joins!(*associations : Symbol, **nested) : self
     associations.each { |assoc| left_joins!(assoc) }
+    add_join_clauses(Grant::Query::JoinSupport.resolve_nested(Model, nested, :left, @join_clauses)) unless nested.empty?
     self
   end
 
@@ -835,7 +853,7 @@ class Grant::Query::Builder(Model)
   #
   # Raises `ArgumentError` if the association is unknown.
   private def resolve_association_join(association : Symbol, type : Symbol) : Array(NamedTuple(type: Symbol, table: String, on: String))
-    Grant::Query::JoinSupport.resolve(Model, association, type)
+    Grant::Query::JoinSupport.resolve(Model, association, type, nil, @join_clauses)
   end
 
   private def add_eager_load_join(association : Symbol) : Nil
@@ -954,7 +972,7 @@ class Grant::Query::Builder(Model)
   # # => SELECT ... FROM users ORDER BY created_at DESC
   # ```
   def reorder!(**dsl) : self
-    clear_order_fields
+    start_reordering!
     order!(**dsl)
   end
 
@@ -965,7 +983,7 @@ class Grant::Query::Builder(Model)
   # # => SELECT ... FROM users ORDER BY created_at ASC
   # ```
   def reorder!(field : Symbol) : self
-    clear_order_fields
+    start_reordering!
     order!(field)
   end
 
@@ -976,14 +994,14 @@ class Grant::Query::Builder(Model)
   # # => ORDER BY created_at ASC, id ASC
   # ```
   def reorder!(*fields : Symbol) : self
-    clear_order_fields
+    start_reordering!
     fields.each { |field| order!(field) }
     self
   end
 
   # Clears existing order and replaces it with an array of ascending fields.
   def reorder!(fields : Array(Symbol)) : self
-    clear_order_fields
+    start_reordering!
     order!(fields)
   end
 
@@ -994,7 +1012,7 @@ class Grant::Query::Builder(Model)
   # User.order(:name).reorder(nil) # => no ORDER BY
   # ```
   def reorder!(none : Nil) : self
-    clear_order_fields
+    start_reordering!
     self
   end
 
@@ -1051,7 +1069,7 @@ class Grant::Query::Builder(Model)
   # ```
   def reselect!(*columns : Symbol) : self
     reset_load_state
-    @select_columns = columns.map(&.to_s).to_a
+    @select_columns = columns.map { |column| resolve_column_alias(column.to_s) }.to_a
     self
   end
 
@@ -1083,7 +1101,12 @@ class Grant::Query::Builder(Model)
   # Mirrors ActiveRecord's `unscope`. Useful for removing parts of an inherited
   # scope while keeping the rest of the chain intact. Recognized components:
   # `:where`, `:order`, `:limit`, `:offset`, `:group` (alias `:group_by`),
-  # `:having`, `:joins`, `:select`, `:distinct`, `:lock`.
+  # `:having`, `:joins`, `:left_joins` (alias `:left_outer_joins`), `:select`,
+  # `:distinct`, `:lock`, `:readonly`, `:optimizer_hints`, `:from`, `:with`,
+  # `:includes`, `:preload`, `:eager_load`, `:strict_loading`, `:annotate`,
+  # `:create_with`, `:reordering` and `:extending` (a no-op: a relation holds no
+  # extension modules). `unscope(where: :column)` drops the conditions on one
+  # column. Default-scope clauses stay, and so do raw SQL string conditions.
   #
   # ```
   # User.where(active: true).order(name: :asc).unscope(:order)
@@ -1095,6 +1118,7 @@ class Grant::Query::Builder(Model)
   #
   # Raises `ArgumentError` for an unrecognized component.
   def unscope!(*components : Symbol) : self
+    record_unscope(components.to_a)
     unscope_components!(components.to_a)
   end
 
@@ -1116,7 +1140,9 @@ class Grant::Query::Builder(Model)
       when :having
         clear_having_clauses
       when :joins
-        clear_join_clauses
+        drop_join_clauses!(left: false)
+      when :left_joins, :left_outer_joins
+        drop_join_clauses!(left: true)
       when :select
         @select_columns = nil
       when :distinct
@@ -1289,20 +1315,31 @@ class Grant::Query::Builder(Model)
 
   # Clause components `only` and `except` understand; the same table `unscope`
   # uses.
-  RELATION_COMPONENTS = [:where, :order, :limit, :offset, :group, :having, :joins, :select, :distinct, :lock, :from, :with]
+  RELATION_COMPONENTS = [:where, :order, :limit, :offset, :group, :having, :joins, :left_joins, :select, :distinct, :lock, :from, :with,
+                         :includes, :preload, :eager_load, :strict_loading, :readonly, :optimizer_hints, :annotate, :create_with, :reordering, :extending]
 
   # Returns a copy that keeps only the named clause *components* and drops the
   # rest. Components are `:where`, `:order`, `:limit`, `:offset`, `:group`,
-  # `:having`, `:joins`, `:select`, `:distinct` and `:lock`. Default-scope
-  # clauses are left alone, as with `unscope`. Raises `ArgumentError` for an
-  # unknown component.
+  # `:having`, `:joins`, `:left_joins`, `:select`, `:distinct`, `:lock`,
+  # `:from`, `:with`, the eager-loading lists `:includes`, `:preload` and
+  # `:eager_load`, and the flags and settings `:strict_loading`, `:readonly`,
+  # `:optimizer_hints`, `:annotate`, `:create_with`, `:reordering` and
+  # `:extending`. Default-scope clauses are left alone, as with `unscope`: they
+  # are what keeps a soft-delete or tenant filter in place (use `unscoped` to
+  # drop them on purpose). Raises `ArgumentError` for an unknown component.
   #
   # ```
   # User.where(active: true).order(:email).limit(5).only(:where)
   # # => WHERE active = ? (no ORDER BY, no LIMIT)
   # ```
   def only(*components : Symbol) : self
-    normalized = components.map { |component| component == :group_by ? :group : component }
+    normalized = components.map do |component|
+      case component
+      when :group_by         then :group
+      when :left_outer_joins then :left_joins
+      else                        component
+      end
+    end
     unknown = normalized.reject { |component| RELATION_COMPONENTS.includes?(component) }
     raise ArgumentError.new("only: unknown component #{unknown.first.inspect}") unless unknown.empty?
 
@@ -1723,7 +1760,7 @@ class Grant::Query::Builder(Model)
   # User.where(active: true).touch_all                # bump updated_at
   # User.where(active: true).touch_all(:last_seen_at) # also bump last_seen_at
   # ```
-  def touch_all(*fields, time : Time = Time.local(Grant.settings.default_timezone)) : Int64
+  def touch_all(*fields, time : Time = Grant::Timestamps.current_time) : Int64
     return 0_i64 if is_none?
 
     Model.guard_writes!
@@ -1945,12 +1982,16 @@ class Grant::Query::Builder(Model)
     associations.each { |spec| specs.concat(Grant::AssociationLoader.normalize(spec)) }
     specs.concat(Grant::AssociationLoader.normalize(nested_associations)) unless nested_associations.empty?
     own_eager_load_associations.concat(specs)
+    joins_before = @join_clauses
+    was_distinct = @distinct
     specs.each do |spec|
       case spec
       when Symbol then add_eager_load_join(spec)
       when Hash   then spec.each_key { |name| add_eager_load_join(name) }
       end
     end
+    # Remember what this call added, so `unscope(:eager_load)` can take it back.
+    record_eager_load_joins(@join_clauses - joins_before, !was_distinct && @distinct)
     self
   end
 
@@ -2160,15 +2201,16 @@ class Grant::Query::Builder(Model)
   # ```
   def merge!(other : self) : self
     reset_load_state
+    # Clauses the other relation unscoped are removed first, then its own
+    # conditions are added back.
+    merge_unscopes!(other)
     # Merge where conditions: an equality on a column the other relation also
     # constrains is replaced, not ANDed (see `merge_where_fields!`).
     merge_where_fields!(other)
 
-    # Merge order fields (other's order takes precedence if both have orders)
-    if other.order_fields.any?
-      @order_fields = other.order_fields.dup
-      @shared_arrays &= ~4_u16
-    end
+    # Merge order fields: the other relation's terms are appended (like
+    # ActiveRecord), or replace ours when it was built with `reorder`.
+    merge_order!(other)
 
     # Merge group fields
     other.group_fields.each do |field|
@@ -2251,7 +2293,7 @@ class Grant::Query::Builder(Model)
   # ```
   def select!(*columns : Symbol) : self
     reset_load_state
-    @select_columns = columns.map(&.to_s).to_a
+    @select_columns = columns.map { |column| resolve_column_alias(column.to_s) }.to_a
     self
   end
 
@@ -2286,3 +2328,5 @@ require "./aggregations"
 require "./pluck"
 require "./extract_associated"
 require "./typed_predicates"
+require "./relation_merging"
+require "./relation_rewrites"

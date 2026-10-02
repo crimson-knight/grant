@@ -43,7 +43,9 @@ module Grant::Sharding
       end
     end
 
-    COMPOSITE_ID_LAYOUT = /\A\d{4}_\d{2}_\d{2}_\d{13}(_|\z)/
+    # `CompositeId#generate_composite_id`, with or without its prefix
+    # (`ORD_2024_07_01_...`); the capture is the part that orders by time.
+    COMPOSITE_ID_LAYOUT = /\A(?:[A-Za-z][A-Za-z0-9]*_)?(\d{4}_\d{2}_\d{2}_\d{13}(?:_.*)?)\z/
 
     @time_ranges : Array(TimeRange)
 
@@ -77,8 +79,8 @@ module Grant::Sharding
         raise ShardNotFoundError.new("Value #{value} not in any defined range")
       end
 
-      if value.is_a?(String) && COMPOSITE_ID_LAYOUT.matches?(value)
-        range = @ranges.find(&.includes?(value))
+      if value.is_a?(String) && (tail = composite_tail(value))
+        range = @ranges.find(&.includes?(tail))
         return range.shard if range
         raise ShardNotFoundError.new("Value #{value} not in any defined range")
       end
@@ -97,8 +99,45 @@ module Grant::Sharding
     # than returning an empty or partial result.
     def shards_for_range(minimum : String | Int64, maximum : String | Int64) : Array(Symbol)?
       return nil unless minimum.is_a?(String) && maximum.is_a?(String)
-      return nil unless COMPOSITE_ID_LAYOUT.matches?(minimum) && COMPOSITE_ID_LAYOUT.matches?(maximum)
-      super
+      return nil unless low = composite_tail(minimum)
+      return nil unless high = composite_tail(maximum)
+      super(low, high)
+    end
+
+    # Pruning for a query bounded on one or both sides: `Time` bounds, or
+    # composite-ID `String` bounds (prefixed or not). Anything else is not
+    # comparable with the ranges and returns nil.
+    def shards_for_bounds(minimum : Grant::Columns::Type, maximum : Grant::Columns::Type, upper_exclusive : Bool = false) : Array(Symbol)?
+      return nil if minimum.nil? && maximum.nil?
+
+      if (minimum.nil? || minimum.is_a?(Time)) && (maximum.nil? || maximum.is_a?(Time))
+        return @time_ranges.select { |range| time_range_reaches?(range, minimum, maximum, upper_exclusive) }.map(&.shard).uniq
+      end
+
+      if (minimum.nil? || minimum.is_a?(String)) && (maximum.nil? || maximum.is_a?(String))
+        low = minimum.is_a?(String) ? composite_tail(minimum) : nil
+        high = maximum.is_a?(String) ? composite_tail(maximum) : nil
+        return nil if minimum.is_a?(String) && low.nil?
+        return nil if maximum.is_a?(String) && high.nil?
+        return @ranges.select(&.intersects?(low, high)).map(&.shard).uniq
+      end
+
+      nil
+    end
+
+    # The time-ordered part of a composite ID (`2024_07_01_<ms>_<hex>`), without
+    # a prefix such as `ORD_`; nil for any other string.
+    def composite_tail(value : String) : String?
+      match = COMPOSITE_ID_LAYOUT.match(value)
+      match ? match[1] : nil
+    end
+
+    private def time_range_reaches?(range : TimeRange, minimum : Time?, maximum : Time?, upper_exclusive : Bool) : Bool
+      return false if minimum && range.to <= minimum
+      if maximum
+        return false if upper_exclusive ? range.from >= maximum : range.from > maximum
+      end
+      true
     end
 
     # Shards that can hold rows from `now - span` through `now`.

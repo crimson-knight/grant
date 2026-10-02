@@ -138,7 +138,7 @@ module Grant::STI
 
     # :nodoc: allocate a plain root instance (the root itself is concrete).
     protected def self.allocate_root_instance : self
-      new
+      Grant::Scoping.hydrating { new }
     end
 
     macro inherited
@@ -174,7 +174,7 @@ module Grant::STI
       # Descendant-only columns are not in this subclass's SELECT, so they stay
       # nil (the documented base-query limitation, applied at each level).
       def self.from_rs(result : ::DB::ResultSet) : self
-        model = new
+        model = Grant::Scoping.hydrating { new }
         model.new_record = false
         model.from_rs result
         model.after_find if model.responds_to?(:after_find)

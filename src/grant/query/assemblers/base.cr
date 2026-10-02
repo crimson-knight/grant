@@ -726,11 +726,20 @@ module Grant::Query::Assembler
     end
 
     def touch_all(fields : Tuple, time : Time) : Int64
-      set_parts = ["#{Model.quote("updated_at")} = #{add_parameter(time)}"]
+      # The update timestamp columns the model declares (`updated_at`,
+      # `updated_on`), `updated_at` when it declares none; values follow the
+      # same stamping rules as a save (date-only `*_on`, `precision:`).
+      precision = Model.timestamp_precision
+      update_columns = Model.update_timestamp_columns
+      update_columns = ["updated_at"] if update_columns.empty?
+      set_parts = update_columns.map do |column_name|
+        "#{Model.quote(column_name)} = #{add_parameter(Grant::Timestamps.stamp(column_name, time, precision))}"
+      end
 
       # Add any additional fields to touch
       fields.each do |field|
-        set_parts << "#{Model.quote(field.to_s)} = #{add_parameter(time)}"
+        next if update_columns.includes?(field.to_s)
+        set_parts << "#{Model.quote(field.to_s)} = #{add_parameter(Grant::Timestamps.stamp(field.to_s, time, precision))}"
       end
 
       where_clause = if limited_or_joined_write?

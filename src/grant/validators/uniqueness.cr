@@ -34,7 +34,7 @@ module Grant::Validators
   macro validates_uniqueness_of(*fields, **options)
     {% message = options[:message] %}
     {% for field in fields %}
-      __rule({{field}}, {{message}}, :taken, kind: :uniqueness, {{options.double_splat}}) do
+      __rule({{field}}, "", :taken, kind: :uniqueness, {{options.double_splat}}) do
         next true if value.nil?
 
         {% if options[:case_sensitive] == false %}
@@ -87,7 +87,9 @@ module Grant::Validators
           end
         end
 
-        !query.exists?
+        next true unless query.exists?
+        record.errors.add({{field.id.stringify}}, :taken, message: Grant::Error.wrap_message({{message}}), value: value)
+        false
       end
     {% end %}
   end

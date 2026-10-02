@@ -374,6 +374,12 @@ abstract class Grant::Base
         query = query.promote_where_to_default_scope
       end
 
+      # A `scoping { }` block of a parent class (single table inheritance)
+      # applies to this class too.
+      if Fiber.current.grant_scoping_stacks && !_unscoped?
+        query = Grant::Scoping.merge_inherited(query, __lineage_names)
+      end
+
       query
     end
 
@@ -545,6 +551,7 @@ abstract class Grant::Base
       # ```
       def initialize(**args)
         ensure_dirty_tracking_initialized
+        __apply_scope_attributes
         set_attributes(args.to_h.transform_keys(&.to_s))
         establish_initial_dirty_baseline
         __after_initialize
@@ -561,6 +568,7 @@ abstract class Grant::Base
       # ```
       def initialize(args : Grant::ModelArgs)
         ensure_dirty_tracking_initialized
+        __apply_scope_attributes
         set_attributes(args.transform_keys(&.to_s))
         establish_initial_dirty_baseline
         __after_initialize
@@ -570,6 +578,7 @@ abstract class Grant::Base
       # records or arrays of records as well as scalar columns.
       def initialize(args : Hash(String | Symbol, T)) forall T
         ensure_dirty_tracking_initialized
+        __apply_scope_attributes
         set_attributes(args.transform_keys(&.to_s))
         establish_initial_dirty_baseline
         __after_initialize
@@ -585,6 +594,7 @@ abstract class Grant::Base
       # ```
       def initialize
         ensure_dirty_tracking_initialized
+        __apply_scope_attributes
         establish_initial_dirty_baseline
         __after_initialize
       end
@@ -598,6 +608,7 @@ abstract class Grant::Base
       # ```
       def initialize(**args, &)
         ensure_dirty_tracking_initialized
+        __apply_scope_attributes
         set_attributes(args.to_h.transform_keys(&.to_s))
         establish_initial_dirty_baseline
         yield self
@@ -609,10 +620,21 @@ abstract class Grant::Base
       # Attributes-hash form of the initializer block.
       def initialize(args : Grant::ModelArgs, &)
         ensure_dirty_tracking_initialized
+        __apply_scope_attributes
         set_attributes(args.transform_keys(&.to_s))
         establish_initial_dirty_baseline
         yield self
         __after_initialize
+      end
+
+      # Starts a new record from the attributes of the `scoping { }` relation
+      # in effect, so `Post.where(published: true).scoping { Post.new }` is
+      # published. Arguments passed to `new` are applied afterwards and win.
+      private def __apply_scope_attributes : Nil
+        return unless Fiber.current.grant_scoping_stacks
+
+        attributes = Grant::Scoping.new_record_attributes(self.class)
+        set_attributes(attributes) unless attributes.empty?
       end
 
       # Captures the values supplied to initialize as the initial baseline.
@@ -705,21 +727,34 @@ abstract class Grant::Base
       dirty_tracking_hashes[1].dup
     end
     
-    # Returns an array of names of attributes that have been changed.
+    # Returns the names of the attributes that have been changed (ActiveModel's
+    # `changed`).
     #
     # ```
     # user = User.find!(1)
     # user.name = "New Name"
     # user.email = "new@example.com"
-    # 
-    # user.changed_attributes # => ["name", "email"]
+    #
+    # user.changed # => ["name", "email"]
     # ```
-    def changed_attributes
+    def changed : Array(String)
       refresh_dirty
       ensure_dirty_tracking_initialized
       dirty_tracking_hashes[1].keys
     end
-    
+
+    # Returns the original value of every changed attribute, keyed by name
+    # (ActiveModel's `changed_attributes`). Values are the stored (database)
+    # representation, like `changes`; use `<attr>_was` for the column type.
+    #
+    # ```
+    # user.name = "New Name"
+    # user.changed_attributes # => {"name" => "Old Name"}
+    # ```
+    def changed_attributes : Hash(String, DirtyValue)
+      attributes_in_database
+    end
+
     # Returns the changes that were saved in the last save operation.
     #
     # This is useful for after_save callbacks to know what changed.
@@ -921,6 +956,7 @@ abstract class Grant::Base
       ensure_dirty_tracking_initialized
       @previous_changes = dirty_tracking_hashes[1].dup
       dirty_tracking_hashes[1].clear
+      clear_assigned_attributes
       @forced_changes.try &.clear
       dirty_tracking_hashes[0].clear
       @new_record = false

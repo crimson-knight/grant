@@ -1,8 +1,9 @@
+require "../connection_context"
+
 module Grant
   class ShardManager
     # Thread-safe storage for shard configurations
     @@shard_configs = {} of String => Sharding::ShardConfig
-    @@current_shard = {} of Fiber => Symbol?
     @@mutex = Mutex.new
 
     # Register shard configuration for a model
@@ -12,42 +13,57 @@ module Grant
       end
     end
 
-    # Execute within shard context
-    def self.with_shard(shard : Symbol, &block)
-      fiber = Fiber.current
-      previous = @@mutex.synchronize do
-        was = @@current_shard[fiber]?
-        @@current_shard[fiber] = shard
-        was
-      end
+    # Runs the block with *shard* as the active shard of this fiber, so every
+    # sharded model reaches that shard's database. This is an explicit shard
+    # swap: it raises `Grant::ShardSwappingProhibited` while
+    # `prohibit_shard_swapping` is active. Grant's own routing (a record going
+    # to the shard its key resolves to, a query fanning out over its shards)
+    # uses `route_to`, which the prohibition does not cover.
+    def self.with_shard(shard : Symbol, &)
+      guard_shard_swap!(shard)
+      route_to(shard) { yield }
+    end
 
-      # Set connection context using Fiber-local storage
-      # This replaces the Thread.current usage
+    # Raises `Grant::ShardSwappingProhibited` when the current fiber is inside
+    # `prohibit_shard_swapping`. *shard* names the target in the message.
+    #
+    # :nodoc:
+    def self.guard_shard_swap!(shard : Symbol? = nil) : Nil
+      return unless state = ConnectionState.current?
+      return unless state.shard_swapping_prohibited?
+
+      target = shard ? " to shard #{shard.inspect}" : ""
+      raise Grant::ShardSwappingProhibited.new(
+        "Cannot switch#{target} while shard swapping is prohibited")
+    end
+
+    # Runs the block with *shard* active without the shard-swapping check:
+    # routing Grant does on the data's behalf. The pinned shard lives in the
+    # fiber's `ConnectionState`, so no lock is taken per query.
+    #
+    # :nodoc:
+    def self.route_to(shard : Symbol, &)
+      state = ConnectionState.current
+      previous = state.pinned_shard
+      state.pinned_shard = shard
       begin
         yield
       ensure
-        # Delete the entry when restoring to nil to avoid a memory leak
-        # where long-lived fibers accumulate dead entries in the hash.
-        @@mutex.synchronize do
-          if prev = previous
-            @@current_shard[fiber] = prev
-          else
-            @@current_shard.delete(fiber)
-          end
-        end
+        state.pinned_shard = previous
       end
     end
 
-    # Get current shard for fiber
+    # The shard active for this fiber, or `nil`.
     def self.current_shard : Symbol?
-      fiber = Fiber.current
-      @@mutex.synchronize { @@current_shard[fiber]? }
+      return nil unless state = ConnectionState.current?
+
+      state.pinned_shard
     end
 
-    # Set current shard (used internally)
+    # Pins the current fiber to *shard* (or clears it with `nil`) until changed
+    # again. Prefer `with_shard`, which restores the previous shard.
     def self.set_current_shard(shard : Symbol?)
-      fiber = Fiber.current
-      @@mutex.synchronize { @@current_shard[fiber] = shard }
+      ConnectionState.current.pinned_shard = shard
     end
 
     # Resolve shard for given keys
@@ -111,8 +127,8 @@ module Grant
     def self.clear
       @@mutex.synchronize do
         @@shard_configs.clear
-        @@current_shard.clear
       end
+      set_current_shard(nil)
     end
 
     # Get statistics about shard distribution

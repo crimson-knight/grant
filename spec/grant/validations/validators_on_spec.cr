@@ -99,6 +99,6 @@ describe "validator reflection" do
   it "does not change validation behavior" do
     person = V02vPerson.new(name: "a")
     person.valid?.should be_false
-    person.errors.full_messages.should contain("Name must be at least 2 characters and at most 40 characters")
+    person.errors.full_messages.should contain("Name is too short (minimum is 2 characters)")
   end
 end

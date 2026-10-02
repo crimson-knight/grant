@@ -43,16 +43,22 @@ module Grant::EnumAttributes
   # * **predicates** `#draft? : Bool`, `#published? : Bool`, `#archived? : Bool`
   #   — true when `status` equals that member;
   # * **bang-setters** `#draft!`, `#published!`, `#archived!` — assign that member
-  #   and, on a persisted record, `save!` it (one UPDATE; validations and
-  #   callbacks run; raises `Grant::RecordInvalid` on failure). A new record is
-  #   only assigned;
+  #   and `save!` it, like Rails' `update!` (one INSERT or UPDATE; validations
+  #   and callbacks run; raises `Grant::RecordInvalid` on failure);
   # * **in-memory setters** `#assign_draft`, `#assign_published`, ... — assign
   #   without saving;
   # * **scopes** `.draft`, `.published`, `.archived` and negated
   #   `.not_draft`, ... — class methods returning a query filtered to that member;
   # * `#status=(String | Symbol)` — assigns by member name;
-  # * `.statuses` — all enum values (`Array(Status)`);
-  # * `.status_mapping` — a `Hash` of underscored member name ⇒ enum value.
+  # * `.statuses` — Rails' mapping: a `Hash` of underscored member name ⇒ enum
+  #   value (`Status.values` lists the members);
+  # * `.status_mapping` — the same hash, kept for older callers;
+  # * `#status_previously_was` — the member before the last save.
+  #
+  # Mass assignment (`new`, `assign_attributes`) accepts a member, a name or a
+  # symbol; an unknown name raises (or fails validation with `validate:`) the
+  # same way `status = "bogus"` does. `normalizes` may be declared on the same
+  # column.
   #
   # Options: `prefix:` / `suffix:` (true, a Symbol or a String) rename the
   # generated methods, `scopes: false` skips the scopes, and `validate: true`
@@ -77,7 +83,7 @@ module Grant::EnumAttributes
   # p.published!   # => Post::Status::Published
   # p.published?   # => true
   # Post.published # => query scoped to status == Published
-  # Post.statuses  # => [Post::Status::Draft, Post::Status::Published]
+  # Post.statuses  # => {"draft" => Post::Status::Draft, "published" => Post::Status::Published}
   # ```
   macro enum_attribute(decl, **options)
     {%
@@ -137,13 +143,12 @@ module Grant::EnumAttributes
         self.{{name}} = {{enum_type}}::{{member}}
       end
 
-      # Sets the value and, on a persisted record, saves it like Rails'
-      # `update!` (validations and callbacks run, one UPDATE round trip;
-      # raises on failure). A new record only has the value assigned: use
-      # `save!` to insert it. Returns the enum member.
+      # Sets the value and saves it like Rails' `update!` (validations and
+      # callbacks run, one INSERT or UPDATE round trip; raises on failure).
+      # Use `assign_<member>` to set it in memory only. Returns the enum member.
       def {{method_name.id}}! : {{enum_type}}
         self.{{name}} = {{enum_type}}::{{member}}
-        save! if persisted?
+        save!
         {{enum_type}}::{{member}}
       end
 
@@ -167,17 +172,17 @@ module Grant::EnumAttributes
     {% else %}
       {% plural_name = plural_name + "s" %}
     {% end %}
-    def self.{{plural_name.id}}
-      {{enum_type}}.values
+    def self.{{plural_name.id}} : Hash(String, {{enum_type}})
+      {{name.id}}_mapping
     end
 
     # Return mapping of enum names to values
-    def self.{{name.id}}_mapping
+    def self.{{name.id}}_mapping : Hash(String, {{enum_type}})
       {
         {% for member in enum_type.constants %}
           {{member.underscore.stringify}} => {{enum_type}}::{{member}},
         {% end %}
-      }
+      } of String => {{enum_type}}
     end
 
     # Looks a member up by its underscored name (String or Symbol), or by
@@ -227,10 +232,22 @@ module Grant::EnumAttributes
     @_invalid_enum_{{name.id}} : String? = nil
 
     # Any assignment through the column setter (a member or nil) replaces a
-    # previously remembered unknown name, so validation reflects the latest value.
-    private def __assign_hook_{{name.id}}(value)
+    # previously remembered unknown name, so validation reflects the latest
+    # value. (A separate hook from `__assign_hook_*`, which `normalizes` owns.)
+    private def __after_assign_{{name.id}}(value)
       @_invalid_enum_{{name.id}} = nil
-      value
+    end
+
+    # Mass assignment of a name or symbol goes through `status=(String | Symbol)`
+    # so an unknown name follows `validate:` instead of becoming a conversion
+    # error.
+    private def __mass_assign_special_{{name.id}}(value) : Bool
+      if value.is_a?(String) || value.is_a?(Symbol)
+        self.{{name.id}} = value
+        true
+      else
+        false
+      end
     end
 
     def {{name.id}}=(value : String | Symbol)

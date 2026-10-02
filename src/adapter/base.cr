@@ -28,6 +28,13 @@ abstract class Grant::Adapter::Base
   property keepalive : Time::Span? = nil
   property max_age : Time::Span? = nil
 
+  # A connection that has sat idle at least this long is checked with
+  # `SELECT 1` as it is taken from the pool, and replaced when the check fails,
+  # so a server restart or failover costs one cheap probe instead of a failed
+  # statement. Connections used more recently are never probed, so the busy
+  # path pays one clock read. `nil` turns the check off.
+  property verify_idle_after : Time::Span? = 30.seconds
+
   # Checkouts in progress and fibers blocked waiting for one. Plain atomics, so
   # reading pool statistics or picking a replica never takes a lock.
   @active_checkouts = Atomic(Int32).new(0)
@@ -155,7 +162,7 @@ abstract class Grant::Adapter::Base
     ping
   rescue ex : ::Exception
     translated = translate_exception(ex)
-    raise translated if translated.is_a?(Grant::ConnectionNotEstablished)
+    raise translated if translated.is_a?(Grant::ConnectionNotEstablished) || translated.is_a?(Grant::NoDatabaseError)
     raise Grant::ConnectionFailed.new("Could not reach #{name}: #{ex.message}", cause: ex)
   end
 
@@ -163,7 +170,7 @@ abstract class Grant::Adapter::Base
   def active? : Bool
     verify!
     true
-  rescue Grant::ConnectionNotEstablished
+  rescue Grant::ConnectionNotEstablished | Grant::NoDatabaseError
     false
   end
 
@@ -305,7 +312,7 @@ abstract class Grant::Adapter::Base
       begin
         return yield schema_conn
       rescue ex : ::Exception
-        raise translate_exception(ex, sql, binds)
+        raise translate_exception(ex, sql || schema_conn.grant_last_sql, binds)
       end
     end
 
@@ -318,7 +325,7 @@ abstract class Grant::Adapter::Base
       begin
         return yield tx_conn
       rescue ex : ::Exception
-        raise translate_exception(ex, sql, binds)
+        raise translate_exception(ex, sql || tx_conn.grant_last_sql, binds)
       end
     end
 
@@ -329,7 +336,7 @@ abstract class Grant::Adapter::Base
       begin
         return yield pinned
       rescue ex : ::Exception
-        raise translate_exception(ex, sql, binds)
+        raise translate_exception(ex, sql || pinned.grant_last_sql, binds)
       end
     end
 
@@ -379,7 +386,7 @@ abstract class Grant::Adapter::Base
     attempt = 0
     loop do
       begin
-        return checked_out { |conn| yield conn }
+        return checked_out(sql, binds) { |conn| yield conn }
       rescue ex : ::DB::ConnectionLost
         raise ex if lost_retries == 0
         lost_retries -= 1
@@ -391,7 +398,7 @@ abstract class Grant::Adapter::Base
     raise translate_exception(ex, sql, binds)
   end
 
-  private def checked_out(&)
+  private def checked_out(sql : String? = nil, binds = nil, &)
     connection = checkout_connection
     @active_checkouts.add(1)
     @last_used_ticks.set(Grant::Adapter::PoolSupport.ticks)
@@ -402,12 +409,16 @@ abstract class Grant::Adapter::Base
     rescue ex : ::Exception
       if ex.message =~ /client was disconnected/
         raise ::DB::ConnectionLost.new(connection)
+      elsif sql.nil?
+        # A caller that passed no SQL still gets the statement that failed.
+        raise translate_exception(ex, connection.grant_last_sql, binds)
       else
         raise ex
       end
     ensure
       @active_checkouts.sub(1)
       connection.close if aged?(connection)
+      connection.grant_last_used_ticks = Grant::Adapter::PoolSupport.ticks
       connection.release
     end
   end
@@ -427,7 +438,8 @@ abstract class Grant::Adapter::Base
     begin
       loop do
         begin
-          return database.checkout
+          connection = database.checkout
+          return connection if usable_after_idle?(connection)
         rescue ex : ::DB::PoolResourceRefused
           raise ex if attempt >= @retry_attempts
           sleep Grant::Adapter::PoolSupport.backoff(@retry_delay, attempt)
@@ -439,6 +451,36 @@ abstract class Grant::Adapter::Base
     end
   end
 
+  # False, after discarding *connection*, when it sat idle past
+  # `verify_idle_after` and no longer answers. The probe runs only after the
+  # idle threshold, never per checkout.
+  private def usable_after_idle?(connection : DB::Connection) : Bool
+    return true unless threshold = @verify_idle_after
+
+    now = Grant::Adapter::PoolSupport.ticks
+    return true if now - connection.grant_last_used_ticks < threshold.total_milliseconds
+
+    begin
+      verify_idle_connection(connection)
+      connection.grant_last_used_ticks = now
+      true
+    rescue probe_error : ::Exception
+      Grant::Log.debug(exception: probe_error) { "Idle connection to #{name} failed its probe and was discarded" }
+      begin
+        connection.close
+      rescue close_error : ::Exception
+        Grant::Log.debug(exception: close_error) { "Closing a dead idle connection to #{name} failed" }
+      end
+      connection.release
+      false
+    end
+  end
+
+  # The probe run on a connection that sat idle. Adapters keep the default.
+  protected def verify_idle_connection(connection : DB::Connection) : Nil
+    connection.scalar("SELECT 1")
+  end
+
   # Maps a driver failure to the matching `Grant::ErrorBase` subclass and
   # returns it. An exception Grant does not recognize is returned unchanged, so
   # control-flow exceptions and unknown driver errors keep propagating as they
@@ -447,7 +489,27 @@ abstract class Grant::Adapter::Base
   #
   # Only called from a `rescue`, so it costs nothing when statements succeed.
   def translate_exception(ex : ::Exception, sql : String? = nil, binds = nil) : ::Exception
+    if ex.is_a?(::DB::ConnectionRefused)
+      if kind = connect_failure_kind(ex)
+        return Grant::Adapter::ErrorTranslator.build(kind, connect_failure_message(ex), sql, binds, ex)
+      end
+      return Grant::ConnectionFailed.new(connect_failure_message(ex), cause: ex)
+    end
+
     Grant::Adapter::ErrorTranslator.translate_pool_error(ex) || ex
+  end
+
+  # What a refused connection says about the target, read from the driver's own
+  # error (`ex.cause`), which crystal-db leaves unspoken in `ex.message`: an
+  # adapter returns `Kind::NoDatabase` when the server or file names a database
+  # that does not exist, and `nil` for any other refusal.
+  protected def connect_failure_kind(ex : ::DB::ConnectionRefused) : Grant::Adapter::ErrorTranslator::Kind?
+    nil
+  end
+
+  private def connect_failure_message(ex : ::DB::ConnectionRefused) : String
+    detail = ex.cause.try(&.message) || ex.message
+    "Could not connect to #{name}#{detail ? ": #{detail}" : ""}"
   end
 
   def log(query : String, elapsed_time : Time::Span, params = [] of String) : Nil

@@ -116,14 +116,15 @@ describe "Automatic timestamps" do
       statements.first.should_not contain("created_on")
       statements.first.should contain("updated_on")
       row.created_on.should eq(created)
-      row.updated_on.not_nil!.should be > created.not_nil!
+      # *_on columns hold dates: both are today's date at midnight UTC.
+      row.updated_on.not_nil!.should be >= created.not_nil!
     end
 
     it "is refreshed by touch" do
       row = OnColumnRow.create!(name: "a")
       pinned = Time.utc(2020, 1, 2, 3, 4, 5)
       row.touch(time: pinned)
-      OnColumnRow.find!(row.id).updated_on.not_nil!.to_utc.should eq(pinned)
+      OnColumnRow.find!(row.id).updated_on.not_nil!.to_utc.should eq(Time.utc(2020, 1, 2))
     end
   end
 

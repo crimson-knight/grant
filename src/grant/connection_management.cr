@@ -356,6 +356,9 @@ module Grant::ConnectionManagement
   #
   # A class that declares nothing inherits its superclass's settings when they
   # are read, so `connects_to` on an abstract parent applies to every subclass.
+  # A class that calls `connects_to` owns its whole declaration, as in
+  # ActiveRecord: the roles and shards it does not name are not taken from the
+  # superclass.
   #
   # The named connections themselves must be established separately with
   # `Grant::ConnectionRegistry.establish_connection`.
@@ -399,6 +402,10 @@ module Grant::ConnectionManagement
           {{role.id.symbolize}} => {{db_name.id.stringify}},
         {% end %}
       } of Symbol => String
+    {% else %}
+      # A class that calls connects_to owns its whole declaration: roles it
+      # does not name are not taken from its superclass.
+      self.connection_config = {} of Symbol => String
     {% end %}
 
     {% if shards %}
@@ -414,6 +421,8 @@ module Grant::ConnectionManagement
           } of Symbol => String,
         {% end %}
       } of Symbol => Hash(Symbol, String)
+    {% else %}
+      self.shard_config = {} of Symbol => Hash(Symbol, String)
     {% end %}
 
     Grant::ConnectionHandling.declare({{@type.name.stringify}}, -> { {{@type}}.connection_names })
@@ -604,6 +613,45 @@ module Grant::ConnectionManagement
         contexts.pop(contexts.size - depth) if contexts.size > depth
         state.block_floor = outer_floor
       end
+    end
+
+    # `connected_to` with a role hash, as ActiveRecord's
+    # `connected_to(database: {reading: :replica})`: *database* maps a role to
+    # the connection to use. The role is *role*, or the hash's only key. The
+    # block then runs with that role and connection.
+    #
+    # ```
+    # User.connected_to(database: {reading: "primary_replica"}) { User.count }
+    # ```
+    def connected_to(
+      *,
+      database : NamedTuple,
+      role : Symbol? = nil,
+      shard : Symbol? = nil,
+      prevent_writes : Bool = false,
+      &block : -> T
+    ) : T forall T
+      roles = {} of Symbol => String
+      database.each { |key, name| roles[key] = name.to_s }
+      connected_to(database: roles, role: role, shard: shard, prevent_writes: prevent_writes) { yield }
+    end
+
+    # :ditto:
+    def connected_to(
+      *,
+      database : Hash(Symbol, String),
+      role : Symbol? = nil,
+      shard : Symbol? = nil,
+      prevent_writes : Bool = false,
+      &block : -> T
+    ) : T forall T
+      chosen = role || (database.size == 1 ? database.first_key : nil)
+      unless chosen
+        raise ArgumentError.new("connected_to(database: {...}) with #{database.size} roles needs role: to pick one of #{database.keys.join(", ")}")
+      end
+      name = database[chosen]? || raise ArgumentError.new(
+        "connected_to(database:) has no connection for role #{chosen.inspect}; it names #{database.keys.join(", ")}")
+      connected_to(database: name, role: chosen, shard: shard, prevent_writes: prevent_writes) { yield }
     end
 
     # Switches this fiber to the given *role*, *shard*, and/or *database*
@@ -834,6 +882,15 @@ module Grant::ConnectionManagement
       resolve_adapter_for_role(current_role)
     end
 
+    # The adapter serving *shard* in *role*, whatever shard is active: the
+    # connection `connects_to(shards: ...)` names for that shard and role, else
+    # the model's own database registered under that shard. `Sharding::Model`
+    # resolves its shard from the data and calls this. It never falls back to
+    # another registered connection.
+    def adapter_for_shard(shard : Symbol, role : Symbol = current_role) : Grant::Adapter::Base
+      resolve_adapter_for_role(role, shard, fallback: false)
+    end
+
     # Resolves a model's connection for an explicit raw-SQL operation role.
     # An active `connected_to` role takes precedence, matching the surrounding
     # connection context; otherwise *role* selects the model's configured
@@ -842,27 +899,48 @@ module Grant::ConnectionManagement
       resolve_adapter_for_role(connection_context.try(&.role) || role)
     end
 
-    private def resolve_adapter_for_role(role : Symbol) : Grant::Adapter::Base
-      shard = current_shard
+    private def resolve_adapter_for_role(role : Symbol, shard : Symbol? = current_shard, fallback : Bool = true) : Grant::Adapter::Base
       registry_role = Grant::ConnectionManagement.registry_role(role)
       configured_role = Grant::ConnectionManagement.canonical_role(role)
+
+      # The `:default` shard is the unsharded connection, so it carries no
+      # shard key in the registry.
+      shard = nil if shard == :default && shard_config.has_key?(:default)
 
       # Determine database name
       db_name = if shard
                   # For sharded connections, look up the database name
                   shard_settings = shard_config[shard]?
                   shard_settings.try(&.[configured_role]?) || current_database
+                elsif ctx_db = connection_context_database
+                  # An explicit `connected_to(database:)` names the connection.
+                  ctx_db
                 elsif role_db = connection_config[configured_role]? || connection_config[role]?
                   # For role-based connections; `:primary` is the writing role
                   role_db
+                elsif default_settings = shard_config[:default]?
+                  # No role-based declaration: the `:default` shard serves the
+                  # unsharded connection.
+                  default_settings[configured_role]? || default_settings[:writing]? || current_database
                 else
                   # Default database
                   current_database
                 end
 
+      # A connection that `connects_to(shards:)` names for this shard is
+      # registered under its own name; one registered with the shard key is
+      # found by it.
+      if shard && shard_config[shard]?.try(&.has_key?(configured_role)) && !registered_for_shard?(db_name, registry_role, shard)
+        shard = nil
+      end
+
       begin
         ConnectionRegistry.get_adapter(db_name, registry_role, shard)
       rescue ex : Grant::AdapterNotAvailableError
+        # A sharded model never borrows another connection: that would send a
+        # shard's rows to the wrong database.
+        raise ex unless fallback
+
         # Fallback to first registered connection for backward compatibility.
         # This handles legacy setups where a model references a connection name
         # that was not explicitly registered but a single global connection
@@ -875,6 +953,13 @@ module Grant::ConnectionManagement
           raise ex
         end
       end
+    end
+
+    private def registered_for_shard?(database : String, registry_role : Symbol, shard : Symbol) : Bool
+      registry = Grant::ConnectionRegistry
+      registry.connection_exists?(database, registry_role, shard) ||
+        registry.connection_exists?(database, :primary, shard) ||
+        (registry_role == :reading && registry.connection_exists?(database, :writing, shard))
     end
 
     # Returns a raw connection facade for this model. Connection calls do not

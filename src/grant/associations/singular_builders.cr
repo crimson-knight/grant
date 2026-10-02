@@ -60,7 +60,7 @@ module Grant::Associations
     def build_{{method_name.id}}(**attributes) : {{class_name.id}}
       child = {{class_name.id}}.new(**attributes)
       _grant_displace_{{method_name.id}}
-      self.{{method_name.id}} = child
+      _grant_assign_{{method_name.id}}(child)
       child
     end
 
@@ -69,7 +69,7 @@ module Grant::Associations
       child = {{class_name.id}}.new(**attributes)
       self.class.transaction do
         _grant_displace_{{method_name.id}}
-        self.{{method_name.id}} = child
+        _grant_assign_{{method_name.id}}(child)
         child.save
       end
       child
@@ -80,7 +80,7 @@ module Grant::Associations
       child = {{class_name.id}}.new(**attributes)
       self.class.transaction do
         _grant_displace_{{method_name.id}}
-        self.{{method_name.id}} = child
+        _grant_assign_{{method_name.id}}(child)
         child.save!
       end
       child
