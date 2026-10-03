@@ -418,16 +418,7 @@ module Grant::Columns
             new_db_value = value.is_a?(Grant::Base::DirtyValue) ? value : value.to_s.as(Grant::Base::DirtyValue)
           {% end %}
 
-          if old_db_value != new_db_value
-            originals = dirty_originals
-            originals[{{decl.var.stringify}}] = old_db_value unless originals.has_key?({{decl.var.stringify}})
-            original = originals[{{decl.var.stringify}}]
-            if original == new_db_value
-              @changed_attributes.try(&.delete({{decl.var.stringify}}))
-            else
-              dirty_pending[{{decl.var.stringify}}] = {original, new_db_value}
-            end
-          end
+          record_dirty_assignment({{decl.var.stringify}}, old_db_value, new_db_value)
         end
 
         discard_before_type_cast({{decl.var.stringify}})
@@ -535,16 +526,7 @@ module Grant::Columns
             new_db_value = value.is_a?(Grant::Base::DirtyValue) ? value : value.to_s.as(Grant::Base::DirtyValue)
           {% end %}
 
-          if old_db_value != new_db_value
-            originals = dirty_originals
-            originals[{{decl.var.stringify}}] = old_db_value unless originals.has_key?({{decl.var.stringify}})
-            original = originals[{{decl.var.stringify}}]
-            if original == new_db_value
-              @changed_attributes.try(&.delete({{decl.var.stringify}}))
-            else
-              dirty_pending[{{decl.var.stringify}}] = {original, new_db_value}
-            end
-          end
+          record_dirty_assignment({{decl.var.stringify}}, old_db_value, new_db_value)
         end
 
         discard_before_type_cast({{decl.var.stringify}})
