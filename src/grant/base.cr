@@ -551,22 +551,6 @@ abstract class Grant::Base
       @changed_attributes ||= {} of String => Tuple(DirtyValue, DirtyValue)
     end
 
-    # Applies one column's database-form values to the shared dirty hashes.
-    # Column setters keep their type-specific conversion, then use this common
-    # path for the name-keyed bookkeeping.
-    private def record_dirty_assignment(attribute_name : String, old_value : DirtyValue, new_value : DirtyValue) : Nil
-      return if old_value == new_value
-
-      originals = dirty_originals
-      originals[attribute_name] = old_value unless originals.has_key?(attribute_name)
-      original = originals[attribute_name]
-      if original == new_value
-        @changed_attributes.try(&.delete(attribute_name))
-      else
-        dirty_pending[attribute_name] = {original, new_value}
-      end
-    end
-
     # True once any dirty hash exists. A record that was loaded and never
     # assigned a column has none.
     #
