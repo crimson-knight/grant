@@ -1,0 +1,179 @@
+{
+  "version": 1,
+  "measurement_commit": "2fef4d6db190ebd031bf321962c051c18c493a65",
+  "compile": {
+    "unit": "decimal MB of peak RSS",
+    "headroom_percent": 5,
+    "measurement_runs": 3,
+    "runner_note": "All five compile probes run sequentially on ubuntu-latest (16 GB); none are skipped. Measured values use the maximum across three complete checks on the final source; the largest observed debug probe was 6.3 GB RSS.",
+    "probes": {
+      "assoc_one_200_semantic": {
+        "kind": "peak",
+        "workload": "assoc_one",
+        "count": 200,
+        "mode": "semantic",
+        "measured_mb": 1711.8,
+        "limit_mb": 1797.4
+      },
+      "lifecycle_debug": {
+        "kind": "peak",
+        "path": "bench/lifecycle_bench.cr",
+        "mode": "debug",
+        "measured_mb": 1851.5,
+        "limit_mb": 1944.1
+      },
+      "association_regressions_debug": {
+        "kind": "peak",
+        "path": "spec/grant/associations/association_regressions_spec.cr",
+        "mode": "debug",
+        "measured_mb": 6255.1,
+        "limit_mb": 6567.9
+      },
+      "query_slope_10_200": {
+        "kind": "slope",
+        "workload": "query",
+        "low": 10,
+        "high": 200,
+        "mode": "semantic",
+        "measured_mb": 18.6,
+        "limit_mb": 19.6
+      },
+      "assoc_slope_10_200": {
+        "kind": "slope",
+        "workload": "assoc",
+        "low": 10,
+        "high": 200,
+        "mode": "semantic",
+        "measured_mb": 21.8,
+        "limit_mb": 22.9
+      }
+    }
+  },
+  "runtime": {
+    "adapter": "sqlite",
+    "variant": "perf03-builder",
+    "iterations": 2000,
+    "rounds": 5,
+    "runs_averaged": 3,
+    "command": "BENCH_ADAPTER=sqlite crystal-alpha build --release bench/lifecycle_bench.cr -o /tmp/perf03_lifecycle_after_builder; run binary 3 times with --iterations 2000 --rounds 5 --grant-only --json",
+    "local_headroom_percent": 10,
+    "ci_time_multiplier": 1.5,
+    "ci_bytes_headroom_percent": 5,
+    "ci_note": "The local mean limit is 10% above the highest of three run means. CI permits 50% above the three-run average for shared-runner timing noise; allocated bytes are limited to 5% above the highest observed run.",
+    "operations": {
+      "build (no database)": {
+        "measured_mean_microseconds": 0.552928,
+        "maximum_observed_mean_microseconds": 0.69767,
+        "measured_bytes_per_operation": 1164.859,
+        "maximum_observed_bytes_per_operation": 1167.074,
+        "local": {
+          "mean_limit_microseconds": 0.768,
+          "bytes_limit_per_operation": 1284
+        },
+        "ci": {
+          "mean_limit_microseconds": 0.83,
+          "bytes_limit_per_operation": 1226
+        }
+      },
+      "create": {
+        "measured_mean_microseconds": 37.760106,
+        "maximum_observed_mean_microseconds": 38.362202,
+        "measured_bytes_per_operation": 8941.712,
+        "maximum_observed_bytes_per_operation": 8944.253,
+        "local": {
+          "mean_limit_microseconds": 42.199,
+          "bytes_limit_per_operation": 9839
+        },
+        "ci": {
+          "mean_limit_microseconds": 56.641,
+          "bytes_limit_per_operation": 9392
+        }
+      },
+      "find by id": {
+        "measured_mean_microseconds": 4.125775,
+        "maximum_observed_mean_microseconds": 4.260993,
+        "measured_bytes_per_operation": 1645.333,
+        "maximum_observed_bytes_per_operation": 1648.337,
+        "local": {
+          "mean_limit_microseconds": 4.688,
+          "bytes_limit_per_operation": 1814
+        },
+        "ci": {
+          "mean_limit_microseconds": 6.189,
+          "bytes_limit_per_operation": 1731
+        }
+      },
+      "page of 100 by index": {
+        "measured_mean_microseconds": 31.42066,
+        "maximum_observed_mean_microseconds": 31.71414,
+        "measured_bytes_per_operation": 27115.253,
+        "maximum_observed_bytes_per_operation": 27172.16,
+        "local": {
+          "mean_limit_microseconds": 34.886,
+          "bytes_limit_per_operation": 29890
+        },
+        "ci": {
+          "mean_limit_microseconds": 47.131,
+          "bytes_limit_per_operation": 28531
+        }
+      },
+      "load all 2000 rows": {
+        "measured_mean_microseconds": 975.693278,
+        "maximum_observed_mean_microseconds": 1103.326333,
+        "measured_bytes_per_operation": 1288648.0,
+        "maximum_observed_bytes_per_operation": 1289097.333,
+        "local": {
+          "mean_limit_microseconds": 1213.659,
+          "bytes_limit_per_operation": 1418008
+        },
+        "ci": {
+          "mean_limit_microseconds": 1463.54,
+          "bytes_limit_per_operation": 1353553
+        }
+      },
+      "count": {
+        "measured_mean_microseconds": 65.38222,
+        "maximum_observed_mean_microseconds": 67.61126,
+        "measured_bytes_per_operation": 3343.573,
+        "maximum_observed_bytes_per_operation": 3383.52,
+        "local": {
+          "mean_limit_microseconds": 74.373,
+          "bytes_limit_per_operation": 3722
+        },
+        "ci": {
+          "mean_limit_microseconds": 98.074,
+          "bytes_limit_per_operation": 3553
+        }
+      },
+      "load and update": {
+        "measured_mean_microseconds": 28.993838,
+        "maximum_observed_mean_microseconds": 34.891608,
+        "measured_bytes_per_operation": 10666.187,
+        "maximum_observed_bytes_per_operation": 10667.646,
+        "local": {
+          "mean_limit_microseconds": 38.381,
+          "bytes_limit_per_operation": 11735
+        },
+        "ci": {
+          "mean_limit_microseconds": 43.491,
+          "bytes_limit_per_operation": 11202
+        }
+      },
+      "load and destroy": {
+        "measured_mean_microseconds": 28.77161,
+        "maximum_observed_mean_microseconds": 34.552805,
+        "measured_bytes_per_operation": 3027.798,
+        "maximum_observed_bytes_per_operation": 3030.467,
+        "local": {
+          "mean_limit_microseconds": 38.009,
+          "bytes_limit_per_operation": 3334
+        },
+        "ci": {
+          "mean_limit_microseconds": 43.158,
+          "bytes_limit_per_operation": 3182
+        }
+      }
+    },
+    "measurement_commit": "2630a6e60bf8ab8965bf07024fc2924dedfa9d3b"
+  }
+}

@@ -10,7 +10,8 @@ Numbers are the compiler's peak resident set in MB (decimal), with an empty
 `CRYSTAL_CACHE_DIR`, one compile at a time through `crystal-slot`, on
 crystal-alpha 1.21.0. "Before" is `parity/wave-6` at `8bb661d`; "after" is this
 branch. "Semantic" is `crystal build --no-codegen`; "debug" is a plain
-`crystal build`.
+`crystal build`. Current CI limits and local reproduction commands are in
+[`docs/PERFORMANCE_BUDGETS.md`](PERFORMANCE_BUDGETS.md).
 
 ## What changed
 
@@ -165,3 +166,98 @@ BENCH_DATABASE_URL=sqlite3:/tmp/lifecycle.db /tmp/lifecycle --iterations 2000 --
 
 The investigation this work follows, with its ablations and generator
 scripts, is `parity-audit-2026-09-28/evidence/compile_memory/codex_report.md`.
+
+## PERF03: shared query work and measured budgets
+
+PERF03 kept the public block APIs yield-based and changed only Grant's internal
+save transaction route. `Transaction.run_without_result` captures the save
+body as a typed `Proc(Nil)`, so the transaction runner is shared. The query
+list executor now passes row hydration through a fixed-signature loader to one
+non-generic cursor runner. Association restriction discovery and replay moved
+to one non-generic resolver that takes the model name and relation state as
+values. A PostgreSQL boolean query compatibility fix was needed first because
+the starting commit did not compile the lifecycle benchmark with its locked
+`db` dependency; the SQLite path used for runtime measurements was unchanged.
+
+The first row is the PERF03 starting measurement supplied for `da1e061`. Later
+rows are the before/after measurements from each attempted code change. The
+column setter experiment is included for transparency and was reverted because
+it did not produce a reliable compile improvement.
+
+| Step | Query slope MB/model | Association slope MB/model | `assoc_one` 200 semantic MB | Lifecycle debug MB | Association regression debug MB |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| PERF03 starting point | 19.5 | 22.9 | 1,690.0 | 1,804.0 | 6,887.0 |
+| Transaction Proc path (`97d8194`) | 19.58 → 19.70 | 22.75 → 22.73 | 1,632.8 → 1,661.8 | 1,863.8 → 1,845.3 | 6,696.5 → 6,230.2 |
+| Shared list cursor runner (`c1b8abe`) | 19.70 → 19.22 | 22.73 → 22.42 | 1,661.8 → 1,632.8 | 1,845.3 → 1,871.4 | 6,230.2 → 5,770.7 |
+| Shared association restriction resolver (`2630a6e`) | 19.22 → 18.48 | 22.42 → 21.79 | 1,632.8 → 1,632.8 | 1,871.4 → 1,841.5 | 5,770.7 → 5,819.2 |
+| Column dirty-assignment experiment (`89209a4`, reverted) | 18.48 → 18.65 | 21.79 → 21.62 | 1,632.8 → 1,614.7 | 1,841.5 → 1,828.1 | 5,819.2 → 6,277.1 |
+| Final source, budget measurement | 18.6 | 21.8 | 1,711.8 | 1,851.5 | 6,255.1 |
+
+The retained changes lowered the association regression debug build by about
+9% from the starting measurement and lowered the semantic slopes by about 5%.
+The one-query associated declaration probe and lifecycle debug build did not
+improve reliably. Final budget inputs are the maximum of three complete
+`scripts/compile_memory.py check` runs; the corresponding 5% limits are in
+[`bench/budgets.json`](../bench/budgets.json). Every command and source revision
+is recorded in [`docs/performance/perf03_measurements.jsonl`](performance/perf03_measurements.jsonl).
+
+### PERF03 targets
+
+| Target | Final measured value | Status |
+| --- | ---: | --- |
+| `assoc_one` 200 semantic at most 1,600 MB | 1,711.8 MB | Not met. Most of this probe's cost is still model declaration. |
+| Query semantic slope at most 7.7 MB/model | 18.6 MB/model | Not met. The generic builder remains the largest per-model body. |
+| Association semantic slope at most 9.3 MB/model | 21.8 MB/model | Not met. Association declarations still add typed relation and callback code. |
+| One-model lifecycle debug at most 1,300 MB | 1,851.5 MB | Not met. The fixed Grant, stdlib, and benchmark harness cost remains. |
+
+There is no separate PERF03 target for `association_regressions_spec.cr`; its
+6,255.1 MB peak is lower than the 6,887 MB starting measurement and is gated
+at the final value plus 5% headroom.
+
+### Remaining IR cost
+
+The final query IR probe used ten generated scalar-query models. The exact
+command and counts are in the measurement log. It emitted a 105,378,769-byte
+LLVM IR file and contained 1,330 `Builder(Model)` function definitions across
+the ten models (about 133 per model, with 195,730 function-body lines). The
+list executor still emitted 80 model-specific functions (8 per model, 15,660
+body lines total). The cursor loop itself appeared once as
+`SharedListRunner#run` (2,377 body lines). The association restriction resolver
+and its helpers appeared as five functions and 1,081 body lines total.
+
+This confirms why the slope targets remain unmet: the shared runner removed the
+per-model database cursor loop, but each model still owns a typed `Builder`
+stack and typed result-cache/hydration entrypoints. Moving more builder state,
+SQL planning, or callback methods requires preserving each model's concrete
+relation return type, association scope behavior, and callback registration.
+The setter experiment's final IR opportunity was not retained because its
+compile peaks did not improve consistently and the association regression
+measurement increased.
+
+`_autosave_*` and `_validate_associated_*` methods remain generated per
+association. They participate in per-association validation and save callbacks;
+no shared replacement was measured and verified in PERF03. Optional feature
+requires also remain unchanged: prior reachability ablations either broke
+`require "grant"` transitive behavior or saved too little to justify changing
+the entrypoint surface.
+
+### PERF03 runtime guardrail
+
+Three release runs averaged 2,000 SQLite lifecycle iterations and five
+leak-check rounds. The baseline was captured at `7881cdf` after the typed
+PostgreSQL boolean prerequisite; this changed no SQLite query path. Every mean
+and allocation ratio stayed within the required 1.05x baseline.
+
+| Operation | Baseline mean µs | Final mean µs | Mean ratio | Baseline bytes/op | Final bytes/op | Bytes ratio |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| build (no database) | 0.540 | 0.553 | 1.024 | 1,167.8 | 1,164.9 | 0.997 |
+| create | 40.755 | 37.760 | 0.927 | 8,942.8 | 8,941.7 | 1.000 |
+| find by id | 3.967 | 4.126 | 1.040 | 1,629.5 | 1,645.3 | 1.010 |
+| page of 100 by index | 32.933 | 31.421 | 0.954 | 27,177.3 | 27,115.3 | 0.998 |
+| load all 2000 rows | 1,078.564 | 975.693 | 0.905 | 1,288,479.1 | 1,288,648.0 | 1.000 |
+| count | 64.775 | 65.382 | 1.009 | 3,304.1 | 3,343.6 | 1.012 |
+| load and update | 30.155 | 28.994 | 0.961 | 10,652.9 | 10,666.2 | 1.001 |
+| load and destroy | 34.175 | 28.772 | 0.842 | 3,008.8 | 3,027.8 | 1.006 |
+
+The shared budgets and checker are described in
+[`docs/PERFORMANCE_BUDGETS.md`](PERFORMANCE_BUDGETS.md).

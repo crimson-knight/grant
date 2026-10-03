@@ -15,6 +15,10 @@ features.
 - **Fiber-based Concurrency**: Native async support without callback complexity
 - **Zero-cost Abstractions**: Performance comparable to hand-written SQL
 
+Compile-memory and SQLite lifecycle limits are enforced in CI; see
+[Performance budgets](docs/PERFORMANCE_BUDGETS.md) for the measured limits and
+local commands.
+
 [Amber](https://github.com/amberframework/amber) is a web framework written in
 the [Crystal](https://github.com/crystal-lang/crystal) language.
 

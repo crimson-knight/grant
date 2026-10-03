@@ -4,6 +4,16 @@
 
 Minimum Crystal: 1.19.0
 
+### Performance budgets
+
+- Added a pull request and `main` push gate for measured compile-memory probes
+  and SQLite lifecycle mean time and allocation budgets. The source values,
+  limits, and measurement commands are checked in; see
+  [`docs/PERFORMANCE_BUDGETS.md`](docs/PERFORMANCE_BUDGETS.md).
+- Shared the non-generic list-executor cursor loop and eager-load restriction
+  resolver to reduce per-model query compilation. The PERF03 measurements and
+  targets that remain unmet are recorded in [`docs/compile_memory.md`](docs/compile_memory.md).
+
 ### Minimum Crystal version
 
 Behavior changes:
