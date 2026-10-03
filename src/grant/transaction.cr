@@ -480,6 +480,12 @@ module Grant::Transaction
     end
   end
 
+  # :nodoc:
+  def self.run_without_result(adapter : Grant::Adapter::Base, options : Options, &work : ->) : Nil
+    run(adapter, options) { work.call }
+    nil
+  end
+
   private def self.run_nested(state : TransactionState, adapter : Grant::Adapter::Base, options : Options, & : -> T) : T? forall T
     if options.independent
       if Grant::SchemaTenant.current_connection?(adapter) || adapter.pinned_connection?
