@@ -81,10 +81,10 @@ class Grant::Query::Builder(Model)
   # to (so `includes` behaves as `eager_load` there), and returns, for each
   # association loaded through a join, the conditions that mention only its table.
   protected def association_restrictions : Hash(Symbol, Array(WhereField))
-    return {} of Symbol => Array(WhereField) if @includes_associations.empty? && @eager_load_associations.empty?
+    return {} of Symbol => Array(WhereField) if @relation_state.includes_associations.empty? && @relation_state.eager_load_associations.empty?
 
     Grant::Query::AssociationRestrictionSupport.resolve(
-      Model.name, @includes_associations, @eager_load_associations, @where_fields, @join_clauses,
+      Model.name, @relation_state.includes_associations, @relation_state.eager_load_associations, @relation_state.where_fields, @relation_state.join_clauses,
       ->(association : Symbol) { add_eager_load_join(association); nil }
     )
   end

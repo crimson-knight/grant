@@ -149,7 +149,7 @@ class Grant::Query::Builder(Model)
   # own.
   # :nodoc:
   def merge_foreign_relation!(other : Grant::Query::ForeignRelation) : self
-    staged = Grant::Query::Builder(Model).new(@db_type)
+    staged = Grant::Query::Builder(Model).new(@relation_state.db_type)
     staged.own_where_fields.concat(other.where_fields)
     staged.own_order_fields.concat(other.order_fields)
     staged.own_group_fields.concat(other.group_fields)

@@ -2,10 +2,6 @@
 class Grant::Query::Builder(Model)
   # The boolean connector is carried into a model-specific relation when a
   # named scope starts from the model's current query.
-  def boolean_operator : Symbol
-    @boolean_operator
-  end
-
   # Copy query state into a different Builder subtype for the same model.
   # Named scopes use this to retain defaults and existing relation clauses.
   def copy_state_to(target : Grant::Query::Builder(Model)) : Nil

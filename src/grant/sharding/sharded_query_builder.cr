@@ -113,7 +113,7 @@ module Grant::Sharding
       records = assembler.select.run
 
       # Apply eager loading if any associations are specified
-      all_associations = @includes_associations + @preload_associations + @eager_load_associations
+      all_associations = includes_associations + preload_associations + eager_load_associations
       unless all_associations.empty?
         Grant::AssociationLoader.load_associations(records, all_associations)
       end
@@ -265,16 +265,16 @@ module Grant::Sharding
 
     private def reverse_order
       # Create a new builder with reversed order
-      new_builder = self.class.new(@db_type, @boolean_operator)
+      new_builder = self.class.new(db_type, boolean_operator)
 
       # Copy all fields
-      new_builder.own_where_fields.concat(@where_fields)
-      new_builder.own_group_fields.concat(@group_fields)
-      new_builder.offset = @offset
-      new_builder.limit = @limit
+      new_builder.own_where_fields.concat(where_fields)
+      new_builder.own_group_fields.concat(group_fields)
+      new_builder.offset = offset
+      new_builder.limit = limit
 
       # Reverse order fields
-      @order_fields.each do |order|
+      order_fields.each do |order|
         new_builder.own_order_fields << Grant::Query::OrderSupport.reverse(order)
       end
       if new_builder.order_fields.empty?

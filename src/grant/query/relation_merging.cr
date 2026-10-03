@@ -90,7 +90,7 @@ class Grant::Query::Builder(Model)
       @notes = notes.with(reordering: true)
     else
       other.order_fields.each do |term|
-        own_order_fields << term unless @order_fields.includes?(term)
+        own_order_fields << term unless @relation_state.order_fields.includes?(term)
       end
     end
   end
@@ -110,13 +110,13 @@ class Grant::Query::Builder(Model)
       added = current.eager_load_joins
       own_join_clauses.reject! { |clause| added.includes?(clause) }
     end
-    @distinct = false if current.eager_load_distinct?
+    @relation_state.distinct = false if current.eager_load_distinct?
     @notes = current.with(eager_load_joins: [] of Grant::Query::JoinSupport::Clause, eager_load_distinct: false) if current.eager_load_distinct? || !current.eager_load_joins.empty?
   end
 
   # Drops the LEFT JOIN clauses (`left: true`) or every other join clause.
   protected def drop_join_clauses!(left : Bool) : Nil
-    return unless @join_clauses.any? { |clause| (clause[:type] == :left) == left }
+    return unless @relation_state.join_clauses.any? { |clause| (clause[:type] == :left) == left }
 
     own_join_clauses.reject! { |clause| (clause[:type] == :left) == left }
   end
@@ -131,7 +131,7 @@ class Grant::Query::Builder(Model)
     when :reordering
       @notes = notes.with(reordering: false) if reordering?
     when :strict_loading
-      @strict_loading = false
+      @relation_state.strict_loading = false
     when :extending
       # A relation holds no extension modules in Grant (`extending` is a model
       # macro, resolved at compile time), so there is nothing to remove.

@@ -4,10 +4,6 @@ require "../locking/clause"
 class Grant::Query::Builder(Model)
   # The vendor lock clause set through `lock(clause)`, or nil. A relation holds
   # either this or a `lock_mode`, never both.
-  @lock_clause : Grant::Locking::Clause? = nil
-
-  getter lock_clause : Grant::Locking::Clause?
-
   # Locks the selected rows with a vendor clause the `LockMode` enum has no
   # name for (`FOR NO KEY UPDATE`, `FOR UPDATE OF users`). Returns `self`.
   # Build the *clause* with `Grant::Locking.clause`, which accepts only
@@ -15,8 +11,8 @@ class Grant::Query::Builder(Model)
   # there.
   def lock!(clause : Grant::Locking::Clause) : self
     reset_load_state
-    @lock_mode = nil
-    @lock_clause = clause
+    @relation_state.lock_mode = nil
+    @relation_state.lock_clause = clause
     self
   end
 
@@ -29,8 +25,8 @@ class Grant::Query::Builder(Model)
   # Drops any row lock the relation carries. Returns `self`.
   def unlock! : self
     reset_load_state
-    @lock_mode = nil
-    @lock_clause = nil
+    @relation_state.lock_mode = nil
+    @relation_state.lock_clause = nil
     self
   end
 
@@ -48,7 +44,7 @@ class Grant::Query::Builder(Model)
 
   # True when the relation carries a row lock of either kind.
   def locked? : Bool
-    !@lock_mode.nil? || !@lock_clause.nil?
+    !@relation_state.lock_mode.nil? || !@relation_state.lock_clause.nil?
   end
 
   # The lock SQL for *adapter*: the mode's clause, or the custom clause. Adapters
@@ -56,9 +52,9 @@ class Grant::Query::Builder(Model)
   #
   # :nodoc:
   def lock_sql(adapter : Grant::Adapter::Base) : String?
-    if mode = @lock_mode
+    if mode = @relation_state.lock_mode
       mode.to_sql(adapter)
-    elsif clause = @lock_clause
+    elsif clause = @relation_state.lock_clause
       adapter.supports_lock_mode?(Grant::Locking::LockMode::Update) ? clause.sql : ""
     end
   end
@@ -68,11 +64,11 @@ class Grant::Query::Builder(Model)
   # :nodoc:
   def take_lock_from!(other : Grant::Query::Builder(Model)) : Nil
     if mode = other.lock_mode
-      @lock_clause = nil
-      @lock_mode = mode
+      @relation_state.lock_clause = nil
+      @relation_state.lock_mode = mode
     elsif clause = other.lock_clause
-      @lock_mode = nil
-      @lock_clause = clause
+      @relation_state.lock_mode = nil
+      @relation_state.lock_clause = clause
     end
   end
 end

@@ -3,7 +3,7 @@ require "./builder"
 class Grant::Query::Builder(Model)
   # `true` when records loaded through this relation are marked read-only.
   def readonly? : Bool
-    @readonly
+    @relation_state.readonly
   end
 
   # Marks every record this relation loads read-only (`value = true`), so
@@ -16,7 +16,7 @@ class Grant::Query::Builder(Model)
   # ```
   def readonly!(value : Bool = true) : self
     reset_load_state
-    @readonly = value
+    @relation_state.readonly = value
     self
   end
 

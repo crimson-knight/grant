@@ -72,7 +72,7 @@ class Grant::Query::Builder(Model)
   # :ditto:
   def reselect!(columns : ColumnList) : self
     reset_load_state
-    @select_columns = columns.map do |column|
+    @relation_state.select_columns = columns.map do |column|
       column.is_a?(String) ? Grant::Query::SqlExpression.validate!(column, "SELECT expression") : column.to_s
     end.to_a
     self

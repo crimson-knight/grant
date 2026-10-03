@@ -20,8 +20,6 @@ end
 
 class Grant::Query::Builder(Model)
   # Index hints attached to this query, rendered per-adapter in the FROM clause.
-  getter index_hints : Array(Grant::Query::IndexHint) = Grant::Query::EmptyClauses::INDEX_HINTS
-
   # Suggest the query planner *consider* the named index(es).
   #
   # Renders `USE INDEX (...)` on MySQL and `INDEXED BY ...` on SQLite. On
@@ -76,7 +74,7 @@ class Grant::Query::Builder(Model)
   # User.where(tenant_id: t).use_index("idx_t").index_hints? # => true
   # ```
   def index_hints? : Bool
-    !@index_hints.empty?
+    !@relation_state.index_hints.empty?
   end
 
   # Returns a `dup` of this query with all index hints stripped.
@@ -153,15 +151,6 @@ module Grant::Query::OptimizerHint
 end
 
 class Grant::Query::Builder(Model)
-  # Optimizer hints placed in a `/*+ ... */` comment right after `SELECT`. Kept
-  # as an array that is replaced, never mutated, so copies share it safely.
-  @optimizer_hints : Array(String) = Grant::Query::EmptyClauses::OPTIMIZER_HINTS
-
-  # The hints in the order they were added.
-  def optimizer_hint_list : Array(String)
-    @optimizer_hints
-  end
-
   # Adds optimizer hints, rendered as `SELECT /*+ hint hint */ ...`. MySQL reads
   # them as optimizer hints (`MAX_EXECUTION_TIME(1000)`), PostgreSQL with
   # `pg_hint_plan` reads them as plan hints, and SQLite ignores the comment.
@@ -185,7 +174,7 @@ class Grant::Query::Builder(Model)
     return self if cleaned.empty?
 
     reset_load_state
-    @optimizer_hints = @optimizer_hints | cleaned
+    @relation_state.optimizer_hints = @relation_state.optimizer_hints | cleaned
     self
   end
 
