@@ -5,11 +5,10 @@
 # only the association's table on that second query.
 module Grant::Query::AssociationRestrictionSupport
   alias WhereField = Grant::Query::WhereField
-  alias JoinClause = NamedTuple(type: Symbol, table: String, on: String)
 
   # Resolves which eager-loaded associations need joins and which WHERE
   # fields can safely be replayed while loading those associations.
-  def self.resolve(model_name : String, includes : Array(Grant::Includes), eager_load : Array(Grant::Includes), where_fields : Array(WhereField), join_clauses : Array(JoinClause), add_eager_load_join : Proc(Symbol, Nil)) : Hash(Symbol, Array(WhereField))
+  def self.resolve(model_name : String, includes : Array(Grant::Includes), eager_load : Array(Grant::Includes), where_fields : Array(WhereField), has_join_for_table : Proc(String, Bool), add_eager_load_join : Proc(Symbol, Nil)) : Hash(Symbol, Array(WhereField))
     restrictions = {} of Symbol => Array(WhereField)
     referenced = referenced_where_tables(where_fields)
 
@@ -32,7 +31,7 @@ module Grant::Query::AssociationRestrictionSupport
         joined = eager_load.any? { |eager| eager == name || (eager.is_a?(Hash) && eager.has_key?(name)) }
         next unless joined || referenced.includes?(target_table)
 
-        add_eager_load_join.call(name) unless join_clauses.any? { |clause| clause[:table] == target_table }
+        add_eager_load_join.call(name) unless has_join_for_table.call(target_table)
         restrictions[name] = replayable ? where_fields_for_table(where_fields, target_table) : [] of WhereField
       end
     end
@@ -84,7 +83,8 @@ class Grant::Query::Builder(Model)
     return {} of Symbol => Array(WhereField) if @relation_state.includes_associations.empty? && @relation_state.eager_load_associations.empty?
 
     Grant::Query::AssociationRestrictionSupport.resolve(
-      Model.name, @relation_state.includes_associations, @relation_state.eager_load_associations, @relation_state.where_fields, @relation_state.join_clauses,
+      Model.name, @relation_state.includes_associations, @relation_state.eager_load_associations, @relation_state.where_fields,
+      ->(table : String) { @relation_state.join_clauses.any? { |clause| clause[:table] == table } },
       ->(association : Symbol) { add_eager_load_join(association); nil }
     )
   end
