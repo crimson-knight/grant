@@ -151,7 +151,7 @@ module Grant::Query
     property offset : Int64?
     property lock_mode : Grant::Locking::LockMode?
     property lock_clause : Grant::Locking::Clause?
-    property readonly : Bool = false
+    property? readonly : Bool = false
     getter? distinct : Bool = false
     getter? is_none : Bool = false
     getter? strict_loading : Bool = false
@@ -344,11 +344,11 @@ module Grant::Query
       self.order_fields = @order_fields.map { |field| Grant::Query::OrderSupport.reverse(field) }
     end
 
-    def offset!(value : Number | Nil) : Nil
+    def offset!(value : Number?) : Nil
       @offset = value.nil? ? nil : value.to_i64
     end
 
-    def limit!(value : Number | Nil) : Nil
+    def limit!(value : Number?) : Nil
       @limit = value.nil? ? nil : value.to_i64
     end
 
@@ -529,7 +529,8 @@ class Grant::Query::Builder(Model)
     @relation_state.distinct?
   end
 
-  def is_none? : Bool
+  # This relation flag is part of Builder's public API on main.
+  def is_none? : Bool # ameba:disable Naming/PredicateName (preserve the public relation flag from main)
     @relation_state.is_none?
   end
 

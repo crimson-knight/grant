@@ -14,28 +14,44 @@ class Grant::Query::RelationState
   end
 
   def merge_components_from!(other : Grant::Query::RelationState, include_select : Bool = true, include_strict_loading : Bool = true) : Nil
+    merge_group_fields_from!(other)
+    merge_select_columns_from!(other) if include_select
+    merge_limits_and_offsets_from!(other)
+    merge_association_loads_from!(other)
+    @strict_loading = true if include_strict_loading && other.strict_loading?
+    merge_locking_from!(other)
+    merge_join_clauses_from!(other)
+    merge_simple_flags_from!(other)
+  end
+
+  private def merge_group_fields_from!(other : Grant::Query::RelationState) : Nil
     other.group_fields.each do |field|
       own_group_fields << field unless @group_fields.includes?(field)
     end
+  end
 
-    if include_select
-      if other_columns = other.select_columns
-        if current_columns = @select_columns
-          @select_columns = (current_columns + other_columns).uniq
-        else
-          @select_columns = other_columns.dup
-        end
+  private def merge_select_columns_from!(other : Grant::Query::RelationState) : Nil
+    if other_columns = other.select_columns
+      if current_columns = @select_columns
+        @select_columns = (current_columns + other_columns).uniq
+      else
+        @select_columns = other_columns.dup
       end
     end
+  end
 
+  private def merge_limits_and_offsets_from!(other : Grant::Query::RelationState) : Nil
     @limit = other.limit if other.limit
     @offset = other.offset if other.offset
+  end
 
+  private def merge_association_loads_from!(other : Grant::Query::RelationState) : Nil
     own_eager_load_associations.concat(other.eager_load_associations).uniq!
     own_preload_associations.concat(other.preload_associations).uniq!
     own_includes_associations.concat(other.includes_associations).uniq!
-    @strict_loading = true if include_strict_loading && other.strict_loading?
+  end
 
+  private def merge_locking_from!(other : Grant::Query::RelationState) : Nil
     if mode = other.lock_mode
       @lock_clause = nil
       @lock_mode = mode
@@ -43,15 +59,19 @@ class Grant::Query::RelationState
       @lock_mode = nil
       @lock_clause = clause
     end
+  end
 
+  private def merge_join_clauses_from!(other : Grant::Query::RelationState) : Nil
     other.join_clauses.each do |join_clause|
       own_join_clauses << join_clause unless @join_clauses.includes?(join_clause)
     end
+  end
 
+  private def merge_simple_flags_from!(other : Grant::Query::RelationState) : Nil
     @distinct = true if other.distinct?
     own_having_clauses.concat(other.having_clauses)
     @is_none = true if other.is_none?
-    @readonly = true if other.readonly
+    @readonly = true if other.readonly?
     @optimizer_hints = @optimizer_hints | other.optimizer_hints
   end
 

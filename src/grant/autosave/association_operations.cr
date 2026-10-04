@@ -44,7 +44,8 @@ module Grant::Autosave::AssociationOperations
 
   def self.validate_one(owner : Grant::Base, name : String, association_type : Symbol, foreign_key : String, record : Grant::Base?, autosaving : Bool) : Nil
     return unless record
-    return unless record.changed_for_autosave? && !record.destroyed? && !(autosaving && record.marked_for_destruction?)
+    return unless record.changed_for_autosave?
+    return if record.destroyed? || (autosaving && record.marked_for_destruction?)
 
     record._grant_skip_nested_owner_foreign_key_validation(foreign_key) if association_type == :has_one && owner.new_record?
     return if record.valid?
