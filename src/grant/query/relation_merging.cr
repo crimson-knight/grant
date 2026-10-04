@@ -93,16 +93,11 @@ class Grant::Query::RelationNotes
 
   # Removes only the JOIN clauses and DISTINCT that eager_load added. Nil
   # means no eager-load additions need to be removed.
-  def drop_eager_load_joins_from(state : Grant::Query::RelationState) : RelationNotes?
+  def drop_eager_load_joins_from : NamedTuple(join_clauses: Array(Grant::Query::JoinSupport::Clause), distinct: Bool, notes: RelationNotes)?
     return if eager_load_joins.empty? && !eager_load_distinct?
 
-    unless eager_load_joins.empty?
-      added = eager_load_joins
-      state.own_join_clauses.reject! { |clause| added.includes?(clause) }
-    end
-    state.distinct = false if eager_load_distinct?
     empty_joins = [] of Grant::Query::JoinSupport::Clause
-    self.with(eager_load_joins: empty_joins, eager_load_distinct: false)
+    {join_clauses: eager_load_joins, distinct: eager_load_distinct?, notes: self.with(eager_load_joins: empty_joins, eager_load_distinct: false)}
   end
 end
 
@@ -176,8 +171,11 @@ class Grant::Query::Builder(Model)
 
   # Removes the joins and DISTINCT `eager_load` added, for `unscope(:eager_load)`.
   protected def drop_eager_load_joins! : Nil
-    if updated = notes.drop_eager_load_joins_from(@relation_state)
-      @notes = updated
+    if removal = notes.drop_eager_load_joins_from
+      reset_load_state
+      @relation_state.own_join_clauses.reject! { |clause| removal[:join_clauses].includes?(clause) }
+      @relation_state.distinct = false if removal[:distinct]
+      @notes = removal[:notes]
     end
   end
 
