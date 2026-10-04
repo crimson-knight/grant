@@ -13,8 +13,10 @@ The compile checker runs five serial probes with an empty `CRYSTAL_CACHE_DIR`:
 - debug RSS for the lifecycle benchmark and the association regression spec;
 - semantic query and association slopes from 10 to 200 models.
 
-No probe is skipped or scaled on the 16 GB Ubuntu runner. The largest observed
-debug probe is 6,887 MB, below half the runner's memory. Linux probes use
+No probe is skipped or scaled on the 16 GB Ubuntu runner. The latest Darwin
+association regression debug probe peaked at 4,985.3 MB; the earlier PERF02
+sample was 6,887 MB. Linux remains calibration-only until its RSS is measured
+on an actual runner. Linux probes use
 `--link-flags=-Wl,--no-export-dynamic`, as in `scripts/spec-groups.sh`.
 
 The runtime checker covers every Grant operation in
@@ -41,10 +43,10 @@ automatically switches to enforcement.
 ## Why timing and bytes have different CI limits
 
 Semantic compile RSS is stable enough to use a 5% limit above the highest of
-three measurements. Debug compile probes use 10% headroom: the prior
-one-worker association regression samples ranged from 4,816 to 5,179 MB, a
-roughly 7% spread relative to the maximum, so 5% would be vulnerable to a
-repeatable measurement fluctuation. Both checkers compare the recorded
+three measurements. Debug compile probes use 10% headroom: the latest
+one-worker association regression samples ranged from 4,611.5 to 4,985.3 MB, a
+7.5% spread relative to the maximum, so 5% would be vulnerable to a repeatable
+measurement fluctuation. Both checkers compare the recorded
 `CRYSTAL_WORKERS` condition with the current value (default 1) and fail closed
 if it differs. Runtime limits also record the SQLite adapter and worker count.
 The runtime values come from the Grant-only SQLite variant with

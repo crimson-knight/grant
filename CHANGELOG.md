@@ -24,6 +24,14 @@ Minimum Crystal: 1.19.0
   resolver to reduce per-model query compilation. The measured results show
   the `assoc_one` target met and the remaining slope/debug misses in
   [`docs/compile_memory.md`](docs/compile_memory.md).
+- Fixed eager-load join reuse when multiple includes target the same table,
+  and added coverage for sharded reverse ordering and aggregate `last` paths.
+  The final three-run Darwin measurements and Builder IR counts are recorded in
+  [`docs/compile_memory.md`](docs/compile_memory.md) and
+  [`docs/performance/perf03_measurements.jsonl`](docs/performance/perf03_measurements.jsonl).
+- Compile budgets now record and enforce `CRYSTAL_WORKERS=1` by default. They
+  use 5% semantic and 10% debug RSS headroom based on measured sample spread;
+  the Linux block remains explicitly in calibration mode.
 
 ### Compatibility notes
 

@@ -367,3 +367,81 @@ documented in
 
 The measured, per-platform budgets and the Linux calibration-only CI behavior
 are described in [`PERFORMANCE_BUDGETS.md`](PERFORMANCE_BUDGETS.md).
+
+### PERF03 round three: review fixes and final measurements
+
+The review fixes preserve the typed relation return types and query behavior.
+The same-table eager-load regression now reads the live join list after a
+copy-on-write update. Other fixes remove accidental public setters, restore
+internal API documentation, consolidate WHERE key normalization, narrow chunk
+fields once, make relation-note join removal return data for the Builder to
+apply, and repair the reverse-order sharded and aggregate finder paths. The
+transaction adapter hook and the unsupported nature of former Builder state
+ivars are documented in the Unreleased changelog.
+
+| Step | Evidence |
+| --- | --- |
+| M1 live eager-load joins | The regression fixture produced two `users` joins before the fix and one after; the focused SQLite group passes with the expected row. |
+| M2 public and internal surface | Removed the three accidental public setters; marked `RelationState` and shared helper types `:nodoc:`; restored Sort and generated macro docs. |
+| M3–M5 relation state and chunk paths | Removed duplicate WHERE normalization, typed chunk values once, renamed state mutators, and kept `distinct` with the state implementation. |
+| M6 eager-join removal | `RelationNotes` now returns clauses and replacement state; Builder resets load state before applying the returned changes. |
+| M7–M8 compatibility | `transaction_adapter` is the documented customization hook for save transactions; changelog calls out former Builder ivars as unsupported extension state. |
+| M9 finder paths | Sharded reverse ordering and aggregate `last` now use existing public finder behavior; specs cover both paths. |
+
+Final compile values are the maximum of three measurements on Darwin with
+crystal-alpha 1.21.0, SQLite, an empty compiler cache, and one Crystal worker.
+The comparison column is the round-two final value; all samples and exact
+commands are in the measurement ledger.
+
+| Probe | Round-two final | Round-three final max | Target | Result |
+| --- | ---: | ---: | ---: | --- |
+| Query slope, 10–200 models | 16.1 | 16.1 MB/model | ≤ 7.7 MB/model | Missed by 8.4 MB/model |
+| Association slope, 10–200 models | 18.9 | 19.0 MB/model | ≤ 9.3 MB/model | Missed by 9.7 MB/model |
+| `assoc_one`, 200 models | 1,599.0 | 1,598.9 MB | ≤ 1,600 MB | Met by 1.1 MB |
+| Lifecycle benchmark debug | 1,846.9 | 1,848.7 MB | ≤ 1,300 MB | Missed by 548.7 MB |
+| Association regression spec debug | 5,179.1 | 4,985.3 MB | No separate target | Reduced 193.8 MB |
+
+The direct `Builder(Model)` count from the same single-module LLVM report path
+is 108 definitions and 3,420 function-body lines per model, versus 109 and
+3,238 at round two. The line total rose by 182 while one definition was
+removed during the review-fix sequence. The current 237-line
+`drop_eager_load_joins!` applies the eager-join changes returned by the shared
+relation notes after load-state reset. The largest remaining typed bodies are
+`drop_eager_load_joins!` (237 lines), `select` (229), `collapse_or_fields!`
+(159), `chunked_select` and `select_single` (143 each),
+`expand_where_column_name` (139), `each_in_chunk` (136),
+`add_association_condition` (124), and `add_eager_load_join` (119). The
+measurement command uses `crystal-alpha build -s --no-color --emit llvm-ir`
+through `crystal-slot`, then `scripts/ir_report.py` counts direct Builder
+owners in the emitted `.ll` file. The IR still contains model-specific
+selection, eager-load, and association work, so it is evidence that query
+specialization remains; it is not a conversion from lines to RSS.
+
+The `assoc_one` target is now met. Both slope targets and the one-model debug
+target remain above their requested limits; the retained IR shows that typed
+selection and association paths still scale with each model. The association
+regression debug compile fell from 5,179.1 to 4,985.3 MB, but has no separate
+target. The measured slopes of 16.1 and 19.0 MB/model are the current observed
+floor for these probes, not a theoretical minimum.
+
+### PERF03 round-three runtime comparison
+
+Each final runtime value is the average of three SQLite release runs, each
+with 2,000 iterations and five rounds. Ratios compare the round-one baseline
+at `7881cdf`; the command and all three runs are in the measurement ledger.
+Every aggregate mean and bytes/op value remains within 1.05× of that baseline.
+
+| Operation | Round-one mean µs | Round-three mean µs | Mean ratio | Round-one bytes/op | Round-three bytes/op | Bytes ratio |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| build (no database) | 0.540 | 0.502 | 0.929 | 1,167.8 | 1,169.0 | 1.001 |
+| create | 40.755 | 35.937 | 0.882 | 8,942.8 | 8,941.5 | 1.000 |
+| find by id | 3.967 | 3.833 | 0.966 | 1,629.5 | 1,645.7 | 1.010 |
+| page of 100 by index | 32.933 | 29.669 | 0.901 | 27,177.3 | 27,180.1 | 1.000 |
+| load all 2,000 rows | 1,078.564 | 1,076.939 | 0.998 | 1,288,479.1 | 1,289,221.3 | 1.001 |
+| count | 64.775 | 64.109 | 0.990 | 3,304.1 | 3,359.6 | 1.017 |
+| load and update | 30.155 | 28.463 | 0.944 | 10,652.9 | 10,671.5 | 1.002 |
+| load and destroy | 34.175 | 33.707 | 0.986 | 3,008.8 | 3,023.0 | 1.005 |
+
+All rows also pass the Darwin runtime checker using the measured local limits.
+CI keeps the broader mean-time allowance and tight bytes/op gate described in
+[`PERFORMANCE_BUDGETS.md`](PERFORMANCE_BUDGETS.md).

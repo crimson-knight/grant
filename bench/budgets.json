@@ -48,45 +48,45 @@
           "assoc_one_200_semantic": {
             "command": "BENCH_ADAPTER=sqlite CURRENT_ADAPTER=sqlite CRYSTAL_WORKERS=1 CRYSTAL_SLOT=/Users/crimsonknight/open_source_coding_projects/amber_framework_libraries/parity-audit-2026-09-28/tools/crystal-slot CRYSTAL_BIN=crystal-alpha python3 scripts/compile_memory.py probe assoc_one 200 semantic",
             "headroom_percent": 5,
-            "limit_mb": 1679.0,
-            "measured_mb": 1599.0,
+            "limit_mb": 1678.8,
+            "measured_mb": 1598.9,
             "samples_mb": [
-              1599.0,
               1598.9,
-              1599.0
+              1598.9,
+              1566.9
             ]
           },
           "assoc_slope_10_200": {
             "command": "BENCH_ADAPTER=sqlite CURRENT_ADAPTER=sqlite CRYSTAL_WORKERS=1 CRYSTAL_SLOT=/Users/crimsonknight/open_source_coding_projects/amber_framework_libraries/parity-audit-2026-09-28/tools/crystal-slot CRYSTAL_BIN=crystal-alpha python3 scripts/compile_memory.py slope assoc 10 200",
             "headroom_percent": 5,
-            "limit_mb": 19.8,
-            "measured_mb": 18.9,
+            "limit_mb": 19.9,
+            "measured_mb": 19.0,
             "samples_mb": [
-              18.9,
-              18.9,
-              18.9
+              19.0,
+              19.0,
+              19.0
             ]
           },
           "association_regressions_debug": {
             "command": "BENCH_ADAPTER=sqlite CURRENT_ADAPTER=sqlite CRYSTAL_WORKERS=1 CRYSTAL_SLOT=/Users/crimsonknight/open_source_coding_projects/amber_framework_libraries/parity-audit-2026-09-28/tools/crystal-slot CRYSTAL_BIN=crystal-alpha python3 scripts/compile_memory.py file spec/grant/associations/association_regressions_spec.cr debug",
             "headroom_percent": 10,
-            "limit_mb": 5697.0,
-            "measured_mb": 5179.1,
+            "limit_mb": 5483.8,
+            "measured_mb": 4985.3,
             "samples_mb": [
-              4999.0,
-              5179.1,
-              4815.9
+              4611.5,
+              4985.3,
+              4751.3
             ]
           },
           "lifecycle_debug": {
             "command": "BENCH_ADAPTER=sqlite CURRENT_ADAPTER=sqlite CRYSTAL_WORKERS=1 CRYSTAL_SLOT=/Users/crimsonknight/open_source_coding_projects/amber_framework_libraries/parity-audit-2026-09-28/tools/crystal-slot CRYSTAL_BIN=crystal-alpha python3 scripts/compile_memory.py file bench/lifecycle_bench.cr debug",
             "headroom_percent": 10,
-            "limit_mb": 2031.6,
-            "measured_mb": 1846.9,
+            "limit_mb": 2033.6,
+            "measured_mb": 1848.7,
             "samples_mb": [
-              1844.0,
-              1846.9,
-              1834.1
+              1836.4,
+              1848.7,
+              1846.7
             ]
           },
           "query_slope_10_200": {
@@ -95,13 +95,13 @@
             "limit_mb": 16.9,
             "measured_mb": 16.1,
             "samples_mb": [
-              15.9,
               16.1,
+              16.0,
               16.1
             ]
           }
         },
-        "runner_note": "Three local crystal-alpha 1.21.0 samples; semantic limits are 5% above max, debug limits are 10% above max to cover observed 7% sample spread. Linux runners calibrate independently.",
+        "runner_note": "Three local crystal-alpha 1.21.0 samples, CRYSTAL_WORKERS=1, SQLite, empty cache. Semantic limits are 5% above the maximum sample; debug limits are 10% above the maximum to cover the observed sample spread. Linux runners calibrate independently.",
         "unit": "decimal MB of peak RSS"
       },
       "platform": "macOS (Darwin)",
@@ -111,9 +111,9 @@
         "ci_note": "CI timing allows 1.5x the maximum mean from three local runs because shared runner scheduling is noisy; bytes/op allows 5% above the maximum observed allocation.",
         "ci_time_multiplier": 1.5,
         "commands": {
-          "build": "BENCH_ADAPTER=sqlite \"${CRYSTAL_SLOT:-crystal-slot}\" \"$CRYSTAL_BIN\" build --release --no-color bench/lifecycle_bench.cr -o /tmp/grant-lifecycle",
+          "build": "BENCH_ADAPTER=sqlite CRYSTAL_WORKERS=1 \"${CRYSTAL_SLOT:-crystal-slot}\" \"$CRYSTAL_BIN\" build --release --no-color bench/lifecycle_bench.cr -o /tmp/grant-lifecycle",
           "calibrate": "BENCH_ADAPTER=sqlite CRYSTAL_BIN=crystal-alpha CRYSTAL_SLOT=/Users/crimsonknight/open_source_coding_projects/amber_framework_libraries/parity-audit-2026-09-28/tools/crystal-slot CRYSTAL_WORKERS=1 python3 scripts/check_runtime_budget.py calibrate --runs 3 --iterations 2000 --rounds 5",
-          "calibration_build_actual": "/Users/crimsonknight/open_source_coding_projects/amber_framework_libraries/parity-audit-2026-09-28/tools/crystal-slot crystal-alpha build --release --no-color /Users/crimsonknight/open_source_coding_projects/amber_framework_libraries/grant-perf03/bench/lifecycle_bench.cr -o /var/folders/81/8xr46ykx0p350l1g_v0nk7hr0000gn/T/grant-runtime-calibration-1k_yuk02/lifecycle_bench",
+          "calibration_build_actual": "/Users/crimsonknight/open_source_coding_projects/amber_framework_libraries/parity-audit-2026-09-28/tools/crystal-slot crystal-alpha build --release --no-color /Users/crimsonknight/open_source_coding_projects/amber_framework_libraries/grant-perf03/bench/lifecycle_bench.cr -o /var/folders/81/8xr46ykx0p350l1g_v0nk7hr0000gn/T/grant-runtime-calibration-6_fzv24m/lifecycle_bench",
           "run": "BENCH_DATABASE_URL=sqlite3:/tmp/grant-lifecycle.sqlite /tmp/grant-lifecycle --iterations 2000 --rounds 5 --grant-only --label perf03-builder --json /tmp/perf03-lifecycle.json"
         },
         "conditions": {
@@ -133,114 +133,114 @@
           "build (no database)": {
             "ci": {
               "bytes_limit_per_operation": 1228,
-              "mean_limit_microseconds": 0.839
+              "mean_limit_microseconds": 0.827
             },
             "local": {
-              "bytes_limit_per_operation": 1286,
-              "mean_limit_microseconds": 0.615
+              "bytes_limit_per_operation": 1287,
+              "mean_limit_microseconds": 0.607
             },
-            "maximum_observed_bytes_per_operation": 1168.749,
-            "maximum_observed_mean_microseconds": 0.559261,
-            "measured_bytes_per_operation": 1168.368,
-            "measured_mean_microseconds": 0.513948
+            "maximum_observed_bytes_per_operation": 1169.507,
+            "maximum_observed_mean_microseconds": 0.551599,
+            "measured_bytes_per_operation": 1169.002,
+            "measured_mean_microseconds": 0.50191
           },
           "count": {
             "ci": {
-              "bytes_limit_per_operation": 3553,
-              "mean_limit_microseconds": 101.477
+              "bytes_limit_per_operation": 3543,
+              "mean_limit_microseconds": 98.274
             },
             "local": {
-              "bytes_limit_per_operation": 3722,
-              "mean_limit_microseconds": 74.416
+              "bytes_limit_per_operation": 3712,
+              "mean_limit_microseconds": 72.068
             },
-            "maximum_observed_bytes_per_operation": 3383.2,
-            "maximum_observed_mean_microseconds": 67.65123,
-            "measured_bytes_per_operation": 3338.507,
-            "measured_mean_microseconds": 65.450267
+            "maximum_observed_bytes_per_operation": 3374.08,
+            "maximum_observed_mean_microseconds": 65.51625,
+            "measured_bytes_per_operation": 3359.573,
+            "measured_mean_microseconds": 64.1086
           },
           "create": {
             "ci": {
-              "bytes_limit_per_operation": 9392,
-              "mean_limit_microseconds": 71.696
+              "bytes_limit_per_operation": 9391,
+              "mean_limit_microseconds": 54.557
             },
             "local": {
-              "bytes_limit_per_operation": 9840,
-              "mean_limit_microseconds": 52.577
+              "bytes_limit_per_operation": 9838,
+              "mean_limit_microseconds": 40.009
             },
-            "maximum_observed_bytes_per_operation": 8944.615,
-            "maximum_observed_mean_microseconds": 47.797217,
-            "measured_bytes_per_operation": 8941.215,
-            "measured_mean_microseconds": 40.305097
+            "maximum_observed_bytes_per_operation": 8943.545,
+            "maximum_observed_mean_microseconds": 36.371528,
+            "measured_bytes_per_operation": 8941.521,
+            "measured_mean_microseconds": 35.936788
           },
           "find by id": {
             "ci": {
-              "bytes_limit_per_operation": 1730,
-              "mean_limit_microseconds": 6.139
+              "bytes_limit_per_operation": 1729,
+              "mean_limit_microseconds": 5.877
             },
             "local": {
-              "bytes_limit_per_operation": 1812,
-              "mean_limit_microseconds": 4.502
+              "bytes_limit_per_operation": 1811,
+              "mean_limit_microseconds": 4.309
             },
-            "maximum_observed_bytes_per_operation": 1646.989,
-            "maximum_observed_mean_microseconds": 4.092609,
-            "measured_bytes_per_operation": 1645.965,
-            "measured_mean_microseconds": 4.039933
+            "maximum_observed_bytes_per_operation": 1646.257,
+            "maximum_observed_mean_microseconds": 3.917682,
+            "measured_bytes_per_operation": 1645.712,
+            "measured_mean_microseconds": 3.833121
           },
           "load all 2000 rows": {
             "ci": {
-              "bytes_limit_per_operation": 1353904,
-              "mean_limit_microseconds": 1824.375
+              "bytes_limit_per_operation": 1353983,
+              "mean_limit_microseconds": 1635.833
             },
             "local": {
-              "bytes_limit_per_operation": 1418376,
-              "mean_limit_microseconds": 1337.875
+              "bytes_limit_per_operation": 1418458,
+              "mean_limit_microseconds": 1199.611
             },
-            "maximum_observed_bytes_per_operation": 1289432.0,
-            "maximum_observed_mean_microseconds": 1216.249833,
-            "measured_bytes_per_operation": 1289128.889,
-            "measured_mean_microseconds": 1129.049778
+            "maximum_observed_bytes_per_operation": 1289506.667,
+            "maximum_observed_mean_microseconds": 1090.5555,
+            "measured_bytes_per_operation": 1289221.333,
+            "measured_mean_microseconds": 1076.938583
           },
           "load and destroy": {
             "ci": {
-              "bytes_limit_per_operation": 3181,
-              "mean_limit_microseconds": 55.914
+              "bytes_limit_per_operation": 3178,
+              "mean_limit_microseconds": 51.362
             },
             "local": {
-              "bytes_limit_per_operation": 3333,
-              "mean_limit_microseconds": 41.004
+              "bytes_limit_per_operation": 3329,
+              "mean_limit_microseconds": 37.666
             },
-            "maximum_observed_bytes_per_operation": 3029.448,
-            "maximum_observed_mean_microseconds": 37.276077,
-            "measured_bytes_per_operation": 3025.14,
-            "measured_mean_microseconds": 34.736628
+            "maximum_observed_bytes_per_operation": 3026.08,
+            "maximum_observed_mean_microseconds": 34.241381,
+            "measured_bytes_per_operation": 3023.018,
+            "measured_mean_microseconds": 33.706742
           },
           "load and update": {
             "ci": {
-              "bytes_limit_per_operation": 11204,
-              "mean_limit_microseconds": 45.06
+              "bytes_limit_per_operation": 11211,
+              "mean_limit_microseconds": 45.23
             },
             "local": {
-              "bytes_limit_per_operation": 11737,
-              "mean_limit_microseconds": 33.044
+              "bytes_limit_per_operation": 11745,
+              "mean_limit_microseconds": 33.169
             },
-            "maximum_observed_bytes_per_operation": 10669.869,
-            "maximum_observed_mean_microseconds": 30.039964,
-            "measured_bytes_per_operation": 10669.359,
-            "measured_mean_microseconds": 29.020691
+            "maximum_observed_bytes_per_operation": 10676.556,
+            "maximum_observed_mean_microseconds": 30.153306,
+            "measured_bytes_per_operation": 10671.478,
+            "measured_mean_microseconds": 28.463201
           },
           "page of 100 by index": {
             "ci": {
-              "bytes_limit_per_operation": 28600,
-              "mean_limit_microseconds": 46.574
+              "bytes_limit_per_operation": 28624,
+              "mean_limit_microseconds": 46.955
             },
             "local": {
-              "bytes_limit_per_operation": 29962,
-              "mean_limit_microseconds": 34.154
+              "bytes_limit_per_operation": 29987,
+              "mean_limit_microseconds": 34.434
             },
-            "maximum_observed_bytes_per_operation": 27238.08,
-            "maximum_observed_mean_microseconds": 31.04913,
-            "measured_bytes_per_operation": 27202.4,
-            "measured_mean_microseconds": 30.795673
+            "maximum_observed_bytes_per_operation": 27260.48,
+            "maximum_observed_mean_microseconds": 31.30336,
+            "measured_bytes_per_operation": 27180.053,
+            "measured_mean_microseconds": 29.668617
           }
         },
         "rounds": 5,
