@@ -270,8 +270,8 @@ module Grant::Sharding
       # Copy all fields
       new_builder.own_where_fields.concat(where_fields)
       new_builder.own_group_fields.concat(group_fields)
-      new_builder.offset = offset
-      new_builder.limit = limit
+      new_builder.offset!(offset)
+      new_builder.limit!(limit)
 
       # Reverse order fields
       order_fields.each do |order|
