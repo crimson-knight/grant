@@ -156,6 +156,10 @@ module Grant::Query
     getter? is_none : Bool = false
     getter? strict_loading : Bool = false
 
+    def distinct : Bool
+      distinct?
+    end
+
     @shared_arrays : UInt16 = 0x3FF_u16
     @raw_where_columns : Hash(String, Tuple(String, Bool))? = nil
 
@@ -277,7 +281,7 @@ module Grant::Query
       own_order_fields.concat(fields)
     end
 
-    def order_direction(value) : Sort
+    def order_direction(value : String | Symbol) : Sort
       value == "desc" || value == :desc ? Sort::Descending : Sort::Ascending
     end
 
@@ -289,7 +293,11 @@ module Grant::Query
       fields.each { |field| append_group(field.to_s) }
     end
 
-    def append_groups(fields) : Nil
+    def append_groups(fields : NamedTuple) : Nil
+      fields.each { |field, _| append_group(field.to_s) }
+    end
+
+    def append_groups(fields : Hash(K, V)) : Nil forall K, V
       fields.each { |field, _| append_group(field.to_s) }
     end
 
@@ -297,11 +305,10 @@ module Grant::Query
       own_having_clauses << {stmt: stmt, value: value}
     end
 
-    def where_fields_for_chunk(index : Int32, slice : Array) : Array(WhereField)
+    def where_fields_for_chunk(index : Int32, base_field : NamedTuple(join: Symbol, field: String, operator: Symbol, value: Grant::Columns::Type), slice : Grant::Columns::SupportedArrayTypes) : Array(WhereField)
       @where_fields.map_with_index do |field, field_index|
         if field_index == index
-          base_field = field.as(NamedTuple(join: Symbol, field: String, operator: Symbol, value: Grant::Columns::Type))
-          {join: base_field[:join], field: base_field[:field], operator: :in, value: slice.as(Grant::Columns::Type)}.as(WhereField)
+          {join: base_field[:join], field: base_field[:field], operator: :in, value: slice}.as(WhereField)
         else
           field
         end
@@ -309,34 +316,47 @@ module Grant::Query
     end
 
     def each_chunk_where_fields(index : Int32, chunk_size : Int32, work : Proc(Array(WhereField), Bool)) : Nil
-      base_field = @where_fields[index].as(NamedTuple(join: Symbol, field: String, operator: Symbol, value: Grant::Columns::Type))
-      full_values = base_field[:value].as(Array)
+      base_field, full_values = chunk_field(index)
       full_values.each_slice(chunk_size) do |slice|
-        break unless work.call(where_fields_for_chunk(index, slice))
+        break unless work.call(where_fields_for_chunk(index, base_field, slice))
       end
     end
 
     def chunk_value_count(index : Int32) : Int32
-      @where_fields[index].as(NamedTuple(join: Symbol, field: String, operator: Symbol, value: Grant::Columns::Type))[:value].as(Array).size
+      chunk_field(index)[1].size
+    end
+
+    private def chunk_field(index : Int32) : Tuple(NamedTuple(join: Symbol, field: String, operator: Symbol, value: Grant::Columns::Type), Grant::Columns::SupportedArrayTypes)
+      field = @where_fields[index]
+      unless field.is_a?(NamedTuple(join: Symbol, field: String, operator: Symbol, value: Grant::Columns::Type))
+        raise ArgumentError.new("Expected an IN-list field at index #{index}")
+      end
+
+      values = field[:value]
+      unless values.is_a?(Grant::Columns::SupportedArrayTypes)
+        raise ArgumentError.new("Expected array values in the IN-list field at index #{index}")
+      end
+
+      {field, values}
     end
 
     def reverse_order_fields : Nil
       self.order_fields = @order_fields.map { |field| Grant::Query::OrderSupport.reverse(field) }
     end
 
-    def set_offset(value) : Nil
+    def offset!(value : Number | Nil) : Nil
       @offset = value.nil? ? nil : value.to_i64
     end
 
-    def set_limit(value) : Nil
+    def limit!(value : Number | Nil) : Nil
       @limit = value.nil? ? nil : value.to_i64
     end
 
-    def set_distinct : Nil
+    def distinct! : Nil
       @distinct = true
     end
 
-    def set_none : Nil
+    def none! : Nil
       @is_none = true
     end
 
@@ -1213,7 +1233,7 @@ class Grant::Query::Builder(Model)
   # ```
   def distinct! : self
     reset_load_state
-    @relation_state.set_distinct
+    @relation_state.distinct!
     self
   end
 
@@ -1248,7 +1268,7 @@ class Grant::Query::Builder(Model)
   # ```
   def none! : self
     reset_load_state
-    @relation_state.set_none
+    @relation_state.none!
     self
   end
 
@@ -1442,7 +1462,7 @@ class Grant::Query::Builder(Model)
   # ```
   def offset!(num) : self
     reset_load_state
-    @relation_state.set_offset(num)
+    @relation_state.offset!(num)
     self
   end
 
@@ -1455,7 +1475,7 @@ class Grant::Query::Builder(Model)
   # ```
   def limit!(num) : self
     reset_load_state
-    @relation_state.set_limit(num)
+    @relation_state.limit!(num)
     self
   end
 

@@ -10,10 +10,6 @@ end
 
 # :nodoc:
 class Grant::Query::RelationState
-  def distinct : Bool
-    distinct?
-  end
-
   # Index into the WHERE clauses of the first `:in` field whose values exceed
   # *limit*, or nil when every list fits. This check is relation-state work and
   # does not depend on the model hydrated by the builder.
