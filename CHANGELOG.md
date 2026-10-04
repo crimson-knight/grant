@@ -25,6 +25,18 @@ Minimum Crystal: 1.19.0
   the `assoc_one` target met and the remaining slope/debug misses in
   [`docs/compile_memory.md`](docs/compile_memory.md).
 
+### Compatibility notes
+
+- Model save operations select their adapter through `transaction_adapter` and
+  use Grant's shared transaction runner. An override of
+  `transaction(options, &block)` does not intercept a save's internal
+  transaction; override `transaction_adapter` to customize adapter selection.
+- Query builder clauses now live in internal relation state. Extensions and
+  reopenings that directly referenced former Builder ivars such as
+  `@where_fields`, `@limit`, `@offset`, or `@boolean_operator` must use the
+  relation's query methods instead; those implementation ivars are not a
+  supported extension surface.
+
 ### Minimum Crystal version
 
 Behavior changes:
