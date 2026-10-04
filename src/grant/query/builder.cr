@@ -184,6 +184,22 @@ module Grant::Query
       end
     end
 
+    # Merges another relation's WHERE fields, including the raw-clause column
+    # registrations that make later rewhere/unscope operations work.
+    def merge_where_relation(other : RelationState, owner_table : String) : Bool
+      incoming = other.where_fields
+      incoming_raw_columns = {} of String => Tuple(String, Bool)
+      incoming.each do |clause|
+        next if clause.is_a?(NamedTuple(join: Symbol, field: String, operator: Symbol, value: Grant::Columns::Type))
+
+        stmt = clause[:stmt]
+        if registered = other.raw_where_column(stmt)
+          incoming_raw_columns[stmt] = registered
+        end
+      end
+      merge_where_fields(incoming, incoming_raw_columns, owner_table)
+    end
+
     def merge_where_fields(incoming : Array(WhereField), incoming_raw_columns : Hash(String, Tuple(String, Bool))?, owner_table : String) : Bool
       return true if incoming.empty?
 
@@ -2471,48 +2487,7 @@ class Grant::Query::Builder(Model)
     # ActiveRecord), or replace ours when it was built with `reorder`.
     merge_order!(other)
 
-    # Merge group fields
-    other.group_fields.each do |field|
-      own_group_fields << field unless @relation_state.group_fields.includes?(field)
-    end
-
-    # Merge the column projection
-    if other_columns = other.select_columns
-      current_columns = @relation_state.select_columns
-      @relation_state.select_columns = current_columns ? (current_columns + other_columns).uniq : other_columns.dup
-    end
-
-    # Use other's limit/offset if set
-    @relation_state.limit = other.limit if other.limit
-    @relation_state.offset = other.offset if other.offset
-
-    # Merge associations
-    own_eager_load_associations.concat(other.eager_load_associations).uniq!
-    own_preload_associations.concat(other.preload_associations).uniq!
-    own_includes_associations.concat(other.includes_associations).uniq!
-    @relation_state.strict_loading = true if other.strict_loading?
-
-    # Use other's lock if set
-    take_lock_from!(other)
-
-    # Merge join clauses
-    other.join_clauses.each do |jc|
-      own_join_clauses << jc unless @relation_state.join_clauses.includes?(jc)
-    end
-
-    # Merge distinct flag
-    @relation_state.distinct = true if other.distinct?
-
-    # Merge having clauses
-    other.having_clauses.each do |hc|
-      own_having_clauses << hc
-    end
-
-    # Merge none flag
-    @relation_state.is_none = true if other.is_none?
-
-    @relation_state.readonly = true if other.readonly?
-    @relation_state.optimizer_hints = @relation_state.optimizer_hints | other.optimizer_hint_list
+    @relation_state.merge_components_from!(other.relation_state)
     merge_from_and_with!(other)
 
     self

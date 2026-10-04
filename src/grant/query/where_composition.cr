@@ -1,4 +1,6 @@
 require "./builder"
+require "./association_condition_planner"
+require "./key_list_predicate"
 
 # Resolves which columns a joined table can be queried on. `where(posts:
 # {published: true})` and qualified fields (`"posts.published"`) check the
@@ -255,90 +257,18 @@ class Grant::Query::Builder(Model)
   # given records. Only the key of each record is read; nothing is loaded.
   private def add_association_condition(join : Symbol, name : String, value) : Nil
     reflection = Grant::AssociationRegistry.reflection(Model.name, name) || raise Grant::AssociationNotFoundError.new(Model.name, name)
-    entries = association_key_entries(value)
-    foreign_key = reflection.foreign_key
-
-    if entries.empty?
-      own_where_fields << {join: join, stmt: "1=0", value: nil.as(Grant::Columns::Type)}
-      return
+    field_sql = ->(field : String) { structured_field_sql(field) }
+    plan = Grant::Query::AssociationConditionPlanner.build(join, name, Model.name, reflection, value, field_sql)
+    own_where_fields.concat(plan.where_fields) unless plan.where_fields.empty?
+    plan.raw_columns.each do |stmt, field, equality|
+      register_raw_where_column(stmt, field, equality: equality)
     end
-
-    unless reflection.polymorphic?
-      if entries.size == 1
-        add_field_condition(join, foreign_key, :eq, entries.first[0])
-      else
-        keys = entries.map(&.[0])
-        predicate, values = key_list_predicate(structured_field_sql(foreign_key), keys)
-        own_where_fields << {join: join, stmt: predicate, values: values}
-        register_raw_where_column(predicate, foreign_key, equality: keys.none?(Nil))
-      end
-      return
-    end
-
-    type_column = reflection.foreign_type || raise ArgumentError.new("Polymorphic association #{Model.name}##{name} has no type column")
-    if join == :and && entries.size == 1 && (type_name = entries.first[1]) && !entries.first[0].nil?
-      add_field_condition(:and, foreign_key, :eq, entries.first[0])
-      add_field_condition(:and, type_column, :eq, type_name)
-      return
-    end
-
-    key_sql = structured_field_sql(foreign_key)
-    type_sql = structured_field_sql(type_column)
-    by_type = {} of String => Array(Grant::Columns::Type)
-    null_key = false
-    entries.each do |key, entry_type|
-      if entry_type
-        (by_type[entry_type] ||= [] of Grant::Columns::Type) << key
-      elsif key.nil?
-        null_key = true
-      else
-        raise ArgumentError.new("#{Model.name}##{name} is polymorphic; pass records so the type column can be matched")
-      end
-    end
-
-    parts = [] of String
-    values = [] of Grant::Columns::Type
-    by_type.each do |grouped_type, keys|
-      predicate, key_values = key_list_predicate(key_sql, keys)
-      parts << "(#{predicate} AND #{type_sql} = ?)"
-      values.concat(key_values)
-      values << grouped_type
-    end
-    parts << "#{key_sql} IS NULL" if null_key
-    predicate = "(#{parts.join(" OR ")})"
-    own_where_fields << {join: join, stmt: predicate, values: values}
-    register_raw_where_column(predicate, foreign_key)
-  end
-
-  # Foreign key and polymorphic type name for each value passed under an
-  # association name: a record contributes its primary key and class name, a
-  # scalar or nil is taken as the key itself.
-  private def association_key_entries(value) : Array(Tuple(Grant::Columns::Type, String?))
-    entries = [] of Tuple(Grant::Columns::Type, String?)
-    if value.is_a?(Array)
-      value.each { |item| entries.concat(association_key_entries(item)) }
-    elsif value.is_a?(Grant::Base)
-      key_name = value.class.primary_name || raise ArgumentError.new("#{value.class.name} has no primary key to match an association against")
-      entries << {value.read_attribute(key_name).as(Grant::Columns::Type), value.class.polymorphic_name}
-    elsif value.is_a?(Grant::Columns::Type)
-      entries << {value, nil.as(String?)}
-    else
-      raise ArgumentError.new("Cannot compare an association with a #{value.class.name}")
-    end
-    entries
   end
 
   # `field IN (?, ?)` for *keys*; a nil key also matches NULL, an empty list
   # matches nothing.
   private def key_list_predicate(field_sql : String, keys : Array(Grant::Columns::Type)) : Tuple(String, Array(Grant::Columns::Type))
-    present = keys.reject(&.nil?) # ameba:disable Style/IsAFilter (reject(Nil) would narrow the element type)
-    has_nil = present.size != keys.size
-    return {has_nil ? "#{field_sql} IS NULL" : "1=0", [] of Grant::Columns::Type} if present.empty?
-
-    placeholders = Array.new(present.size, "?").join(", ")
-    predicate = present.size == 1 ? "#{field_sql} = ?" : "#{field_sql} IN (#{placeholders})"
-    predicate = "(#{predicate} OR #{field_sql} IS NULL)" if has_nil
-    {predicate, present}
+    Grant::Query::KeyListPredicate.build(field_sql, keys)
   end
 
   # ---- named binds ---------------------------------------------------------
@@ -542,18 +472,8 @@ class Grant::Query::Builder(Model)
     incoming = other.where_fields
     return if incoming.empty?
 
-    incoming_raw_columns = {} of String => Tuple(String, Bool)
-    incoming.each do |clause|
-      next if clause.is_a?(FieldClause)
-
-      stmt = clause[:stmt]
-      if registered = other.raw_where_column(stmt)
-        incoming_raw_columns[stmt] = registered
-      end
-    end
-
     reset_load_state
-    merged = @relation_state.merge_where_fields(incoming, incoming_raw_columns, Model.table_name)
+    merged = @relation_state.merge_where_relation(other.relation_state, Model.table_name)
     unless merged
       append_where_group(other)
     end

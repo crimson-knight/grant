@@ -36,33 +36,8 @@ class Grant::Query::Builder(Model)
     merge_unscopes!(other)
     merge_where_fields!(other)
     merge_order!(other)
-
-    other.group_fields.each do |field|
-      own_group_fields << field unless group_fields.includes?(field)
-    end
-
-    if query_limit = other.limit
-      limit!(query_limit)
-    end
-    if query_offset = other.offset
-      offset!(query_offset)
-    end
-
-    own_eager_load_associations.concat(other.eager_load_associations).uniq!
-    own_preload_associations.concat(other.preload_associations).uniq!
-    own_includes_associations.concat(other.includes_associations).uniq!
-
-    take_lock_from!(other)
-
-    other.join_clauses.each do |clause|
-      own_join_clauses << clause unless join_clauses.includes?(clause)
-    end
-
-    distinct! if other.distinct?
-    own_having_clauses.concat(other.having_clauses)
-    none! if other.is_none?
-    readonly! if other.readonly?
-    add_optimizer_hints(other.optimizer_hint_list)
+    reset_load_state
+    @relation_state.merge_scope_components_from!(other.relation_state)
     adopt_create_with_defaults(other.create_with_attributes)
     self
   end

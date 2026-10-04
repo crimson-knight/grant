@@ -1,5 +1,64 @@
 require "./builder"
 
+# Copies the relation components that need no model-specific interpretation.
+class Grant::Query::RelationState
+  def merge_order_fields!(other : Grant::Query::RelationState, replacing : Bool) : Nil
+    if replacing
+      self.order_fields = other.order_fields.dup
+    else
+      other.order_fields.each do |term|
+        own_order_fields << term unless @order_fields.includes?(term)
+      end
+    end
+  end
+
+  def merge_components_from!(other : Grant::Query::RelationState, include_select : Bool = true, include_strict_loading : Bool = true) : Nil
+    other.group_fields.each do |field|
+      own_group_fields << field unless @group_fields.includes?(field)
+    end
+
+    if include_select
+      if other_columns = other.select_columns
+        if current_columns = @select_columns
+          @select_columns = (current_columns + other_columns).uniq
+        else
+          @select_columns = other_columns.dup
+        end
+      end
+    end
+
+    @limit = other.limit if other.limit
+    @offset = other.offset if other.offset
+
+    own_eager_load_associations.concat(other.eager_load_associations).uniq!
+    own_preload_associations.concat(other.preload_associations).uniq!
+    own_includes_associations.concat(other.includes_associations).uniq!
+    @strict_loading = true if include_strict_loading && other.strict_loading?
+
+    if mode = other.lock_mode
+      @lock_clause = nil
+      @lock_mode = mode
+    elsif clause = other.lock_clause
+      @lock_mode = nil
+      @lock_clause = clause
+    end
+
+    other.join_clauses.each do |join_clause|
+      own_join_clauses << join_clause unless @join_clauses.includes?(join_clause)
+    end
+
+    @distinct = true if other.distinct?
+    own_having_clauses.concat(other.having_clauses)
+    @is_none = true if other.is_none?
+    @readonly = true if other.readonly
+    @optimizer_hints = @optimizer_hints | other.optimizer_hints
+  end
+
+  def merge_scope_components_from!(other : Grant::Query::RelationState) : Nil
+    merge_components_from!(other, include_select: false, include_strict_loading: false)
+  end
+end
+
 # State and helpers behind `merge`, `reorder` and the later `unscope`
 # components: whether the relation was reordered, and which clauses were
 # unscoped, so merging a relation applies its unscoping as well.
@@ -29,6 +88,20 @@ class Grant::Query::RelationNotes
            eager_load_joins : Array(Grant::Query::JoinSupport::Clause) = @eager_load_joins,
            eager_load_distinct : Bool = @eager_load_distinct) : RelationNotes
     RelationNotes.new(reordering, unscoped_components, unscoped_columns, eager_load_joins, eager_load_distinct)
+  end
+
+  # Removes only the JOIN clauses and DISTINCT that eager_load added. Nil
+  # means no eager-load additions need to be removed.
+  def drop_eager_load_joins_from(state : Grant::Query::RelationState) : RelationNotes?
+    return if eager_load_joins.empty? && !eager_load_distinct?
+
+    unless eager_load_joins.empty?
+      added = eager_load_joins
+      state.own_join_clauses.reject! { |clause| added.includes?(clause) }
+    end
+    state.distinct = false if eager_load_distinct?
+    empty_joins = [] of Grant::Query::JoinSupport::Clause
+    self.with(eager_load_joins: empty_joins, eager_load_distinct: false)
   end
 end
 
@@ -85,13 +158,10 @@ class Grant::Query::Builder(Model)
   # replaces ours with them when *other* was reordered.
   protected def merge_order!(other : Builder(Model)) : Nil
     if other.reordering?
-      clear_order_fields
-      own_order_fields.concat(other.order_fields)
+      @relation_state.merge_order_fields!(other.relation_state, true)
       @notes = notes.with(reordering: true)
     else
-      other.order_fields.each do |term|
-        own_order_fields << term unless @relation_state.order_fields.includes?(term)
-      end
+      @relation_state.merge_order_fields!(other.relation_state, false)
     end
   end
 
@@ -105,13 +175,9 @@ class Grant::Query::Builder(Model)
 
   # Removes the joins and DISTINCT `eager_load` added, for `unscope(:eager_load)`.
   protected def drop_eager_load_joins! : Nil
-    current = notes
-    unless current.eager_load_joins.empty?
-      added = current.eager_load_joins
-      own_join_clauses.reject! { |clause| added.includes?(clause) }
+    if updated = notes.drop_eager_load_joins_from(@relation_state)
+      @notes = updated
     end
-    @relation_state.distinct = false if current.eager_load_distinct?
-    @notes = current.with(eager_load_joins: [] of Grant::Query::JoinSupport::Clause, eager_load_distinct: false) if current.eager_load_distinct? || !current.eager_load_joins.empty?
   end
 
   # Drops the LEFT JOIN clauses (`left: true`) or every other join clause.

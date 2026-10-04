@@ -24,6 +24,32 @@ module Grant::Query
   end
 end
 
+module Grant::Query::ScopeAttributeCollector
+  def self.collect_equality_attributes(fields : Array(Grant::Query::WhereField), into attrs : Hash(String, Grant::Columns::Type), owner_table : String, model_fields : Array(String)) : Nil
+    fields.each do |condition|
+      next unless condition.is_a?(NamedTuple(join: Symbol, field: String, operator: Symbol, value: Grant::Columns::Type))
+      next unless condition[:join] == :and && condition[:operator] == :eq
+
+      value = condition[:value]
+      next if value.nil?
+
+      if column = own_column_name(condition[:field], owner_table, model_fields)
+        attrs[column] = value
+      end
+    end
+  end
+
+  private def self.own_column_name(field : String, owner_table : String, model_fields : Array(String)) : String?
+    unquoted = field.delete('"').delete('`')
+    column = unquoted
+    if dot = unquoted.rindex('.')
+      return unless unquoted[0, dot] == owner_table
+      column = unquoted[(dot + 1)..]
+    end
+    model_fields.includes?(column) ? column : nil
+  end
+end
+
 module Grant::Query::Finders(Model)
   # Defaults set with `create_with`. The hash is never mutated once assigned:
   # every write builds a new one, so relations that share it through a copy
@@ -80,36 +106,9 @@ module Grant::Query::Finders(Model)
   # ```
   def scope_attributes : Hash(String, Grant::Columns::Type)
     attrs = Hash(String, Grant::Columns::Type).new
-    collect_equality_attributes(default_scope_where_fields, attrs)
-    collect_equality_attributes(where_fields, attrs)
+    Grant::Query::ScopeAttributeCollector.collect_equality_attributes(default_scope_where_fields, attrs, Model.table_name, Model.fields)
+    Grant::Query::ScopeAttributeCollector.collect_equality_attributes(where_fields, attrs, Model.table_name, Model.fields)
     attrs
-  end
-
-  private def collect_equality_attributes(fields : Array(Grant::Query::WhereField), into attrs : Hash(String, Grant::Columns::Type)) : Nil
-    fields.each do |condition|
-      next unless condition.is_a?(NamedTuple(join: Symbol, field: String, operator: Symbol, value: Grant::Columns::Type))
-      next unless condition[:join] == :and && condition[:operator] == :eq
-
-      value = condition[:value]
-      next if value.nil?
-
-      if column = own_column_name(condition[:field])
-        attrs[column] = value
-      end
-    end
-  end
-
-  # The unquoted column name of *field* when it names a column of `Model`,
-  # or `nil` when it is qualified with another table (a joined association's
-  # `authors.id` must not seed the model's own `id`) or is not a model column.
-  private def own_column_name(field : String) : String?
-    unquoted = field.delete('"').delete('`')
-    column = unquoted
-    if dot = unquoted.rindex('.')
-      return unless unquoted[0, dot] == Model.table_name
-      column = unquoted[(dot + 1)..]
-    end
-    Model.fields.includes?(column) ? column : nil
   end
 
   # Merges *defaults* over this relation's `create_with` defaults in place.

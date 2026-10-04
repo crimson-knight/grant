@@ -12,6 +12,24 @@ class Grant::Query::RelationState
   def distinct : Bool
     distinct?
   end
+
+  # Index into the WHERE clauses of the first `:in` field whose values exceed
+  # *limit*, or nil when every list fits. This check is relation-state work and
+  # does not depend on the model hydrated by the builder.
+  def oversized_in_index(limit : Int32) : Int32?
+    where_fields.each_with_index do |field, idx|
+      if field.is_a?(NamedTuple(join: Symbol, field: String, operator: Symbol, value: Grant::Columns::Type))
+        op = field[:operator]
+        val = field[:value]
+        if (op == :in || op == :nin) && val.is_a?(Array) && val.size > limit
+          # NOT IN cannot be chunked by union (would change semantics), so only
+          # chunk plain IN. NOT IN over a huge list is rare; let it fall through.
+          return idx if op == :in
+        end
+      end
+    end
+    nil
+  end
 end
 
 class Grant::Query::Builder(Model)
@@ -68,19 +86,7 @@ class Grant::Query::Builder(Model)
   # oversized IN list (the documented, common large-table case); other WHERE
   # conditions are replayed verbatim on every chunk.
   protected def oversized_in_index : Int32?
-    limit = effective_in_chunk_size
-    @relation_state.where_fields.each_with_index do |field, idx|
-      if field.is_a?(NamedTuple(join: Symbol, field: String, operator: Symbol, value: Grant::Columns::Type))
-        op = field[:operator]
-        val = field[:value]
-        if (op == :in || op == :nin) && val.is_a?(Array) && val.size > limit
-          # NOT IN cannot be chunked by union (would change semantics), so only
-          # chunk plain IN. NOT IN over a huge list is rare; let it fall through.
-          return idx if op == :in
-        end
-      end
-    end
-    nil
+    @relation_state.oversized_in_index(effective_in_chunk_size)
   end
 
   # Returns `true` when this query will be executed as chunked IN queries —
