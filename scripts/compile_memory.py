@@ -38,9 +38,11 @@ COLUMNS = """  column id : Int64, primary: true
 
 
 def command_prefix():
-    environment = ["BENCH_ADAPTER=sqlite", "CURRENT_ADAPTER=sqlite"]
-    if "CRYSTAL_WORKERS" in os.environ:
-        environment.append("CRYSTAL_WORKERS=" + os.environ["CRYSTAL_WORKERS"])
+    environment = [
+        "BENCH_ADAPTER=sqlite",
+        "CURRENT_ADAPTER=sqlite",
+        "CRYSTAL_WORKERS=" + os.environ.get("CRYSTAL_WORKERS", "1"),
+    ]
     environment.extend(["CRYSTAL_SLOT=" + SLOT, "CRYSTAL_BIN=" + CRYSTAL])
     return " ".join(environment + ["python3", "scripts/compile_memory.py"])
 
@@ -73,6 +75,7 @@ def measure(path, mode):
     link_flags = ["--link-flags=-Wl,--no-export-dynamic"] if platform.system() == "Linux" else []
     cmd = [*slot, *timer, CRYSTAL, "build", "--no-color", *flags, *link_flags, path, "-o", out]
     env = dict(os.environ, CRYSTAL_CACHE_DIR=os.path.join(cache, "cache"))
+    env.setdefault("CRYSTAL_WORKERS", "1")
     try:
         done = subprocess.run(cmd, cwd=ROOT, env=env, capture_output=True, text=True)
         output = done.stdout + done.stderr
@@ -117,12 +120,38 @@ def check(raw_json_path=None):
     compile_budget = platform_budget.get("compile")
     if not compile_budget:
         raise BudgetSelectionError("performance budget for %s has no compile limits" % key)
+    conditions = compile_budget.get("conditions")
+    if not isinstance(conditions, dict):
+        raise BudgetSelectionError("compile budget for %s has no measurement conditions; run calibrate and add its block" % key)
+    expected_workers = conditions.get("CRYSTAL_WORKERS")
+    if expected_workers is None:
+        raise BudgetSelectionError("compile budget for %s does not record CRYSTAL_WORKERS" % key)
+    current_conditions = {
+        "adapter": "sqlite",
+        "cache": "empty",
+        "CRYSTAL_WORKERS": os.environ.get("CRYSTAL_WORKERS", "1"),
+    }
+    mismatched_conditions = [
+        name for name, value in current_conditions.items()
+        if str(conditions.get(name)) != value
+    ]
+    if mismatched_conditions:
+        details = ", ".join(
+            "%s measured=%s current=%s" % (name, conditions.get(name), current_conditions[name])
+            for name in mismatched_conditions
+        )
+        raise BudgetSelectionError("compile budget for %s has different measurement conditions: %s" % (key, details))
     definitions = data.get("compile_probe_suite", {})
     probes = compile_budget.get("probes", {})
     missing = sorted(set(definitions) - set(probes))
     unexpected = sorted(set(probes) - set(definitions))
     if missing or unexpected:
         raise BudgetSelectionError("compile budget for %s does not match probe suite (missing: %s; unexpected: %s)" % (key, ", ".join(missing) or "none", ", ".join(unexpected) or "none"))
+    for name, probe in definitions.items():
+        budget = probes[name]
+        expected_headroom = 10 if probe.get("mode") == "debug" else 5
+        if budget.get("headroom_percent") != expected_headroom:
+            raise BudgetSelectionError("compile budget for %s probe %s must use %d%% headroom for %s mode" % (key, name, expected_headroom, probe.get("mode", "semantic")))
 
     failures = []
     measurements = {}
@@ -153,6 +182,7 @@ def check(raw_json_path=None):
     if raw_json_path:
         result = {
             "platform_key": key,
+            "conditions": conditions,
             "compile_probe_results": measurements,
             "check_command": command_prefix() + " check --json-output <result.json>",
         }
@@ -180,6 +210,8 @@ def calibrate(runs=1):
     if runs < 1:
         raise ValueError("--runs must be positive")
 
+    os.environ.setdefault("CRYSTAL_WORKERS", "1")
+
     budget_path = os.path.join(ROOT, "bench", "budgets.json")
     with open(budget_path, encoding="utf-8") as budget_file:
         data = json.load(budget_file)
@@ -206,9 +238,11 @@ def calibrate(runs=1):
             command = "%s file %s %s" % (prefix, definition["path"], definition["mode"])
         else:
             command = "%s probe %s %d %s" % (prefix, definition["workload"], definition["count"], definition["mode"])
+        headroom = 10 if definition.get("mode") == "debug" else 5
         probes[name] = {
             "measured_mb": measured,
-            "limit_mb": round(measured * 1.05, 1),
+            "limit_mb": round(measured * (1 + headroom / 100), 1),
+            "headroom_percent": headroom,
             "samples_mb": values,
             "command": command,
         }
@@ -218,7 +252,12 @@ def calibrate(runs=1):
         "compile": {
             "unit": "decimal MB of peak RSS",
             "measurement_runs": runs,
-            "headroom_percent": 5,
+            "headroom_percent": {"semantic": 5, "debug": 10},
+            "conditions": {
+                "adapter": "sqlite",
+                "cache": "empty",
+                "CRYSTAL_WORKERS": os.environ["CRYSTAL_WORKERS"],
+            },
             "probes": probes,
         },
         "check_command": command_prefix() + " check",

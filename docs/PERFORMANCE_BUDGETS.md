@@ -40,8 +40,14 @@ automatically switches to enforcement.
 
 ## Why timing and bytes have different CI limits
 
-Compile RSS is stable enough to use a 5% limit above the highest of three
-measurements. The runtime values come from the Grant-only SQLite variant with
+Semantic compile RSS is stable enough to use a 5% limit above the highest of
+three measurements. Debug compile probes use 10% headroom: the prior
+one-worker association regression samples ranged from 4,816 to 5,179 MB, a
+roughly 7% spread relative to the maximum, so 5% would be vulnerable to a
+repeatable measurement fluctuation. Both checkers compare the recorded
+`CRYSTAL_WORKERS` condition with the current value (default 1) and fail closed
+if it differs. Runtime limits also record the SQLite adapter and worker count.
+The runtime values come from the Grant-only SQLite variant with
 2,000 records and five leak-check rounds. Local limits add 10% above the highest
 of three observed means and allocations. On shared CI runners, CPU scheduling
 and filesystem activity make timing noisy, so CI allows 1.5 times the measured
@@ -85,7 +91,8 @@ commands/environment to reproduce them. Review this JSON before copying its
 compile or runtime block into the matching platform budget. The compile probe
 uses one Crystal worker because the local crystal-alpha scheduler stalled on
 the 200-model association slope with its default worker count. CI also sets one
-worker so the probe has the same execution shape.
+worker so the probe has the same execution shape. Calibration records this
+condition in its paste-ready block; do not copy a budget across worker counts.
 
 Linux remains in calibration mode until a measured Linux block is reviewed.
 That workflow announces the mode in its log and step summary, runs the compile

@@ -35,6 +35,27 @@ def check(result_path: Path, budgets_path: Path, mode: str) -> int:
     if not runtime:
         raise BudgetSelectionError("performance budget for %s has no runtime limits" % key)
 
+    conditions = runtime.get("conditions")
+    if not isinstance(conditions, dict):
+        raise BudgetSelectionError("runtime budget for %s has no measurement conditions; run calibrate and add its block" % key)
+    expected_workers = conditions.get("CRYSTAL_WORKERS")
+    if expected_workers is None:
+        raise BudgetSelectionError("runtime budget for %s does not record CRYSTAL_WORKERS" % key)
+    current_conditions = {
+        "adapter": os.environ.get("BENCH_ADAPTER", "sqlite"),
+        "CRYSTAL_WORKERS": os.environ.get("CRYSTAL_WORKERS", "1"),
+    }
+    mismatched_conditions = [
+        name for name, value in current_conditions.items()
+        if str(conditions.get(name)) != value
+    ]
+    if mismatched_conditions:
+        details = ", ".join(
+            "%s measured=%s current=%s" % (name, conditions.get(name), current_conditions[name])
+            for name in mismatched_conditions
+        )
+        raise BudgetSelectionError("runtime budget for %s has different measurement conditions: %s" % (key, details))
+
     result = read_json(result_path)
     expected_variant = runtime["variant"]
     variants = [variant for variant in result["list_of_variants"] if variant["variant"] == expected_variant]
@@ -86,6 +107,7 @@ def calibrate(budgets_path: Path, runs: int, iterations: int, rounds: int) -> No
     crystal = crystal_binary()
     env = dict(os.environ)
     env["BENCH_ADAPTER"] = "sqlite"
+    env.setdefault("CRYSTAL_WORKERS", "1")
     bench = ROOT / "bench" / "lifecycle_bench.cr"
     link_flags = ["--link-flags=-Wl,--no-export-dynamic"] if platform.system() == "Linux" else []
 
@@ -109,7 +131,7 @@ def calibrate(budgets_path: Path, runs: int, iterations: int, rounds: int) -> No
             raw_runs.append({
                 "run": run,
                 "command": shlex.join(command),
-                "environment": {"BENCH_DATABASE_URL": database_url, "CRYSTAL_WORKERS": env.get("CRYSTAL_WORKERS")},
+                "environment": {"BENCH_DATABASE_URL": database_url, "CRYSTAL_WORKERS": env["CRYSTAL_WORKERS"]},
                 "result": raw,
             })
             print("completed runtime calibration run %d/%d" % (run, runs), file=sys.stderr, flush=True)
@@ -147,9 +169,8 @@ def calibrate(budgets_path: Path, runs: int, iterations: int, rounds: int) -> No
         "BENCH_ADAPTER=sqlite",
         "CRYSTAL_BIN=" + crystal,
         "CRYSTAL_SLOT=" + SLOT,
+        "CRYSTAL_WORKERS=" + env["CRYSTAL_WORKERS"],
     ]
-    if env.get("CRYSTAL_WORKERS") is not None:
-        calibration_environment.append("CRYSTAL_WORKERS=" + env["CRYSTAL_WORKERS"])
     link_flags_text = " --link-flags=-Wl,--no-export-dynamic" if link_flags else ""
     result = {
         "platform_key": key,
@@ -159,13 +180,17 @@ def calibrate(budgets_path: Path, runs: int, iterations: int, rounds: int) -> No
             "iterations": iterations,
             "rounds": rounds,
             "runs_averaged": runs,
+            "conditions": {
+                "adapter": "sqlite",
+                "CRYSTAL_WORKERS": env["CRYSTAL_WORKERS"],
+            },
             "local_headroom_percent": 10,
             "ci_time_multiplier": 1.5,
             "ci_bytes_headroom_percent": 5,
             "operations": operations,
             "commands": {
                 "calibrate": " ".join(calibration_environment + ["python3", "scripts/check_runtime_budget.py", "calibrate", "--runs", str(runs), "--iterations", str(iterations), "--rounds", str(rounds)]),
-                "build": "BENCH_ADAPTER=sqlite \"${CRYSTAL_SLOT:-crystal-slot}\" \"$CRYSTAL_BIN\" build --release --no-color%s bench/lifecycle_bench.cr -o /tmp/grant-lifecycle" % link_flags_text,
+                "build": "BENCH_ADAPTER=sqlite CRYSTAL_WORKERS=%s \"${CRYSTAL_SLOT:-crystal-slot}\" \"$CRYSTAL_BIN\" build --release --no-color%s bench/lifecycle_bench.cr -o /tmp/grant-lifecycle" % (env["CRYSTAL_WORKERS"], link_flags_text),
                 "run": "BENCH_DATABASE_URL=sqlite3:/tmp/grant-lifecycle.sqlite /tmp/grant-lifecycle --iterations %d --rounds %d --grant-only --label %s --json /tmp/perf03-lifecycle.json" % (iterations, rounds, variant_name),
                 "calibration_build_actual": shlex.join(build_command),
             },
@@ -173,7 +198,7 @@ def calibrate(budgets_path: Path, runs: int, iterations: int, rounds: int) -> No
                 "BENCH_ADAPTER": "sqlite",
                 "CRYSTAL_BIN": crystal,
                 "CRYSTAL_SLOT": SLOT,
-                "CRYSTAL_WORKERS": env.get("CRYSTAL_WORKERS"),
+                "CRYSTAL_WORKERS": env["CRYSTAL_WORKERS"],
             },
         },
         "raw_runs": raw_runs,

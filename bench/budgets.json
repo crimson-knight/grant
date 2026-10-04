@@ -1,58 +1,53 @@
 {
-  "version": 2,
   "compile_probe_suite": {
     "assoc_one_200_semantic": {
-      "kind": "peak",
-      "workload": "assoc_one",
       "count": 200,
-      "mode": "semantic"
-    },
-    "lifecycle_debug": {
       "kind": "peak",
-      "path": "bench/lifecycle_bench.cr",
-      "mode": "debug"
+      "mode": "semantic",
+      "workload": "assoc_one"
+    },
+    "assoc_slope_10_200": {
+      "high": 200,
+      "kind": "slope",
+      "low": 10,
+      "mode": "semantic",
+      "workload": "assoc"
     },
     "association_regressions_debug": {
       "kind": "peak",
-      "path": "spec/grant/associations/association_regressions_spec.cr",
-      "mode": "debug"
+      "mode": "debug",
+      "path": "spec/grant/associations/association_regressions_spec.cr"
+    },
+    "lifecycle_debug": {
+      "kind": "peak",
+      "mode": "debug",
+      "path": "bench/lifecycle_bench.cr"
     },
     "query_slope_10_200": {
-      "kind": "slope",
-      "workload": "query",
-      "low": 10,
       "high": 200,
-      "mode": "semantic"
-    },
-    "assoc_slope_10_200": {
       "kind": "slope",
-      "workload": "assoc",
       "low": 10,
-      "high": 200,
-      "mode": "semantic"
+      "mode": "semantic",
+      "workload": "query"
     }
-  },
-  "runtime_probe": {
-    "adapter": "sqlite",
-    "variant": "perf03-builder",
-    "iterations": 2000,
-    "rounds": 5,
-    "calibration_runs": 3,
-    "local_headroom_percent": 10,
-    "ci_time_multiplier": 1.5,
-    "ci_bytes_headroom_percent": 5
   },
   "platform_budgets": {
     "darwin-crystal-alpha-1.21.0": {
-      "status": "measured",
-      "toolchain": "crystal-alpha 1.21.0",
-      "platform": "macOS (Darwin)",
       "compile": {
-        "headroom_percent": 5,
+        "conditions": {
+          "CRYSTAL_WORKERS": "1",
+          "adapter": "sqlite",
+          "cache": "empty"
+        },
+        "headroom_percent": {
+          "debug": 10,
+          "semantic": 5
+        },
         "measurement_runs": 3,
         "probes": {
           "assoc_one_200_semantic": {
             "command": "BENCH_ADAPTER=sqlite CURRENT_ADAPTER=sqlite CRYSTAL_WORKERS=1 CRYSTAL_SLOT=/Users/crimsonknight/open_source_coding_projects/amber_framework_libraries/parity-audit-2026-09-28/tools/crystal-slot CRYSTAL_BIN=crystal-alpha python3 scripts/compile_memory.py probe assoc_one 200 semantic",
+            "headroom_percent": 5,
             "limit_mb": 1679.0,
             "measured_mb": 1599.0,
             "samples_mb": [
@@ -63,6 +58,7 @@
           },
           "assoc_slope_10_200": {
             "command": "BENCH_ADAPTER=sqlite CURRENT_ADAPTER=sqlite CRYSTAL_WORKERS=1 CRYSTAL_SLOT=/Users/crimsonknight/open_source_coding_projects/amber_framework_libraries/parity-audit-2026-09-28/tools/crystal-slot CRYSTAL_BIN=crystal-alpha python3 scripts/compile_memory.py slope assoc 10 200",
+            "headroom_percent": 5,
             "limit_mb": 19.8,
             "measured_mb": 18.9,
             "samples_mb": [
@@ -73,7 +69,8 @@
           },
           "association_regressions_debug": {
             "command": "BENCH_ADAPTER=sqlite CURRENT_ADAPTER=sqlite CRYSTAL_WORKERS=1 CRYSTAL_SLOT=/Users/crimsonknight/open_source_coding_projects/amber_framework_libraries/parity-audit-2026-09-28/tools/crystal-slot CRYSTAL_BIN=crystal-alpha python3 scripts/compile_memory.py file spec/grant/associations/association_regressions_spec.cr debug",
-            "limit_mb": 5438.1,
+            "headroom_percent": 10,
+            "limit_mb": 5697.0,
             "measured_mb": 5179.1,
             "samples_mb": [
               4999.0,
@@ -83,7 +80,8 @@
           },
           "lifecycle_debug": {
             "command": "BENCH_ADAPTER=sqlite CURRENT_ADAPTER=sqlite CRYSTAL_WORKERS=1 CRYSTAL_SLOT=/Users/crimsonknight/open_source_coding_projects/amber_framework_libraries/parity-audit-2026-09-28/tools/crystal-slot CRYSTAL_BIN=crystal-alpha python3 scripts/compile_memory.py file bench/lifecycle_bench.cr debug",
-            "limit_mb": 1939.2,
+            "headroom_percent": 10,
+            "limit_mb": 2031.6,
             "measured_mb": 1846.9,
             "samples_mb": [
               1844.0,
@@ -93,6 +91,7 @@
           },
           "query_slope_10_200": {
             "command": "BENCH_ADAPTER=sqlite CURRENT_ADAPTER=sqlite CRYSTAL_WORKERS=1 CRYSTAL_SLOT=/Users/crimsonknight/open_source_coding_projects/amber_framework_libraries/parity-audit-2026-09-28/tools/crystal-slot CRYSTAL_BIN=crystal-alpha python3 scripts/compile_memory.py slope query 10 200",
+            "headroom_percent": 5,
             "limit_mb": 16.9,
             "measured_mb": 16.1,
             "samples_mb": [
@@ -102,18 +101,24 @@
             ]
           }
         },
-        "unit": "decimal MB of peak RSS",
-        "runner_note": "Three local crystal-alpha 1.21.0 samples; each limit is 5% above the maximum. Linux runners calibrate independently."
+        "runner_note": "Three local crystal-alpha 1.21.0 samples; semantic limits are 5% above max, debug limits are 10% above max to cover observed 7% sample spread. Linux runners calibrate independently.",
+        "unit": "decimal MB of peak RSS"
       },
+      "platform": "macOS (Darwin)",
       "runtime": {
         "adapter": "sqlite",
         "ci_bytes_headroom_percent": 5,
+        "ci_note": "CI timing allows 1.5x the maximum mean from three local runs because shared runner scheduling is noisy; bytes/op allows 5% above the maximum observed allocation.",
         "ci_time_multiplier": 1.5,
         "commands": {
           "build": "BENCH_ADAPTER=sqlite \"${CRYSTAL_SLOT:-crystal-slot}\" \"$CRYSTAL_BIN\" build --release --no-color bench/lifecycle_bench.cr -o /tmp/grant-lifecycle",
           "calibrate": "BENCH_ADAPTER=sqlite CRYSTAL_BIN=crystal-alpha CRYSTAL_SLOT=/Users/crimsonknight/open_source_coding_projects/amber_framework_libraries/parity-audit-2026-09-28/tools/crystal-slot CRYSTAL_WORKERS=1 python3 scripts/check_runtime_budget.py calibrate --runs 3 --iterations 2000 --rounds 5",
           "calibration_build_actual": "/Users/crimsonknight/open_source_coding_projects/amber_framework_libraries/parity-audit-2026-09-28/tools/crystal-slot crystal-alpha build --release --no-color /Users/crimsonknight/open_source_coding_projects/amber_framework_libraries/grant-perf03/bench/lifecycle_bench.cr -o /var/folders/81/8xr46ykx0p350l1g_v0nk7hr0000gn/T/grant-runtime-calibration-1k_yuk02/lifecycle_bench",
           "run": "BENCH_DATABASE_URL=sqlite3:/tmp/grant-lifecycle.sqlite /tmp/grant-lifecycle --iterations 2000 --rounds 5 --grant-only --label perf03-builder --json /tmp/perf03-lifecycle.json"
+        },
+        "conditions": {
+          "CRYSTAL_WORKERS": "1",
+          "adapter": "sqlite"
         },
         "environment": {
           "BENCH_ADAPTER": "sqlite",
@@ -123,6 +128,7 @@
         },
         "iterations": 2000,
         "local_headroom_percent": 10,
+        "measurement_command": "BENCH_ADAPTER=sqlite CRYSTAL_BIN=crystal-alpha CRYSTAL_SLOT=/Users/crimsonknight/open_source_coding_projects/amber_framework_libraries/parity-audit-2026-09-28/tools/crystal-slot CRYSTAL_WORKERS=1 PYTHONDONTWRITEBYTECODE=1 python3 scripts/check_runtime_budget.py calibrate --runs 3",
         "operations": {
           "build (no database)": {
             "ci": {
@@ -239,16 +245,27 @@
         },
         "rounds": 5,
         "runs_averaged": 3,
-        "variant": "perf03-builder",
-        "ci_note": "CI timing allows 1.5x the maximum mean from three local runs because shared runner scheduling is noisy; bytes/op allows 5% above the maximum observed allocation.",
-        "measurement_command": "BENCH_ADAPTER=sqlite CRYSTAL_BIN=crystal-alpha CRYSTAL_SLOT=/Users/crimsonknight/open_source_coding_projects/amber_framework_libraries/parity-audit-2026-09-28/tools/crystal-slot CRYSTAL_WORKERS=1 PYTHONDONTWRITEBYTECODE=1 python3 scripts/check_runtime_budget.py calibrate --runs 3"
-      }
+        "variant": "perf03-builder"
+      },
+      "status": "measured",
+      "toolchain": "crystal-alpha 1.21.0"
     },
     "linux-crystal-1.21.0": {
-      "status": "calibration-required",
-      "toolchain": "stock crystal 1.21.0",
+      "note": "Linux peak RSS and lifecycle allocation/timing limits have not been measured on the GitHub runner. CI runs compile and runtime calibration and uploads raw JSON until a measured Linux block is committed.",
       "platform": "Ubuntu Linux",
-      "note": "Linux peak RSS and lifecycle allocation/timing limits have not been measured on the GitHub runner. CI runs compile and runtime calibration and uploads raw JSON until a measured Linux block is committed."
+      "status": "calibration-required",
+      "toolchain": "stock crystal 1.21.0"
     }
-  }
+  },
+  "runtime_probe": {
+    "adapter": "sqlite",
+    "calibration_runs": 3,
+    "ci_bytes_headroom_percent": 5,
+    "ci_time_multiplier": 1.5,
+    "iterations": 2000,
+    "local_headroom_percent": 10,
+    "rounds": 5,
+    "variant": "perf03-builder"
+  },
+  "version": 2
 }
