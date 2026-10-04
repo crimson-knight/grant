@@ -1,3 +1,4 @@
+# :nodoc:
 module Grant::Autosave::AssociationOperations
   def self.loaded_record(owner : Grant::Base, name : String) : Grant::Base?
     return unless owner.association_loaded?(name)

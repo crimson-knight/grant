@@ -64,10 +64,12 @@ module Grant::Query
     DescendingNullsLast
     Raw
 
+    # Returns whether this sort direction orders values from high to low.
     def sorts_descending? : Bool
       descending? || descending_nulls_first? || descending_nulls_last?
     end
 
+    # Returns the requested null placement, if this sort direction specifies one.
     def nulls_placement : Symbol?
       if ascending_nulls_first? || descending_nulls_first?
         :first
@@ -76,6 +78,7 @@ module Grant::Query
       end
     end
 
+    # Returns the opposite sort direction while preserving its null placement.
     def reverse : Sort
       case self
       when Ascending            then Descending
@@ -125,6 +128,8 @@ module Grant::Query
   # Model-independent relation clauses and their copy-on-write storage.
   # Builder(Model) keeps only hydrated records, typed caches, and the model
   # operations needed to interpret or execute these values.
+  #
+  # :nodoc:
   class RelationState
     alias WhereField = Grant::Query::WhereField
 
@@ -346,6 +351,10 @@ module Grant::Query
     {% for pair in [{"where_fields", 1, "WHERE_FIELDS"}, {"default_scope_where_fields", 2, "DEFAULT_SCOPE_WHERE_FIELDS"}, {"order_fields", 4, "ORDER_FIELDS"}, {"group_fields", 8, "GROUP_FIELDS"}, {"join_clauses", 16, "JOIN_CLAUSES"}, {"having_clauses", 32, "HAVING_CLAUSES"}, {"includes_associations", 64, "INCLUDES_ASSOCIATIONS"}, {"preload_associations", 128, "PRELOAD_ASSOCIATIONS"}, {"eager_load_associations", 256, "EAGER_LOAD_ASSOCIATIONS"}, {"index_hints", 512, "INDEX_HINTS"}] %}
       {% name = pair[0].id %}
       {% bit = pair[1] %}
+      # Returns the writable `{{name}}` array, copying it first when another
+      # relation still shares it. Every in-place write goes through here.
+      #
+      # :nodoc:
       def own_{{name}}
         if (@shared_arrays & {{bit}}_u16) != 0_u16
           writable = @{{name}}.class.new(@{{name}}.size + 1)
@@ -356,6 +365,9 @@ module Grant::Query
         @{{name}}
       end
 
+      # Resets `{{name}}` to the shared empty array.
+      #
+      # :nodoc:
       def clear_{{name}} : Nil
         @{{name}} = EmptyClauses::{{pair[2].id}}
         @shared_arrays |= {{bit}}_u16
@@ -365,6 +377,7 @@ module Grant::Query
     ALL_ARRAYS_SHARED = 0x3FF_u16
   end
 
+  # :nodoc:
   module ValueComparison
     def self.compare(a : Grant::Columns::Type, b : Grant::Columns::Type) : Int32
       return 0 if a.nil? && b.nil?
@@ -496,24 +509,12 @@ class Grant::Query::Builder(Model)
     @relation_state.distinct?
   end
 
-  def distinct=(value : Bool)
-    @relation_state.distinct = value
-  end
-
   def is_none? : Bool
     @relation_state.is_none?
   end
 
-  def is_none=(value : Bool)
-    @relation_state.is_none = value
-  end
-
   def strict_loading? : Bool
     @relation_state.strict_loading?
-  end
-
-  def strict_loading=(value : Bool)
-    @relation_state.strict_loading = value
   end
 
   protected def relation_state : Grant::Query::RelationState
@@ -550,11 +551,13 @@ class Grant::Query::Builder(Model)
     chain_copy
   end
 
-  # Same as `dup`; the name states the intent at chain-method call sites.
   protected def relation_state=(value : Grant::Query::RelationState) : Grant::Query::RelationState
     @relation_state = value
   end
 
+  # Same as `dup`; the name states the intent at chain-method call sites.
+  #
+  # :nodoc:
   protected def chain_copy : self
     state = @relation_state.chain_copy
     copy = self.class.allocate

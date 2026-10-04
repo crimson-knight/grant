@@ -8,6 +8,7 @@ module Grant::Query::InChunks
   end
 end
 
+# :nodoc:
 class Grant::Query::RelationState
   def distinct : Bool
     distinct?

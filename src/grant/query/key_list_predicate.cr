@@ -1,3 +1,4 @@
+# :nodoc:
 module Grant::Query::KeyListPredicate
   # Builds `field IN (...)` for non-nil keys. Nil is represented with an
   # `IS NULL` branch; an empty list matches no rows.

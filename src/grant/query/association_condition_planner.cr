@@ -1,3 +1,4 @@
+# :nodoc:
 module Grant::Query::AssociationConditionPlanner
   alias KeyEntry = Tuple(Grant::Columns::Type, String?)
   alias RawColumn = Tuple(String, String, Bool)

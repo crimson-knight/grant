@@ -1,6 +1,7 @@
 module Grant::Query::Executor
   # The database cursor loop is identical for every model. Keep it in one
   # non-generic runner and pass only the model-specific row hydration step.
+  # :nodoc:
   class SharedListRunner
     alias RowLoader = Proc(DB::ResultSet, Grant::Adapter::Base, Nil)
 

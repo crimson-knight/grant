@@ -1,5 +1,6 @@
 require "./builder"
 
+# :nodoc:
 class Grant::Query::RelationState
   def unscope_component!(component : Symbol, extra : Proc(Symbol, Bool)) : Nil
     case component

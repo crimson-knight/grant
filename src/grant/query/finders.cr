@@ -24,6 +24,7 @@ module Grant::Query
   end
 end
 
+# :nodoc:
 module Grant::Query::ScopeAttributeCollector
   def self.collect_equality_attributes(fields : Array(Grant::Query::WhereField), into attrs : Hash(String, Grant::Columns::Type), owner_table : String, model_fields : Array(String)) : Nil
     fields.each do |condition|

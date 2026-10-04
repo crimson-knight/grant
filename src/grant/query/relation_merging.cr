@@ -1,6 +1,7 @@
 require "./builder"
 
 # Copies the relation components that need no model-specific interpretation.
+# :nodoc:
 class Grant::Query::RelationState
   def merge_order_fields!(other : Grant::Query::RelationState, replacing : Bool) : Nil
     if replacing

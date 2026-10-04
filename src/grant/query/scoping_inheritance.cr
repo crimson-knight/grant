@@ -45,6 +45,7 @@ class Grant::Query::ForeignRelation
   end
 end
 
+# :nodoc:
 class Grant::Query::RelationState
   def self.from_foreign_relation(db_type : Grant::Query::DbType, other : Grant::Query::ForeignRelation) : Grant::Query::RelationState
     state = new(db_type)

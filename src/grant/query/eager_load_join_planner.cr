@@ -3,6 +3,7 @@ require "./builder"
 # Builds the two JOIN clauses used by eager loading through and polymorphic
 # associations. The relation builder supplies its model class and consumes
 # plain clauses, so the reflection traversal and SQL assembly compile once.
+# :nodoc:
 module Grant::Query::EagerLoadJoinPlanner
   alias Clause = Grant::Query::JoinSupport::Clause
 

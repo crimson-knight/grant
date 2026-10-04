@@ -3,6 +3,7 @@ require "./builder"
 # Validates and quotes a simple field or a table-qualified field. Model-specific
 # names and columns arrive as values; the query builder only supplies its
 # adapter's identifier quoting operation.
+# :nodoc:
 module Grant::Query::StructuredFieldResolver
   alias Clause = Grant::Query::JoinSupport::Clause
   alias QuoteIdentifier = Proc(String, String)

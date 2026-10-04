@@ -3,6 +3,7 @@
 # WHERE are the rows the association holds. Grant loads associations in a second
 # query, so it joins for the filter and then repeats the conditions that name
 # only the association's table on that second query.
+# :nodoc:
 module Grant::Query::AssociationRestrictionSupport
   alias WhereField = Grant::Query::WhereField
 
