@@ -255,7 +255,7 @@ module Grant::Query
       end
     end
 
-    private def where_column_key(field : String, owner_table : String) : String
+    def where_column_key(field : String, owner_table : String) : String
       prefix = "#{owner_table}."
       field.starts_with?(prefix) ? field[prefix.size..] : field
     end

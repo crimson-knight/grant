@@ -43,34 +43,18 @@ end
 class Grant::Query::Builder(Model)
   alias FieldClause = NamedTuple(join: Symbol, field: String, operator: Symbol, value: Grant::Columns::Type)
 
-  # Raw WHERE statements this relation generated for a single column (a
-  # nil-aware `IN`, an array holding ranges, a record list under an
-  # association), keyed by their SQL text and mapped to that column, so
-  # `rewhere`, `merge` and `unscope(where:)` remove them with the column's
-  # structured conditions. The flag is true for a plain `IN` list, which
-  # `merge` treats like an equality. A chain copy gets its own copy of the
-  # map is copied with the relation state when a relation is chained.
-
-  # Records that the raw *stmt* constrains *field* only; *equality* marks a
-  # plain `IN` list.
+  # Records the model column a generated raw WHERE statement constrains so
+  # `rewhere`, `merge` and `unscope(where:)` can treat it like a structured
+  # condition. *equality* marks a plain `IN` list, which merge treats like an
+  # equality on that column.
   protected def register_raw_where_column(stmt : String, field : String, equality : Bool = false) : Nil
-    @relation_state.register_raw_where_column(stmt, where_column_key(field), equality)
+    @relation_state.register_raw_where_column(stmt, @relation_state.where_column_key(field, Model.table_name), equality)
   end
 
   # The column a raw clause was registered for and whether it is a plain `IN`
   # list; nil for a user-written or multi-column statement.
   protected def raw_where_column(stmt : String) : Tuple(String, Bool)?
     @relation_state.raw_where_column(stmt)
-  end
-
-  # Column a WHERE clause constrains when it is tied to exactly one column:
-  # a structured field clause, or a raw clause registered for one column.
-  private def where_clause_column(clause : WhereField) : String?
-    if clause.is_a?(FieldClause)
-      where_column_key(clause[:field])
-    elsif registered = raw_where_column(clause[:stmt])
-      registered[0]
-    end
   end
 
   # Adds one `field => value` condition joined by *join* (`:and` or `:or`).
@@ -477,12 +461,6 @@ class Grant::Query::Builder(Model)
     unless merged
       append_where_group(other)
     end
-  end
-
-  # Column a condition applies to, without the model's own table qualifier.
-  private def where_column_key(field : String) : String
-    prefix = "#{Model.table_name}."
-    field.starts_with?(prefix) ? field[prefix.size..] : field
   end
 
   # Drops every condition tied to one of *columns*: structured clauses on it
