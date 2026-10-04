@@ -365,8 +365,9 @@ documented in
 | load and update | 30.155 | 29.021 | 0.962 | 10,652.9 | 10,669.4 | 1.002 |
 | load and destroy | 34.175 | 34.737 | 1.016 | 3,008.8 | 3,025.1 | 1.005 |
 
-The measured, per-platform budgets and the Linux calibration-only CI behavior
-are described in [`PERFORMANCE_BUDGETS.md`](PERFORMANCE_BUDGETS.md).
+The measured, per-platform budgets and CI calibration behavior are described
+in [`PERFORMANCE_BUDGETS.md`](PERFORMANCE_BUDGETS.md). Linux was calibrated and
+switched to enforcement in PERF03 round four below.
 
 ### PERF03 round three: review fixes and final measurements
 
@@ -445,3 +446,29 @@ Every aggregate mean and bytes/op value remains within 1.05× of that baseline.
 All rows also pass the Darwin runtime checker using the measured local limits.
 CI keeps the broader mean-time allowance and tight bytes/op gate described in
 [`PERFORMANCE_BUDGETS.md`](PERFORMANCE_BUDGETS.md).
+
+### PERF03 round four: Linux budget calibration
+
+The Linux budget uses stock Crystal 1.21.0 on GitHub Actions `ubuntu-latest`,
+SQLite, an empty compile cache, and `CRYSTAL_WORKERS=1`. Two attempts of
+workflow run 37175528324 produced two compile samples per probe and six runtime
+samples per operation. The compile `measured` column is the average of both
+samples; limits are 5% above the largest semantic sample and 10% above the
+largest debug sample. The complete samples and commands are in the measurement
+ledger.
+
+| Linux compile probe | Samples (MB) | Measured (MB) | Limit (MB) |
+| --- | ---: | ---: | ---: |
+| Query slope, N=10..200 | 16.6, 16.6 | 16.6 | 17.4 |
+| Association slope, N=10..200 | 19.0, 18.9 | 18.9 | 19.9 |
+| 200 associated models, one query | 1,553.6, 1,553.3 | 1,553.4 | 1,631.3 |
+| Lifecycle benchmark, debug | 1,740.9, 1,741.3 | 1,741.1 | 1,915.4 |
+| Association regression spec, debug | 5,091.1, 5,096.5 | 5,093.8 | 5,606.2 |
+
+Linux now enforces these measured limits in CI. The compile probes fit the
+16 GB runner and none are skipped or scaled. The runtime block averages all six
+SQLite release samples and gives CI timing 1.5x the largest observed mean and
+bytes/op 5% over the largest observed allocation. Future platform/toolchain
+keys with a `calibration-required` placeholder still use the explicit
+calibration workflow branch and upload their raw measurements; a missing key
+fails closed.

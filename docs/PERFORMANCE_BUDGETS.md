@@ -15,8 +15,11 @@ The compile checker runs five serial probes with an empty `CRYSTAL_CACHE_DIR`:
 
 No probe is skipped or scaled on the 16 GB Ubuntu runner. The latest Darwin
 association regression debug probe peaked at 4,985.3 MB; the earlier PERF02
-sample was 6,887 MB. Linux remains calibration-only until its RSS is measured
-on an actual runner. Linux probes use
+sample was 6,887 MB. Linux was measured on GitHub Actions run 37175528324,
+attempts 1 and 2, using stock Crystal 1.21.0, SQLite, an empty cache, and one
+worker. Compile limits use the maximum of the two samples plus 5% for semantic
+probes and 10% for debug probes. The five probe values, samples, limits, and
+artifact paths are recorded in the measurement ledger. Linux probes use
 `--link-flags=-Wl,--no-export-dynamic`, as in `scripts/spec-groups.sh`.
 
 The runtime checker covers every Grant operation in
@@ -33,26 +36,29 @@ version, such as `darwin-crystal-alpha-1.21.0` or
 with a clear error; a result from one platform is never used as another
 platform's budget.
 
-The Darwin block is measured with crystal-alpha 1.21.0. The Linux stock Crystal
-1.21.0 block remains `calibration-required` until a real GitHub runner sample
-is reviewed and committed. CI says when it is in calibration mode, runs the
-measurements without enforcing limits, and uploads both raw measurement JSON
-files as an artifact. When a measured Linux block is added, the same workflow
-automatically switches to enforcement.
+The Darwin block is measured with crystal-alpha 1.21.0. The Linux block is
+measured with stock Crystal 1.21.0 from two attempts of workflow run
+37175528324, and CI enforces it. The workflow retains a calibration branch for
+platform/toolchain entries marked `calibration-required`; it uploads both raw
+calibration JSON files so a future block can be based on real runner data.
+Missing platform entries fail closed and must first be added as calibration
+placeholders.
 
 ## Why timing and bytes have different CI limits
 
-Semantic compile RSS is stable enough to use a 5% limit above the highest of
-three measurements. Debug compile probes use 10% headroom: the latest
+Semantic compile RSS is stable enough to use a 5% limit above the highest
+sample; the Darwin block uses three samples and Linux uses two. Debug compile
+probes use 10% headroom: the latest
 one-worker association regression samples ranged from 4,611.5 to 4,985.3 MB, a
 7.5% spread relative to the maximum, so 5% would be vulnerable to a repeatable
 measurement fluctuation. Both checkers compare the recorded
 `CRYSTAL_WORKERS` condition with the current value (default 1) and fail closed
 if it differs. Runtime limits also record the SQLite adapter and worker count.
 The runtime values come from the Grant-only SQLite variant with
-2,000 records and five leak-check rounds. Local limits add 10% above the highest
-of three observed means and allocations. On shared CI runners, CPU scheduling
-and filesystem activity make timing noisy, so CI allows 1.5 times the measured
+2,000 iterations and five leak-check rounds. The Linux block averages six runs
+from the two calibration attempts. Local limits add 10% above the highest
+observed mean and allocation. On shared CI runners, CPU scheduling and
+filesystem activity make timing noisy, so CI allows 1.5 times the measured
 maximum mean. Bytes per operation are less affected by runner contention, so CI
 keeps them within 5% of the maximum measured allocation.
 
@@ -96,11 +102,12 @@ the 200-model association slope with its default worker count. CI also sets one
 worker so the probe has the same execution shape. Calibration records this
 condition in its paste-ready block; do not copy a budget across worker counts.
 
-Linux remains in calibration mode until a measured Linux block is reviewed.
-That workflow announces the mode in its log and step summary, runs the compile
-probes once (their RSS is stable) and the runtime benchmark three times without
-enforcement, then uploads the compile/runtime JSON as a workflow artifact. Once the Linux block is marked `measured`, CI enforces it
-and continues uploading the raw check and lifecycle result JSON.
+For a platform with a `calibration-required` entry, the workflow announces
+calibration mode in its log and step summary, runs the compile probes once and
+the runtime benchmark three times without enforcement, then uploads the
+compile/runtime JSON as an artifact. Linux now has a measured block, so CI
+enforces both compile RSS and lifecycle limits there and continues uploading
+the raw compile check and lifecycle result JSON.
 
 ## Raise a budget
 
