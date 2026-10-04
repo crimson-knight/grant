@@ -24,18 +24,42 @@ jobs:
           crystal: 1.21.0
       - name: Install locked shards
         run: shards install --frozen --skip-postinstall --skip-executables
-      - name: Check compile-memory budgets
-        run: python3 scripts/compile_memory.py check
-        env:
-          CRYSTAL_BIN: crystal
-          CRYSTAL_SLOT: ""
-      - name: Build lifecycle benchmark
-        run: crystal build --release bench/lifecycle_bench.cr --link-flags=-Wl,--no-export-dynamic -o /tmp/grant-lifecycle
+      - name: Check measured budgets or calibrate this runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          budget_status="$(python3 scripts/performance_budget_platform.py status)"
+          echo "$budget_status"
+          echo "Performance budget status: $budget_status" >> "$GITHUB_STEP_SUMMARY"
+
+          case "$budget_status" in
+            *" calibration-required:"*)
+              echo "::notice::Linux Crystal 1.21.0 has no measured budget block yet. Running calibration only; this step does not enforce performance limits."
+              echo "Linux budgets are not calibrated. This job measured compile RSS, runtime means, and bytes; add the emitted Linux block to bench/budgets.json before enforcement." >> "$GITHUB_STEP_SUMMARY"
+              CRYSTAL_BIN=crystal CRYSTAL_SLOT="" python3 scripts/compile_memory.py calibrate --runs 1 > /tmp/perf03-compile-calibration.json
+              BENCH_ADAPTER=sqlite CRYSTAL_BIN=crystal CRYSTAL_SLOT="" python3 scripts/check_runtime_budget.py calibrate --runs 3 > /tmp/perf03-runtime-calibration.json
+              ;;
+            *" measured"*)
+              CRYSTAL_BIN=crystal CRYSTAL_SLOT="" python3 scripts/compile_memory.py check --json-output /tmp/perf03-compile-check.json
+              crystal build --release bench/lifecycle_bench.cr --link-flags=-Wl,--no-export-dynamic -o /tmp/grant-lifecycle
+              /tmp/grant-lifecycle --iterations 2000 --rounds 5 --grant-only --label perf03-builder --json /tmp/perf03-lifecycle.json
+              python3 scripts/check_runtime_budget.py check /tmp/perf03-lifecycle.json --mode ci
+              ;;
+            *)
+              echo "Unrecognized performance budget status: $budget_status" >&2
+              exit 2
+              ;;
+          esac
         env:
           BENCH_ADAPTER: sqlite
-      - name: Run lifecycle benchmark
-        run: /tmp/grant-lifecycle --iterations 2000 --rounds 5 --grant-only --label perf03-builder --json /tmp/grant-lifecycle.json
-        env:
           BENCH_DATABASE_URL: sqlite3:/tmp/grant-lifecycle.db
-      - name: Check lifecycle budgets
-        run: python3 scripts/check_runtime_budget.py /tmp/grant-lifecycle.json --mode ci
+          CRYSTAL_BIN: crystal
+          CRYSTAL_SLOT: ""
+          CRYSTAL_WORKERS: "1"
+      - name: Upload raw performance measurements
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: performance-calibration-${{ runner.os }}-crystal-1.21.0
+          path: /tmp/perf03-*.json
+          if-no-files-found: error

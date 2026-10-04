@@ -6,7 +6,7 @@ Usage (from the repo root, one compile at a time through crystal-slot):
   scripts/compile_memory.py probe <query|assoc|assoc_one|assoc_none|none> <count> [semantic|debug]
   scripts/compile_memory.py file <path.cr> [semantic|debug]
   scripts/compile_memory.py slope <query|assoc> [low] [high]
-  scripts/compile_memory.py check
+  scripts/compile_memory.py check [--json-output <path>]
 
 `query` queries every model once, `assoc` adds a belongs_to/has_many ring and
 queries every model, `assoc_one` has the ring but queries ONE model, `assoc_none` queries none, `none` declares plain models and queries none. Every
@@ -24,6 +24,8 @@ import tempfile
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SLOT = os.environ.get("CRYSTAL_SLOT", "crystal-slot")
 CRYSTAL = os.environ.get("CRYSTAL_BIN", "crystal-alpha")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from performance_budget_platform import BudgetSelectionError, platform_key, select_budget
 
 COLUMNS = """  column id : Int64, primary: true
   column first_name : String
@@ -33,6 +35,14 @@ COLUMNS = """  column id : Int64, primary: true
   column score : Float64
   timestamps
 """
+
+
+def command_prefix():
+    environment = ["BENCH_ADAPTER=sqlite", "CURRENT_ADAPTER=sqlite"]
+    if "CRYSTAL_WORKERS" in os.environ:
+        environment.append("CRYSTAL_WORKERS=" + os.environ["CRYSTAL_WORKERS"])
+    environment.extend(["CRYSTAL_SLOT=" + SLOT, "CRYSTAL_BIN=" + CRYSTAL])
+    return " ".join(environment + ["python3", "scripts/compile_memory.py"])
 
 
 def generate(workload, count):
@@ -98,15 +108,27 @@ def slope(workload, low=10, high=200):
     return (probe_peak(workload, high) - probe_peak(workload, low)) / (high - low)
 
 
-def check():
+def check(raw_json_path=None):
     budget_path = os.path.join(ROOT, "bench", "budgets.json")
     with open(budget_path, encoding="utf-8") as budget_file:
-        probes = json.load(budget_file)["compile"]["probes"]
+        data = json.load(budget_file)
+
+    key, platform_budget = select_budget(budget_path)
+    compile_budget = platform_budget.get("compile")
+    if not compile_budget:
+        raise BudgetSelectionError("performance budget for %s has no compile limits" % key)
+    definitions = data.get("compile_probe_suite", {})
+    probes = compile_budget.get("probes", {})
+    missing = sorted(set(definitions) - set(probes))
+    unexpected = sorted(set(probes) - set(definitions))
+    if missing or unexpected:
+        raise BudgetSelectionError("compile budget for %s does not match probe suite (missing: %s; unexpected: %s)" % (key, ", ".join(missing) or "none", ", ".join(unexpected) or "none"))
 
     failures = []
+    measurements = {}
     os.environ["BENCH_ADAPTER"] = "sqlite"
     os.environ["CURRENT_ADAPTER"] = "sqlite"
-    for name, probe in probes.items():
+    for name, probe in definitions.items():
         if probe["kind"] == "peak":
             if "path" in probe:
                 value = measure(probe["path"], probe["mode"])
@@ -117,20 +139,126 @@ def check():
         else:
             raise ValueError("unknown compile probe kind for %s: %s" % (name, probe["kind"]))
 
-        limit = probe["limit_mb"]
-        print("%s: %.1f MB (limit %.1f; set from %.1f MB)" % (name, value, limit, probe["measured_mb"]), flush=True)
+        budget = probes[name]
+        limit = budget["limit_mb"]
+        print("%s [%s]: %.1f MB (limit %.1f; set from %.1f MB)" % (name, key, value, limit, budget["measured_mb"]), flush=True)
+        measurements[name] = {
+            "measured_mb": round(value, 1),
+            "limit_mb": limit,
+            "passed": value <= limit,
+        }
         if value > limit:
             failures.append(name)
+
+    if raw_json_path:
+        result = {
+            "platform_key": key,
+            "compile_probe_results": measurements,
+            "check_command": command_prefix() + " check --json-output <result.json>",
+        }
+        with open(raw_json_path, "w", encoding="utf-8") as output_file:
+            json.dump(result, output_file, indent=2, sort_keys=True)
+            output_file.write("\n")
     if failures:
         print("over the limit: " + ", ".join(failures))
         sys.exit(1)
 
 
+def measure_named_probe(probe):
+    os.environ["BENCH_ADAPTER"] = "sqlite"
+    os.environ["CURRENT_ADAPTER"] = "sqlite"
+    if probe["kind"] == "peak":
+        if "path" in probe:
+            return measure(probe["path"], probe["mode"])
+        return probe_peak(probe["workload"], probe["count"], probe["mode"])
+    if probe["kind"] == "slope":
+        return slope(probe["workload"], probe["low"], probe["high"])
+    raise ValueError("unknown compile probe kind: %s" % probe["kind"])
+
+
+def calibrate(runs=1):
+    if runs < 1:
+        raise ValueError("--runs must be positive")
+
+    budget_path = os.path.join(ROOT, "bench", "budgets.json")
+    with open(budget_path, encoding="utf-8") as budget_file:
+        data = json.load(budget_file)
+    key = platform_key()
+    definitions = data.get("compile_probe_suite", {})
+    if not definitions:
+        raise BudgetSelectionError("compile_probe_suite is empty in %s" % budget_path)
+
+    samples = {name: [] for name in definitions}
+    for run in range(runs):
+        for name, probe in definitions.items():
+            value = measure_named_probe(probe)
+            samples[name].append(round(value, 1))
+            print("run %d/%d %s: %.1f MB" % (run + 1, runs, name, value), file=sys.stderr, flush=True)
+
+    probes = {}
+    for name, values in samples.items():
+        measured = max(values)
+        definition = definitions[name]
+        prefix = command_prefix()
+        if definition["kind"] == "slope":
+            command = "%s slope %s %d %d" % (prefix, definition["workload"], definition["low"], definition["high"])
+        elif "path" in definition:
+            command = "%s file %s %s" % (prefix, definition["path"], definition["mode"])
+        else:
+            command = "%s probe %s %d %s" % (prefix, definition["workload"], definition["count"], definition["mode"])
+        probes[name] = {
+            "measured_mb": measured,
+            "limit_mb": round(measured * 1.05, 1),
+            "samples_mb": values,
+            "command": command,
+        }
+
+    result = {
+        "platform_key": key,
+        "compile": {
+            "unit": "decimal MB of peak RSS",
+            "measurement_runs": runs,
+            "headroom_percent": 5,
+            "probes": probes,
+        },
+        "check_command": command_prefix() + " check",
+    }
+    print(json.dumps(result, indent=2, sort_keys=True))
+
+
 if __name__ == "__main__":
+    if len(sys.argv) < 2:
+        print(__doc__)
+        sys.exit(2)
     kind = sys.argv[1]
     if kind == "check":
-        check()
-        sys.exit(0)
+        raw_json_path = None
+        if len(sys.argv) == 4 and sys.argv[2] == "--json-output":
+            raw_json_path = sys.argv[3]
+        elif len(sys.argv) != 2:
+            print("usage: scripts/compile_memory.py check [--json-output <path>]", file=sys.stderr)
+            sys.exit(2)
+        try:
+            check(raw_json_path)
+            sys.exit(0)
+        except BudgetSelectionError as error:
+            print(str(error), file=sys.stderr)
+            sys.exit(2)
+    if kind == "calibrate":
+        runs = 1
+        args = sys.argv[2:]
+        if args:
+            if len(args) == 2 and args[0] == "--runs":
+                runs = int(args[1])
+            else:
+                print("usage: scripts/compile_memory.py calibrate [--runs N]", file=sys.stderr)
+                sys.exit(2)
+        try:
+            calibrate(runs)
+            sys.exit(0)
+        except (BudgetSelectionError, ValueError) as error:
+            print(str(error), file=sys.stderr)
+            sys.exit(2)
     if kind == "slope":
         workload = sys.argv[2]
         low = int(sys.argv[3]) if len(sys.argv) > 3 else 10

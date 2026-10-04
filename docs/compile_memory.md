@@ -167,7 +167,7 @@ BENCH_DATABASE_URL=sqlite3:/tmp/lifecycle.db /tmp/lifecycle --iterations 2000 --
 The investigation this work follows, with its ablations and generator
 scripts, is `parity-audit-2026-09-28/evidence/compile_memory/codex_report.md`.
 
-## PERF03: shared query work and measured budgets
+## PERF03 round 1: shared query work and measured budgets
 
 PERF03 kept the public block APIs yield-based and changed only Grant's internal
 save transaction route. `Transaction.run_without_result` captures the save
@@ -261,3 +261,109 @@ and allocation ratio stayed within the required 1.05x baseline.
 
 The shared budgets and checker are described in
 [`docs/PERFORMANCE_BUDGETS.md`](PERFORMANCE_BUDGETS.md).
+
+
+## PERF03 round 2: shared query planning and association callbacks
+
+Round two started at `6184649` with 18.5 MB/model query slope, 21.9 MB/model
+association slope, and 121 `Query::Builder(Model)` definitions totaling
+18,896 IR body lines per model. The retained work moved relation state,
+copy/merge operations, predicate planning, scope collection, eager-load
+planning, and association callback work into shared non-generic helpers.
+`Builder(Model)` remains the typed facade and preserves its existing concrete
+return types, scopes, association scopes, and `Enumerable(Model)` behavior.
+Typed hydration and terminal paths still depend on `Model`.
+
+### Incremental Builder measurements
+
+Each query step used the same 10-to-200 semantic slope probes and the generated
+ten-model query LLVM IR fixture. The `IR` column is function definitions and
+body lines per model. A small increase in one slope is measurement variance;
+the per-step records and final calibration samples are in the JSONL log.
+
+| Query step | Query slope MB/model | Association slope MB/model | Builder IR definitions/body lines per model |
+| --- | ---: | ---: | ---: |
+| Round-two start | 18.50 | 21.90 | 121 / 18,896 |
+| Relation state and unscope | 18.50 → 16.98 | 21.90 → 20.39 | 121 / 18,896 → 135 / 5,715 |
+| Oversized-IN index | 16.98 → 16.88 | 20.39 → 19.70 | 135 / 5,715 → 135 / 5,443 |
+| Nil-aware key-list predicate | 16.88 → 16.80 | 19.70 → 19.50 | 135 / 5,443 → 135 / 5,299 |
+| Association condition planner | 16.80 → 16.63 | 19.50 → 19.58 | 135 / 5,299 → 130 / 4,678 |
+| Eager-load join planning | 16.63 → 16.53 | 19.58 → 19.51 | 130 / 4,678 → 130 / 4,444 |
+| Relation component merge | 16.53 → 16.34 | 19.51 → 19.32 | 130 / 4,444 → 129 / 4,030 |
+| Foreign-relation staging | 16.34 → 16.08 | 19.32 → 19.06 | 129 / 4,030 → 114 / 3,690 |
+| Raw WHERE registration merge | 16.08 → 16.05 | 19.06 → 19.03 | 114 / 3,690 → 113 / 3,544 |
+| Scope equality collection | 16.05 → 16.05 | 19.03 → 18.83 | 113 / 3,544 → 111 / 3,307 |
+| Relation order merge | 16.05 → 16.05 | 18.83 → 18.94 | 111 / 3,307 → 109 / 3,238 |
+| Named-scope relation merge | 16.05 → 16.05 | 18.94 → 18.86 | 109 / 3,238 → 109 / 3,238 |
+
+The three-run final calibration reports maxima of 16.1 MB/model query slope and
+18.9 MB/model association slope. Relative to round-two start, Builder IR body
+lines fell 82.9% (18,896 to 3,238); definitions fell from 121 to 109 per model.
+
+### Generated association callbacks
+
+The autosave and associated-validation implementations now share their record
+collection, validation, and error-import logic. The generated typed methods
+remain as small accessors so association reflection and concrete model types
+stay intact. The ten-model association IR probe measured:
+
+| Generated family | Before: definitions / body lines per model | After: definitions / body lines per model |
+| --- | ---: | ---: |
+| `_autosave_*` | 5 / 670 | 5 / 133 |
+| `_validate_associated_*` | 4 / 388 | 4 / 139 |
+
+The definition count is unchanged, but these bodies are 80.1% and 64.2% smaller,
+respectively. The shared implementation preserves the existing association
+callbacks; the required final grouped SQLite suite validates the complete change.
+
+### Round-two compile results and targets
+
+The RSS values below compare the round-two start commit with the maximum of
+three final samples on Darwin with crystal-alpha 1.21.0. The association
+regression spec has no standalone target; its result is shown to track the
+improvement. The exact commands and samples are in the measurement ledger.
+
+| Probe | Round-two start MB | Final max MB | Target | Result |
+| --- | ---: | ---: | ---: | --- |
+| Query slope, 10–200 models | 18.5 | 16.1 | ≤ 7.7 MB/model | Missed |
+| Association slope, 10–200 models | 21.9 | 18.9 | ≤ 9.3 MB/model | Missed |
+| `assoc_one`, 200 models | 1,632.8 | 1,599.0 | ≤ 1,600 MB | Met by 1.0 MB |
+| Lifecycle benchmark debug | 1,836.4 | 1,846.9 | ≤ 1,300 MB | Missed; +10.5 MB vs start |
+| Association regression spec debug | 6,391.8 | 5,179.1 | No separate target | Reduced 19.0% |
+
+The measured final slope remains above target, so this is not a claim that the
+generic cost has reached a hard theoretical floor. The ten-model LLVM IR still
+contains 109 Builder definitions and 3,238 body lines per model. Its largest
+remaining typed bodies are `select` (232 lines), `collapse_or_fields!` (158),
+`chunked_select` and `select_single` (142 each), `expand_where_column_name`
+(138), `each_in_chunk` (135), `add_association_condition` (123),
+`add_eager_load_join` (118), `add_common_table!` (103), and
+`unscope_where_columns!` (93). These paths still construct model-specific
+relations, use model reflection or column types, or return/hydrate concrete
+`Model` values. A further reduction needs to separate those typed boundaries
+without changing relation, scope, or terminal behavior.
+
+### Round-two runtime comparison
+
+Each final value is the average of three SQLite release runs, each with 2,000
+iterations and five rounds. Ratios compare the round-one baseline at
+`7881cdf` with the round-two final mean and allocation average. All three-run aggregate means and bytes/op are within 1.05×. Load-all is the
+narrowest aggregate mean at 1.047×: its three run means were 1,216.250,
+1,101.528, and 1,069.372 µs, so the highest sample was 1.128× the round-one
+baseline. CI uses a loose time multiplier and a tight allocation limit as
+documented in
+[`PERFORMANCE_BUDGETS.md`](PERFORMANCE_BUDGETS.md).
+
+| Operation | Round-one mean µs | Round-two mean µs | Mean ratio | Round-one bytes/op | Round-two bytes/op | Bytes ratio |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| build (no database) | 0.540 | 0.514 | 0.952 | 1,167.8 | 1,168.4 | 1.000 |
+| create | 40.755 | 40.305 | 0.989 | 8,942.8 | 8,941.2 | 1.000 |
+| find by id | 3.967 | 4.040 | 1.018 | 1,629.5 | 1,646.0 | 1.010 |
+| page of 100 by index | 32.933 | 30.796 | 0.935 | 27,177.3 | 27,202.4 | 1.001 |
+| load all 2,000 rows | 1,078.564 | 1,129.050 | 1.047 | 1,288,479.1 | 1,289,128.9 | 1.001 |
+| count | 64.775 | 65.450 | 1.010 | 3,304.1 | 3,338.5 | 1.010 |
+| load and update | 30.155 | 29.021 | 0.962 | 10,652.9 | 10,669.4 | 1.002 |
+| load and destroy | 34.175 | 34.737 | 1.016 | 3,008.8 | 3,025.1 | 1.005 |
+
+The measured, per-platform budgets and the Linux calibration-only CI behavior
+are described in [`PERFORMANCE_BUDGETS.md`](PERFORMANCE_BUDGETS.md).

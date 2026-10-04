@@ -1,179 +1,254 @@
 {
-  "version": 1,
-  "measurement_commit": "2fef4d6db190ebd031bf321962c051c18c493a65",
-  "compile": {
-    "unit": "decimal MB of peak RSS",
-    "headroom_percent": 5,
-    "measurement_runs": 3,
-    "runner_note": "All five compile probes run sequentially on ubuntu-latest (16 GB); none are skipped. Measured values use the maximum across three complete checks on the final source; the largest observed debug probe was 6.3 GB RSS.",
-    "probes": {
-      "assoc_one_200_semantic": {
-        "kind": "peak",
-        "workload": "assoc_one",
-        "count": 200,
-        "mode": "semantic",
-        "measured_mb": 1711.8,
-        "limit_mb": 1797.4
-      },
-      "lifecycle_debug": {
-        "kind": "peak",
-        "path": "bench/lifecycle_bench.cr",
-        "mode": "debug",
-        "measured_mb": 1851.5,
-        "limit_mb": 1944.1
-      },
-      "association_regressions_debug": {
-        "kind": "peak",
-        "path": "spec/grant/associations/association_regressions_spec.cr",
-        "mode": "debug",
-        "measured_mb": 6255.1,
-        "limit_mb": 6567.9
-      },
-      "query_slope_10_200": {
-        "kind": "slope",
-        "workload": "query",
-        "low": 10,
-        "high": 200,
-        "mode": "semantic",
-        "measured_mb": 18.6,
-        "limit_mb": 19.6
-      },
-      "assoc_slope_10_200": {
-        "kind": "slope",
-        "workload": "assoc",
-        "low": 10,
-        "high": 200,
-        "mode": "semantic",
-        "measured_mb": 21.8,
-        "limit_mb": 22.9
-      }
+  "version": 2,
+  "compile_probe_suite": {
+    "assoc_one_200_semantic": {
+      "kind": "peak",
+      "workload": "assoc_one",
+      "count": 200,
+      "mode": "semantic"
+    },
+    "lifecycle_debug": {
+      "kind": "peak",
+      "path": "bench/lifecycle_bench.cr",
+      "mode": "debug"
+    },
+    "association_regressions_debug": {
+      "kind": "peak",
+      "path": "spec/grant/associations/association_regressions_spec.cr",
+      "mode": "debug"
+    },
+    "query_slope_10_200": {
+      "kind": "slope",
+      "workload": "query",
+      "low": 10,
+      "high": 200,
+      "mode": "semantic"
+    },
+    "assoc_slope_10_200": {
+      "kind": "slope",
+      "workload": "assoc",
+      "low": 10,
+      "high": 200,
+      "mode": "semantic"
     }
   },
-  "runtime": {
+  "runtime_probe": {
     "adapter": "sqlite",
     "variant": "perf03-builder",
     "iterations": 2000,
     "rounds": 5,
-    "runs_averaged": 3,
-    "command": "BENCH_ADAPTER=sqlite crystal-alpha build --release bench/lifecycle_bench.cr -o /tmp/perf03_lifecycle_after_builder; run binary 3 times with --iterations 2000 --rounds 5 --grant-only --json",
+    "calibration_runs": 3,
     "local_headroom_percent": 10,
     "ci_time_multiplier": 1.5,
-    "ci_bytes_headroom_percent": 5,
-    "ci_note": "The local mean limit is 10% above the highest of three run means. CI permits 50% above the three-run average for shared-runner timing noise; allocated bytes are limited to 5% above the highest observed run.",
-    "operations": {
-      "build (no database)": {
-        "measured_mean_microseconds": 0.552928,
-        "maximum_observed_mean_microseconds": 0.69767,
-        "measured_bytes_per_operation": 1164.859,
-        "maximum_observed_bytes_per_operation": 1167.074,
-        "local": {
-          "mean_limit_microseconds": 0.768,
-          "bytes_limit_per_operation": 1284
+    "ci_bytes_headroom_percent": 5
+  },
+  "platform_budgets": {
+    "darwin-crystal-alpha-1.21.0": {
+      "status": "measured",
+      "toolchain": "crystal-alpha 1.21.0",
+      "platform": "macOS (Darwin)",
+      "compile": {
+        "headroom_percent": 5,
+        "measurement_runs": 3,
+        "probes": {
+          "assoc_one_200_semantic": {
+            "command": "BENCH_ADAPTER=sqlite CURRENT_ADAPTER=sqlite CRYSTAL_WORKERS=1 CRYSTAL_SLOT=/Users/crimsonknight/open_source_coding_projects/amber_framework_libraries/parity-audit-2026-09-28/tools/crystal-slot CRYSTAL_BIN=crystal-alpha python3 scripts/compile_memory.py probe assoc_one 200 semantic",
+            "limit_mb": 1679.0,
+            "measured_mb": 1599.0,
+            "samples_mb": [
+              1599.0,
+              1598.9,
+              1599.0
+            ]
+          },
+          "assoc_slope_10_200": {
+            "command": "BENCH_ADAPTER=sqlite CURRENT_ADAPTER=sqlite CRYSTAL_WORKERS=1 CRYSTAL_SLOT=/Users/crimsonknight/open_source_coding_projects/amber_framework_libraries/parity-audit-2026-09-28/tools/crystal-slot CRYSTAL_BIN=crystal-alpha python3 scripts/compile_memory.py slope assoc 10 200",
+            "limit_mb": 19.8,
+            "measured_mb": 18.9,
+            "samples_mb": [
+              18.9,
+              18.9,
+              18.9
+            ]
+          },
+          "association_regressions_debug": {
+            "command": "BENCH_ADAPTER=sqlite CURRENT_ADAPTER=sqlite CRYSTAL_WORKERS=1 CRYSTAL_SLOT=/Users/crimsonknight/open_source_coding_projects/amber_framework_libraries/parity-audit-2026-09-28/tools/crystal-slot CRYSTAL_BIN=crystal-alpha python3 scripts/compile_memory.py file spec/grant/associations/association_regressions_spec.cr debug",
+            "limit_mb": 5438.1,
+            "measured_mb": 5179.1,
+            "samples_mb": [
+              4999.0,
+              5179.1,
+              4815.9
+            ]
+          },
+          "lifecycle_debug": {
+            "command": "BENCH_ADAPTER=sqlite CURRENT_ADAPTER=sqlite CRYSTAL_WORKERS=1 CRYSTAL_SLOT=/Users/crimsonknight/open_source_coding_projects/amber_framework_libraries/parity-audit-2026-09-28/tools/crystal-slot CRYSTAL_BIN=crystal-alpha python3 scripts/compile_memory.py file bench/lifecycle_bench.cr debug",
+            "limit_mb": 1939.2,
+            "measured_mb": 1846.9,
+            "samples_mb": [
+              1844.0,
+              1846.9,
+              1834.1
+            ]
+          },
+          "query_slope_10_200": {
+            "command": "BENCH_ADAPTER=sqlite CURRENT_ADAPTER=sqlite CRYSTAL_WORKERS=1 CRYSTAL_SLOT=/Users/crimsonknight/open_source_coding_projects/amber_framework_libraries/parity-audit-2026-09-28/tools/crystal-slot CRYSTAL_BIN=crystal-alpha python3 scripts/compile_memory.py slope query 10 200",
+            "limit_mb": 16.9,
+            "measured_mb": 16.1,
+            "samples_mb": [
+              15.9,
+              16.1,
+              16.1
+            ]
+          }
         },
-        "ci": {
-          "mean_limit_microseconds": 0.83,
-          "bytes_limit_per_operation": 1226
-        }
+        "unit": "decimal MB of peak RSS",
+        "runner_note": "Three local crystal-alpha 1.21.0 samples; each limit is 5% above the maximum. Linux runners calibrate independently."
       },
-      "create": {
-        "measured_mean_microseconds": 37.760106,
-        "maximum_observed_mean_microseconds": 38.362202,
-        "measured_bytes_per_operation": 8941.712,
-        "maximum_observed_bytes_per_operation": 8944.253,
-        "local": {
-          "mean_limit_microseconds": 42.199,
-          "bytes_limit_per_operation": 9839
+      "runtime": {
+        "adapter": "sqlite",
+        "ci_bytes_headroom_percent": 5,
+        "ci_time_multiplier": 1.5,
+        "commands": {
+          "build": "BENCH_ADAPTER=sqlite \"${CRYSTAL_SLOT:-crystal-slot}\" \"$CRYSTAL_BIN\" build --release --no-color bench/lifecycle_bench.cr -o /tmp/grant-lifecycle",
+          "calibrate": "BENCH_ADAPTER=sqlite CRYSTAL_BIN=crystal-alpha CRYSTAL_SLOT=/Users/crimsonknight/open_source_coding_projects/amber_framework_libraries/parity-audit-2026-09-28/tools/crystal-slot CRYSTAL_WORKERS=1 python3 scripts/check_runtime_budget.py calibrate --runs 3 --iterations 2000 --rounds 5",
+          "calibration_build_actual": "/Users/crimsonknight/open_source_coding_projects/amber_framework_libraries/parity-audit-2026-09-28/tools/crystal-slot crystal-alpha build --release --no-color /Users/crimsonknight/open_source_coding_projects/amber_framework_libraries/grant-perf03/bench/lifecycle_bench.cr -o /var/folders/81/8xr46ykx0p350l1g_v0nk7hr0000gn/T/grant-runtime-calibration-1k_yuk02/lifecycle_bench",
+          "run": "BENCH_DATABASE_URL=sqlite3:/tmp/grant-lifecycle.sqlite /tmp/grant-lifecycle --iterations 2000 --rounds 5 --grant-only --label perf03-builder --json /tmp/perf03-lifecycle.json"
         },
-        "ci": {
-          "mean_limit_microseconds": 56.641,
-          "bytes_limit_per_operation": 9392
-        }
-      },
-      "find by id": {
-        "measured_mean_microseconds": 4.125775,
-        "maximum_observed_mean_microseconds": 4.260993,
-        "measured_bytes_per_operation": 1645.333,
-        "maximum_observed_bytes_per_operation": 1648.337,
-        "local": {
-          "mean_limit_microseconds": 4.688,
-          "bytes_limit_per_operation": 1814
+        "environment": {
+          "BENCH_ADAPTER": "sqlite",
+          "CRYSTAL_BIN": "crystal-alpha",
+          "CRYSTAL_SLOT": "/Users/crimsonknight/open_source_coding_projects/amber_framework_libraries/parity-audit-2026-09-28/tools/crystal-slot",
+          "CRYSTAL_WORKERS": "1"
         },
-        "ci": {
-          "mean_limit_microseconds": 6.189,
-          "bytes_limit_per_operation": 1731
-        }
-      },
-      "page of 100 by index": {
-        "measured_mean_microseconds": 31.42066,
-        "maximum_observed_mean_microseconds": 31.71414,
-        "measured_bytes_per_operation": 27115.253,
-        "maximum_observed_bytes_per_operation": 27172.16,
-        "local": {
-          "mean_limit_microseconds": 34.886,
-          "bytes_limit_per_operation": 29890
+        "iterations": 2000,
+        "local_headroom_percent": 10,
+        "operations": {
+          "build (no database)": {
+            "ci": {
+              "bytes_limit_per_operation": 1228,
+              "mean_limit_microseconds": 0.839
+            },
+            "local": {
+              "bytes_limit_per_operation": 1286,
+              "mean_limit_microseconds": 0.615
+            },
+            "maximum_observed_bytes_per_operation": 1168.749,
+            "maximum_observed_mean_microseconds": 0.559261,
+            "measured_bytes_per_operation": 1168.368,
+            "measured_mean_microseconds": 0.513948
+          },
+          "count": {
+            "ci": {
+              "bytes_limit_per_operation": 3553,
+              "mean_limit_microseconds": 101.477
+            },
+            "local": {
+              "bytes_limit_per_operation": 3722,
+              "mean_limit_microseconds": 74.416
+            },
+            "maximum_observed_bytes_per_operation": 3383.2,
+            "maximum_observed_mean_microseconds": 67.65123,
+            "measured_bytes_per_operation": 3338.507,
+            "measured_mean_microseconds": 65.450267
+          },
+          "create": {
+            "ci": {
+              "bytes_limit_per_operation": 9392,
+              "mean_limit_microseconds": 71.696
+            },
+            "local": {
+              "bytes_limit_per_operation": 9840,
+              "mean_limit_microseconds": 52.577
+            },
+            "maximum_observed_bytes_per_operation": 8944.615,
+            "maximum_observed_mean_microseconds": 47.797217,
+            "measured_bytes_per_operation": 8941.215,
+            "measured_mean_microseconds": 40.305097
+          },
+          "find by id": {
+            "ci": {
+              "bytes_limit_per_operation": 1730,
+              "mean_limit_microseconds": 6.139
+            },
+            "local": {
+              "bytes_limit_per_operation": 1812,
+              "mean_limit_microseconds": 4.502
+            },
+            "maximum_observed_bytes_per_operation": 1646.989,
+            "maximum_observed_mean_microseconds": 4.092609,
+            "measured_bytes_per_operation": 1645.965,
+            "measured_mean_microseconds": 4.039933
+          },
+          "load all 2000 rows": {
+            "ci": {
+              "bytes_limit_per_operation": 1353904,
+              "mean_limit_microseconds": 1824.375
+            },
+            "local": {
+              "bytes_limit_per_operation": 1418376,
+              "mean_limit_microseconds": 1337.875
+            },
+            "maximum_observed_bytes_per_operation": 1289432.0,
+            "maximum_observed_mean_microseconds": 1216.249833,
+            "measured_bytes_per_operation": 1289128.889,
+            "measured_mean_microseconds": 1129.049778
+          },
+          "load and destroy": {
+            "ci": {
+              "bytes_limit_per_operation": 3181,
+              "mean_limit_microseconds": 55.914
+            },
+            "local": {
+              "bytes_limit_per_operation": 3333,
+              "mean_limit_microseconds": 41.004
+            },
+            "maximum_observed_bytes_per_operation": 3029.448,
+            "maximum_observed_mean_microseconds": 37.276077,
+            "measured_bytes_per_operation": 3025.14,
+            "measured_mean_microseconds": 34.736628
+          },
+          "load and update": {
+            "ci": {
+              "bytes_limit_per_operation": 11204,
+              "mean_limit_microseconds": 45.06
+            },
+            "local": {
+              "bytes_limit_per_operation": 11737,
+              "mean_limit_microseconds": 33.044
+            },
+            "maximum_observed_bytes_per_operation": 10669.869,
+            "maximum_observed_mean_microseconds": 30.039964,
+            "measured_bytes_per_operation": 10669.359,
+            "measured_mean_microseconds": 29.020691
+          },
+          "page of 100 by index": {
+            "ci": {
+              "bytes_limit_per_operation": 28600,
+              "mean_limit_microseconds": 46.574
+            },
+            "local": {
+              "bytes_limit_per_operation": 29962,
+              "mean_limit_microseconds": 34.154
+            },
+            "maximum_observed_bytes_per_operation": 27238.08,
+            "maximum_observed_mean_microseconds": 31.04913,
+            "measured_bytes_per_operation": 27202.4,
+            "measured_mean_microseconds": 30.795673
+          }
         },
-        "ci": {
-          "mean_limit_microseconds": 47.131,
-          "bytes_limit_per_operation": 28531
-        }
-      },
-      "load all 2000 rows": {
-        "measured_mean_microseconds": 975.693278,
-        "maximum_observed_mean_microseconds": 1103.326333,
-        "measured_bytes_per_operation": 1288648.0,
-        "maximum_observed_bytes_per_operation": 1289097.333,
-        "local": {
-          "mean_limit_microseconds": 1213.659,
-          "bytes_limit_per_operation": 1418008
-        },
-        "ci": {
-          "mean_limit_microseconds": 1463.54,
-          "bytes_limit_per_operation": 1353553
-        }
-      },
-      "count": {
-        "measured_mean_microseconds": 65.38222,
-        "maximum_observed_mean_microseconds": 67.61126,
-        "measured_bytes_per_operation": 3343.573,
-        "maximum_observed_bytes_per_operation": 3383.52,
-        "local": {
-          "mean_limit_microseconds": 74.373,
-          "bytes_limit_per_operation": 3722
-        },
-        "ci": {
-          "mean_limit_microseconds": 98.074,
-          "bytes_limit_per_operation": 3553
-        }
-      },
-      "load and update": {
-        "measured_mean_microseconds": 28.993838,
-        "maximum_observed_mean_microseconds": 34.891608,
-        "measured_bytes_per_operation": 10666.187,
-        "maximum_observed_bytes_per_operation": 10667.646,
-        "local": {
-          "mean_limit_microseconds": 38.381,
-          "bytes_limit_per_operation": 11735
-        },
-        "ci": {
-          "mean_limit_microseconds": 43.491,
-          "bytes_limit_per_operation": 11202
-        }
-      },
-      "load and destroy": {
-        "measured_mean_microseconds": 28.77161,
-        "maximum_observed_mean_microseconds": 34.552805,
-        "measured_bytes_per_operation": 3027.798,
-        "maximum_observed_bytes_per_operation": 3030.467,
-        "local": {
-          "mean_limit_microseconds": 38.009,
-          "bytes_limit_per_operation": 3334
-        },
-        "ci": {
-          "mean_limit_microseconds": 43.158,
-          "bytes_limit_per_operation": 3182
-        }
+        "rounds": 5,
+        "runs_averaged": 3,
+        "variant": "perf03-builder",
+        "ci_note": "CI timing allows 1.5x the maximum mean from three local runs because shared runner scheduling is noisy; bytes/op allows 5% above the maximum observed allocation.",
+        "measurement_command": "BENCH_ADAPTER=sqlite CRYSTAL_BIN=crystal-alpha CRYSTAL_SLOT=/Users/crimsonknight/open_source_coding_projects/amber_framework_libraries/parity-audit-2026-09-28/tools/crystal-slot CRYSTAL_WORKERS=1 PYTHONDONTWRITEBYTECODE=1 python3 scripts/check_runtime_budget.py calibrate --runs 3"
       }
     },
-    "measurement_commit": "2630a6e60bf8ab8965bf07024fc2924dedfa9d3b"
+    "linux-crystal-1.21.0": {
+      "status": "calibration-required",
+      "toolchain": "stock crystal 1.21.0",
+      "platform": "Ubuntu Linux",
+      "note": "Linux peak RSS and lifecycle allocation/timing limits have not been measured on the GitHub runner. CI runs compile and runtime calibration and uploads raw JSON until a measured Linux block is committed."
+    }
   }
 }

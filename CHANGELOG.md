@@ -10,9 +10,20 @@ Minimum Crystal: 1.19.0
   and SQLite lifecycle mean time and allocation budgets. The source values,
   limits, and measurement commands are checked in; see
   [`docs/PERFORMANCE_BUDGETS.md`](docs/PERFORMANCE_BUDGETS.md).
+- Split performance budgets by operating system and Crystal toolchain. The
+  checker now fails closed when the matching block is missing. Linux Crystal
+  1.21.0 is in explicit calibration mode until a real runner measurement is
+  reviewed; CI uploads its compile and runtime measurement JSON.
+- Moved relation clauses, copy-on-write state, chunk iteration, field
+  validation, eager-load join planning, and unscope dispatch out of the typed
+  query builder where model metadata could be supplied as values. Shared
+  association operations now handle autosave record collection, validation,
+  and error import while generated accessors retain their concrete model
+  types.
 - Shared the non-generic list-executor cursor loop and eager-load restriction
-  resolver to reduce per-model query compilation. The PERF03 measurements and
-  targets that remain unmet are recorded in [`docs/compile_memory.md`](docs/compile_memory.md).
+  resolver to reduce per-model query compilation. The measured results show
+  the `assoc_one` target met and the remaining slope/debug misses in
+  [`docs/compile_memory.md`](docs/compile_memory.md).
 
 ### Minimum Crystal version
 
