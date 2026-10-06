@@ -1,0 +1,72 @@
+# Grant API card; validate every note and hint with:
+# CRYSTAL_WORKERS=1 ./scripts/compile_api_card_probes.sh
+card_version: 1
+library: grant
+applies_to: "~> 0.23.0"
+docs_flags:
+  - grant_docs
+notes:
+  - symbol: User#id
+    text: "A Grant primary-key getter is nilable before persistence: `id : Int64?`; use `id! : Int64` when the row must already have an ID."
+  - symbol: User#name
+    text: "A required column's `name` getter returns `String` and `name?` returns the raw `String?`; a nullable column has `nickname : String?` and `nickname! : String`. Grant does generate `name?`; it returns a nullable value, not Bool."
+  - symbol: Post#author_id
+    text: "A nullable foreign-key column returns `Int64?`; use `author_id! : Int64` when the association key must be present."
+  - symbol: Grant::Base.primary_name
+    text: "`primary_name` can be `Nil` on a base type without one primary-key column; a concrete model with `column id : Int64, primary: true` has a primary name. Narrow it before passing it to `where` or `read_attribute`."
+  - symbol: Post.find
+    text: "`Post.find(id)` returns `Post?`; narrow the result before reading a record field."
+  - symbol: Post.find!
+    text: "`Post.find!(id)` returns `Post` and raises `Grant::Querying::NotFound` when no row matches."
+  - symbol: Post.find?
+    text: "Grant does not define `Post.find?`; use `Post.find(id)` for a nilable result or `Post.find!(id)` for the raising form."
+  - symbol: Post.all
+    text: "No-argument `Post.all` returns `Grant::Query::Builder(Post)`. The raw-SQL overload `Post.all(clause, binds)` returns `Array(Post) | Grant::Collection(Post)`; call `.to_a` when an `Array(Post)` is required."
+  - symbol: Grant::Collection(Post)#to_a
+    text: "`Grant::Collection(Post)#to_a` materializes and returns `Array(Post)`."
+  - symbol: Post.count
+    text: "`Post.count` returns `Int64`, including grouped results that the model-level count reduces to a scalar."
+  - symbol: Grant::Query::Builder#count
+    text: "A builder count returns `Grant::Query::Builder::CountResult`: `Int64` for an ungrouped query or a `Hash` for grouped results."
+  - symbol: Grant::Columns::Type
+    text: "`Grant::Columns::Type` is Grant's database-value union. Bind scalar column values such as IDs or strings; convert model objects to their primary-key values first."
+  - symbol: Grant::Query::Builder#where
+    text: "`where` returns `Grant::Query::Builder(Post)`. A SQL-string condition accepts one scalar bind; use `Post.all(clause, binds)` when raw SQL needs several bind values."
+  - symbol: Post.find_by_sql
+    text: "`Post.find_by_sql(sql, binds)` exists in Grant 0.23.4 and returns `Array(Post)`; it executes raw SQL without applying a default scope. Use `Post.all(clause, binds)` when the model's scoped query path is required."
+  - symbol: Grant::Base
+    text: "Every persisted model needs a primary key, commonly `column id : Int64, primary: true`. In Grant macros, inspect `@type.instance_vars` inside a method on the completed type; check class methods with `@type.class.has_method?`."
+  - symbol: Grant::Type.from_rs
+    text: "`Grant::Type.from_rs(result, Int64)` passes the concrete `Int64` type class and returns `Int64`; a runtime union's `.class` is not a supported substitute."
+  - symbol: Grant::Adapter::Base#quote
+    text: "`quote` accepts a non-nil `String` column name and returns `String`; narrow an optional name before calling it."
+  - symbol: Grant::Query::Builder#order
+    text: "For multiple symbol fields, use the array overload such as `.order([:id, :title])`; it returns `Grant::Query::Builder(Post)`."
+  - symbol: Grant::Query::Builder#reorder
+    text: "For multiple reordered fields with directions, use named ordering such as `.reorder(title: :asc, score: :desc)`; it returns `Grant::Query::Builder(Post)`."
+  - symbol: Grant::Query::Builder#from
+    text: "`from` accepts an SQL source string with `as: String` and returns `Grant::Query::Builder(Post)`; bind values use `Array(Grant::Columns::Type)`."
+  - symbol: Grant::Query::Builder#on_shard
+    text: "Start shard selection on the sharded model with `Model.on_shard(:one)`; the model call returns its sharded query type."
+  - symbol: Grant::Query::Builder#sum
+    text: "A builder sum can return a numeric value or a grouped `Hash`; branch on the result before using numeric-only methods."
+  - symbol: Grant::Base#primary_key_value
+    text: "`primary_key_value` is nilable on a Grant base-model reference; narrow it before passing the key to an API that requires `Int64`."
+  - symbol: Grant::Sharding::GeoResolver.new
+    text: "Every GeoResolver region tuple includes `states` and `cities`; set either field to `nil` when the region has no list."
+error_hints:
+  - pattern: "A primary key must be defined for Grant::Base\\."
+    hint: "Declare a primary-key column on every persisted Grant model."
+    example: "column id : Int64, primary: true"
+  - pattern: "expected argument #1 to 'Array\\(Int32 \\| Nil\\)#<<' to be \\(Int32 \\| Nil\\), not \\(Int64 \\| Nil\\)"
+    hint: "Initialize this collection with the same nilable element type as the IDs it will hold."
+    example: "found_models = [] of Int64?"
+  - pattern: "expected argument #2 to 'Grant::Type\\.from_rs' to be"
+    hint: "Pass the concrete column type to `from_rs` for reads, and call the configured converter's `to_db` for outgoing values."
+    example: "Grant::Type.from_rs(result, Int64)\nconverter.to_db(values)"
+  - pattern: "expected argument #1 to 'ReplicatedChat#read_attribute' to be \\(String \\| Symbol\\) or String, not \\(String \\| Nil\\)"
+    hint: "Narrow the model's optional primary name before passing it to `read_attribute`."
+    example: "if primary_name = value.class.primary_name; value.read_attribute(primary_name); end"
+  - pattern: "expected argument #1 to 'Array\\(Int64\\)#<<' to be Int64, not \\(Int64 \\| Nil\\)"
+    hint: "Check that the ID is present before appending, or use Grant's raising accessor when the record must already have a key."
+    example: "if record_id = record.id\n  ids << record_id\nend\nids_from_each << record.id!"
