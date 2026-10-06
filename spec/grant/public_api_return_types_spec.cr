@@ -44,12 +44,12 @@ class PublicApiReturnTypeCompositeOwner < Grant::Base
 end
 {% end %}
 
-alias PublicApiRawScalarType = Array(PG::BoolArray) | Array(PG::CharArray) | Array(PG::Float32Array) | Array(PG::Float64Array) |
-                               Array(PG::Int16Array) | Array(PG::Int32Array) | Array(PG::Int64Array) | Array(PG::NumericArray) |
-                               Array(PG::StringArray) | Array(PG::TimeArray) | Array(PG::UUIDArray) | Bool | Char | Float32 | Float64 |
-                               Int16 | Int32 | Int64 | Int8 | JSON::Any | JSON::PullParser | PG::Geo::Box | PG::Geo::Circle |
-                               PG::Geo::Line | PG::Geo::LineSegment | PG::Geo::Path | PG::Geo::Point | PG::Geo::Polygon |
-                               PG::Interval | PG::Numeric | Slice(UInt8) | String | Time | Time::Span | UInt32 | UInt64 | UUID | Nil
+alias PublicApiRawScalarType = (Array(PG::BoolArray) | Array(PG::CharArray) | Array(PG::Float32Array) | Array(PG::Float64Array) |
+                                Array(PG::Int16Array) | Array(PG::Int32Array) | Array(PG::Int64Array) | Array(PG::NumericArray) |
+                                Array(PG::StringArray) | Array(PG::TimeArray) | Array(PG::UUIDArray) | Bool | Char | Float32 | Float64 |
+                                Int16 | Int32 | Int64 | Int8 | JSON::Any | JSON::PullParser | PG::Geo::Box | PG::Geo::Circle |
+                                PG::Geo::Line | PG::Geo::LineSegment | PG::Geo::Path | PG::Geo::Point | PG::Geo::Polygon |
+                                PG::Interval | PG::Numeric | Slice(UInt8) | String | Time | Time::Span | UInt32 | UInt64 | UUID)?
 
 describe "Grant public API inferred return types" do
   it "preserves the class query API return types" do
@@ -69,8 +69,8 @@ describe "Grant public API inferred return types" do
     typeof(PublicApiReturnTypeAuthor.find_sole_by(name: "Ada")).to_s.should eq(PublicApiReturnTypeAuthor.to_s)
     typeof(PublicApiReturnTypeAuthor.find_sole_by({"name" => "Ada"})).to_s.should eq(PublicApiReturnTypeAuthor.to_s)
 
-    typeof(PublicApiReturnTypeAuthor.find_each { |author| author.name }).to_s.should eq(Nil.to_s)
-    typeof(PublicApiReturnTypeAuthor.find_in_batches { |authors| authors.size }).to_s.should eq(Nil.to_s)
+    typeof(PublicApiReturnTypeAuthor.find_each(&.name)).to_s.should eq(Nil.to_s)
+    typeof(PublicApiReturnTypeAuthor.find_in_batches(&.size)).to_s.should eq(Nil.to_s)
     # `query` stays undeclared: it returns the query log wrapper's result, which varies with the logging setup.
     typeof(PublicApiReturnTypeAuthor.scalar("SELECT 1")).to_s.should eq(PublicApiRawScalarType.to_s)
     typeof(PublicApiReturnTypeAuthor.scalar("SELECT 1") { |value| value.try(&.to_s) }).to_s.should eq(String?.to_s)
