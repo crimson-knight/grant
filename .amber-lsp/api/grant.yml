@@ -84,6 +84,36 @@ notes:
     text: "`Grant::AssociationCollection(Owner, Target)#first` returns `Target | Nil`; use `first!` when a missing association record should raise."
   - symbol: Grant::Connections.[]
     text: "`Grant::Connections[name]` returns `NamedTuple(writer: Grant::Adapter::Base, reader: Grant::Adapter::Base) | Nil`; assign it with `|| raise` before indexing the writer or reader."
+  - symbol: Post#set_attributes
+    text: "`set_attributes` takes one `Hash(String | Symbol, T)` (including `Hash(String, String)` for string values) and returns the same `Model`; it does not take keyword arguments. For encrypted password fields, assign through the generated password setter, such as `record.password = \"next-pass\"`."
+  - symbol: Grant::Query::Builder#unscope
+    text: "`unscope` accepts positional relation-component symbols; the `component: :where` overload hint means `.unscope(:where)`, which returns `Grant::Query::Builder(Post)`. Use `unscope(where: :column)` only for removing one column predicate."
+  - symbol: Post.where_tuples
+    text: "Grant 0.23.4 does not define `where_tuples`; express composite criteria with `Post.where(shop_id: 1_i64, order_id: 1_i64)`, which returns `Grant::Query::Builder(Post)`."
+  - symbol: Post#reload_with_lock
+    text: "`reload_with_lock(mode : Grant::Locking::LockMode = Update, force : Bool = false)` returns `Post`; `force:` is supported in Grant 0.23.4, and the default mode is `Update`."
+  - symbol: Grant::Query::Builder#update_all
+    text: "The raw-SQL overload `update_all(assignments : String)` returns `DB::ExecResult`; read `.rows_affected` for its row count. Hash, named-argument, and tuple-array overloads return `Int64`."
+  - symbol: Grant::Query::Builder#build
+    text: "`Builder#build(**attributes)` needs the model attributes and returns an unsaved `Model`; `Model.new(**attributes)` also constructs an unsaved record. A query builder is a relation, and `build` with no attributes has no matching overload."
+  - symbol: Grant::Query::Builder#only
+    text: "`only(*components : Symbol)` is a query-builder modifier and returns `Grant::Query::Builder(Post)`; a `component: :where` overload hint corresponds to positional `.only(:where)`. Start with `Model.all.only(:where)`; an unknown component raises `ArgumentError` when the call runs."
+  - symbol: Grant::Query::Builder#max
+    text: "`max(column : Symbol | String)` computes the column maximum and returns `Grant::Query::Builder::ExtremumResult`, including grouped hash forms. To fetch the row with the largest value, order descending and call `first`."
+  - symbol: Grant::Query::Builder#find_by!
+    text: "`Builder#find_by!(**criteria)` returns `Model` and raises `Grant::Querying::NotFound` when no row matches; for example, `Post.where(title: \"draft\").find_by!(title: \"draft\")`."
+  - symbol: Grant::LoadedAssociationCollection(User, Post)#clear
+    text: "`Grant::LoadedAssociationCollection(Owner, Target)#clear` returns the loaded collection and disassociates its records through the owner context. For read-only enumeration, call `.to_a : Array(Target)`."
+  - symbol: Post#delete
+    text: "Instance `Post#delete` removes the row without destroy callbacks and returns `Post`; `destroy` runs destroy callbacks and returns `Bool`. Both are available in Grant 0.23.4."
+  - symbol: User.where_encrypted
+    text: "`where_encrypted(**criteria)` returns `Array(User) | Grant::Collection(User)` through Grant's raw-SQL `all` path. It already returns records, so do not call a no-block `select` on the result."
+  - symbol: Grant::SchemaTenantResetError.new
+    text: "In Grant 0.23.4, construct this error with `Grant::SchemaTenantResetError.new(message : String, cause : Exception)`; it stores an optional `block_exception`. This constructor does not take a schema argument."
+  - symbol: Grant::Query::Builder#first
+    text: "`Builder#first` returns `Model | Nil`; narrow it before reading fields. Use `first! : Model` when absence should raise `Grant::Querying::NotFound`."
+  - symbol: Grant::Query::Builder#lock
+    text: "The public query-builder `lock` accepts `Bool` or `Grant::Locking::Clause`; the `mode: LockMode` overload is `lock!(mode : Grant::Locking::LockMode)`. Narrow a nilable mode before calling `lock!`; both forms return `Grant::Query::Builder(Post)`."
 error_hints:
   - pattern: "A primary key must be defined for Grant::Base\\."
     hint: "Declare a primary-key column on every persisted Grant model."
