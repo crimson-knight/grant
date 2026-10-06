@@ -23,7 +23,7 @@ notes:
   - symbol: Post.all
     text: "No-argument `Post.all` returns `Grant::Query::Builder(Post)`. The raw-SQL overload `Post.all(clause, binds)` returns `Array(Post) | Grant::Collection(Post)`; call `.to_a` when an `Array(Post)` is required."
   - symbol: Grant::Collection(Post)#to_a
-    text: "`Grant::Collection(Post)#to_a` materializes and returns `Array(Post)`."
+    text: "`Grant::Collection(T)#to_a` materializes a lazy collection and returns `Array(T)`."
   - symbol: Post.count
     text: "`Post.count` returns `Int64`, including grouped results that the model-level count reduces to a scalar."
   - symbol: Grant::Query::Builder#count
@@ -49,11 +49,41 @@ notes:
   - symbol: Grant::Query::Builder#on_shard
     text: "Start shard selection on the sharded model with `Model.on_shard(:one)`; the model call returns its sharded query type."
   - symbol: Grant::Query::Builder#sum
-    text: "A builder sum can return a numeric value or a grouped `Hash`; branch on the result before using numeric-only methods."
+    text: "A builder sum returns `Grant::Query::Builder::SumResult`, a numeric value or grouped `Hash`; branch on the result before using numeric-only methods."
   - symbol: Grant::Base#primary_key_value
     text: "`primary_key_value` is nilable on a Grant base-model reference; narrow it before passing the key to an API that requires `Int64`."
   - symbol: Grant::Sharding::GeoResolver.new
-    text: "Every GeoResolver region tuple includes `states` and `cities`; set either field to `nil` when the region has no list."
+    text: "`Grant::Sharding::GeoResolver.new` returns `Grant::Sharding::GeoResolver`. Every region tuple includes `states` and `cities`; set either field to `nil` when the region has no list."
+  - symbol: Post.composite_primary_key?
+    text: "A model defines `composite_primary_key?` after including `Grant::CompositePrimaryKey`; mark each key column primary and declare the tuple with `composite_primary_key`."
+  - symbol: Grant::Sharding::RangeResolver::RangeDefinition#intersects?
+    text: "`intersects?` accepts `String | Int64 | Nil` for each bound and returns `Bool`; narrow a wider column union before passing the bounds."
+  - symbol: Grant::Query::Builder#new
+    text: "A query builder is a relation; construct records with `Model.new`, then build a relation with `Model.all` or `Model.where`."
+  - symbol: Grant::Sharding::Model
+    text: "The sharding model mixin is provided by `require \"grant/sharding\"`; after that, include `Grant::Sharding::Model` and declare routing with `shards_by`."
+  - symbol: Post.insert_all
+    text: "`insert_all` takes an `Array(Hash(K, V))` and returns `Array(Post)`; convert each named tuple row with `.to_h` and type the rows as `Hash(String | Symbol, Grant::Columns::Type)`."
+  - symbol: Grant::Adapter::Sqlite::Kind
+    text: "SQLite's `Kind` alias is `Grant::Adapter::ErrorTranslator::Kind`, the shared error enum; use that enum type in return annotations."
+  - symbol: Post.select
+    text: "`Post.select(:title)` returns `Grant::Query::Builder(Post)`; `Post.pluck(:title)` returns `Array(Grant::Columns::Type)`."
+  - symbol: Grant::Query::Builder#find
+    text: "Builder `find` takes a block; filter by key with `where` and read one optional record with `first`, which returns `Model | Nil`."
+  - symbol: Grant::LoadedAssociationCollection(User, Post)#<<
+    text: "`Grant::LoadedAssociationCollection(Owner, Target)#<<(record)` accepts a `Target` and returns the same loaded collection; narrow a union before calling collection methods."
+  - symbol: Grant::Query::Builder#find!
+    text: "Builder `find!` takes a block; filter with `where` and use `first || raise` when the caller requires a record, returning `Model`."
+  - symbol: User.connection_config
+    text: "Set replica and failover settings with `configure_connection(failover_retry_attempts: 3)`; the option type is `failover_retry_attempts: Int32`, and the no-argument `connection_config` getter returns `Hash(Symbol, String)`."
+  - symbol: Grant::Query::Builder#create!
+    text: "Create persisted records through the model class, for example `Post.create!(title: \"Draft\", author_id: nil)`, which returns `Post`; a query builder is a relation."
+  - symbol: Grant::Adapter::Base#open
+    text: "`open` yields a raw `DB::Connection`; call `database.exec(sql)` inside the block and use its `DB::ExecResult`."
+  - symbol: Grant::AssociationCollection(User, Post)#first
+    text: "`Grant::AssociationCollection(Owner, Target)#first` returns `Target | Nil`; use `first!` when a missing association record should raise."
+  - symbol: Grant::Connections.[]
+    text: "`Grant::Connections[name]` returns `NamedTuple(writer: Grant::Adapter::Base, reader: Grant::Adapter::Base) | Nil`; assign it with `|| raise` before indexing the writer or reader."
 error_hints:
   - pattern: "A primary key must be defined for Grant::Base\\."
     hint: "Declare a primary-key column on every persisted Grant model."
