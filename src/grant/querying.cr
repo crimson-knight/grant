@@ -644,7 +644,7 @@ module Grant::Querying
       connection.execute(clause, binds)
     end
 
-    def query(clause = "", params = [] of Grant::Columns::Type, & : DB::ResultSet -> T) : T forall T
+    def query(clause = "", params = [] of Grant::Columns::Type, & : DB::ResultSet -> T) forall T
       guard_writes!
       ensure_raw_sql_unscoped!
       mark_write_operation

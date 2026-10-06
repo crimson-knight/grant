@@ -76,7 +76,7 @@ module Grant::Transactions
     # User.clear # => deletes all users, runs no callbacks
     # User.count # => 0
     # ```
-    def clear : Int64?
+    def clear
       guard_writes!
       query = current_scope
       if !_unscoped? && (_has_default_scope? || (__sti_model? && !sti_root_class?))
