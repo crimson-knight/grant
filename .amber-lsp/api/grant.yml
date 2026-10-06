@@ -133,3 +133,67 @@ error_hints:
   - pattern: "expected argument #1 to 'Array\\(Int64\\)#<<' to be Int64, not \\(Int64 \\| Nil\\)"
     hint: "Check that the ID is present before appending, or use Grant's raising accessor when the record must already have a key."
     example: "if record_id = record.id\n  ids << record_id\nend\nids_from_each << record.id!"
+  - pattern: "undefined method '([^']+)' for Nil \\(compile-time type is .+ \\| (?:::)?Nil\\)"
+    hint: "Narrow the nilable value before calling the quoted method; when a Grant `find` or `first` result must exist, use its raising `!` form."
+    example: |-
+      if order = W6TimeOrder.find(id)
+        order.label
+      end
+  - pattern: "undefined method '(only|except|unscope|lock|max)' for [A-Za-z0-9_:]+\\.class"
+    hint: "`only`, `except`, `unscope`, `lock`, and `max` are query builder methods; call the captured modifier on `Model.where(...)` or `Model.all`."
+    example: |-
+      post = Post.all.only(:where).except(:order).unscope(:where).lock(true)
+      post.max(:score)
+  - pattern: "undefined method '(find_by!?)' for Grant::Query::Builder\\([^)]*\\)"
+    hint: "`find_by` and `find_by!` are model class methods; filter the builder with `where(...)`, then call `.first` or `.first!`."
+    example: |-
+      EverywhereScopedRecord.unscoped.where(title: "visible one").first!
+      EverywhereScopedRecord.where(title: "visible one").first
+  - pattern: "undefined method '(new|on_shard|recent|create!)' for Grant::Query::Builder\\([^)]*\\)"
+    hint: "`new`, `on_shard`, named scopes such as `recent`, and `create!` are model APIs; invoke the matching API on the model class."
+    example: |-
+      W6usNote.new(kind: "z")
+      W6shThing.on_shard(:one)
+      AuditScopeModel.published.order(:id)
+      Invoice.create!(tenant_id: nil, number: "Legacy")
+  - pattern: "undefined method '(q)' for Grant::Query::Builder\\([^)]*\\)"
+    hint: "Inside a Grant scope block, call the relation modifiers directly; `q` is not a Grant query method."
+    example: "-> { where(active: true).order(id: :desc).limit(1) }"
+  - pattern: "expected argument #1 to 'Int64#(\\+)' to be .* not DB::ExecResult"
+    hint: "Grant raw-SQL updates return `DB::ExecResult`; add `.rows_affected` when the surrounding code needs an affected-row count."
+    example: "updated += relation.update_all(sql).rows_affected"
+  - pattern: "no overload matches 'Grant::Query::Builder\\([^)]*\\)#(unscope)', where: Symbol"
+    hint: "`unscope` takes positional relation-component symbols; call `.unscope(:where)` on the builder."
+    example: "Post.all.unscope(:where)"
+  - pattern: "no overload matches '[^']*#(reload_with_lock)' with types .* force: Bool"
+    hint: "`reload_with_lock` takes the lock mode positionally; call `record.reload_with_lock(mode)` or pass its optional Boolean positionally."
+    example: "record.reload_with_lock(mode)"
+  - pattern: "no overload matches '[^']*\\.(find!)', tenant_id: Int64, local_id: Int64"
+    hint: "`find!` accepts one positional primary key; use `find_by!` for multiple named column criteria."
+    example: "ParityScratchCompositeRecord.find_by!(tenant_id: tenant_id, local_id: local_id)"
+  - pattern: "no overload matches '[^']*\\.(new)',"
+    hint: "Grant model constructors accept declared fields; create related rows through association APIs and assign enum fields after construction."
+    example: |-
+      company = AutosaveCompany.create!(name: "ACME Corp")
+      article = EnumArticle.new
+      article.status = EnumArticle::Status::Published
+  - pattern: "wrong number of arguments for 'Grant::Query::Builder\\([^)]*\\)#(order|reorder)'"
+    hint: "Pass one ordering specification at a time: give `order` an array for multiple fields or give `reorder` named directions."
+    example: |-
+      Post.all.order([:region_id, :line_id])
+      Post.all.reorder(published: :asc, score: :asc)
+  - pattern: "expected argument #1 to 'Grant::Adapter::Mysql#(quote)' to be String, not (Nil|\\(String \\| Nil\\))"
+    hint: "`quote` needs a non-nil column name; narrow the optional name before passing it to the captured method."
+    example: |-
+      if name = column_name
+        adapter.quote(name)
+      end
+  - pattern: "can't cast .+ to \\(Array\\(Bool\\) \\| Array\\(Float32\\)"
+    hint: "Grant bind values must fit `Grant::Columns::Type`; convert domain values to supported database scalars before binding them."
+    example: "first.to_s"
+  - pattern: "undefined constant ([A-Za-z_][A-Za-z0-9_:]*)"
+    hint: "Check the named constant against this Grant version and require its documented opt-in entry when the feature is optional."
+    example: |-
+      class ShardedProbeRecord < Grant::Base
+        include Grant::Sharding::Model
+      end
