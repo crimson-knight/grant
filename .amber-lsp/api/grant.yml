@@ -117,6 +117,8 @@ notes:
     text: "`Builder#first` returns `Model | Nil`; narrow it before reading fields. Use `first! : Model` when absence should raise `Grant::Querying::NotFound`."
   - symbol: Grant::Query::Builder#lock
     text: "The public query-builder `lock` accepts `Bool` or `Grant::Locking::Clause`; the `mode: LockMode` overload is `lock!(mode : Grant::Locking::LockMode)`. Narrow a nilable mode before calling `lock!`; both forms return `Grant::Query::Builder(Post)`."
+  - symbol: Grant::Encryption.encrypts
+    text: "`ignore_case: true` requires the typed field form, such as `encrypts email : String` or `encrypts email : String?`, and it requires `deterministic: true`. The symbol form `encrypts :email` produces a typed-form compiler error."
 error_hints:
   - pattern: "A primary key must be defined for Grant::Base\\."
     hint: "Declare a primary-key column on every persisted Grant model."
@@ -197,3 +199,8 @@ error_hints:
       class ShardedProbeRecord < Grant::Base
         include Grant::Sharding::Model
       end
+  - pattern: 'encrypts "([A-Za-z_][A-Za-z0-9_]*)": ignore_case: true needs the typed form'
+    hint: "Use a typed encrypted field for {1}; ignore_case accepts String or String? and requires deterministic encryption."
+    example: |-
+      encrypts {1} : String, deterministic: true, ignore_case: true
+      # Or: encrypts {1} : String?, deterministic: true, ignore_case: true
