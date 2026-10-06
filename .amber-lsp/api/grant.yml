@@ -5,6 +5,9 @@ library: grant
 applies_to: "~> 0.23.0"
 docs_flags:
   - grant_docs
+docs_entries:
+  - src/grant.cr
+  - src/grant/sharding.cr
 notes:
   - symbol: User#id
     text: "A Grant primary-key getter is nilable before persistence: `id : Int64?`; use `id! : Int64` when the row must already have an ID."
