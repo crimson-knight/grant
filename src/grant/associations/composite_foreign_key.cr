@@ -196,7 +196,7 @@ module Grant::Associations
       reset_association({{name_text}})
     end
 
-    def reload_{{method_name.id}}
+    def reload_{{method_name.id}} : Grant::CompositeCollection({{@type}}, {{class_name.id}})
       reload_association({{name_text}})
       {{method_name}}
     end

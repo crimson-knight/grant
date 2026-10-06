@@ -822,7 +822,7 @@ module Grant::Associations
     @[Grant::Relationship(target: {{class_name.id}}, through: {{through.id}}, type: :has_many,
       primary_key: {{primary_key.id}}, foreign_key: {{foreign_key.id}}, source: {{source.id}},
       owner_primary_key: {{primary_key.id}}, scope: {{scope}})]
-    def {{method_name.id}}
+    def {{method_name.id}} : Grant::AssociationCollection(self, {{class_name.id}})
       {% if scope %}
         {% if scope.args.empty? %}
           scope_proc = ->(q : Grant::Query::Builder({{class_name.id}})) { q.{{scope.body}} }
@@ -896,7 +896,7 @@ module Grant::Associations
       reset_association({{method_name.stringify}})
     end
 
-    def reload_{{method_name.id}}
+    def reload_{{method_name.id}} : Grant::AssociationCollection(self, {{class_name.id}})
       {% if through %}
         # A preloaded through association would hand back stale join rows.
         reset_association({{through.id.stringify}})

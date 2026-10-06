@@ -15,13 +15,13 @@ notes:
   - symbol: Grant::Base.primary_name
     text: "`primary_name` can be `Nil` on a base type without one primary-key column; a concrete model with `column id : Int64, primary: true` has a primary name. Narrow it before passing it to `where` or `read_attribute`."
   - symbol: Post.find
-    text: "`Post.find(id)` returns `Post?`; narrow the result before reading a record field."
+    text: "Grant declares `Post.find(value) : Post?`; it returns the matching record or `nil`, so narrow the result before reading a record field."
   - symbol: Post.find!
-    text: "`Post.find!(id)` returns `Post` and raises `Grant::Querying::NotFound` when no row matches."
+    text: "Grant declares `Post.find!(value) : Post`; it returns the matching record and raises `Grant::Querying::NotFound` when no row matches."
   - symbol: Post.find?
     text: "Grant does not define `Post.find?`; use `Post.find(id)` for a nilable result or `Post.find!(id)` for the raising form."
   - symbol: Post.all
-    text: "No-argument `Post.all` returns `Grant::Query::Builder(Post)`. The raw-SQL overload `Post.all(clause, binds)` returns `Array(Post) | Grant::Collection(Post)`; call `.to_a` when an `Array(Post)` is required."
+    text: "No-argument `Post.all` returns `Grant::Query::Builder(Post)`. Grant declares the raw-SQL overload `Post.all(clause, params)` to return `Array(Post) | Grant::Collection(Post)`; call `.to_a` when an `Array(Post)` is required."
   - symbol: Grant::Collection(Post)#to_a
     text: "`Grant::Collection(T)#to_a` materializes a lazy collection and returns `Array(T)`."
   - symbol: Post.count
@@ -31,7 +31,7 @@ notes:
   - symbol: Grant::Columns::Type
     text: "`Grant::Columns::Type` is Grant's database-value union. Bind scalar column values such as IDs or strings; convert model objects to their primary-key values first."
   - symbol: Grant::Query::Builder#where
-    text: "`where` returns `Grant::Query::Builder(Post)`. A SQL-string condition accepts one scalar bind; use `Post.all(clause, binds)` when raw SQL needs several bind values."
+    text: "Grant declares the model `where` overloads to return `Grant::Query::Builder(self)` (`Grant::Query::Builder(Post)` for Post). A SQL-string condition accepts one scalar bind; use `Post.all(clause, params)` when raw SQL needs several bind values."
   - symbol: Post.find_by_sql
     text: "`Post.find_by_sql(sql, binds)` exists in Grant 0.23.4 and returns `Array(Post)`; it executes raw SQL without applying a default scope. Use `Post.all(clause, binds)` when the model's scoped query path is required."
   - symbol: Grant::Base

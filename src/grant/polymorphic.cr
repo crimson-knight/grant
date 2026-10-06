@@ -579,7 +579,7 @@ module Grant::Polymorphic
     @[Grant::Relationship(target: {{class_name.id}}, type: :has_many, polymorphic_as: {{poly_as.id.stringify}},
       foreign_key: {{foreign_key.id.stringify}}, type_column: {{type_column.id.stringify}},
       primary_key: {{primary_key_name}}, scope: nil)]
-    def {{method_name.id}}
+    def {{method_name.id}} : Grant::AssociationCollection(self, {{class_name.id}})
       loaded_records = nil.as(Array({{class_name.id}})?)
       if association_loaded?({{method_name.stringify}})
         loaded_data = get_loaded_association({{method_name.stringify}})
@@ -613,7 +613,7 @@ module Grant::Polymorphic
       reset_association({{method_name.stringify}})
     end
 
-    def reload_{{method_name.id}}
+    def reload_{{method_name.id}} : Grant::AssociationCollection(self, {{class_name.id}})
       reload_association({{method_name.stringify}})
       {{method_name.id}}
     end

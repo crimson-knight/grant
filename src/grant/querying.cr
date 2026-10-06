@@ -249,7 +249,7 @@ module Grant::Querying
     # User.all("WHERE active = ?", [true]) # raw filtered query
     # User.all.each { |user| puts user.email }
     # ```
-    def all(clause = "", params = [] of Grant::Columns::Type, use_primary_adapter = true)
+    def all(clause = "", params = [] of Grant::Columns::Type, use_primary_adapter = true) : Array(self) | Grant::Collection(self)
       mark_write_operation if use_primary_adapter == true
 
       # If we have scoping support, use current_scope
@@ -295,7 +295,7 @@ module Grant::Querying
     # User.first("WHERE active = ?", [true]) # first active user
     # User.first("ORDER BY id DESC")         # highest id
     # ```
-    def first(clause = "", params = [] of Grant::Columns::Type)
+    def first(clause = "", params = [] of Grant::Columns::Type) : self?
       # If we have scoping support, use current_scope with limit
       if responds_to?(:current_scope)
         clean_clause = clause.strip
@@ -330,7 +330,7 @@ module Grant::Querying
     # User.first!                             # => #<User ...> (raises if table empty)
     # User.first!("WHERE active = ?", [true]) # => first active user or raises
     # ```
-    def first!(clause = "", params = [] of Grant::Columns::Type)
+    def first!(clause = "", params = [] of Grant::Columns::Type) : self
       first(clause, params) || raise NotFound.new("No #{{{@type.name.stringify}}} found with first(#{clause})")
     end
 
@@ -342,7 +342,7 @@ module Grant::Querying
     # User.find(1)   # => #<User id: 1, ...> or nil
     # User.find(999) # => nil
     # ```
-    def find(value)
+    def find(value) : self?
       first("WHERE #{primary_name} = ?", [value])
     end
 
@@ -352,7 +352,7 @@ module Grant::Querying
     # User.find!(1)   # => #<User id: 1, ...>
     # User.find!(999) # raises Grant::Querying::NotFound
     # ```
-    def find!(value)
+    def find!(value) : self
       find(value) || raise Grant::Querying::NotFound.new("No #{{{@type.name.stringify}}} found where #{primary_name} = #{value}")
     end
 
@@ -365,7 +365,7 @@ module Grant::Querying
     # User.find_by(email: "a@example.com") # => #<User ...> or nil
     # User.find_by(active: true, email: "a@b.com")
     # ```
-    def find_by(**criteria : Grant::Columns::Type)
+    def find_by(**criteria : Grant::Columns::Type) : self?
       find_by criteria.to_h
     end
 
@@ -376,7 +376,7 @@ module Grant::Querying
     # ```
     # User.find_by({"email" => "a@example.com", "active" => true})
     # ```
-    def find_by(criteria : Grant::ModelArgs)
+    def find_by(criteria : Grant::ModelArgs) : self?
       if has_attribute_aliases?
         criteria = criteria.transform_keys { |field| resolve_attribute_alias(field.to_s).as(Symbol | String) }
       end
@@ -393,20 +393,20 @@ module Grant::Querying
     # ```
     # User.find_by!(email: "a@example.com") # => #<User ...> or raises
     # ```
-    def find_by!(**criteria : Grant::Columns::Type)
+    def find_by!(**criteria : Grant::Columns::Type) : self
       find_by!(criteria.to_h)
     end
 
     # :ditto:
     #
     # Hash form — accepts a pre-built criteria hash (`Grant::ModelArgs`).
-    def find_by!(criteria : Grant::ModelArgs)
+    def find_by!(criteria : Grant::ModelArgs) : self
       find_by(criteria) || raise NotFound.new("No #{{{@type.name.stringify}}} found where #{criteria.map { |k, v| %(#{k} #{v.nil? ? "is NULL" : "= #{v}"}) }.join(" and ")}")
     end
 
     # Returns the single record that matches the criteria. Raises `NotFound` if no record found.
     # Raises `NotUnique` if more than one record found.
-    def sole(clause = "", params = [] of Grant::Columns::Type)
+    def sole(clause = "", params = [] of Grant::Columns::Type) : self
       # If we have scoping support, use current_scope
       if responds_to?(:current_scope)
         clean_clause = clause.strip
@@ -444,12 +444,12 @@ module Grant::Querying
 
     # Returns the single record that matches the given criteria. Raises `NotFound` if no record found.
     # Raises `NotUnique` if more than one record found.
-    def find_sole_by(**criteria : Grant::Columns::Type)
+    def find_sole_by(**criteria : Grant::Columns::Type) : self
       find_sole_by(criteria.to_h)
     end
 
     # :ditto:
-    def find_sole_by(criteria : Grant::ModelArgs)
+    def find_sole_by(criteria : Grant::ModelArgs) : self
       if criteria.empty?
         sole
       else
@@ -521,7 +521,7 @@ module Grant::Querying
     #   process(user)
     # end
     # ```
-    def find_each(clause = "", params = [] of Grant::Columns::Type, batch_size limit = 1000, offset = 0, start : Grant::Columns::Type = nil, finish : Grant::Columns::Type = nil, cursor : Array(Symbol)? = nil, order : Symbol = :asc, error_on_ignore : Bool = false, &)
+    def find_each(clause = "", params = [] of Grant::Columns::Type, batch_size limit = 1000, offset = 0, start : Grant::Columns::Type = nil, finish : Grant::Columns::Type = nil, cursor : Array(Symbol)? = nil, order : Symbol = :asc, error_on_ignore : Bool = false, &) : Nil
       batch_scope(clause, params, offset).find_each(limit, start, finish, cursor, order, error_on_ignore) do |record|
         yield record
       end
@@ -546,7 +546,7 @@ module Grant::Querying
     #   puts "processing #{batch.size} users"
     # end
     # ```
-    def find_in_batches(clause = "", params = [] of Grant::Columns::Type, batch_size limit = 1000, offset = 0, start : Grant::Columns::Type = nil, finish : Grant::Columns::Type = nil, cursor : Array(Symbol)? = nil, order : Symbol = :asc, error_on_ignore : Bool = false, &)
+    def find_in_batches(clause = "", params = [] of Grant::Columns::Type, batch_size limit = 1000, offset = 0, start : Grant::Columns::Type = nil, finish : Grant::Columns::Type = nil, cursor : Array(Symbol)? = nil, order : Symbol = :asc, error_on_ignore : Bool = false, &) : Nil
       batch_scope(clause, params, offset).find_in_batches(limit, start, finish, cursor, order, error_on_ignore) do |batch|
         yield batch
       end
@@ -644,7 +644,7 @@ module Grant::Querying
       connection.execute(clause, binds)
     end
 
-    def query(clause = "", params = [] of Grant::Columns::Type, &)
+    def query(clause = "", params = [] of Grant::Columns::Type, & : DB::ResultSet -> T) : T forall T
       guard_writes!
       ensure_raw_sql_unscoped!
       mark_write_operation
@@ -722,7 +722,7 @@ module Grant::Querying
   # # record gets updated by another process
   # post.reload # refreshes this same object from the database
   # ```
-  def reload
+  def reload : self
     fresh = self.class.find!(primary_key_value)
 
     {% begin %}
