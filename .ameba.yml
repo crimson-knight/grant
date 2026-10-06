@@ -5,6 +5,8 @@ Excluded:
   - lib/**/*.cr
   # Disabled specs kept for reference; they are not compiled or run.
   - spec_disabled/**/*.cr
+  # API card compile probes: each file is compiled alone to prove a card note; none is a spec.
+  - spec/api_card_probes/**/*.cr
 
 # Grant writes macro interpolations as `{{x}}`; `crystal tool format` owns layout.
 Lint/WhitespaceAroundMacroExpression:

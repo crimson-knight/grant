@@ -5,27 +5,27 @@ module Grant::Query::BuilderMethods
   end
 
   # Explicit where overloads to avoid delegate splat/keyword ambiguity
-  def where(**matches)
+  def where(**matches) : Grant::Query::Builder(self)
     __builder.where(**matches)
   end
 
-  def where(matches)
+  def where(matches) : Grant::Query::Builder(self)
     __builder.where(matches)
   end
 
-  def where(field : Symbol | String, operator : Symbol, value : Grant::Columns::Type)
+  def where(field : Symbol | String, operator : Symbol, value : Grant::Columns::Type) : Grant::Query::Builder(self)
     __builder.where(field, operator, value)
   end
 
-  def where(stmt : String, value : Grant::Columns::Type = nil)
+  def where(stmt : String, value : Grant::Columns::Type = nil) : Grant::Query::Builder(self)
     __builder.where(stmt, value)
   end
 
-  def where(stmt : String, first, second, *rest)
+  def where(stmt : String, first, second, *rest) : Grant::Query::Builder(self)
     __builder.where(stmt, first, second, *rest)
   end
 
-  def where : Grant::Query::WhereChain
+  def where : Grant::Query::WhereChain(self)
     __builder.where
   end
 

@@ -7,7 +7,7 @@ module Grant
   #
   # Mirrors the `FrozenError` ActiveRecord raises for a destroyed record.
   class RecordDestroyedError < ErrorBase
-    def initialize(model_name : String, action : String)
+    def initialize(model_name : String, action : String) : Nil
       super("Cannot #{action} a destroyed #{model_name}")
     end
   end
@@ -106,7 +106,7 @@ module Grant::Transactions
     # user.persisted? # => true (when the save succeeded)
     # user.id         # => 1
     # ```
-    def create(**args)
+    def create(**args) : self
       create(args.to_h)
     end
 
@@ -121,7 +121,7 @@ module Grant::Transactions
     # User.create({"email" => "ada@example.com"})
     # User.create({"email" => "seed@example.com"}, skip_timestamps: true)
     # ```
-    def create(args, skip_timestamps : Bool = false, context : (Symbol | Array(Symbol))? = nil)
+    def create(args, skip_timestamps : Bool = false, context : (Symbol | Array(Symbol))? = nil) : self
       guard_writes!
       instance = new
       instance.set_attributes(args.to_h.transform_keys(&.to_s))
@@ -146,7 +146,7 @@ module Grant::Transactions
     # user = User.create!(email: "ada@example.com") # => persisted User
     # User.create!(email: "")                       # raises Grant::RecordNotSaved
     # ```
-    def create!(**args)
+    def create!(**args) : self
       create!(args.to_h)
     end
 
@@ -158,7 +158,7 @@ module Grant::Transactions
     # ```
     # User.create!({"email" => "ada@example.com"})
     # ```
-    def create!(args, skip_timestamps : Bool = false, context : (Symbol | Array(Symbol))? = nil)
+    def create!(args, skip_timestamps : Bool = false, context : (Symbol | Array(Symbol))? = nil) : self
       guard_writes!
       instance = new
       instance.set_attributes(args.to_h.transform_keys(&.to_s))
@@ -197,7 +197,7 @@ module Grant::Transactions
     # User.import(users)                  # one INSERT for all 1000 rows
     # User.import(users, batch_size: 100) # ten INSERTs of 100 rows each
     # ```
-    def import(model_array : Array(self) | Grant::Collection(self), batch_size : Int32 = model_array.size)
+    def import(model_array : Array(self) | Grant::Collection(self), batch_size : Int32 = model_array.size) : Nil
       guard_writes!
       {% begin %}
         {% primary_key = @type.instance_vars.find { |ivar| (ann = ivar.annotation(Grant::Column)) && ann[:primary] } %}
@@ -241,7 +241,7 @@ module Grant::Transactions
     # # If a user with id 1 already exists, overwrite only its age column:
     # User.import(users, update_on_duplicate: true, columns: ["age"])
     # ```
-    def import(model_array : Array(self) | Grant::Collection(self), update_on_duplicate : Bool, columns : Array(String), batch_size : Int32 = model_array.size)
+    def import(model_array : Array(self) | Grant::Collection(self), update_on_duplicate : Bool, columns : Array(String), batch_size : Int32 = model_array.size) : Nil
       guard_writes!
       {% begin %}
         {% primary_key = @type.instance_vars.find { |ivar| (ann = ivar.annotation(Grant::Column)) && ann[:primary] } %}
@@ -283,7 +283,7 @@ module Grant::Transactions
     # # If id 1 already exists, this row is skipped rather than raising:
     # User.import(users, ignore_on_duplicate: true)
     # ```
-    def import(model_array : Array(self) | Grant::Collection(self), ignore_on_duplicate : Bool, batch_size : Int32 = model_array.size)
+    def import(model_array : Array(self) | Grant::Collection(self), ignore_on_duplicate : Bool, batch_size : Int32 = model_array.size) : Nil
       guard_writes!
       {% begin %}
         {% primary_key = @type.instance_vars.find { |ivar| (ann = ivar.annotation(Grant::Column)) && ann[:primary] } %}

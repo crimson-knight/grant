@@ -1,12 +1,12 @@
 class Grant::Collection(M)
   forward_missing_to collection
 
-  def initialize(@loader : -> Array(M))
+  def initialize(@loader : -> Array(M)) : Nil
     @loaded = false
     @collection = [] of M
   end
 
-  def loaded?
+  def loaded? : Bool
     @loaded
   end
 

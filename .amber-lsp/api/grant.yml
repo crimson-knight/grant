@@ -1,0 +1,206 @@
+# Grant API card; validate every note and hint with:
+# CRYSTAL_WORKERS=1 ./scripts/compile_api_card_probes.sh
+card_version: 1
+library: grant
+applies_to: "~> 0.23.0"
+docs_flags:
+  - grant_docs
+docs_entries:
+  - src/grant.cr
+  - src/grant/sharding.cr
+notes:
+  - symbol: User#id
+    text: "A Grant primary-key getter is nilable before persistence: `id : Int64?`; use `id! : Int64` when the row must already have an ID."
+  - symbol: User#name
+    text: "A required column's `name` getter returns `String` and `name?` returns the raw `String?`; a nullable column has `nickname : String?` and `nickname! : String`. Grant does generate `name?`; it returns a nullable value, not Bool."
+  - symbol: Post#author_id
+    text: "A nullable foreign-key column returns `Int64?`; use `author_id! : Int64` when the association key must be present."
+  - symbol: Grant::Base.primary_name
+    text: "`primary_name` can be `Nil` on a base type without one primary-key column; a concrete model with `column id : Int64, primary: true` has a primary name. Narrow it before passing it to `where` or `read_attribute`."
+  - symbol: Post.find
+    text: "Grant declares `Post.find(value) : Post?`; it returns the matching record or `nil`, so narrow the result before reading a record field."
+  - symbol: Post.find!
+    text: "Grant declares `Post.find!(value) : Post`; it returns the matching record and raises `Grant::Querying::NotFound` when no row matches."
+  - symbol: Post.find?
+    text: "Grant does not define `Post.find?`; use `Post.find(id)` for a nilable result or `Post.find!(id)` for the raising form."
+  - symbol: Post.all
+    text: "No-argument `Post.all` returns `Grant::Query::Builder(Post)`. Grant declares the raw-SQL overload `Post.all(clause, params)` to return `Array(Post) | Grant::Collection(Post)`; call `.to_a` when an `Array(Post)` is required."
+  - symbol: Grant::Collection(Post)#to_a
+    text: "`Grant::Collection(T)#to_a` materializes a lazy collection and returns `Array(T)`."
+  - symbol: Post.count
+    text: "`Post.count` returns `Int64`, including grouped results that the model-level count reduces to a scalar."
+  - symbol: Grant::Query::Builder#count
+    text: "A builder count returns `Grant::Query::Builder::CountResult`: `Int64` for an ungrouped query or a `Hash` for grouped results."
+  - symbol: Grant::Columns::Type
+    text: "`Grant::Columns::Type` is Grant's database-value union. Bind scalar column values such as IDs or strings; convert model objects to their primary-key values first."
+  - symbol: Grant::Query::Builder#where
+    text: "Grant declares the model `where` overloads to return `Grant::Query::Builder(self)` (`Grant::Query::Builder(Post)` for Post). A SQL-string condition accepts one scalar bind; use `Post.all(clause, params)` when raw SQL needs several bind values."
+  - symbol: Post.find_by_sql
+    text: "`Post.find_by_sql(sql, binds)` exists in Grant 0.23.4 and returns `Array(Post)`; it executes raw SQL without applying a default scope. Use `Post.all(clause, binds)` when the model's scoped query path is required."
+  - symbol: Grant::Base
+    text: "Every persisted model needs a primary key, commonly `column id : Int64, primary: true`. In Grant macros, inspect `@type.instance_vars` inside a method on the completed type; check class methods with `@type.class.has_method?`."
+  - symbol: Grant::Type.from_rs
+    text: "`Grant::Type.from_rs(result, Int64)` passes the concrete `Int64` type class and returns `Int64`; a runtime union's `.class` is not a supported substitute."
+  - symbol: Grant::Adapter::Base#quote
+    text: "`quote` accepts a non-nil `String` column name and returns `String`; narrow an optional name before calling it."
+  - symbol: Grant::Query::Builder#order
+    text: "For multiple symbol fields, use the array overload such as `.order([:id, :title])`; it returns `Grant::Query::Builder(Post)`."
+  - symbol: Grant::Query::Builder#reorder
+    text: "For multiple reordered fields with directions, use named ordering such as `.reorder(title: :asc, score: :desc)`; it returns `Grant::Query::Builder(Post)`."
+  - symbol: Grant::Query::Builder#from
+    text: "`from` accepts an SQL source string with `as: String` and returns `Grant::Query::Builder(Post)`; bind values use `Array(Grant::Columns::Type)`."
+  - symbol: Grant::Query::Builder#on_shard
+    text: "Start shard selection on the sharded model with `Model.on_shard(:one)`; the model call returns its sharded query type."
+  - symbol: Grant::Query::Builder#sum
+    text: "A builder sum returns `Grant::Query::Builder::SumResult`, a numeric value or grouped `Hash`; branch on the result before using numeric-only methods."
+  - symbol: Grant::Base#primary_key_value
+    text: "`primary_key_value` is nilable on a Grant base-model reference; narrow it before passing the key to an API that requires `Int64`."
+  - symbol: Grant::Sharding::GeoResolver.new
+    text: "`Grant::Sharding::GeoResolver.new` returns `Grant::Sharding::GeoResolver`. Every region tuple includes `states` and `cities`; set either field to `nil` when the region has no list."
+  - symbol: Post.composite_primary_key?
+    text: "A model defines `composite_primary_key?` after including `Grant::CompositePrimaryKey`; mark each key column primary and declare the tuple with `composite_primary_key`."
+  - symbol: Grant::Sharding::RangeResolver::RangeDefinition#intersects?
+    text: "`intersects?` accepts `String | Int64 | Nil` for each bound and returns `Bool`; narrow a wider column union before passing the bounds."
+  - symbol: Grant::Query::Builder#new
+    text: "A query builder is a relation; construct records with `Model.new`, then build a relation with `Model.all` or `Model.where`."
+  - symbol: Grant::Sharding::Model
+    text: "The sharding model mixin is provided by `require \"grant/sharding\"`; after that, include `Grant::Sharding::Model` and declare routing with `shards_by`."
+  - symbol: Post.insert_all
+    text: "`insert_all` takes an `Array(Hash(K, V))` and returns `Array(Post)`; convert each named tuple row with `.to_h` and type the rows as `Hash(String | Symbol, Grant::Columns::Type)`."
+  - symbol: Grant::Adapter::Sqlite::Kind
+    text: "SQLite's `Kind` alias is `Grant::Adapter::ErrorTranslator::Kind`, the shared error enum; use that enum type in return annotations."
+  - symbol: Post.select
+    text: "`Post.select(:title)` returns `Grant::Query::Builder(Post)`; `Post.pluck(:title)` returns `Array(Grant::Columns::Type)`."
+  - symbol: Grant::Query::Builder#find
+    text: "Builder `find` takes a block; filter by key with `where` and read one optional record with `first`, which returns `Model | Nil`."
+  - symbol: Grant::LoadedAssociationCollection(User, Post)#<<
+    text: "`Grant::LoadedAssociationCollection(Owner, Target)#<<(record)` accepts a `Target` and returns the same loaded collection; narrow a union before calling collection methods."
+  - symbol: Grant::Query::Builder#find!
+    text: "Builder `find!` takes a block; filter with `where` and use `first || raise` when the caller requires a record, returning `Model`."
+  - symbol: User.connection_config
+    text: "Set replica and failover settings with `configure_connection(failover_retry_attempts: 3)`; the option type is `failover_retry_attempts: Int32`, and the no-argument `connection_config` getter returns `Hash(Symbol, String)`."
+  - symbol: Grant::Query::Builder#create!
+    text: "Create persisted records through the model class, for example `Post.create!(title: \"Draft\", author_id: nil)`, which returns `Post`; a query builder is a relation."
+  - symbol: Grant::Adapter::Base#open
+    text: "`open` yields a raw `DB::Connection`; call `database.exec(sql)` inside the block and use its `DB::ExecResult`."
+  - symbol: Grant::AssociationCollection(User, Post)#first
+    text: "`Grant::AssociationCollection(Owner, Target)#first` returns `Target | Nil`; use `first!` when a missing association record should raise."
+  - symbol: Grant::Connections.[]
+    text: "`Grant::Connections[name]` returns `NamedTuple(writer: Grant::Adapter::Base, reader: Grant::Adapter::Base) | Nil`; assign it with `|| raise` before indexing the writer or reader."
+  - symbol: Post#set_attributes
+    text: "`set_attributes` takes one `Hash(String | Symbol, T)` (including `Hash(String, String)` for string values) and returns the same `Model`; it does not take keyword arguments. For encrypted password fields, assign through the generated password setter, such as `record.password = \"next-pass\"`."
+  - symbol: Grant::Query::Builder#unscope
+    text: "`unscope` accepts positional relation-component symbols; the `component: :where` overload hint means `.unscope(:where)`, which returns `Grant::Query::Builder(Post)`. Use `unscope(where: :column)` only for removing one column predicate."
+  - symbol: Post.where_tuples
+    text: "Grant 0.23.4 does not define `where_tuples`; express composite criteria with `Post.where(shop_id: 1_i64, order_id: 1_i64)`, which returns `Grant::Query::Builder(Post)`."
+  - symbol: Post#reload_with_lock
+    text: "`reload_with_lock(mode : Grant::Locking::LockMode = Update, force : Bool = false)` returns `Post`; `force:` is supported in Grant 0.23.4, and the default mode is `Update`."
+  - symbol: Grant::Query::Builder#update_all
+    text: "The raw-SQL overload `update_all(assignments : String)` returns `DB::ExecResult`; read `.rows_affected` for its row count. Hash, named-argument, and tuple-array overloads return `Int64`."
+  - symbol: Grant::Query::Builder#build
+    text: "`Builder#build(**attributes)` needs the model attributes and returns an unsaved `Model`; `Model.new(**attributes)` also constructs an unsaved record. A query builder is a relation, and `build` with no attributes has no matching overload."
+  - symbol: Grant::Query::Builder#only
+    text: "`only(*components : Symbol)` is a query-builder modifier and returns `Grant::Query::Builder(Post)`; a `component: :where` overload hint corresponds to positional `.only(:where)`. Start with `Model.all.only(:where)`; an unknown component raises `ArgumentError` when the call runs."
+  - symbol: Grant::Query::Builder#max
+    text: "`max(column : Symbol | String)` computes the column maximum and returns `Grant::Query::Builder::ExtremumResult`, including grouped hash forms. To fetch the row with the largest value, order descending and call `first`."
+  - symbol: Grant::Query::Builder#find_by!
+    text: "`Builder#find_by!(**criteria)` returns `Model` and raises `Grant::Querying::NotFound` when no row matches; for example, `Post.where(title: \"draft\").find_by!(title: \"draft\")`."
+  - symbol: Grant::LoadedAssociationCollection(User, Post)#clear
+    text: "`Grant::LoadedAssociationCollection(Owner, Target)#clear` returns the loaded collection and disassociates its records through the owner context. For read-only enumeration, call `.to_a : Array(Target)`."
+  - symbol: Post#delete
+    text: "Instance `Post#delete` removes the row without destroy callbacks and returns `Post`; `destroy` runs destroy callbacks and returns `Bool`. Both are available in Grant 0.23.4."
+  - symbol: User.where_encrypted
+    text: "`where_encrypted(**criteria)` returns `Array(User) | Grant::Collection(User)` through Grant's raw-SQL `all` path. It already returns records, so do not call a no-block `select` on the result."
+  - symbol: Grant::SchemaTenantResetError.new
+    text: "In Grant 0.23.4, construct this error with `Grant::SchemaTenantResetError.new(message : String, cause : Exception)`; it stores an optional `block_exception`. This constructor does not take a schema argument."
+  - symbol: Grant::Query::Builder#first
+    text: "`Builder#first` returns `Model | Nil`; narrow it before reading fields. Use `first! : Model` when absence should raise `Grant::Querying::NotFound`."
+  - symbol: Grant::Query::Builder#lock
+    text: "The public query-builder `lock` accepts `Bool` or `Grant::Locking::Clause`; the `mode: LockMode` overload is `lock!(mode : Grant::Locking::LockMode)`. Narrow a nilable mode before calling `lock!`; both forms return `Grant::Query::Builder(Post)`."
+  - symbol: Grant::Encryption.encrypts
+    text: "`ignore_case: true` requires the typed field form, such as `encrypts email : String` or `encrypts email : String?`, and it requires `deterministic: true`. The symbol form `encrypts :email` produces a typed-form compiler error."
+error_hints:
+  - pattern: "A primary key must be defined for Grant::Base\\."
+    hint: "Declare a primary-key column on every persisted Grant model."
+    example: "column id : Int64, primary: true"
+  - pattern: "expected argument #1 to 'Array\\(Int32 \\| Nil\\)#<<' to be \\(Int32 \\| Nil\\), not \\(Int64 \\| Nil\\)"
+    hint: "Initialize this collection with the same nilable element type as the IDs it will hold."
+    example: "found_models = [] of Int64?"
+  - pattern: "expected argument #2 to 'Grant::Type\\.from_rs' to be"
+    hint: "Pass the concrete column type to `from_rs` for reads, and call the configured converter's `to_db` for outgoing values."
+    example: "Grant::Type.from_rs(result, Int64)\nconverter.to_db(values)"
+  - pattern: "expected argument #1 to 'ReplicatedChat#read_attribute' to be \\(String \\| Symbol\\) or String, not \\(String \\| Nil\\)"
+    hint: "Narrow the model's optional primary name before passing it to `read_attribute`."
+    example: "if primary_name = value.class.primary_name; value.read_attribute(primary_name); end"
+  - pattern: "expected argument #1 to 'Array\\(Int64\\)#<<' to be Int64, not \\(Int64 \\| Nil\\)"
+    hint: "Check that the ID is present before appending, or use Grant's raising accessor when the record must already have a key."
+    example: "if record_id = record.id\n  ids << record_id\nend\nids_from_each << record.id!"
+  - pattern: "undefined method '([^']+)' for Nil \\(compile-time type is .+ \\| (?:::)?Nil\\)"
+    hint: "Narrow the nilable value before calling the quoted method; when a Grant `find` or `first` result must exist, use its raising `!` form."
+    example: |-
+      if order = W6TimeOrder.find(id)
+        order.label
+      end
+  - pattern: "undefined method '(only|except|unscope|lock|max)' for [A-Za-z0-9_:]+\\.class"
+    hint: "`only`, `except`, `unscope`, `lock`, and `max` are query builder methods; call the captured modifier on `Model.where(...)` or `Model.all`."
+    example: |-
+      post = Post.all.only(:where).except(:order).unscope(:where).lock(true)
+      post.max(:score)
+  - pattern: "undefined method '(find_by!?)' for Grant::Query::Builder\\([^)]*\\)"
+    hint: "`find_by` and `find_by!` are model class methods; filter the builder with `where(...)`, then call `.first` or `.first!`."
+    example: |-
+      EverywhereScopedRecord.unscoped.where(title: "visible one").first!
+      EverywhereScopedRecord.where(title: "visible one").first
+  - pattern: "undefined method '(new|on_shard|recent|create!)' for Grant::Query::Builder\\([^)]*\\)"
+    hint: "`new`, `on_shard`, named scopes such as `recent`, and `create!` are model APIs; invoke the matching API on the model class."
+    example: |-
+      W6usNote.new(kind: "z")
+      W6shThing.on_shard(:one)
+      AuditScopeModel.published.order(:id)
+      Invoice.create!(tenant_id: nil, number: "Legacy")
+  - pattern: "undefined method '(q)' for Grant::Query::Builder\\([^)]*\\)"
+    hint: "Inside a Grant scope block, call the relation modifiers directly; `q` is not a Grant query method."
+    example: "-> { where(active: true).order(id: :desc).limit(1) }"
+  - pattern: "expected argument #1 to 'Int64#(\\+)' to be .* not DB::ExecResult"
+    hint: "Grant raw-SQL updates return `DB::ExecResult`; add `.rows_affected` when the surrounding code needs an affected-row count."
+    example: "updated += relation.update_all(sql).rows_affected"
+  - pattern: "no overload matches 'Grant::Query::Builder\\([^)]*\\)#(unscope)', where: Symbol"
+    hint: "`unscope` takes positional relation-component symbols; call `.unscope(:where)` on the builder."
+    example: "Post.all.unscope(:where)"
+  - pattern: "no overload matches '[^']*#(reload_with_lock)' with types .* force: Bool"
+    hint: "`reload_with_lock` takes the lock mode positionally; call `record.reload_with_lock(mode)` or pass its optional Boolean positionally."
+    example: "record.reload_with_lock(mode)"
+  - pattern: "no overload matches '[^']*\\.(find!)', tenant_id: Int64, local_id: Int64"
+    hint: "`find!` accepts one positional primary key; use `find_by!` for multiple named column criteria."
+    example: "ParityScratchCompositeRecord.find_by!(tenant_id: tenant_id, local_id: local_id)"
+  - pattern: "no overload matches '[^']*\\.(new)',"
+    hint: "Grant model constructors accept declared fields; create related rows through association APIs and assign enum fields after construction."
+    example: |-
+      company = AutosaveCompany.create!(name: "ACME Corp")
+      article = EnumArticle.new
+      article.status = EnumArticle::Status::Published
+  - pattern: "wrong number of arguments for 'Grant::Query::Builder\\([^)]*\\)#(order|reorder)'"
+    hint: "Pass one ordering specification at a time: give `order` an array for multiple fields or give `reorder` named directions."
+    example: |-
+      Post.all.order([:region_id, :line_id])
+      Post.all.reorder(published: :asc, score: :asc)
+  - pattern: "expected argument #1 to 'Grant::Adapter::Mysql#(quote)' to be String, not (Nil|\\(String \\| Nil\\))"
+    hint: "`quote` needs a non-nil column name; narrow the optional name before passing it to the captured method."
+    example: |-
+      if name = column_name
+        adapter.quote(name)
+      end
+  - pattern: "can't cast .+ to \\(Array\\(Bool\\) \\| Array\\(Float32\\)"
+    hint: "Grant bind values must fit `Grant::Columns::Type`; convert domain values to supported database scalars before binding them."
+    example: "first.to_s"
+  - pattern: "undefined constant ([A-Za-z_][A-Za-z0-9_:]*)"
+    hint: "Check the named constant against this Grant version and require its documented opt-in entry when the feature is optional."
+    example: |-
+      class ShardedProbeRecord < Grant::Base
+        include Grant::Sharding::Model
+      end
+  - pattern: 'encrypts "([A-Za-z_][A-Za-z0-9_]*)": ignore_case: true needs the typed form'
+    hint: "Use a typed encrypted field for {1}; ignore_case accepts String or String? and requires deterministic encryption."
+    example: |-
+      encrypts {1} : String, deterministic: true, ignore_case: true
+      # Or: encrypts {1} : String?, deterministic: true, ignore_case: true
