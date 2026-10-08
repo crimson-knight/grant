@@ -241,22 +241,7 @@ module Grant::Aggregations
 
     # Last with query conditions
     def last : Model?
-      # Reverse the order for last
-      reverse_order = @order_fields.map { |field| Grant::Query::OrderSupport.reverse(field) }
-
-      # If no order specified, order by primary key DESC
-      if reverse_order.empty?
-        reverse_order = [{field: Model.primary_name, direction: Sort::Descending}]
-      end
-
-      # Create new builder with reversed order
-      new_builder = self.class.new(@db_type)
-      new_builder.own_where_fields.concat(@where_fields)
-      new_builder.own_group_fields.concat(@group_fields)
-      reverse_order.each { |field| new_builder.own_order_fields << field }
-      new_builder.limit = 1
-
-      new_builder.select.first?
+      @query.last
     end
 
     # Last! with query conditions

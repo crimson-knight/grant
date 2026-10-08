@@ -2,6 +2,7 @@ require "./dependent"
 require "./counter_cache"
 require "./association_touch"
 require "./autosave"
+require "./autosave/association_operations"
 
 # Implements the advanced options accepted by the association macros
 # (`belongs_to`/`has_one`/`has_many`). You never call the macros in this module

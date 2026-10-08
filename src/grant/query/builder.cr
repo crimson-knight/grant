@@ -47,12 +47,57 @@ require "./finders"
 # (`like`, `gt`, `not_in`, …) are available via the no-argument `where`, which
 # returns a `WhereChain`.
 module Grant::Query
+  enum DbType
+    Mysql
+    Sqlite
+    Pg
+  end
+
+  # Direction of one ORDER BY term. `Raw` marks a term whose `field` is a
+  # complete SQL expression (direction included) that is emitted as written.
+  enum Sort
+    Ascending
+    Descending
+    AscendingNullsFirst
+    AscendingNullsLast
+    DescendingNullsFirst
+    DescendingNullsLast
+    Raw
+
+    # Returns whether this sort direction orders values from high to low.
+    def sorts_descending? : Bool
+      descending? || descending_nulls_first? || descending_nulls_last?
+    end
+
+    # Returns the requested null placement, if this sort direction specifies one.
+    def nulls_placement : Symbol?
+      if ascending_nulls_first? || descending_nulls_first?
+        :first
+      elsif ascending_nulls_last? || descending_nulls_last?
+        :last
+      end
+    end
+
+    # Returns the opposite sort direction while preserving its null placement.
+    def reverse : Sort
+      case self
+      when Ascending            then Descending
+      when Descending           then Ascending
+      when AscendingNullsFirst  then DescendingNullsLast
+      when AscendingNullsLast   then DescendingNullsFirst
+      when DescendingNullsFirst then AscendingNullsLast
+      when DescendingNullsLast  then AscendingNullsFirst
+      else                           self
+      end
+    end
+  end
+
   alias WhereField = NamedTuple(join: Symbol, field: String, operator: Symbol, value: Grant::Columns::Type) |
                      NamedTuple(join: Symbol, stmt: String, value: Grant::Columns::Type) |
                      NamedTuple(join: Symbol, stmt: String, values: Array(Grant::Columns::Type))
 
   # The empty clause lists every new relation starts with. They are shared by
-  # all relations and never written: a relation's `@shared_arrays` bit for a
+  # all relations and never written: a relation state's shared-array bit for a
   # list is set while it still holds one of these, so the first write goes
   # through `own_<list>` and copies it. A relation that adds only a WHERE
   # therefore never allocates its (empty) ORDER, GROUP, JOIN, HAVING or
@@ -60,7 +105,7 @@ module Grant::Query
   module EmptyClauses
     WHERE_FIELDS               = [] of Grant::Query::WhereField
     DEFAULT_SCOPE_WHERE_FIELDS = [] of Grant::Query::WhereField
-    ORDER_FIELDS               = [] of NamedTuple(field: String, direction: Grant::Query::Builder::Sort)
+    ORDER_FIELDS               = [] of NamedTuple(field: String, direction: Grant::Query::Sort)
     GROUP_FIELDS               = [] of NamedTuple(field: String)
     JOIN_CLAUSES               = [] of NamedTuple(type: Symbol, table: String, on: String)
     HAVING_CLAUSES             = [] of NamedTuple(stmt: String, value: Grant::Columns::Type)
@@ -79,6 +124,305 @@ module Grant::Query
         EAGER_LOAD_ASSOCIATIONS.empty? && INDEX_HINTS.empty? && OPTIMIZER_HINTS.empty?
     end
   end
+
+  # Model-independent relation clauses and their copy-on-write storage.
+  # Builder(Model) keeps only hydrated records, typed caches, and the model
+  # operations needed to interpret or execute these values.
+  #
+  # :nodoc:
+  class RelationState
+    alias WhereField = Grant::Query::WhereField
+
+    getter db_type : DbType
+    getter boolean_operator : Symbol
+    getter where_fields : Array(WhereField) = EmptyClauses::WHERE_FIELDS
+    getter default_scope_where_fields : Array(WhereField) = EmptyClauses::DEFAULT_SCOPE_WHERE_FIELDS
+    getter order_fields : Array(NamedTuple(field: String, direction: Sort)) = EmptyClauses::ORDER_FIELDS
+    getter group_fields : Array(NamedTuple(field: String)) = EmptyClauses::GROUP_FIELDS
+    getter join_clauses : Array(NamedTuple(type: Symbol, table: String, on: String)) = EmptyClauses::JOIN_CLAUSES
+    getter having_clauses : Array(NamedTuple(stmt: String, value: Grant::Columns::Type)) = EmptyClauses::HAVING_CLAUSES
+    getter includes_associations : Array(Grant::Includes) = EmptyClauses::INCLUDES_ASSOCIATIONS
+    getter preload_associations : Array(Grant::Includes) = EmptyClauses::PRELOAD_ASSOCIATIONS
+    getter eager_load_associations : Array(Grant::Includes) = EmptyClauses::EAGER_LOAD_ASSOCIATIONS
+    getter index_hints : Array(Grant::Query::IndexHint) = EmptyClauses::INDEX_HINTS
+    getter optimizer_hints : Array(String) = EmptyClauses::OPTIMIZER_HINTS
+    property select_columns : Array(String)?
+    property limit : Int64?
+    property offset : Int64?
+    property lock_mode : Grant::Locking::LockMode?
+    property lock_clause : Grant::Locking::Clause?
+    property? readonly : Bool = false
+    getter? distinct : Bool = false
+    getter? is_none : Bool = false
+    getter? strict_loading : Bool = false
+
+    def distinct : Bool
+      distinct?
+    end
+
+    @shared_arrays : UInt16 = 0x3FF_u16
+    @raw_where_columns : Hash(String, Tuple(String, Bool))? = nil
+
+    def initialize(@db_type : DbType, @boolean_operator : Symbol = :and)
+    end
+
+    def distinct=(value : Bool) : Bool
+      @distinct = value
+    end
+
+    def is_none=(value : Bool) : Bool
+      @is_none = value
+    end
+
+    def strict_loading=(value : Bool) : Bool
+      @strict_loading = value
+    end
+
+    def optimizer_hints=(value : Array(String)) : Array(String)
+      @optimizer_hints = value
+    end
+
+    def register_raw_where_column(stmt : String, field_key : String, equality : Bool) : Nil
+      raw_columns = @raw_where_columns ||= {} of String => Tuple(String, Bool)
+      raw_columns[stmt] = {field_key, equality}
+    end
+
+    def raw_where_column(stmt : String) : Tuple(String, Bool)?
+      if raw_columns = @raw_where_columns
+        raw_columns[stmt]?
+      end
+    end
+
+    # Merges another relation's WHERE fields, including the raw-clause column
+    # registrations that make later rewhere/unscope operations work.
+    def merge_where_relation(other : RelationState, owner_table : String) : Bool
+      incoming = other.where_fields
+      incoming_raw_columns = {} of String => Tuple(String, Bool)
+      incoming.each do |clause|
+        next if clause.is_a?(NamedTuple(join: Symbol, field: String, operator: Symbol, value: Grant::Columns::Type))
+
+        stmt = clause[:stmt]
+        if registered = other.raw_where_column(stmt)
+          incoming_raw_columns[stmt] = registered
+        end
+      end
+      merge_where_fields(incoming, incoming_raw_columns, owner_table)
+    end
+
+    def merge_where_fields(incoming : Array(WhereField), incoming_raw_columns : Hash(String, Tuple(String, Bool))?, owner_table : String) : Bool
+      return true if incoming.empty?
+
+      incoming_flat = incoming.all? { |clause| clause[:join] == :and }
+      own_flat = @where_fields.all? { |clause| clause[:join] == :and }
+      return false unless incoming_flat && own_flat
+
+      replaced = Set(String).new
+      incoming.each do |clause|
+        if clause.is_a?(NamedTuple(join: Symbol, field: String, operator: Symbol, value: Grant::Columns::Type))
+          replaced << where_column_key(clause[:field], owner_table) if clause[:operator] == :eq || clause[:operator] == :in
+        elsif registered = incoming_raw_columns.try(&.[clause[:stmt]]?)
+          replaced << registered[0] if registered[1]
+        end
+      end
+      remove_where_columns(replaced, owner_table) unless replaced.empty?
+      own_where_fields.concat(incoming)
+      incoming.each do |clause|
+        next if clause.is_a?(NamedTuple(join: Symbol, field: String, operator: Symbol, value: Grant::Columns::Type))
+
+        stmt = clause[:stmt]
+        if registered = incoming_raw_columns.try(&.[stmt]?)
+          register_raw_where_column(stmt, registered[0], registered[1])
+        end
+      end
+      true
+    end
+
+    def remove_where_columns(columns : Set(String), owner_table : String) : Nil
+      return unless @where_fields.any? { |clause| where_clause_on?(clause, columns, owner_table) }
+
+      own_where_fields.reject! { |clause| where_clause_on?(clause, columns, owner_table) }
+    end
+
+    private def where_clause_on?(clause : WhereField, columns : Set(String), owner_table : String) : Bool
+      if column = where_clause_column(clause, owner_table)
+        columns.includes?(column)
+      else
+        false
+      end
+    end
+
+    private def where_clause_column(clause : WhereField, owner_table : String) : String?
+      if clause.is_a?(NamedTuple(join: Symbol, field: String, operator: Symbol, value: Grant::Columns::Type))
+        where_column_key(clause[:field], owner_table)
+      elsif registered = raw_where_column(clause[:stmt])
+        registered[0]
+      end
+    end
+
+    def where_column_key(field : String, owner_table : String) : String
+      prefix = "#{owner_table}."
+      field.starts_with?(prefix) ? field[prefix.size..] : field
+    end
+
+    def raw_where_columns=(value : Hash(String, Tuple(String, Bool))?) : Hash(String, Tuple(String, Bool))?
+      @raw_where_columns = value
+    end
+
+    def order_fields=(value : Array(NamedTuple(field: String, direction: Sort)))
+      @order_fields = value
+      @shared_arrays &= ~4_u16
+    end
+
+    def append_order(field : String, direction : Sort) : Nil
+      own_order_fields << {field: field, direction: direction}
+    end
+
+    def append_order(fields : Array(NamedTuple(field: String, direction: Sort))) : Nil
+      own_order_fields.concat(fields)
+    end
+
+    def order_direction(value : String | Symbol) : Sort
+      value == "desc" || value == :desc ? Sort::Descending : Sort::Ascending
+    end
+
+    def append_group(field : String) : Nil
+      own_group_fields << {field: field}
+    end
+
+    def append_groups(fields : Array(Symbol)) : Nil
+      fields.each { |field| append_group(field.to_s) }
+    end
+
+    def append_groups(fields : NamedTuple) : Nil
+      fields.each { |field, _| append_group(field.to_s) }
+    end
+
+    def append_groups(fields : Hash(K, V)) : Nil forall K, V
+      fields.each { |field, _| append_group(field.to_s) }
+    end
+
+    def append_having(stmt : String, value : Grant::Columns::Type) : Nil
+      own_having_clauses << {stmt: stmt, value: value}
+    end
+
+    def where_fields_for_chunk(index : Int32, base_field : NamedTuple(join: Symbol, field: String, operator: Symbol, value: Grant::Columns::Type), slice : Grant::Columns::SupportedArrayTypes) : Array(WhereField)
+      @where_fields.map_with_index do |field, field_index|
+        if field_index == index
+          {join: base_field[:join], field: base_field[:field], operator: :in, value: slice}.as(WhereField)
+        else
+          field
+        end
+      end
+    end
+
+    def each_chunk_where_fields(index : Int32, chunk_size : Int32, work : Proc(Array(WhereField), Bool)) : Nil
+      base_field, full_values = chunk_field(index)
+      full_values.each_slice(chunk_size) do |slice|
+        break unless work.call(where_fields_for_chunk(index, base_field, slice))
+      end
+    end
+
+    def chunk_value_count(index : Int32) : Int32
+      chunk_field(index)[1].size
+    end
+
+    private def chunk_field(index : Int32) : Tuple(NamedTuple(join: Symbol, field: String, operator: Symbol, value: Grant::Columns::Type), Grant::Columns::SupportedArrayTypes)
+      field = @where_fields[index]
+      unless field.is_a?(NamedTuple(join: Symbol, field: String, operator: Symbol, value: Grant::Columns::Type))
+        raise ArgumentError.new("Expected an IN-list field at index #{index}")
+      end
+
+      values = field[:value]
+      unless values.is_a?(Grant::Columns::SupportedArrayTypes)
+        raise ArgumentError.new("Expected array values in the IN-list field at index #{index}")
+      end
+
+      {field, values}
+    end
+
+    def reverse_order_fields : Nil
+      self.order_fields = @order_fields.map { |field| Grant::Query::OrderSupport.reverse(field) }
+    end
+
+    def offset!(value : Number?) : Nil
+      @offset = value.nil? ? nil : value.to_i64
+    end
+
+    def limit!(value : Number?) : Nil
+      @limit = value.nil? ? nil : value.to_i64
+    end
+
+    def distinct! : Nil
+      @distinct = true
+    end
+
+    def none! : Nil
+      @is_none = true
+    end
+
+    def chain_copy : self
+      @shared_arrays = ALL_ARRAYS_SHARED
+      copy = self.class.allocate
+      copy.as(Void*).copy_from(self.as(Void*), instance_sizeof(Grant::Query::RelationState))
+      copy.raw_where_columns = @raw_where_columns.try(&.dup)
+      copy
+    end
+
+    {% for pair in [{"where_fields", 1, "WHERE_FIELDS"}, {"default_scope_where_fields", 2, "DEFAULT_SCOPE_WHERE_FIELDS"}, {"order_fields", 4, "ORDER_FIELDS"}, {"group_fields", 8, "GROUP_FIELDS"}, {"join_clauses", 16, "JOIN_CLAUSES"}, {"having_clauses", 32, "HAVING_CLAUSES"}, {"includes_associations", 64, "INCLUDES_ASSOCIATIONS"}, {"preload_associations", 128, "PRELOAD_ASSOCIATIONS"}, {"eager_load_associations", 256, "EAGER_LOAD_ASSOCIATIONS"}, {"index_hints", 512, "INDEX_HINTS"}] %}
+      {% name = pair[0].id %}
+      {% bit = pair[1] %}
+      # Returns the writable `{{name}}` array, copying it first when another
+      # relation still shares it. Every in-place write goes through here.
+      #
+      # :nodoc:
+      def own_{{name}}
+        if (@shared_arrays & {{bit}}_u16) != 0_u16
+          writable = @{{name}}.class.new(@{{name}}.size + 1)
+          writable.concat(@{{name}})
+          @{{name}} = writable
+          @shared_arrays &= ~{{bit}}_u16
+        end
+        @{{name}}
+      end
+
+      # Resets `{{name}}` to the shared empty array.
+      #
+      # :nodoc:
+      def clear_{{name}} : Nil
+        @{{name}} = EmptyClauses::{{pair[2].id}}
+        @shared_arrays |= {{bit}}_u16
+      end
+    {% end %}
+
+    ALL_ARRAYS_SHARED = 0x3FF_u16
+  end
+
+  # :nodoc:
+  module ValueComparison
+    def self.compare(a : Grant::Columns::Type, b : Grant::Columns::Type) : Int32
+      return 0 if a.nil? && b.nil?
+      return 1 if a.nil?
+      return -1 if b.nil?
+
+      if a.is_a?(Number) && b.is_a?(Number)
+        af = a.to_f
+        bf = b.to_f
+        return af < bf ? -1 : (af > bf ? 1 : 0)
+      end
+
+      if a.is_a?(Time) && b.is_a?(Time)
+        return a < b ? -1 : (a > b ? 1 : 0)
+      end
+
+      if a.is_a?(String) && b.is_a?(String)
+        return a < b ? -1 : (a > b ? 1 : 0)
+      end
+
+      sa = a.to_s
+      sb = b.to_s
+      sa < sb ? -1 : (sa > sb ? 1 : 0)
+    end
+  end
 end
 
 class Grant::Query::Builder(Model)
@@ -87,92 +431,13 @@ class Grant::Query::Builder(Model)
   include Grant::Query::Batches(Model)
   include Grant::Query::Finders(Model)
 
-  enum DbType
-    Mysql
-    Sqlite
-    Pg
-  end
-
-  # Direction of one ORDER BY term. `Raw` marks a term whose `field` is a
-  # complete SQL expression (direction included) that is emitted as written.
-  enum Sort
-    Ascending
-    Descending
-    AscendingNullsFirst
-    AscendingNullsLast
-    DescendingNullsFirst
-    DescendingNullsLast
-    Raw
-
-    # `true` for every descending member, whatever its NULL placement.
-    def sorts_descending? : Bool
-      descending? || descending_nulls_first? || descending_nulls_last?
-    end
-
-    # Where NULLs sort, `:first` or `:last`, or `nil` for the adapter default.
-    def nulls_placement : Symbol?
-      if ascending_nulls_first? || descending_nulls_first?
-        :first
-      elsif ascending_nulls_last? || descending_nulls_last?
-        :last
-      end
-    end
-
-    # The opposite direction, with NULL placement flipped the way
-    # ActiveRecord's `reverse_order` does. A `Raw` term stays `Raw`; its SQL is
-    # reversed by `Grant::Query::OrderSupport.reverse_raw`.
-    def reverse : Sort
-      case self
-      when Ascending            then Descending
-      when Descending           then Ascending
-      when AscendingNullsFirst  then DescendingNullsLast
-      when AscendingNullsLast   then DescendingNullsFirst
-      when DescendingNullsFirst then AscendingNullsLast
-      when DescendingNullsLast  then AscendingNullsFirst
-      else                           self
-      end
-    end
-  end
-
+  alias DbType = Grant::Query::DbType
+  alias Sort = Grant::Query::Sort
   alias WhereField = Grant::Query::WhereField
   alias CountResult = Int64 | Hash(Grant::Columns::Type, Int64) | Hash(Array(Grant::Columns::Type), Int64)
   alias AssociationQuery = Grant::Includes
 
-  getter db_type : DbType
-  getter where_fields : Array(WhereField) = Grant::Query::EmptyClauses::WHERE_FIELDS
-  getter default_scope_where_fields : Array(WhereField) = Grant::Query::EmptyClauses::DEFAULT_SCOPE_WHERE_FIELDS
-  getter order_fields : Array(NamedTuple(field: String, direction: Sort)) = Grant::Query::EmptyClauses::ORDER_FIELDS
-  getter group_fields : Array(NamedTuple(field: String)) = Grant::Query::EmptyClauses::GROUP_FIELDS
-  getter offset : Int64?
-  getter limit : Int64?
-  getter eager_load_associations : Array(Grant::Includes) = Grant::Query::EmptyClauses::EAGER_LOAD_ASSOCIATIONS
-  getter preload_associations : Array(Grant::Includes) = Grant::Query::EmptyClauses::PRELOAD_ASSOCIATIONS
-  getter includes_associations : Array(Grant::Includes) = Grant::Query::EmptyClauses::INCLUDES_ASSOCIATIONS
-  getter lock_mode : Grant::Locking::LockMode?
-  property select_columns : Array(String)?
-
-  # Join clauses for INNER JOIN and LEFT JOIN operations.
-  getter join_clauses : Array(NamedTuple(type: Symbol, table: String, on: String)) = Grant::Query::EmptyClauses::JOIN_CLAUSES
-
-  # Flag for SELECT DISTINCT queries.
-  getter? distinct : Bool = false
-
-  # Having clauses for aggregate filtering after GROUP BY.
-  getter having_clauses : Array(NamedTuple(stmt: String, value: Grant::Columns::Type)) = Grant::Query::EmptyClauses::HAVING_CLAUSES
-
-  # Flag for null relation (none) — short-circuits to empty results.
-  getter? is_none : Bool = false
-  getter? strict_loading : Bool = false
-
-  # Copy-on-write bookkeeping: one bit per array ivar (see `own_*`). A set bit
-  # means the array may be referenced by another relation and must be copied
-  # before it is written to. Declared next to the Bool flags so they pack into
-  # one word (every chain step copies the whole relation).
-  @shared_arrays : UInt16 = 0x3FF_u16
-
-  # Declared here, beside the other flags, so it packs into the same word; the
-  # reader and writer are in `readonly.cr`.
-  @readonly : Bool = false
+  @relation_state : Grant::Query::RelationState
 
   # Memoized result of `load`. Cleared by every mutation and by `reset`.
   @records : Array(Model)?
@@ -180,37 +445,111 @@ class Grant::Query::Builder(Model)
   # Memoized `cache_version`, cleared together with `@records`.
   @cache_version : String?
 
-  ALL_ARRAYS_SHARED = 0x3FF_u16
-
-  def initialize(@db_type, @boolean_operator = :and)
+  def initialize(db_type : DbType, boolean_operator : Symbol = :and)
+    @relation_state = Grant::Query::RelationState.new(db_type, boolean_operator)
   end
 
-  {% for pair in [{"where_fields", 1, "WHERE_FIELDS"}, {"default_scope_where_fields", 2, "DEFAULT_SCOPE_WHERE_FIELDS"}, {"order_fields", 4, "ORDER_FIELDS"}, {"group_fields", 8, "GROUP_FIELDS"}, {"join_clauses", 16, "JOIN_CLAUSES"}, {"having_clauses", 32, "HAVING_CLAUSES"}, {"includes_associations", 64, "INCLUDES_ASSOCIATIONS"}, {"preload_associations", 128, "PRELOAD_ASSOCIATIONS"}, {"eager_load_associations", 256, "EAGER_LOAD_ASSOCIATIONS"}, {"index_hints", 512, "INDEX_HINTS"}] %}
-    {% name = pair[0].id %}
-    {% bit = pair[1] %}
-    # Returns the writable `{{name}}` array, copying it first when another
-    # relation still shares it. Every in-place write goes through here.
-    #
-    # :nodoc:
-    def own_{{name}}
-      if (@shared_arrays & {{bit}}_u16) != 0_u16
-        # Room for the element the caller is about to add, so the write does
-        # not reallocate the buffer it was just given.
-        writable = @{{name}}.class.new(@{{name}}.size + 1)
-        writable.concat(@{{name}})
-        @{{name}} = writable
-        @shared_arrays &= ~{{bit}}_u16
-      end
+  def db_type : DbType
+    @relation_state.db_type
+  end
+
+  def boolean_operator : Symbol
+    @relation_state.boolean_operator
+  end
+
+  def where_fields : Array(WhereField)
+    @relation_state.where_fields
+  end
+
+  def default_scope_where_fields : Array(WhereField)
+    @relation_state.default_scope_where_fields
+  end
+
+  def order_fields : Array(NamedTuple(field: String, direction: Sort))
+    @relation_state.order_fields
+  end
+
+  def group_fields : Array(NamedTuple(field: String))
+    @relation_state.group_fields
+  end
+
+  def join_clauses : Array(NamedTuple(type: Symbol, table: String, on: String))
+    @relation_state.join_clauses
+  end
+
+  def having_clauses : Array(NamedTuple(stmt: String, value: Grant::Columns::Type))
+    @relation_state.having_clauses
+  end
+
+  def includes_associations : Array(Grant::Includes)
+    @relation_state.includes_associations
+  end
+
+  def preload_associations : Array(Grant::Includes)
+    @relation_state.preload_associations
+  end
+
+  def eager_load_associations : Array(Grant::Includes)
+    @relation_state.eager_load_associations
+  end
+
+  def index_hints : Array(Grant::Query::IndexHint)
+    @relation_state.index_hints
+  end
+
+  def optimizer_hint_list : Array(String)
+    @relation_state.optimizer_hints
+  end
+
+  def lock_mode : Grant::Locking::LockMode?
+    @relation_state.lock_mode
+  end
+
+  def lock_clause : Grant::Locking::Clause?
+    @relation_state.lock_clause
+  end
+
+  def select_columns : Array(String)?
+    @relation_state.select_columns
+  end
+
+  def select_columns=(value : Array(String)?)
+    @relation_state.select_columns = value
+  end
+
+  def limit : Int64?
+    @relation_state.limit
+  end
+
+  def offset : Int64?
+    @relation_state.offset
+  end
+
+  def distinct? : Bool
+    @relation_state.distinct?
+  end
+
+  # This relation flag is part of Builder's public API on main.
+  def is_none? : Bool # ameba:disable Naming/PredicateName (preserve the public relation flag from main)
+    @relation_state.is_none?
+  end
+
+  def strict_loading? : Bool
+    @relation_state.strict_loading?
+  end
+
+  protected def relation_state : Grant::Query::RelationState
+    @relation_state
+  end
+
+  {% for name in %w[where_fields default_scope_where_fields order_fields group_fields join_clauses having_clauses includes_associations preload_associations eager_load_associations index_hints] %}
+    def own_{{name.id}}
       reset_load_state
-      @{{name}}
+      @relation_state.own_{{name.id}}
     end
 
-    # Replaces `{{name}}` with the shared empty list.
-    #
-    # :nodoc:
-    def clear_{{name}} : Nil
-      @{{name}} = Grant::Query::EmptyClauses::{{pair[2].id}}
-      @shared_arrays |= {{bit}}_u16
+    def clear_{{name.id}} : Nil
+      @relation_state.clear_{{name.id}}
       reset_load_state
     end
   {% end %}
@@ -233,11 +572,18 @@ class Grant::Query::Builder(Model)
     chain_copy
   end
 
+  protected def relation_state=(value : Grant::Query::RelationState) : Grant::Query::RelationState
+    @relation_state = value
+  end
+
   # Same as `dup`; the name states the intent at chain-method call sites.
+  #
+  # :nodoc:
   protected def chain_copy : self
-    @shared_arrays = ALL_ARRAYS_SHARED
+    state = @relation_state.chain_copy
     copy = self.class.allocate
     copy.as(Void*).copy_from(self.as(Void*), instance_sizeof(Grant::Query::Builder(Model)))
+    copy.relation_state = state
     copy.copy_subclass_state_from(self)
     copy.forget_copied_state
     copy
@@ -255,10 +601,6 @@ class Grant::Query::Builder(Model)
     @records = nil
     @cache_version = nil
     @_cached_assembler = nil
-    # The copy records its own column-keyed raw clauses from here on.
-    if raw_columns = @raw_where_columns
-      @raw_where_columns = raw_columns.dup
-    end
   end
 
   # Returns a copy whose WHERE clauses are recorded as default-scope clauses
@@ -281,12 +623,12 @@ class Grant::Query::Builder(Model)
 
   def strict_loading!(value : Bool = true) : self
     reset_load_state
-    @strict_loading = value
+    @relation_state.strict_loading = value
     self
   end
 
   def assembler : Assembler::Base(Model)
-    case @db_type
+    case @relation_state.db_type
     when DbType::Pg
       Assembler::Pg(Model).new self
     when DbType::Mysql
@@ -294,7 +636,7 @@ class Grant::Query::Builder(Model)
     when DbType::Sqlite
       Assembler::Sqlite(Model).new self
     else
-      raise "Unknown database type: #{@db_type}"
+      raise "Unknown database type: #{@relation_state.db_type}"
     end
   end
 
@@ -630,37 +972,8 @@ class Grant::Query::Builder(Model)
   end
 
   private def structured_field_sql(field : String) : String
-    parts = field.split('.')
-    unless parts.size.in?(1..2) && parts.all?(&.matches?(/\A[A-Za-z_][A-Za-z0-9_]*\z/))
-      raise ArgumentError.new("Invalid query field #{field.inspect}")
-    end
-
-    column = parts.last
-    qualifier = parts.size == 2 ? parts.first : nil
-    if qualifier && qualifier != Model.table_name
-      # A joined table: check the column against the model behind it when the
-      # registry knows one; a raw joined table is only identifier-checked.
-      joined = Grant::Query::JoinedColumns.known_column?(Model.name, qualifier, column)
-      if joined == false
-        raise ArgumentError.new("Unknown query field #{column.inspect} for #{Model.name}")
-      end
-    else
-      unless Model.fields.includes?(column)
-        raise ArgumentError.new("Unknown query field #{column.inspect} for #{Model.name}")
-      end
-    end
-
-    if qualifier
-      allowed_qualifiers = [Model.table_name] + @join_clauses.flat_map { |join| Grant::Query::JoinSupport.qualifiers(join) }
-      unless allowed_qualifiers.includes?(qualifier)
-        raise ArgumentError.new("Unknown query table #{qualifier.inspect} for #{Model.name}")
-      end
-      "#{Model.quote(qualifier)}.#{Model.quote(column)}"
-    elsif !@join_clauses.empty?
-      "#{Model.quote(Model.table_name)}.#{Model.quote(column)}"
-    else
-      Model.quote(column)
-    end
+    quote_identifier = ->(identifier : String) { Model.quote(identifier) }
+    Grant::Query::StructuredFieldResolver.resolve(field, Model.name, Model.table_name, Model.fields, @relation_state.join_clauses, quote_identifier)
   end
 
   # Appends an ascending ORDER BY on a single *field*. Returns `self`.
@@ -669,8 +982,8 @@ class Grant::Query::Builder(Model)
   # User.order(:email) # => ORDER BY email ASC
   # ```
   def order!(field : Symbol) : self
-    own_order_fields << {field: resolve_column_alias(field.to_s), direction: Sort::Ascending}
-
+    reset_load_state
+    @relation_state.append_order(resolve_column_alias(field.to_s), Sort::Ascending)
     self
   end
 
@@ -680,10 +993,10 @@ class Grant::Query::Builder(Model)
   # User.order([:active, :email]) # => ORDER BY active ASC, email ASC
   # ```
   def order!(fields : Array(Symbol)) : self
+    reset_load_state
     fields.each do |field|
-      order! field
+      @relation_state.append_order(resolve_column_alias(field.to_s), Sort::Ascending)
     end
-
     self
   end
 
@@ -704,16 +1017,10 @@ class Grant::Query::Builder(Model)
   #
   # Hash/NamedTuple form of `order(**dsl)`.
   def order!(dsl) : self
+    reset_load_state
     dsl.each do |field, dsl_direction|
-      direction = Sort::Ascending
-
-      if dsl_direction == "desc" || dsl_direction == :desc
-        direction = Sort::Descending
-      end
-
-      own_order_fields << {field: resolve_column_alias(field.to_s), direction: direction}
+      @relation_state.append_order(resolve_column_alias(field.to_s), @relation_state.order_direction(dsl_direction))
     end
-
     self
   end
 
@@ -725,8 +1032,8 @@ class Grant::Query::Builder(Model)
   # User.group_by(:active) # => GROUP BY active
   # ```
   def group_by!(field : Symbol) : self
-    own_group_fields << {field: field.to_s}
-
+    reset_load_state
+    @relation_state.append_group(field.to_s)
     self
   end
 
@@ -736,10 +1043,8 @@ class Grant::Query::Builder(Model)
   # User.group_by([:active, :email]) # => GROUP BY active, email
   # ```
   def group_by!(fields : Array(Symbol)) : self
-    fields.each do |field|
-      group_by! field
-    end
-
+    reset_load_state
+    @relation_state.append_groups(fields)
     self
   end
 
@@ -756,10 +1061,8 @@ class Grant::Query::Builder(Model)
   #
   # Hash/NamedTuple form of `group_by(**dsl)`.
   def group_by!(dsl) : self
-    dsl.each do |field, _|
-      own_group_fields << {field: field.to_s}
-    end
-
+    reset_load_state
+    @relation_state.append_groups(dsl)
     self
   end
 
@@ -777,8 +1080,8 @@ class Grant::Query::Builder(Model)
   # ```
   def lock!(mode : Grant::Locking::LockMode = Grant::Locking::LockMode::Update) : self
     reset_load_state
-    @lock_clause = nil
-    @lock_mode = mode
+    @relation_state.lock_clause = nil
+    @relation_state.lock_mode = mode
     self
   end
 
@@ -829,7 +1132,7 @@ class Grant::Query::Builder(Model)
   # ```
   def joins!(*associations : Symbol, **nested) : self
     associations.each { |assoc| joins!(assoc) }
-    add_join_clauses(Grant::Query::JoinSupport.resolve_nested(Model, nested, :inner, @join_clauses)) unless nested.empty?
+    add_join_clauses(Grant::Query::JoinSupport.resolve_nested(Model, nested, :inner, @relation_state.join_clauses)) unless nested.empty?
     self
   end
 
@@ -866,7 +1169,7 @@ class Grant::Query::Builder(Model)
   # nested associations.
   def left_joins!(*associations : Symbol, **nested) : self
     associations.each { |assoc| left_joins!(assoc) }
-    add_join_clauses(Grant::Query::JoinSupport.resolve_nested(Model, nested, :left, @join_clauses)) unless nested.empty?
+    add_join_clauses(Grant::Query::JoinSupport.resolve_nested(Model, nested, :left, @relation_state.join_clauses)) unless nested.empty?
     self
   end
 
@@ -882,7 +1185,7 @@ class Grant::Query::Builder(Model)
   #
   # Raises `ArgumentError` if the association is unknown.
   private def resolve_association_join(association : Symbol, type : Symbol) : Array(NamedTuple(type: Symbol, table: String, on: String))
-    Grant::Query::JoinSupport.resolve(Model, association, type, nil, @join_clauses)
+    Grant::Query::JoinSupport.resolve(Model, association, type, nil, @relation_state.join_clauses)
   end
 
   private def add_eager_load_join(association : Symbol) : Nil
@@ -911,35 +1214,13 @@ class Grant::Query::Builder(Model)
 
   # `has_many/has_one ..., as:` joins on the key and on the stored type name.
   private def add_polymorphic_as_eager_load_join(reflection : Grant::Reflection) : Nil
-    target_model = reflection.klass
-    type_column = reflection.foreign_type || return
-    type_name = Model.polymorphic_name.gsub("'", "''")
-    on = "#{target_model.quote(target_model.table_name)}.#{target_model.quote(reflection.foreign_key)} = #{Model.quote(Model.table_name)}.#{Model.quote(reflection.primary_key)}" \
-         " AND #{target_model.quote(target_model.table_name)}.#{target_model.quote(type_column)} = '#{type_name}'"
-    left_joins!(target_model.table_name, on: on)
+    clause = Grant::Query::EagerLoadJoinPlanner.polymorphic_as(Model, reflection) || return
+    add_join_clause(clause)
   end
 
   private def add_through_eager_load_join(metadata : Grant::AssociationRegistry::AssociationMeta) : Bool
-    through_name = metadata[:through]
-    source_name = metadata[:source]
-    return false unless through_name && source_name
-
-    through_metadata = Grant::AssociationRegistry.get(Model.name, through_name)
-    return false unless through_metadata
-    source_metadata = Grant::AssociationRegistry.get(through_metadata[:target_class].name, source_name)
-    return false unless source_metadata
-
-    through_model = through_metadata[:target_class]
-    target_model = metadata[:target_class]
-    owner_join = "#{through_model.quote(through_model.table_name)}.#{through_model.quote(through_metadata[:foreign_key])} = #{Model.quote(Model.table_name)}.#{Model.quote(through_metadata[:primary_key])}"
-    left_joins!(through_model.table_name, on: owner_join)
-
-    target_join = if source_metadata[:type] == :belongs_to
-                    "#{target_model.quote(target_model.table_name)}.#{target_model.quote(source_metadata[:primary_key])} = #{through_model.quote(through_model.table_name)}.#{through_model.quote(source_metadata[:foreign_key])}"
-                  else
-                    "#{target_model.quote(target_model.table_name)}.#{target_model.quote(source_metadata[:foreign_key])} = #{through_model.quote(through_model.table_name)}.#{through_model.quote(source_metadata[:primary_key])}"
-                  end
-    left_joins!(target_model.table_name, on: target_join)
+    clauses = Grant::Query::EagerLoadJoinPlanner.through(Model, metadata) || return false
+    add_join_clauses(clauses)
     true
   end
 
@@ -953,7 +1234,7 @@ class Grant::Query::Builder(Model)
   # ```
   def distinct! : self
     reset_load_state
-    @distinct = true
+    @relation_state.distinct!
     self
   end
 
@@ -969,7 +1250,8 @@ class Grant::Query::Builder(Model)
   # # => SELECT ... FROM users GROUP BY department HAVING COUNT(*) > 5
   # ```
   def having!(stmt : String, value : Grant::Columns::Type = nil) : self
-    own_having_clauses << {stmt: stmt, value: value}
+    reset_load_state
+    @relation_state.append_having(stmt, value)
     self
   end
 
@@ -987,7 +1269,7 @@ class Grant::Query::Builder(Model)
   # ```
   def none! : self
     reset_load_state
-    @is_none = true
+    @relation_state.none!
     self
   end
 
@@ -1057,15 +1339,14 @@ class Grant::Query::Builder(Model)
   # ```
   def reverse_order! : self
     reset_load_state
-    if @order_fields.empty?
+    if @relation_state.order_fields.empty?
       implicit_order_columns.each do |column|
         own_order_fields << {field: column, direction: Sort::Descending}
       end
       return self
     end
 
-    @order_fields = @order_fields.map { |field| Grant::Query::OrderSupport.reverse(field) }
-    @shared_arrays &= ~4_u16
+    @relation_state.reverse_order_fields
     self
   end
 
@@ -1098,7 +1379,7 @@ class Grant::Query::Builder(Model)
   # ```
   def reselect!(*columns : Symbol) : self
     reset_load_state
-    @select_columns = columns.map { |column| resolve_column_alias(column.to_s) }.to_a
+    @relation_state.select_columns = columns.map { |column| resolve_column_alias(column.to_s) }.to_a
     self
   end
 
@@ -1154,42 +1435,20 @@ class Grant::Query::Builder(Model)
   # Applies `unscope!` for a list of components (shared with `only`).
   protected def unscope_components!(components : Array(Symbol)) : self
     reset_load_state
-    components.each do |component|
+    extra = ->(component : Symbol) do
       case component
-      when :where
-        clear_where_fields
-      when :order
-        clear_order_fields
-      when :limit
-        @limit = nil
-      when :offset
-        @offset = nil
-      when :group, :group_by
-        clear_group_fields
-      when :having
-        clear_having_clauses
-      when :joins
-        drop_join_clauses!(left: false)
-      when :left_joins, :left_outer_joins
-        drop_join_clauses!(left: true)
-      when :select
-        @select_columns = nil
-      when :distinct
-        @distinct = false
-      when :lock
-        @lock_mode = nil
-        @lock_clause = nil
-      when :readonly
-        @readonly = false
-      when :optimizer_hints
-        @optimizer_hints = [] of String
       when :from
         clear_from_source!
+        true
       when :with
         clear_common_tables!
+        true
       else
-        raise ArgumentError.new("unscope: unknown component #{component.inspect}") unless unscope_extra_component!(component)
+        unscope_extra_component!(component)
       end
+    end
+    components.each do |component|
+      @relation_state.unscope_component!(component, extra)
     end
     self
   end
@@ -1204,8 +1463,7 @@ class Grant::Query::Builder(Model)
   # ```
   def offset!(num) : self
     reset_load_state
-    @offset = num.nil? ? nil : num.to_i64
-
+    @relation_state.offset!(num)
     self
   end
 
@@ -1218,8 +1476,7 @@ class Grant::Query::Builder(Model)
   # ```
   def limit!(num) : self
     reset_load_state
-    @limit = num.nil? ? nil : num.to_i64
-
+    @relation_state.limit!(num)
     self
   end
 
@@ -1263,7 +1520,7 @@ class Grant::Query::Builder(Model)
     records.each(&.readonly!) if readonly?
 
     # Apply eager loading if any associations are specified
-    all_associations = @includes_associations + @preload_associations + @eager_load_associations
+    all_associations = @relation_state.includes_associations + @relation_state.preload_associations + @relation_state.eager_load_associations
     unless all_associations.empty?
       Grant::AssociationLoader.load_associations(records, all_associations, restrictions)
     end
@@ -1625,13 +1882,13 @@ class Grant::Query::Builder(Model)
   # `limit(1).second` returns `nil`.
   private def first_records_from(index : Int32, count : Int32) : Array(Model)
     effective = count.to_i64
-    if window = @limit
+    if window = @relation_state.limit
       effective = Math.min(window - index, effective)
     end
     return [] of Model if effective <= 0
 
     copy = ordered_copy
-    copy.offset!((@offset || 0_i64) + index) unless index.zero?
+    copy.offset!((@relation_state.offset || 0_i64) + index) unless index.zero?
     copy.limit!(effective).select
   end
 
@@ -1646,7 +1903,7 @@ class Grant::Query::Builder(Model)
   end
 
   private def limit_or_offset? : Bool
-    !@limit.nil? || !@offset.nil?
+    !@relation_state.limit.nil? || !@relation_state.offset.nil?
   end
 
   # Returns a copy ordered for `first`/`last`/ordinal finders: the relation's
@@ -1660,7 +1917,7 @@ class Grant::Query::Builder(Model)
 
   # :nodoc:
   protected def apply_ordered_finder_order(reverse : Bool) : Nil
-    if @order_fields.empty?
+    if @relation_state.order_fields.empty?
       direction = reverse ? Sort::Descending : Sort::Ascending
       implicit_order_columns.each do |column|
         own_order_fields << {field: column, direction: direction}
@@ -1700,7 +1957,7 @@ class Grant::Query::Builder(Model)
 
     probe = chain_copy
     probe.clear_order_fields
-    probe_limit = (@limit || limit.to_i64)
+    probe_limit = (@relation_state.limit || limit.to_i64)
     probe.limit!(Math.min(probe_limit, limit.to_i64))
     probe.ids.size
   end
@@ -1862,7 +2119,7 @@ class Grant::Query::Builder(Model)
   end
 
   private def chunked_grouped_count : Hash(Array(Grant::Columns::Type), Int64)
-    if @limit || @offset || @having_clauses.any? || @distinct
+    if @relation_state.limit || @relation_state.offset || @relation_state.having_clauses.any? || @relation_state.distinct
       raise ArgumentError.new("Grouped counts with chunked IN lists cannot preserve limit, offset, having, or distinct")
     end
 
@@ -2023,8 +2280,8 @@ class Grant::Query::Builder(Model)
     specs.concat(Grant::AssociationLoader.normalize(nested_associations)) unless nested_associations.empty?
     Grant::AssociationLoader.enable(Model)
     own_eager_load_associations.concat(specs)
-    joins_before = @join_clauses
-    was_distinct = @distinct
+    joins_before = @relation_state.join_clauses
+    was_distinct = @relation_state.distinct
     specs.each do |spec|
       case spec
       when Symbol then add_eager_load_join(spec)
@@ -2032,7 +2289,7 @@ class Grant::Query::Builder(Model)
       end
     end
     # Remember what this call added, so `unscope(:eager_load)` can take it back.
-    record_eager_load_joins(@join_clauses - joins_before, !was_distinct && @distinct)
+    record_eager_load_joins(@relation_state.join_clauses - joins_before, !was_distinct && @relation_state.distinct)
     self
   end
 
@@ -2061,7 +2318,7 @@ class Grant::Query::Builder(Model)
 
   def or!(& : self ->) : self
     reset_load_state
-    or_builder = self.class.new(@db_type, :or)
+    or_builder = self.class.new(@relation_state.db_type, :or)
     built = yield or_builder
     or_builder = built if built.is_a?(Builder(Model))
 
@@ -2126,7 +2383,7 @@ class Grant::Query::Builder(Model)
 
   def not!(& : self ->) : self
     reset_load_state
-    not_builder = self.class.new(@db_type)
+    not_builder = self.class.new(@relation_state.db_type)
     built = yield not_builder
     not_builder = built if built.is_a?(Builder(Model))
 
@@ -2207,7 +2464,7 @@ class Grant::Query::Builder(Model)
 
     Model.guard_writes!
 
-    if should_chunk_in? && (@limit || @offset)
+    if should_chunk_in? && (@relation_state.limit || @relation_state.offset)
       raise ArgumentError.new("Bulk writes with a chunked IN list cannot preserve limit or offset")
     end
 
@@ -2254,48 +2511,7 @@ class Grant::Query::Builder(Model)
     # ActiveRecord), or replace ours when it was built with `reorder`.
     merge_order!(other)
 
-    # Merge group fields
-    other.group_fields.each do |field|
-      own_group_fields << field unless @group_fields.includes?(field)
-    end
-
-    # Merge the column projection
-    if other_columns = other.select_columns
-      current_columns = @select_columns
-      @select_columns = current_columns ? (current_columns + other_columns).uniq : other_columns.dup
-    end
-
-    # Use other's limit/offset if set
-    @limit = other.limit if other.limit
-    @offset = other.offset if other.offset
-
-    # Merge associations
-    own_eager_load_associations.concat(other.eager_load_associations).uniq!
-    own_preload_associations.concat(other.preload_associations).uniq!
-    own_includes_associations.concat(other.includes_associations).uniq!
-    @strict_loading = true if other.strict_loading?
-
-    # Use other's lock if set
-    take_lock_from!(other)
-
-    # Merge join clauses
-    other.join_clauses.each do |jc|
-      own_join_clauses << jc unless @join_clauses.includes?(jc)
-    end
-
-    # Merge distinct flag
-    @distinct = true if other.distinct?
-
-    # Merge having clauses
-    other.having_clauses.each do |hc|
-      own_having_clauses << hc
-    end
-
-    # Merge none flag
-    @is_none = true if other.is_none?
-
-    @readonly = true if other.readonly?
-    @optimizer_hints = @optimizer_hints | other.optimizer_hint_list
+    @relation_state.merge_components_from!(other.relation_state)
     merge_from_and_with!(other)
 
     self
@@ -2335,7 +2551,7 @@ class Grant::Query::Builder(Model)
   # ```
   def select!(*columns : Symbol) : self
     reset_load_state
-    @select_columns = columns.map { |column| resolve_column_alias(column.to_s) }.to_a
+    @relation_state.select_columns = columns.map { |column| resolve_column_alias(column.to_s) }.to_a
     self
   end
 
