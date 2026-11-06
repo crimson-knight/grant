@@ -1,0 +1,142 @@
+pack: grant/tenancy
+library: grant
+version: 2.0.0
+
+modes:
+  row:
+    context: |
+      Grant row tenancy was detected from the app's `multitenant` model macros.
+      Each model captures the tenant column passed to its own macro. Grant adds a
+      default scope that raises `Grant::NoTenantError` when no tenant is set, and
+      writes using another tenant's id raise `Grant::TenantMismatchError`.
+      `Model.exec/query/scalar` on a default-scoped model raises
+      `Grant::Querying::ScopedRawSqlError` outside `Model.unscoped { }`.
+      Block-form `unscoped` temporarily disables scoping. Chainable `Model.unscoped`
+      returns an unguarded builder, so chained reads and writes can cross tenants.
+      `Grant::Tenant.with` is fiber-local: a spawned fiber starts without the
+      tenant. Carry the tenant id into that fiber and wrap its work. `Tenant.clear`
+      exists mainly for tests.
+  schema:
+    context: |
+      Grant schema tenancy was detected from the app's `Grant::SchemaTenant.with`
+      call or `schema_tenant_excluded` model macro. `SchemaTenant.with` pins a
+      PostgreSQL connection with the tenant search path; excluded models use
+      `public`. A query on a non-excluded model outside the block runs against the
+      default search path without an error. The request pipe covers controllers;
+      jobs and other non-request work need their own block. The row and schema
+      modes can coexist, but review `docs/schema_tenancy.md` for their tradeoffs
+      and migration path.
+
+rules:
+  - id: grant/chained-unscoped-in-request-code
+    modes: [row]
+    severity: error
+    applies_to:
+      - "src/controllers/**"
+      - "src/channels/**"
+      - "src/sockets/**"
+      - "src/pipes/**"
+    message: "Remove chainable unscoped from request code and rely on the model's tenant scope."
+    check:
+      kind: crystal_ast
+      operation: chained_unscoped_in_request_code
+
+  - id: grant/chained-unscoped-bulk-write
+    modes: [row]
+    severity: error
+    applies_to: ["**/*.cr"]
+    exclude_from: ["spec/**", "db/**"]
+    message: "Replace the unscoped bulk write with a tenant-scoped write or an explicit tenant predicate."
+    check:
+      kind: crystal_ast
+      operation: chained_unscoped_bulk_write
+
+  - id: grant/chained-unscoped-on-tenant-model
+    modes: [row]
+    severity: warning
+    applies_to: ["**/*.cr"]
+    exclude_from:
+      - "src/controllers/**"
+      - "src/channels/**"
+      - "src/sockets/**"
+      - "src/pipes/**"
+      - "spec/**"
+      - "db/**"
+    message: "Use the tenant-scoped model query; reserve chainable unscoped for an explicitly justified cross-tenant operation."
+    check:
+      kind: crystal_ast
+      operation: chained_unscoped_on_tenant_model
+
+  - id: grant/unscoped-block-in-request-code
+    modes: [row]
+    severity: warning
+    applies_to:
+      - "src/controllers/**"
+      - "src/channels/**"
+      - "src/sockets/**"
+      - "src/pipes/**"
+    message: "Remove the unscoped block from request code and rely on the model's tenant scope."
+    check:
+      kind: crystal_ast
+      operation: unscoped_block_in_request_code
+
+  - id: grant/spawn-inside-tenant-block
+    modes: [row, schema]
+    severity: warning
+    applies_to: ["**/*.cr"]
+    exclude_from: ["spec/**"]
+    message: "Carry the tenant id or schema into the fiber and wrap its work in the matching Grant tenant block."
+    check:
+      kind: crystal_ast
+      operation: spawn_inside_tenant_block
+
+  - id: grant/tenant-column-without-multitenant
+    modes: [row]
+    severity: warning
+    applies_to: ["src/**"]
+    message: "This model declares {tenant_column}, which is used as a tenant key elsewhere; add multitenant :{tenant_column}, or rename/remove it if unrelated."
+    check:
+      kind: crystal_ast
+      operation: tenant_column_without_multitenant
+
+  - id: grant/raw-connection-sql-on-tenant-table
+    modes: [row]
+    severity: warning
+    applies_to: ["**/*.cr"]
+    exclude_from: ["spec/**"]
+    message: "Raw connection SQL bypasses model scopes; use the tenant-scoped model API or add an explicit tenant predicate."
+    check:
+      kind: crystal_ast
+      operation: raw_connection_sql_on_tenant_table
+
+  - id: grant/tenant-clear-in-app-code
+    modes: [row]
+    severity: warning
+    applies_to: ["**/*.cr"]
+    exclude_from: ["spec/**"]
+    message: "Remove Tenant.clear from app code; scope work with Grant::Tenant.with and reserve clear for tests."
+    check:
+      kind: crystal_ast
+      operation: tenant_clear_in_app_code
+
+  - id: grant/schema-query-outside-tenant
+    modes: [schema]
+    severity: warning
+    applies_to:
+      - "src/jobs/**"
+      - "src/lib/**"
+      - "src/domain/**"
+      - "src/process_managers/**"
+    message: "Wrap non-request work in Grant::SchemaTenant.with(schema); otherwise this query uses the default search path."
+    check:
+      kind: crystal_ast
+      operation: schema_query_outside_tenant
+
+  - id: grant/tenancy-modes-mixed
+    modes: [row, schema]
+    severity: warning
+    applies_to: ["**/*.cr"]
+    message: "Both tenancy modes were detected; review docs/schema_tenancy.md and document why both are needed."
+    check:
+      kind: project_conflict
+      condition: mixed_modes

@@ -233,3 +233,10 @@ only after the new data and constraints have been verified.
 - Database permissions still matter. Give the application role access only to
   the tenant schemas it should use, and avoid allowing tenant users to create
   objects in `public`.
+
+## Editor and agent checks
+
+Grant ships an `amber-lsp` rule pack at `.amber-lsp/packs/tenancy.yml`. Amber CLI
+2.0.9 or newer loads it from `lib/grant/` with no setup. It detects the tenancy
+mode from the app's `multitenant` and `Grant::SchemaTenant` calls, then checks each
+Crystal file as you edit it. Run `amber-lsp context` to see the mode it detected.

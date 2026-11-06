@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   formatting:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Download source
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -51,7 +51,7 @@ jobs:
   # Informational: the latest patch of the minor version below the floor
   # should NOT compile. If it does, the floor may be higher than necessary.
   below-minimum:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     continue-on-error: true
     steps:
       - name: Download source
@@ -86,7 +86,7 @@ jobs:
           echo "Grant does not compile on Crystal $BELOW, as expected for the declared floor."
 
   sqlite-spec:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -119,7 +119,7 @@ jobs:
           SQLITE_REPLICA_URL: sqlite3:./grant_replica.db
 
   mysql-spec:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -193,7 +193,7 @@ jobs:
   # anywhere — this validates Grant's caching_sha2_password handshake against a
   # default-configured server. Mirrors docker-compose.test.yml (mysql8/mysql9).
   mysql-caching-sha2-spec:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -264,7 +264,7 @@ jobs:
           MYSQL_REPLICA_URL: mysql://grant:password@127.0.0.1:3306/grant_db
 
   psql-spec:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -324,7 +324,7 @@ jobs:
           PG_REPLICA_URL: postgres://grant:password@localhost:5433/grant_replica_db
 
   sharding-spec:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
