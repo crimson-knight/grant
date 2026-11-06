@@ -32,7 +32,7 @@ concurrency:
 # primary server, so each job runs one primary and one replica.
 jobs:
   postgres-failover:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     services:
       postgres-primary:
         image: postgres:16@sha256:a3b7f434b2dc57ce85a67e171163eb8ab1a1ebcb39d27484661f26b1dfbe30d6
@@ -85,7 +85,7 @@ jobs:
           PG_REPLICA_URL: postgres://grant:password@localhost:5433/grant_db
 
   mysql-failover:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     services:
       mysql-primary:
         image: mysql:8.0@sha256:7dcddc01f13bab2f15cde676d44d01f61fc9f99fe7785e86196dfc07d358ae2b
