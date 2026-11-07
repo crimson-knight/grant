@@ -74,6 +74,74 @@ describe "Multi-Database Unit Tests" do
     end
   end
 
+  describe "pool settings in the connection URL" do
+    it "keeps pool parameters the URL gives when establish_connection gives none" do
+      spec = Grant::ConnectionRegistry::ConnectionSpec.new(
+        database: "test", adapter_class: Grant::Adapter::Sqlite, role: :primary,
+        url: "sqlite3:./pool.db?max_pool_size=4&checkout_timeout=9.0&retry_attempts=3"
+      )
+
+      params = URI.parse(spec.build_pool_url).query_params
+      params["max_pool_size"].should eq("4")
+      params["initial_pool_size"].should eq("2")
+      params["checkout_timeout"].should eq("9.0")
+      params["retry_attempts"].should eq("3")
+      params["retry_delay"].should eq("0.2")
+    end
+
+    it "lets a setting given to establish_connection replace the URL's" do
+      spec = Grant::ConnectionRegistry::ConnectionSpec.new(
+        database: "test", adapter_class: Grant::Adapter::Sqlite, role: :primary,
+        url: "sqlite3:./pool.db?max_pool_size=4&retry_attempts=3",
+        pool_size: 6, retry_attempts: 5
+      )
+
+      params = URI.parse(spec.build_pool_url).query_params
+      params["max_pool_size"].should eq("6")
+      params["retry_attempts"].should eq("5")
+    end
+
+    it "uses Grant's defaults when neither the URL nor the caller gives a setting" do
+      spec = Grant::ConnectionRegistry::ConnectionSpec.new(
+        database: "test", adapter_class: Grant::Adapter::Sqlite, role: :primary,
+        url: "sqlite3:./pool.db"
+      )
+
+      params = URI.parse(spec.build_pool_url).query_params
+      params["max_pool_size"].should eq("25")
+      params["initial_pool_size"].should eq("2")
+      spec.pool_size.should eq(25)
+    end
+
+    it "caps the initial pool at the URL's pool size" do
+      spec = Grant::ConnectionRegistry::ConnectionSpec.new(
+        database: "test", adapter_class: Grant::Adapter::Sqlite, role: :primary,
+        url: "sqlite3:./pool.db?max_pool_size=1"
+      )
+
+      URI.parse(spec.build_pool_url).query_params["initial_pool_size"].should eq("1")
+    end
+
+    it "treats a setting assigned after registration as given" do
+      spec = Grant::ConnectionRegistry::ConnectionSpec.new(
+        database: "test", adapter_class: Grant::Adapter::Sqlite, role: :primary,
+        url: "sqlite3:./pool.db?max_pool_size=4"
+      )
+      spec.pool_size = 9
+
+      URI.parse(spec.build_pool_url).query_params["max_pool_size"].should eq("9")
+    end
+
+    it "keeps the URL's pool size for a connection registered with Grant::Connections <<" do
+      Grant::Connections << Grant::Adapter::Sqlite.new(name: "url_pool_precedence", url: "sqlite3:./url_pool_precedence.db?max_pool_size=3")
+      registered = Grant::ConnectionRegistry.connection_spec("url_pool_precedence", :primary)
+      registered.should_not be_nil
+      if registered
+        URI.parse(registered.build_pool_url).query_params["max_pool_size"].should eq("3")
+      end
+    end
+  end
+
   describe "ReplicaLagTracker" do
     it "tracks write operations" do
       tracker = Grant::ConnectionManagement::ReplicaLagTracker.new
