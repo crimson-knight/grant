@@ -38,12 +38,48 @@ module Grant
       # register with this instead of an eager URL.
       @url_provider : (-> String)?
 
-      # Pool configuration
-      property pool_size : Int32 = 25
-      property initial_pool_size : Int32 = 2
-      property checkout_timeout : Time::Span = 5.seconds
-      property retry_attempts : Int32 = 1
-      property retry_delay : Time::Span = 0.2.seconds
+      # Pool configuration. A setting passed to `establish_connection` (or
+      # assigned here) wins over the same parameter in the URL; a setting
+      # given in neither place uses these defaults.
+      DEFAULT_POOL_SIZE         = 25
+      DEFAULT_INITIAL_POOL_SIZE =  2
+      DEFAULT_CHECKOUT_TIMEOUT  = 5.seconds
+      DEFAULT_RETRY_ATTEMPTS    = 1
+      DEFAULT_RETRY_DELAY       = 0.2.seconds
+
+      property pool_size : Int32 = DEFAULT_POOL_SIZE
+      property initial_pool_size : Int32 = DEFAULT_INITIAL_POOL_SIZE
+      property checkout_timeout : Time::Span = DEFAULT_CHECKOUT_TIMEOUT
+      property retry_attempts : Int32 = DEFAULT_RETRY_ATTEMPTS
+      property retry_delay : Time::Span = DEFAULT_RETRY_DELAY
+
+      # The crystal-db parameter names of the pool settings given explicitly.
+      @given_pool_parameters = Set(String).new
+
+      def pool_size=(@pool_size : Int32) : Int32
+        @given_pool_parameters << "max_pool_size"
+        @pool_size
+      end
+
+      def initial_pool_size=(@initial_pool_size : Int32) : Int32
+        @given_pool_parameters << "initial_pool_size"
+        @initial_pool_size
+      end
+
+      def checkout_timeout=(@checkout_timeout : Time::Span) : Time::Span
+        @given_pool_parameters << "checkout_timeout"
+        @checkout_timeout
+      end
+
+      def retry_attempts=(@retry_attempts : Int32) : Int32
+        @given_pool_parameters << "retry_attempts"
+        @retry_attempts
+      end
+
+      def retry_delay=(@retry_delay : Time::Span) : Time::Span
+        @given_pool_parameters << "retry_delay"
+        @retry_delay
+      end
 
       # Most idle connections the pool keeps. `nil` means "as many as the pool
       # holds" for server adapters (so a burst does not open and close
@@ -83,9 +119,9 @@ module Grant
       property health_check_timeout : Time::Span = 5.seconds
 
       def initialize(@database, @adapter_class, url : String, @role, @shard = nil,
-                     @pool_size = 25, @initial_pool_size = 2,
-                     @checkout_timeout = 5.seconds, @retry_attempts = 1,
-                     @retry_delay = 0.2.seconds, @health_check_interval = 30.seconds,
+                     pool_size : Int32? = nil, initial_pool_size : Int32? = nil,
+                     checkout_timeout : Time::Span? = nil, retry_attempts : Int32? = nil,
+                     retry_delay : Time::Span? = nil, @health_check_interval = 30.seconds,
                      @health_check_timeout = 5.seconds, *,
                      @max_idle_pool_size = nil, @idle_timeout = nil, @keepalive = nil,
                      @reaping_frequency = 1.minute, @min_connections = 0, @max_age = nil,
@@ -93,14 +129,15 @@ module Grant
                      @replica_index = 0, @replica_weight = 1, @verify_idle_after = 30.seconds)
         @url = url
         @url_provider = nil
+        apply_pool_settings(pool_size, initial_pool_size, checkout_timeout, retry_attempts, retry_delay)
       end
 
       # Lazy-URL constructor. The provider is *not* invoked here; it is resolved
       # on first pool build via `#resolved_url`.
       def initialize(@database, @adapter_class, @role, *, url_provider : -> String, @shard = nil,
-                     @pool_size = 25, @initial_pool_size = 2,
-                     @checkout_timeout = 5.seconds, @retry_attempts = 1,
-                     @retry_delay = 0.2.seconds, @health_check_interval = 30.seconds,
+                     pool_size : Int32? = nil, initial_pool_size : Int32? = nil,
+                     checkout_timeout : Time::Span? = nil, retry_attempts : Int32? = nil,
+                     retry_delay : Time::Span? = nil, @health_check_interval = 30.seconds,
                      @health_check_timeout = 5.seconds,
                      @max_idle_pool_size = nil, @idle_timeout = nil, @keepalive = nil,
                      @reaping_frequency = 1.minute, @min_connections = 0, @max_age = nil,
@@ -108,6 +145,15 @@ module Grant
                      @replica_index = 0, @replica_weight = 1, @verify_idle_after = 30.seconds)
         @url = nil
         @url_provider = url_provider
+        apply_pool_settings(pool_size, initial_pool_size, checkout_timeout, retry_attempts, retry_delay)
+      end
+
+      private def apply_pool_settings(pool_size, initial_pool_size, checkout_timeout, retry_attempts, retry_delay) : Nil
+        self.pool_size = pool_size if pool_size
+        self.initial_pool_size = initial_pool_size if initial_pool_size
+        self.checkout_timeout = checkout_timeout if checkout_timeout
+        self.retry_attempts = retry_attempts if retry_attempts
+        self.retry_delay = retry_delay if retry_delay
       end
 
       # True when this spec was registered with a lazy `url_provider` and has not
@@ -149,12 +195,14 @@ module Grant
         ConnectionRegistry.key_for(database, role, shard, replica_index)
       end
 
-      # Returns the connection URL (`String`) with the pool settings appended
+      # Returns the connection URL (`String`) with the pool settings added
       # as crystal-db query parameters (`max_pool_size`, `initial_pool_size`,
       # `max_idle_pool_size`, `checkout_timeout`, `retry_attempts`,
       # `retry_delay`, and `prepared_statements` /
       # `prepared_statements_cache` when they differ from the defaults).
-      # Resolves a lazy `url_provider` if needed.
+      # A setting given to `establish_connection` replaces the same parameter in
+      # the URL; a parameter only the URL names is kept; anything else gets
+      # Grant's default. Resolves a lazy `url_provider` if needed.
       #
       # A database that lives inside one connection (SQLite `:memory:`) is
       # always given a pool of exactly one connection, since a second one would
@@ -169,20 +217,43 @@ module Grant
           params["initial_pool_size"] = "1"
           params["max_idle_pool_size"] = "1"
         else
-          params["max_pool_size"] = @pool_size.to_s
-          params["initial_pool_size"] = Math.min(@initial_pool_size, @pool_size).to_s
-          idle_limit = @max_idle_pool_size || (adapter_class.server_adapter? ? @pool_size : nil)
-          params["max_idle_pool_size"] = idle_limit.to_s if idle_limit
+          pool_limit = chosen_count(params, "max_pool_size", @pool_size)
+          params["max_pool_size"] = pool_limit.to_s
+          params["initial_pool_size"] = Math.min(chosen_count(params, "initial_pool_size", @initial_pool_size), pool_limit).to_s
+          if idle_limit = @max_idle_pool_size
+            params["max_idle_pool_size"] = idle_limit.to_s
+          elsif adapter_class.server_adapter? && !params.has_key?("max_idle_pool_size")
+            params["max_idle_pool_size"] = pool_limit.to_s
+          end
         end
-        params["checkout_timeout"] = @checkout_timeout.total_seconds.to_s
-        params["retry_attempts"] = @retry_attempts.to_s
-        params["retry_delay"] = @retry_delay.total_seconds.to_s
+        write_unless_in_url(params, "checkout_timeout", @checkout_timeout.total_seconds.to_s)
+        write_unless_in_url(params, "retry_attempts", @retry_attempts.to_s)
+        write_unless_in_url(params, "retry_delay", @retry_delay.total_seconds.to_s)
 
         params["prepared_statements"] = "false" if !@prepared_statements && adapter_class.supports_unprepared_statements?
         params["prepared_statements_cache"] = "false" if @statement_limit == 0
 
         uri.query = params.to_s
         uri.to_s
+      end
+
+      # The given setting, else a whole number the URL already carries, else
+      # Grant's default.
+      private def chosen_count(params : URI::Params, name : String, value : Int32) : Int32
+        return value if @given_pool_parameters.includes?(name)
+
+        if written = params[name]?
+          if count = written.to_i?
+            return count
+          end
+        end
+        value
+      end
+
+      private def write_unless_in_url(params : URI::Params, name : String, value : String) : Nil
+        return if params.has_key?(name) && !@given_pool_parameters.includes?(name)
+
+        params[name] = value
       end
     end
 
@@ -261,8 +332,12 @@ module Grant
     #   replicas of one database (index 0, 1, 2, ...) and, for `WeightedStrategy`,
     #   how many reads each gets.
     # * *pool_size*, *initial_pool_size*, *checkout_timeout*, *retry_attempts*,
-    #   *retry_delay* — the connection pool. *max_idle_pool_size* defaults to
-    #   *pool_size* for server databases so bursts reuse connections.
+    #   *retry_delay* — the connection pool. Each one given here replaces the
+    #   same crystal-db parameter in *url* (`max_pool_size`, `initial_pool_size`,
+    #   `checkout_timeout`, `retry_attempts`, `retry_delay`); one left out keeps
+    #   the URL's value, or Grant's default (pool of 25) when the URL has none.
+    #   *max_idle_pool_size* defaults to *pool_size* for server databases so
+    #   bursts reuse connections.
     #   *retry_attempts* and *retry_delay* govern retrying a refused connection
     #   and a lost read, with capped exponential backoff; a lost write is never
     #   retried.
@@ -291,11 +366,11 @@ module Grant
       url : String,
       role : Symbol = :primary,
       shard : Symbol? = nil,
-      pool_size : Int32 = 25,
-      initial_pool_size : Int32 = 2,
-      checkout_timeout : Time::Span = 5.seconds,
-      retry_attempts : Int32 = 1,
-      retry_delay : Time::Span = 0.2.seconds,
+      pool_size : Int32? = nil,
+      initial_pool_size : Int32? = nil,
+      checkout_timeout : Time::Span? = nil,
+      retry_attempts : Int32? = nil,
+      retry_delay : Time::Span? = nil,
       health_check_interval : Time::Span = 30.seconds,
       health_check_timeout : Time::Span = 5.seconds,
       max_idle_pool_size : Int32? = nil,
@@ -358,11 +433,11 @@ module Grant
       url_provider : -> String,
       role : Symbol = :primary,
       shard : Symbol? = nil,
-      pool_size : Int32 = 25,
-      initial_pool_size : Int32 = 2,
-      checkout_timeout : Time::Span = 5.seconds,
-      retry_attempts : Int32 = 1,
-      retry_delay : Time::Span = 0.2.seconds,
+      pool_size : Int32? = nil,
+      initial_pool_size : Int32? = nil,
+      checkout_timeout : Time::Span? = nil,
+      retry_attempts : Int32? = nil,
+      retry_delay : Time::Span? = nil,
       health_check_interval : Time::Span = 30.seconds,
       health_check_timeout : Time::Span = 5.seconds,
       max_idle_pool_size : Int32? = nil,
@@ -601,12 +676,12 @@ module Grant
         # Extract pool settings if provided
         pool_config = settings[:pool]?.as?(NamedTuple)
         options = {
-          pool_size:             pool_config.try(&.[:max_pool_size]?.as?(Int32)) || 25,
-          initial_pool_size:     pool_config.try(&.[:initial_pool_size]?.as?(Int32)) || 2,
+          pool_size:             pool_config.try(&.[:max_pool_size]?.as?(Int32)),
+          initial_pool_size:     pool_config.try(&.[:initial_pool_size]?.as?(Int32)),
           max_idle_pool_size:    pool_config.try(&.[:max_idle_pool_size]?.as?(Int32)),
-          checkout_timeout:      pool_config.try(&.[:checkout_timeout]?.as?(Time::Span)) || 5.seconds,
-          retry_attempts:        pool_config.try(&.[:retry_attempts]?.as?(Int32)) || 1,
-          retry_delay:           pool_config.try(&.[:retry_delay]?.as?(Time::Span)) || 0.2.seconds,
+          checkout_timeout:      pool_config.try(&.[:checkout_timeout]?.as?(Time::Span)),
+          retry_attempts:        pool_config.try(&.[:retry_attempts]?.as?(Int32)),
+          retry_delay:           pool_config.try(&.[:retry_delay]?.as?(Time::Span)),
           health_check_interval: settings[:health_check]?.as?(NamedTuple).try(&.[:interval]?.as?(Time::Span)) || 30.seconds,
           health_check_timeout:  settings[:health_check]?.as?(NamedTuple).try(&.[:timeout]?.as?(Time::Span)) || 5.seconds,
         }

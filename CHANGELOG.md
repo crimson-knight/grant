@@ -20,6 +20,13 @@ Behavior changes:
 
 Fixes:
 
+- Pool parameters in a connection URL are no longer replaced by Grant's
+  defaults (#65). `DATABASE_URL=postgres://...?max_pool_size=4` registered
+  with `Grant::Connections <<` used to open a pool of 25, because
+  `ConnectionSpec#build_pool_url` always wrote the registry's values. Each
+  setting now comes from, in order: the value passed to
+  `establish_connection` (or assigned to the spec), the URL, then Grant's
+  default. Apps that never put pool parameters in the URL see no change.
 - The `run_callbacks` macro in `src/grant/callbacks.cr` no longer puts a
   macro variable right before a macro tag (`%result{% else %}`). Parsers
   before Crystal 1.21.0 (crystal-lang/crystal#16879) rejected that with
