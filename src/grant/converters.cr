@@ -120,7 +120,7 @@ module Grant::Converters
     end
   end
 
-  # Converters a `PG::Numeric` value into a `Float64`.
+  # Converters a `Grant::PG::Numeric` value into a `Float64`.
   module PgNumeric
     extend self
 
@@ -133,7 +133,7 @@ module Grant::Converters
     end
 
     def self.from_rs(result : ::DB::ResultSet) : Float64?
-      result.read(::PG::Numeric?).try &.to_f
+      result.read(::Grant::PG::Numeric?).try &.to_f
     end
   end
 end

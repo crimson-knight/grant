@@ -33,16 +33,6 @@ development_dependencies:
     github: crimson-knight/crystal-mysql
     version: "0.17.0"
     commit: c061324dcef89a200a7a3f86a59b2ebf03f83602
-  sqlite3:
-    github: crystal-lang/crystal-sqlite3
-    # crystal-sqlite3 0.23.0, pinned to the peeled release tag commit.
-    version: "0.23.0"
-    commit: 271a1314a6c64e6c3d98942a39bf1b3e8326b190
-  pg:
-    github: will/crystal-pg
-    # crystal-pg 0.30.0, pinned to the peeled release tag commit.
-    version: "0.30.0"
-    commit: 1f4aefd82440cffd6e70ccb02b7d27bfbfc6d25d
   ameba:
     github: crystal-ameba/ameba
     # Crystal 1.21 compatibility pending Ameba 1.7.0.

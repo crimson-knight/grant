@@ -84,11 +84,11 @@ splits any group that passes `SPEC_GROUP_MAX_RSS_GB` (default 10), and retries.
 
 ## Database Support
 
-| Database | Driver Shard | Notes |
+| Database | Driver | Notes |
 |----------|-------------|-------|
-| PostgreSQL | `crystal-lang/crystal-pg` | Full feature support (arrays, JSONB, UUID, all lock modes) |
-| MySQL | `crystal-lang/crystal-mysql` | Full support (JSON 5.7+, basic lock modes) |
-| SQLite | `crystal-lang/crystal-sqlite3` | Local dev/testing, no row-level locking, requires >= 3.24.0 |
+| PostgreSQL | owned, `src/grant/drivers/pg` (from crystal-pg 0.30.0) | Full feature support (arrays, JSONB, UUID, all lock modes) |
+| MySQL | `crystal-lang/crystal-mysql` shard | Full support (JSON 5.7+, basic lock modes) |
+| SQLite | owned, `src/grant/drivers/sqlite3` (from crystal-sqlite3 0.23.0) | Local dev/testing, no row-level locking, requires >= 3.24.0 |
 
 ## Branch Convention
 

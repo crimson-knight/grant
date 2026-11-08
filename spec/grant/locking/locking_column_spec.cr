@@ -106,7 +106,7 @@ describe "locking_column and lock_optimistically" do
       root = File.expand_path("../../..", __DIR__)
       source = File.tempfile("locking_column_late", ".cr", dir: root) do |file|
         file.puts %(require "./src/grant")
-        file.puts %(require "sqlite3")
+        file.puts %(require "./src/grant/drivers/sqlite3/sqlite3")
         file.puts "class LockingColumnSpecLate < Grant::Base"
         file.puts "  include Grant::Locking::Optimistic"
         file.puts "  locking_column :revision"

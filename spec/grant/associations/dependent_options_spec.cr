@@ -185,7 +185,7 @@ require "../../support/crystal_compiler"
 private def compile_dependent_source(body : String) : Tuple(Bool, String)
   repo_root = File.expand_path("../../..", __DIR__)
   source = <<-CR
-    require "sqlite3"
+    require "../../../src/grant/drivers/sqlite3/sqlite3"
     require "../../../src/grant"
     require "../../../src/adapter/sqlite"
 

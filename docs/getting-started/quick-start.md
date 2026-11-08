@@ -40,10 +40,8 @@ Add Grant to `shard.yml`:
 dependencies:
   grant:
     github: amberframework/grant
-  
-  # Using SQLite for simplicity
-  sqlite3:
-    github: crystal-lang/crystal-sqlite3
+
+  # SQLite and PostgreSQL drivers ship inside Grant; there is nothing else to add.
 ```
 
 Install dependencies:

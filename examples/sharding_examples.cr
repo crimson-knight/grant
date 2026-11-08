@@ -1,4 +1,4 @@
-require "sqlite3"
+require "../src/grant/drivers/sqlite3/sqlite3"
 require "../src/grant"
 require "../src/grant/sharding"
 require "../src/adapter/sqlite"

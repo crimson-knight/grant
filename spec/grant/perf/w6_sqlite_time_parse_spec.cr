@@ -13,8 +13,8 @@ require "../../spec_helper"
 
   # What the general parser makes of *text*: the reference for the fast path.
   private def w6_reference_time(text : String) : Time
-    format = text.includes?(".") ? "%F %H:%M:%S.%N" : SQLite3::DATE_FORMAT_SECOND
-    Time.parse(text, format, location: SQLite3::TIME_ZONE).in(Grant.settings.default_timezone)
+    format = text.includes?(".") ? "%F %H:%M:%S.%N" : Grant::SQLite3::DATE_FORMAT_SECOND
+    Time.parse(text, format, location: Grant::SQLite3::TIME_ZONE).in(Grant.settings.default_timezone)
   end
 
   private def w6_stored_time(text : String) : Time?

@@ -1,6 +1,6 @@
 require "mysql"
-require "pg"
-require "sqlite3"
+require "../src/grant/drivers/pg/pg"
+require "../src/grant/drivers/sqlite3/sqlite3"
 
 # Enable test mode for HealthMonitor to prevent background fibers in tests
 require "../src/grant"

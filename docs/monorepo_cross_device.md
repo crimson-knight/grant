@@ -54,11 +54,8 @@ version: 0.1.0
 dependencies:
   grant:
     github: amberframework/grant
-  # adapters — each build pulls in only the one it requires
-  sqlite3:
-    github: crystal-lang/crystal-sqlite3
-  pg:
-    github: will/crystal-pg
+  # Each build pulls in only the adapter it requires; the PostgreSQL and SQLite
+  # drivers ship inside Grant.
 
 targets:
   mobile:

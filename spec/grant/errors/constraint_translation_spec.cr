@@ -2,10 +2,10 @@ require "../../spec_helper"
 
 alias G01Kind = Grant::Adapter::ErrorTranslator::Kind
 
-private def pg_error(sqlstate : String, message : String = "ERROR: something failed") : PQ::PQError
-  PQ::PQError.new([
-    PQ::Frame::ErrorResponse::Field.new(:code, sqlstate, 'C'.ord.to_u8),
-    PQ::Frame::ErrorResponse::Field.new(:message, message, 'M'.ord.to_u8),
+private def pg_error(sqlstate : String, message : String = "ERROR: something failed") : Grant::PQ::PQError
+  Grant::PQ::PQError.new([
+    Grant::PQ::Frame::ErrorResponse::Field.new(:code, sqlstate, 'C'.ord.to_u8),
+    Grant::PQ::Frame::ErrorResponse::Field.new(:message, message, 'M'.ord.to_u8),
   ])
 end
 
@@ -450,7 +450,7 @@ describe "Grant constraint and lock error translation" do
           end
         end
       end
-      error.cause.should be_a(PQ::PQError)
+      error.cause.should be_a(Grant::PQ::PQError)
     end
 
     it "raises QueryCanceled when another session cancels the statement" do
@@ -526,7 +526,7 @@ describe "Grant constraint and lock error translation" do
             error = expect_raises(Grant::LockWaitTimeout) do
               adapter.open_pool_connection(statement, &.exec(statement))
             end
-            error.cause.should be_a(SQLite3::Exception)
+            error.cause.should be_a(Grant::SQLite3::Exception)
           ensure
             holder.exec "ROLLBACK"
           end

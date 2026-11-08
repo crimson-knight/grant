@@ -24,31 +24,22 @@ dependencies:
   grant:
     github: amberframework/grant
 
-  # The driver(s) you use — you MUST add these yourself:
-  sqlite3:
-    github: crystal-lang/crystal-sqlite3
-    version: ~> 0.21.0
 ```
 
-If you target Postgres and/or MySQL, add the matching driver(s) instead of (or
-alongside) `sqlite3`:
+The PostgreSQL and SQLite drivers ship inside Grant, so `grant` is the only
+dependency they need. Add the MySQL driver only if you target MySQL:
 
 ```yaml
 dependencies:
   grant:
     github: amberframework/grant
 
-  pg:                              # Postgres
-    github: will/crystal-pg
-    version: ~> 0.29.0
-
   mysql:                           # MySQL
     github: crystal-lang/crystal-mysql
     version: ~> 0.16.0
 ```
 
-Then `shards install`. (`db` is pulled in transitively by `grant`; you only add
-the drivers.)
+Then `shards install`. (`db` is pulled in transitively by `grant`.)
 
 ## Setup (once)
 

@@ -143,6 +143,14 @@ abstract class Grant::Adapter::Base
     true
   end
 
+  # The URL handed to crystal-db. An adapter whose driver lives inside Grant
+  # overrides this with a scheme only that driver registers, so the connection
+  # keeps Grant's driver when the app also loads a public shard that claims
+  # the same `postgres` or `sqlite3` scheme.
+  protected def driver_url : String
+    @url
+  end
+
   # The connection pool, opened on first use.
   def database : DB::Database
     @_database || open_database
@@ -151,7 +159,7 @@ abstract class Grant::Adapter::Base
   private def open_database : DB::Database
     @database_mutex.synchronize do
       @_database ||= begin
-        opened = DB.open(@url)
+        opened = DB.open(driver_url)
         limit = @statement_limit
         opened.setup_connection(&.statement_cache_limit=(limit)) if limit > 0
         opened

@@ -14,15 +14,9 @@ dependencies:
   grant:
     github: amberframework/grant
 
-  # Pick your database
+  # Only MySQL needs a driver shard; PostgreSQL and SQLite drivers ship inside Grant.
   mysql:
     github: crystal-lang/crystal-mysql
-
-  sqlite3:
-    github: crystal-lang/crystal-sqlite3
-
-  pg:
-    github: will/crystal-pg
 ```
 
 ### Register a Connection

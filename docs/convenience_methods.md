@@ -258,7 +258,7 @@ end
 
 begin
   User.upsert_all(data, unique_by: [:email])
-rescue e : SQLite3::Exception
+rescue e : Grant::SQLite3::Exception
   # Handle database-specific errors (e.g., missing unique index)
 end
 ```

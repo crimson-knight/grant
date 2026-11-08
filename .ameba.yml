@@ -7,6 +7,10 @@ Excluded:
   - spec_disabled/**/*.cr
   # API card compile probes: each file is compiled alone to prove a card note; none is a spec.
   - spec/api_card_probes/**/*.cr
+  # Grant's owned database drivers keep the upstream code as written; Grant's own
+  # driver specs in spec/grant/drivers/ are linted, the carried upstream ones are not.
+  - src/grant/drivers/**/*.cr
+  - spec/grant/drivers/*/upstream/**/*.cr
 
 # Grant writes macro interpolations as `{{x}}`; `crystal tool format` owns layout.
 Lint/WhitespaceAroundMacroExpression:
