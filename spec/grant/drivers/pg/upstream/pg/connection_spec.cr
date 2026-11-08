@@ -5,7 +5,7 @@ require "../spec_helper"
 describe Grant::PG::Connection, "#initialize" do
   it "raises on bad connections" do
     expect_raises(DB::ConnectionRefused) {
-      DB.open("postgres://localhost:5433")
+      DB.open("postgres://localhost:59321")
     }
   end
 
