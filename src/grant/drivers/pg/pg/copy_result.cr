@@ -1,5 +1,5 @@
 # IO object obtained through PG::Connection.exec_copy.
-class PG::CopyResult < IO
+class Grant::PG::CopyResult < IO
   getter? closed : Bool
 
   def initialize(@connection : PQ::Connection, query : String)

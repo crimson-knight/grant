@@ -1,4 +1,4 @@
-struct PG::Record(*T)
+struct Grant::PG::Record(*T)
   getter data : T
 
   def self.read_from(reader : Reader)
@@ -37,7 +37,7 @@ struct PG::Record(*T)
 end
 
 class DB::ResultSet
-  def read(type : PG::Record.class)
+  def read(type : Grant::PG::Record.class)
     type.read_from read(PG::Record::Reader)
   end
 end

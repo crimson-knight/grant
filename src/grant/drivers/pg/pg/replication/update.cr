@@ -1,6 +1,6 @@
 require "./wal_message"
 
-module PG::Replication
+module Grant::PG::Replication
   struct Update < WALMessage
     getter oid : Int32
     getter key_tuple_data : TupleData?

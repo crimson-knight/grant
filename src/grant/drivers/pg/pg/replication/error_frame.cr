@@ -1,4 +1,4 @@
-module PG::Replication
+module Grant::PG::Replication
   struct ErrorFrame < Frame
     getter severity : Severity?
     getter message : String?

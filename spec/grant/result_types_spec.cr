@@ -52,7 +52,7 @@ describe "Grant::Result driver values" do
       value = GrantResultValueProbe.scalar("SELECT 1.5::numeric")
 
       value.should_not be_nil
-      value.class.should eq(PG::Numeric)
+      value.class.should eq(Grant::PG::Numeric)
       value.to_s.should eq("1.5")
     end
 

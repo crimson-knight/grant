@@ -1,5 +1,5 @@
 # Exception thrown on invalid SQLite3 operations.
-class SQLite3::Exception < ::Exception
+class Grant::SQLite3::Exception < ::Exception
   # The internal code associated with the failure.
   getter code
 

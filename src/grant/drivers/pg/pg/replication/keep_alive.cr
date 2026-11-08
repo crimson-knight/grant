@@ -1,6 +1,6 @@
 require "./time_parser"
 
-module PG::Replication
+module Grant::PG::Replication
   struct KeepAlive
     getter wal_end : Int64
     getter timestamp : Time

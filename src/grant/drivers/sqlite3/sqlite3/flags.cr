@@ -1,5 +1,5 @@
 @[Flags]
-enum SQLite3::Flag
+enum Grant::SQLite3::Flag
   READONLY       = 0x00000001 # Ok for sqlite3_open_v2()
   READWRITE      = 0x00000002 # Ok for sqlite3_open_v2()
   CREATE         = 0x00000004 # Ok for sqlite3_open_v2()
@@ -22,9 +22,9 @@ enum SQLite3::Flag
   WAL            = 0x00080000 # VFS only
 end
 
-module SQLite3
+module Grant::SQLite3
   # Same as doing SQLite3::Flag.flag(*values)
   macro flags(*values)
-    ::SQLite3::Flag.flags({{*values}})
+    ::Grant::SQLite3::Flag.flags({{*values}})
   end
 end

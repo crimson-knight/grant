@@ -1,6 +1,6 @@
 require "./frame"
 
-module PQ
+module Grant::PQ
   # http://www.postgresql.org/docs/current/static/protocol-error-fields.html
   struct Notice
     getter fields : Array(PQ::Frame::ErrorNoticeFrame::Field)

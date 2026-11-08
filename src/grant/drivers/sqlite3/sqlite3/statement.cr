@@ -1,4 +1,4 @@
-class SQLite3::Statement < DB::Statement
+class Grant::SQLite3::Statement < DB::Statement
   # Keep references to bound strings and bytes to prevent them from being
   # garbage collected before SQLite executes the statement. It is lazy
   # initialized to help with memory footprint.

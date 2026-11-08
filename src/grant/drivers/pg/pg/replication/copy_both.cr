@@ -1,6 +1,6 @@
 require "./frame"
 
-module PG::Replication
+module Grant::PG::Replication
   struct CopyBoth < Frame
     getter format : Format
     getter column_formats : Array(Int16)

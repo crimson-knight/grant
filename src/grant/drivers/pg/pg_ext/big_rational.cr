@@ -1,6 +1,6 @@
 require "big"
 
-module PG
+module Grant::PG
   struct Numeric
     # Returns a BigRational representation of the numeric. This retains all
     # precision, but requires LibGMP installed.

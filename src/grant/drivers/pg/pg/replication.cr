@@ -3,7 +3,7 @@ require "./replication/x_log_data"
 require "./replication/copy_data"
 require "./replication/standby_status_update"
 
-module PG::Replication
+module Grant::PG::Replication
   module Handler
     # This method must be defined in order to tell the `Connection` how much of
     # the WAL has been flushed and applied.

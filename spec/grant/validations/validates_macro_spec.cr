@@ -144,7 +144,7 @@ describe "validates (unified macro)" do
 
     compile = ->(body : String) do
       source = <<-CR
-        require "sqlite3"
+        require "../../../src/grant/drivers/sqlite3/sqlite3"
         require "../../../src/grant"
         require "../../../src/adapter/sqlite"
 

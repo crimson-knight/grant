@@ -1,5 +1,5 @@
 # Each of the possible types of an SQLite3 column.
-enum SQLite3::Type
+enum Grant::SQLite3::Type
   INTEGER = 1
   FLOAT   = 2
   BLOB    = 4

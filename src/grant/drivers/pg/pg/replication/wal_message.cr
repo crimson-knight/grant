@@ -1,6 +1,6 @@
 require "./read"
 
-module PG::Replication
+module Grant::PG::Replication
   abstract struct WALMessage
     include Read
 

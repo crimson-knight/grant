@@ -1,4 +1,4 @@
-module PQ
+module Grant::PQ
   Log = ::Log.for("pg")
 
   class PgPass

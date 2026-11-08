@@ -1,4 +1,9 @@
-class PG::Driver < ::DB::Driver
+class Grant::PG::Driver < ::DB::Driver
+  # A scheme only this driver registers. `Grant::Adapter::Pg` connects through it,
+  # so the connection keeps this driver when the app also requires the public
+  # `pg` shard, which registers `postgres` and `postgresql` too.
+  GRANT_ONLY_SCHEME = "grant-postgres"
+
   class ConnectionBuilder < ::DB::ConnectionBuilder
     def initialize(@options : ::DB::Connection::Options, @conn_info : PQ::ConnInfo)
     end
@@ -14,5 +19,6 @@ class PG::Driver < ::DB::Driver
   end
 end
 
-DB.register_driver "postgres", PG::Driver
-DB.register_driver "postgresql", PG::Driver
+DB.register_driver "postgres", Grant::PG::Driver
+DB.register_driver "postgresql", Grant::PG::Driver
+DB.register_driver Grant::PG::Driver::GRANT_ONLY_SCHEME, Grant::PG::Driver

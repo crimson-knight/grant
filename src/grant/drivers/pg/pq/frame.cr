@@ -1,6 +1,6 @@
 require "./field"
 
-module PQ
+module Grant::PQ
   # :nodoc:
   abstract struct Frame
     getter bytes

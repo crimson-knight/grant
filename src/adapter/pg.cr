@@ -1,4 +1,4 @@
-require "pg"
+require "../grant/drivers/pg/pg"
 require "./base"
 require "../grant/schema/column_info"
 require "./registry"
@@ -6,6 +6,10 @@ require "./registry"
 # PostgreSQL implementation of the Adapter
 class Grant::Adapter::Pg < Grant::Adapter::Base
   QUOTING_CHAR = '"'
+
+  protected def driver_url : String
+    url.sub(/\Apostgres(ql)?:/, "#{Grant::PG::Driver::GRANT_ONLY_SCHEME}:")
+  end
 
   def postgres? : Bool
     true

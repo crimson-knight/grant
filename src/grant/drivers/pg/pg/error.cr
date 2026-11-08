@@ -1,4 +1,4 @@
-module PG
+module Grant::PG
   # :nodoc:
   class Error < ::Exception
   end

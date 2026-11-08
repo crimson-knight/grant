@@ -1,6 +1,6 @@
 require "../pg/geo"
 
-module PQ
+module Grant::PQ
   # :nodoc:
   record Param, slice : Slice(UInt8), size : Int32, format : Int16 do
     delegate to_unsafe, to: slice

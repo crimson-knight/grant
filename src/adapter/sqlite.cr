@@ -1,19 +1,20 @@
 require "./base"
-require "sqlite3"
+require "../grant/drivers/sqlite3/sqlite3"
 require "../grant/sqlite_version_check"
 require "../grant/schema/column_info"
 require "./registry"
 
-# Patch SQLite3::Statement so that perform_exec always calls sqlite3_reset in
+# Patch Grant::SQLite3::Statement so that perform_exec always calls sqlite3_reset in
 # its ensure clause.  SQLite does NOT decrement db->nVdbeActive when
 # sqlite3_step returns SQLITE_LOCKED (or similar) unless sqlite3_reset is
 # explicitly called.  Without this, a subsequent COMMIT on the same connection
 # fails with "cannot commit transaction - SQL statements in progress".
 #
 # NOTE: this duplicates the upstream method body from sqlite3 ~> 0.21.0
-# (src/sqlite3/statement.cr) and adds only the ensure-reset.  When bumping the
-# sqlite3 shard, diff upstream perform_exec against this patch and re-apply.
-class SQLite3::Statement
+# (src/sqlite3/statement.cr) and adds only the ensure-reset.  When updating the
+# owned driver in src/grant/drivers/sqlite3, diff perform_exec against this
+# patch and re-apply.
+class Grant::SQLite3::Statement
   protected def perform_exec(args : Enumerable) : DB::ExecResult
     LibSQLite3.reset(to_unsafe)
     args.each_with_index(1) do |arg, index|
@@ -40,6 +41,10 @@ end
 
 # Sqlite implementation of the Adapter
 class Grant::Adapter::Sqlite < Grant::Adapter::Base
+  protected def driver_url : String
+    url.sub(/\Asqlite3:/, "#{Grant::SQLite3::Driver::GRANT_ONLY_SCHEME}:")
+  end
+
   # :nodoc:
   alias Kind = Grant::Adapter::ErrorTranslator::Kind
 

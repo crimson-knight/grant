@@ -1,6 +1,6 @@
 require "../pq/*"
 
-module PG
+module Grant::PG
   class Connection < ::DB::Connection
     protected getter connection
 

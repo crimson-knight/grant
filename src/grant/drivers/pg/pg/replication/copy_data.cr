@@ -1,4 +1,4 @@
-module PG::Replication
+module Grant::PG::Replication
   struct CopyData < Frame
     getter data : XLogData | KeepAlive | KeepAliveResponse
 

@@ -1,7 +1,11 @@
 require "db"
+
+module Grant
+end
+
 require "./pg/*"
 
-module PG
+module Grant::PG
   # Establish a connection to the database
   def self.connect(url)
     DB.open(url)

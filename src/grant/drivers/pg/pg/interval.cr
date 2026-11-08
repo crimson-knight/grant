@@ -1,4 +1,4 @@
-module PG
+module Grant::PG
   # A representation for INTERVAL data type.
   # https://www.postgresql.org/docs/current/datatype-datetime.html
   struct Interval

@@ -40,7 +40,7 @@ class FakeConnection < DB::Connection
   end
 end
 
-alias EmitterType = DB::Any | PG::Numeric | JSON::Any | Int16
+alias EmitterType = DB::Any | Grant::PG::Numeric | JSON::Any | Int16
 
 # FieldEmitter emulates the subtle and uninformed way that
 # DB::ResultSet emits data. To be used in testing interactions

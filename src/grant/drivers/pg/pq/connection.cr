@@ -8,7 +8,7 @@ require "openssl/hmac"
 require "./notice"
 require "../ext/openssl"
 
-module PQ
+module Grant::PQ
   record Notification, pid : Int32, channel : String, payload : String
 
   # :nodoc:

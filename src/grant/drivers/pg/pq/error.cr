@@ -1,4 +1,4 @@
-module PQ
+module Grant::PQ
   class ConnectionError < Exception
   end
 

@@ -1,6 +1,6 @@
 require "./wal_message"
 
-module PG::Replication
+module Grant::PG::Replication
   struct Commit < WALMessage
     getter flags : Int8
     getter begin_lsn : Int64

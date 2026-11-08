@@ -1,4 +1,4 @@
-class SQLite3::Connection < DB::Connection
+class Grant::SQLite3::Connection < DB::Connection
   record Options,
     filename : String = ":memory:",
     # pragmas

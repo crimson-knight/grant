@@ -1,4 +1,9 @@
-class SQLite3::Driver < DB::Driver
+class Grant::SQLite3::Driver < DB::Driver
+  # A scheme only this driver registers. `Grant::Adapter::Sqlite` connects through
+  # it, so the connection keeps this driver when the app also requires the public
+  # `sqlite3` shard, which registers `sqlite3` too.
+  GRANT_ONLY_SCHEME = "grant-sqlite3"
+
   class ConnectionBuilder < ::DB::ConnectionBuilder
     def initialize(@options : ::DB::Connection::Options, @sqlite3_options : SQLite3::Connection::Options)
     end
@@ -14,4 +19,5 @@ class SQLite3::Driver < DB::Driver
   end
 end
 
-DB.register_driver "sqlite3", SQLite3::Driver
+DB.register_driver "sqlite3", Grant::SQLite3::Driver
+DB.register_driver Grant::SQLite3::Driver::GRANT_ONLY_SCHEME, Grant::SQLite3::Driver

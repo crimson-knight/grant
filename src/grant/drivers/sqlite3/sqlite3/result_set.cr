@@ -1,4 +1,4 @@
-class SQLite3::ResultSet < DB::ResultSet
+class Grant::SQLite3::ResultSet < DB::ResultSet
   @column_index = 0
 
   protected def do_close

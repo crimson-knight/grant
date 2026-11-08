@@ -7,7 +7,7 @@
   end
 {% end %}
 
-class PG::ResultSet < ::DB::ResultSet
+class Grant::PG::ResultSet < ::DB::ResultSet
   getter rows_affected
 
   def initialize(statement, @fields : Array(PQ::Field)?)

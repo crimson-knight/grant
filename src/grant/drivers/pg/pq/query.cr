@@ -1,4 +1,4 @@
-module PQ
+module Grant::PQ
   # :nodoc:
   class ExtendedQuery
     getter conn, query, params, fields

@@ -1,6 +1,6 @@
 require "./wal_message"
 
-module PG::Replication
+module Grant::PG::Replication
   struct Origin < WALMessage
     getter lsn : Int64
     getter name : String

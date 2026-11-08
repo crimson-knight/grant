@@ -1,7 +1,7 @@
 require "./wal_message"
 require "./time_parser"
 
-module PG::Replication
+module Grant::PG::Replication
   struct XLogData
     getter wal_start : Int64
     getter wal_end : Int64

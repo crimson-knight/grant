@@ -33,7 +33,7 @@ module Grant::Converters
       when Float        then ::BigDecimal.new(value.to_s)
       when Bytes        then parse(String.new(value))
       else
-        # PostgreSQL returns `PG::Numeric`, which prints as its exact decimal.
+        # PostgreSQL returns `Grant::PG::Numeric`, which prints as its exact decimal.
         parse(value.to_s)
       end
     end

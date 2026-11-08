@@ -1,4 +1,4 @@
-module PG::Geo
+module Grant::PG::Geo
   record Point, x : Float64, y : Float64
   record Line, a : Float64, b : Float64, c : Float64
   record Circle, x : Float64, y : Float64, radius : Float64

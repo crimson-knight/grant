@@ -1,6 +1,6 @@
 require "../numeric"
 
-module PG
+module Grant::PG
   module Decoders
     # Generic Array decoder: decodes to a recursive array type
     struct ArrayDecoder(T, D)

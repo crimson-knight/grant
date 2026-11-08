@@ -7,8 +7,8 @@
 #   CURRENT_ADAPTER=sqlite crystal-alpha run --release bench/insert_all.cr
 #   CURRENT_ADAPTER=pg PG_DATABASE_URL=postgres://localhost/grant_bench crystal-alpha run --release bench/insert_all.cr
 
-require "pg"
-require "sqlite3"
+require "../src/grant/drivers/pg/pg"
+require "../src/grant/drivers/sqlite3/sqlite3"
 require "../src/grant"
 require "../src/adapter/pg"
 require "../src/adapter/sqlite"

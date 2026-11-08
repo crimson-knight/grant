@@ -1,4 +1,4 @@
-module PG
+module Grant::PG
   # The Postgres numeric type has arbitrary precision, and can be NaN, "not a
   # number".
   #

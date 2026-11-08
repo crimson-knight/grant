@@ -1,4 +1,4 @@
-module PG::Replication
+module Grant::PG::Replication
   private module TimeParser
     extend self
 

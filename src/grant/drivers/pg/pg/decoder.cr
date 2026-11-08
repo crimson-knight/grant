@@ -1,7 +1,7 @@
 require "json"
 require "uuid"
 
-module PG
+module Grant::PG
   alias PGValue = String | Nil | Bool | Int32 | Float32 | Float64 | Time | JSON::Any | PG::Numeric | UUID
 
   # :nodoc:

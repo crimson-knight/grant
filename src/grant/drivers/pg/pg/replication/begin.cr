@@ -1,7 +1,7 @@
 require "./wal_message"
 require "./time_parser"
 
-module PG::Replication
+module Grant::PG::Replication
   struct Begin < WALMessage
     getter final_lsn : Int64
     getter timestamp : Time

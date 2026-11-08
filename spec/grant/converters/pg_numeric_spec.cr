@@ -10,7 +10,7 @@ describe Grant::Converters::PgNumeric do
   describe ".from_rs" do
     it "should convert the RS value into a Float64" do
       rs = FieldEmitter.new.tap do |e|
-        e._set_values([PG::Numeric.new(2_i16, 0_i16, 0_i16, 1_i16, [1_i16, 3000_i16])])
+        e._set_values([Grant::PG::Numeric.new(2_i16, 0_i16, 0_i16, 1_i16, [1_i16, 3000_i16])])
       end
 
       Grant::Converters::PgNumeric.from_rs(rs).should eq 1.3

@@ -44,12 +44,12 @@ class PublicApiReturnTypeCompositeOwner < Grant::Base
 end
 {% end %}
 
-alias PublicApiRawScalarType = (Array(PG::BoolArray) | Array(PG::CharArray) | Array(PG::Float32Array) | Array(PG::Float64Array) |
-                                Array(PG::Int16Array) | Array(PG::Int32Array) | Array(PG::Int64Array) | Array(PG::NumericArray) |
-                                Array(PG::StringArray) | Array(PG::TimeArray) | Array(PG::UUIDArray) | Bool | Char | Float32 | Float64 |
-                                Int16 | Int32 | Int64 | Int8 | JSON::Any | JSON::PullParser | PG::Geo::Box | PG::Geo::Circle |
-                                PG::Geo::Line | PG::Geo::LineSegment | PG::Geo::Path | PG::Geo::Point | PG::Geo::Polygon |
-                                PG::Interval | PG::Numeric | Slice(UInt8) | String | Time | Time::Span | UInt32 | UInt64 | UUID)?
+alias PublicApiRawScalarType = (Array(Grant::PG::BoolArray) | Array(Grant::PG::CharArray) | Array(Grant::PG::Float32Array) | Array(Grant::PG::Float64Array) |
+                                Array(Grant::PG::Int16Array) | Array(Grant::PG::Int32Array) | Array(Grant::PG::Int64Array) | Array(Grant::PG::NumericArray) |
+                                Array(Grant::PG::StringArray) | Array(Grant::PG::TimeArray) | Array(Grant::PG::UUIDArray) | Bool | Char | Float32 | Float64 |
+                                Int16 | Int32 | Int64 | Int8 | JSON::Any | JSON::PullParser | Grant::PG::Geo::Box | Grant::PG::Geo::Circle |
+                                Grant::PG::Geo::Line | Grant::PG::Geo::LineSegment | Grant::PG::Geo::Path | Grant::PG::Geo::Point | Grant::PG::Geo::Polygon |
+                                Grant::PG::Interval | Grant::PG::Numeric | Slice(UInt8) | String | Time | Time::Span | UInt32 | UInt64 | UUID)?
 
 describe "Grant public API inferred return types" do
   it "preserves the class query API return types" do

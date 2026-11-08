@@ -1,4 +1,4 @@
-module PG
+module Grant::PG
   module EscapeHelper
     extend self
 

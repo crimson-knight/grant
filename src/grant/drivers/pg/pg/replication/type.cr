@@ -1,6 +1,6 @@
 require "./wal_message"
 
-module PG::Replication
+module Grant::PG::Replication
   struct Type < WALMessage
     # getter transaction_id : Int32
     getter oid : Int32

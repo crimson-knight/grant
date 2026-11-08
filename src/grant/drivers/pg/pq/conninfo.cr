@@ -2,7 +2,7 @@ require "uri"
 require "http"
 require "system/user"
 
-module PQ
+module Grant::PQ
   struct ConnInfo
     SOCKET_SEARCH = %w(/run/postgresql /tmp /var/run/postgresql)
 

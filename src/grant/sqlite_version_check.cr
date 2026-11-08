@@ -1,7 +1,9 @@
 # Add missing libversion bindings to LibSQLite3
-lib LibSQLite3
-  fun libversion = sqlite3_libversion : UInt8*
-  fun libversion_number = sqlite3_libversion_number : Int32
+module Grant
+  lib LibSQLite3
+    fun libversion = sqlite3_libversion : UInt8*
+    fun libversion_number = sqlite3_libversion_number : Int32
+  end
 end
 
 module Grant

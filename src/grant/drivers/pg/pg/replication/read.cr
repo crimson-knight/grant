@@ -1,6 +1,6 @@
 require "./time_parser"
 
-module PG::Replication
+module Grant::PG::Replication
   module Read
     protected def read(io : IO, int : Int.class)
       io.read_bytes int, IO::ByteFormat::NetworkEndian

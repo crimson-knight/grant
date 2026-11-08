@@ -1,6 +1,6 @@
 require "./keep_alive_response"
 
-module PG::Replication
+module Grant::PG::Replication
   struct StandbyStatusUpdate < KeepAliveResponse
     getter last_wal_byte_received : Int64
     getter last_wal_byte_flushed : Int64

@@ -1,4 +1,4 @@
-class PG::Statement < ::DB::Statement
+class Grant::PG::Statement < ::DB::Statement
   def initialize(connection, command : String)
     super(connection, command)
   end

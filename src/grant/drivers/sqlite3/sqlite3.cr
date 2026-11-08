@@ -1,7 +1,11 @@
 require "db"
+
+module Grant
+end
+
 require "./sqlite3/**"
 
-module SQLite3
+module Grant::SQLite3
   DATE_FORMAT_SUBSECOND = "%F %H:%M:%S.%L"
   DATE_FORMAT_SECOND    = "%F %H:%M:%S"
 
