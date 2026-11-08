@@ -103,9 +103,13 @@ describe Grant::PG::Driver do
   it "treats Slice(UInt8) as String" do
     with_pg_driver_db do |db|
       # Grant: a server built without contrib modules has no citext to test against.
-      next if db.scalar("select count(*) from pg_available_extensions where name = 'citext'").as(Int64) == 0
+      begin
+        db.exec "create extension if not exists citext with schema public"
+      rescue error : Grant::PQ::PQError
+        next if error.message.to_s.includes?("citext")
 
-      db.exec "create extension if not exists citext with schema public"
+        raise error
+      end
       db.exec "drop table if exists users"
       db.exec "create table users (email citext)"
       db.exec "insert into users values ($1)", "foo@example.com"
