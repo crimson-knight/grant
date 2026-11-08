@@ -11,6 +11,7 @@ module Grant::PQ
           when 'Z' then ReadyForQuery
           when '1' then ParseComplete
           when '2' then BindComplete
+          when '3' then CloseComplete
           when 'T' then RowDescription
           when 'A' then NotificationResponse
           when 'E' then ErrorResponse
@@ -244,6 +245,9 @@ module Grant::PQ
     end
 
     struct BindComplete < Frame
+    end
+
+    struct CloseComplete < Frame
     end
 
     struct EmptyQueryResponse < Frame

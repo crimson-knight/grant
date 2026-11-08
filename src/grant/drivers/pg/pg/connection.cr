@@ -23,8 +23,12 @@ module Grant::PG
       end
     end
 
+    # A statement is named only when it can be reused: the crystal-db cache
+    # keeps one object per query on this connection. With preparing off for a
+    # connection pooler, or with the cache off, every call stays unnamed.
     def build_prepared_statement(query) : Statement
-      Statement.new(self, query)
+      statement_name = @connection.generate_statement_name if prepared_statements? && prepared_statements_cache?
+      Statement.new(self, query, statement_name)
     end
 
     def build_unprepared_statement(query) : Statement

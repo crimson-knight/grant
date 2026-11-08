@@ -21,6 +21,11 @@ module Grant::PQ
     @mutex = Mutex.new
     @established = false
 
+    # The server's transaction state from its latest ReadyForQuery.
+    getter transaction_status : Frame::ReadyForQuery::Status = Frame::ReadyForQuery::Status::Idle
+    @count_of_generated_statement_names = 0
+    @list_of_statements_awaiting_close = [] of String
+
     def initialize(@conninfo : ConnInfo)
       begin
         if Path.new(@conninfo.host).absolute?
@@ -221,6 +226,11 @@ module Grant::PQ
       expect_frame Frame::ReadyForQuery if @established
       notice_handler.call(error_frame.as_notice)
       raise PQError.new(error_frame.fields)
+    end
+
+    private def handle_async_frames(frame : Frame::ReadyForQuery)
+      @transaction_status = frame.transaction_status
+      false
     end
 
     private def handle_async_frames(frame : Frame::NotificationResponse)
@@ -474,6 +484,33 @@ module Grant::PQ
       end
     end
 
+    # Returns a statement name unique to this connection.
+    def generate_statement_name : String
+      @count_of_generated_statement_names += 1
+      "grant_#{@count_of_generated_statement_names}"
+    end
+
+    # True while the server has an open transaction on this connection,
+    # including one aborted by an error.
+    def in_transaction? : Bool
+      !transaction_status.idle?
+    end
+
+    # Queues *statement_name* to be closed on the server with the connection's
+    # next statement, because the connection may be mid-result right now.
+    def release_server_statement_later(statement_name : String) : Nil
+      @list_of_statements_awaiting_close << statement_name
+    end
+
+    # Writes the queued Close messages and returns how many went out, which is
+    # how many CloseComplete frames the caller must read first.
+    def send_close_messages_for_released_statements : Int32
+      count_of_closes = @list_of_statements_awaiting_close.size
+      @list_of_statements_awaiting_close.each { |statement_name| send_close_statement_message(statement_name) }
+      @list_of_statements_awaiting_close.clear
+      count_of_closes
+    end
+
     def expect_frame(frame_class, type = nil)
       f = type ? read(type) : read
       raise "Expected #{frame_class} but got #{f}" unless frame_class === f
@@ -500,12 +537,21 @@ module Grant::PQ
       soc.flush
     end
 
-    def send_parse_message(query)
+    def send_parse_message(query, statement_name = "")
       write_chr 'P'
-      write_i32 query.bytesize + 4 + 1 + 2 + 1
-      write_null # prepared statment name
+      write_i32 4 + statement_name.bytesize + 1 + query.bytesize + 1 + 2
+      soc << statement_name
+      write_null
       soc << query
+      write_null
       write_i16 0 # don't give any param types
+    end
+
+    def send_close_statement_message(statement_name)
+      write_chr 'C'
+      write_i32 4 + 1 + statement_name.bytesize + 1
+      write_chr 'S'
+      soc << statement_name
       write_null
     end
 
@@ -515,16 +561,17 @@ module Grant::PQ
     # however it is a parameter so that people who want to use the protocol
     # directly can choose text results. The addition of this param though is
     # experimental, and may go away in future releases.
-    def send_bind_message(params, result_format = 1_i16)
+    def send_bind_message(params, result_format = 1_i16, statement_name = "")
       nparams = params.size
       total_size = params.reduce(0) do |acc, p|
         acc + 4 + (p.size == -1 ? 0 : p.size)
       end
 
       write_chr 'B'
-      write_i32 4 + 1 + 1 + 2 + (2*nparams) + 2 + total_size + 2 + 2
-      write_null        # unnamed destination portal
-      write_null        # unnamed prepared statment
+      write_i32 4 + 1 + statement_name.bytesize + 1 + 2 + (2*nparams) + 2 + total_size + 2 + 2
+      write_null # unnamed destination portal
+      soc << statement_name
+      write_null        # end of the prepared statement name
       write_i16 nparams # number of params format codes to follow
       params.each { |p| write_i16 p.format }
       write_i16 nparams # number of params to follow

@@ -72,6 +72,43 @@ describe "prepared statements" do
     adapter.open(&.query_one(sql, 41, as: Int64)).should eq 42
   end
 
+  {% if env("CURRENT_ADAPTER") == "pg" %}
+    describe "the Postgres driver" do
+      it "keeps one server-side statement per query by default" do
+        adapter = C02Support.establish("c02_prepared", pool_size: 1, initial_pool_size: 1)
+        lookup = "SELECT 201 + $1::int"
+
+        20.times { adapter.open(&.query_one(lookup, 1, as: Int32)).should eq 202 }
+
+        count = adapter.open(&.query_one("SELECT count(*) FROM pg_prepared_statements WHERE statement = $1", lookup, as: Int64))
+        count.should eq 1
+      end
+
+      it "holds no server-side statements with prepared_statements: false" do
+        adapter = C02Support.establish("c02_prepared", pool_size: 1, initial_pool_size: 1, prepared_statements: false)
+        lookup = "SELECT 301 + $1::int"
+
+        20.times { adapter.open(&.query_one(lookup, 1, as: Int32)).should eq 302 }
+
+        count = adapter.open(&.query_one("SELECT count(*) FROM pg_prepared_statements WHERE statement = $1", lookup, as: Int64))
+        count.should eq 0
+      end
+
+      it "closes a statement evicted by statement_limit on the server" do
+        adapter = C02Support.establish("c02_prepared", pool_size: 1, initial_pool_size: 1, statement_limit: 2)
+        first_lookup = "SELECT 401 + $1::int"
+
+        adapter.open(&.query_one(first_lookup, 1, as: Int32)).should eq 402
+        adapter.open(&.query_one("SELECT 402 + $1::int", 1, as: Int32)).should eq 403
+        adapter.open(&.query_one("SELECT 403 + $1::int", 1, as: Int32)).should eq 404
+        adapter.open(&.scalar("SELECT 1"))
+
+        count = adapter.open(&.query_one("SELECT count(*) FROM pg_prepared_statements WHERE statement = $1", first_lookup, as: Int64))
+        count.should eq 0
+      end
+    end
+  {% end %}
+
   it "forwards the options as URL parameters only when they differ from the defaults" do
     defaults = Grant::ConnectionRegistry::ConnectionSpec.new("u", Grant::Adapter::Pg, "postgres://localhost/app", :writing)
     URI.parse(defaults.build_pool_url).query_params.has_key?("prepared_statements").should be_false
