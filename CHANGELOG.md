@@ -25,6 +25,10 @@ Behavior changes:
   because its copy is stale (a changed column type, `DEALLOCATE ALL`)
   re-parses and retries once outside a transaction; inside a transaction
   the error reaches the caller and the statement re-parses on its next use.
+  A named statement keeps the parameter types from its first parse, so a
+  column changed between types with a cast Postgres applies by itself
+  (`timestamp` to `timestamptz`) reinterprets values on connections that
+  already hold that statement; recycle the pool after such a migration.
 - **Postgres connections to this machine no longer negotiate TLS by default.**
   A Unix socket, `localhost`, or a loopback address (127.0.0.0/8, ::1) with
   no `sslmode` in the URL now uses `sslmode=disable`; any other host keeps
