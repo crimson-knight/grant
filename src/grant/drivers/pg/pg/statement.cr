@@ -36,17 +36,7 @@ class Grant::PG::Statement < ::DB::Statement
     statement_name = @statement_name
     must_parse = statement_name.nil? || !@is_parsed_on_server
 
-    count_of_closes = conn.send_close_messages_for_released_statements
-    if statement_name && @must_close_before_parsing
-      conn.send_close_statement_message(statement_name)
-      count_of_closes += 1
-    end
-    conn.send_parse_message(command, statement_name || "") if must_parse
-    conn.send_bind_message(params, statement_name: statement_name || "")
-    conn.send_describe_portal_message
-    conn.send_execute_message
-    conn.send_sync_message
-
+    count_of_closes = send_statement_messages(conn, params, statement_name, must_parse)
     count_of_closes.times { conn.expect_frame PQ::Frame::CloseComplete }
     if must_parse
       conn.expect_frame PQ::Frame::ParseComplete
@@ -55,6 +45,7 @@ class Grant::PG::Statement < ::DB::Statement
       @is_parsed_on_server = !statement_name.nil?
       @must_close_before_parsing = false
     end
+
     begin
       conn.expect_frame PQ::Frame::BindComplete
     rescue error : PQ::PQError
@@ -66,16 +57,35 @@ class Grant::PG::Statement < ::DB::Statement
 
       return run_on_server(params, may_retry: false)
     end
+    ResultSet.new(self, read_result_fields(conn))
+  end
+
+  # Writes one pipeline ending in Sync and returns how many Close messages
+  # went out, which is how many CloseComplete frames arrive first.
+  private def send_statement_messages(conn, params, statement_name : String?, must_parse : Bool) : Int32
+    count_of_closes = conn.send_close_messages_for_released_statements
+    if statement_name && @must_close_before_parsing
+      conn.send_close_statement_message(statement_name)
+      count_of_closes += 1
+    end
+    conn.send_parse_message(command, statement_name || "") if must_parse
+    conn.send_bind_message(params, statement_name: statement_name || "")
+    conn.send_describe_portal_message
+    conn.send_execute_message
+    conn.send_sync_message
+    count_of_closes
+  end
+
+  private def read_result_fields(conn) : Array(PQ::Field)?
     frame = conn.read
     case frame
     when PQ::Frame::RowDescription
-      fields = frame.fields
+      frame.fields
     when PQ::Frame::NoData
-      fields = nil
+      nil
     else
       raise "expected RowDescription or NoData, got #{frame}"
     end
-    ResultSet.new(self, fields)
   end
 
   protected def perform_exec(args : Enumerable) : ::DB::ExecResult
