@@ -199,7 +199,7 @@ Currently Grant supports various converters, each with their own supported datab
 - `Enum(E, T)` - Converts an Enum of type `E` to/from a database column of type `T`. Supported types for `T` are: `Number`, `String`, and `Bytes`.
 - `Json(M, T)` - Converters an `Object` of type `M` to/from a database column of type `T.` Supported types for `T` are: `String`, `JSON::Any`, and `Bytes`.
   - **NOTE:** `M` must implement `#to_json` and `.from_json` methods.
-- `PgNumeric` - Converts a `PG::Numeric` value to a `Float64` on read.
+- `PgNumeric` - Converts a `Grant::PG::Numeric` value to a `Float64` on read.
 
 The converter is defined on a per field basis. This example has an `OrderStatus` enum typed field. When saved, the enum value would be converted to a string to be stored in the DB. Then, when read, the string would be used to parse a new instance of `OrderStatus`.
 

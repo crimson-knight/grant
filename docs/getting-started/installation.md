@@ -34,19 +34,9 @@ dependencies:
   grant:
     github: amberframework/grant
 
-  # Choose one or more database drivers:
-  
-  # PostgreSQL
-  pg:
-    github: will/crystal-pg
-
-  # MySQL  
+  # PostgreSQL and SQLite drivers ship inside Grant. Add this only for MySQL:
   mysql:
     github: crystal-lang/crystal-mysql
-
-  # SQLite
-  sqlite3:
-    github: crystal-lang/crystal-sqlite3
 ```
 
 Then install the dependencies:

@@ -28,7 +28,7 @@ old pool.
 | `checkout_timeout` | 5 s | How long a fiber waits for a connection before `Grant::ConnectionTimeoutError` |
 | `retry_attempts` / `retry_delay` | 1 / 0.2 s | Retries of a refused connection, and of one lost read, with exponential backoff capped at 5 s |
 | `idle_timeout`, `min_connections`, `keepalive`, `max_age`, `reaping_frequency` | off | Opt-in reaper (see below) |
-| `prepared_statements` | `true` | `false` for PgBouncer in transaction mode (SQLite always prepares) |
+| `prepared_statements` | `true` | Postgres parses each statement once per connection and reuses it; `false` for PgBouncer in transaction mode sends every statement unnamed (SQLite always prepares) |
 | `statement_limit` | 1000 | Prepared statements cached per connection; 0 disables the cache |
 
 A SQLite `:memory:` database always gets a pool of one connection, because a

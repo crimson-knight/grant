@@ -4,6 +4,32 @@
 
 Minimum Crystal: 1.19.0
 
+### Grant owns its Postgres and SQLite drivers
+
+Behavior changes:
+
+- **The PostgreSQL and SQLite drivers now live inside Grant**
+  (`src/grant/drivers`, from crystal-pg 0.30.0 and crystal-sqlite3 0.23.0;
+  see `PROVENANCE.md` in each directory). `crystal-db` is Grant's only
+  database dependency for these two; MySQL stays on its external shard.
+  `require "grant/adapter/pg"` and `require "grant/adapter/sqlite"` work as
+  before, and an app may still depend on the public `pg` or `sqlite3` shard.
+- Apps that name the driver's types must use the new constants:
+  `PG::Numeric` becomes `Grant::PG::Numeric`, `PQ::PQError` becomes
+  `Grant::PQ::PQError`, `SQLite3::Exception` becomes
+  `Grant::SQLite3::Exception`.
+- **Postgres statements are now named.** Each statement object parses once
+  per connection and later calls send only Bind, Describe, Execute and
+  Sync. `prepared_statements: false`, for connection poolers, sends every
+  statement unnamed as before. A statement the server rejects at Bind
+  because its copy is stale (a changed column type, `DEALLOCATE ALL`)
+  re-parses and retries once outside a transaction; inside a transaction
+  the error reaches the caller and the statement re-parses on its next use.
+- **Postgres connections to this machine no longer negotiate TLS by default.**
+  A Unix socket, `localhost`, or a loopback address (127.0.0.0/8, ::1) with
+  no `sslmode` in the URL now uses `sslmode=disable`; any other host keeps
+  `prefer`, and an explicit `sslmode` always wins.
+
 ### Minimum Crystal version
 
 Behavior changes:

@@ -767,7 +767,7 @@
       "feature": "Database-specific types: PostgreSQL ranges, network (inet/cidr/macaddr), interval, native enum, citext",
       "status": "missing",
       "evidence_spec_paths": [],
-      "gap": "Only PG::Interval appears in the adapter's allowed type list and no spec covers it. No Range(T,T) column mapping, no Socket::IPAddress column, no PG CREATE TYPE enum mapping or citext. Deferred: Effort L, low value, and range bound normalization makes dirty tracking risky. Take individual types on demand.",
+      "gap": "Only Grant::PG::Interval appears in the adapter's allowed type list and no spec covers it. No Range(T,T) column mapping, no Socket::IPAddress column, no PG CREATE TYPE enum mapping or citext. Deferred: Effort L, low value, and range bound normalization makes dirty tracking risky. Take individual types on demand.",
       "not_applicable_reason": "",
       "priority": 41
     },

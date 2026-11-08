@@ -32,7 +32,7 @@ CURRENT_ADAPTER=sqlite crystal run --release bench/run.cr -- \
 Use `--release` for representative numbers; the debug build is fine for a smoke
 test but is several times slower.
 
-> The harness needs the SQLite driver shard installed (`shards install`) and
+> The harness needs `shards install` run and
 > `CURRENT_ADAPTER=sqlite` set so Grant pulls in the SQLite adapter.
 
 ---
