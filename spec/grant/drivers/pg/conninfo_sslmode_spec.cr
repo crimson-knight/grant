@@ -2,7 +2,6 @@ require "spec"
 
 {% skip_file unless env("CURRENT_ADAPTER") == "pg" %}
 
-require "spec"
 require "../../../../src/grant/drivers/pg/pg"
 
 private def sslmode_for(url : String) : Symbol
