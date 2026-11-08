@@ -11,7 +11,9 @@ private def test_insert_and_read(datatype, value, file = __FILE__, line = __LINE
   it "inserts #{datatype}", file, line do
     PG_DRIVER_DB.exec "drop table if exists test_table"
     PG_DRIVER_DB.exec "create table test_table (v #{datatype})"
-    PG_DRIVER_DB.exec "insert into test_table values ($1)", args: [value]
+    # Grant: this one SQL text meets a differently typed table on every example,
+    # and a named statement keeps its first parameter types, so it stays unnamed.
+    PG_DRIVER_DB.unprepared.exec "insert into test_table values ($1)", args: [value]
 
     # Read casting the value
     actual_value = PG_DRIVER_DB.query_one "select v from test_table", as: value.class

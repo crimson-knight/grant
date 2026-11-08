@@ -121,6 +121,11 @@ describe Grant::PG::Driver do
       db.query "select email from users limit 1" do |rs|
         assert_single_read rs, String?, "foo@example.com"
       end
+
+      # Grant: this database is shared with the whole suite, and schema dumps list
+      # installed extensions, so nothing from this spec may stay behind.
+      db.exec "drop table users"
+      db.exec "drop extension citext"
     end
   end
 
