@@ -4,6 +4,47 @@
 
 Minimum Crystal: 1.19.0
 
+### Performance budgets
+
+- Added a pull request and `main` push gate for measured compile-memory probes
+  and SQLite lifecycle mean time and allocation budgets. The source values,
+  limits, and measurement commands are checked in; see
+  [`docs/PERFORMANCE_BUDGETS.md`](docs/PERFORMANCE_BUDGETS.md).
+- Split performance budgets by operating system and Crystal toolchain. The
+  checker now fails closed when the matching block is missing. Linux Crystal
+  1.21.0 is in explicit calibration mode until a real runner measurement is
+  reviewed; CI uploads its compile and runtime measurement JSON.
+- Moved relation clauses, copy-on-write state, chunk iteration, field
+  validation, eager-load join planning, and unscope dispatch out of the typed
+  query builder where model metadata could be supplied as values. Shared
+  association operations now handle autosave record collection, validation,
+  and error import while generated accessors retain their concrete model
+  types.
+- Shared the non-generic list-executor cursor loop and eager-load restriction
+  resolver to reduce per-model query compilation. The measured results show
+  the `assoc_one` target met and the remaining slope/debug misses in
+  [`docs/compile_memory.md`](docs/compile_memory.md).
+- Fixed eager-load join reuse when multiple includes target the same table,
+  and added coverage for sharded reverse ordering and aggregate `last` paths.
+  The final three-run Darwin measurements and Builder IR counts are recorded in
+  [`docs/compile_memory.md`](docs/compile_memory.md) and
+  [`docs/performance/perf03_measurements.jsonl`](docs/performance/perf03_measurements.jsonl).
+- Compile budgets now record and enforce `CRYSTAL_WORKERS=1` by default. They
+  use 5% semantic and 10% debug RSS headroom based on measured sample spread;
+  the Linux block remains explicitly in calibration mode.
+
+### Compatibility notes
+
+- Model save operations select their adapter through `transaction_adapter` and
+  use Grant's shared transaction runner. An override of
+  `transaction(options, &block)` does not intercept a save's internal
+  transaction; override `transaction_adapter` to customize adapter selection.
+- Query builder clauses now live in internal relation state. Extensions and
+  reopenings that directly referenced former Builder ivars such as
+  `@where_fields`, `@limit`, `@offset`, or `@boolean_operator` must use the
+  relation's query methods instead; those implementation ivars are not a
+  supported extension surface.
+
 ### Minimum Crystal version
 
 Behavior changes:

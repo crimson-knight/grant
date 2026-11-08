@@ -10,7 +10,8 @@ Numbers are the compiler's peak resident set in MB (decimal), with an empty
 `CRYSTAL_CACHE_DIR`, one compile at a time through `crystal-slot`, on
 crystal-alpha 1.21.0. "Before" is `parity/wave-6` at `8bb661d`; "after" is this
 branch. "Semantic" is `crystal build --no-codegen`; "debug" is a plain
-`crystal build`.
+`crystal build`. Current CI limits and local reproduction commands are in
+[`docs/PERFORMANCE_BUDGETS.md`](PERFORMANCE_BUDGETS.md).
 
 ## What changed
 
@@ -165,3 +166,309 @@ BENCH_DATABASE_URL=sqlite3:/tmp/lifecycle.db /tmp/lifecycle --iterations 2000 --
 
 The investigation this work follows, with its ablations and generator
 scripts, is `parity-audit-2026-09-28/evidence/compile_memory/codex_report.md`.
+
+## PERF03 round 1: shared query work and measured budgets
+
+PERF03 kept the public block APIs yield-based and changed only Grant's internal
+save transaction route. `Transaction.run_without_result` captures the save
+body as a typed `Proc(Nil)`, so the transaction runner is shared. The query
+list executor now passes row hydration through a fixed-signature loader to one
+non-generic cursor runner. Association restriction discovery and replay moved
+to one non-generic resolver that takes the model name and relation state as
+values. A PostgreSQL boolean query compatibility fix was needed first because
+the starting commit did not compile the lifecycle benchmark with its locked
+`db` dependency; the SQLite path used for runtime measurements was unchanged.
+
+The first row is the PERF03 starting measurement supplied for `da1e061`. Later
+rows are the before/after measurements from each attempted code change. The
+column setter experiment is included for transparency and was reverted because
+it did not produce a reliable compile improvement.
+
+| Step | Query slope MB/model | Association slope MB/model | `assoc_one` 200 semantic MB | Lifecycle debug MB | Association regression debug MB |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| PERF03 starting point | 19.5 | 22.9 | 1,690.0 | 1,804.0 | 6,887.0 |
+| Transaction Proc path (`97d8194`) | 19.58 → 19.70 | 22.75 → 22.73 | 1,632.8 → 1,661.8 | 1,863.8 → 1,845.3 | 6,696.5 → 6,230.2 |
+| Shared list cursor runner (`c1b8abe`) | 19.70 → 19.22 | 22.73 → 22.42 | 1,661.8 → 1,632.8 | 1,845.3 → 1,871.4 | 6,230.2 → 5,770.7 |
+| Shared association restriction resolver (`2630a6e`) | 19.22 → 18.48 | 22.42 → 21.79 | 1,632.8 → 1,632.8 | 1,871.4 → 1,841.5 | 5,770.7 → 5,819.2 |
+| Column dirty-assignment experiment (`89209a4`, reverted) | 18.48 → 18.65 | 21.79 → 21.62 | 1,632.8 → 1,614.7 | 1,841.5 → 1,828.1 | 5,819.2 → 6,277.1 |
+| Final source, budget measurement | 18.6 | 21.8 | 1,711.8 | 1,851.5 | 6,255.1 |
+
+The retained changes lowered the association regression debug build by about
+9% from the starting measurement and lowered the semantic slopes by about 5%.
+The one-query associated declaration probe and lifecycle debug build did not
+improve reliably. Final budget inputs are the maximum of three complete
+`scripts/compile_memory.py check` runs; the corresponding 5% limits are in
+[`bench/budgets.json`](../bench/budgets.json). Every command and source revision
+is recorded in [`docs/performance/perf03_measurements.jsonl`](performance/perf03_measurements.jsonl).
+
+### PERF03 targets
+
+| Target | Final measured value | Status |
+| --- | ---: | --- |
+| `assoc_one` 200 semantic at most 1,600 MB | 1,711.8 MB | Not met. Most of this probe's cost is still model declaration. |
+| Query semantic slope at most 7.7 MB/model | 18.6 MB/model | Not met. The generic builder remains the largest per-model body. |
+| Association semantic slope at most 9.3 MB/model | 21.8 MB/model | Not met. Association declarations still add typed relation and callback code. |
+| One-model lifecycle debug at most 1,300 MB | 1,851.5 MB | Not met. The fixed Grant, stdlib, and benchmark harness cost remains. |
+
+There is no separate PERF03 target for `association_regressions_spec.cr`; its
+6,255.1 MB peak is lower than the 6,887 MB starting measurement and is gated
+at the final value plus 5% headroom.
+
+### Remaining IR cost
+
+The final query IR probe used ten generated scalar-query models. The exact
+command and counts are in the measurement log. It emitted a 105,378,769-byte
+LLVM IR file and contained 1,330 `Builder(Model)` function definitions across
+the ten models (about 133 per model, with 195,730 function-body lines). The
+list executor still emitted 80 model-specific functions (8 per model, 15,660
+body lines total). The cursor loop itself appeared once as
+`SharedListRunner#run` (2,377 body lines). The association restriction resolver
+and its helpers appeared as five functions and 1,081 body lines total.
+
+This confirms why the slope targets remain unmet: the shared runner removed the
+per-model database cursor loop, but each model still owns a typed `Builder`
+stack and typed result-cache/hydration entrypoints. Moving more builder state,
+SQL planning, or callback methods requires preserving each model's concrete
+relation return type, association scope behavior, and callback registration.
+The setter experiment's final IR opportunity was not retained because its
+compile peaks did not improve consistently and the association regression
+measurement increased.
+
+`_autosave_*` and `_validate_associated_*` methods remain generated per
+association. They participate in per-association validation and save callbacks;
+no shared replacement was measured and verified in PERF03. Optional feature
+requires also remain unchanged: prior reachability ablations either broke
+`require "grant"` transitive behavior or saved too little to justify changing
+the entrypoint surface.
+
+### PERF03 runtime guardrail
+
+Three release runs averaged 2,000 SQLite lifecycle iterations and five
+leak-check rounds. The baseline was captured at `7881cdf` after the typed
+PostgreSQL boolean prerequisite; this changed no SQLite query path. Every mean
+and allocation ratio stayed within the required 1.05x baseline.
+
+| Operation | Baseline mean µs | Final mean µs | Mean ratio | Baseline bytes/op | Final bytes/op | Bytes ratio |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| build (no database) | 0.540 | 0.553 | 1.024 | 1,167.8 | 1,164.9 | 0.997 |
+| create | 40.755 | 37.760 | 0.927 | 8,942.8 | 8,941.7 | 1.000 |
+| find by id | 3.967 | 4.126 | 1.040 | 1,629.5 | 1,645.3 | 1.010 |
+| page of 100 by index | 32.933 | 31.421 | 0.954 | 27,177.3 | 27,115.3 | 0.998 |
+| load all 2000 rows | 1,078.564 | 975.693 | 0.905 | 1,288,479.1 | 1,288,648.0 | 1.000 |
+| count | 64.775 | 65.382 | 1.009 | 3,304.1 | 3,343.6 | 1.012 |
+| load and update | 30.155 | 28.994 | 0.961 | 10,652.9 | 10,666.2 | 1.001 |
+| load and destroy | 34.175 | 28.772 | 0.842 | 3,008.8 | 3,027.8 | 1.006 |
+
+The shared budgets and checker are described in
+[`docs/PERFORMANCE_BUDGETS.md`](PERFORMANCE_BUDGETS.md).
+
+
+## PERF03 round 2: shared query planning and association callbacks
+
+Round two started at `6184649` with 18.5 MB/model query slope, 21.9 MB/model
+association slope, and 121 `Query::Builder(Model)` definitions totaling
+18,896 IR body lines per model. The retained work moved relation state,
+copy/merge operations, predicate planning, scope collection, eager-load
+planning, and association callback work into shared non-generic helpers.
+`Builder(Model)` remains the typed facade and preserves its existing concrete
+return types, scopes, association scopes, and `Enumerable(Model)` behavior.
+Typed hydration and terminal paths still depend on `Model`.
+
+### Incremental Builder measurements
+
+Each query step used the same 10-to-200 semantic slope probes and the generated
+ten-model query LLVM IR fixture. The `IR` column is function definitions and
+body lines per model. A small increase in one slope is measurement variance;
+the per-step records and final calibration samples are in the JSONL log.
+
+| Query step | Query slope MB/model | Association slope MB/model | Builder IR definitions/body lines per model |
+| --- | ---: | ---: | ---: |
+| Round-two start | 18.50 | 21.90 | 121 / 18,896 |
+| Relation state and unscope | 18.50 → 16.98 | 21.90 → 20.39 | 121 / 18,896 → 135 / 5,715 |
+| Oversized-IN index | 16.98 → 16.88 | 20.39 → 19.70 | 135 / 5,715 → 135 / 5,443 |
+| Nil-aware key-list predicate | 16.88 → 16.80 | 19.70 → 19.50 | 135 / 5,443 → 135 / 5,299 |
+| Association condition planner | 16.80 → 16.63 | 19.50 → 19.58 | 135 / 5,299 → 130 / 4,678 |
+| Eager-load join planning | 16.63 → 16.53 | 19.58 → 19.51 | 130 / 4,678 → 130 / 4,444 |
+| Relation component merge | 16.53 → 16.34 | 19.51 → 19.32 | 130 / 4,444 → 129 / 4,030 |
+| Foreign-relation staging | 16.34 → 16.08 | 19.32 → 19.06 | 129 / 4,030 → 114 / 3,690 |
+| Raw WHERE registration merge | 16.08 → 16.05 | 19.06 → 19.03 | 114 / 3,690 → 113 / 3,544 |
+| Scope equality collection | 16.05 → 16.05 | 19.03 → 18.83 | 113 / 3,544 → 111 / 3,307 |
+| Relation order merge | 16.05 → 16.05 | 18.83 → 18.94 | 111 / 3,307 → 109 / 3,238 |
+| Named-scope relation merge | 16.05 → 16.05 | 18.94 → 18.86 | 109 / 3,238 → 109 / 3,238 |
+
+The three-run final calibration reports maxima of 16.1 MB/model query slope and
+18.9 MB/model association slope. Relative to round-two start, Builder IR body
+lines fell 82.9% (18,896 to 3,238); definitions fell from 121 to 109 per model.
+
+### Generated association callbacks
+
+The autosave and associated-validation implementations now share their record
+collection, validation, and error-import logic. The generated typed methods
+remain as small accessors so association reflection and concrete model types
+stay intact. The ten-model association IR probe measured:
+
+| Generated family | Before: definitions / body lines per model | After: definitions / body lines per model |
+| --- | ---: | ---: |
+| `_autosave_*` | 5 / 670 | 5 / 133 |
+| `_validate_associated_*` | 4 / 388 | 4 / 139 |
+
+The definition count is unchanged, but these bodies are 80.1% and 64.2% smaller,
+respectively. The shared implementation preserves the existing association
+callbacks; the required final grouped SQLite suite validates the complete change.
+
+### Round-two compile results and targets
+
+The RSS values below compare the round-two start commit with the maximum of
+three final samples on Darwin with crystal-alpha 1.21.0. The association
+regression spec has no standalone target; its result is shown to track the
+improvement. The exact commands and samples are in the measurement ledger.
+
+| Probe | Round-two start MB | Final max MB | Target | Result |
+| --- | ---: | ---: | ---: | --- |
+| Query slope, 10–200 models | 18.5 | 16.1 | ≤ 7.7 MB/model | Missed |
+| Association slope, 10–200 models | 21.9 | 18.9 | ≤ 9.3 MB/model | Missed |
+| `assoc_one`, 200 models | 1,632.8 | 1,599.0 | ≤ 1,600 MB | Met by 1.0 MB |
+| Lifecycle benchmark debug | 1,836.4 | 1,846.9 | ≤ 1,300 MB | Missed; +10.5 MB vs start |
+| Association regression spec debug | 6,391.8 | 5,179.1 | No separate target | Reduced 19.0% |
+
+The measured final slope remains above target, so this is not a claim that the
+generic cost has reached a hard theoretical floor. The ten-model LLVM IR still
+contains 109 Builder definitions and 3,238 body lines per model. Its largest
+remaining typed bodies are `select` (232 lines), `collapse_or_fields!` (158),
+`chunked_select` and `select_single` (142 each), `expand_where_column_name`
+(138), `each_in_chunk` (135), `add_association_condition` (123),
+`add_eager_load_join` (118), `add_common_table!` (103), and
+`unscope_where_columns!` (93). These paths still construct model-specific
+relations, use model reflection or column types, or return/hydrate concrete
+`Model` values. A further reduction needs to separate those typed boundaries
+without changing relation, scope, or terminal behavior.
+
+### Round-two runtime comparison
+
+Each final value is the average of three SQLite release runs, each with 2,000
+iterations and five rounds. Ratios compare the round-one baseline at
+`7881cdf` with the round-two final mean and allocation average. All three-run aggregate means and bytes/op are within 1.05×. Load-all is the
+narrowest aggregate mean at 1.047×: its three run means were 1,216.250,
+1,101.528, and 1,069.372 µs, so the highest sample was 1.128× the round-one
+baseline. CI uses a loose time multiplier and a tight allocation limit as
+documented in
+[`PERFORMANCE_BUDGETS.md`](PERFORMANCE_BUDGETS.md).
+
+| Operation | Round-one mean µs | Round-two mean µs | Mean ratio | Round-one bytes/op | Round-two bytes/op | Bytes ratio |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| build (no database) | 0.540 | 0.514 | 0.952 | 1,167.8 | 1,168.4 | 1.000 |
+| create | 40.755 | 40.305 | 0.989 | 8,942.8 | 8,941.2 | 1.000 |
+| find by id | 3.967 | 4.040 | 1.018 | 1,629.5 | 1,646.0 | 1.010 |
+| page of 100 by index | 32.933 | 30.796 | 0.935 | 27,177.3 | 27,202.4 | 1.001 |
+| load all 2,000 rows | 1,078.564 | 1,129.050 | 1.047 | 1,288,479.1 | 1,289,128.9 | 1.001 |
+| count | 64.775 | 65.450 | 1.010 | 3,304.1 | 3,338.5 | 1.010 |
+| load and update | 30.155 | 29.021 | 0.962 | 10,652.9 | 10,669.4 | 1.002 |
+| load and destroy | 34.175 | 34.737 | 1.016 | 3,008.8 | 3,025.1 | 1.005 |
+
+The measured, per-platform budgets and CI calibration behavior are described
+in [`PERFORMANCE_BUDGETS.md`](PERFORMANCE_BUDGETS.md). Linux was calibrated and
+switched to enforcement in PERF03 round four below.
+
+### PERF03 round three: review fixes and final measurements
+
+The review fixes preserve the typed relation return types and query behavior.
+The same-table eager-load regression now reads the live join list after a
+copy-on-write update. Other fixes remove accidental public setters, restore
+internal API documentation, consolidate WHERE key normalization, narrow chunk
+fields once, make relation-note join removal return data for the Builder to
+apply, and repair the reverse-order sharded and aggregate finder paths. The
+transaction adapter hook and the unsupported nature of former Builder state
+ivars are documented in the Unreleased changelog.
+
+| Step | Evidence |
+| --- | --- |
+| M1 live eager-load joins | The regression fixture produced two `users` joins before the fix and one after; the focused SQLite group passes with the expected row. |
+| M2 public and internal surface | Removed the three accidental public setters; marked `RelationState` and shared helper types `:nodoc:`; restored Sort and generated macro docs. |
+| M3–M5 relation state and chunk paths | Removed duplicate WHERE normalization, typed chunk values once, renamed state mutators, and kept `distinct` with the state implementation. |
+| M6 eager-join removal | `RelationNotes` now returns clauses and replacement state; Builder resets load state before applying the returned changes. |
+| M7–M8 compatibility | `transaction_adapter` is the documented customization hook for save transactions; changelog calls out former Builder ivars as unsupported extension state. |
+| M9 finder paths | Sharded reverse ordering and aggregate `last` now use existing public finder behavior; specs cover both paths. |
+
+Final compile values are the maximum of three measurements on Darwin with
+crystal-alpha 1.21.0, SQLite, an empty compiler cache, and one Crystal worker.
+The comparison column is the round-two final value; all samples and exact
+commands are in the measurement ledger.
+
+| Probe | Round-two final | Round-three final max | Target | Result |
+| --- | ---: | ---: | ---: | --- |
+| Query slope, 10–200 models | 16.1 | 16.1 MB/model | ≤ 7.7 MB/model | Missed by 8.4 MB/model |
+| Association slope, 10–200 models | 18.9 | 19.0 MB/model | ≤ 9.3 MB/model | Missed by 9.7 MB/model |
+| `assoc_one`, 200 models | 1,599.0 | 1,598.9 MB | ≤ 1,600 MB | Met by 1.1 MB |
+| Lifecycle benchmark debug | 1,846.9 | 1,848.7 MB | ≤ 1,300 MB | Missed by 548.7 MB |
+| Association regression spec debug | 5,179.1 | 4,985.3 MB | No separate target | Reduced 193.8 MB |
+
+The direct `Builder(Model)` count from the same single-module LLVM report path
+is 108 definitions and 3,420 function-body lines per model, versus 109 and
+3,238 at round two. The line total rose by 182 while one definition was
+removed during the review-fix sequence. The current 237-line
+`drop_eager_load_joins!` applies the eager-join changes returned by the shared
+relation notes after load-state reset. The largest remaining typed bodies are
+`drop_eager_load_joins!` (237 lines), `select` (229), `collapse_or_fields!`
+(159), `chunked_select` and `select_single` (143 each),
+`expand_where_column_name` (139), `each_in_chunk` (136),
+`add_association_condition` (124), and `add_eager_load_join` (119). The
+measurement command uses `crystal-alpha build -s --no-color --emit llvm-ir`
+through `crystal-slot`, then `scripts/ir_report.py` counts direct Builder
+owners in the emitted `.ll` file. The IR still contains model-specific
+selection, eager-load, and association work, so it is evidence that query
+specialization remains; it is not a conversion from lines to RSS.
+
+The `assoc_one` target is now met. Both slope targets and the one-model debug
+target remain above their requested limits; the retained IR shows that typed
+selection and association paths still scale with each model. The association
+regression debug compile fell from 5,179.1 to 4,985.3 MB, but has no separate
+target. The measured slopes of 16.1 and 19.0 MB/model are the current observed
+floor for these probes, not a theoretical minimum.
+
+### PERF03 round-three runtime comparison
+
+Each final runtime value is the average of three SQLite release runs, each
+with 2,000 iterations and five rounds. Ratios compare the round-one baseline
+at `7881cdf`; the command and all three runs are in the measurement ledger.
+Every aggregate mean and bytes/op value remains within 1.05× of that baseline.
+
+| Operation | Round-one mean µs | Round-three mean µs | Mean ratio | Round-one bytes/op | Round-three bytes/op | Bytes ratio |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| build (no database) | 0.540 | 0.502 | 0.929 | 1,167.8 | 1,169.0 | 1.001 |
+| create | 40.755 | 35.937 | 0.882 | 8,942.8 | 8,941.5 | 1.000 |
+| find by id | 3.967 | 3.833 | 0.966 | 1,629.5 | 1,645.7 | 1.010 |
+| page of 100 by index | 32.933 | 29.669 | 0.901 | 27,177.3 | 27,180.1 | 1.000 |
+| load all 2,000 rows | 1,078.564 | 1,076.939 | 0.998 | 1,288,479.1 | 1,289,221.3 | 1.001 |
+| count | 64.775 | 64.109 | 0.990 | 3,304.1 | 3,359.6 | 1.017 |
+| load and update | 30.155 | 28.463 | 0.944 | 10,652.9 | 10,671.5 | 1.002 |
+| load and destroy | 34.175 | 33.707 | 0.986 | 3,008.8 | 3,023.0 | 1.005 |
+
+All rows also pass the Darwin runtime checker using the measured local limits.
+CI keeps the broader mean-time allowance and tight bytes/op gate described in
+[`PERFORMANCE_BUDGETS.md`](PERFORMANCE_BUDGETS.md).
+
+### PERF03 round four: Linux budget calibration
+
+The Linux budget uses stock Crystal 1.21.0 on GitHub Actions `ubuntu-latest`,
+SQLite, an empty compile cache, and `CRYSTAL_WORKERS=1`. Two attempts of
+workflow run 37175528324 produced two compile samples per probe and six runtime
+samples per operation. The compile `measured` column is the average of both
+samples; limits are 5% above the largest semantic sample and 10% above the
+largest debug sample. The complete samples and commands are in the measurement
+ledger.
+
+| Linux compile probe | Samples (MB) | Measured (MB) | Limit (MB) |
+| --- | ---: | ---: | ---: |
+| Query slope, N=10..200 | 16.6, 16.6 | 16.6 | 17.4 |
+| Association slope, N=10..200 | 19.0, 18.9 | 18.9 | 19.9 |
+| 200 associated models, one query | 1,553.6, 1,553.3 | 1,553.4 | 1,631.3 |
+| Lifecycle benchmark, debug | 1,740.9, 1,741.3 | 1,741.1 | 1,915.4 |
+| Association regression spec, debug | 5,091.1, 5,096.5 | 5,093.8 | 5,606.2 |
+
+Linux now enforces these measured limits in CI. The compile probes fit the
+16 GB runner and none are skipped or scaled. The runtime block averages all six
+SQLite release samples and gives CI timing 1.5x the largest observed mean and
+bytes/op 5% over the largest observed allocation. Future platform/toolchain
+keys with a `calibration-required` placeholder still use the explicit
+calibration workflow branch and upload their raw measurements; a missing key
+fails closed.

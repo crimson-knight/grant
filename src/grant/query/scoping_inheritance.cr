@@ -45,6 +45,36 @@ class Grant::Query::ForeignRelation
   end
 end
 
+# :nodoc:
+class Grant::Query::RelationState
+  def self.from_foreign_relation(db_type : Grant::Query::DbType, other : Grant::Query::ForeignRelation) : Grant::Query::RelationState
+    state = new(db_type)
+    state.own_where_fields.concat(other.where_fields)
+    state.own_order_fields.concat(other.order_fields)
+    state.own_group_fields.concat(other.group_fields)
+    state.own_join_clauses.concat(other.join_clauses)
+    state.own_having_clauses.concat(other.having_clauses)
+    state.own_includes_associations.concat(other.includes_associations)
+    state.own_preload_associations.concat(other.preload_associations)
+    state.own_eager_load_associations.concat(other.eager_load_associations)
+    state.own_index_hints.concat(other.index_hints)
+    state.select_columns = other.select_columns
+    state.limit = other.limit
+    state.offset = other.offset
+    state.distinct = other.distinct?
+    state.is_none = other.none?
+    state.readonly = true if other.readonly?
+    state.strict_loading = other.strict_loading?
+    state.optimizer_hints = other.optimizer_hints.dup
+    if mode = other.lock_mode
+      state.lock_mode = mode
+    elsif clause = other.lock_clause
+      state.lock_clause = clause
+    end
+    state
+  end
+end
+
 abstract class Grant::Scoping::ScopeEntry
   # The entry's relation as clauses a relation over another model of the same
   # table can merge, or nil when the entry hides the scope instead.
@@ -149,30 +179,9 @@ class Grant::Query::Builder(Model)
   # own.
   # :nodoc:
   def merge_foreign_relation!(other : Grant::Query::ForeignRelation) : self
-    staged = Grant::Query::Builder(Model).new(@db_type)
-    staged.own_where_fields.concat(other.where_fields)
-    staged.own_order_fields.concat(other.order_fields)
-    staged.own_group_fields.concat(other.group_fields)
-    staged.own_join_clauses.concat(other.join_clauses)
-    staged.own_having_clauses.concat(other.having_clauses)
-    staged.own_includes_associations.concat(other.includes_associations)
-    staged.own_preload_associations.concat(other.preload_associations)
-    staged.own_eager_load_associations.concat(other.eager_load_associations)
-    staged.own_index_hints.concat(other.index_hints)
-    staged.select_columns = other.select_columns
-    staged.limit!(other.limit) if other.limit
-    staged.offset!(other.offset) if other.offset
-    staged.distinct! if other.distinct?
-    staged.none! if other.none?
-    staged.readonly! if other.readonly?
-    staged.strict_loading! if other.strict_loading?
-    staged.add_optimizer_hints(other.optimizer_hints)
+    staged = Grant::Query::Builder(Model).new(@relation_state.db_type)
+    staged.relation_state = Grant::Query::RelationState.from_foreign_relation(@relation_state.db_type, other)
     staged.adopt_create_with_defaults(other.create_with_defaults)
-    if mode = other.lock_mode
-      staged.lock!(mode)
-    elsif clause = other.lock_clause
-      staged.lock!(clause)
-    end
     merge!(staged)
   end
 end

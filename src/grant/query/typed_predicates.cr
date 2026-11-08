@@ -155,7 +155,7 @@ class Grant::Query::Builder(Model)
 
   private def add_json_containment_text(join : Symbol, field : String, json : String) : Nil
     column = structured_field_sql(field)
-    case @db_type
+    case @relation_state.db_type
     in .pg?
       own_where_fields << {join: join, stmt: "#{column} @> ?::jsonb", values: [json.as(Grant::Columns::Type)]}
     in .sqlite?
@@ -197,7 +197,7 @@ class Grant::Query::Builder(Model)
     segments = path.is_a?(String) ? path.split('.') : path
     raise ArgumentError.new("json_path needs at least one path segment") if segments.empty? || segments.any?(&.empty?)
 
-    case @db_type
+    case @relation_state.db_type
     in .pg?
       predicate, binds = pg_json_path_predicate(column, segments, value)
     in .sqlite?
@@ -214,7 +214,7 @@ class Grant::Query::Builder(Model)
   # `json_type(settings, '$."theme"')` on SQLite).
   def json_has_key!(field : Symbol | String, key : String) : self
     column = structured_field_sql(field.to_s)
-    case @db_type
+    case @relation_state.db_type
     in .pg?
       own_where_fields << {join: :and, stmt: "#{column} ?? ?", values: [key.as(Grant::Columns::Type)]}
     in .sqlite?
@@ -270,8 +270,8 @@ class Grant::Query::Builder(Model)
   end
 
   private def require_array_support(what : String) : Nil
-    return if @db_type.pg?
-    raise Grant::Schema::UnsupportedOperation.new("#{what} need PostgreSQL array columns; #{@db_type.to_s.upcase} has no array type")
+    return if @relation_state.db_type.pg?
+    raise Grant::Schema::UnsupportedOperation.new("#{what} need PostgreSQL array columns; #{@relation_state.db_type.to_s.upcase} has no array type")
   end
 
   private def pg_json_path_predicate(column : String, segments : Array(String), value) : Tuple(String, Array(Grant::Columns::Type))

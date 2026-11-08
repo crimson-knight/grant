@@ -64,7 +64,7 @@ class Grant::Query::Builder(Model)
     return empty_aggregate_count if is_none?
 
     if should_chunk_in?
-      if distinct || group_fields.any? || @limit || @offset
+      if distinct || group_fields.any? || @relation_state.limit || @relation_state.offset
         raise ArgumentError.new("count(column) with a chunked IN list cannot preserve distinct, group, limit or offset")
       end
       total = 0_i64
@@ -232,7 +232,7 @@ class Grant::Query::Builder(Model)
   end
 
   private def better_extremum?(function : String, candidate : Grant::Columns::Type, current : Grant::Columns::Type) : Bool
-    ordering = compare_values(candidate, current)
+    ordering = Grant::Query::ValueComparison.compare(candidate, current)
     function == "MIN" ? ordering < 0 : ordering > 0
   end
 
@@ -342,7 +342,7 @@ class Grant::Query::Builder(Model)
   # ---- IN-list chunking -----------------------------------------------------
 
   private def chunked_decimal_total(column : String) : BigDecimal
-    if group_fields.any? || @limit || @offset || distinct?
+    if group_fields.any? || @relation_state.limit || @relation_state.offset || distinct?
       raise ArgumentError.new("sum with a chunked IN list cannot preserve group, limit, offset or distinct")
     end
     total = BigDecimal.new(0)
@@ -359,7 +359,7 @@ class Grant::Query::Builder(Model)
   end
 
   private def chunked_average(column : String) : Float64?
-    if group_fields.any? || @limit || @offset || distinct?
+    if group_fields.any? || @relation_state.limit || @relation_state.offset || distinct?
       raise ArgumentError.new("avg with a chunked IN list cannot preserve group, limit, offset or distinct")
     end
     total = BigDecimal.new(0)

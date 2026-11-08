@@ -62,6 +62,10 @@ describe "Sharded query routing over two real SQLite shard files" do
     S02RoutedThing.order(id: :asc).limit(5).offset(8).select.map(&.id).should eq [9_i64, 10_i64]
   end
 
+  it "returns the last matching row through the sharded reverse-order path" do
+    S02RoutedThing.order(id: :asc).last.try(&.id).should eq(10_i64)
+  end
+
   it "sends limit plus offset and no OFFSET to each shard" do
     statements = StatementRecorder.statements do
       S02RoutedThing.order(id: :asc).limit(3).offset(2).select

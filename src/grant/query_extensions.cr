@@ -15,7 +15,7 @@ class Grant::Query::Builder(Model)
 
     Model.guard_writes!
 
-    if should_chunk_in? && (@limit || @offset)
+    if should_chunk_in? && (@relation_state.limit || @relation_state.offset)
       raise ArgumentError.new("Bulk writes with a chunked IN list cannot preserve limit or offset")
     end
 
@@ -81,7 +81,7 @@ class Grant::Query::Builder(Model)
 
     Model.guard_writes!
 
-    if should_chunk_in? && (@limit || @offset)
+    if should_chunk_in? && (@relation_state.limit || @relation_state.offset)
       raise ArgumentError.new("Bulk writes with a chunked IN list cannot preserve limit or offset")
     end
 

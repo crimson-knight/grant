@@ -480,6 +480,12 @@ module Grant::Transaction
     end
   end
 
+  # :nodoc:
+  def self.run_without_result(adapter : Grant::Adapter::Base, options : Options, &work : ->) : Nil
+    run(adapter, options) { work.call }
+    nil
+  end
+
   private def self.run_nested(state : TransactionState, adapter : Grant::Adapter::Base, options : Options, & : -> T) : T? forall T
     if options.independent
       if Grant::SchemaTenant.current_connection?(adapter) || adapter.pinned_connection?
@@ -935,10 +941,12 @@ module Grant::Transaction
       Grant::Transaction.run(transaction_adapter, options) { yield }
     end
 
-    # The adapter a transaction on this model opens on. Always the writer: the
-    # read/write splitter keeps every statement in an open transaction on it
-    # (see `should_use_reader?`). `Grant::Sharding::Model` overrides it to use
-    # the active shard's connection.
+    # The adapter-selection hook used by transaction-aware model operations.
+    # Always returns the writer so every statement in an open transaction uses
+    # that connection. `Grant::Sharding::Model` overrides it for the active
+    # shard. Save operations use this hook with the shared transaction runner;
+    # overriding `transaction(options, &block)` does not intercept their
+    # internal transaction.
     #
     # :nodoc:
     def transaction_adapter : Grant::Adapter::Base

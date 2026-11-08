@@ -185,7 +185,7 @@ module Grant
     private def self.table_exists?(adapter : Grant::Adapter::Base, dialect : Grant::Schema::Dialect) : Bool
       adapter.open do |db|
         case dialect
-        in .pg?     then db.scalar("SELECT to_regclass($1) IS NOT NULL", TABLE).as(Bool)
+        in .pg?     then db.query_one("SELECT to_regclass($1) IS NOT NULL", TABLE, as: Bool)
         in .mysql?  then db.scalar("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ?", TABLE).as(Int).to_i64 > 0
         in .sqlite? then db.scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?", TABLE).as(Int).to_i64 > 0
         end

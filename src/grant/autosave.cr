@@ -120,11 +120,7 @@ module Grant::Autosave
   #
   # :nodoc:
   def _autosave_import_errors(association : String, record : Grant::Base, index : Int32?) : Nil
-    prefix = index ? "#{association}[#{index}]" : association
-    record.errors.each do |error|
-      options = error.options? ? error.options.dup : nil
-      errors << Grant::Error.new("#{prefix}.#{error.field}", error.message, error.type, options: options, base: self)
-    end
+    Grant::Autosave::AssociationOperations.import_errors(self, association, record, index)
   end
 end
 
@@ -194,25 +190,16 @@ module Grant::AssociationOptions
         # the ones built or appended on it.
         private def _autosave_records_{{association_name.id}} : Array({{target_class.id}})
           records = [] of {{target_class.id}}
-          # Identity set, so a large loaded target is deduplicated in linear time.
-          seen = Set(UInt64).new
-          if association_loaded?({{name}}) && (loaded = get_loaded_association({{name}}).as?(Array(Grant::Base)))
-            loaded.each do |candidate|
-              record = candidate.as?({{target_class.id}})
-              records << record if record && seen.add?(record.object_id)
-            end
-          end
-          _autosave_staged({{name}}).each do |candidate|
+          consume = ->(candidate : Grant::Base) do
             record = candidate.as?({{target_class.id}})
-            records << record if record && seen.add?(record.object_id)
+            records << record if record
           end
+          Grant::Autosave::AssociationOperations.each_unique_record(self, {{name}}, consume)
           records
         end
       {% else %}
         private def _autosave_record_{{association_name.id}} : {{target_class.id}}?
-          if association_loaded?({{name}})
-            get_loaded_association({{name}}).as?({{target_class.id}})
-          end
+          Grant::Autosave::AssociationOperations.loaded_record(self, {{name}}).try(&.as?({{target_class.id}}))
         end
       {% end %}
 
@@ -220,40 +207,11 @@ module Grant::AssociationOptions
         return unless _autosave_validating_{{association_name.id}}?
         autosaving = _autosave_on_{{association_name.id}}?
         {% if association_type == :has_many %}
-          candidates = _autosave_records_{{association_name.id}}.select do |record|
-            if new_record?
-              true
-            elsif autosaving
-              record.changed_for_autosave?
-            else
-              record.new_record?
-            end
-          end
-          candidates.each_with_index do |record, position|
-            next if record.destroyed? || (autosaving && record.marked_for_destruction?)
-            record._grant_skip_nested_owner_foreign_key_validation({{foreign_key}}) if new_record?
-            next if record.valid?
-            if autosaving
-              _autosave_import_errors({{name}}, record, _autosave_indexed_{{association_name.id}}? ? position : nil)
-            else
-              errors.add({{name}}, "is invalid", :invalid)
-            end
-          end
+          records = _autosave_records_{{association_name.id}}.map { |record| record.as(Grant::Base) }
+          Grant::Autosave::AssociationOperations.validate_many(self, {{name}}, {{foreign_key}}, records, autosaving, _autosave_indexed_{{association_name.id}}?)
         {% else %}
-          if record = _autosave_record_{{association_name.id}}
-            if record.changed_for_autosave? && !record.destroyed? && !(autosaving && record.marked_for_destruction?)
-              {% if association_type == :has_one %}
-                record._grant_skip_nested_owner_foreign_key_validation({{foreign_key}}) if new_record?
-              {% end %}
-              unless record.valid?
-                if autosaving
-                  _autosave_import_errors({{name}}, record, nil)
-                else
-                  errors.add({{name}}, "is invalid", :invalid)
-                end
-              end
-            end
-          end
+          record = _autosave_record_{{association_name.id}}
+          Grant::Autosave::AssociationOperations.validate_one(self, {{name}}, {{association_type}}, {{foreign_key}}, record.try(&.as(Grant::Base)), autosaving)
         {% end %}
       end
 

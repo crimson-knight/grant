@@ -224,7 +224,7 @@ class Grant::Query::Builder(Model)
   # requested through two paths (`joins(:posts).joins(posts: :comments)`) is
   # joined once.
   protected def add_join_clause(clause : Grant::Query::JoinSupport::Clause) : Nil
-    return if @join_clauses.includes?(clause)
+    return if @relation_state.join_clauses.includes?(clause)
     own_join_clauses << clause
   end
 
@@ -273,7 +273,7 @@ class Grant::Query::Builder(Model)
   # Joins only nested associations (`joins(posts: :comments)`); see the
   # positional form for mixing plain names with nested ones.
   def joins!(**nested) : self
-    add_join_clauses(Grant::Query::JoinSupport.resolve_nested(Model, nested, :inner, @join_clauses))
+    add_join_clauses(Grant::Query::JoinSupport.resolve_nested(Model, nested, :inner, @relation_state.join_clauses))
     self
   end
 
@@ -285,7 +285,7 @@ class Grant::Query::Builder(Model)
   # User.joins(:manager, as: "managers").where("managers.name": "Ada")
   # ```
   def joins!(association : Symbol, *, as as_name : String) : self
-    add_join_clauses(Grant::Query::JoinSupport.resolve(Model, association, :inner, as_name, @join_clauses))
+    add_join_clauses(Grant::Query::JoinSupport.resolve(Model, association, :inner, as_name, @relation_state.join_clauses))
     self
   end
 
@@ -324,12 +324,12 @@ class Grant::Query::Builder(Model)
   end
 
   def left_joins!(**nested) : self
-    add_join_clauses(Grant::Query::JoinSupport.resolve_nested(Model, nested, :left, @join_clauses))
+    add_join_clauses(Grant::Query::JoinSupport.resolve_nested(Model, nested, :left, @relation_state.join_clauses))
     self
   end
 
   def left_joins!(association : Symbol, *, as as_name : String) : self
-    add_join_clauses(Grant::Query::JoinSupport.resolve(Model, association, :left, as_name, @join_clauses))
+    add_join_clauses(Grant::Query::JoinSupport.resolve(Model, association, :left, as_name, @relation_state.join_clauses))
     self
   end
 

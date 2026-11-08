@@ -26,6 +26,10 @@ describe "typed aggregations" do
     AtLedger.create!(kind: "b", cents: 30_i64, ratio: 2.0, note: nil)
   end
 
+  it "delegates assembler last to the relation's typed finder" do
+    AtLedger.where(kind: "a").order(:id).assembler.last.try(&.cents).should eq(10_i64)
+  end
+
   describe "count" do
     it "counts rows with a value for a column" do
       AtLedger.count.should eq(3_i64)

@@ -275,7 +275,7 @@ class Grant::Query::Builder(Model)
     tuples.each { |tuple| tuple.each { |value| values << value } }
     operator = negated ? "NOT IN" : "IN"
     # SQLite accepts a row value on the left of IN only against a subquery.
-    list = @db_type.sqlite? ? "VALUES #{rows}" : rows
+    list = @relation_state.db_type.sqlite? ? "VALUES #{rows}" : rows
     "(#{columns_sql.join(", ")}) #{operator} (#{list})"
   end
 

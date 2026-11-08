@@ -42,7 +42,7 @@ module Grant::Schema
       return true if @table_present
       found = @adapter.open do |db|
         case @dialect
-        in .pg?     then db.scalar("SELECT to_regclass($1) IS NOT NULL", table_name).as(Bool)
+        in .pg?     then db.query_one("SELECT to_regclass($1) IS NOT NULL", table_name, as: Bool)
         in .mysql?  then db.scalar("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ?", table_name).as(Int).to_i64 > 0
         in .sqlite? then db.scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?", table_name).as(Int).to_i64 > 0
         end

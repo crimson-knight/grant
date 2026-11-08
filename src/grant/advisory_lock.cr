@@ -93,7 +93,7 @@ module Grant
     # One attempt to take *key*; `Adapter::Base#try_advisory_lock` calls this.
     def self.try_acquire(adapter : Grant::Adapter::Base, connection : DB::Connection, key : String) : Bool
       if adapter.postgres?
-        connection.scalar("SELECT pg_try_advisory_lock($1)", key_to_int64(key)).as(Bool)
+        connection.query_one("SELECT pg_try_advisory_lock($1)", key_to_int64(key), as: Bool)
       elsif adapter.mysql?
         connection.scalar("SELECT GET_LOCK(?, 0)", mysql_name(key)).as?(Int).try(&.== 1) || false
       elsif adapter.sqlite?

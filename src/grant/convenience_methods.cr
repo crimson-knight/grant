@@ -83,7 +83,7 @@ module Grant::ConvenienceMethods(Model)
   # Executes a single pluck query from already-stringified field names. Builds a
   # fresh assembler each call so per-chunk parameters do not accumulate.
   protected def pluck_single(field_names : Array(String)) : Array(Array(Grant::Columns::Type))
-    assembler = case @db_type
+    assembler = case db_type
                 when Grant::Query::Builder::DbType::Pg
                   Grant::Query::Assembler::Pg(Model).new(self)
                 when Grant::Query::Builder::DbType::Mysql
@@ -91,7 +91,7 @@ module Grant::ConvenienceMethods(Model)
                 when Grant::Query::Builder::DbType::Sqlite
                   Grant::Query::Assembler::Sqlite(Model).new(self)
                 else
-                  raise "Unknown database type: #{@db_type}"
+                  raise "Unknown database type: #{db_type}"
                 end
 
     sql = assembler.pluck_sql(field_names)

@@ -582,7 +582,7 @@ module Grant::Transactions
     # Which operation a failed save's after_rollback belongs to, for `on:`.
     save_rollback_action = (@{{primary_key.name.id}} && !new_record?) ? Grant::CommitCallbacks::ACTION_UPDATE : Grant::CommitCallbacks::ACTION_CREATE
 
-    self.class.transaction(save_transaction) do
+    Grant::Transaction.run_without_result(self.class.transaction_adapter, save_transaction) do
       enlist_transaction_record
 
       begin
@@ -642,6 +642,7 @@ module Grant::Transactions
         )
         raise Grant::Transaction::Rollback.new
       end
+      nil
     end
 
     if save_failed
