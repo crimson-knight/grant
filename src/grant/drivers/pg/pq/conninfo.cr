@@ -1,6 +1,7 @@
 require "uri"
 require "http"
 require "system/user"
+require "socket"
 
 module Grant::PQ
   struct ConnInfo
@@ -23,7 +24,9 @@ module Grant::PQ
     # The password. Optional.
     getter password : String?
 
-    # The sslmode. Optional (:prefer is default).
+    # The sslmode. Optional. The default is :disable for a database on this
+    # machine (a Unix socket, localhost, or a loopback address) and :prefer for
+    # any other host; an explicit sslmode always wins.
     getter sslmode : Symbol
 
     # The sslcert. Optional.
@@ -80,7 +83,7 @@ module Grant::PQ
       params = URI::Params.parse(uri.query.to_s)
       hostname = uri.hostname.presence || params.fetch("host", "")
       port = uri.port || params["port"]?
-      initialize(hostname, uri.path, uri.user, uri.password, port, :prefer, params.fetch("application_name", nil), params["replication"]?)
+      initialize(hostname, uri.path, uri.user, uri.password, port, nil, params.fetch("application_name", nil), params["replication"]?)
       if q = uri.query
         HTTP::Params.parse(q) do |key, value|
           handle_sslparam(key, value)
@@ -157,7 +160,9 @@ module Grant::PQ
 
     private def default_sslmode(mode)
       case mode
-      when nil, :prefer, "prefer"
+      when nil
+        database_is_on_this_machine? ? :disable : :prefer
+      when :prefer, "prefer"
         :prefer
       when :disable, "disable"
         :disable
@@ -172,6 +177,16 @@ module Grant::PQ
       else
         raise ArgumentError.new("sslmode #{mode} not supported")
       end
+    end
+
+    # Encryption adds a TLS handshake and per-record work without protecting
+    # anything when the bytes never leave the machine.
+    private def database_is_on_this_machine? : Bool
+      return true if Path.new(@host).absolute?
+      return true if @host.compare("localhost", case_insensitive: true) == 0
+      return false unless Socket::IPAddress.valid?(@host)
+
+      Socket::IPAddress.new(@host, @port).loopback?
     end
 
     private def current_user_name
