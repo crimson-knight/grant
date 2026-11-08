@@ -1,3 +1,5 @@
+require "spec"
+
 {% skip_file unless (env("CURRENT_ADAPTER") || "sqlite") == "sqlite" %}
 
 require "./spec_helper"
