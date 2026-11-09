@@ -84,6 +84,12 @@ module Grant::PQ
         context.private_key = sslkey
       end
       if sslrootcert = @conninfo.sslrootcert
+        {% if flag?(:win32) %}
+          if sslmode_verifies_certificate?
+            raise ConnectionError.new(
+              "sslmode=#{@conninfo.sslmode}: exclusive sslrootcert trust is unavailable on Windows")
+          end
+        {% end %}
         context.ca_certificates = sslrootcert
       elsif sslmode_verifies_certificate?
         context.set_default_verify_paths

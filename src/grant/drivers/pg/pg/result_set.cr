@@ -207,8 +207,7 @@ class Grant::PG::ResultSet < ::DB::ResultSet
   end
 
   protected def do_close
-    super
-
+    # Keep the pool connection checked out until PostgreSQL's response is drained.
     # Nothing to do if all the rows were consumed
     return if @end
 
@@ -230,6 +229,8 @@ class Grant::PG::ResultSet < ::DB::ResultSet
   rescue DB::ConnectionLost
     # if the connection is lost there is nothing to be
     # done since the result set is no longer needed
+  ensure
+    super
   end
 
   private class Buffer < IO::Sized

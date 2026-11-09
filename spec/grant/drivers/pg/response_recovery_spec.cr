@@ -3,6 +3,8 @@ require "spec"
 {% skip_file unless env("CURRENT_ADAPTER") == "pg" %}
 
 require "../../../../src/grant/drivers/pg/pg"
+require "../../../../src/grant"
+require "../../../../src/adapter/pg"
 
 private PG_DATABASE_URL = ENV["PG_DATABASE_URL"]? || "postgres:///"
 
@@ -18,6 +20,19 @@ end
 private def backend_pid_and_integer(database : DB::Database, integer_value : Int32) : {Int32, Int32}
   database.query_one("SELECT pg_backend_pid(), #{integer_value}") do |result_set|
     {result_set.read(Int32), result_set.read(Int32)}
+  end
+end
+
+private def with_one_pg_adapter(& : Grant::Adapter::Pg ->)
+  separator = PG_DATABASE_URL.includes?("?") ? "&" : "?"
+  pool_options = "initial_pool_size=1&max_pool_size=1&max_idle_pool_size=1"
+  adapter = Grant::Adapter::Pg.new(name: "grant_d8_result_set_close", url: "#{PG_DATABASE_URL}#{separator}#{pool_options}")
+  adapter.verify_idle_after = nil
+
+  begin
+    yield adapter
+  ensure
+    adapter.disconnect!
   end
 end
 
@@ -76,6 +91,43 @@ describe Grant::PQ::Connection, "response recovery (D8)" do
           database.query_one("SELECT execution_count FROM #{table}", as: Int32).should eq 1
         ensure
           database.exec("DROP TABLE IF EXISTS #{table}")
+        end
+      end
+    end
+  end
+
+  context "when a result set closes" do
+    it "drains unread rows before a waiting fiber checks out the only connection" do
+      with_one_pg_adapter do |adapter|
+        result_set = adapter.database.query("SELECT repeat('x', 131072) FROM generate_series(1, 32)")
+        waiter_result = Channel({Int32?, Exception?}).new(1)
+
+        begin
+          result_set.move_next.should be_true
+          result_set.read(String).size.should eq 131_072
+
+          spawn do
+            value = adapter.open do |connection|
+              connection.query_one("SELECT 42", as: Int32)
+            end
+            waiter_result.send({value, nil})
+          rescue ex
+            waiter_result.send({nil, ex})
+          end
+
+          100.times do
+            break if adapter.pool_stat.waiting == 1
+            Fiber.yield
+          end
+          adapter.pool_stat.waiting.should eq 1
+
+          result_set.close
+
+          waiter_value, waiter_error = waiter_result.receive
+          waiter_error.should be_nil
+          waiter_value.should eq 42
+        ensure
+          result_set.close
         end
       end
     end

@@ -2,9 +2,21 @@ require "spec"
 
 {% skip_file unless env("CURRENT_ADAPTER") == "pg" %}
 
+require "socket"
+require "socket/tcp_server"
+require "socket/tcp_socket"
 require "../../../../src/grant/drivers/pg/pg"
 
 private PG_DATABASE_URL = ENV["PG_DATABASE_URL"]? || "postgres:///"
+
+private record LocalWireLengthObservation,
+  startup_declared_length : Int32?,
+  startup_payload : Bytes?,
+  password_message_type : Char?,
+  password_declared_length : Int32?,
+  password_payload : Bytes?,
+  server_error : Exception?,
+  client_error : Exception?
 
 private def plain_pg_server_settings
   port = ENV["GRANT_PG_PLAIN_PORT"]?
@@ -61,7 +73,152 @@ private def with_pg_driver_connection(conn_info : Grant::PQ::ConnInfo, & : Grant
   end
 end
 
+private def send_cleartext_authentication_request(socket : TCPSocket) : Nil
+  socket << 'R'
+  socket.write_bytes(8_i32, IO::ByteFormat::NetworkEndian)
+  socket.write_bytes(3_i32, IO::ByteFormat::NetworkEndian)
+  socket.flush
+end
+
+private def send_authentication_success(socket : TCPSocket) : Nil
+  socket << 'R'
+  socket.write_bytes(8_i32, IO::ByteFormat::NetworkEndian)
+  socket.write_bytes(0_i32, IO::ByteFormat::NetworkEndian)
+  socket << 'Z'
+  socket.write_bytes(5_i32, IO::ByteFormat::NetworkEndian)
+  socket << 'I'
+  socket.flush
+end
+
+private def read_cleartext_password_message(socket : TCPSocket) : {Char?, Int32?, Bytes?}
+  message_type = socket.read_char
+  return {message_type, nil, nil} unless message_type == 'p'
+
+  declared_length = socket.read_bytes(Int32, IO::ByteFormat::NetworkEndian)
+  raise "The password frame length is invalid" if declared_length < 4 || declared_length > 1_000_000
+
+  payload = Bytes.new(declared_length - 4)
+  socket.read_fully(payload)
+  {message_type, declared_length, payload}
+end
+
+private def run_in_process_cleartext_server_probe : LocalWireLengthObservation
+  server = TCPServer.new("127.0.0.1", 0)
+  observations = Channel(LocalWireLengthObservation).new
+
+  spawn do
+    startup_declared_length : Int32? = nil
+    startup_payload : Bytes? = nil
+    password_message_type : Char? = nil
+    password_declared_length : Int32? = nil
+    password_payload : Bytes? = nil
+    server_error : Exception? = nil
+    client : TCPSocket? = nil
+
+    begin
+      client = server.accept
+      if socket = client
+        declared_startup_frame_length = socket.read_bytes(Int32, IO::ByteFormat::NetworkEndian)
+        startup_declared_length = declared_startup_frame_length
+        if declared_startup_frame_length < 8 || declared_startup_frame_length > 1_000_000
+          raise "The startup frame length is invalid"
+        end
+        startup_payload = Bytes.new(declared_startup_frame_length - 4)
+        socket.read_fully(startup_payload)
+
+        send_cleartext_authentication_request(socket)
+        password_message_type, password_declared_length, password_payload = read_cleartext_password_message(socket)
+        send_authentication_success(socket)
+      end
+    rescue ex
+      server_error = ex
+    ensure
+      if socket = client
+        socket.close unless socket.closed?
+      end
+      server.close
+      observations.send(LocalWireLengthObservation.new(
+        startup_declared_length,
+        startup_payload,
+        password_message_type,
+        password_declared_length,
+        password_payload,
+        server_error,
+        nil
+      ))
+    end
+  end
+
+  client_error : Exception? = nil
+  connection : Grant::PQ::Connection? = nil
+  begin
+    conn_info = Grant::PQ::ConnInfo.new(
+      host: "127.0.0.1",
+      port: server.local_address.port,
+      database: "grant_wire_probe",
+      user: "päss",
+      password: "agentc-placeholder:local-dev-only-pässwörd",
+      sslmode: :disable
+    )
+    conn_info.auth_methods << "cleartext"
+    connection = Grant::PQ::Connection.new(conn_info)
+    connection.connect
+  rescue ex
+    client_error = ex
+  ensure
+    if pg_connection = connection
+      begin
+        pg_connection.close
+      rescue IO::Error
+        # The local server may already have closed its socket after a frame error.
+      end
+    end
+  end
+
+  observation = observations.receive
+  server.close unless server.closed?
+  LocalWireLengthObservation.new(
+    observation.startup_declared_length,
+    observation.startup_payload,
+    observation.password_message_type,
+    observation.password_declared_length,
+    observation.password_payload,
+    observation.server_error,
+    client_error
+  )
+end
+
 describe Grant::PQ::Connection, "large bind parameter counts (D19)" do
+  describe "UTF-8 byte lengths on an in-process server" do
+    it "declares and sends non-ASCII startup and cleartext password bytes" do
+      observation = run_in_process_cleartext_server_probe
+
+      observation.server_error.should be_nil
+      observation.client_error.should be_nil
+
+      unless startup_declared_length = observation.startup_declared_length
+        raise "The server did not receive a startup frame"
+      end
+      unless startup_payload = observation.startup_payload
+        raise "The server did not receive the complete startup payload"
+      end
+      startup_declared_length.should eq startup_payload.size + 4
+      startup_message = String.new(startup_payload)
+      startup_message.should contain("päss")
+      startup_message.ends_with?("\0\0").should be_true
+
+      observation.password_message_type.should eq 'p'
+      unless password_declared_length = observation.password_declared_length
+        raise "The server did not receive a complete password frame"
+      end
+      unless password_payload = observation.password_payload
+        raise "The server did not receive a password payload"
+      end
+      password_declared_length.should eq password_payload.size + 4
+      String.new(password_payload).should eq "agentc-placeholder:local-dev-only-pässwörd\0"
+    end
+  end
+
   context "golden behavior" do
     it "returns the right row with 40,000 parameters" do
       with_one_pg_database do |database|
