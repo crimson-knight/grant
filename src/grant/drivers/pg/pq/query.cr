@@ -9,6 +9,7 @@ module Grant::PQ
     end
 
     def initialize(@conn : Connection, @query : String, @params : Array(Param))
+      conn.validate_bind_parameter_count(params.size)
       conn.send_parse_message query
       conn.send_bind_message params
       conn.send_describe_portal_message

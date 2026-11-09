@@ -63,6 +63,7 @@ class Grant::PG::Statement < ::DB::Statement
   # Writes one pipeline ending in Sync and returns how many Close messages
   # went out, which is how many CloseComplete frames arrive first.
   private def send_statement_messages(conn, params, statement_name : String?, must_parse : Bool) : Int32
+    conn.validate_bind_parameter_count(params.size)
     count_of_closes = conn.send_close_messages_for_released_statements
     if statement_name && @must_close_before_parsing
       conn.send_close_statement_message(statement_name)

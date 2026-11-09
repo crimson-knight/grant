@@ -35,6 +35,11 @@ module Grant::PG
       Statement.new(self, query)
     end
 
+    # :nodoc:
+    def closed? : Bool
+      super || @connection.soc.closed?
+    end
+
     # Execute several statements. No results are returned.
     def exec_all(query : String) : Nil
       PQ::SimpleQuery.new(@connection, query)

@@ -4,6 +4,20 @@
 
 Minimum Crystal: 1.19.0
 
+### PostgreSQL driver fixes
+
+- PostgreSQL `verify-ca` and `verify-full` now verify the certificate chain, with
+  `verify-full` also checking the server host name. A configured
+  `sslrootcert` is the trust source; otherwise the system certificate store is
+  used. `require` remains encrypted without certificate verification, and
+  strict TLS modes refuse servers that decline TLS.
+- PostgreSQL response parsing and value decoding failures close the affected
+  connection while server `ErrorResponse` frames continue to drain through
+  `ReadyForQuery`.
+- PostgreSQL bound statements support up to 65,535 parameters and reject larger
+  counts before writing the extended-query messages. Startup and cleartext
+  password message lengths count UTF-8 bytes.
+
 ### Grant owns its Postgres and SQLite drivers
 
 Behavior changes:

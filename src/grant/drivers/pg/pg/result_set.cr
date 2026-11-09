@@ -49,7 +49,7 @@ class Grant::PG::ResultSet < ::DB::ResultSet
     if conn.read_next_row_start
       # We ignore these (redundant information)
       conn.read_i32 # size
-      conn.read_i16 # ncols
+      conn.read_u16 # ncols
       @column_index = 0
       true
     else
@@ -59,8 +59,12 @@ class Grant::PG::ResultSet < ::DB::ResultSet
     end
   rescue e : IO::Error
     raise DB::ConnectionLost.new(statement.connection, cause: e)
+  rescue e : PQ::PQError
+    @end = true
+    raise e
   rescue ex
     @end = true
+    close_connection_after_response_error
     raise ex
   end
 
@@ -92,6 +96,11 @@ class Grant::PG::ResultSet < ::DB::ResultSet
     end
   rescue e : IO::Error
     raise DB::ConnectionLost.new(statement.connection, cause: e)
+  rescue e : PQ::PQError
+    raise e
+  rescue ex
+    close_connection_after_response_error
+    raise ex
   end
 
   def read(t : Array(T).class) : Array(T) forall T
@@ -150,6 +159,17 @@ class Grant::PG::ResultSet < ::DB::ResultSet
     end
   rescue e : IO::Error
     raise DB::ConnectionLost.new(statement.connection, cause: e)
+  rescue e : PQ::PQError
+    raise e
+  rescue ex
+    close_connection_after_response_error
+    raise ex
+  end
+
+  private def close_connection_after_response_error : Nil
+    conn.close
+  rescue IO::Error
+    nil
   end
 
   private def safe_read(col_bytesize, &)
