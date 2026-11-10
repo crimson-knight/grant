@@ -39,9 +39,17 @@ describe Grant::SQLite3::ResultSet do
       reader.exec "begin"
       reader.scalar("select count(*) from numbers").should eq(0)
 
+      result_set = writer.query("insert into numbers (n) values (1), (2), (3) returning n")
+      result_set.move_next.should be_true
+
       expect_raises(Grant::SQLite3::Exception, "database is locked") do
-        insert_three_and_read_first(writer)
+        result_set.close
       end
+
+      # The failed close still released the result set: closing again
+      # raises nothing and leaves it closed.
+      result_set.close
+      result_set.closed?.should be_true
 
       reader.exec "rollback"
     end

@@ -1,15 +1,22 @@
 class Grant::SQLite3::ResultSet < DB::ResultSet
   @column_index = 0
-  @last_step_failed = false
+  @released = false
 
-  # Resets the statement and releases it. sqlite3_reset repeats the error of
-  # a failed step, which `move_next` already raised, so that code is not
-  # raised again. Any other error is new and is raised: resetting a partly
-  # read `INSERT ... RETURNING` commits its write and can fail with
-  # SQLITE_BUSY, and dropping that code would hide a lost write.
+  # Resets the statement and releases it, once. sqlite3_reset repeats the
+  # error of a failed step, which `move_next` already raised, so that code
+  # is not raised again. Any other error is new and is raised: resetting a
+  # partly read `INSERT ... RETURNING` commits its write and can fail with
+  # SQLITE_BUSY, and dropping that code would hide a lost write. The release
+  # happens before the raise, and a second close does nothing.
   protected def do_close
+    return if @released
+    @released = true
+    statement = sqlite3_statement
     reset_code = LibSQLite3.reset(self)
-    reset_error = Exception.new(sqlite3_statement.sqlite3_connection) unless reset_code == 0 || @last_step_failed
+    unless reset_code == 0
+      reset_error = Exception.new(statement.sqlite3_connection) unless statement.last_step_failed?
+      statement.record_step_failure
+    end
     super
     raise reset_error if reset_error
   end
@@ -26,7 +33,7 @@ class Grant::SQLite3::ResultSet < DB::ResultSet
     when LibSQLite3::Code::DONE
       false
     else
-      @last_step_failed = true
+      sqlite3_statement.record_step_failure
       raise Exception.new(sqlite3_statement.sqlite3_connection)
     end
   end

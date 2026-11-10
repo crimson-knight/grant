@@ -54,6 +54,30 @@ describe Grant::SQLite3::Statement do
     end
   end
 
+  it "raises a failed write that SQLite first reports when the statement is finalized" do
+    File.delete(STATEMENT_CLOSE_SPEC_FILENAME) rescue nil
+    connection = DB.connect "sqlite3:#{STATEMENT_CLOSE_SPEC_FILENAME}?foreign_keys=1"
+    begin
+      connection.exec "create table parents (id integer primary key)"
+      connection.exec "create table children (parent_id integer references parents (id) deferrable initially deferred)"
+
+      # The deferred foreign key is checked at commit, which this partly
+      # read statement reaches only when the connection finalizes it.
+      result_set = connection.query "insert into children (parent_id) values (98), (99) returning parent_id"
+      result_set.move_next.should be_true
+
+      expect_raises(Grant::SQLite3::Exception, "FOREIGN KEY constraint failed") do
+        connection.close
+      end
+
+      # The connection finished closing before it raised.
+      connection.close
+      connection.closed?.should be_true
+    ensure
+      File.delete(STATEMENT_CLOSE_SPEC_FILENAME) rescue nil
+    end
+  end
+
   it "closes the database without raising after a failed step was followed by a successful one" do
     closing_error = error_from_closing_after do |db|
       expect_raises(Grant::SQLite3::Exception, "CHECK constraint failed") do

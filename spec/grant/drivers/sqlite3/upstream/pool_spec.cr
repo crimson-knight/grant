@@ -117,24 +117,26 @@ describe DB::Pool do
   describe "a writer's outcome reaches the receiver" do
     it "reports success when its last row is the last row the table accepts" do
       outcomes = Channel(Exception?).new
+      stop_signal = PoolSpecStopSignal.new
       with_sqlite_driver_db "#{SQLITE_DRIVER_DB_FILENAME}?busy_timeout=#{POOL_SPEC_BUSY_TIMEOUT_MS}" do |db|
         db.exec "create table capped_numbers (n integer check (n < 10), fiber integer)"
 
-        spawn_number_writer(db, "capped_numbers", 0, 9, outcomes, PoolSpecStopSignal.new)
+        spawn_number_writer(db, "capped_numbers", 0, 9, outcomes, stop_signal)
 
-        collect_writer_outcomes(outcomes, 1, PoolSpecStopSignal.new).should eq([nil] of Exception?)
+        collect_writer_outcomes(outcomes, 1, stop_signal).should eq([nil] of Exception?)
         db.scalar("select count(*) from capped_numbers").should eq(9)
       end
     end
 
     it "reports the error when its last row is one past what the table accepts" do
       outcomes = Channel(Exception?).new
+      stop_signal = PoolSpecStopSignal.new
       with_sqlite_driver_db "#{SQLITE_DRIVER_DB_FILENAME}?busy_timeout=#{POOL_SPEC_BUSY_TIMEOUT_MS}" do |db|
         db.exec "create table capped_numbers (n integer check (n < 10), fiber integer)"
 
-        spawn_number_writer(db, "capped_numbers", 0, 10, outcomes, PoolSpecStopSignal.new)
+        spawn_number_writer(db, "capped_numbers", 0, 10, outcomes, stop_signal)
 
-        error = collect_writer_outcomes(outcomes, 1, PoolSpecStopSignal.new).first
+        error = collect_writer_outcomes(outcomes, 1, stop_signal).first
         error.should be_a(Grant::SQLite3::Exception)
         error.try(&.message).to_s.should contain("CHECK constraint failed")
         db.scalar("select count(*) from capped_numbers").should eq(9)
