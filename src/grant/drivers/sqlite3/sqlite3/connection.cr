@@ -1,5 +1,4 @@
 class Grant::SQLite3::Connection < DB::Connection
-  @statements_closed = false
   @handle_closed = false
 
   record Options,
@@ -76,31 +75,38 @@ class Grant::SQLite3::Connection < DB::Connection
     raise DB::Error.new("SQLite3 driver does not support unprepared statements")
   end
 
-  # Closes every cached statement once, then the SQLite handle, before
-  # raising the first error a statement reported while closing. Raising at
-  # the first statement would leave the rest of them and the handle open.
-  # The handle close runs on every attempt until it succeeds: sqlite3_close
-  # returns SQLITE_BUSY and keeps the handle open while an uncached
-  # statement is unfinalized, and a later close must be able to finish the
-  # job. Once it succeeds the handle is never passed to SQLite again.
+  # Closes every cached statement, then the SQLite handle, and raises the
+  # first error a statement reported while closing; raising at the first
+  # statement would leave the rest of them and the handle open.
+  #
+  # sqlite3_close returns SQLITE_BUSY and keeps the handle open while an
+  # uncached statement is unfinalized. The connection then stays in its pool
+  # and reports open, so a later `close` (or `Database#close`) retries. Once
+  # the handle closes, the connection leaves its pool, is marked closed even
+  # when a statement error is raised, and never passes the handle to SQLite
+  # again.
   def do_close
     first_statement_error = nil
-    unless @statements_closed
-      @statements_closed = true
-      @statements_cache.each_value do |statement|
-        statement.close
-      rescue error : Exception
-        first_statement_error ||= error
-      end
-      @statements_cache.clear
-      context.discard self
+    @statements_cache.each_value do |statement|
+      statement.close
+    rescue error : Exception
+      first_statement_error ||= error
     end
+    @statements_cache.clear
+
     close_code = 0
     unless @handle_closed
       close_code = LibSQLite3.close(self)
-      @handle_closed = close_code == 0
+      if close_code == 0
+        @handle_closed = true
+        context.discard self
+      end
     end
-    raise first_statement_error if first_statement_error
+
+    if first_statement_error
+      @closed = true if @handle_closed
+      raise first_statement_error
+    end
     check close_code
   end
 

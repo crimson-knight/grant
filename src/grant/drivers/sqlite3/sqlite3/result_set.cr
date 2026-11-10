@@ -7,7 +7,7 @@ class Grant::SQLite3::ResultSet < DB::ResultSet
   # is not raised again. Any other error is new and is raised: resetting a
   # partly read `INSERT ... RETURNING` commits its write and can fail with
   # SQLITE_BUSY, and dropping that code would hide a lost write. The release
-  # happens before the raise, and a second close does nothing.
+  # happens before the raise, and the result set reports closed after it.
   protected def do_close
     return if @released
     @released = true
@@ -18,7 +18,11 @@ class Grant::SQLite3::ResultSet < DB::ResultSet
       statement.record_step_failure
     end
     super
-    raise reset_error if reset_error
+    if reset_error
+      # Released already, so marked closed before the error is raised.
+      @closed = true
+      raise reset_error
+    end
   end
 
   # Advances to the next row. Returns `true` if there's a next row,

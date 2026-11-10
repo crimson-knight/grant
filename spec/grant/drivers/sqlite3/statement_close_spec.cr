@@ -70,9 +70,9 @@ describe Grant::SQLite3::Statement do
         connection.close
       end
 
-      # The connection finished closing before it raised.
-      connection.close
+      # The connection finished closing before it raised, and it says so.
       connection.closed?.should be_true
+      connection.close
     ensure
       File.delete(STATEMENT_CLOSE_SPEC_FILENAME) rescue nil
     end
@@ -96,6 +96,31 @@ describe Grant::SQLite3::Statement do
 
       connection.closed?.should be_true
       # The SQLite handle released its file descriptor, so it really closed.
+      Dir.children("/dev/fd").size.should eq(open_descriptors_before)
+    ensure
+      File.delete(STATEMENT_CLOSE_SPEC_FILENAME) rescue nil
+    end
+  end
+
+  it "keeps a pooled connection that SQLite refused to close, so closing the database again finishes it" do
+    File.delete(STATEMENT_CLOSE_SPEC_FILENAME) rescue nil
+    open_descriptors_before = Dir.children("/dev/fd").size
+    db = DB.open "sqlite3:#{STATEMENT_CLOSE_SPEC_FILENAME}"
+    begin
+      pooled_connection = db.checkout
+      # Built directly, so the connection's statement cache does not hold it.
+      uncached_statement = Grant::SQLite3::Statement.new(pooled_connection, "select 1")
+      pooled_connection.release
+
+      expect_raises(Grant::SQLite3::Exception, "unfinalized statements") do
+        db.close
+      end
+      pooled_connection.closed?.should be_false
+
+      uncached_statement.close
+      db.close
+
+      pooled_connection.closed?.should be_true
       Dir.children("/dev/fd").size.should eq(open_descriptors_before)
     ensure
       File.delete(STATEMENT_CLOSE_SPEC_FILENAME) rescue nil

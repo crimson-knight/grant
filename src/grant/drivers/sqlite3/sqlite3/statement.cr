@@ -83,9 +83,12 @@ class Grant::SQLite3::Statement < DB::Statement
     return if @finalized
     @finalized = true
     finalize_code = LibSQLite3.finalize(self)
-    unless finalize_code == 0 || @last_step_failed
-      raise Exception.new(sqlite3_connection)
-    end
+    return if finalize_code == 0 || @last_step_failed
+    # Finalize freed the statement whatever it returned, so it is marked
+    # closed before the error is raised; DB::Disposable would otherwise
+    # report it open and a later call could reach the freed pointer.
+    @closed = true
+    raise Exception.new(sqlite3_connection)
   end
 
   private def bind_arg(index, value : Nil)

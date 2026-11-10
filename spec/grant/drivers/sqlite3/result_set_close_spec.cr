@@ -46,10 +46,9 @@ describe Grant::SQLite3::ResultSet do
         result_set.close
       end
 
-      # The failed close still released the result set: closing again
-      # raises nothing and leaves it closed.
-      result_set.close
+      # The failed close still released the result set, and it says so.
       result_set.closed?.should be_true
+      result_set.close
 
       reader.exec "rollback"
     end
