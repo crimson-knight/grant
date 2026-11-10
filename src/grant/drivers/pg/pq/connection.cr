@@ -291,13 +291,10 @@ module Grant::PQ
 
     private def handle_response_frame(frame)
       handle_async_frames(frame)
-    rescue ex : PQError
+    rescue ex : PQError | IO::Error
+      # Callback failures were already converted in call_response_callback, so an
+      # IO::Error here is the socket itself and keeps the lost-connection path.
       raise ex
-    rescue ex : IO::Error
-      # Draining after a server error failed. The server already answered, so this
-      # must not surface as IO::Error, which crystal-db retries as a lost connection.
-      close_socket_after_error
-      raise ConnectionError.new("Response handling failed: #{ex.message}", cause: ex)
     rescue ex
       close_socket_after_error
       raise ex

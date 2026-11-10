@@ -169,19 +169,22 @@ private def attempt_local_tls_startup(host : String, sslmode : String, ca_file :
     connection.startup(["user", "päss", "database", "tls_probe"])
   rescue ex
     client_error = ex
-  ensure
-    if pg_connection = connection
-      begin
-        pg_connection.soc.close
-      rescue IO::Error
-        # The local TLS server closes after observing the startup frame.
-      rescue OpenSSL::SSL::Error
-        # The peer may have completed its close before the client did.
-      end
+  end
+
+  # The client stays open until the server has read the startup frame, because
+  # TLS 1.3 servers write session tickets that fail against a closed peer.
+  startup_length, startup_payload, server_error = server_observation.receive
+
+  if pg_connection = connection
+    begin
+      pg_connection.soc.close
+    rescue IO::Error
+      # The local TLS server closes after observing the startup frame.
+    rescue OpenSSL::SSL::Error
+      # The peer may have completed its close before the client did.
     end
   end
 
-  startup_length, startup_payload, server_error = server_observation.receive
   server_finished.receive
   LocalTLSAttempt.new(startup_length, startup_payload, client_error, server_error)
 end
