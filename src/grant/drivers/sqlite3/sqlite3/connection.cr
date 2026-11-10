@@ -1,5 +1,6 @@
 class Grant::SQLite3::Connection < DB::Connection
-  @close_started = false
+  @statements_closed = false
+  @handle_closed = false
 
   record Options,
     filename : String = ":memory:",
@@ -75,22 +76,32 @@ class Grant::SQLite3::Connection < DB::Connection
     raise DB::Error.new("SQLite3 driver does not support unprepared statements")
   end
 
-  # Closes every cached statement and the SQLite handle, once, before
+  # Closes every cached statement once, then the SQLite handle, before
   # raising the first error a statement reported while closing. Raising at
   # the first statement would leave the rest of them and the handle open.
+  # The handle close runs on every attempt until it succeeds: sqlite3_close
+  # returns SQLITE_BUSY and keeps the handle open while an uncached
+  # statement is unfinalized, and a later close must be able to finish the
+  # job. Once it succeeds the handle is never passed to SQLite again.
   def do_close
-    return if @close_started
-    @close_started = true
     first_statement_error = nil
-    @statements_cache.each_value do |statement|
-      statement.close
-    rescue error : Exception
-      first_statement_error ||= error
+    unless @statements_closed
+      @statements_closed = true
+      @statements_cache.each_value do |statement|
+        statement.close
+      rescue error : Exception
+        first_statement_error ||= error
+      end
+      @statements_cache.clear
+      context.discard self
     end
-    @statements_cache.clear
-    context.discard self
-    check LibSQLite3.close(self)
+    close_code = 0
+    unless @handle_closed
+      close_code = LibSQLite3.close(self)
+      @handle_closed = close_code == 0
+    end
     raise first_statement_error if first_statement_error
+    check close_code
   end
 
   # :nodoc:

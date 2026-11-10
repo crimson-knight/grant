@@ -78,6 +78,30 @@ describe Grant::SQLite3::Statement do
     end
   end
 
+  it "finishes closing the connection on a later close after SQLite refused while a statement was open" do
+    File.delete(STATEMENT_CLOSE_SPEC_FILENAME) rescue nil
+    open_descriptors_before = Dir.children("/dev/fd").size
+    connection = DB.connect "sqlite3:#{STATEMENT_CLOSE_SPEC_FILENAME}"
+    begin
+      # Built directly, so the connection's statement cache does not hold it.
+      uncached_statement = Grant::SQLite3::Statement.new(connection, "select 1")
+
+      expect_raises(Grant::SQLite3::Exception, "unfinalized statements") do
+        connection.close
+      end
+      connection.closed?.should be_false
+
+      uncached_statement.close
+      connection.close
+
+      connection.closed?.should be_true
+      # The SQLite handle released its file descriptor, so it really closed.
+      Dir.children("/dev/fd").size.should eq(open_descriptors_before)
+    ensure
+      File.delete(STATEMENT_CLOSE_SPEC_FILENAME) rescue nil
+    end
+  end
+
   it "closes the database without raising after a failed step was followed by a successful one" do
     closing_error = error_from_closing_after do |db|
       expect_raises(Grant::SQLite3::Exception, "CHECK constraint failed") do
