@@ -96,6 +96,33 @@ describe Grant::PQ::Connection, "response recovery (D8)" do
     end
   end
 
+  context "when a notice handler raises IO::Error" do
+    it "closes the connection and leaves the statement run once" do
+      sequence_name = "grant_d8_notice_#{Random.rand(1_000_000)}"
+      function_name = "#{sequence_name}_call"
+
+      with_one_pg_database do |database|
+        database.exec("CREATE SEQUENCE #{sequence_name}")
+        database.exec("CREATE FUNCTION #{function_name}() RETURNS void LANGUAGE plpgsql AS $body$ BEGIN PERFORM nextval('#{sequence_name}'); RAISE NOTICE 'probe'; END $body$")
+
+        begin
+          database.using_connection do |connection|
+            connection.as(Grant::PG::Connection).on_notice { raise IO::Error.new("notice handler failed") }
+          end
+
+          expect_raises(Grant::PQ::ConnectionError, /notice handler failed/) do
+            database.exec("SELECT #{function_name}()")
+          end
+
+          database.query_one("SELECT last_value FROM #{sequence_name}", as: Int64).should eq 1
+        ensure
+          database.exec("DROP FUNCTION IF EXISTS #{function_name}()")
+          database.exec("DROP SEQUENCE IF EXISTS #{sequence_name}")
+        end
+      end
+    end
+  end
+
   context "when a result set closes" do
     it "drains unread rows before a waiting fiber checks out the only connection" do
       with_one_pg_adapter do |adapter|

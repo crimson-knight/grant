@@ -106,7 +106,16 @@ private def expect_local_startup_frame(attempt : LocalTLSAttempt, first_user : S
   startup_message.ends_with?("\0\0").should be_true
 end
 
-private def attempt_local_tls_startup(host : String, sslmode : String, ca_file : String, certificates : LocalTLSCertificates) : LocalTLSAttempt
+# Points OpenSSL's default trust store at *certificate_file* for the block.
+private def with_system_certificate_file(certificate_file : String, &)
+  previous_value = ENV["SSL_CERT_FILE"]?
+  ENV["SSL_CERT_FILE"] = certificate_file
+  yield
+ensure
+  ENV["SSL_CERT_FILE"] = previous_value
+end
+
+private def attempt_local_tls_startup(host : String, sslmode : String, ca_file : String?, certificates : LocalTLSCertificates) : LocalTLSAttempt
   server = TCPServer.new("127.0.0.1", 0)
   server_context = OpenSSL::SSL::Context::Server.new
   server_context.certificate_chain = certificates.leaf_certificate_file
@@ -259,6 +268,15 @@ describe Grant::PQ::Connection, "TLS certificate verification (D1)" do
       end
 
       context "at the boundary" do
+        it "uses the system store when sslrootcert is absent" do
+          with_local_tls_certificates do |certificates|
+            with_system_certificate_file(certificates.ca_certificate_file) do
+              attempt = attempt_local_tls_startup("localhost", "verify-full", nil, certificates)
+              expect_local_startup_frame(attempt, "päss")
+            end
+          end
+        end
+
         it "sends startup after verify-ca accepts the trusted chain for an IP host" do
           with_local_tls_certificates do |certificates|
             attempt = attempt_local_tls_startup("127.0.0.1", "verify-ca", certificates.ca_certificate_file, certificates)
@@ -275,6 +293,17 @@ describe Grant::PQ::Connection, "TLS certificate verification (D1)" do
             attempt.client_error.should be_a(OpenSSL::SSL::Error)
             attempt.startup_declared_length.should be_nil
             attempt.startup_payload.should be_nil
+          end
+        end
+
+        it "keeps sslrootcert as the only trust anchor when the system store trusts the server" do
+          with_local_tls_certificates do |certificates|
+            with_system_certificate_file(certificates.ca_certificate_file) do
+              attempt = attempt_local_tls_startup("localhost", "verify-full", certificates.unrelated_ca_certificate_file, certificates)
+
+              attempt.client_error.should be_a(OpenSSL::SSL::Error)
+              attempt.startup_payload.should be_nil
+            end
           end
         end
 

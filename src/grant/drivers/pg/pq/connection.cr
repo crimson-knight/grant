@@ -293,6 +293,11 @@ module Grant::PQ
       handle_async_frames(frame)
     rescue ex : PQError
       raise ex
+    rescue ex : IO::Error
+      # A callback or a drain failed after the server already ran the statement, so
+      # this must not surface as IO::Error, which crystal-db retries as a lost connection.
+      close_socket_after_error
+      raise ConnectionError.new("Response handling failed: #{ex.message}", cause: ex)
     rescue ex
       close_socket_after_error
       raise ex
