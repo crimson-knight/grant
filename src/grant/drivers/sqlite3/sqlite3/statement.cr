@@ -53,7 +53,11 @@ class Grant::SQLite3::Statement < DB::Statement
   protected def do_close
     super
     clear_arg_refs
-    check LibSQLite3.finalize(self)
+    # sqlite3_finalize always frees the statement. Its return code repeats
+    # the error of the statement's most recent step, which perform_exec or
+    # ResultSet#move_next already raised to the caller, so closing does not
+    # raise it a second time (for example from Database#close at shutdown).
+    LibSQLite3.finalize(self)
   end
 
   private def bind_arg(index, value : Nil)
