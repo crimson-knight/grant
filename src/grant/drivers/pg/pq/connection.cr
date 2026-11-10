@@ -294,13 +294,22 @@ module Grant::PQ
     rescue ex : PQError
       raise ex
     rescue ex : IO::Error
-      # A callback or a drain failed after the server already ran the statement, so
-      # this must not surface as IO::Error, which crystal-db retries as a lost connection.
+      # Draining after a server error failed. The server already answered, so this
+      # must not surface as IO::Error, which crystal-db retries as a lost connection.
       close_socket_after_error
       raise ConnectionError.new("Response handling failed: #{ex.message}", cause: ex)
     rescue ex
       close_socket_after_error
       raise ex
+    end
+
+    # A callback's exception says nothing about the protocol stream, whatever its type,
+    # so it closes the connection and reaches the caller as one error crystal-db does not retry.
+    private def call_response_callback(&) : Nil
+      yield
+    rescue ex
+      close_socket_after_error
+      raise ConnectionError.new("Response callback failed: #{ex.message}", cause: ex)
     end
 
     private def handle_async_frames(frame)
@@ -309,7 +318,7 @@ module Grant::PQ
 
     private def handle_async_frames(error_frame : Frame::ErrorResponse)
       expect_frame Frame::ReadyForQuery if @established
-      notice_handler.call(error_frame.as_notice)
+      call_response_callback { notice_handler.call(error_frame.as_notice) }
       raise PQError.new(error_frame.fields)
     end
 
@@ -319,12 +328,12 @@ module Grant::PQ
     end
 
     private def handle_async_frames(frame : Frame::NotificationResponse)
-      notification_handler.call(frame.as_notification)
+      call_response_callback { notification_handler.call(frame.as_notification) }
       true
     end
 
     private def handle_async_frames(frame : Frame::NoticeResponse)
-      notice_handler.call(frame.as_notice)
+      call_response_callback { notice_handler.call(frame.as_notice) }
       true
     end
 

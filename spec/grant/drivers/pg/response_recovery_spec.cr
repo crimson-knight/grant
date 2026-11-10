@@ -96,6 +96,50 @@ describe Grant::PQ::Connection, "response recovery (D8)" do
     end
   end
 
+  context "when a notice handler raises a driver or pool error" do
+    it "does not treat a server-style error from the callback as a drained response" do
+      with_one_pg_database do |database|
+        database.using_connection do |connection|
+          connection.as(Grant::PG::Connection).on_notice do
+            raise Grant::PQ::PQError.new([] of Grant::PQ::Frame::ErrorResponse::Field)
+          end
+        end
+
+        expect_raises(Grant::PQ::ConnectionError, /Response callback failed/) do
+          database.exec("DO $body$ BEGIN RAISE NOTICE 'probe'; END $body$")
+        end
+
+        database.query_one("SELECT 11", as: Int32).should eq 11
+        database.query_one("SELECT 12", as: Int32).should eq 12
+      end
+    end
+
+    it "does not let a retryable error from the callback run the statement again" do
+      sequence_name = "grant_d8_lost_#{Random.rand(1_000_000)}"
+      function_name = "#{sequence_name}_call"
+
+      with_one_pg_database do |database|
+        database.exec("CREATE SEQUENCE #{sequence_name}")
+        database.exec("CREATE FUNCTION #{function_name}() RETURNS void LANGUAGE plpgsql AS $body$ BEGIN PERFORM nextval('#{sequence_name}'); RAISE NOTICE 'probe'; END $body$")
+
+        begin
+          database.using_connection do |connection|
+            connection.as(Grant::PG::Connection).on_notice { raise DB::ConnectionLost.new(connection) }
+          end
+
+          expect_raises(Grant::PQ::ConnectionError, /Response callback failed/) do
+            database.exec("SELECT #{function_name}()")
+          end
+
+          database.query_one("SELECT last_value FROM #{sequence_name}", as: Int64).should eq 1
+        ensure
+          database.exec("DROP FUNCTION IF EXISTS #{function_name}()")
+          database.exec("DROP SEQUENCE IF EXISTS #{sequence_name}")
+        end
+      end
+    end
+  end
+
   context "when a notice handler raises IO::Error" do
     it "closes the connection and leaves the statement run once" do
       sequence_name = "grant_d8_notice_#{Random.rand(1_000_000)}"
