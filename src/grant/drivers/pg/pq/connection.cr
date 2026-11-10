@@ -53,24 +53,71 @@ module Grant::PQ
       @soc.flush
 
       if process_ssl_message
-        ctx = OpenSSL::SSL::Context::Client.new
-        ctx.verify_mode = OpenSSL::SSL::VerifyMode::NONE # currently emulating sslmode 'require' not verify_ca or verify_full
-        if sslcert = @conninfo.sslcert
-          ctx.certificate_chain = sslcert
-        end
-        if sslkey = @conninfo.sslkey
-          ctx.private_key = sslkey
-        end
-        if sslrootcert = @conninfo.sslrootcert
-          ctx.ca_certificates = sslrootcert
-        end
-        @soc = OpenSSL::SSL::Socket::Client.new(@soc, context: ctx, sync_close: true, hostname: @conninfo.host)
+        ctx = ssl_context
+        @soc = OpenSSL::SSL::Socket::Client.new(
+          @soc,
+          context: ctx,
+          sync_close: true,
+          hostname: ssl_hostname
+        )
+      elsif sslmode_requires_tls?
+        raise ConnectionError.new("sslmode=#{@conninfo.sslmode} and server did not establish SSL")
+      end
+    rescue ex
+      close_socket_after_error
+      raise ex
+    end
+
+    private def ssl_context : OpenSSL::SSL::Context::Client
+      context = OpenSSL::SSL::Context::Client.insecure
+      context.default_verify_param = "ssl_server"
+      context.verify_mode = if sslmode_verifies_certificate?
+                              OpenSSL::SSL::VerifyMode::PEER
+                            else
+                              OpenSSL::SSL::VerifyMode::NONE
+                            end
+
+      if sslcert = @conninfo.sslcert
+        context.certificate_chain = sslcert
+      end
+      if sslkey = @conninfo.sslkey
+        context.private_key = sslkey
+      end
+      if sslrootcert = @conninfo.sslrootcert
+        {% if flag?(:win32) %}
+          if sslmode_verifies_certificate?
+            raise ConnectionError.new(
+              "sslmode=#{@conninfo.sslmode}: exclusive sslrootcert trust is unavailable on Windows")
+          end
+        {% end %}
+        context.ca_certificates = sslrootcert
+      elsif sslmode_verifies_certificate?
+        context.set_default_verify_paths
       end
 
-      if @conninfo.sslmode == :require && !@soc.is_a?(OpenSSL::SSL::Socket::Client)
-        close
-        raise ConnectionError.new("sslmode=require and server did not establish SSL")
-      end
+      context
+    end
+
+    private def sslmode_verifies_certificate? : Bool
+      @conninfo.sslmode == :"verify-ca" || @conninfo.sslmode == :"verify-full"
+    end
+
+    private def sslmode_requires_tls? : Bool
+      @conninfo.sslmode == :require || sslmode_verifies_certificate?
+    end
+
+    private def ssl_hostname : String?
+      return if @conninfo.sslmode == :"verify-ca"
+
+      @conninfo.host
+    end
+
+    # Closes the socket after a failed handshake or response. A failure while closing
+    # stays here so the caller's original error is the one reported.
+    private def close_socket_after_error : Nil
+      @soc.close unless @soc.closed?
+    rescue IO::Error
+      nil
     end
 
     private def process_ssl_message : Bool
@@ -93,8 +140,11 @@ module Grant::PQ
     def close
       synchronize do
         return if @soc.closed?
-        send_terminate_message
-        @soc.close
+        begin
+          send_terminate_message
+        ensure
+          @soc.close unless @soc.closed?
+        end
       end
     end
 
@@ -111,6 +161,10 @@ module Grant::PQ
     end
 
     private def write_i16(i : Int16)
+      soc.write_bytes i, IO::ByteFormat::NetworkEndian
+    end
+
+    private def write_u16(i : UInt16)
       soc.write_bytes i, IO::ByteFormat::NetworkEndian
     end
 
@@ -138,6 +192,11 @@ module Grant::PQ
       soc.read_bytes(Int16, IO::ByteFormat::NetworkEndian)
     end
 
+    # :nodoc:
+    def read_u16 : UInt16
+      soc.read_bytes(UInt16, IO::ByteFormat::NetworkEndian)
+    end
+
     def read_bytes(count)
       data = Slice(UInt8).new(count)
       soc.read_fully(data)
@@ -153,7 +212,7 @@ module Grant::PQ
     end
 
     def startup(args : Array(String))
-      len = args.reduce(0) { |acc, arg| acc + arg.size + 1 }
+      len = args.reduce(0) { |acc, arg| acc + arg.bytesize + 1 }
       write_i32 len + 8 + 1
       write_i32 0x30000
       args.each { |arg| soc << arg << '\0' }
@@ -163,7 +222,7 @@ module Grant::PQ
 
     def read_data_row(&)
       size = read_i32
-      ncols = read_i16
+      ncols = read_u16
       row = Array(Slice(UInt8)?).new(ncols.to_i32) do
         col_size = read_i32
         if col_size == -1
@@ -182,14 +241,19 @@ module Grant::PQ
 
     def read(frame_type)
       frame = read_one_frame(frame_type)
-      handle_async_frames(frame) ? read : frame
+      handle_response_frame(frame) ? read : frame
+    rescue ex : PQError | IO::Error
+      raise ex
+    rescue ex
+      close_socket_after_error
+      raise ex
     end
 
     def read_async_frame_loop
       loop do
         break if @soc.closed?
         begin
-          handle_async_frames(read_one_frame(soc.read_char))
+          handle_response_frame(read_one_frame(soc.read_char))
         rescue e : IO::Error
           @soc.closed? ? break : raise e
         end
@@ -216,6 +280,33 @@ module Grant::PQ
       size = read_i32
       slice = read_bytes(size - 4)
       Frame.new(frame_type.not_nil!, slice) # .tap { |f| p f }
+    rescue ex : IO::Error
+      # Socket failures keep their own path: the result set reports ConnectionLost
+      # and the LISTEN loop must still see an unexpected disconnect.
+      raise ex
+    rescue ex
+      close_socket_after_error
+      raise ex
+    end
+
+    private def handle_response_frame(frame)
+      handle_async_frames(frame)
+    rescue ex : PQError | IO::Error
+      # Callback failures were already converted in call_response_callback, so an
+      # IO::Error here is the socket itself and keeps the lost-connection path.
+      raise ex
+    rescue ex
+      close_socket_after_error
+      raise ex
+    end
+
+    # A callback's exception says nothing about the protocol stream, whatever its type,
+    # so it closes the connection and reaches the caller as one error crystal-db does not retry.
+    private def call_response_callback(&) : Nil
+      yield
+    rescue ex
+      close_socket_after_error
+      raise ConnectionError.new("Response callback failed: #{ex.message}", cause: ex)
     end
 
     private def handle_async_frames(frame)
@@ -224,7 +315,7 @@ module Grant::PQ
 
     private def handle_async_frames(error_frame : Frame::ErrorResponse)
       expect_frame Frame::ReadyForQuery if @established
-      notice_handler.call(error_frame.as_notice)
+      call_response_callback { notice_handler.call(error_frame.as_notice) }
       raise PQError.new(error_frame.fields)
     end
 
@@ -234,12 +325,12 @@ module Grant::PQ
     end
 
     private def handle_async_frames(frame : Frame::NotificationResponse)
-      notification_handler.call(frame.as_notification)
+      call_response_callback { notification_handler.call(frame.as_notification) }
       true
     end
 
     private def handle_async_frames(frame : Frame::NoticeResponse)
-      notice_handler.call(frame.as_notice)
+      call_response_callback { notice_handler.call(frame.as_notice) }
       true
     end
 
@@ -444,7 +535,7 @@ module Grant::PQ
       while type == 'N'
         # NoticeResponse
         frame = read_one_frame('N')
-        handle_async_frames(frame)
+        handle_response_frame(frame)
         type = soc.read_char
       end
 
@@ -472,7 +563,7 @@ module Grant::PQ
       while type == 'N'
         # NoticeResponse
         frame = read_one_frame('N')
-        handle_async_frames(frame)
+        handle_response_frame(frame)
         type = soc.read_char
       end
 
@@ -513,14 +604,17 @@ module Grant::PQ
 
     def expect_frame(frame_class, type = nil)
       f = type ? read(type) : read
-      raise "Expected #{frame_class} but got #{f}" unless frame_class === f
+      unless frame_class === f
+        close_socket_after_error
+        raise ConnectionError.new("Expected #{frame_class} but got #{f}")
+      end
       frame_class.cast(f)
     end
 
     def send_password_message(password)
       write_chr 'p'
       if password
-        write_i32 password.size + 4 + 1
+        write_i32 password.bytesize + 4 + 1
         soc << password
       else
         write_i32 4 + 1
@@ -563,6 +657,7 @@ module Grant::PQ
     # experimental, and may go away in future releases.
     def send_bind_message(params, result_format = 1_i16, statement_name = "")
       nparams = params.size
+      validate_bind_parameter_count(nparams)
       total_size = params.reduce(0) do |acc, p|
         acc + 4 + (p.size == -1 ? 0 : p.size)
       end
@@ -571,16 +666,23 @@ module Grant::PQ
       write_i32 4 + 1 + statement_name.bytesize + 1 + 2 + (2*nparams) + 2 + total_size + 2 + 2
       write_null # unnamed destination portal
       soc << statement_name
-      write_null        # end of the prepared statement name
-      write_i16 nparams # number of params format codes to follow
+      write_null               # end of the prepared statement name
+      write_u16 nparams.to_u16 # number of params format codes to follow
       params.each { |p| write_i16 p.format }
-      write_i16 nparams # number of params to follow
+      write_u16 nparams.to_u16 # number of params to follow
       params.each do |p|
         write_i32 p.size
         soc.write(p.slice)
       end
       write_i16 1 # number of following return types (1 means apply next for all)
       write_i16 result_format
+    end
+
+    # :nodoc:
+    def validate_bind_parameter_count(parameter_count : Int32) : Nil
+      if parameter_count > MAX_BIND_PARAMETER_COUNT
+        raise TooManyParametersError.new(parameter_count)
+      end
     end
 
     def send_describe_portal_message

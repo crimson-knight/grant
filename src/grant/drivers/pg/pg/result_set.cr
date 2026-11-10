@@ -49,7 +49,7 @@ class Grant::PG::ResultSet < ::DB::ResultSet
     if conn.read_next_row_start
       # We ignore these (redundant information)
       conn.read_i32 # size
-      conn.read_i16 # ncols
+      conn.read_u16 # ncols
       @column_index = 0
       true
     else
@@ -59,8 +59,12 @@ class Grant::PG::ResultSet < ::DB::ResultSet
     end
   rescue e : IO::Error
     raise DB::ConnectionLost.new(statement.connection, cause: e)
+  rescue e : PQ::PQError
+    @end = true
+    raise e
   rescue ex
     @end = true
+    close_connection_after_response_error
     raise ex
   end
 
@@ -92,6 +96,11 @@ class Grant::PG::ResultSet < ::DB::ResultSet
     end
   rescue e : IO::Error
     raise DB::ConnectionLost.new(statement.connection, cause: e)
+  rescue e : PQ::PQError
+    raise e
+  rescue ex
+    close_connection_after_response_error
+    raise ex
   end
 
   def read(t : Array(T).class) : Array(T) forall T
@@ -150,6 +159,17 @@ class Grant::PG::ResultSet < ::DB::ResultSet
     end
   rescue e : IO::Error
     raise DB::ConnectionLost.new(statement.connection, cause: e)
+  rescue e : PQ::PQError
+    raise e
+  rescue ex
+    close_connection_after_response_error
+    raise ex
+  end
+
+  private def close_connection_after_response_error : Nil
+    conn.close
+  rescue IO::Error
+    nil
   end
 
   private def safe_read(col_bytesize, &)
@@ -187,8 +207,7 @@ class Grant::PG::ResultSet < ::DB::ResultSet
   end
 
   protected def do_close
-    super
-
+    # Keep the pool connection checked out until PostgreSQL's response is drained.
     # Nothing to do if all the rows were consumed
     return if @end
 
@@ -210,6 +229,8 @@ class Grant::PG::ResultSet < ::DB::ResultSet
   rescue DB::ConnectionLost
     # if the connection is lost there is nothing to be
     # done since the result set is no longer needed
+  ensure
+    super
   end
 
   private class Buffer < IO::Sized
