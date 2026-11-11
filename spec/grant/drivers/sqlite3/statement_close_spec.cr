@@ -11,20 +11,25 @@ STATEMENT_CLOSE_SPEC_FILENAME = "./statement_close_spec.db"
 private def error_from_closing_after(&block : DB::Database ->) : Exception?
   File.delete(STATEMENT_CLOSE_SPEC_FILENAME) rescue nil
   db = DB.open "sqlite3:#{STATEMENT_CLOSE_SPEC_FILENAME}"
-  closing_error : Exception? = nil
   begin
     db.exec "create table capped_numbers (n integer check (n < 10))"
     block.call(db)
-  ensure
-    closing_error = begin
-      db.close
-      nil
-    rescue error : Exception
-      error
-    end
+  rescue error : Exception
+    error_from_closing(db)
     File.delete(STATEMENT_CLOSE_SPEC_FILENAME) rescue nil
+    raise error
   end
+  closing_error = error_from_closing(db)
+  File.delete(STATEMENT_CLOSE_SPEC_FILENAME) rescue nil
   closing_error
+end
+
+# Closes *db* and returns the exception closing raised, or nil.
+private def error_from_closing(db : DB::Database) : Exception?
+  db.close
+  nil
+rescue error : Exception
+  error
 end
 
 private def insert_capped_number(db : DB::Database, number : Int32)
