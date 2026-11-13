@@ -10,27 +10,13 @@ require "./registry"
 # explicitly called.  Without this, a subsequent COMMIT on the same connection
 # fails with "cannot commit transaction - SQL statements in progress".
 #
-# NOTE: this duplicates the upstream method body from sqlite3 ~> 0.21.0
-# (src/sqlite3/statement.cr) and adds only the ensure-reset.  When updating the
-# owned driver in src/grant/drivers/sqlite3, diff perform_exec against this
-# patch and re-apply.
+# The wrapper runs the owned driver's own `perform_exec` through `previous_def`,
+# so the exec body (binding, stepping, and releasing the previous call's bound
+# values) lives in one place, src/grant/drivers/sqlite3/sqlite3/statement.cr.
+# This patch adds only the ensure-reset.
 class Grant::SQLite3::Statement
   protected def perform_exec(args : Enumerable) : DB::ExecResult
-    LibSQLite3.reset(to_unsafe)
-    args.each_with_index(1) do |arg, index|
-      bind_arg(index, arg)
-    end
-
-    step = uninitialized LibSQLite3::Code
-    loop do
-      step = LibSQLite3::Code.new LibSQLite3.step(self)
-      break unless step == LibSQLite3::Code::ROW
-    end
-    raise Exception.new(sqlite3_connection) unless step == LibSQLite3::Code::DONE
-
-    rows_affected = LibSQLite3.changes(sqlite3_connection).to_i64
-    last_id = LibSQLite3.last_insert_rowid(sqlite3_connection)
-    DB::ExecResult.new rows_affected, last_id
+    previous_def
   ensure
     # Always reset the statement so SQLite decrements nVdbeActive even when
     # the step returned an error code.  This prevents "SQL statements in
