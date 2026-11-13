@@ -17,8 +17,11 @@ private def with_exec_bind_database(&)
 end
 
 private def bound_reference_count(statement : DB::Statement) : Int32
-  sqlite_statement = statement.as(Grant::SQLite3::Statement)
-  if references = sqlite_statement.@arg_refs
+  unless statement.is_a?(Grant::SQLite3::Statement)
+    fail "expected a Grant::SQLite3::Statement, got #{statement.class}"
+  end
+
+  if references = statement.@arg_refs
     references.size
   else
     0
