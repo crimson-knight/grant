@@ -17,24 +17,22 @@ module Grant::SQLite3::RegexpFunction
     end
 
     arguments = Slice.new(argv, argc)
-    pattern = text_of(arguments[0])
-    text = text_of(arguments[1])
-    if pattern.nil? || text.nil?
+    if arguments.any? { |value| LibSQLite3.value_type(value).null? }
       LibSQLite3.result_null(context)
       return
     end
 
+    pattern = text_of(arguments[0])
+    text = text_of(arguments[1])
     matched = Regex.new(pattern).matches?(text)
     LibSQLite3.result_int(context, matched ? 1 : 0)
   rescue ex
     report_error(context, "regexp: #{ex.message || ex.class.name}")
   end
 
-  # Reads an argument as UTF-8 text, or returns nil for SQL NULL. The byte count
-  # bounds the read, so text holding a NUL byte is read whole.
-  private def self.text_of(value : LibSQLite3::SQLite3Value) : String?
-    return nil if LibSQLite3.value_type(value).null?
-
+  # Reads a non-NULL argument as UTF-8 text. The byte count bounds the read, so
+  # text holding a NUL byte is read whole.
+  private def self.text_of(value : LibSQLite3::SQLite3Value) : String
     pointer = LibSQLite3.value_text(value)
     byte_count = LibSQLite3.value_bytes(value)
     return "" if pointer.null? || byte_count == 0

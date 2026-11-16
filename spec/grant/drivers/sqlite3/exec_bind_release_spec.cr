@@ -71,4 +71,45 @@ describe "Grant::SQLite3::Statement exec through the SQLite adapter" do
       end
     end
   end
+
+  it "binds NULL for a parameter that an exec leaves unbound, after a full exec" do
+    with_exec_bind_database do |db|
+      db.using_connection do |connection|
+        statement = connection.prepared("INSERT INTO posts (body, title, data) VALUES ('fixed body', ?, ?)")
+        statement.exec("full title", Bytes[1, 2, 3])
+        GC.collect
+        statement.exec("short title")
+        GC.collect
+
+        connection.query_one("SELECT title, data FROM posts WHERE id = 2", as: {String, Bytes?})
+          .should eq({"short title", nil})
+      end
+    end
+  end
+
+  it "stores every value again when a full exec follows a short one" do
+    with_exec_bind_database do |db|
+      db.using_connection do |connection|
+        statement = connection.prepared("INSERT INTO posts (body, title, data) VALUES ('fixed body', ?, ?)")
+        statement.exec("short title")
+        statement.exec("second title", Bytes[4, 5, 6])
+
+        connection.query_one("SELECT title, data FROM posts WHERE id = 2", as: {String, Bytes})
+          .should eq({"second title", Bytes[4, 5, 6]})
+      end
+    end
+  end
+
+  it "binds NULL for every parameter when an exec passes no arguments after a full exec" do
+    with_exec_bind_database do |db|
+      db.using_connection do |connection|
+        statement = connection.prepared("INSERT INTO posts (body, title, data) VALUES ('fixed body', ?, ?)")
+        statement.exec("full title", Bytes[7, 8, 9])
+        statement.exec
+
+        connection.query_one("SELECT title, data FROM posts WHERE id = 2", as: {String?, Bytes?})
+          .should eq({nil, nil})
+      end
+    end
+  end
 end

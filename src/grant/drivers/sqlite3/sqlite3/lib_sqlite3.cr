@@ -117,6 +117,7 @@ module Grant
   
       fun bind_parameter_index = {{ symbol_prefix + "sqlite3_bind_parameter_index" }}(stmt : Statement, name : UInt8*) : Int32
       fun reset = {{ symbol_prefix + "sqlite3_reset" }}(stmt : Statement) : Int32
+      fun clear_bindings = {{ symbol_prefix + "sqlite3_clear_bindings" }}(stmt : Statement) : Int32
       fun column_name = {{ symbol_prefix + "sqlite3_column_name" }}(stmt : Statement, idx : Int32) : UInt8*
       fun last_insert_rowid = {{ symbol_prefix + "sqlite3_last_insert_rowid" }}(db : SQLite3) : Int64
       fun changes = {{ symbol_prefix + "sqlite3_changes" }}(db : SQLite3) : Int32

@@ -13,9 +13,14 @@ require "./registry"
 # The wrapper runs the owned driver's own `perform_exec` through `previous_def`,
 # so the exec body (binding, stepping, and releasing the previous call's bound
 # values) lives in one place, src/grant/drivers/sqlite3/sqlite3/statement.cr.
-# This patch adds only the ensure-reset.
+# This patch adds the ensure-reset, and clears SQLite's bindings first.
 class Grant::SQLite3::Statement
   protected def perform_exec(args : Enumerable) : DB::ExecResult
+    # sqlite3_reset keeps every binding, and the driver binds text and blobs
+    # without copying them. The driver releases the previous call's values
+    # before binding, so a parameter this call leaves unbound would point at
+    # released memory. Clearing the bindings first makes it NULL instead.
+    LibSQLite3.clear_bindings(to_unsafe)
     previous_def
   ensure
     # Always reset the statement so SQLite decrements nVdbeActive even when

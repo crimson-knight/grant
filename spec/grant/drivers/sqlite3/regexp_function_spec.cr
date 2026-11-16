@@ -50,4 +50,19 @@ describe "Grant::SQLite3 regexp function" do
       db.query_one("SELECT CAST(? AS TEXT) REGEXP ?", "ab\u0000cd", "cd$", as: Int64).should eq 1
     end
   end
+  it "returns NULL when one argument is NULL and the other is not valid UTF-8" do
+    with_regexp_database do |db|
+      db.query_one("SELECT CAST(X'FF' AS TEXT) REGEXP NULL", as: Int64?).should be_nil
+      db.query_one("SELECT NULL REGEXP CAST(X'FF' AS TEXT)", as: Int64?).should be_nil
+    end
+  end
+
+  it "reports text that is not valid UTF-8 when neither argument is NULL" do
+    with_regexp_database do |db|
+      expect_raises(Grant::SQLite3::Exception, /UTF-8/) do
+        db.query_one("SELECT CAST(X'FF' AS TEXT) REGEXP 'a'", as: Int64?)
+      end
+      db.scalar("SELECT 1").should eq 1
+    end
+  end
 end
