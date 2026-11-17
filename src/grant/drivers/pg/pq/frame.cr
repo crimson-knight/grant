@@ -16,6 +16,7 @@ module Grant::PQ
           when 'A' then NotificationResponse
           when 'E' then ErrorResponse
           when 'N' then NoticeResponse
+          when 't' then ParameterDescription
           when 'n' then NoData
           when 'I' then EmptyQueryResponse
             # when 'D' then DataRow
@@ -52,6 +53,10 @@ module Grant::PQ
     private def i16(pos, bytes) : {Int32, Int16}
       return pos + 2, (bytes[pos + 1].to_i16 << 0) |
                       (bytes[pos + 0].to_i16 << 8)
+    end
+
+    private def u16(pos, bytes) : {Int32, UInt16}
+      return pos + 2, (bytes[pos].to_u16 << 8) | bytes[pos + 1].to_u16
     end
 
     struct Unknown
@@ -194,13 +199,26 @@ module Grant::PQ
     struct NoticeResponse < ErrorNoticeFrame
     end
 
+    struct ParameterDescription < Frame
+      getter nparameters : UInt16
+      getter list_of_parameter_type_oids : Array(Int32)
+
+      def initialize(bytes)
+        pos, @nparameters = u16(0, bytes)
+        @list_of_parameter_type_oids = Array(Int32).new(@nparameters.to_i32) do
+          pos, parameter_type_oid = i32(pos, bytes)
+          parameter_type_oid
+        end
+      end
+    end
+
     struct RowDescription < Frame
-      getter nfields : Int16
+      getter nfields : UInt16
       getter fields : Array(Field)
 
       def initialize(bytes)
         pos = 0
-        pos, @nfields = i16 pos, bytes
+        pos, @nfields = u16 pos, bytes
         @fields = Array(Field).new(@nfields.to_i32) do
           pos, name = find_next_string(pos, bytes)
           pos, col_oid = i32 pos, bytes
