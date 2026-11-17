@@ -10,27 +10,18 @@ require "./registry"
 # explicitly called.  Without this, a subsequent COMMIT on the same connection
 # fails with "cannot commit transaction - SQL statements in progress".
 #
-# NOTE: this duplicates the upstream method body from sqlite3 ~> 0.21.0
-# (src/sqlite3/statement.cr) and adds only the ensure-reset.  When updating the
-# owned driver in src/grant/drivers/sqlite3, diff perform_exec against this
-# patch and re-apply.
+# The wrapper runs the owned driver's own `perform_exec` through `previous_def`,
+# so the exec body (binding, stepping, and releasing the previous call's bound
+# values) lives in one place, src/grant/drivers/sqlite3/sqlite3/statement.cr.
+# This patch adds the ensure-reset, and clears SQLite's bindings first.
 class Grant::SQLite3::Statement
   protected def perform_exec(args : Enumerable) : DB::ExecResult
-    LibSQLite3.reset(to_unsafe)
-    args.each_with_index(1) do |arg, index|
-      bind_arg(index, arg)
-    end
-
-    step = uninitialized LibSQLite3::Code
-    loop do
-      step = LibSQLite3::Code.new LibSQLite3.step(self)
-      break unless step == LibSQLite3::Code::ROW
-    end
-    raise Exception.new(sqlite3_connection) unless step == LibSQLite3::Code::DONE
-
-    rows_affected = LibSQLite3.changes(sqlite3_connection).to_i64
-    last_id = LibSQLite3.last_insert_rowid(sqlite3_connection)
-    DB::ExecResult.new rows_affected, last_id
+    # sqlite3_reset keeps every binding, and the driver binds text and blobs
+    # without copying them. The driver releases the previous call's values
+    # before binding, so a parameter this call leaves unbound would point at
+    # released memory. Clearing the bindings first makes it NULL instead.
+    LibSQLite3.clear_bindings(to_unsafe)
+    previous_def
   ensure
     # Always reset the statement so SQLite decrements nVdbeActive even when
     # the step returned an error code.  This prevents "SQL statements in

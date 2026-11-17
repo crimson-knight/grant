@@ -84,9 +84,9 @@ module Grant::PG::Replication
       query_params = uri.query_params
       query_params["replication"] = "database"
       uri.query_params = query_params
-      @uri = uri
+      @uri = PG.grant_only_url(uri)
 
-      @conn = DB.connect(@uri).as(PG::Connection)
+      @conn = PG.connect_with_grant_driver(@uri)
 
       # Periodically tell the server how far we've gotten so it can release WAL
       # segments we've already processed and keep the connection alive.
@@ -158,7 +158,7 @@ module Grant::PG::Replication
           @conn.close
         rescue
         end
-        @conn = DB.connect(@uri).as(PG::Connection)
+        @conn = PG.connect_with_grant_driver(@uri)
       end
     end
 

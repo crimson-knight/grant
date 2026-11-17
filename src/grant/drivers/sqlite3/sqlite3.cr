@@ -15,11 +15,11 @@ module Grant::SQLite3
   TIME_ZONE = Time::Location::UTC
 
   # :nodoc:
+  #
+  # SQLite calls this from C for every `REGEXP` it evaluates, so it hands all
+  # work to `RegexpFunction.call`, which never lets an exception unwind into SQLite.
   REGEXP_FN = ->(context : LibSQLite3::SQLite3Context, argc : Int32, argv : LibSQLite3::SQLite3Value*) do
-    argv = Slice.new(argv, sizeof(Void*))
-    pattern = LibSQLite3.value_text(argv[0])
-    text = LibSQLite3.value_text(argv[1])
-    LibSQLite3.result_int(context, Regex.new(String.new(pattern)).matches?(String.new(text)).to_unsafe)
+    RegexpFunction.call(context, argc, argv)
     nil
   end
 end

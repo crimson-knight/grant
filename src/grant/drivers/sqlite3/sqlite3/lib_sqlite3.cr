@@ -117,6 +117,7 @@ module Grant
   
       fun bind_parameter_index = {{ symbol_prefix + "sqlite3_bind_parameter_index" }}(stmt : Statement, name : UInt8*) : Int32
       fun reset = {{ symbol_prefix + "sqlite3_reset" }}(stmt : Statement) : Int32
+      fun clear_bindings = {{ symbol_prefix + "sqlite3_clear_bindings" }}(stmt : Statement) : Int32
       fun column_name = {{ symbol_prefix + "sqlite3_column_name" }}(stmt : Statement, idx : Int32) : UInt8*
       fun last_insert_rowid = {{ symbol_prefix + "sqlite3_last_insert_rowid" }}(db : SQLite3) : Int64
       fun changes = {{ symbol_prefix + "sqlite3_changes" }}(db : SQLite3) : Int32
@@ -128,6 +129,10 @@ module Grant
       fun create_function = {{ symbol_prefix + "sqlite3_create_function" }}(SQLite3, funcName : UInt8*, nArg : Int32, eTextRep : Int32, pApp : Void*, xFunc : FuncCallback, xStep : Void*, xFinal : Void*) : Int32
       fun value_text = {{ symbol_prefix + "sqlite3_value_text" }}(SQLite3Value) : UInt8*
       fun result_int = {{ symbol_prefix + "sqlite3_result_int" }}(SQLite3Context, Int32) : Nil
+      fun value_type = {{ symbol_prefix + "sqlite3_value_type" }}(SQLite3Value) : ::Grant::SQLite3::Type
+      fun value_bytes = {{ symbol_prefix + "sqlite3_value_bytes" }}(SQLite3Value) : Int32
+      fun result_null = {{ symbol_prefix + "sqlite3_result_null" }}(SQLite3Context) : Nil
+      fun result_error = {{ symbol_prefix + "sqlite3_result_error" }}(SQLite3Context, UInt8*, Int32) : Nil
     end
   {% end %}
 end
