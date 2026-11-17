@@ -6,6 +6,22 @@ class Grant::SQLite3::Statement < DB::Statement
   # context.
   @arg_refs : Array(Pointer(UInt8)) | Nil
 
+  # Set when the statement's most recent step failed and that error was
+  # raised to the caller, so a reset or finalize that repeats it is not
+  # raised again. Cleared each time the statement runs.
+  @last_step_failed = false
+  @finalized = false
+
+  # :nodoc:
+  def record_step_failure : Nil
+    @last_step_failed = true
+  end
+
+  # :nodoc:
+  def last_step_failed? : Bool
+    @last_step_failed
+  end
+
   private def clear_arg_refs
     @arg_refs.try(&.clear)
   end
@@ -23,6 +39,7 @@ class Grant::SQLite3::Statement < DB::Statement
   protected def perform_query(args : Enumerable) : DB::ResultSet
     clear_arg_refs
     LibSQLite3.reset(self)
+    @last_step_failed = false
     args.each_with_index(1) do |arg, index|
       bind_arg(index, arg)
     end
@@ -32,6 +49,7 @@ class Grant::SQLite3::Statement < DB::Statement
   protected def perform_exec(args : Enumerable) : DB::ExecResult
     clear_arg_refs
     LibSQLite3.reset(self.to_unsafe)
+    @last_step_failed = false
     args.each_with_index(1) do |arg, index|
       bind_arg(index, arg)
     end
@@ -42,7 +60,10 @@ class Grant::SQLite3::Statement < DB::Statement
       step = LibSQLite3::Code.new LibSQLite3.step(self)
       break unless step == LibSQLite3::Code::ROW
     end
-    raise Exception.new(sqlite3_connection) unless step == LibSQLite3::Code::DONE
+    unless step == LibSQLite3::Code::DONE
+      record_step_failure
+      raise Exception.new(sqlite3_connection)
+    end
 
     rows_affected = LibSQLite3.changes(sqlite3_connection).to_i64
     last_id = LibSQLite3.last_insert_rowid(sqlite3_connection)
@@ -50,10 +71,24 @@ class Grant::SQLite3::Statement < DB::Statement
     DB::ExecResult.new rows_affected, last_id
   end
 
+  # Finalizes the statement once. sqlite3_finalize always frees it and
+  # returns the error of the most recent step, which `perform_exec` or
+  # `ResultSet#move_next` already raised when that step failed, so that
+  # repeat is not raised again. Any other error is new and is raised: a
+  # partly read `INSERT ... RETURNING` with a deferred foreign key first
+  # reports its failed write here.
   protected def do_close
     super
     clear_arg_refs
-    check LibSQLite3.finalize(self)
+    return if @finalized
+    @finalized = true
+    finalize_code = LibSQLite3.finalize(self)
+    return if finalize_code == 0 || @last_step_failed
+    # Finalize freed the statement whatever it returned, so it is marked
+    # closed before the error is raised; DB::Disposable would otherwise
+    # report it open and a later call could reach the freed pointer.
+    @closed = true
+    raise Exception.new(sqlite3_connection)
   end
 
   private def bind_arg(index, value : Nil)
