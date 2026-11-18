@@ -127,8 +127,9 @@ class Grant::Query::Builder(Model)
           # Every type name in the member is rooted, at any nesting depth: this
           # code sits inside `Grant`, where an unrooted `Connection` (even inside
           # `Array(Tuple(Connection, Int64))`) would name `Grant::Connection`
-          # and the condition would be dropped.
-          return add_array_condition(join, field, values) if values.is_a?({{ type.stringify.gsub(/(?<![:\w])([A-Z]\w*)/, "::\\1").id }})
+          # and the condition would be dropped. A named-tuple key (`Foo:`) is left
+          # as written.
+          return add_array_condition(join, field, values) if values.is_a?({{ type.stringify.gsub(/(?<![:\w"])([A-Z]\w*+)(?!:(?!:))/, "::\\1").id }})
         {% end %}
       {% end %}
     {% else %}
