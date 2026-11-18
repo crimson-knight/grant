@@ -1051,7 +1051,7 @@ module Grant::Associations
         scoped: {{scoped}}, polymorphic: {{polymorphic}}, strict_loading_option: {{strict_loading}},
         options: { {% for key, index in option_keys %}{{key}} => {{option_values[index]}}, {% end %} } of String => String
       ),
-      {{@type}}.as(Grant::Base.class)
+      ::{{@type}}.as(Grant::Base.class)
     )
   end
 

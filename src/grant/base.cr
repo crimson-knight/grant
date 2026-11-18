@@ -321,7 +321,7 @@ abstract class Grant::Base
   macro inherited
     # :nodoc:
     def self.__lineage_names : Array(String)
-      [{{@type.name.stringify}}] + {{@type.superclass}}.__lineage_names
+      [{{@type.name.stringify}}] + ::{{@type.superclass}}.__lineage_names
     end
 
     # Connection settings belong to each model class and resolve through the
@@ -329,22 +329,22 @@ abstract class Grant::Base
     # abstract class) reaches subclasses declared before and after it.
     # :nodoc:
     def self.default_database_name : String
-      @@own_default_database_name || {{@type.superclass}}.default_database_name
+      @@own_default_database_name || ::{{@type.superclass}}.default_database_name
     end
 
     # :nodoc:
     def self.connection_config : Hash(Symbol, String)
-      @@own_connection_config || {{@type.superclass}}.connection_config
+      @@own_connection_config || ::{{@type.superclass}}.connection_config
     end
 
     # :nodoc:
     def self.shard_config : Hash(Symbol, Hash(Symbol, String))
-      @@own_shard_config || {{@type.superclass}}.shard_config
+      @@own_shard_config || ::{{@type.superclass}}.shard_config
     end
 
     # :nodoc:
     def self.__connection_owned_by?(owner : String) : Bool
-      owner == {{@type.name.stringify}} || {{@type.superclass}}.__connection_owned_by?(owner)
+      owner == {{@type.name.stringify}} || ::{{@type.superclass}}.__connection_owned_by?(owner)
     end
 
     # Keep this method concrete per model. A shared class method invoked through
@@ -353,7 +353,7 @@ abstract class Grant::Base
     # in Crystal 1.21. The per-model method keeps Builder's model type concrete
     # and still lets generic class references dispatch to the right scope.
     # :nodoc:
-    def self.__builder : Grant::Query::Builder({{@type}})
+    def self.__builder : Grant::Query::Builder(::{{@type}})
       resolved_adapter = adapter
       db_type = if resolved_adapter.postgres?
                   Grant::Query::Builder::DbType::Pg
@@ -363,18 +363,18 @@ abstract class Grant::Base
                   Grant::Query::Builder::DbType::Sqlite
                 end
 
-      Grant::Query::Builder({{@type}}).new(db_type)
+      Grant::Query::Builder(::{{@type}}).new(db_type)
     end
 
-    def self.current_scope : Grant::Query::Builder({{@type}})
-      if scoped = Grant::Scoping.current_relation({{@type}})
+    def self.current_scope : Grant::Query::Builder(::{{@type}})
+      if scoped = Grant::Scoping.current_relation(::{{@type}})
         return scoped
       end
 
       # `__builder` may be overridden by the sharding macro and Crystal sees
       # the union of builders from STI siblings here. Cast back to this model's
       # builder type while retaining the sharded subclass at runtime.
-      query = __builder.as(Grant::Query::Builder({{@type}}))
+      query = __builder.as(Grant::Query::Builder(::{{@type}}))
 
       if !_unscoped? && _has_default_scope?
         query = apply_default_scope(query)
@@ -527,7 +527,7 @@ abstract class Grant::Base
     protected class_getter select_container : Container = Container.new(table_name: table_name, fields: fields)
 
     # Auto-register for polymorphic associations
-    Grant::Polymorphic.register_polymorphic_type({{@type.name.stringify}}, {{@type}})
+    Grant::Polymorphic.register_polymorphic_type({{@type.name.stringify}}, ::{{@type}})
 
     # The names flagged by `attribute_will_change!`, created on first use.
     private def forced_change_names : Set(String)
