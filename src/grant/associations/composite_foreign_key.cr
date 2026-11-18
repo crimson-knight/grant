@@ -167,15 +167,15 @@ module Grant::Associations
     @[Grant::Relationship(target: {{class_name.id}}, type: :has_many, composite: true,
       foreign_key: {{foreign_key.map(&.id.stringify).join(",")}},
       primary_key: {{primary_key ? primary_key.map(&.id.stringify).join(",") : ""}}, scope: {{scope}})]
-    def {{method_name}} : Grant::CompositeCollection({{@type}}, {{class_name.id}})
+    def {{method_name}} : Grant::CompositeCollection(::{{@type}}, {{class_name.id}})
       loaded_records = nil.as(Array({{class_name.id}})?)
       if association_loaded?({{name_text}})
         loaded_data = get_loaded_association({{name_text}})
         loaded_records = loaded_data.map(&.as({{class_name.id}})) if loaded_data.is_a?(Array(Grant::Base))
       end
-      Grant::CompositeCollection({{@type}}, {{class_name.id}}).new(
+      Grant::CompositeCollection(::{{@type}}, {{class_name.id}}).new(
         self, {{name_text}}, Grant::Associations.__composite_key_names({{foreign_key}}),
-        {% if primary_key %}Grant::Associations.__composite_key_names({{primary_key}}){% else %}Grant::CompositeAssociation.key_columns_of({{@type}}){% end %},
+        {% if primary_key %}Grant::Associations.__composite_key_names({{primary_key}}){% else %}Grant::CompositeAssociation.key_columns_of(::{{@type}}){% end %},
         Grant::Associations.__composite_scope_proc({{scope}}, {{class_name}}),
         loaded_records, {{options[:strict_loading]}}, {{inverse_of ? inverse_of.id.stringify : nil}})
     end
@@ -183,7 +183,7 @@ module Grant::Associations
     # Replaces the cached collection, pointing each record at this owner.
     def {{method_name}}=(records : Array({{class_name.id}}))
       owner_values = Grant::CompositeAssociation.owner_key_values(
-        self, {% if primary_key %}Grant::Associations.__composite_key_names({{primary_key}}){% else %}Grant::CompositeAssociation.key_columns_of({{@type}}){% end %})
+        self, {% if primary_key %}Grant::Associations.__composite_key_names({{primary_key}}){% else %}Grant::CompositeAssociation.key_columns_of(::{{@type}}){% end %})
       if owner_values
         records.each do |record|
           Grant::CompositeAssociation.assign_key(record, Grant::Associations.__composite_key_names({{foreign_key}}), owner_values)
@@ -196,7 +196,7 @@ module Grant::Associations
       reset_association({{name_text}})
     end
 
-    def reload_{{method_name.id}} : Grant::CompositeCollection({{@type}}, {{class_name.id}})
+    def reload_{{method_name.id}} : Grant::CompositeCollection(::{{@type}}, {{class_name.id}})
       reload_association({{name_text}})
       {{method_name}}
     end
@@ -204,7 +204,7 @@ module Grant::Associations
     def __composite_preload_{{method_name.id}}(records : Array(Grant::Base), restriction : Array(Grant::Query::WhereField)?) : Nil
       Grant::CompositeAssociation.preload_has(
         records, {{name_text}}, Grant::Associations.__composite_key_names({{foreign_key}}),
-        {% if primary_key %}Grant::Associations.__composite_key_names({{primary_key}}){% else %}Grant::CompositeAssociation.key_columns_of({{@type}}){% end %},
+        {% if primary_key %}Grant::Associations.__composite_key_names({{primary_key}}){% else %}Grant::CompositeAssociation.key_columns_of(::{{@type}}){% end %},
         ->(tuples : Array(Array(Grant::Columns::Type))) : Array(Grant::Base) {
           relation = {{class_name.id}}.current_scope
           scope_proc = Grant::Associations.__composite_scope_proc({{scope}}, {{class_name}})
@@ -250,7 +250,7 @@ module Grant::Associations
         assert_association_can_lazy_load!({{name_text}}, {{options[:strict_loading]}})
         child = Grant::CompositeAssociation.find_child(
           self, {{class_name.id}}, Grant::Associations.__composite_key_names({{foreign_key}}),
-          {% if primary_key %}Grant::Associations.__composite_key_names({{primary_key}}){% else %}Grant::CompositeAssociation.key_columns_of({{@type}}){% end %},
+          {% if primary_key %}Grant::Associations.__composite_key_names({{primary_key}}){% else %}Grant::CompositeAssociation.key_columns_of(::{{@type}}){% end %},
           Grant::Associations.__composite_scope_proc({{scope}}, {{class_name}}))
         set_loaded_association({{name_text}}, child)
         if child
@@ -271,7 +271,7 @@ module Grant::Associations
     def {{method_name}}=(child : {{class_name.id}}?)
       if child
         owner_values = Grant::CompositeAssociation.owner_key_values(
-          self, {% if primary_key %}Grant::Associations.__composite_key_names({{primary_key}}){% else %}Grant::CompositeAssociation.key_columns_of({{@type}}){% end %})
+          self, {% if primary_key %}Grant::Associations.__composite_key_names({{primary_key}}){% else %}Grant::CompositeAssociation.key_columns_of(::{{@type}}){% end %})
         if owner_values
           Grant::CompositeAssociation.assign_key(child, Grant::Associations.__composite_key_names({{foreign_key}}), owner_values)
         end
@@ -291,7 +291,7 @@ module Grant::Associations
     def __composite_preload_{{method_name.id}}(records : Array(Grant::Base), restriction : Array(Grant::Query::WhereField)?) : Nil
       Grant::CompositeAssociation.preload_has(
         records, {{name_text}}, Grant::Associations.__composite_key_names({{foreign_key}}),
-        {% if primary_key %}Grant::Associations.__composite_key_names({{primary_key}}){% else %}Grant::CompositeAssociation.key_columns_of({{@type}}){% end %},
+        {% if primary_key %}Grant::Associations.__composite_key_names({{primary_key}}){% else %}Grant::CompositeAssociation.key_columns_of(::{{@type}}){% end %},
         ->(tuples : Array(Array(Grant::Columns::Type))) : Array(Grant::Base) {
           relation = {{class_name.id}}.current_scope
           scope_proc = Grant::Associations.__composite_scope_proc({{scope}}, {{class_name}})

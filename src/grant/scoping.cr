@@ -166,11 +166,11 @@ module Grant::Scoping
   macro scope(name, body)
     # Each model gets a relation subtype so calls like `Post.published.recent`
     # can resolve all of that model's scope methods at compile time.
-    class BuildNamedScopeRelation < Grant::Query::Builder({{@type}})
+    class BuildNamedScopeRelation < Grant::Query::Builder(::{{@type}})
       # Relation methods return copies, and a copy keeps this subtype, so the
       # result of a scope body is normally already the relation to hand back.
       # A body that returns some other builder is converted, keeping its clauses.
-      def self.adopt(result : Grant::Query::Builder({{@type}})) : BuildNamedScopeRelation
+      def self.adopt(result : Grant::Query::Builder(::{{@type}})) : BuildNamedScopeRelation
         return result if result.is_a?(BuildNamedScopeRelation)
 
         relation = new(result.db_type, result.boolean_operator)
@@ -263,7 +263,7 @@ module Grant::Scoping
   # returns a fresh instance of it. Use it to add bespoke, chainable query
   # helpers beyond what named scopes express.
   macro extending(&block)
-    class QueryExtension < Grant::Query::Builder(\{{@type}})
+    class QueryExtension < Grant::Query::Builder(::\{{@type}})
       {{block.body}}
     end
 

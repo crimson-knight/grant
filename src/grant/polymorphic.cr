@@ -818,6 +818,6 @@ module Grant::Polymorphic
   # end
   # ```
   macro register_polymorphic_type
-    Grant::Polymorphic.register_polymorphic_type({{@type.name.stringify}}, {{@type}})
+    Grant::Polymorphic.register_polymorphic_type({{@type.name.stringify}}, ::{{@type}})
   end
 end

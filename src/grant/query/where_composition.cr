@@ -124,7 +124,7 @@ class Grant::Query::Builder(Model)
         end
       {% else %}
         {% for type in V.union_types %}
-          return add_array_condition(join, field, values) if values.is_a?({{ type }})
+          return add_array_condition(join, field, values) if values.is_a?(::Array({{ type.type_vars.first.union_types.map { |element| "::#{element}" }.join(" | ").id }}))
         {% end %}
       {% end %}
     {% else %}

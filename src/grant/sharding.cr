@@ -118,13 +118,13 @@ module Grant::Sharding
       # Query on specific shard
       def self.on_shard(shard : Symbol)
         Grant::ShardManager.guard_shard_swap!(shard)
-        Grant::Sharding::ShardedQuery({{@type}}).new(self, shard)
+        Grant::Sharding::ShardedQuery(::{{@type}}).new(self, shard)
       end
 
       # Query on all shards
       def self.on_all_shards
         Grant::ShardManager.guard_shard_swap!
-        Grant::Sharding::MultiShardQuery({{@type}}).new(self)
+        Grant::Sharding::MultiShardQuery(::{{@type}}).new(self)
       end
 
       # Execute a block on all shards
@@ -144,7 +144,7 @@ module Grant::Sharding
 
       # Iterate through all records across all shards in batches, one shard
       # after another, in keyset batches (see `find_each_shard`).
-      def self.find_each(batch_size : Int32 = 1000, &block : {{@type}} ->)
+      def self.find_each(batch_size : Int32 = 1000, &block : ::{{@type}} ->)
         if sharding_config
           find_each_shard(batch_size: batch_size) { |record| yield record }
         else
@@ -232,7 +232,7 @@ module Grant::Sharding
         # when the query is executed with proper shard context
         db_type = Grant::Query::Builder::DbType::Sqlite
 
-        Grant::Sharding::ShardedQueryBuilder({{@type}}).new(db_type, :and, self.sharding_config)
+        Grant::Sharding::ShardedQueryBuilder(::{{@type}}).new(db_type, :and, self.sharding_config)
       end
     end
 

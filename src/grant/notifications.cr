@@ -30,7 +30,7 @@ module Grant
     # snapshot without a lock.
     module Publishable
       macro included
-        @@subscriptions = [] of Grant::Notifications::Subscription({{@type}})
+        @@subscriptions = [] of Grant::Notifications::Subscription(::{{@type}})
         @@subscription_mutex = Mutex.new
 
         # :nodoc:
@@ -39,12 +39,12 @@ module Grant
         end
 
         # :nodoc:
-        def self.add_subscription(subscription : Grant::Notifications::Subscription({{@type}})) : Nil
+        def self.add_subscription(subscription : Grant::Notifications::Subscription(::{{@type}})) : Nil
           @@subscription_mutex.synchronize { @@subscriptions = @@subscriptions + [subscription] }
         end
 
         # :nodoc:
-        def self.remove_subscription(subscription : Grant::Notifications::Subscription({{@type}})) : Nil
+        def self.remove_subscription(subscription : Grant::Notifications::Subscription(::{{@type}})) : Nil
           @@subscription_mutex.synchronize { @@subscriptions = @@subscriptions.reject(&.same?(subscription)) }
         end
 

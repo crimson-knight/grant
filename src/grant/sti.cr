@@ -68,7 +68,7 @@ module Grant::STI
   # registration without re-including the module.
   macro included
     # Register the root itself in the STI registry.
-    Grant::STI.register_sti_type({{@type.name.stringify}}, {{@type}})
+    Grant::STI.register_sti_type({{@type.name.stringify}}, ::{{@type}})
 
     extend Grant::STI::ClassMethods
     include Grant::STI::InstanceMethods
@@ -151,13 +151,13 @@ module Grant::STI
       # included`, so an unescaped @type would resolve to the ROOT at
       # included-expansion time (registering the root repeatedly). Escaping
       # defers resolution to each subclass's own expansion.
-      Grant::STI.register_sti_type(\{{@type.name.stringify}}, \{{@type}})
+      Grant::STI.register_sti_type(\{{@type.name.stringify}}, ::\{{@type}})
 
       # Annotations do not inherit in Crystal, so a subclass would otherwise
       # compute its own table name from its class name. Delegate to the
       # superclass instead, which recurses up to the STI root's table.
       def self.table_name : String
-        \{{@type.superclass}}.table_name
+        ::\{{@type.superclass}}.table_name
       end
 
       # Subclasses are NOT the root.
@@ -254,7 +254,7 @@ module Grant::STI
       {% if @type.superclass.id == "Grant::Base" %}
         self
       {% else %}
-        {{@type.superclass}}.sti_root
+        ::{{@type.superclass}}.sti_root
       {% end %}
     end
 
