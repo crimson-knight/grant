@@ -5,10 +5,15 @@ require "./character_class_data"
 # The character classes of a Crystal `Regex`, answered without PCRE2. Crystal
 # compiles every regex with UTF and UCP, so `\w`, `\d` and `\s` are Unicode
 # classes and a case-insensitive ASCII letter also matches a few non-ASCII
-# letters (the Kelvin sign matches `k`, the long s matches `s`). The tables in
-# `character_class_data.cr` are generated from the linked PCRE2 by
-# `scripts/generate_character_classes.cr`; `spec/grant/text/character_class_spec.cr`
-# checks every code point against PCRE2.
+# letters (the Kelvin sign matches `k`, the long s matches `s`).
+#
+# The answers follow the PCRE2 10.43+ Unicode tables in
+# `character_class_data.cr` on every platform, whatever PCRE2 the system has:
+# `\w` is a letter, a number, a nonspacing mark or a connector punctuation.
+# `scripts/generate_character_classes.cr` writes the tables from a linked
+# PCRE2 10.43 or later; `spec/grant/text/character_class_spec.cr` checks every
+# code point against PCRE2 where the linked one is 10.43 or later, and checks
+# the tables themselves everywhere.
 module Grant::CharacterClass
   # `\w`: a letter, a number, a nonspacing mark or a connector punctuation.
   def self.word?(char : Char) : Bool

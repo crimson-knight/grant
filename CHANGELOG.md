@@ -19,6 +19,19 @@ Behavior changes:
   case-insensitive folds; `spec/grant/text` compares every one with its old
   pattern. `scripts/check_pcre2_linkage.rb` builds probe apps and fails if
   their binaries link PCRE2.
+- **`\w`, `\d` and `\s` follow the PCRE2 10.43+ Unicode tables on every
+  platform.** This is Grant's defined semantics: `\w` is a letter, a number, a
+  nonspacing mark or a connector punctuation; `\d` is a decimal digit in any
+  script; `\s` is Unicode white space. The tables are checked in as
+  `src/grant/text/character_class_data.cr`, so the answers do not depend on
+  the system's PCRE2. On a system with an older PCRE2 (10.42 on Ubuntu 24.04,
+  whose `\w` leaves out combining marks such as U+0301 and connector
+  punctuation such as U+203F, and whose Unicode version is older), Grant's
+  checks differ from the regular expressions they replace for text holding
+  those characters. `scripts/generate_character_classes.cr` regenerates the
+  tables and requires PCRE2 10.43 or later; the specs compare Grant with the
+  linked PCRE2 only where it is 10.43 or later and check the tables directly
+  everywhere.
 - **Regex features are opt-in with `require "grant/regex"`** (after
   `require "grant"`, before the models that use it): `validates_format_of`
   (and `validates ... format:`), Regex entries in `filter_attributes` and

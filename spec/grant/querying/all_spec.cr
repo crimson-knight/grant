@@ -72,19 +72,19 @@ describe "#all" do
       Parent.all("WHERE name <> ? ORDER BY id DESC LIMIT 2", ["n9"] of Grant::Columns::Type).map(&.id).should eq [ids[2], ids[1]]
     end
 
-    # PostgreSQL rejects grouping the derived table by a non-key column while
-    # selecting every column, so this shape is checked on SQLite and MySQL.
-    {% unless env("CURRENT_ADAPTER") == "pg" %}
-      it "runs GROUP BY and HAVING as written" do
-        Parent.clear
-        Parent.new(name: "twice").save!
-        Parent.new(name: "twice").save!
-        Parent.new(name: "once").save!
+    # `raw_all` selects every column of the derived table, so the clause groups
+    # by all of them: that shape is valid under MySQL's ONLY_FULL_GROUP_BY and
+    # in PostgreSQL. Wrapped in `where`, the clause would be a syntax error.
+    it "runs GROUP BY and HAVING as written" do
+      Parent.clear
+      first = Parent.new(name: "kept").tap(&.save!)
+      second = Parent.new(name: "kept").tap(&.save!)
+      Parent.new(name: "dropped").save!
 
-        found = Parent.all("WHERE name IS NOT NULL GROUP BY name HAVING COUNT(*) > ? ORDER BY name", [1] of Grant::Columns::Type)
-        found.map(&.name).should eq ["twice"]
-      end
-    {% end %}
+      clause = "WHERE name IS NOT NULL GROUP BY id, name, created_at, updated_at HAVING COUNT(*) = ? AND name <> ? ORDER BY id"
+      found = Parent.all(clause, [1, "dropped"] of Grant::Columns::Type)
+      found.map(&.id).should eq [first.id, second.id]
+    end
 
     it "still filters a plain WHERE clause through the relation" do
       Parent.clear

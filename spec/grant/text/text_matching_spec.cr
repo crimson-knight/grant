@@ -1,4 +1,5 @@
 require "../../spec_helper"
+require "../../support/linked_pcre2"
 
 # Each `Grant::TextMatching` method replaces a regular expression Grant used on
 # its default path. These specs run the original expression and the
@@ -6,6 +7,11 @@ require "../../spec_helper"
 # letters, digits and spaces, separators, case folds such as the Kelvin sign,
 # and very long text) plus a seeded fuzz corpus built from the tokens each
 # pattern cares about, and require identical answers.
+#
+# Grant's character classes follow the PCRE2 10.43+ tables. When the linked
+# PCRE2 is older, inputs holding a character it answers differently (a
+# combining mark in `\w`, a digit from a newer Unicode version) are left out of
+# the comparison; see `LinkedPCRE2`.
 
 private alias TM = Grant::TextMatching
 
@@ -33,9 +39,11 @@ private def inputs_for(tokens : Array(String), extra = [] of String) : Array(Str
   COMMON_INPUTS + extra + fuzz_corpus(tokens) + tokens
 end
 
-# Compares *old* and *new* over *inputs* and lists the inputs where they differ.
+# Compares *old* and *new* over the *inputs* where the linked PCRE2 agrees with
+# Grant's character classes, and lists the inputs where they differ.
 private def mismatches(inputs : Array(String), &block : String -> {T, T}) : Array(String) forall T
   inputs.compact_map do |input|
+    next unless LinkedPCRE2.agrees_on?(input)
     expected, actual = block.call(input)
     expected == actual ? nil : "#{input.inspect}: expected #{expected.inspect}, got #{actual.inspect}"
   end.first(10)
@@ -45,6 +53,10 @@ IDENTIFIER_TOKENS = ["a", "Z", "_", "0", "9", ".", " ", "-", "users", "id", "K
 SQL_TOKENS        = [" ", "  ", "SELECT", "select", "FROM", "from", "INTO", "UPDATE", "ONLY", "only", "users", "\"users\"", "`t`", "[t]", "public.users", "$x", "WHERE", "where", "id", "=", "?", "$1", "$12", ",", "(", ")", "'a'", "'", "1", "42", "x1", "ORDER", "BY", "by", "LIMIT", "OFFSET", "GROUP", "for", "FOR", "update", "share", "SHARE", "no", "key", "KEY", "KEY", "ſHARE", "NOT", "IN", "in", "LIKE", "ILIKE", "liKe", "!=", "<>", "<=", ">=", "<", ">", "INSERT", "VALUES", "values", "JOIN", "join", "AS", "as", "ON", "USING", "INNER", "LEFT", "posts", "p", ".", "\""]
 
 describe Grant::TextMatching do
+  unless LinkedPCRE2.follows_grant_tables?
+    pending "compares inputs that hold a character the linked PCRE2 answers differently (#{LinkedPCRE2::PENDING_REASON})"
+  end
+
   it "matches bare identifiers like /\\A[A-Za-z_][A-Za-z0-9_]*\\z/" do
     mismatches(inputs_for(IDENTIFIER_TOKENS)) { |text| {text.matches?(/\A[A-Za-z_][A-Za-z0-9_]*\z/), TM.simple_identifier?(text)} }.should be_empty
   end
