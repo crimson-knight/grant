@@ -28,4 +28,56 @@ describe "#all" do
     set.size.should eq 1
     set.first.name.should eq name
   end
+  # Issue #43: a raw clause carrying SQL after its condition used to be wrapped
+  # in `where`, and the builder appended a second ORDER BY (with the implicit
+  # primary-key order on, as in Grant 0.23).
+  describe "with a raw clause that orders and limits (issue #43)" do
+    around_each do |example|
+      Grant.settings.implicit_order = true
+      begin
+        example.run
+      ensure
+        Grant.settings.implicit_order = false
+      end
+    end
+
+    it "runs WHERE ... ORDER BY ... LIMIT with one bind as written" do
+      Parent.clear
+      first = Parent.new(name: "issue43").tap(&.save!)
+      second = Parent.new(name: "issue43").tap(&.save!)
+      Parent.new(name: "other").save!
+
+      found = Parent.all("WHERE name = ? ORDER BY id DESC LIMIT 20", ["issue43"] of Grant::Columns::Type)
+      found.map(&.id).should eq [second.id, first.id]
+    end
+
+    it "runs LIMIT and OFFSET without binds as written" do
+      Parent.clear
+      ids = (1..3).map { |number| Parent.new(name: "n#{number}").tap(&.save!).id }
+
+      Parent.all("ORDER BY id ASC LIMIT 1 OFFSET 1").map(&.id).should eq [ids[1]]
+      Parent.all("WHERE name <> ? ORDER BY id DESC LIMIT 2", ["n9"] of Grant::Columns::Type).map(&.id).should eq [ids[2], ids[1]]
+    end
+
+    # PostgreSQL rejects grouping the derived table by a non-key column while
+    # selecting every column, so this shape is checked on SQLite and MySQL.
+    {% unless env("CURRENT_ADAPTER") == "pg" %}
+      it "runs GROUP BY and HAVING as written" do
+        Parent.clear
+        Parent.new(name: "twice").save!
+        Parent.new(name: "twice").save!
+        Parent.new(name: "once").save!
+
+        found = Parent.all("WHERE name IS NOT NULL GROUP BY name HAVING COUNT(*) > ? ORDER BY name", [1] of Grant::Columns::Type)
+        found.map(&.name).should eq ["twice"]
+      end
+    {% end %}
+
+    it "still filters a plain WHERE clause through the relation" do
+      Parent.clear
+      Parent.new(name: "keep").save!
+      Parent.new(name: "drop").save!
+      Parent.all("WHERE name = ?", ["keep"] of Grant::Columns::Type).map(&.name).should eq ["keep"]
+    end
+  end
 end

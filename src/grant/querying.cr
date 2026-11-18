@@ -258,7 +258,10 @@ module Grant::Querying
         # Fall back to raw_all for clauses that the query builder can't handle:
         # - JOIN clauses (e.g. from :through associations)
         # - Multiple parameters (query.where only accepts a single value)
-        if clean_clause.includes?("JOIN ") || params.size > 1 || clean_clause.upcase.starts_with?("ORDER BY ")
+        # - SQL after the condition (ORDER BY, LIMIT, OFFSET, GROUP BY,
+        #   HAVING), which `where` would wrap and the builder would follow
+        #   with its own ORDER BY (issue #43)
+        if clean_clause.includes?("JOIN ") || params.size > 1 || clean_clause.upcase.starts_with?("ORDER BY ") || Grant::TextMatching.sql_after_condition?(clean_clause)
           Collection(self).new(-> { raw_all(clause, params) })
         else
           query = current_scope
