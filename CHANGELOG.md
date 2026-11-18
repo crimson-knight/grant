@@ -48,7 +48,12 @@ Behavior changes:
 - `Model.all(clause, params)` with a raw clause that carries SQL after its
   condition (`ORDER BY`, `LIMIT`, `OFFSET`, `GROUP BY`, `HAVING`) runs the
   clause as written instead of wrapping it in `where` and appending a second
-  `ORDER BY` (issue #43).
+  `ORDER BY` (issue #43). Words inside single-quoted literals and
+  double-quoted or backtick identifiers do not count, so
+  `all("WHERE title = 'LIMIT'")` still filters inside the default scope.
+- `Model.all`, `first` and `sole` recognize a raw `JOIN` in any case as a
+  whole word outside quoted text (they matched only uppercase `"JOIN "`
+  before), so `all("join children on ...")` runs as written.
 - Polymorphic and STI loaders, `Grant::AssociationLoader`, and array
   conditions in `where` root the model types they generate with `::`, so an
   app model named like a Grant type (`Connection`) resolves to the app's

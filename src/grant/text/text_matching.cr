@@ -178,7 +178,10 @@ module Grant::TextMatching
   end
 
   # Replaces `text.gsub(/(?<![\w."`])#{Regex.escape(table)}\./, replacement)`:
-  # rewrites `table.` qualifiers that are not part of a longer name.
+  # rewrites `table.` qualifiers that are not part of a longer name. The
+  # *replacement* is written as given (`gsub` with a string would expand `\0`
+  # and the like); callers pass identifiers or quoted table names, which hold
+  # no backslashes.
   def self.replace_table_qualifier(text : String, table : String, replacement : String) : String
     needle = "#{table}."
     return text unless text.includes?(needle)
@@ -266,26 +269,22 @@ module Grant::TextMatching
   # Replaces `/\b(ORDER\s+BY|LIMIT|OFFSET|GROUP\s+BY)\b/i`: whether a raw
   # clause holds SQL that does not belong in a WHERE condition.
   def self.trailing_clause_keyword?(clause : String) : Bool
-    chars = clause.chars
-    chars.each_index do |index|
-      next unless boundary_before?(chars, index)
-      {% for words in [{"order", "by"}, {"limit"}, {"offset"}, {"group", "by"}] %}
-        if stop = keyword_sequence_end(chars, index, {{words}})
-          return true if boundary_before?(chars, stop)
-        end
-      {% end %}
-    end
-    false
+    trailing_clause_keyword_in?(clause.chars)
   end
 
   # Whether a raw clause holds SQL that follows a WHERE condition: the
-  # `.trailing_clause_keyword?` words or `HAVING`, each a whole word in any case.
+  # `.trailing_clause_keyword?` words or `HAVING`, each a whole word in any
+  # case. Text inside single-quoted literals and double-quoted or backtick
+  # identifiers is skipped, so `WHERE title = 'LIMIT'` is a plain condition.
   def self.sql_after_condition?(clause : String) : Bool
-    return true if trailing_clause_keyword?(clause)
-    chars = clause.chars
-    chars.each_index.any? do |index|
-      boundary_before?(chars, index) && keyword_at?(chars, index, "having") && boundary_before?(chars, index + 6)
-    end
+    chars = mask_quoted_text(clause.chars)
+    trailing_clause_keyword_in?(chars) || whole_keyword?(chars, "having")
+  end
+
+  # Whether a raw clause joins another table: the word `JOIN` in any case,
+  # outside quoted literals and identifiers.
+  def self.join_clause?(clause : String) : Bool
+    whole_keyword?(mask_quoted_text(clause.chars), "join")
   end
 
   # Replaces `type.sub(/\ATIMESTAMP(\(\d+\))?/i, replacement)`: a column type
@@ -446,7 +445,10 @@ module Grant::TextMatching
         if chars_at?(chars, run_end, "/src/".chars) && text_of(chars, run_start, run_end).includes?("crystal")
           return true
         end
-        index = run_end
+        # The candidate's trailing slash can open the next `/share/`
+        # (`/share/share/...`). Each character between slashes is still
+        # visited a bounded number of times, so the scan stays linear.
+        index = run_start - 1
       else
         index += 1
       end
@@ -458,15 +460,7 @@ module Grant::TextMatching
   # bcrypt hash.
   def self.bcrypt_digest?(digest : String) : Bool
     chars = digest.chars
-    return false unless chars[0]? == '$' && chars[1]? == '2'
-    index = 2
-    index += 1 if chars[index]?.try(&.in?('a', 'b', 'x', 'y'))
-    return false unless chars[index]? == '$'
-    first_digit = chars[index + 1]?
-    second_digit = chars[index + 2]?
-    return false unless first_digit && second_digit && CC.digit?(first_digit) && CC.digit?(second_digit)
-    return false unless chars[index + 3]? == '$'
-    body_start = index + 4
+    body_start = bcrypt_body_start(chars) || return false
     return false unless chars.size - body_start == 53
     chars.each(within: body_start..) do |char|
       return false unless char.ascii_alphanumeric? || char.in?('.', '/')
@@ -518,20 +512,13 @@ module Grant::TextMatching
     index = 0
     while index < chars.size
       previous = index > 0 ? chars[index - 1] : nil
-      if previous.nil? || !(CC.word?(previous) || previous == '.')
-        name_start = chars[index] == '"' ? index + 1 : index
-        name_end = identifier_end(chars, name_start, fold: false)
-        if name_end > name_start
-          dot = chars[name_end]? == '"' ? name_end + 1 : name_end
-          following = chars[dot + 1]?
-          if chars[dot]? == '.' && following && (following == '"' || following == '_' || following.ascii_letter?)
-            found << text_of(chars, name_start, name_end)
-            index = dot + 1
-            next
-          end
-        end
+      if (previous.nil? || !(CC.word?(previous) || previous == '.')) && (qualifier = qualifier_at(chars, index))
+        name_start, name_end, dot = qualifier
+        found << text_of(chars, name_start, name_end)
+        index = dot + 1
+      else
+        index += 1
       end
-      index += 1
     end
     found
   end
@@ -546,7 +533,7 @@ module Grant::TextMatching
     name_end = identifier_end(chars, index, fold: true)
     return false if name_end == index || chars[name_end]? != '('
     index = skip_spaces(chars, name_end + 1)
-    if (reference_end = column_reference_end(chars, index))
+    if reference_end = column_reference_end(chars, index)
       index = reference_end
       loop do
         comma = skip_spaces(chars, index)
@@ -828,6 +815,58 @@ module Grant::TextMatching
     CC.word_boundary?(index > 0 ? chars[index - 1]? : nil, chars[index]?)
   end
 
+  # Whether *chars* holds `\b(ORDER\s+BY|LIMIT|OFFSET|GROUP\s+BY)\b`, ignoring case.
+  private def self.trailing_clause_keyword_in?(chars : Array(Char)) : Bool
+    chars.each_index do |index|
+      next unless boundary_before?(chars, index)
+      {% for words in [{"order", "by"}, {"limit"}, {"offset"}, {"group", "by"}] %}
+        if stop = keyword_sequence_end(chars, index, {{words}})
+          return true if boundary_before?(chars, stop)
+        end
+      {% end %}
+    end
+    false
+  end
+
+  # Whether the lowercase ASCII *keyword* appears in *chars* as a whole word,
+  # ignoring case.
+  private def self.whole_keyword?(chars : Array(Char), keyword : String) : Bool
+    chars.each_index.any? do |index|
+      boundary_before?(chars, index) && keyword_at?(chars, index, keyword) && boundary_before?(chars, index + keyword.size)
+    end
+  end
+
+  # Stands in for each character of quoted SQL text: neither a word character
+  # nor white space, so no keyword or word boundary forms across it.
+  private QUOTED_TEXT_MASK = '\0'
+
+  # A copy of *chars* with every single-quoted literal and every double-quoted
+  # or backtick identifier (delimiters included) replaced by
+  # `QUOTED_TEXT_MASK`. A doubled delimiter inside the quotes (`''`, `""`)
+  # stands for itself; an unclosed quote runs to the end of the text.
+  private def self.mask_quoted_text(chars : Array(Char)) : Array(Char)
+    masked = chars.dup
+    closing : Char? = nil
+    index = 0
+    while index < chars.size
+      char = chars[index]
+      if quote = closing
+        masked[index] = QUOTED_TEXT_MASK
+        if char == quote && chars[index + 1]? == quote
+          index += 1
+          masked[index] = QUOTED_TEXT_MASK
+        elsif char == quote
+          closing = nil
+        end
+      elsif char.in?('\'', '"', '`')
+        masked[index] = QUOTED_TEXT_MASK
+        closing = char
+      end
+      index += 1
+    end
+    masked
+  end
+
   # The end of `[A-Za-z_][A-Za-z0-9_]*` at *index* (*index* itself when none
   # starts there). With *fold*, the letters match as in a `/i` regex.
   private def self.identifier_end(chars : Array(Char), index : Int32, *, fold : Bool) : Int32
@@ -870,7 +909,7 @@ module Grant::TextMatching
   private def self.sort_tail(chars : Array(Char), index : Int32) : {String?, String?}?
     position = index
     direction = nil
-    if (start = spaces_after(chars, position))
+    if start = spaces_after(chars, position)
       word = {"asc", "desc"}.find { |candidate| keyword_at?(chars, start, candidate) }
       if word
         direction = text_of(chars, start, start + word.size)
@@ -938,6 +977,33 @@ module Grant::TextMatching
       position += 1
     end
     position
+  end
+
+  # Matches `\A\$2[abxy]?\$\d{2}\$`, the prefix of a bcrypt hash: where the
+  # hash body starts, or `nil`.
+  private def self.bcrypt_body_start(chars : Array(Char)) : Int32?
+    return unless chars[0]? == '$' && chars[1]? == '2'
+    index = 2
+    index += 1 if chars[index]?.try(&.in?('a', 'b', 'x', 'y'))
+    return unless chars[index]? == '$'
+    first_digit = chars[index + 1]?
+    second_digit = chars[index + 2]?
+    return unless first_digit && second_digit && CC.digit?(first_digit) && CC.digit?(second_digit)
+    return unless chars[index + 3]? == '$'
+    index + 4
+  end
+
+  # Matches `"?([A-Za-z_][A-Za-z0-9_]*)"?\.(?=["A-Za-z_])` at *index*: the
+  # start and end of the qualifier name and the index of its dot, or `nil`.
+  private def self.qualifier_at(chars : Array(Char), index : Int32) : {Int32, Int32, Int32}?
+    name_start = chars[index] == '"' ? index + 1 : index
+    name_end = identifier_end(chars, name_start, fold: false)
+    return if name_end == name_start
+    dot = chars[name_end]? == '"' ? name_end + 1 : name_end
+    following = chars[dot + 1]?
+    return unless chars[dot]? == '.' && following
+    return unless following == '"' || following == '_' || following.ascii_letter?
+    {name_start, name_end, dot}
   end
 
   # The end of a URL scheme `[A-Za-z][A-Za-z0-9+.\-]*` at the start, or `nil`.

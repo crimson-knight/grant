@@ -138,6 +138,23 @@ describe Grant::TextMatching do
     mismatches(inputs_for(tokens)) { |text| {text.matches?(/\b(ORDER\s+BY|LIMIT|OFFSET|GROUP\s+BY)\b/i), TM.trailing_clause_keyword?(text)} }.should be_empty
   end
 
+  it "detects SQL after a condition outside quoted text" do
+    # The reference: blank every quoted literal or identifier, then look for
+    # the words as whole words in any case.
+    quoted = /'(?:[^']|'')*'?|"(?:[^"]|"")*"?|`(?:[^`]|``)*`?/
+    reference = ->(text : String, keywords : Regex) do
+      text.gsub(quoted) { |match| "\0" * match.size }.matches?(keywords)
+    end
+    tokens = SQL_TOKENS + ["HAVING", "having", "limit", "'LIMIT'", "'it''s'", %("order by"), "`limit`", "''", %(""), "``", "'", "JOIN", "Join", "joined"]
+    extra = ["WHERE title = 'LIMIT'", "WHERE a = 'x' LIMIT 1", "WHERE a = 'it''s' ORDER BY a", %(WHERE "limit" = 1), "WHERE `order by` = 1", "WHERE a = 'open LIMIT", "WHERE a = 'x''' LIMIT 1", "a HAVING b"]
+    mismatches(inputs_for(tokens, extra)) do |text|
+      {reference.call(text, /\b(ORDER\s+BY|LIMIT|OFFSET|GROUP\s+BY|HAVING)\b/i), TM.sql_after_condition?(text)}
+    end.should be_empty
+    mismatches(inputs_for(tokens, extra + ["JOIN b", "x join b", "'join' x", %("JOIN")])) do |text|
+      {reference.call(text, /\bjoin\b/i), TM.join_clause?(text)}
+    end.should be_empty
+  end
+
   it "strips a leading WHERE like /\\AWHERE\\s+/i" do
     mismatches(inputs_for(SQL_TOKENS)) { |text| {text.sub(/\AWHERE\s+/i, ""), TM.strip_leading_where(text)} }.should be_empty
   end
@@ -185,8 +202,9 @@ describe Grant::TextMatching do
   end
 
   it "recognizes standard library paths like the old Grant::Logs::STDLIB_FRAME" do
-    tokens = ["/", "share", "crystal", "agent-crystal", "src", "lib", "x", ".", "-", "_", "1.21", "HEAD", "/share/", "/src/", "/crystal/", " "]
-    mismatches(inputs_for(tokens)) { |text| {text.matches?(%r{/(?:share/[\w.-]*crystal[\w.-]*|crystal)/src/}), TM.stdlib_path?(text)} }.should be_empty
+    tokens = ["/", "share", "crystal", "agent-crystal", "src", "lib", "x", ".", "-", "_", "1.21", "HEAD", "/share/", "/src/", "/crystal/", " ", "share/"]
+    extra = ["/usr/share/share/crystal-alpha/src/array.cr", "/share/share/share/crystal/src/", "/share/x/share/crystal/src/", "/share/share/src/", "/share/crystalshare/crystal/src/"]
+    mismatches(inputs_for(tokens, extra)) { |text| {text.matches?(%r{/(?:share/[\w.-]*crystal[\w.-]*|crystal)/src/}), TM.stdlib_path?(text)} }.should be_empty
   end
 
   it "recognizes bcrypt digests like the old SecurePassword::DIGEST_FORMAT" do
@@ -332,6 +350,7 @@ describe Grant::TextMatching do
         TM.locking_read?(text)
         TM.trailing_clause_keyword?(text)
         TM.sql_after_condition?(text)
+        TM.join_clause?(text)
         TM.normalize_sql_shape(text)
         TM.split_sql_words(text)
         TM.stdlib_path?(text)

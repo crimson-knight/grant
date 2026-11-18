@@ -46,7 +46,7 @@ STDOUT << "# PCRE2 library Crystal links. Do not edit it by hand.\n\n"
 STDOUT << "module Grant::CharacterClass\n"
 CLASSES.each_with_index do |(name, pattern), index|
   STDOUT << "\n" if index > 0
-  emit(STDOUT, "#{name}_ranges", ranges_for { |char| char.to_s.matches?(pattern) })
+  emit(STDOUT, "#{name}_ranges", ranges_for(&.to_s.matches?(pattern)))
 end
 
 # Non-ASCII code points that a case-insensitive regex matches against an ASCII

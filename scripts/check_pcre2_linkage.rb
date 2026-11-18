@@ -1,7 +1,7 @@
 #!/usr/bin/ruby
 # Proves Grant's default path links no PCRE2.
 #
-# Builds the probes in spec/linkage with $CRYSTAL (default crystal-alpha) and
+# Builds the probes in scripts/linkage with $CRYSTAL (default crystal-alpha) and
 # counts PCRE2 in each binary: `otool -L` (macOS) or `ldd` (Linux) for the
 # linked library, `nm` for pcre2_ symbols. The default-app and PostgreSQL
 # probes must show 0 and 0; the control probe, which uses a Regex, must show
@@ -19,9 +19,9 @@ LIBRARY_LISTER = RUBY_PLATFORM.include?("darwin") ? %w[otool -L] : %w[ldd]
 Probe = Struct.new(:name, :source, :expect_pcre2, :run)
 
 PROBES = [
-  Probe.new("default app (SQLite)", "spec/linkage/default_app_probe.cr", false, true),
-  Probe.new("PostgreSQL adapter", "spec/linkage/pg_app_probe.cr", false, false),
-  Probe.new("control (uses Regex)", "spec/linkage/regex_control_probe.cr", true, true),
+  Probe.new("default app (SQLite)", "scripts/linkage/default_app_probe.cr", false, true),
+  Probe.new("PostgreSQL adapter", "scripts/linkage/pg_app_probe.cr", false, false),
+  Probe.new("control (uses Regex)", "scripts/linkage/regex_control_probe.cr", true, true),
 ]
 
 def count_matches(command, pattern)

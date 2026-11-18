@@ -116,13 +116,13 @@ describe "Regex support behind require \"grant/regex\"" do
     end
 
     it "leaves REGEXP unregistered on SQLite connections" do
-      ok, message = compile_without_opt_in(<<-CR, run: true)
+      ok, message = compile_without_opt_in(<<-'CR', run: true)
         adapter = Grant::Adapter::Sqlite.new(name: "probe", url: "sqlite3::memory:")
         begin
           adapter.open(&.scalar("SELECT 'abc' REGEXP 'b'"))
           puts "REGEXP available"
         rescue ex
-          puts "REGEXP missing: \#{ex.message}"
+          puts "REGEXP missing: #{ex.message}"
         end
         CR
       ok.should be_true, message
