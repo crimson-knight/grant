@@ -5,8 +5,6 @@ require "./sql_expression"
 module Grant::Query::OrderSupport
   alias Term = NamedTuple(field: String, direction: Grant::Query::Builder::Sort)
 
-  RAW_DIRECTION = /\s+(asc|desc)(\s+nulls\s+(first|last))?\s*\z/i
-
   # Returns *term* ordered the other way. A raw term has its trailing
   # `ASC`/`DESC` (and `NULLS FIRST`/`LAST`) flipped on every comma-separated
   # part, or gains `DESC` when it names no direction.
@@ -20,10 +18,10 @@ module Grant::Query::OrderSupport
 
   def self.reverse_raw(sql : String) : String
     Grant::Query::SqlExpression.split_terms(sql).map do |part|
-      if match = RAW_DIRECTION.match(part)
-        flipped = match[1].downcase == "asc" ? "DESC" : "ASC"
-        nulls = match[3]?.try { |placement| " NULLS #{placement.downcase == "first" ? "LAST" : "FIRST"}" } || ""
-        "#{part[0, match.begin(0)]} #{flipped}#{nulls}"
+      if found = Grant::TextMatching.raw_direction(part)
+        flipped = found.direction.downcase == "asc" ? "DESC" : "ASC"
+        nulls = found.nulls.try { |placement| " NULLS #{placement.downcase == "first" ? "LAST" : "FIRST"}" } || ""
+        "#{part[0, found.index]} #{flipped}#{nulls}"
       else
         "#{part} DESC"
       end
@@ -49,8 +47,6 @@ module Grant::Query::OrderSupport
 end
 
 class Grant::Query::Builder(Model)
-  ORDER_TERM = /\A\s*([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)?)(?:\s+(asc|desc))?(?:\s+nulls\s+(first|last))?\s*\z/i
-
   # Appends ORDER BY terms written as SQL. Each comma-separated term of the form
   # `column [ASC|DESC] [NULLS FIRST|LAST]` (column may be `table.column`) becomes
   # a structured term. A function of columns, such as `lower(name) DESC` or
@@ -75,8 +71,8 @@ class Grant::Query::Builder(Model)
 
   private def append_order_terms(sql : String, trusted : Bool) : self
     Grant::Query::SqlExpression.split_terms(sql).each do |term|
-      if match = ORDER_TERM.match(term)
-        own_order_fields << {field: match[1], direction: Grant::Query::OrderSupport.sort_for(match[2]?, match[3]?)}
+      if parsed = Grant::TextMatching.order_term(term)
+        own_order_fields << {field: parsed.column, direction: Grant::Query::OrderSupport.sort_for(parsed.direction, parsed.nulls)}
       else
         own_order_fields << {field: raw_order_term(term, trusted), direction: Sort::Raw}
       end

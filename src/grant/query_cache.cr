@@ -30,9 +30,6 @@
 module Grant::QueryCache
   @@generation = Atomic(UInt64).new(0_u64)
 
-  # Reads that hold row locks must reach the database every time.
-  LOCKING_READ = /\bfor\s+(update|share|no\s+key\s+update|key\s+share)\b/i
-
   # Adapter, connection, schema-tenant schema, SQL and binds. The schema is
   # part of the key because `Grant::SchemaTenant.with` switches `search_path`
   # on one connection without a write, so the same SQL on the same connection
@@ -153,7 +150,8 @@ module Grant::QueryCache
     state = Fiber.current.grant_query_cache
     return yield unless state && state.enabled?
     return yield unless Grant::Adapter::PoolSupport.idempotent_read?(sql)
-    return yield if LOCKING_READ.matches?(sql)
+    # Reads that hold row locks must reach the database every time.
+    return yield if Grant::TextMatching.locking_read?(sql)
 
     started = generation
     if state.generation != started

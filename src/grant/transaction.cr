@@ -94,8 +94,6 @@ module Grant::Transaction
   class InvalidSavepointNameError < Grant::ErrorBase
   end
 
-  SAVEPOINT_NAME_PATTERN = /\A[a-zA-Z_][a-zA-Z0-9_]*\z/
-
   # Bundle of options for a `transaction`. Construct one directly to reuse the
   # same settings across several `transaction(options)` calls, or pass the
   # individual keyword arguments to `transaction(isolation:, readonly:,
@@ -897,7 +895,7 @@ module Grant::Transaction
   def self.with_savepoint(adapter : Grant::Adapter::Base, name : String?, & : -> T) : T? forall T
     state = current_state_for?(adapter)
     raise NotOpenError.new("Savepoints require an open transaction") unless state
-    if name && !(name =~ SAVEPOINT_NAME_PATTERN)
+    if name && !Grant::TextMatching.simple_identifier?(name)
       raise InvalidSavepointNameError.new("Invalid savepoint name: #{name.inspect}")
     end
     run_savepoint(state, true, name) { yield }

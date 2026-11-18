@@ -272,7 +272,7 @@ module Grant::Migrator
     # macro: fractional digits on PostgreSQL and MySQL (SQLite stores text).
     private def stamped_type(type : String, precision : Int32?) : String
       return type if precision.nil? || dialect.sqlite?
-      dialect.mysql? ? type.gsub("(6)", "(#{precision})") : type.sub(/\ATIMESTAMP(\(\d+\))?/i, "TIMESTAMP(#{precision})")
+      dialect.mysql? ? type.gsub("(6)", "(#{precision})") : Grant::TextMatching.replace_leading_timestamp(type, "TIMESTAMP(#{precision})")
     end
 
     # One column definition line, without its trailing newline.

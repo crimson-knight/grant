@@ -31,7 +31,7 @@ class Grant::Adapter::Mysql < Grant::Adapter::Base
   # collation when the URL does not provide one.
   def initialize(name : String, url : String)
     MySql::Type.types_by_code[245_u8] = MySql::Type::String
-    unless url.matches?(/[?&]encoding=/i)
+    unless Grant::TextMatching.encoding_option?(url)
       separator = url.includes?("?") ? "&" : "?"
       url = "#{url}#{separator}encoding=utf8mb4_general_ci"
     end

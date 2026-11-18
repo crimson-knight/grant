@@ -563,10 +563,10 @@ module Grant::Querying
       scope = current_scope
       filter = clause.strip
       unless filter.empty?
-        if filter.matches?(/\b(ORDER\s+BY|LIMIT|OFFSET|GROUP\s+BY)\b/i)
+        if Grant::TextMatching.trailing_clause_keyword?(filter)
           raise ArgumentError.new("find_each/find_in_batches accept only a WHERE clause; use order, limit and offset on the relation instead")
         end
-        scope = scope.where(filter.sub(/\AWHERE\s+/i, ""), params)
+        scope = scope.where(Grant::TextMatching.strip_leading_where(filter), params)
       end
       scope = scope.offset(offset) if offset > 0
       scope

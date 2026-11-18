@@ -46,9 +46,7 @@ module Grant
       # The scheme of *url* (`"postgres"` for `postgres://h/db`, `"sqlite3"`
       # for `sqlite3:./a.db`), or `nil` when it has none.
       def self.scheme_of(url : String) : String?
-        if match = url.match(/\A([A-Za-z][A-Za-z0-9+.\-]*):/)
-          match[1].downcase
-        end
+        Grant::TextMatching.url_scheme(url).try(&.downcase)
       end
 
       # The adapter class for *url*, chosen from its scheme.
@@ -67,7 +65,7 @@ module Grant
       def self.redact(url : String) : String
         # Greedy up to the last "@" before any query or fragment, so a password
         # holding "/" or "@" is still hidden.
-        url.sub(/\A([A-Za-z][A-Za-z0-9+.\-]*:\/\/)[^?#]*@/, "\\1***@")
+        Grant::TextMatching.redact_url_credentials(url)
       end
     end
   end

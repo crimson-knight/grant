@@ -15,10 +15,6 @@ module Grant::Schema
   # A Crystal value usable as a SQL column default.
   alias DefaultLiteral = ::String | Int8 | Int16 | Int32 | Int64 | Float32 | Float64 | BigDecimal | Bool | ::Time?
 
-  # A MySQL column default that is a literal: a single-quoted string (quotes
-  # doubled or backslash-escaped inside) or a signed decimal number.
-  MYSQL_LITERAL_DEFAULT = /\A(?:'(?:[^'\\]|''|\\.)*'|[-+]?\d+(?:\.\d+)?)\z/
-
   # The SQL flavor a schema statement is written in. Statements are built from
   # a dialect alone, so the SQL for every adapter can be asserted without a
   # connection to it.
@@ -79,9 +75,10 @@ module Grant::Schema
       return expression if pg?
       trimmed = expression.strip
       return trimmed if trimmed.starts_with?('(') && trimmed.ends_with?(')')
-      return trimmed if mysql? && trimmed.matches?(MYSQL_LITERAL_DEFAULT)
-      bare = mysql? ? /\A(CURRENT_TIMESTAMP|CURRENT_DATE|CURRENT_TIME|NOW|LOCALTIMESTAMP|LOCALTIME)(\(\d*\))?\z/i : /\ACURRENT_(TIMESTAMP|DATE|TIME)\z/i
-      trimmed.matches?(bare) ? trimmed : "(#{trimmed})"
+      # A MySQL literal: a single-quoted string (quotes doubled or
+      # backslash-escaped inside) or a signed decimal number.
+      return trimmed if mysql? && Grant::TextMatching.mysql_literal_default?(trimmed)
+      Grant::TextMatching.bare_time_default?(trimmed, mysql: mysql?) ? trimmed : "(#{trimmed})"
     end
 
     # Like `#default_expression` for a column of native type *type*. MySQL
@@ -91,9 +88,9 @@ module Grant::Schema
     def default_expression(expression : String, type : String) : String
       rendered = default_expression(expression)
       return rendered unless mysql?
-      digits = type.match(/\A(?:DATETIME|TIMESTAMP|TIME)\((\d+)\)/i).try(&.[1])
+      digits = Grant::TextMatching.time_type_precision(type)
       return rendered if digits.nil? || digits == "0"
-      rendered.match(/\A(CURRENT_TIMESTAMP|CURRENT_TIME|NOW|LOCALTIMESTAMP|LOCALTIME)\z/i) ? "#{rendered}(#{digits})" : rendered
+      Grant::TextMatching.current_time_keyword?(rendered) ? "#{rendered}(#{digits})" : rendered
     end
   end
 
@@ -157,7 +154,7 @@ module Grant::Schema
           base
         end
       when "Time"
-        precision && !dialect.sqlite? ? "#{base.sub(/\(\d+\)/, "")}(#{precision})" : base
+        precision && !dialect.sqlite? ? "#{Grant::TextMatching.remove_parenthesized_number(base)}(#{precision})" : base
       when "Int8", "Int16", "Int32", "Int64"
         limit ? integer_type(dialect, limit) : base
       when "Bytes"
@@ -220,7 +217,7 @@ module Grant::Schema
       array = dialect.pg? && name.ends_with?("[]")
       name = name.rchop("[]") if array
       return "Bool" if dialect.mysql? && name.delete(' ') == "tinyint(1)"
-      name = name.sub(/\s*\(.*\)/, "").strip
+      name = Grant::TextMatching.remove_parenthesized_suffix(name).strip
       table = case dialect
               in .pg?     then CRYSTAL_PG
               in .mysql?  then CRYSTAL_MYSQL

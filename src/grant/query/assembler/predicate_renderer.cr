@@ -93,7 +93,7 @@ class Grant::Query::Assembler::PredicateRenderer
 
   def structured_field_sql(field : String) : String
     parts = field.split('.')
-    unless parts.size.in?(1..2) && parts.all?(&.matches?(/\A[A-Za-z_][A-Za-z0-9_]*\z/))
+    unless parts.size.in?(1..2) && parts.all? { |part| Grant::TextMatching.simple_identifier?(part) }
       raise ArgumentError.new("Invalid query field #{field.inspect}")
     end
 

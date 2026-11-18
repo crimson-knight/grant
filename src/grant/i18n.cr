@@ -242,15 +242,20 @@ module Grant::I18n
         io << human_attribute << ' ' << message
       end
     else
-      template.gsub(/%\{(attribute|message)\}/) { |_, match| match[1] == "attribute" ? human_attribute : message }
+      Grant::TextMatching.replace_named_placeholders(template) do |whole, name|
+        case name
+        when "attribute" then human_attribute
+        when "message"   then message
+        else                  whole
+        end
+      end
     end
   end
 
   # Replaces `%{name}` placeholders in *template*.
   def self.interpolate(template : String, base : Grant::Base?, attribute : String, options : Grant::Error::Options?) : String
     return template unless template.includes?("%{")
-    template.gsub(/%\{(\w+)\}/) do |whole, match|
-      name = match[1]
+    Grant::TextMatching.replace_named_placeholders(template) do |whole, name|
       found = nil
       options.try &.each do |key, value|
         if key.to_s == name

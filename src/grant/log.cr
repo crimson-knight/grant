@@ -26,9 +26,6 @@ module Grant::Logs
   end
 
   GRANT_SOURCE_ROOT = File.expand_path("..", __DIR__)
-  STDLIB_FRAME      = %r{/(?:share/[\w.-]*crystal[\w.-]*|crystal)/src/}
-  FRAME_LOCATION    = /\A(.+?:\d+(?::\d+)?)(.*)\z/m
-  TABLE_AFTER       = /\b(?:FROM|INTO|UPDATE)\s+(?:ONLY\s+)?[`"\[]?([\w.$]+)/i
 
   # Writes the verbose lines for one executed statement. Called by
   # `Adapter::Base#log` after the statement's own entry.
@@ -61,7 +58,7 @@ module Grant::Logs
   # The name of the model whose table *sql* targets, or `nil` when no model
   # owns that table. Only used to label verbose lines, never on the hot path.
   private def self.model_name_in(sql : String) : String?
-    table = TABLE_AFTER.match(sql).try(&.[1])
+    table = Grant::TextMatching.statement_table(sql)
     table ? model_name_for_table(table) : nil
   end
 
@@ -84,14 +81,14 @@ module Grant::Logs
   # the Crystal standard library and not another shard under `lib/`.
   def self.source_location(frames : Array(String)) : String?
     frames.each do |frame|
-      next unless match = FRAME_LOCATION.match(frame)
+      next unless Grant::TextMatching.frame_with_line?(frame)
       path = frame.split(':', 2).first
       absolute = File.expand_path(path)
       next if absolute.starts_with?(GRANT_SOURCE_ROOT)
-      next if STDLIB_FRAME.matches?(absolute) || absolute.includes?("/lib/")
+      next if Grant::TextMatching.stdlib_path?(absolute) || absolute.includes?("/lib/")
       next if path == "??" || File.extname(path) != ".cr"
 
-      return "#{match[1]}#{match[2]}"
+      return frame
     end
     nil
   end
@@ -112,7 +109,7 @@ module Grant::Logs
            end
     return "SQL" unless kind
 
-    table = name || TABLE_AFTER.match(sql).try(&.[1])
+    table = name || Grant::TextMatching.statement_table(sql)
     table ? "#{table} #{kind}" : kind
   end
 

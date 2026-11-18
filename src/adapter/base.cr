@@ -449,7 +449,7 @@ abstract class Grant::Adapter::Base
     rescue IO::Error
       raise ::DB::ConnectionLost.new(connection)
     rescue ex : ::Exception
-      if ex.message =~ /client was disconnected/
+      if ex.message.try(&.includes?("client was disconnected"))
         raise ::DB::ConnectionLost.new(connection)
       elsif sql.nil?
         # A caller that passed no SQL still gets the statement that failed.
@@ -879,7 +879,7 @@ abstract class Grant::Adapter::Base
   end
 
   private def shift_parameter_placeholders(clause : String, offset : Int32) : String
-    clause.gsub(/\$(\d+)/) do |match|
+    Grant::TextMatching.replace_numbered_placeholders(clause) do |match|
       "$#{match[1..].to_i + offset}"
     end
   end
@@ -962,10 +962,10 @@ abstract class Grant::Adapter::Base
   end
 
   private def colorize(query : String, params, elapsed_time : Float64) : String
-    q = query.to_s.split(/([a-zA-Z0-9_$']+)/).map do |word|
+    q = Grant::TextMatching.split_sql_words(query.to_s).map do |word|
       if SQL_KEYWORDS.includes?(word.upcase)
         word.colorize.bold.blue.to_s
-      elsif !word.starts_with?('$') && word =~ /\d+/
+      elsif !word.starts_with?('$') && Grant::TextMatching.contains_digit?(word)
         word.colorize.light_red
       elsif word.starts_with?('\'') && word.ends_with?('\'')
         word.colorize(Colorize::Color256.new(193))

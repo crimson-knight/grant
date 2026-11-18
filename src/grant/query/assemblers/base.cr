@@ -53,7 +53,7 @@ module Grant::Query::Assembler
     end
 
     private def qualify_join_field(field : String, quoted_table_name : String) : String
-      if !@query.join_clauses.empty? && field.matches?(/\A[A-Za-z_][A-Za-z0-9_]*\z/)
+      if !@query.join_clauses.empty? && Grant::TextMatching.simple_identifier?(field)
         "#{quoted_table_name}.#{Model.quote(field)}"
       else
         quote_reserved_field(field)
