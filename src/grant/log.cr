@@ -129,7 +129,7 @@ macro finished
     names = {} of String => String
     {% for klass in Grant::Base.all_subclasses %}
       {% unless klass.abstract? || !klass.type_vars.empty? || klass.name.starts_with?("Validators::") || klass.name.starts_with?("Spec::") %}
-        names[{{klass}}.table_name] ||= {{klass.name.stringify}}
+        names[::{{klass}}.table_name] ||= {{klass.name.stringify}}
       {% end %}
     {% end %}
     names
