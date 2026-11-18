@@ -25,6 +25,32 @@ This project is to provide an ORM in Crystal using the Active Record pattern.
 Crystal 1.19.0 or newer (below 2.0). `shard.yml` declares the minimum, and CI
 proves it on every pull request; see [docs/RELEASING.md](docs/RELEASING.md).
 
+## Regex support is opt-in
+
+Grant's default path (model definition, columns, attributes, associations,
+querying, saving, validating, logging, and the SQLite and PostgreSQL adapters)
+uses hand-written text checks, so an app built on it links no PCRE2. Features
+whose purpose is a regular expression load only when you ask for them:
+
+```crystal
+require "grant"
+require "grant/adapter/sqlite"
+require "grant/regex" # after grant, before the models that use it
+```
+
+`require "grant/regex"` turns on:
+
+- `validates_format_of` (and `validates :field, format: /.../`)
+- Regex entries in `filter_attributes` and `Grant.settings.filter_attributes`
+- the `REGEXP` SQL operator on SQLite connections
+- `Grant::Validators::BuiltIn::CommonFormats::EMAIL_REGEX` and `URL_REGEX`
+
+Without it, `validates_format_of` and a Regex `filter_attributes` stop at
+compile time with a message naming the require, and SQLite reports
+`no such function: REGEXP`. `validates_email` and `validates_url` need no
+opt-in. `scripts/check_pcre2_linkage.rb` builds probe apps and checks that
+their binaries link no PCRE2.
+
 ## Comprehensive Feature Examples
 
 Here are 3 example models that demonstrate every feature available in Grant:
@@ -305,6 +331,8 @@ end
 ### Example 3: Product Model (Advanced Features & Sharding)
 
 ```crystal
+require "grant/regex" # for validates_format_of below
+
 class Product < Grant::Base
   # Sharding configuration
   connection :products_shard

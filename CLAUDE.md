@@ -8,7 +8,7 @@ Grant is an ActiveRecord-pattern ORM for the Crystal programming language, pursu
 - **Pattern**: ActiveRecord (models inherit from `Grant::Base`)
 - **Language**: Crystal (>= 1.19.0, < 2.0.0; see `docs/RELEASING.md`)
 - **License**: MIT
-- **Version**: 0.23.4
+- **Version**: 0.24.0
 
 ## Build and Test Commands
 

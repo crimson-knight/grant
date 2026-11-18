@@ -60,9 +60,17 @@ validates_numericality_of :priority, in: 1..5, even: true
 
 **Options**: `greater_than`, `greater_than_or_equal_to`, `less_than`, `less_than_or_equal_to`, `equal_to`, `other_than`, `odd: true`, `even: true`, `only_integer: true`, `in: range`, `allow_nil: true`, `allow_blank: true`
 
-### Format
+### Format (opt-in: `require "grant/regex"`)
+
+Regex support is opt-in so a default Grant app links no PCRE2. Add
+`require "grant/regex"` after `require "grant"` and before the models that use
+`validates_format_of`; without it the macro stops at compile time with a message
+naming the require. Prefer `validates_email` / `validates_url` (no opt-in) for
+email and URL checks.
 
 ```crystal
+require "grant/regex"
+
 validates_format_of :username, with: /\A[a-zA-Z0-9_]+\z/
 validates_format_of :phone, with: /\A\d{3}-\d{3}-\d{4}\z/
 validates_format_of :username, without: /\A(admin|root)\z/, message: "is reserved"
@@ -202,7 +210,7 @@ validates_numericality_of :age,
   greater_than_or_equal_to: 18,
   message: "You must be at least 18 years old"
 
-validates_format_of :email,
+validates_format_of :email, # needs require "grant/regex"
   with: /@company\.com\z/,
   message: "must be a company email address"
 
