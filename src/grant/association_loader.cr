@@ -300,7 +300,7 @@ module Grant
 
     def initialize(records : Array(T), *associations, **nested_associations) forall T
       {% for model in T.union_types %}
-        Grant::AssociationLoader.enable({{model}})
+        Grant::AssociationLoader.enable(::{{model}})
       {% end %}
       @records = [] of Grant::Base
       records.each { |record| @records << record }

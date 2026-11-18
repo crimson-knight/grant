@@ -46,7 +46,9 @@ module Grant::STI
 
   # Registers an STI class for type resolution at compile time.
   macro register_sti_type(name, klass)
-    {% Grant::STI::REGISTERED_TYPES[name] = klass %}
+    # The generated loaders run inside the Grant namespace, so a model named
+    # like a Grant type (`Connection`) is stored rooted at the top level.
+    {% Grant::STI::REGISTERED_TYPES[name] = klass.is_a?(Path) && !klass.global? ? parse_type("::#{klass}") : klass %}
   end
 
   # Raised when a `type` value in the database does not map to a registered
@@ -157,7 +159,7 @@ module Grant::STI
       # compute its own table name from its class name. Delegate to the
       # superclass instead, which recurses up to the STI root's table.
       def self.table_name : String
-        \{{@type.superclass}}.table_name
+        ::\{{@type.superclass}}.table_name
       end
 
       # Subclasses are NOT the root.
@@ -254,7 +256,7 @@ module Grant::STI
       {% if @type.superclass.id == "Grant::Base" %}
         self
       {% else %}
-        {{@type.superclass}}.sti_root
+        ::{{@type.superclass}}.sti_root
       {% end %}
     end
 
