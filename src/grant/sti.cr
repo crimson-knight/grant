@@ -46,7 +46,11 @@ module Grant::STI
 
   # Registers an STI class for type resolution at compile time.
   macro register_sti_type(name, klass)
-    {% Grant::STI::REGISTERED_TYPES[name] = klass %}
+    # Stores a rooted path: the dispatch tables below expand inside `Grant`,
+    # where an unrooted `Connection` would name `Grant::Connection`. The path is
+    # resolved in an escaped block so it resolves at the call site (the model),
+    # the scope the caller wrote it in.
+    \{% Grant::STI::REGISTERED_TYPES[{{name}}] = ({{klass}}).resolve? ? parse_type("::#{({{klass}}).resolve}") : {{klass}} %}
   end
 
   # Raised when a `type` value in the database does not map to a registered

@@ -23,6 +23,11 @@ require "log/spec"
     column host_address : String
 
     has_many :notes, as: :notable, class_name: "ConnectionNote"
+
+    # Hand-written registrations with an unrooted path replace the automatic
+    # ones; the registries must still store the app's class.
+    Grant::Polymorphic.register_polymorphic_type("Connection", Connection)
+    Grant::STI.register_sti_type("Connection", Connection)
   end
 
   class PooledConnection < Connection
