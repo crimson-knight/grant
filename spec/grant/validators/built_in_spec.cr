@@ -1,4 +1,5 @@
 require "../../spec_helper"
+require "../../../src/grant/regex"
 
 describe "Grant::Validators::BuiltIn" do
   describe "validates_numericality_of" do

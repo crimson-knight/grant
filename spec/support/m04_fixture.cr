@@ -1,4 +1,5 @@
 require "../spec_helper"
+require "../../src/grant/regex"
 
 # A schema with every feature the dumper round-trips: types, defaults,
 # comments, auto and composite primary keys, partial, expression, descending and

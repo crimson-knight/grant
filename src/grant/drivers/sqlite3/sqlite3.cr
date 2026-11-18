@@ -13,13 +13,4 @@ module Grant::SQLite3
 
   # :nodoc:
   TIME_ZONE = Time::Location::UTC
-
-  # :nodoc:
-  #
-  # SQLite calls this from C for every `REGEXP` it evaluates, so it hands all
-  # work to `RegexpFunction.call`, which never lets an exception unwind into SQLite.
-  REGEXP_FN = ->(context : LibSQLite3::SQLite3Context, argc : Int32, argv : LibSQLite3::SQLite3Value*) do
-    RegexpFunction.call(context, argc, argv)
-    nil
-  end
 end

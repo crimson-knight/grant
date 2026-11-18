@@ -1,4 +1,5 @@
 require "../../spec_helper"
+require "../../../src/grant/regex"
 require "../../../src/grant/encryption"
 
 class FilterEncAccount < Grant::Base

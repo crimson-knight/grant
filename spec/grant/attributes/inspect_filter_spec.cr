@@ -1,4 +1,5 @@
 require "./attribute_models"
+require "../../../src/grant/regex"
 
 describe "inspect and filter_attributes" do
   before_all do
