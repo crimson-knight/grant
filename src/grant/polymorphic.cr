@@ -583,9 +583,12 @@ module Grant::Polymorphic
     # Resolves `class_name` lazily in this model's own namespace, so Grant code
     # reading the annotation from inside `Grant` reaches the class the model
     # meant, and a target defined later still resolves. :nodoc:
-    alias GrantAssociationTarget{{method_name.id.camelcase}} = {{class_name.id}}
+    {% grant_target_alias = "GrantAssociationTarget" + method_name.id.camelcase.stringify + class_name.id.stringify.gsub(/[^A-Za-z0-9]/, "") %}
+    {% unless @type.has_constant?(grant_target_alias) %}
+      alias {{grant_target_alias.id}} = {{class_name.id}}
+    {% end %}
 
-    @[Grant::Relationship(target: ::{{@type.name(generic_args: false)}}::GrantAssociationTarget{{method_name.id.camelcase}}, type: :has_many, polymorphic_as: {{poly_as.id.stringify}},
+    @[Grant::Relationship(target: ::{{@type.name(generic_args: false)}}::{{grant_target_alias.id}}, type: :has_many, polymorphic_as: {{poly_as.id.stringify}},
       foreign_key: {{foreign_key.id.stringify}}, type_column: {{type_column.id.stringify}},
       primary_key: {{primary_key_name}}, scope: nil)]
     def {{method_name.id}} : Grant::AssociationCollection(self, {{class_name.id}})
@@ -722,9 +725,12 @@ module Grant::Polymorphic
     # Resolves `class_name` lazily in this model's own namespace, so Grant code
     # reading the annotation from inside `Grant` reaches the class the model
     # meant, and a target defined later still resolves. :nodoc:
-    alias GrantAssociationTarget{{method_name.id.camelcase}} = {{class_name.id}}
+    {% grant_target_alias = "GrantAssociationTarget" + method_name.id.camelcase.stringify + class_name.id.stringify.gsub(/[^A-Za-z0-9]/, "") %}
+    {% unless @type.has_constant?(grant_target_alias) %}
+      alias {{grant_target_alias.id}} = {{class_name.id}}
+    {% end %}
 
-    @[Grant::Relationship(target: ::{{@type.name(generic_args: false)}}::GrantAssociationTarget{{method_name.id.camelcase}}, type: :has_one, polymorphic_as: {{poly_as.id.stringify}},
+    @[Grant::Relationship(target: ::{{@type.name(generic_args: false)}}::{{grant_target_alias.id}}, type: :has_one, polymorphic_as: {{poly_as.id.stringify}},
       foreign_key: {{foreign_key.id.stringify}}, type_column: {{type_column.id.stringify}},
       primary_key: {{primary_key_name}}, scope: nil)]
     def {{method_name.id}} : {{class_name.id}}?

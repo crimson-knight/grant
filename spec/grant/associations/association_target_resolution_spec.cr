@@ -45,6 +45,12 @@ require "../../spec_helper"
       column headline_text : String
     end
   end
+
+  # Reopening a model and declaring an association again still compiles, and
+  # the redeclared association keeps its namespaced target.
+  class Admin::Post < Grant::Base
+    has_many :comments, class_name: Comment
+  end
 {% end %}
 
 private def create_admin_post_with_comments : Admin::Post
