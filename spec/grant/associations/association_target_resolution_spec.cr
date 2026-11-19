@@ -55,6 +55,14 @@ require "../../spec_helper"
     # (Admin::Comment) is the one that holds.
     has_many :thread_comments, class_name: ::Comment, foreign_key: :post_id
     has_many :thread_comments, class_name: Comment, foreign_key: :post_id
+
+    # A nested type that already holds the next alias name is skipped over.
+    # (Escaped so it is evaluated here, after the declarations above took theirs.)
+    \{% begin %}
+      class GrantAssociationTarget\{{ Grant::Associations::TARGET_ALIAS_SEQUENCE.size + 1 }}
+      end
+    \{% end %}
+    has_many :guarded_comments, class_name: Comment, foreign_key: :post_id
   end
 {% end %}
 
@@ -117,6 +125,13 @@ describe "Association targets named by class_name:" do
 
       post = Admin::Post.includes(:thread_comments).to_a.first
       post.thread_comments.to_a.map(&.class).uniq.should eq([Admin::Comment])
+    end
+
+    it "skips an alias name the model already uses for its own type" do
+      create_admin_post_with_comments
+
+      post = Admin::Post.includes(:guarded_comments).to_a.first
+      post.guarded_comments.to_a.map(&.class).uniq.should eq([Admin::Comment])
     end
 
     it "applies an association scope to the target from the model's own namespace" do
