@@ -66,9 +66,9 @@ require "./association_options"
 # See `docs/advanced_associations.md` for the full guide.
 module Grant::Associations
   # Grows by one entry per association declaration at compile time. Its size
-  # numbers the alias each declaration gives its `class_name:` target, so every
-  # declaration (including a redeclaration of the same association) has its own
-  # alias and no two targets can share one.
+  # alone names the alias each declaration gives its `class_name:` target
+  # (`GrantAssociationTarget17`), so every declaration (including a redeclaration
+  # of the same association) has its own alias and no two can share a name.
   # :nodoc:
   TARGET_ALIAS_SEQUENCE = [] of Nil
 
@@ -174,7 +174,7 @@ module Grant::Associations
     # reading the annotation from inside `Grant` reaches the class the model
     # meant, and a target defined later still resolves. :nodoc:
     {% Grant::Associations::TARGET_ALIAS_SEQUENCE << nil %}
-    {% grant_target_alias = "GrantAssociationTarget" + method_name.id.camelcase.stringify + Grant::Associations::TARGET_ALIAS_SEQUENCE.size.stringify %}
+    {% grant_target_alias = "GrantAssociationTarget" + Grant::Associations::TARGET_ALIAS_SEQUENCE.size.stringify %}
     alias {{grant_target_alias.id}} = {{class_name.id}}
 
     @[Grant::Relationship(target: ::{{@type.name(generic_args: false)}}::{{grant_target_alias.id}}, type: :belongs_to,
@@ -423,7 +423,7 @@ module Grant::Associations
       # reading the annotation from inside `Grant` reaches the class the model
       # meant, and a target defined later still resolves. :nodoc:
       {% Grant::Associations::TARGET_ALIAS_SEQUENCE << nil %}
-      {% grant_target_alias = "GrantAssociationTarget" + method_name.id.camelcase.stringify + Grant::Associations::TARGET_ALIAS_SEQUENCE.size.stringify %}
+      {% grant_target_alias = "GrantAssociationTarget" + Grant::Associations::TARGET_ALIAS_SEQUENCE.size.stringify %}
       alias {{grant_target_alias.id}} = {{class_name.id}}
 
       @[Grant::Relationship(target: ::{{@type.name(generic_args: false)}}::{{grant_target_alias.id}}, type: :has_one,
@@ -536,7 +536,7 @@ module Grant::Associations
     # reading the annotation from inside `Grant` reaches the class the model
     # meant, and a target defined later still resolves. :nodoc:
     {% Grant::Associations::TARGET_ALIAS_SEQUENCE << nil %}
-    {% grant_target_alias = "GrantAssociationTarget" + method_name.id.camelcase.stringify + Grant::Associations::TARGET_ALIAS_SEQUENCE.size.stringify %}
+    {% grant_target_alias = "GrantAssociationTarget" + Grant::Associations::TARGET_ALIAS_SEQUENCE.size.stringify %}
     alias {{grant_target_alias.id}} = {{class_name.id}}
 
     @[Grant::Relationship(target: ::{{@type.name(generic_args: false)}}::{{grant_target_alias.id}}, type: :has_one,
@@ -851,7 +851,7 @@ module Grant::Associations
     # reading the annotation from inside `Grant` reaches the class the model
     # meant, and a target defined later still resolves. :nodoc:
     {% Grant::Associations::TARGET_ALIAS_SEQUENCE << nil %}
-    {% grant_target_alias = "GrantAssociationTarget" + method_name.id.camelcase.stringify + Grant::Associations::TARGET_ALIAS_SEQUENCE.size.stringify %}
+    {% grant_target_alias = "GrantAssociationTarget" + Grant::Associations::TARGET_ALIAS_SEQUENCE.size.stringify %}
     alias {{grant_target_alias.id}} = {{class_name.id}}
 
     @[Grant::Relationship(target: ::{{@type.name(generic_args: false)}}::{{grant_target_alias.id}}, through: {{through.id}}, type: :has_many,

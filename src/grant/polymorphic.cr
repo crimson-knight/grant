@@ -584,7 +584,7 @@ module Grant::Polymorphic
     # reading the annotation from inside `Grant` reaches the class the model
     # meant, and a target defined later still resolves. :nodoc:
     {% Grant::Associations::TARGET_ALIAS_SEQUENCE << nil %}
-    {% grant_target_alias = "GrantAssociationTarget" + method_name.id.camelcase.stringify + Grant::Associations::TARGET_ALIAS_SEQUENCE.size.stringify %}
+    {% grant_target_alias = "GrantAssociationTarget" + Grant::Associations::TARGET_ALIAS_SEQUENCE.size.stringify %}
     alias {{grant_target_alias.id}} = {{class_name.id}}
 
     @[Grant::Relationship(target: ::{{@type.name(generic_args: false)}}::{{grant_target_alias.id}}, type: :has_many, polymorphic_as: {{poly_as.id.stringify}},
@@ -725,7 +725,7 @@ module Grant::Polymorphic
     # reading the annotation from inside `Grant` reaches the class the model
     # meant, and a target defined later still resolves. :nodoc:
     {% Grant::Associations::TARGET_ALIAS_SEQUENCE << nil %}
-    {% grant_target_alias = "GrantAssociationTarget" + method_name.id.camelcase.stringify + Grant::Associations::TARGET_ALIAS_SEQUENCE.size.stringify %}
+    {% grant_target_alias = "GrantAssociationTarget" + Grant::Associations::TARGET_ALIAS_SEQUENCE.size.stringify %}
     alias {{grant_target_alias.id}} = {{class_name.id}}
 
     @[Grant::Relationship(target: ::{{@type.name(generic_args: false)}}::{{grant_target_alias.id}}, type: :has_one, polymorphic_as: {{poly_as.id.stringify}},
