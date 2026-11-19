@@ -1,4 +1,5 @@
 require "./character_class"
+require "./character_scan"
 
 # :nodoc:
 #
@@ -8,12 +9,21 @@ require "./character_class"
 # expression it replaces and accepts and rejects exactly what that expression
 # did, Unicode classes and case-insensitive folding included (see
 # `Grant::CharacterClass`). `spec/grant/text/text_matching_spec.cr` compares
-# every method with its original expression over a table of inputs and a
-# seeded fuzz corpus.
+# every method with its original expression over a table of inputs and seeded
+# fuzz corpora.
+#
+# Single-byte text (every character one byte, which is what SQL, URLs and
+# identifiers almost always are) is answered by scanning its bytes in place:
+# no copy of the text, and a library `memchr` to reach the rare byte a pattern
+# starts with. Text that holds a multibyte character goes to
+# `Grant::TextMatching::CharacterScan`, which reads it as characters so the
+# Unicode classes and case folds apply. A few methods whose pattern can only
+# match ASCII bytes scan any text's bytes directly.
 #
 # Every method makes one pass over its input (a few look back or forward a
 # bounded distance), so the work is linear in the input length. Indices are
-# character indices, as `Regex::MatchData#begin` reports them.
+# character indices, as `Regex::MatchData#begin` reports them; in single-byte
+# text a byte index is the character index.
 module Grant::TextMatching
   alias CC = Grant::CharacterClass
 
@@ -37,40 +47,33 @@ module Grant::TextMatching
   # One ORDER BY term written as `column [ASC|DESC] [NULLS FIRST|LAST]`.
   record OrderTerm, column : String, direction : String?, nulls : String?
 
-  # Replaces `/\A[A-Za-z_][A-Za-z0-9_]*\z/`: a bare SQL identifier.
+  # Replaces `/\A[A-Za-z_][A-Za-z0-9_]*\z/`: a bare SQL identifier. The class
+  # is ASCII, so the bytes of any text answer it.
   def self.simple_identifier?(text : String) : Bool
-    return false if text.empty?
-    text.each_char_with_index do |char, index|
-      return false unless identifier_char?(char, first: index == 0)
-    end
-    true
+    bytes = text.to_slice
+    ident_end(bytes, 0) == bytes.size && !bytes.empty?
   end
 
   # Replaces `/\A[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?\z/`: a
   # column name or a `table.column` pair.
   def self.qualified_identifier?(text : String) : Bool
-    part_start = true
-    dots = 0
-    text.each_char do |char|
-      if char == '.'
-        return false if part_start || dots == 1
-        dots += 1
-        part_start = true
-      else
-        return false unless identifier_char?(char, first: part_start)
-        part_start = false
-      end
-    end
-    !part_start
+    bytes = text.to_slice
+    first_end = ident_end(bytes, 0)
+    return false if first_end == 0
+    return true if first_end == bytes.size
+    return false unless bytes.unsafe_fetch(first_end) === '.'
+    ident_end(bytes, first_end + 1) == bytes.size && first_end + 1 < bytes.size
   end
 
   # Replaces `/\A[A-Za-z][A-Za-z0-9_., ]*\z/`: the characters a vendor lock
   # clause may hold.
   def self.lock_clause?(text : String) : Bool
-    chars = text.chars
-    return false if chars.empty? || !chars[0].ascii_letter?
-    chars.each(within: 1..) do |char|
-      return false unless char.ascii_alphanumeric? || char.in?('_', '.', ',', ' ')
+    bytes = text.to_slice
+    return false unless letter_byte?(byte_at(bytes, 0))
+    index = 1
+    while index < bytes.size
+      return false unless lock_byte?(bytes.unsafe_fetch(index))
+      index += 1
     end
     true
   end
@@ -78,63 +81,67 @@ module Grant::TextMatching
   # Replaces the group of `/\A([A-Za-z][A-Za-z0-9+.\-]*):/`: the scheme of a
   # URL as written, or `nil` when it has none.
   def self.url_scheme(url : String) : String?
-    chars = url.chars
-    scheme_end = scheme_end(chars)
-    return unless scheme_end && chars[scheme_end]? == ':'
-    url[0, scheme_end]
+    bytes = url.to_slice
+    scheme_end = scheme_end(bytes) || return
+    return unless byte_at(bytes, scheme_end) === ':'
+    url.byte_slice(0, scheme_end)
   end
 
   # Replaces `url.sub(/\A([A-Za-z][A-Za-z0-9+.\-]*:\/\/)[^?#]*@/, "\\1***@")`:
   # hides the user information of a URL, up to its last `@` before any query
   # or fragment.
   def self.redact_url_credentials(url : String) : String
-    chars = url.chars
-    scheme_end = scheme_end(chars) || return url
-    return url unless chars[scheme_end]? == ':' && chars[scheme_end + 1]? == '/' && chars[scheme_end + 2]? == '/'
+    bytes = url.to_slice
+    scheme_end = scheme_end(bytes) || return url
+    return url unless byte_at(bytes, scheme_end) === ':' && byte_at(bytes, scheme_end + 1) === '/' && byte_at(bytes, scheme_end + 2) === '/'
     authority_start = scheme_end + 3
-    last_at = nil
+    last_at = -1
     index = authority_start
-    while index < chars.size && !chars[index].in?('?', '#')
-      last_at = index if chars[index] == '@'
+    while index < bytes.size
+      byte = bytes.unsafe_fetch(index)
+      break if byte === '?' || byte === '#'
+      last_at = index if byte === '@'
       index += 1
     end
-    return url unless last_at
-    String.build do |io|
-      chars.each(within: 0...authority_start) { |char| io << char }
-      io << "***@"
-      chars.each(within: (last_at + 1)..) { |char| io << char }
-    end
+    return url if last_at < 0
+    join_bytes(bytes[0, authority_start], "***@".to_slice, bytes[last_at + 1..])
   end
 
   # Replaces `url.sub(/\Asqlite3?:(?:\/\/)?/, "")`: a SQLite URL without its
   # scheme and the optional `//`.
   def self.strip_sqlite_scheme(url : String) : String
     rest = if url.starts_with?("sqlite3:")
-             url[8..]
+             8
            elsif url.starts_with?("sqlite:")
-             url[7..]
+             7
            else
              return url
            end
-    rest.starts_with?("//") ? rest[2..] : rest
+    bytes = url.to_slice
+    rest += 2 if byte_at(bytes, rest) === '/' && byte_at(bytes, rest + 1) === '/'
+    url.byte_slice(rest, bytes.size - rest)
   end
 
   # Replaces `url.sub(/\Apostgres(ql)?:/, replacement)`.
   def self.replace_postgres_scheme(url : String, replacement : String) : String
     if url.starts_with?("postgresql:")
-      replacement + url[11..]
+      join_bytes(replacement.to_slice, url.to_slice[11..])
     elsif url.starts_with?("postgres:")
-      replacement + url[9..]
+      join_bytes(replacement.to_slice, url.to_slice[9..])
     else
       url
     end
   end
 
-  # Replaces `url.matches?(/[?&]encoding=/i)`.
+  # Replaces `url.matches?(/[?&]encoding=/i)`. No character outside ASCII
+  # folds to a letter of `encoding`, so the bytes of any text answer it.
   def self.encoding_option?(url : String) : Bool
-    chars = url.chars
-    chars.each_with_index do |char, index|
-      return true if char.in?('?', '&') && keyword_at?(chars, index + 1, "encoding") && chars[index + 9]? == '='
+    bytes = url.to_slice
+    index = 0
+    while index < bytes.size
+      byte = bytes.unsafe_fetch(index)
+      return true if (byte === '?' || byte === '&') && keyword_at?(bytes, index + 1, "encoding") && byte_at(bytes, index + 9) === '='
+      index += 1
     end
     false
   end
@@ -142,38 +149,36 @@ module Grant::TextMatching
   # Replaces `piece.sub(/\s+(?:ASC|DESC)\z/i, "")`: an index column without its
   # trailing sort direction.
   def self.strip_trailing_sort_direction(piece : String) : String
-    chars = piece.chars
-    word_start = if keyword_at?(chars, chars.size - 3, "asc")
-                   chars.size - 3
-                 elsif keyword_at?(chars, chars.size - 4, "desc")
-                   chars.size - 4
+    return CharacterScan.strip_trailing_sort_direction(piece) unless piece.single_byte_optimizable?
+    bytes = piece.to_slice
+    size = bytes.size
+    word_start = if keyword_at?(bytes, size - 3, "asc")
+                   size - 3
+                 elsif keyword_at?(bytes, size - 4, "desc")
+                   size - 4
                  end
-    return piece unless word_start && word_start > 0 && CC.space?(chars[word_start - 1])
-    run_start = word_start - 1
-    while run_start > 0 && CC.space?(chars[run_start - 1])
-      run_start -= 1
-    end
-    piece[0, run_start]
+    return piece unless word_start && space_byte?(byte_at(bytes, word_start - 1))
+    piece.byte_slice(0, space_run_start(bytes, word_start - 1))
   end
 
   # Replaces `text.gsub(/\$\d+/) { |match| ... }`: yields each `$<digits>`
   # placeholder and puts the block's result in its place.
   def self.replace_numbered_placeholders(text : String, & : String -> String) : String
-    return text unless text.includes?('$')
-    chars = text.chars
-    String.build do |io|
-      index = 0
-      while index < chars.size
-        char = chars[index]
-        digits_end = char == '$' ? digit_run_end(chars, index + 1) : index + 1
-        if char == '$' && digits_end > index + 1
-          io << yield text_of(chars, index, digits_end)
-          index = digits_end
-        else
-          io << char
-          index += 1
+    bytes = text.to_slice
+    dollar = bytes.index('$'.ord.to_u8) || return text
+    return CharacterScan.replace_numbered_placeholders(text) { |match| yield match } unless text.single_byte_optimizable?
+    String.build(bytes.size) do |io|
+      copied = 0
+      while dollar
+        digits_end = digit_run_end(bytes, dollar + 1)
+        if digits_end > dollar + 1
+          io.write(bytes[copied, dollar - copied])
+          io << yield ascii_string(bytes[dollar, digits_end - dollar])
+          copied = digits_end
         end
+        dollar = bytes.index('$'.ord.to_u8, Math.max(digits_end, dollar + 1))
       end
+      io.write(bytes[copied..])
     end
   end
 
@@ -183,61 +188,79 @@ module Grant::TextMatching
   # and the like); callers pass identifiers or quoted table names, which hold
   # no backslashes.
   def self.replace_table_qualifier(text : String, table : String, replacement : String) : String
-    needle = "#{table}."
-    return text unless text.includes?(needle)
-    chars = text.chars
-    needle_chars = needle.chars
-    String.build do |io|
-      index = 0
-      while index < chars.size
-        previous = index > 0 ? chars[index - 1] : nil
-        if (previous.nil? || !(CC.word?(previous) || previous.in?('.', '"', '`'))) && chars_at?(chars, index, needle_chars)
-          io << replacement
-          index += needle_chars.size
-        else
-          io << chars[index]
-          index += 1
-        end
+    unless text.single_byte_optimizable? && table.single_byte_optimizable?
+      return CharacterScan.replace_table_qualifier(text, table, replacement)
+    end
+    bytes = text.to_slice
+    name = table.to_slice
+    first = name.empty? ? '.'.ord.to_u8 : name.unsafe_fetch(0)
+    candidate = bytes.index(first)
+    builder = nil
+    copied = 0
+    while candidate
+      stop = candidate + name.size
+      previous = byte_at(bytes, candidate - 1)
+      if byte_at(bytes, stop) === '.' && bytes[candidate, name.size] == name &&
+         !(word_byte?(previous) || previous === '.' || previous === '"' || previous === '`')
+        io = builder ||= String::Builder.new(bytes.size + replacement.bytesize)
+        io.write(bytes[copied, candidate - copied])
+        io << replacement
+        copied = stop + 1
+        candidate = bytes.index(first, stop + 1)
+      else
+        candidate = bytes.index(first, candidate + 1)
       end
     end
+    return text unless io = builder
+    io.write(bytes[copied..])
+    io.to_s
   end
 
   # Replaces `query.split(/([a-zA-Z0-9_$']+)/)`: the text between runs of
   # word characters and the runs themselves, alternating, starting and ending
   # with a (possibly empty) gap, as `String#split` with a capture group yields.
+  # The class is ASCII, so the bytes of any text answer it.
   def self.split_sql_words(query : String) : Array(String)
-    return [""] if query.empty?
-    chars = query.chars
+    bytes = query.to_slice
+    return [""] if bytes.empty?
     parts = [] of String
     gap_start = 0
     index = 0
-    while index < chars.size
-      if sql_word_char?(chars[index])
-        run_end = index
-        while run_end < chars.size && sql_word_char?(chars[run_end])
+    while index < bytes.size
+      if sql_word_byte?(bytes.unsafe_fetch(index))
+        run_end = index + 1
+        while run_end < bytes.size && sql_word_byte?(bytes.unsafe_fetch(run_end))
           run_end += 1
         end
-        parts << text_of(chars, gap_start, index)
-        parts << text_of(chars, index, run_end)
+        parts << String.new(bytes[gap_start, index - gap_start])
+        parts << ascii_string(bytes[index, run_end - index])
         gap_start = index = run_end
       else
         index += 1
       end
     end
-    parts << text_of(chars, gap_start, chars.size)
+    parts << String.new(bytes[gap_start..])
     parts
   end
 
   # Replaces `word =~ /\d+/`: whether *text* holds a decimal digit.
   def self.contains_digit?(text : String) : Bool
-    text.each_char.any? { |char| CC.digit?(char) }
+    return CharacterScan.contains_digit?(text) unless text.single_byte_optimizable?
+    text.to_slice.any? { |byte| digit_byte?(byte) }
   end
 
   # Replaces `text =~ /KEYWORD/i` for an ASCII *keyword*: whether *text*
   # contains it, ignoring case.
   def self.contains_ignoring_case?(text : String, keyword : String) : Bool
-    chars = text.chars
-    (0..chars.size - keyword.size).any? { |index| keyword_at?(chars, index, keyword) }
+    return CharacterScan.contains_ignoring_case?(text, keyword) unless text.single_byte_optimizable?
+    bytes = text.to_slice
+    return true if keyword.empty?
+    finder = LetterFinder.new(bytes, keyword.to_unsafe.value)
+    while candidate = finder.next_at
+      return true if keyword_at?(bytes, candidate, keyword)
+      finder.advance(candidate + 1)
+    end
+    false
   end
 
   # Replaces the chain
@@ -245,6 +268,7 @@ module Grant::TextMatching
   # a statement with its literals and placeholders replaced, for grouping
   # statements of the same shape.
   def self.normalize_sql_shape(sql : String) : String
+    return CharacterScan.normalize_sql_shape(sql) unless sql.single_byte_optimizable?
     shape = replace_standalone_numbers(sql)
     shape = replace_quoted_strings(shape)
     shape = replace_numbered_placeholders(shape) { "?" }
@@ -254,14 +278,17 @@ module Grant::TextMatching
   # Replaces `/\bfor\s+(update|share|no\s+key\s+update|key\s+share)\b/i`: a
   # read that takes row locks.
   def self.locking_read?(sql : String) : Bool
-    chars = sql.chars
-    chars.each_index do |index|
-      next unless keyword_at?(chars, index, "for") && boundary_before?(chars, index)
-      start = spaces_after(chars, index + 3) || next
-      return true if keyword_sequence_end(chars, start, {"update"}).try { |stop| boundary_before?(chars, stop) }
-      return true if keyword_sequence_end(chars, start, {"share"}).try { |stop| boundary_before?(chars, stop) }
-      return true if keyword_sequence_end(chars, start, {"no", "key", "update"}).try { |stop| boundary_before?(chars, stop) }
-      return true if keyword_sequence_end(chars, start, {"key", "share"}).try { |stop| boundary_before?(chars, stop) }
+    return CharacterScan.locking_read?(sql) unless sql.single_byte_optimizable?
+    bytes = sql.to_slice
+    finder = LetterFinder.new(bytes, 'f'.ord.to_u8)
+    while index = finder.next_at
+      finder.advance(index + 1)
+      next unless keyword_at?(bytes, index, "for") && boundary_before?(bytes, index)
+      start = spaces_after(bytes, index + 3) || next
+      return true if keyword_sequence_end(bytes, start, {"update"}).try { |stop| boundary_before?(bytes, stop) }
+      return true if keyword_sequence_end(bytes, start, {"share"}).try { |stop| boundary_before?(bytes, stop) }
+      return true if keyword_sequence_end(bytes, start, {"no", "key", "update"}).try { |stop| boundary_before?(bytes, stop) }
+      return true if keyword_sequence_end(bytes, start, {"key", "share"}).try { |stop| boundary_before?(bytes, stop) }
     end
     false
   end
@@ -269,7 +296,14 @@ module Grant::TextMatching
   # Replaces `/\b(ORDER\s+BY|LIMIT|OFFSET|GROUP\s+BY)\b/i`: whether a raw
   # clause holds SQL that does not belong in a WHERE condition.
   def self.trailing_clause_keyword?(clause : String) : Bool
-    trailing_clause_keyword_in?(clause.chars)
+    return CharacterScan.trailing_clause_keyword?(clause) unless clause.single_byte_optimizable?
+    bytes = clause.to_slice
+    # Every keyword holds an `o` or an `i`; long text without either has none.
+    return false unless short?(bytes) || has_letter?(bytes, 'o'.ord.to_u8) || has_letter?(bytes, 'i'.ord.to_u8)
+    each_word(bytes, skip_quoted: false) do |start, stop|
+      return true if clause_keyword?(bytes, start, stop, having: false)
+    end
+    false
   end
 
   # Whether a raw clause holds SQL that follows a WHERE condition: the
@@ -277,89 +311,113 @@ module Grant::TextMatching
   # case. Text inside single-quoted literals and double-quoted or backtick
   # identifiers is skipped, so `WHERE title = 'LIMIT'` is a plain condition.
   def self.sql_after_condition?(clause : String) : Bool
-    chars = mask_quoted_text(clause.chars)
-    trailing_clause_keyword_in?(chars) || whole_keyword?(chars, "having")
+    return CharacterScan.sql_after_condition?(clause) unless clause.single_byte_optimizable?
+    bytes = clause.to_slice
+    # Every keyword holds an `o` or an `i`; long text without either has none.
+    return false unless short?(bytes) || has_letter?(bytes, 'o'.ord.to_u8) || has_letter?(bytes, 'i'.ord.to_u8)
+    each_word(bytes, skip_quoted: true) do |start, stop|
+      return true if clause_keyword?(bytes, start, stop, having: true)
+    end
+    false
   end
 
   # Whether a raw clause joins another table: the word `JOIN` in any case,
   # outside quoted literals and identifiers.
   def self.join_clause?(clause : String) : Bool
-    whole_keyword?(mask_quoted_text(clause.chars), "join")
+    return CharacterScan.join_clause?(clause) unless clause.single_byte_optimizable?
+    bytes = clause.to_slice
+    return false unless short?(bytes) || has_letter?(bytes, 'j'.ord.to_u8)
+    each_word(bytes, skip_quoted: true) do |start, stop|
+      return true if stop - start == 4 && keyword_at?(bytes, start, "join")
+    end
+    false
   end
 
   # Replaces `type.sub(/\ATIMESTAMP(\(\d+\))?/i, replacement)`: a column type
   # whose leading `TIMESTAMP` (and its precision) is rewritten.
   def self.replace_leading_timestamp(type : String, replacement : String) : String
-    chars = type.chars
-    return type unless keyword_at?(chars, 0, "timestamp")
+    return CharacterScan.replace_leading_timestamp(type, replacement) unless type.single_byte_optimizable?
+    bytes = type.to_slice
+    return type unless keyword_at?(bytes, 0, "timestamp")
     stop = 9
-    if chars[stop]? == '('
-      digits_end = digit_run_end(chars, stop + 1)
-      stop = digits_end + 1 if digits_end > stop + 1 && chars[digits_end]? == ')'
+    if byte_at(bytes, stop) === '('
+      digits_end = digit_run_end(bytes, stop + 1)
+      stop = digits_end + 1 if digits_end > stop + 1 && byte_at(bytes, digits_end) === ')'
     end
-    replacement + text_of(chars, stop, chars.size)
+    join_bytes(replacement.to_slice, bytes[stop..])
   end
 
   # Replaces `/\A(?:'(?:[^'\\]|''|\\.)*'|[-+]?\d+(?:\.\d+)?)\z/`: a MySQL
   # default that is a quoted string or a signed decimal number.
   def self.mysql_literal_default?(text : String) : Bool
-    chars = text.chars
-    return quoted_mysql_string?(chars) if chars.first? == '\''
-    index = chars.first?.try(&.in?('-', '+')) ? 1 : 0
-    integer_end = digit_run_end(chars, index)
+    return CharacterScan.mysql_literal_default?(text) unless text.single_byte_optimizable?
+    bytes = text.to_slice
+    return quoted_mysql_string?(bytes) if byte_at(bytes, 0) === '\''
+    index = byte_at(bytes, 0) === '-' || byte_at(bytes, 0) === '+' ? 1 : 0
+    integer_end = digit_run_end(bytes, index)
     return false if integer_end == index
-    return true if integer_end == chars.size
-    return false unless chars[integer_end] == '.'
-    fraction_end = digit_run_end(chars, integer_end + 1)
-    fraction_end > integer_end + 1 && fraction_end == chars.size
+    return true if integer_end == bytes.size
+    return false unless bytes.unsafe_fetch(integer_end) === '.'
+    fraction_end = digit_run_end(bytes, integer_end + 1)
+    fraction_end > integer_end + 1 && fraction_end == bytes.size
   end
 
   # Replaces `/\A(CURRENT_TIMESTAMP|CURRENT_DATE|CURRENT_TIME|NOW|LOCALTIMESTAMP|LOCALTIME)(\(\d*\))?\z/i`
   # (with *mysql*) and `/\ACURRENT_(TIMESTAMP|DATE|TIME)\z/i`: a time keyword
   # that is a column default as written.
   def self.bare_time_default?(text : String, *, mysql : Bool) : Bool
-    chars = text.chars
+    return CharacterScan.bare_time_default?(text, mysql: mysql) unless text.single_byte_optimizable?
+    bytes = text.to_slice
     unless mysql
-      return {"current_timestamp", "current_date", "current_time"}.any? { |keyword| keyword.size == chars.size && keyword_at?(chars, 0, keyword) }
+      return {"current_timestamp", "current_date", "current_time"}.any? { |keyword| keyword.bytesize == bytes.size && keyword_at?(bytes, 0, keyword) }
     end
     {"current_timestamp", "current_date", "current_time", "now", "localtimestamp", "localtime"}.any? do |keyword|
-      next false unless keyword_at?(chars, 0, keyword)
-      stop = keyword.size
-      next true if stop == chars.size
-      next false unless chars[stop] == '('
-      digits_end = digit_run_end(chars, stop + 1)
-      chars[digits_end]? == ')' && digits_end + 1 == chars.size
+      stop = keyword.bytesize
+      next false unless stop <= bytes.size && keyword_at?(bytes, 0, keyword)
+      next true if stop == bytes.size
+      next false unless bytes.unsafe_fetch(stop) === '('
+      digits_end = digit_run_end(bytes, stop + 1)
+      digits_end + 1 == bytes.size && bytes.unsafe_fetch(digits_end) === ')'
     end
   end
 
   # Replaces the group of `/\A(?:DATETIME|TIMESTAMP|TIME)\((\d+)\)/i`: the
   # fractional digits of a time column type.
   def self.time_type_precision(type : String) : String?
-    chars = type.chars
+    return CharacterScan.time_type_precision(type) unless type.single_byte_optimizable?
+    bytes = type.to_slice
     {"datetime", "timestamp", "time"}.each do |keyword|
-      next unless keyword_at?(chars, 0, keyword) && chars[keyword.size]? == '('
-      digits_end = digit_run_end(chars, keyword.size + 1)
-      return text_of(chars, keyword.size + 1, digits_end) if digits_end > keyword.size + 1 && chars[digits_end]? == ')'
+      size = keyword.bytesize
+      next unless keyword_at?(bytes, 0, keyword) && byte_at(bytes, size) === '('
+      digits_end = digit_run_end(bytes, size + 1)
+      return ascii_string(bytes[size + 1, digits_end - size - 1]) if digits_end > size + 1 && byte_at(bytes, digits_end) === ')'
     end
     nil
   end
 
   # Replaces `/\A(CURRENT_TIMESTAMP|CURRENT_TIME|NOW|LOCALTIMESTAMP|LOCALTIME)\z/i`.
   def self.current_time_keyword?(text : String) : Bool
-    chars = text.chars
+    return CharacterScan.current_time_keyword?(text) unless text.single_byte_optimizable?
+    bytes = text.to_slice
     {"current_timestamp", "current_time", "now", "localtimestamp", "localtime"}.any? do |keyword|
-      keyword.size == chars.size && keyword_at?(chars, 0, keyword)
+      keyword.bytesize == bytes.size && keyword_at?(bytes, 0, keyword)
     end
   end
 
   # Replaces `text.sub(/\(\d+\)/, "")`: drops the first parenthesized number.
   def self.remove_parenthesized_number(text : String) : String
-    chars = text.chars
-    chars.each_with_index do |char, index|
-      next unless char == '('
-      digits_end = digit_run_end(chars, index + 1)
-      if digits_end > index + 1 && chars[digits_end]? == ')'
-        return text_of(chars, 0, index) + text_of(chars, digits_end + 1, chars.size)
+    return CharacterScan.remove_parenthesized_number(text) unless text.single_byte_optimizable?
+    bytes = text.to_slice
+    open = 0
+    while open < bytes.size
+      if bytes.unsafe_fetch(open) === '('
+        digits_end = digit_run_end(bytes, open + 1)
+        if digits_end > open + 1 && byte_at(bytes, digits_end) === ')'
+          return join_bytes(bytes[0, open], bytes[digits_end + 1..])
+        end
+        open = digits_end
+      else
+        open += 1
       end
     end
     text
@@ -368,52 +426,49 @@ module Grant::TextMatching
   # Replaces `name.sub(/\s*\(.*\)/, "")`: drops the first parenthesized part
   # (with the white space before it) up to the last `)` on that line.
   def self.remove_parenthesized_suffix(name : String) : String
-    chars = name.chars
-    # For each index, the last `)` at or after it on the same line (`.` stops
-    # at a newline), found in one pass from the right.
-    last_close = Array(Int32?).new(chars.size + 1, nil)
-    (chars.size - 1).downto(0) do |index|
-      last_close[index] = case chars[index]
-                          when '\n' then nil
-                          when ')'  then last_close[index + 1] || index
-                          else           last_close[index + 1]
-                          end
-    end
-    chars.each_with_index do |char, index|
-      next unless char == '('
-      close = last_close[index + 1] || next
-      start = index
-      while start > 0 && CC.space?(chars[start - 1])
-        start -= 1
+    return CharacterScan.remove_parenthesized_suffix(name) unless name.single_byte_optimizable?
+    bytes = name.to_slice
+    open = bytes.index('('.ord.to_u8)
+    while open
+      # `.` stops at a newline, so the `)` must lie on the line of the `(`.
+      line_end = bytes.index('\n'.ord.to_u8, open + 1) || bytes.size
+      if close = bytes[open + 1, line_end - open - 1].index(')'.ord.to_u8)
+        close += open + 1
+        while later = bytes[close + 1, line_end - close - 1].index(')'.ord.to_u8)
+          close += later + 1
+        end
+        return join_bytes(bytes[0, space_run_start(bytes, open)], bytes[close + 1..])
       end
-      return text_of(chars, 0, start) + text_of(chars, close + 1, chars.size)
+      # No `(` later on this line has a `)` after it either.
+      open = bytes.index('('.ord.to_u8, line_end)
     end
     name
   end
 
   # Replaces `clause.sub(/\AWHERE\s+/i, "")`.
   def self.strip_leading_where(clause : String) : String
-    chars = clause.chars
-    return clause unless keyword_at?(chars, 0, "where")
-    rest = spaces_after(chars, 5) || return clause
-    text_of(chars, rest, chars.size)
+    return CharacterScan.strip_leading_where(clause) unless clause.single_byte_optimizable?
+    bytes = clause.to_slice
+    return clause unless keyword_at?(bytes, 0, "where")
+    rest = spaces_after(bytes, 5) || return clause
+    clause.byte_slice(rest, bytes.size - rest)
   end
 
   # Replaces the first group of
   # `/\b(?:FROM|INTO|UPDATE)\s+(?:ONLY\s+)?[`"\[]?([\w.$]+)/i`: the table a
   # statement reads or writes, as written.
   def self.statement_table(sql : String) : String?
-    chars = sql.chars
-    chars.each_index do |index|
-      next unless boundary_before?(chars, index)
-      keyword = {"from", "into", "update"}.find { |candidate| keyword_at?(chars, index, candidate) } || next
-      start = spaces_after(chars, index + keyword.size) || next
-      if keyword_at?(chars, start, "only") && (after_only = spaces_after(chars, start + 4))
-        if table = table_reference_at(chars, after_only)
+    return CharacterScan.statement_table(sql) unless sql.single_byte_optimizable?
+    bytes = sql.to_slice
+    each_word(bytes, skip_quoted: false) do |start, stop|
+      next unless statement_keyword?(bytes, start, stop)
+      after = spaces_after(bytes, stop) || next
+      if stop_of_only = only_keyword_end(bytes, after)
+        if table = table_reference_at(bytes, stop_of_only)
           return table
         end
       end
-      if table = table_reference_at(chars, start)
+      if table = table_reference_at(bytes, after)
         return table
       end
     end
@@ -424,34 +479,28 @@ module Grant::TextMatching
   # frame): whether a backtrace frame carries a `:line` after its first
   # character.
   def self.frame_with_line?(frame : String) : Bool
-    chars = frame.chars
-    (1...chars.size - 1).any? { |index| chars[index] == ':' && CC.digit?(chars[index + 1]) }
+    return CharacterScan.frame_with_line?(frame) unless frame.single_byte_optimizable?
+    bytes = frame.to_slice
+    colon = bytes.size > 1 ? bytes.index(':'.ord.to_u8, 1) : nil
+    while colon
+      return true if digit_byte?(byte_at(bytes, colon + 1))
+      colon = bytes.index(':'.ord.to_u8, colon + 1)
+    end
+    false
   end
 
   # Replaces `%r{/(?:share/[\w.-]*crystal[\w.-]*|crystal)/src/}`: whether a
   # path lies in the Crystal standard library.
   def self.stdlib_path?(path : String) : Bool
-    return true if path.includes?("/crystal/src/")
-    chars = path.chars
-    share = "/share/".chars
+    return CharacterScan.stdlib_path?(path) unless path.single_byte_optimizable?
+    bytes = path.to_slice
+    # Every match ends in `/src/`: find each, then read the directory before it.
     index = 0
-    while index < chars.size
-      if chars_at?(chars, index, share)
-        run_start = index + share.size
-        run_end = run_start
-        while run_end < chars.size && (CC.word?(chars[run_end]) || chars[run_end].in?('.', '-'))
-          run_end += 1
-        end
-        if chars_at?(chars, run_end, "/src/".chars) && text_of(chars, run_start, run_end).includes?("crystal")
-          return true
-        end
-        # The candidate's trailing slash can open the next `/share/`
-        # (`/share/share/...`). Each character between slashes is still
-        # visited a bounded number of times, so the scan stays linear.
-        index = run_start - 1
-      else
-        index += 1
-      end
+    while index + 5 <= bytes.size
+      byte = bytes.unsafe_fetch(index + 4)
+      return true if byte === '/' && src_directory_at?(bytes, index) && stdlib_directory_before?(bytes, index)
+      # The byte at `index + 4` starts the next candidate only when it is a `/`.
+      index += byte === '/' ? 4 : (byte === 'c' || byte === 'r' || byte === 's' ? 1 : 5)
     end
     false
   end
@@ -459,36 +508,41 @@ module Grant::TextMatching
   # Replaces `/\A\$2[abxy]?\$\d{2}\$[.\/A-Za-z0-9]{53}\z/`: the shape of a
   # bcrypt hash.
   def self.bcrypt_digest?(digest : String) : Bool
-    chars = digest.chars
-    body_start = bcrypt_body_start(chars) || return false
-    return false unless chars.size - body_start == 53
-    chars.each(within: body_start..) do |char|
-      return false unless char.ascii_alphanumeric? || char.in?('.', '/')
-    end
-    true
+    return CharacterScan.bcrypt_digest?(digest) unless digest.single_byte_optimizable?
+    bytes = digest.to_slice
+    return false unless bytes.size.in?(59, 60)
+    body_start = bcrypt_body_start(bytes) || return false
+    return false unless bytes.size - body_start == 53
+    (body_start...bytes.size).all? { |index| bcrypt_byte?(bytes.unsafe_fetch(index)) }
   end
 
   # Replaces `template.gsub(/%\{(\w+)\}/) { |whole, match| ... }`: yields each
   # `%{name}` placeholder and its name, and puts the block's result in its place.
   def self.replace_named_placeholders(template : String, & : String, String -> String) : String
-    chars = template.chars
-    String.build do |io|
-      index = 0
-      while index < chars.size
-        if chars[index] == '%' && chars[index + 1]? == '{'
-          name_end = index + 2
-          while name_end < chars.size && CC.word?(chars[name_end])
+    unless template.single_byte_optimizable?
+      return CharacterScan.replace_named_placeholders(template) { |whole, name| yield whole, name }
+    end
+    bytes = template.to_slice
+    percent = bytes.index('%'.ord.to_u8) || return template
+    String.build(bytes.size) do |io|
+      copied = 0
+      while percent
+        name_end = percent + 2
+        if byte_at(bytes, percent + 1) === '{'
+          while name_end < bytes.size && word_byte?(bytes.unsafe_fetch(name_end))
             name_end += 1
           end
-          if name_end > index + 2 && chars[name_end]? == '}'
-            io << yield text_of(chars, index, name_end + 1), text_of(chars, index + 2, name_end)
-            index = name_end + 1
+          if name_end > percent + 2 && byte_at(bytes, name_end) === '}'
+            io.write(bytes[copied, percent - copied])
+            io << yield ascii_string(bytes[percent, name_end + 1 - percent]), ascii_string(bytes[percent + 2, name_end - percent - 2])
+            copied = name_end + 1
+            percent = bytes.index('%'.ord.to_u8, copied)
             next
           end
         end
-        io << chars[index]
-        index += 1
+        percent = bytes.index('%'.ord.to_u8, percent + 1)
       end
+      io.write(bytes[copied..])
     end
   end
 
@@ -507,14 +561,15 @@ module Grant::TextMatching
   # Replaces scanning `/(?<![\w.])"?([A-Za-z_][A-Za-z0-9_]*)"?\.(?=["A-Za-z_])/`:
   # every `table.` qualifier a raw condition names.
   def self.qualifiers_in(statement : String) : Array(String)
-    chars = statement.chars
+    return CharacterScan.qualifiers_in(statement) unless statement.single_byte_optimizable?
+    bytes = statement.to_slice
     found = [] of String
     index = 0
-    while index < chars.size
-      previous = index > 0 ? chars[index - 1] : nil
-      if (previous.nil? || !(CC.word?(previous) || previous == '.')) && (qualifier = qualifier_at(chars, index))
+    while index < bytes.size
+      previous = byte_at(bytes, index - 1)
+      if !(word_byte?(previous) || previous === '.') && (qualifier = qualifier_at(bytes, index))
         name_start, name_end, dot = qualifier
-        found << text_of(chars, name_start, name_end)
+        found << ascii_string(bytes[name_start, name_end - name_start])
         index = dot + 1
       else
         index += 1
@@ -528,77 +583,75 @@ module Grant::TextMatching
   # with `REF = [A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?`: a
   # function applied to column references only.
   def self.column_function?(text : String) : Bool
-    chars = text.chars
-    index = skip_spaces(chars, 0)
-    name_end = identifier_end(chars, index, fold: true)
-    return false if name_end == index || chars[name_end]? != '('
-    index = skip_spaces(chars, name_end + 1)
-    if reference_end = column_reference_end(chars, index)
+    return CharacterScan.column_function?(text) unless text.single_byte_optimizable?
+    bytes = text.to_slice
+    index = skip_spaces(bytes, 0)
+    name_end = ident_end(bytes, index)
+    return false if name_end == index || !(byte_at(bytes, name_end) === '(')
+    index = skip_spaces(bytes, name_end + 1)
+    if reference_end = column_reference_end(bytes, index)
       index = reference_end
       loop do
-        comma = skip_spaces(chars, index)
-        break unless chars[comma]? == ','
-        next_reference = skip_spaces(chars, comma + 1)
-        reference_end = column_reference_end(chars, next_reference) || return false
+        comma = skip_spaces(bytes, index)
+        break unless byte_at(bytes, comma) === ','
+        reference_end = column_reference_end(bytes, skip_spaces(bytes, comma + 1)) || return false
         index = reference_end
       end
     end
-    index = skip_spaces(chars, index)
-    return false unless chars[index]? == ')'
-    !sort_tail(chars, index + 1).nil?
+    index = skip_spaces(bytes, index)
+    return false unless byte_at(bytes, index) === ')'
+    !sort_tail(bytes, index + 1).nil?
   end
 
   # Replaces `/\A\s*([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)?)(?:\s+(asc|desc))?(?:\s+nulls\s+(first|last))?\s*\z/i`:
   # an ORDER BY term naming a column, or `nil`.
   def self.order_term(term : String) : OrderTerm?
-    chars = term.chars
-    start = skip_spaces(chars, 0)
-    column_end = word_name_end(chars, start)
+    return CharacterScan.order_term(term) unless term.single_byte_optimizable?
+    bytes = term.to_slice
+    start = skip_spaces(bytes, 0)
+    column_end = ident_end(bytes, start)
     return if column_end == start
-    if chars[column_end]? == '.'
-      qualified_end = word_name_end(chars, column_end + 1)
+    if byte_at(bytes, column_end) === '.'
+      qualified_end = ident_end(bytes, column_end + 1)
       column_end = qualified_end if qualified_end > column_end + 1
     end
-    tail = sort_tail(chars, column_end) || return
-    OrderTerm.new(text_of(chars, start, column_end), tail[0], tail[1])
+    tail = sort_tail(bytes, column_end) || return
+    direction_start, direction_stop, nulls_start, nulls_stop = tail
+    OrderTerm.new(ascii_string(bytes[start, column_end - start]),
+      direction_start < 0 ? nil : ascii_string(bytes[direction_start, direction_stop - direction_start]),
+      nulls_start < 0 ? nil : ascii_string(bytes[nulls_start, nulls_stop - nulls_start]))
   end
 
   # Replaces `/\s+(asc|desc)(\s+nulls\s+(first|last))?\s*\z/i`: the direction
   # that ends a raw ORDER BY term, or `nil`.
   def self.raw_direction(part : String) : RawDirection?
-    chars = part.chars
-    stop = chars.size
-    while stop > 0 && CC.space?(chars[stop - 1])
-      stop -= 1
-    end
+    return CharacterScan.raw_direction(part) unless part.single_byte_optimizable?
+    bytes = part.to_slice
+    stop = space_run_start(bytes, bytes.size)
     nulls = nil
-    placement_start = trailing_keyword_start(chars, stop, {"first", "last"})
-    if placement_start && (nulls_start = keyword_before_spaces(chars, placement_start, "nulls"))
-      nulls = text_of(chars, placement_start, stop)
-      stop = last_non_space_end(chars, nulls_start)
+    placement_start = trailing_keyword_start(bytes, stop, {"first", "last"})
+    if placement_start && (nulls_start = keyword_before_spaces(bytes, placement_start, "nulls"))
+      nulls = ascii_string(bytes[placement_start, stop - placement_start])
+      stop = space_run_start(bytes, nulls_start)
     end
-    direction_start = trailing_keyword_start(chars, stop, {"asc", "desc"}) || return
-    return unless direction_start > 0 && CC.space?(chars[direction_start - 1])
-    run_start = direction_start - 1
-    while run_start > 0 && CC.space?(chars[run_start - 1])
-      run_start -= 1
-    end
-    RawDirection.new(run_start, text_of(chars, direction_start, stop), nulls)
+    direction_start = trailing_keyword_start(bytes, stop, {"asc", "desc"}) || return
+    return unless space_byte?(byte_at(bytes, direction_start - 1))
+    RawDirection.new(space_run_start(bytes, direction_start - 1), ascii_string(bytes[direction_start, stop - direction_start]), nulls)
   end
 
   # Replaces `table.rindex(/\s+as\s+/i)` followed by
   # `table[index..].sub(/\A\s+as\s+/i, "")`: the alias of a joined table, or
   # the table itself when it has none.
   def self.join_qualifier(table : String) : String
-    chars = table.chars
-    alias_start = nil
+    return CharacterScan.join_qualifier(table) unless table.single_byte_optimizable?
+    bytes = table.to_slice
+    alias_start = -1
     index = 0
-    while index < chars.size
-      if CC.space?(chars[index])
-        run_end = skip_spaces(chars, index)
-        if keyword_at?(chars, run_end, "as") && (after = spaces_after(chars, run_end + 2))
-          alias_start = after
-          index = after
+    while index < bytes.size
+      if space_byte?(bytes.unsafe_fetch(index))
+        run_end = skip_spaces(bytes, index)
+        if keyword_at?(bytes, run_end, "as") && (after = spaces_after(bytes, run_end + 2))
+          alias_start = index = after
         else
           index = run_end
         end
@@ -606,7 +659,7 @@ module Grant::TextMatching
         index += 1
       end
     end
-    alias_start ? text_of(chars, alias_start, chars.size) : table
+    alias_start < 0 ? table : table.byte_slice(alias_start, bytes.size - alias_start)
   end
 
   # Replaces scanning
@@ -614,25 +667,31 @@ module Grant::TextMatching
   # and taking `match[2]? || match[1]`: the alias (or table) each raw JOIN
   # makes available.
   def self.raw_join_targets(clause : String) : Array(String)
-    chars = clause.chars
+    return CharacterScan.raw_join_targets(clause) unless clause.single_byte_optimizable?
+    bytes = clause.to_slice
     found = [] of String
     index = 0
-    while index < chars.size
-      if boundary_before?(chars, index) && keyword_at?(chars, index, "join") && (table_start = spaces_after(chars, index + 4))
-        table_end = identifier_end(chars, table_start, fold: true)
+    while index < bytes.size
+      if !word_byte?(bytes.unsafe_fetch(index)) || word_byte?(byte_at(bytes, index - 1))
+        index += 1
+        next
+      end
+      word_end = word_end(bytes, index)
+      if word_end - index == 4 && keyword_at?(bytes, index, "join") && (table_start = spaces_after(bytes, word_end))
+        table_end = ident_end(bytes, table_start)
         if table_end > table_start
-          alias_range = join_alias_range(chars, table_end)
-          if alias_range
-            found << text_of(chars, alias_range[0], alias_range[1])
-            index = alias_range[1]
+          if alias_range = join_alias_range(bytes, table_end)
+            alias_start, alias_end = alias_range
+            found << ascii_string(bytes[alias_start, alias_end - alias_start])
+            index = alias_end
           else
-            found << text_of(chars, table_start, table_end)
+            found << ascii_string(bytes[table_start, table_end - table_start])
             index = table_end
           end
           next
         end
       end
-      index += 1
+      index = word_end
     end
     found
   end
@@ -640,16 +699,17 @@ module Grant::TextMatching
   # Replaces scanning `/["`]?([A-Za-z_][A-Za-z0-9_]*)["`]?\s*(?:=|!=|<>|<=|>=|<|>|\bLIKE|\bILIKE)\s*(\?|\$\d+)/i`:
   # every `column <op> placeholder` predicate.
   def self.comparison_binds(query : String) : Array(ComparisonBind)
-    chars = query.chars
+    return CharacterScan.comparison_binds(query) unless query.single_byte_optimizable?
+    bytes = query.to_slice
     found = [] of ComparisonBind
     index = 0
-    while index < chars.size
-      name_start = log_quote?(chars[index]) ? index + 1 : index
-      name_end = identifier_end(chars, name_start, fold: true)
+    while index < bytes.size
+      name_start = log_quote_byte?(bytes.unsafe_fetch(index)) ? index + 1 : index
+      name_end = ident_end(bytes, name_start)
       if name_end > name_start
-        if placeholder = comparison_placeholder(chars, name_end)
-          found << ComparisonBind.new(text_of(chars, name_start, name_end), placeholder)
-          index = placeholder.index + placeholder.text.size
+        if placeholder = comparison_placeholder(bytes, name_end)
+          found << ComparisonBind.new(ascii_string(bytes[name_start, name_end - name_start]), placeholder)
+          index = placeholder.index + placeholder.text.bytesize
         else
           # Any later start inside the same name reaches the same operator
           # position and fails the same way.
@@ -665,16 +725,17 @@ module Grant::TextMatching
   # Replaces scanning `/["`]?([A-Za-z_][A-Za-z0-9_]*)["`]?\s+(?:NOT\s+)?IN\s*\(([^)]*)\)/i`
   # and then `/\?|\$(\d+)/` inside the parentheses.
   def self.in_list_binds(query : String) : Array(InListBind)
-    chars = query.chars
-    closes = next_close_parens(chars)
+    return CharacterScan.in_list_binds(query) unless query.single_byte_optimizable?
+    bytes = query.to_slice
+    closes = CloseParenFinder.new(bytes)
     found = [] of InListBind
     index = 0
-    while index < chars.size
-      name_start = log_quote?(chars[index]) ? index + 1 : index
-      name_end = identifier_end(chars, name_start, fold: true)
+    while index < bytes.size
+      name_start = log_quote_byte?(bytes.unsafe_fetch(index)) ? index + 1 : index
+      name_end = ident_end(bytes, name_start)
       if name_end > name_start
-        if list = in_list_range(chars, closes, name_end)
-          found << InListBind.new(text_of(chars, name_start, name_end), placeholders_in(chars, list[0], list[1]))
+        if list = in_list_range(bytes, closes, name_end)
+          found << InListBind.new(ascii_string(bytes[name_start, name_end - name_start]), placeholders_in(bytes, list[0], list[1]))
           index = list[1] + 1
         else
           index = name_end
@@ -689,27 +750,23 @@ module Grant::TextMatching
   # Replaces `/INSERT\s+INTO\s+\S+\s*\(([^)]*)\)\s*VALUES\s*(.*)/im` and then
   # `/\?|\$(\d+)/` over the VALUES part.
   def self.insert_binds(query : String) : InsertBinds?
-    chars = query.chars
-    closes = next_close_parens(chars)
-    chars.each_index do |index|
-      next unless keyword_at?(chars, index, "insert")
-      into = spaces_after(chars, index + 6) || next
-      next unless keyword_at?(chars, into, "into")
-      target_start = spaces_after(chars, into + 4) || next
+    return CharacterScan.insert_binds(query) unless query.single_byte_optimizable?
+    bytes = query.to_slice
+    closes = CloseParenFinder.new(bytes)
+    finder = LetterFinder.new(bytes, 'i'.ord.to_u8)
+    while index = finder.next_at
+      finder.advance(index + 1)
+      next unless keyword_at?(bytes, index, "insert")
+      into = spaces_after(bytes, index + 6) || next
+      next unless keyword_at?(bytes, into, "into")
+      target_start = spaces_after(bytes, into + 4) || next
       target_end = target_start
-      while target_end < chars.size && !CC.space?(chars[target_end])
+      while target_end < bytes.size && !space_byte?(bytes.unsafe_fetch(target_end))
         target_end += 1
       end
       next if target_end == target_start
-      # `\S+` gives back characters from its end until `\s*\(` can follow.
-      target_end.downto(target_start + 1) do |candidate|
-        open = candidate == target_end ? skip_spaces(chars, candidate) : candidate
-        next unless chars[open]? == '('
-        close = closes[open + 1]? || next
-        values = skip_spaces(chars, close + 1)
-        next unless keyword_at?(chars, values, "values")
-        rest = skip_spaces(chars, values + 6)
-        return InsertBinds.new(text_of(chars, open + 1, close), placeholders_in(chars, rest, chars.size))
+      if binds = insert_binds_after_target(bytes, closes, target_start, target_end)
+        return binds
       end
     end
     nil
@@ -717,317 +774,436 @@ module Grant::TextMatching
 
   # Replaces `/\A[\w+\-.]+@[a-z\d\-]+(\.[a-z\d\-]+)*\.[a-z]+\z/i`.
   def self.email?(value : String) : Bool
-    chars = value.chars
-    at = chars.index('@') || return false
+    return CharacterScan.email?(value) unless value.single_byte_optimizable?
+    bytes = value.to_slice
+    at = bytes.index('@'.ord.to_u8) || return false
     return false if at == 0
-    chars.each(within: 0...at) do |char|
-      return false unless CC.word?(char) || char.in?('+', '-', '.')
+    (0...at).each do |index|
+      return false unless email_local_byte?(bytes.unsafe_fetch(index))
     end
-    labels = [] of Array(Char)
-    current = [] of Char
-    chars.each(within: (at + 1)..) do |char|
-      if char == '.'
-        labels << current
-        current = [] of Char
-      else
-        current << char
-      end
-    end
-    labels << current
-    return false if labels.size < 2 || labels.any?(&.empty?)
-    labels.each_with_index do |label, position|
-      last = position == labels.size - 1
-      label.each do |char|
-        letter = CC.ascii_letter_ignoring_case?(char)
-        return false unless last ? letter : (letter || CC.digit?(char) || char == '-')
-      end
-    end
-    true
+    email_domain?(bytes, at + 1)
   end
 
   # Replaces
   # `/\Ahttps?:\/\/(www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9()@:%_\+.~#?&\/\/=]*)\z/`.
+  # Every class is ASCII and the pattern spans the whole text, so the bytes of
+  # any text answer it.
   def self.url?(value : String) : Bool
-    chars = value.chars
-    prefix = if chars_at?(chars, 0, "https://".chars)
+    prefix = if value.starts_with?("https://")
                8
-             elsif chars_at?(chars, 0, "http://".chars)
+             elsif value.starts_with?("http://")
                7
              else
                return false
              end
-    return true if url_host_and_path?(chars, prefix)
-    chars_at?(chars, prefix, "www.".chars) && url_host_and_path?(chars, prefix + 4)
+    bytes = value.to_slice
+    # The host and top-level domain classes lie inside the path class, so a
+    # match is path characters from the prefix to the end.
+    (prefix...bytes.size).each do |index|
+      return false unless url_path_byte?(bytes.unsafe_fetch(index))
+    end
+    return true if url_host_and_tld?(bytes, prefix)
+    bytes[prefix, Math.min(4, bytes.size - prefix)] == "www.".to_slice && url_host_and_tld?(bytes, prefix + 4)
   end
 
-  # --- building blocks -----------------------------------------------------
+  # --- byte classes ----------------------------------------------------------
+  #
+  # ASCII classes as two 64-bit sets: bit n of *low* is byte n, bit n of *high*
+  # is byte 64 + n. A byte of 0x80 or more (part of a multibyte character, or
+  # an invalid byte) belongs to none of them, as the character it is part of
+  # belongs to no ASCII class.
 
-  private def self.text_of(chars : Array(Char), start : Int32, stop : Int32) : String
-    String.build(stop - start) do |io|
-      chars.each(within: start...stop) { |char| io << char }
+  private macro byte_class(name, low, high)
+    @[AlwaysInline]
+    private def self.{{name.id}}(byte : UInt8) : Bool
+      if byte < 64
+        ({{low}} >> byte) & 1 == 1
+      else
+        byte < 128 && ({{high}} >> (byte &- 64)) & 1 == 1
+      end
     end
   end
 
-  private def self.chars_at?(chars : Array(Char), index : Int32, needle : Array(Char)) : Bool
-    return false if index < 0 || index + needle.size > chars.size
-    needle.each_with_index { |char, offset| return false unless chars[index + offset] == char }
-    true
+  # [A-Za-z0-9_], `\w` in ASCII
+  byte_class word_byte?, 0x03FF000000000000_u64, 0x07FFFFFE87FFFFFE_u64
+  # [ \t\n\v\f\r], `\s` in ASCII
+  byte_class space_byte?, 0x0000000100003E00_u64, 0x0000000000000000_u64
+  # [A-Za-z]
+  byte_class letter_byte?, 0x0000000000000000_u64, 0x07FFFFFE07FFFFFE_u64
+  # [0-9], `\d` in ASCII
+  byte_class digit_byte?, 0x03FF000000000000_u64, 0x0000000000000000_u64
+  # [a-zA-Z0-9_$']
+  byte_class sql_word_byte?, 0x03FF009000000000_u64, 0x07FFFFFE87FFFFFE_u64
+  # [A-Za-z0-9_., ]
+  byte_class lock_byte?, 0x03FF500100000000_u64, 0x07FFFFFE87FFFFFE_u64
+  # [A-Za-z0-9+.\-]
+  byte_class scheme_byte?, 0x03FF680000000000_u64, 0x07FFFFFE07FFFFFE_u64
+  # [-a-zA-Z0-9@:%._\+~#=]
+  byte_class url_host_byte?, 0x27FF682800000000_u64, 0x47FFFFFE87FFFFFF_u64
+  # [a-zA-Z0-9()]
+  byte_class url_tld_byte?, 0x03FF030000000000_u64, 0x07FFFFFE07FFFFFE_u64
+  # [-a-zA-Z0-9()@:%_\+.~#?&\/=]
+  byte_class url_path_byte?, 0xA7FFEB6800000000_u64, 0x47FFFFFE87FFFFFF_u64
+  # [.\/A-Za-z0-9]
+  byte_class bcrypt_byte?, 0x03FFC00000000000_u64, 0x07FFFFFE07FFFFFE_u64
+  # [\w+\-.] in ASCII
+  byte_class email_local_byte?, 0x03FF680000000000_u64, 0x07FFFFFE87FFFFFE_u64
+  # [\w.$] in ASCII
+  byte_class table_reference_byte?, 0x03FF401000000000_u64, 0x07FFFFFE87FFFFFE_u64
+  # [\w.-] in ASCII
+  byte_class stdlib_segment_byte?, 0x03FF600000000000_u64, 0x07FFFFFE87FFFFFE_u64
+
+  @[AlwaysInline]
+  private def self.log_quote_byte?(byte : UInt8) : Bool
+    byte === '"' || byte === '`'
+  end
+
+  # --- building blocks -------------------------------------------------------
+
+  # The byte at *index*, or 0 outside the text. No class holds 0 and no
+  # literal check compares with it, so the edge reads like `chars[index]?`
+  # returning `nil`.
+  @[AlwaysInline]
+  private def self.byte_at(bytes : Bytes, index : Int32) : UInt8
+    0 <= index < bytes.size ? bytes.unsafe_fetch(index) : 0_u8
+  end
+
+  # A string of ASCII *bytes*, with its character count already known.
+  private def self.ascii_string(bytes : Bytes) : String
+    String.new(bytes.size) do |buffer|
+      buffer.copy_from(bytes.to_unsafe, bytes.size)
+      {bytes.size, bytes.size}
+    end
+  end
+
+  # One string made of the given byte runs, copied once.
+  private def self.join_bytes(*parts : Bytes) : String
+    total = parts.sum(&.size)
+    String.new(total) do |buffer|
+      offset = 0
+      parts.each do |part|
+        (buffer + offset).copy_from(part.to_unsafe, part.size)
+        offset += part.size
+      end
+      {total, 0}
+    end
   end
 
   # Whether the lowercase ASCII *keyword* starts at *index*, ignoring case as a
-  # `/i` regex does.
-  private def self.keyword_at?(chars : Array(Char), index : Int32, keyword : String) : Bool
-    return false if index < 0 || index + keyword.size > chars.size
-    keyword.each_char_with_index do |letter, offset|
-      return false unless CC.letter_ignoring_case?(chars[index + offset], letter)
+  # `/i` regex does (the callers' text holds no character that folds to an
+  # ASCII letter).
+  @[AlwaysInline]
+  private def self.keyword_at?(bytes : Bytes, index : Int32, keyword : String) : Bool
+    return false if index < 0 || index + keyword.bytesize > bytes.size
+    letters = keyword.to_unsafe
+    keyword.bytesize.times do |offset|
+      byte = bytes.unsafe_fetch(index + offset)
+      letter = letters[offset]
+      return false unless byte == letter || ((byte | 0x20_u8) == letter && letter_byte?(letter))
     end
     true
   end
 
   # The end of `KEYWORD(\s+KEYWORD)*` at *index*, or `nil`.
-  private def self.keyword_sequence_end(chars : Array(Char), index : Int32, keywords : Tuple) : Int32?
+  private def self.keyword_sequence_end(bytes : Bytes, index : Int32, keywords : Tuple) : Int32?
     position = index
     keywords.each_with_index do |keyword, number|
       if number > 0
-        position = spaces_after(chars, position) || return
+        position = spaces_after(bytes, position) || return
       end
-      return unless keyword_at?(chars, position, keyword)
-      position += keyword.size
+      return unless keyword_at?(bytes, position, keyword)
+      position += keyword.bytesize
     end
     position
   end
 
-  private def self.skip_spaces(chars : Array(Char), index : Int32) : Int32
+  private def self.skip_spaces(bytes : Bytes, index : Int32) : Int32
     position = index
-    while position < chars.size && CC.space?(chars[position])
+    while position < bytes.size && space_byte?(bytes.unsafe_fetch(position))
       position += 1
     end
     position
   end
 
   # The end of a `\s+` run at *index*, or `nil` when there is no white space.
-  private def self.spaces_after(chars : Array(Char), index : Int32) : Int32?
-    position = skip_spaces(chars, index)
+  private def self.spaces_after(bytes : Bytes, index : Int32) : Int32?
+    position = skip_spaces(bytes, index)
     position > index ? position : nil
   end
 
-  private def self.boundary_before?(chars : Array(Char), index : Int32) : Bool
-    CC.word_boundary?(index > 0 ? chars[index - 1]? : nil, chars[index]?)
+  # The start of the white space run that ends at *stop*.
+  private def self.space_run_start(bytes : Bytes, stop : Int32) : Int32
+    position = stop
+    while position > 0 && space_byte?(bytes.unsafe_fetch(position - 1))
+      position -= 1
+    end
+    position
   end
 
-  # Whether *chars* holds `\b(ORDER\s+BY|LIMIT|OFFSET|GROUP\s+BY)\b`, ignoring case.
-  private def self.trailing_clause_keyword_in?(chars : Array(Char)) : Bool
-    chars.each_index do |index|
-      next unless boundary_before?(chars, index)
-      {% for words in [{"order", "by"}, {"limit"}, {"offset"}, {"group", "by"}] %}
-        if stop = keyword_sequence_end(chars, index, {{words}})
-          return true if boundary_before?(chars, stop)
-        end
-      {% end %}
-    end
-    false
+  @[AlwaysInline]
+  private def self.boundary_before?(bytes : Bytes, index : Int32) : Bool
+    word_byte?(byte_at(bytes, index - 1)) != word_byte?(byte_at(bytes, index))
   end
 
-  # Whether the lowercase ASCII *keyword* appears in *chars* as a whole word,
-  # ignoring case.
-  private def self.whole_keyword?(chars : Array(Char), keyword : String) : Bool
-    chars.each_index.any? do |index|
-      boundary_before?(chars, index) && keyword_at?(chars, index, keyword) && boundary_before?(chars, index + keyword.size)
+  # The end of the run of word bytes that starts at *index*.
+  private def self.word_end(bytes : Bytes, index : Int32) : Int32
+    position = index
+    while position < bytes.size && word_byte?(bytes.unsafe_fetch(position))
+      position += 1
     end
-  end
-
-  # Stands in for each character of quoted SQL text: neither a word character
-  # nor white space, so no keyword or word boundary forms across it.
-  private QUOTED_TEXT_MASK = '\0'
-
-  # A copy of *chars* with every single-quoted literal and every double-quoted
-  # or backtick identifier (delimiters included) replaced by
-  # `QUOTED_TEXT_MASK`. A doubled delimiter inside the quotes (`''`, `""`)
-  # stands for itself; an unclosed quote runs to the end of the text.
-  private def self.mask_quoted_text(chars : Array(Char)) : Array(Char)
-    masked = chars.dup
-    closing : Char? = nil
-    index = 0
-    while index < chars.size
-      char = chars[index]
-      if quote = closing
-        masked[index] = QUOTED_TEXT_MASK
-        if char == quote && chars[index + 1]? == quote
-          index += 1
-          masked[index] = QUOTED_TEXT_MASK
-        elsif char == quote
-          closing = nil
-        end
-      elsif char.in?('\'', '"', '`')
-        masked[index] = QUOTED_TEXT_MASK
-        closing = char
-      end
-      index += 1
-    end
-    masked
+    position
   end
 
   # The end of `[A-Za-z_][A-Za-z0-9_]*` at *index* (*index* itself when none
-  # starts there). With *fold*, the letters match as in a `/i` regex.
-  private def self.identifier_end(chars : Array(Char), index : Int32, *, fold : Bool) : Int32
-    first = chars[index]? || return index
-    return index unless first == '_' || (fold ? CC.ascii_letter_ignoring_case?(first) : first.ascii_letter?)
-    position = index + 1
-    while position < chars.size
-      char = chars[position]
-      break unless char == '_' || char.ascii_number? || (fold ? CC.ascii_letter_ignoring_case?(char) : char.ascii_letter?)
+  # starts there).
+  private def self.ident_end(bytes : Bytes, index : Int32) : Int32
+    first = byte_at(bytes, index)
+    return index unless first === '_' || letter_byte?(first)
+    word_end(bytes, index + 1)
+  end
+
+  private def self.digit_run_end(bytes : Bytes, index : Int32) : Int32
+    position = index
+    while position < bytes.size && digit_byte?(bytes.unsafe_fetch(position))
       position += 1
     end
     position
   end
 
-  # The end of `[A-Za-z_]\w*` (case-insensitive) at *index*.
-  private def self.word_name_end(chars : Array(Char), index : Int32) : Int32
-    first = chars[index]? || return index
-    return index unless first == '_' || CC.ascii_letter_ignoring_case?(first)
-    position = index + 1
-    while position < chars.size && CC.word?(chars[position])
-      position += 1
+  # Whether *bytes* are short enough that scanning them once costs less than
+  # first looking for a letter the answer needs.
+  @[AlwaysInline]
+  private def self.short?(bytes : Bytes) : Bool
+    bytes.size < 256
+  end
+
+  # Whether *bytes* hold the lowercase ASCII *letter* in either case.
+  private def self.has_letter?(bytes : Bytes, letter : UInt8) : Bool
+    !bytes.index(letter).nil? || !bytes.index(letter - 32).nil?
+  end
+
+  # Yields the start and end of every maximal run of word bytes. With
+  # *skip_quoted*, every single-quoted literal and every double-quoted or
+  # backtick identifier is passed over: a doubled delimiter inside the quotes
+  # (`''`, `""`) stands for itself, and an unclosed quote runs to the end.
+  private def self.each_word(bytes : Bytes, *, skip_quoted : Bool, &) : Nil
+    kinds = WORD_SCAN_KINDS.to_unsafe
+    pointer = bytes.to_unsafe
+    size = bytes.size
+    index = 0
+    while index < size
+      kind = kinds[pointer[index]]
+      if kind == WORD_KIND
+        stop = index + 1
+        while stop < size && kinds[pointer[stop]] == WORD_KIND
+          stop += 1
+        end
+        yield index, stop
+        index = stop
+      elsif kind == QUOTE_KIND && skip_quoted
+        index = quoted_text_end(bytes, index, pointer[index])
+      else
+        index += 1
+      end
     end
-    position
+  end
+
+  private WORD_KIND  = 1_u8
+  private QUOTE_KIND = 2_u8
+
+  # What each byte is to `.each_word`: a word byte (`[A-Za-z0-9_]`), a quote
+  # that opens quoted text, or neither. A table lookup costs less than the
+  # range checks in the scan's hottest loop.
+  private WORD_SCAN_KINDS = begin
+    kinds = StaticArray(UInt8, 256).new(0_u8)
+    128.times do |byte|
+      char = byte.unsafe_chr
+      kinds[byte] = WORD_KIND if char.ascii_alphanumeric? || char == '_'
+      kinds[byte] = QUOTE_KIND if char.in?('\'', '"', '`')
+    end
+    kinds
+  end
+
+  # The index after the quoted text that opens at *open* with *quote*.
+  private def self.quoted_text_end(bytes : Bytes, open : Int32, quote : UInt8) : Int32
+    position = open + 1
+    while close = bytes.index(quote, position)
+      return close + 1 unless byte_at(bytes, close + 1) == quote
+      position = close + 2
+    end
+    bytes.size
+  end
+
+  # Whether the word at `start...stop` begins `ORDER\s+BY`, `GROUP\s+BY`, or
+  # is `LIMIT`, `OFFSET` (or, with *having*, `HAVING`) as a whole word.
+  private def self.clause_keyword?(bytes : Bytes, start : Int32, stop : Int32, *, having : Bool) : Bool
+    case stop - start
+    when 5 then by_keyword?(bytes, start, stop) || keyword_at?(bytes, start, "limit")
+    when 6 then keyword_at?(bytes, start, "offset") || (having && keyword_at?(bytes, start, "having"))
+    else        false
+    end
+  end
+
+  # Whether the five-letter word at `start...stop` is `ORDER` or `GROUP` and
+  # `\s+BY\b` follows it.
+  private def self.by_keyword?(bytes : Bytes, start : Int32, stop : Int32) : Bool
+    return false unless keyword_at?(bytes, start, "order") || keyword_at?(bytes, start, "group")
+    after = spaces_after(bytes, stop) || return false
+    keyword_at?(bytes, after, "by") && !word_byte?(byte_at(bytes, after + 2))
+  end
+
+  private def self.statement_keyword?(bytes : Bytes, start : Int32, stop : Int32) : Bool
+    case stop - start
+    when 4 then keyword_at?(bytes, start, "from") || keyword_at?(bytes, start, "into")
+    when 6 then keyword_at?(bytes, start, "update")
+    else        false
+    end
+  end
+
+  # The end of `ONLY\s+` at *index*, or `nil`.
+  private def self.only_keyword_end(bytes : Bytes, index : Int32) : Int32?
+    return unless keyword_at?(bytes, index, "only")
+    spaces_after(bytes, index + 4)
+  end
+
+  # `[`"\[]?([\w.$]+)` at *index*: the reference without its opening quote.
+  private def self.table_reference_at(bytes : Bytes, index : Int32) : String?
+    opening = byte_at(bytes, index)
+    start = opening === '`' || opening === '"' || opening === '[' ? index + 1 : index
+    stop = start
+    while stop < bytes.size && table_reference_byte?(bytes.unsafe_fetch(stop))
+      stop += 1
+    end
+    stop > start ? ascii_string(bytes[start, stop - start]) : nil
+  end
+
+  # Whether `/src` starts at *index* (the caller checked the `/` after it).
+  private def self.src_directory_at?(bytes : Bytes, index : Int32) : Bool
+    bytes.unsafe_fetch(index) === '/' && bytes.unsafe_fetch(index + 1) === 's' &&
+      bytes.unsafe_fetch(index + 2) === 'r' && bytes.unsafe_fetch(index + 3) === 'c'
+  end
+
+  # Whether the directory that ends at the `/` at *slash* (the one before
+  # `src/`) is `/crystal`, or a `[\w.-]*` name holding `crystal` right after
+  # `/share/`.
+  private def self.stdlib_directory_before?(bytes : Bytes, slash : Int32) : Bool
+    start = slash
+    while start > 0 && stdlib_segment_byte?(bytes.unsafe_fetch(start - 1))
+      start -= 1
+    end
+    return false unless start > 0 && bytes.unsafe_fetch(start - 1) === '/'
+    directory = bytes[start, slash - start]
+    return true if directory == "crystal".to_slice
+    start >= 7 && bytes[start - 7, 6] == "/share".to_slice && holds_crystal?(directory)
+  end
+
+  private def self.holds_crystal?(bytes : Bytes) : Bool
+    name = "crystal".to_slice
+    (0..bytes.size - name.size).any? { |index| bytes[index, name.size] == name }
   end
 
   # The end of `REF` (see `.column_function?`) at *index*, or `nil`.
-  private def self.column_reference_end(chars : Array(Char), index : Int32) : Int32?
-    first_end = identifier_end(chars, index, fold: true)
+  private def self.column_reference_end(bytes : Bytes, index : Int32) : Int32?
+    first_end = ident_end(bytes, index)
     return if first_end == index
-    if chars[first_end]? == '.'
-      second_end = identifier_end(chars, first_end + 1, fold: true)
+    if byte_at(bytes, first_end) === '.'
+      second_end = ident_end(bytes, first_end + 1)
       return second_end if second_end > first_end + 1
     end
     first_end
   end
 
   # Matches `(?:\s+(asc|desc))?(?:\s+nulls\s+(first|last))?\s*\z` (ignoring
-  # case) at *index*: the direction and NULL placement as written, or `nil`
-  # when the rest of the text has another shape.
-  private def self.sort_tail(chars : Array(Char), index : Int32) : {String?, String?}?
+  # case) at *index*: the start and end of the direction and of the NULL
+  # placement (-1 when absent), or `nil` when the rest of the text has another
+  # shape.
+  private def self.sort_tail(bytes : Bytes, index : Int32) : {Int32, Int32, Int32, Int32}?
     position = index
-    direction = nil
-    if start = spaces_after(chars, position)
-      word = {"asc", "desc"}.find { |candidate| keyword_at?(chars, start, candidate) }
-      if word
-        direction = text_of(chars, start, start + word.size)
-        position = start + word.size
+    direction_start = direction_stop = -1
+    if start = spaces_after(bytes, position)
+      if word = {"asc", "desc"}.find { |candidate| keyword_at?(bytes, start, candidate) }
+        direction_start = start
+        direction_stop = position = start + word.bytesize
       end
     end
-    nulls = nil
-    if (start = spaces_after(chars, position)) && keyword_at?(chars, start, "nulls") && (placement_start = spaces_after(chars, start + 5))
-      word = {"first", "last"}.find { |candidate| keyword_at?(chars, placement_start, candidate) }
-      if word
-        nulls = text_of(chars, placement_start, placement_start + word.size)
-        position = placement_start + word.size
+    nulls_start = nulls_stop = -1
+    if (start = spaces_after(bytes, position)) && keyword_at?(bytes, start, "nulls") && (placement_start = spaces_after(bytes, start + 5))
+      if word = {"first", "last"}.find { |candidate| keyword_at?(bytes, placement_start, candidate) }
+        nulls_start = placement_start
+        nulls_stop = position = placement_start + word.bytesize
       end
     end
-    skip_spaces(chars, position) == chars.size ? {direction, nulls} : nil
+    skip_spaces(bytes, position) == bytes.size ? {direction_start, direction_stop, nulls_start, nulls_stop} : nil
   end
 
   # The start of one of *keywords* that ends exactly at *stop*, or `nil`.
-  private def self.trailing_keyword_start(chars : Array(Char), stop : Int32, keywords : Tuple) : Int32?
+  private def self.trailing_keyword_start(bytes : Bytes, stop : Int32, keywords : Tuple) : Int32?
     keywords.each do |keyword|
-      start = stop - keyword.size
-      return start if keyword_at?(chars, start, keyword)
+      start = stop - keyword.bytesize
+      return start if keyword_at?(bytes, start, keyword)
     end
     nil
   end
 
   # When `KEYWORD\s+` ends at *index*, the start of the white space before
   # KEYWORD, provided there is some; otherwise `nil`.
-  private def self.keyword_before_spaces(chars : Array(Char), index : Int32, keyword : String) : Int32?
-    run_start = index
-    while run_start > 0 && CC.space?(chars[run_start - 1])
-      run_start -= 1
-    end
+  private def self.keyword_before_spaces(bytes : Bytes, index : Int32, keyword : String) : Int32?
+    run_start = space_run_start(bytes, index)
     return if run_start == index
-    keyword_start = run_start - keyword.size
-    return unless keyword_at?(chars, keyword_start, keyword)
-    return unless keyword_start > 0 && CC.space?(chars[keyword_start - 1])
+    keyword_start = run_start - keyword.bytesize
+    return unless keyword_at?(bytes, keyword_start, keyword)
+    return unless keyword_start > 0 && space_byte?(bytes.unsafe_fetch(keyword_start - 1))
     keyword_start
-  end
-
-  private def self.last_non_space_end(chars : Array(Char), stop : Int32) : Int32
-    position = stop
-    while position > 0 && CC.space?(chars[position - 1])
-      position -= 1
-    end
-    position
-  end
-
-  # `[A-Za-z_]` when *first*, `[A-Za-z0-9_]` otherwise.
-  private def self.identifier_char?(char : Char, *, first : Bool) : Bool
-    char == '_' || char.ascii_letter? || (!first && char.ascii_number?)
-  end
-
-  private def self.sql_word_char?(char : Char) : Bool
-    char.ascii_alphanumeric? || char.in?('_', '$', '\'')
-  end
-
-  private def self.log_quote?(char : Char) : Bool
-    char == '"' || char == '`'
-  end
-
-  private def self.digit_run_end(chars : Array(Char), index : Int32) : Int32
-    position = index
-    while position < chars.size && CC.digit?(chars[position])
-      position += 1
-    end
-    position
   end
 
   # Matches `\A\$2[abxy]?\$\d{2}\$`, the prefix of a bcrypt hash: where the
   # hash body starts, or `nil`.
-  private def self.bcrypt_body_start(chars : Array(Char)) : Int32?
-    return unless chars[0]? == '$' && chars[1]? == '2'
+  private def self.bcrypt_body_start(bytes : Bytes) : Int32?
+    return unless byte_at(bytes, 0) === '$' && byte_at(bytes, 1) === '2'
     index = 2
-    index += 1 if chars[index]?.try(&.in?('a', 'b', 'x', 'y'))
-    return unless chars[index]? == '$'
-    first_digit = chars[index + 1]?
-    second_digit = chars[index + 2]?
-    return unless first_digit && second_digit && CC.digit?(first_digit) && CC.digit?(second_digit)
-    return unless chars[index + 3]? == '$'
+    version = byte_at(bytes, index)
+    index += 1 if version === 'a' || version === 'b' || version === 'x' || version === 'y'
+    return unless byte_at(bytes, index) === '$'
+    return unless digit_byte?(byte_at(bytes, index + 1)) && digit_byte?(byte_at(bytes, index + 2))
+    return unless byte_at(bytes, index + 3) === '$'
     index + 4
   end
 
   # Matches `"?([A-Za-z_][A-Za-z0-9_]*)"?\.(?=["A-Za-z_])` at *index*: the
   # start and end of the qualifier name and the index of its dot, or `nil`.
-  private def self.qualifier_at(chars : Array(Char), index : Int32) : {Int32, Int32, Int32}?
-    name_start = chars[index] == '"' ? index + 1 : index
-    name_end = identifier_end(chars, name_start, fold: false)
+  private def self.qualifier_at(bytes : Bytes, index : Int32) : {Int32, Int32, Int32}?
+    name_start = bytes.unsafe_fetch(index) === '"' ? index + 1 : index
+    name_end = ident_end(bytes, name_start)
     return if name_end == name_start
-    dot = chars[name_end]? == '"' ? name_end + 1 : name_end
-    following = chars[dot + 1]?
-    return unless chars[dot]? == '.' && following
-    return unless following == '"' || following == '_' || following.ascii_letter?
+    dot = byte_at(bytes, name_end) === '"' ? name_end + 1 : name_end
+    following = byte_at(bytes, dot + 1)
+    return unless byte_at(bytes, dot) === '.'
+    return unless following === '"' || following === '_' || letter_byte?(following)
     {name_start, name_end, dot}
   end
 
   # The end of a URL scheme `[A-Za-z][A-Za-z0-9+.\-]*` at the start, or `nil`.
-  private def self.scheme_end(chars : Array(Char)) : Int32?
-    return unless chars[0]?.try(&.ascii_letter?)
+  private def self.scheme_end(bytes : Bytes) : Int32?
+    return unless letter_byte?(byte_at(bytes, 0))
     position = 1
-    while position < chars.size && (chars[position].ascii_alphanumeric? || chars[position].in?('+', '.', '-'))
+    while position < bytes.size && scheme_byte?(bytes.unsafe_fetch(position))
       position += 1
     end
     position
   end
 
   # `'(?:[^'\\]|''|\\.)*'` as the whole text.
-  private def self.quoted_mysql_string?(chars : Array(Char)) : Bool
-    return false unless chars.size >= 2 && chars.first == '\'' && chars.last == '\''
+  private def self.quoted_mysql_string?(bytes : Bytes) : Bool
+    return false unless bytes.size >= 2 && bytes.unsafe_fetch(0) === '\'' && bytes.unsafe_fetch(bytes.size - 1) === '\''
     index = 1
-    stop = chars.size - 1
+    stop = bytes.size - 1
     while index < stop
-      case chars[index]
-      when '\''
-        return false unless index + 1 < stop && chars[index + 1] == '\''
+      byte = bytes.unsafe_fetch(index)
+      if byte === '\''
+        return false unless index + 1 < stop && bytes.unsafe_fetch(index + 1) === '\''
         index += 2
-      when '\\'
-        return false unless index + 1 < stop && chars[index + 1] != '\n'
+      elsif byte === '\\'
+        return false if index + 1 >= stop || bytes.unsafe_fetch(index + 1) === '\n'
         index += 2
       else
         index += 1
@@ -1038,107 +1214,121 @@ module Grant::TextMatching
 
   # `\b\d+\b` replaced by `?`.
   private def self.replace_standalone_numbers(text : String) : String
-    chars = text.chars
-    String.build do |io|
-      index = 0
-      while index < chars.size
-        if CC.digit?(chars[index])
-          run_end = digit_run_end(chars, index)
-          before = index > 0 ? chars[index - 1] : nil
-          after = chars[run_end]?
-          if (before.nil? || !CC.word?(before)) && (after.nil? || !CC.word?(after))
-            io << '?'
-          else
-            chars.each(within: index...run_end) { |char| io << char }
-          end
-          index = run_end
-        else
-          io << chars[index]
+    bytes = text.to_slice
+    index = 0
+    while index < bytes.size && !digit_byte?(bytes.unsafe_fetch(index))
+      index += 1
+    end
+    return text if index == bytes.size
+    single_byte_string(bytes.size) do |io|
+      copied = 0
+      while index < bytes.size
+        unless digit_byte?(bytes.unsafe_fetch(index))
           index += 1
+          next
         end
+        run_end = digit_run_end(bytes, index)
+        if !word_byte?(byte_at(bytes, index - 1)) && !word_byte?(byte_at(bytes, run_end))
+          io.write(bytes[copied, index - copied])
+          io << '?'
+          copied = run_end
+        end
+        index = run_end
       end
+      io.write(bytes[copied..])
     end
   end
 
   # `'[^']*'` replaced by `?`.
   private def self.replace_quoted_strings(text : String) : String
-    return text unless text.includes?('\'')
-    chars = text.chars
-    String.build do |io|
-      index = 0
-      while index < chars.size
-        if chars[index] == '\'' && (close = chars.index('\'', index + 1))
-          io << '?'
-          index = close + 1
-        else
-          io << chars[index]
-          index += 1
-        end
+    bytes = text.to_slice
+    open = bytes.index('\''.ord.to_u8) || return text
+    single_byte_string(bytes.size) do |io|
+      copied = 0
+      while open && (close = bytes.index('\''.ord.to_u8, open + 1))
+        io.write(bytes[copied, open - copied])
+        io << '?'
+        copied = close + 1
+        open = bytes.index('\''.ord.to_u8, copied)
       end
+      io.write(bytes[copied..])
     end
   end
 
   # `\s+` replaced by one space.
   private def self.collapse_spaces(text : String) : String
-    chars = text.chars
-    String.build do |io|
-      index = 0
-      while index < chars.size
-        if CC.space?(chars[index])
-          io << ' '
-          index = skip_spaces(chars, index)
-        else
-          io << chars[index]
+    bytes = text.to_slice
+    index = 0
+    # Text whose white space is all single spaces stays as it is.
+    while index < bytes.size
+      byte = bytes.unsafe_fetch(index)
+      break if space_byte?(byte) && (byte != 0x20 || space_byte?(byte_at(bytes, index + 1)))
+      index += 1
+    end
+    return text if index == bytes.size
+    single_byte_string(bytes.size) do |io|
+      copied = 0
+      while index < bytes.size
+        unless space_byte?(bytes.unsafe_fetch(index))
           index += 1
+          next
         end
+        run_end = skip_spaces(bytes, index)
+        io.write(bytes[copied, index - copied])
+        io << ' '
+        copied = index = run_end
       end
+      io.write(bytes[copied..])
     end
   end
 
-  # `[`"\[]?([\w.$]+)` at *index*: the reference without its opening quote.
-  private def self.table_reference_at(chars : Array(Char), index : Int32) : String?
-    start = chars[index]?.try(&.in?('`', '"', '[')) ? index + 1 : index
-    stop = start
-    while stop < chars.size && (CC.word?(chars[stop]) || chars[stop].in?('.', '$'))
-      stop += 1
+  # Builds a string from single-byte text, which keeps its character count
+  # equal to its byte size.
+  private def self.single_byte_string(capacity : Int32, & : IO ->) : String
+    built = String.build(capacity) { |io| yield io }
+    String.new(built.bytesize) do |buffer|
+      buffer.copy_from(built.to_unsafe, built.bytesize)
+      {built.bytesize, built.bytesize}
     end
-    stop > start ? text_of(chars, start, stop) : nil
   end
 
   # The alias part of a raw JOIN after its table name, as `{start, end}`.
-  private def self.join_alias_range(chars : Array(Char), table_end : Int32) : {Int32, Int32}?
-    start = spaces_after(chars, table_end) || return
-    if keyword_at?(chars, start, "as") && (after_as = spaces_after(chars, start + 2))
-      if join_alias_allowed?(chars, after_as)
-        stop = identifier_end(chars, after_as, fold: true)
+  private def self.join_alias_range(bytes : Bytes, table_end : Int32) : {Int32, Int32}?
+    start = spaces_after(bytes, table_end) || return
+    if keyword_at?(bytes, start, "as") && (after_as = spaces_after(bytes, start + 2))
+      if join_alias_allowed?(bytes, after_as)
+        stop = ident_end(bytes, after_as)
         return {after_as, stop} if stop > after_as
       end
     end
-    return unless join_alias_allowed?(chars, start)
-    stop = identifier_end(chars, start, fold: true)
+    return unless join_alias_allowed?(bytes, start)
+    stop = ident_end(bytes, start)
     stop > start ? {start, stop} : nil
   end
 
-  private def self.join_alias_allowed?(chars : Array(Char), index : Int32) : Bool
+  private def self.join_alias_allowed?(bytes : Bytes, index : Int32) : Bool
     {"on", "using", "inner", "left", "right", "full", "cross", "natural", "join"}.none? do |keyword|
-      keyword_at?(chars, index, keyword) && boundary_before?(chars, index + keyword.size)
+      keyword_at?(bytes, index, keyword) && boundary_before?(bytes, index + keyword.bytesize)
     end
   end
 
   # `["`]?\s*(?:=|!=|<>|<=|>=|<|>|\bLIKE|\bILIKE)\s*(\?|\$\d+)` after a name.
-  private def self.comparison_placeholder(chars : Array(Char), name_end : Int32) : Placeholder?
-    position = chars[name_end]?.try { |char| log_quote?(char) } ? name_end + 1 : name_end
-    operator_start = skip_spaces(chars, position)
+  private def self.comparison_placeholder(bytes : Bytes, name_end : Int32) : Placeholder?
+    position = log_quote_byte?(byte_at(bytes, name_end)) ? name_end + 1 : name_end
+    operator_start = skip_spaces(bytes, position)
+    first = byte_at(bytes, operator_start)
+    second = byte_at(bytes, operator_start + 1)
+    # The operators in the order the alternation tries them.
     {"=", "!=", "<>", "<=", ">=", "<", ">"}.each do |operator|
-      if chars_at?(chars, operator_start, operator.chars)
-        if placeholder = placeholder_at(chars, skip_spaces(chars, operator_start + operator.size))
-          return placeholder
-        end
+      next unless first == operator.to_unsafe[0] && (operator.bytesize == 1 || second == operator.to_unsafe[1])
+      if placeholder = placeholder_at(bytes, skip_spaces(bytes, operator_start + operator.bytesize))
+        return placeholder
       end
     end
+    return unless boundary_before?(bytes, operator_start)
     {"like", "ilike"}.each do |operator|
-      if boundary_before?(chars, operator_start) && keyword_at?(chars, operator_start, operator)
-        if placeholder = placeholder_at(chars, skip_spaces(chars, operator_start + operator.size))
+      if keyword_at?(bytes, operator_start, operator)
+        if placeholder = placeholder_at(bytes, skip_spaces(bytes, operator_start + operator.bytesize))
           return placeholder
         end
       end
@@ -1147,28 +1337,27 @@ module Grant::TextMatching
   end
 
   # `\?|\$\d+` exactly at *index*.
-  private def self.placeholder_at(chars : Array(Char), index : Int32) : Placeholder?
-    case chars[index]?
-    when '?'
+  private def self.placeholder_at(bytes : Bytes, index : Int32) : Placeholder?
+    byte = byte_at(bytes, index)
+    if byte === '?'
       Placeholder.new("?", index)
-    when '$'
-      digits_end = digit_run_end(chars, index + 1)
-      digits_end > index + 1 ? Placeholder.new(text_of(chars, index, digits_end), index) : nil
+    elsif byte === '$'
+      digits_end = digit_run_end(bytes, index + 1)
+      digits_end > index + 1 ? Placeholder.new(ascii_string(bytes[index, digits_end - index]), index) : nil
     end
   end
 
-  # Every `\?|\$\d+` in `chars[start...stop]`.
-  private def self.placeholders_in(chars : Array(Char), start : Int32, stop : Int32) : Array(Placeholder)
+  # Every `\?|\$\d+` in `bytes[start...stop]`.
+  private def self.placeholders_in(bytes : Bytes, start : Int32, stop : Int32) : Array(Placeholder)
     found = [] of Placeholder
     index = start
     while index < stop
-      digits_end = chars[index] == '$' ? digit_run_end(chars, index + 1) : index
-      digits_end = stop if digits_end > stop
-      if chars[index] == '?'
+      byte = bytes.unsafe_fetch(index)
+      if byte === '?'
         found << Placeholder.new("?", index)
         index += 1
-      elsif chars[index] == '$' && digits_end > index + 1
-        found << Placeholder.new(text_of(chars, index, digits_end), index)
+      elsif byte === '$' && (digits_end = Math.min(digit_run_end(bytes, index + 1), stop)) > index + 1
+        found << Placeholder.new(ascii_string(bytes[index, digits_end - index]), index)
         index = digits_end
       else
         index += 1
@@ -1177,71 +1366,142 @@ module Grant::TextMatching
     found
   end
 
-  # For each index, the index of the first `)` at or after it.
-  private def self.next_close_parens(chars : Array(Char)) : Array(Int32?)
-    closes = Array(Int32?).new(chars.size + 1, nil)
-    following = nil
-    (chars.size - 1).downto(0) do |index|
-      following = index if chars[index] == ')'
-      closes[index] = following
+  # `\s*\(([^)]*)\)\s*VALUES\s*(.*)` after the `\S+` target of an INSERT that
+  # runs from *target_start* to *target_end*: `\S+` gives back characters from
+  # its end until `\s*\(` can follow.
+  private def self.insert_binds_after_target(bytes : Bytes, closes : CloseParenFinder, target_start : Int32, target_end : Int32) : InsertBinds?
+    target_end.downto(target_start + 1) do |candidate|
+      open = candidate == target_end ? skip_spaces(bytes, candidate) : candidate
+      next unless byte_at(bytes, open) === '('
+      close = closes.at_or_after(open + 1) || next
+      values = skip_spaces(bytes, close + 1)
+      next unless keyword_at?(bytes, values, "values")
+      rest = skip_spaces(bytes, values + 6)
+      return InsertBinds.new(String.new(bytes[open + 1, close - open - 1]), placeholders_in(bytes, rest, bytes.size))
     end
-    closes
+    nil
   end
 
   # `["`]?\s+(?:NOT\s+)?IN\s*\(([^)]*)\)` after a name: the range inside the
   # parentheses.
-  private def self.in_list_range(chars : Array(Char), closes : Array(Int32?), name_end : Int32) : {Int32, Int32}?
-    position = chars[name_end]?.try { |char| log_quote?(char) } ? name_end + 1 : name_end
-    start = spaces_after(chars, position) || return
-    if keyword_at?(chars, start, "not") && (after_not = spaces_after(chars, start + 3))
-      if range = in_parentheses(chars, closes, after_not)
+  private def self.in_list_range(bytes : Bytes, closes : CloseParenFinder, name_end : Int32) : {Int32, Int32}?
+    position = log_quote_byte?(byte_at(bytes, name_end)) ? name_end + 1 : name_end
+    start = spaces_after(bytes, position) || return
+    if keyword_at?(bytes, start, "not") && (after_not = spaces_after(bytes, start + 3))
+      if range = in_parentheses(bytes, closes, after_not)
         return range
       end
     end
-    in_parentheses(chars, closes, start)
+    in_parentheses(bytes, closes, start)
   end
 
-  private def self.in_parentheses(chars : Array(Char), closes : Array(Int32?), index : Int32) : {Int32, Int32}?
-    return unless keyword_at?(chars, index, "in")
-    open = skip_spaces(chars, index + 2)
-    return unless chars[open]? == '('
-    close = closes[open + 1]? || return
+  private def self.in_parentheses(bytes : Bytes, closes : CloseParenFinder, index : Int32) : {Int32, Int32}?
+    return unless keyword_at?(bytes, index, "in")
+    open = skip_spaces(bytes, index + 2)
+    return unless byte_at(bytes, open) === '('
+    close = closes.at_or_after(open + 1) || return
     {open + 1, close}
   end
 
-  # `[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b[-a-zA-Z0-9()@:%_\+.~#?&\/\/=]*\z`
-  # from *start*.
-  private def self.url_host_and_path?(chars : Array(Char), start : Int32) : Bool
-    host_run = start
-    while host_run < chars.size && url_host_char?(chars[host_run])
-      host_run += 1
+  # The domain of an address from *start*: labels of `[a-z\d\-]` joined by
+  # dots, the last one letters only, at least two labels, none empty.
+  private def self.email_domain?(bytes : Bytes, start : Int32) : Bool
+    label_start = start
+    letters_only = true
+    labels = 1
+    index = label_start
+    while index < bytes.size
+      byte = bytes.unsafe_fetch(index)
+      if byte === '.'
+        return false if index == label_start
+        labels += 1
+        label_start = index + 1
+        letters_only = true
+      elsif letter_byte?(byte)
+        # still a possible last label
+      elsif digit_byte?(byte) || byte === '-'
+        letters_only = false
+      else
+        return false
+      end
+      index += 1
     end
-    path_start = chars.size
-    while path_start > start && url_path_char?(chars[path_start - 1])
-      path_start -= 1
+    labels >= 2 && label_start < bytes.size && letters_only
+  end
+
+  # `[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b` from *start*, in text
+  # whose bytes from *start* on are all URL path bytes, so whatever follows the
+  # top-level domain completes the match.
+  private def self.url_host_and_tld?(bytes : Bytes, start : Int32) : Bool
+    host_run = start
+    while host_run < bytes.size && url_host_byte?(bytes.unsafe_fetch(host_run))
+      host_run += 1
     end
     last_dot = Math.min(host_run, start + 256)
     (start + 1..last_dot).each do |dot|
-      next unless chars[dot]? == '.'
+      next unless byte_at(bytes, dot) === '.'
       (1..6).each do |length|
         stop = dot + 1 + length
-        break if stop > chars.size || !url_tld_char?(chars[stop - 1])
-        next if stop < path_start
-        return true if CC.word_boundary?(chars[stop - 1], chars[stop]?)
+        break if stop > bytes.size || !url_tld_byte?(bytes.unsafe_fetch(stop - 1))
+        return true if word_byte?(bytes.unsafe_fetch(stop - 1)) != word_byte?(byte_at(bytes, stop))
       end
     end
     false
   end
 
-  private def self.url_host_char?(char : Char) : Bool
-    char.ascii_alphanumeric? || char.in?('-', '@', ':', '%', '.', '_', '+', '~', '#', '=')
+  # Finds the next byte that is a lowercase ASCII letter or its uppercase
+  # form, with one `memchr` per case: each case's next position is kept until
+  # the scan passes it, so a whole scan reads the text at most twice.
+  private struct LetterFinder
+    @position = 0
+    @next_lower = -1
+    @next_upper = -1
+
+    def initialize(@bytes : Bytes, @lower : UInt8)
+      @upper = @lower.unsafe_chr.ascii_lowercase? ? @lower - 32 : @lower
+    end
+
+    # Moves the scan to *position*.
+    def advance(@position : Int32) : Nil
+    end
+
+    # The first index at or after the scan position that holds the letter.
+    def next_at : Int32?
+      @next_lower = @bytes.index(@lower, @position) || @bytes.size if @next_lower < @position
+      @next_upper = @bytes.index(@upper, @position) || @bytes.size if @next_upper < @position
+      found = Math.min(@next_lower, @next_upper)
+      found < @bytes.size ? found : nil
+    end
   end
 
-  private def self.url_tld_char?(char : Char) : Bool
-    char.ascii_alphanumeric? || char.in?('(', ')')
-  end
+  # Answers "the first `)` at or after *index*", as a table built from the
+  # right would, with `memchr` over only the bytes no earlier question
+  # covered. Questions may move forward or back; each byte is read a bounded
+  # number of times. A class, so the helpers it is passed to share what it
+  # has learned.
+  private class CloseParenFinder
+    # The answer for `@from` and every index up to it: no `)` lies in
+    # `@from...@found`, and `@found` (or the end, -1) holds one.
+    @from = Int32::MAX
+    @found = -1
 
-  private def self.url_path_char?(char : Char) : Bool
-    char.ascii_alphanumeric? || char.in?('-', '(', ')', '@', ':', '%', '_', '+', '.', '~', '#', '?', '&', '/', '=')
+    def initialize(@bytes : Bytes)
+    end
+
+    def at_or_after(index : Int32) : Int32?
+      return if index >= @bytes.size
+      if index >= @from && (@found < 0 || index <= @found)
+        # Already covered.
+      elsif index < @from && index < @bytes.size && @from != Int32::MAX
+        if earlier = @bytes[index, @from - index].index(')'.ord.to_u8)
+          @found = index + earlier
+        end
+        @from = index
+      else
+        @from = index
+        @found = @bytes.index(')'.ord.to_u8, index) || -1
+      end
+      @found < 0 ? nil : @found
+    end
   end
 end

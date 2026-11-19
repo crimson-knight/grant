@@ -6,7 +6,10 @@ require "../../support/linked_pcre2"
 # hand-written check side by side over a table of inputs (empty text, Unicode
 # letters, digits and spaces, separators, case folds such as the Kelvin sign,
 # and very long text) plus a seeded fuzz corpus built from the tokens each
-# pattern cares about, and require identical answers.
+# pattern cares about, and require identical answers. Single-byte text takes
+# the byte-scanning path and text with a multibyte character takes the
+# character path, so every method gets a second corpus without the Unicode
+# tokens (ASCII white space instead) and a few random-byte strings.
 #
 # Grant's character classes follow the PCRE2 10.43+ tables. When the linked
 # PCRE2 is older, inputs holding a character it answers differently (a
@@ -24,10 +27,13 @@ private COMMON_INPUTS = [
   "x" * 10_000, " " * 10_000, "1" * 10_000, ("a" * 5_000) + "." + ("b" * 5_000),
 ]
 
+# ASCII white space and punctuation for the single-byte corpus.
+private ASCII_TOKENS = [" ", "\t", "\n", "\r", "\f", "\v", "\0", "~", "!"]
+
 # A deterministic corpus: *count* strings built from 0 to *max_tokens* tokens.
-private def fuzz_corpus(tokens : Array(String), count = 3_000, max_tokens = 12, seed = 20_261_118) : Array(String)
+private def fuzz_corpus(tokens : Array(String), count = 3_000, max_tokens = 12, seed = 20_261_118, *, unicode = true) : Array(String)
   random = Random.new(seed)
-  all_tokens = tokens + UNICODE_TOKENS
+  all_tokens = unicode ? tokens + UNICODE_TOKENS : tokens.select(&.ascii_only?) + ASCII_TOKENS
   Array.new(count) do
     String.build do |io|
       random.rand(0..max_tokens).times { io << all_tokens.sample(random) }
@@ -36,7 +42,24 @@ private def fuzz_corpus(tokens : Array(String), count = 3_000, max_tokens = 12, 
 end
 
 private def inputs_for(tokens : Array(String), extra = [] of String) : Array(String)
-  COMMON_INPUTS + extra + fuzz_corpus(tokens) + tokens
+  COMMON_INPUTS + extra + fuzz_corpus(tokens) + fuzz_corpus(tokens, 6_000, 16, 20_261_119, unicode: false) + random_ascii(tokens) + tokens
+end
+
+# Strings of random ASCII bytes spliced with *tokens*, for the byte path.
+private def random_ascii(tokens : Array(String), count = 1_000, seed = 20_261_120) : Array(String)
+  random = Random.new(seed)
+  ascii_tokens = tokens.select(&.ascii_only?)
+  Array.new(count) do
+    String.build do |io|
+      random.rand(0..10).times do
+        if ascii_tokens.empty? || random.rand(2) == 0
+          io << random.rand(0x00..0x7F).unsafe_chr
+        else
+          io << ascii_tokens.sample(random)
+        end
+      end
+    end
+  end
 end
 
 # Compares *old* and *new* over the *inputs* where the linked PCRE2 agrees with

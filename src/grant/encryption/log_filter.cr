@@ -33,6 +33,13 @@ module Grant::Encryption
       !global.empty? && Grant::Attributes.filtered?(name, global)
     end
 
+    # Whether any column can be filtered: a tracked model has an encrypted or
+    # filtered column, or `Grant.settings.filter_attributes` names one. When
+    # none can, `.redact` returns the binds without reading the statement.
+    def self.filtering? : Bool
+      !columns.empty? || !Grant.settings.filter_attributes.empty?
+    end
+
     # Returns *params* with the values bound to filtered columns replaced by
     # `[FILTERED]`. Anything that is not a list of binds is returned as given.
     #
@@ -40,7 +47,7 @@ module Grant::Encryption
     # logs several) dispatch per concrete array, so each call maps one element
     # type.
     def self.redact(query : String, params : Array(T)) forall T
-      return params if params.empty?
+      return params if params.empty? || !filtering?
 
       bound = bound_columns(query)
       return params if bound.empty?
