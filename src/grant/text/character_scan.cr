@@ -200,7 +200,10 @@ module Grant::TextMatching::CharacterScan
     parts
   end
 
-  # Replaces `word =~ /\d+/`: whether *text* holds a decimal digit.
+  # Replaces `word =~ /\d+/`: whether *text* holds a decimal digit. Kept out
+  # of line: inlined, this Unicode path would grow the single-byte
+  # `TextMatching.contains_digit?` that calls it.
+  @[NoInline]
   def self.contains_digit?(text : String) : Bool
     text.each_char.any? { |char| CC.digit?(char) }
   end
