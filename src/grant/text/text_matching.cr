@@ -300,10 +300,7 @@ module Grant::TextMatching
     bytes = clause.to_slice
     # Every keyword holds an `o` or an `i`; long text without either has none.
     return false unless short?(bytes) || has_letter?(bytes, 'o'.ord.to_u8) || has_letter?(bytes, 'i'.ord.to_u8)
-    each_word(bytes, skip_quoted: false) do |start, stop|
-      return true if clause_keyword?(bytes, start, stop, having: false)
-    end
-    false
+    clause_keyword_in?(bytes, skip_quoted: false, having: false)
   end
 
   # Whether a raw clause holds SQL that follows a WHERE condition: the
@@ -315,10 +312,7 @@ module Grant::TextMatching
     bytes = clause.to_slice
     # Every keyword holds an `o` or an `i`; long text without either has none.
     return false unless short?(bytes) || has_letter?(bytes, 'o'.ord.to_u8) || has_letter?(bytes, 'i'.ord.to_u8)
-    each_word(bytes, skip_quoted: true) do |start, stop|
-      return true if clause_keyword?(bytes, start, stop, having: true)
-    end
-    false
+    clause_keyword_in?(bytes, skip_quoted: true, having: true)
   end
 
   # Whether a raw clause joins another table: the word `JOIN` in any case,
@@ -1034,22 +1028,126 @@ module Grant::TextMatching
     bytes.size
   end
 
-  # Whether the word at `start...stop` begins `ORDER\s+BY`, `GROUP\s+BY`, or
-  # is `LIMIT`, `OFFSET` (or, with *having*, `HAVING`) as a whole word.
-  private def self.clause_keyword?(bytes : Bytes, start : Int32, stop : Int32, *, having : Bool) : Bool
-    case stop - start
-    when 5 then by_keyword?(bytes, start, stop) || keyword_at?(bytes, start, "limit")
-    when 6 then keyword_at?(bytes, start, "offset") || (having && keyword_at?(bytes, start, "having"))
-    else        false
+  # Whether a word in *bytes* begins `ORDER\s+BY`, `GROUP\s+BY`, or is
+  # `LIMIT`, `OFFSET` (or, with *having*, `HAVING`) as a whole word. With
+  # *skip_quoted*, quoted text is passed over as `.each_word` passes it.
+  #
+  # Every keyword starts with `o`, `l`, `g` or `h`, so only a byte that may be
+  # one of those letters or a quote is looked at. The scan tests eight bytes at
+  # a time for such bytes (see `.clause_candidates`) and checks each one it
+  # finds against CLAUSE_SCAN_KINDS: a quote opens quoted text, and a keyword
+  # letter is compared only where a word starts.
+  private def self.clause_keyword_in?(bytes : Bytes, *, skip_quoted : Bool, having : Bool) : Bool
+    kinds = CLAUSE_SCAN_KINDS.to_unsafe
+    pointer = bytes.to_unsafe
+    size = bytes.size
+    wanted = skip_quoted ? CLAUSE_KEYWORD_START | CLAUSE_QUOTE : CLAUSE_KEYWORD_START
+    index = 0
+    while index < size
+      candidates = clause_candidates(eight_bytes_at(pointer + index, Math.min(8, size &- index)))
+      next_index = index &+ 8
+      while candidates != 0
+        position = index &+ candidates.trailing_zeros_count // 8
+        candidates &= candidates &- 1
+        kind = kinds[pointer[position]] & wanted
+        next if kind == 0
+        if kind == CLAUSE_QUOTE
+          next_index = quoted_text_end(bytes, position, pointer[position])
+          break
+        end
+        next if position > 0 && kinds[pointer[position &- 1]] & CLAUSE_WORD != 0
+        return true if clause_keyword_at?(bytes, position, having: having)
+      end
+      index = next_index
+    end
+    false
+  end
+
+  # The *count* (at most eight) bytes at *pointer* as a little-endian word,
+  # zero-filled past *count*.
+  @[AlwaysInline]
+  private def self.eight_bytes_at(pointer : Pointer(UInt8), count : Int32) : UInt64
+    word = 0_u64
+    # A constant count compiles to one unaligned load.
+    if count == 8
+      pointer.copy_to(pointerof(word).as(Pointer(UInt8)), 8)
+    else
+      pointer.copy_to(pointerof(word).as(Pointer(UInt8)), count)
+    end
+    {% if IO::ByteFormat::SystemEndian == IO::ByteFormat::BigEndian %}
+      word = word.byte_swap
+    {% end %}
+    word
+  end
+
+  private EVERY_BYTE      = 0x0101010101010101_u64
+  private LOW_SEVEN_BITS  = 0x7F7F7F7F7F7F7F7F_u64
+  private HIGH_BIT        = 0x8080808080808080_u64
+  private ASCII_LOWERCASE = 0x2020202020202020_u64
+
+  # The high bit of every byte of *word* that is `g`, `h`, `l` or `o` in
+  # either case, or `'`, `"` or a backtick. Setting bit 5 lowercases a letter;
+  # it also maps a few control bytes and `@` onto a quote, which the caller's
+  # table check rejects. A zero byte is never a candidate.
+  @[AlwaysInline]
+  private def self.clause_candidates(word : UInt64) : UInt64
+    lowered = word | ASCII_LOWERCASE
+    elsewhere = bytes_other_than(lowered, 'g') & bytes_other_than(lowered, 'h') &
+                bytes_other_than(lowered, 'l') & bytes_other_than(lowered, 'o') &
+                bytes_other_than(lowered, '\'') & bytes_other_than(lowered, '"') &
+                bytes_other_than(lowered, '`')
+    ~elsewhere & HIGH_BIT
+  end
+
+  # The high bit of every byte of *word* that differs from *char* (ASCII). A
+  # byte of 0x80 or more always differs. Exact: no carry crosses bytes.
+  @[AlwaysInline]
+  private def self.bytes_other_than(word : UInt64, char : Char) : UInt64
+    difference = word ^ (EVERY_BYTE &* char.ord.to_u64!)
+    ((difference & LOW_SEVEN_BITS) &+ LOW_SEVEN_BITS) | difference
+  end
+
+  # Whether the word that starts at *start* begins `ORDER\s+BY`, `GROUP\s+BY`,
+  # or is `LIMIT`, `OFFSET` (or, with *having*, `HAVING`).
+  private def self.clause_keyword_at?(bytes : Bytes, start : Int32, *, having : Bool) : Bool
+    case bytes.unsafe_fetch(start) | 0x20_u8
+    when 'o' then by_keyword_at?(bytes, start, "order") || whole_keyword_at?(bytes, start, "offset")
+    when 'l' then whole_keyword_at?(bytes, start, "limit")
+    when 'g' then by_keyword_at?(bytes, start, "group")
+    when 'h' then having && whole_keyword_at?(bytes, start, "having")
+    else          false
     end
   end
 
-  # Whether the five-letter word at `start...stop` is `ORDER` or `GROUP` and
-  # `\s+BY\b` follows it.
-  private def self.by_keyword?(bytes : Bytes, start : Int32, stop : Int32) : Bool
-    return false unless keyword_at?(bytes, start, "order") || keyword_at?(bytes, start, "group")
-    after = spaces_after(bytes, stop) || return false
+  # Whether *keyword* is the whole word at *start*.
+  private def self.whole_keyword_at?(bytes : Bytes, start : Int32, keyword : String) : Bool
+    keyword_at?(bytes, start, keyword) && !word_byte?(byte_at(bytes, start + keyword.bytesize))
+  end
+
+  # Whether the five-letter *keyword* is the word at *start* and `\s+BY\b`
+  # follows it.
+  private def self.by_keyword_at?(bytes : Bytes, start : Int32, keyword : String) : Bool
+    return false unless keyword_at?(bytes, start, keyword)
+    after = spaces_after(bytes, start + keyword.bytesize) || return false
     keyword_at?(bytes, after, "by") && !word_byte?(byte_at(bytes, after + 2))
+  end
+
+  private CLAUSE_WORD          = 1_u8
+  private CLAUSE_KEYWORD_START = 2_u8
+  private CLAUSE_QUOTE         = 4_u8
+
+  # What each byte is to `.clause_keyword_in?`: a word byte (`[A-Za-z0-9_]`),
+  # which is also a keyword start when it is `o`, `l`, `g` or `h` in either
+  # case, or a quote that opens quoted text.
+  private CLAUSE_SCAN_KINDS = begin
+    kinds = StaticArray(UInt8, 256).new(0_u8)
+    128.times do |byte|
+      char = byte.unsafe_chr
+      kinds[byte] = CLAUSE_WORD if char.ascii_alphanumeric? || char == '_'
+      kinds[byte] |= CLAUSE_KEYWORD_START if char.downcase.in?('o', 'l', 'g', 'h')
+      kinds[byte] = CLAUSE_QUOTE if char.in?('\'', '"', '`')
+    end
+    kinds
   end
 
   private def self.statement_keyword?(bytes : Bytes, start : Int32, stop : Int32) : Bool

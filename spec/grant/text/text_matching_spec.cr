@@ -190,6 +190,24 @@ describe Grant::TextMatching do
     end.should be_empty
   end
 
+  it "finds clause keywords and quotes at every offset of the eight-byte scan" do
+    quoted = /'(?:[^']|'')*'?|"(?:[^"]|"")*"?|`(?:[^`]|``)*`?/
+    pieces = ["LIMIT 1", "xLIMIT", "order  by a", "Group By", "OFFSET", "having", "'LIMIT' x", "'a''b' LIMIT", "`limit` x",
+              %("order by"), "\a LIMIT", "@limit", "\u0002 offset", "'open LIMIT", "glhoGLHO", "a.limit"]
+    inputs = [] of String
+    pieces.each do |piece|
+      18.times do |offset|
+        inputs << ("x" * offset) + " " + piece
+        inputs << (" " * offset) + piece + " " + ("y" * offset)
+        inputs << ("'" + "z" * offset + "' ") + piece
+      end
+    end
+    mismatches(inputs) do |text|
+      {text.gsub(quoted) { |match| "\0" * match.size }.matches?(/\b(ORDER\s+BY|LIMIT|OFFSET|GROUP\s+BY|HAVING)\b/i), TM.sql_after_condition?(text)}
+    end.should be_empty
+    mismatches(inputs) { |text| {text.matches?(/\b(ORDER\s+BY|LIMIT|OFFSET|GROUP\s+BY)\b/i), TM.trailing_clause_keyword?(text)} }.should be_empty
+  end
+
   it "strips a leading WHERE like /\\AWHERE\\s+/i" do
     mismatches(inputs_for(SQL_TOKENS)) { |text| {text.sub(/\AWHERE\s+/i, ""), TM.strip_leading_where(text)} }.should be_empty
   end
