@@ -15,19 +15,28 @@ require "./character_class_data"
 # code point against PCRE2 where the linked one is 10.43 or later, and checks
 # the tables themselves everywhere.
 module Grant::CharacterClass
+  # `word?`, `digit?` and `space?` stay out of line, as they were when their
+  # tables were built on first use: inlined into the many `CharacterScan`
+  # callers, they shift what the inliner pulls into the single-byte paths of
+  # `Grant::TextMatching`, and those paths slow down by up to 1.6x. Inside
+  # each, the table search inlines with a constant address and size.
+
   # `\w`: a letter, a number, a nonspacing mark or a connector punctuation.
+  @[NoInline]
   def self.word?(char : Char) : Bool
     return char.ascii_alphanumeric? || char == '_' if char.ascii?
     in_ranges?(char, word_ranges)
   end
 
   # `\d`: a decimal digit in any script.
+  @[NoInline]
   def self.digit?(char : Char) : Bool
     return char.ascii_number? if char.ascii?
     in_ranges?(char, digit_ranges)
   end
 
   # `\s`: Unicode white space, including the line and paragraph separators.
+  @[NoInline]
   def self.space?(char : Char) : Bool
     return char == ' ' || '\t' <= char <= '\r' if char.ascii?
     in_ranges?(char, space_ranges)

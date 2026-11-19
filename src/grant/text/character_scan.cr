@@ -8,14 +8,8 @@ require "./character_class"
 # text that holds a multibyte character and answers single-byte text by
 # scanning its bytes. Indices are character indices, as
 # `Regex::MatchData#begin` reports them.
-#
-# Every entry point is `@[NoInline]`: this is the cold, multibyte path, and
-# keeping it out of line keeps the single-byte fast paths in
-# `Grant::TextMatching` small, whatever the inliner decides about the code
-# beneath them.
 module Grant::TextMatching::CharacterScan
   # Replaces `/\A[A-Za-z_][A-Za-z0-9_]*\z/`: a bare SQL identifier.
-  @[NoInline]
   def self.simple_identifier?(text : String) : Bool
     return false if text.empty?
     text.each_char_with_index do |char, index|
@@ -26,7 +20,6 @@ module Grant::TextMatching::CharacterScan
 
   # Replaces `/\A[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?\z/`: a
   # column name or a `table.column` pair.
-  @[NoInline]
   def self.qualified_identifier?(text : String) : Bool
     part_start = true
     dots = 0
@@ -45,7 +38,6 @@ module Grant::TextMatching::CharacterScan
 
   # Replaces `/\A[A-Za-z][A-Za-z0-9_., ]*\z/`: the characters a vendor lock
   # clause may hold.
-  @[NoInline]
   def self.lock_clause?(text : String) : Bool
     chars = text.chars
     return false if chars.empty? || !chars[0].ascii_letter?
@@ -57,7 +49,6 @@ module Grant::TextMatching::CharacterScan
 
   # Replaces the group of `/\A([A-Za-z][A-Za-z0-9+.\-]*):/`: the scheme of a
   # URL as written, or `nil` when it has none.
-  @[NoInline]
   def self.url_scheme(url : String) : String?
     chars = url.chars
     scheme_end = scheme_end(chars)
@@ -68,7 +59,6 @@ module Grant::TextMatching::CharacterScan
   # Replaces `url.sub(/\A([A-Za-z][A-Za-z0-9+.\-]*:\/\/)[^?#]*@/, "\\1***@")`:
   # hides the user information of a URL, up to its last `@` before any query
   # or fragment.
-  @[NoInline]
   def self.redact_url_credentials(url : String) : String
     chars = url.chars
     scheme_end = scheme_end(chars) || return url
@@ -90,7 +80,6 @@ module Grant::TextMatching::CharacterScan
 
   # Replaces `url.sub(/\Asqlite3?:(?:\/\/)?/, "")`: a SQLite URL without its
   # scheme and the optional `//`.
-  @[NoInline]
   def self.strip_sqlite_scheme(url : String) : String
     rest = if url.starts_with?("sqlite3:")
              url[8..]
@@ -103,7 +92,6 @@ module Grant::TextMatching::CharacterScan
   end
 
   # Replaces `url.sub(/\Apostgres(ql)?:/, replacement)`.
-  @[NoInline]
   def self.replace_postgres_scheme(url : String, replacement : String) : String
     if url.starts_with?("postgresql:")
       replacement + url[11..]
@@ -115,7 +103,6 @@ module Grant::TextMatching::CharacterScan
   end
 
   # Replaces `url.matches?(/[?&]encoding=/i)`.
-  @[NoInline]
   def self.encoding_option?(url : String) : Bool
     chars = url.chars
     chars.each_with_index do |char, index|
@@ -126,7 +113,6 @@ module Grant::TextMatching::CharacterScan
 
   # Replaces `piece.sub(/\s+(?:ASC|DESC)\z/i, "")`: an index column without its
   # trailing sort direction.
-  @[NoInline]
   def self.strip_trailing_sort_direction(piece : String) : String
     chars = piece.chars
     word_start = if keyword_at?(chars, chars.size - 3, "asc")
@@ -144,7 +130,6 @@ module Grant::TextMatching::CharacterScan
 
   # Replaces `text.gsub(/\$\d+/) { |match| ... }`: yields each `$<digits>`
   # placeholder and puts the block's result in its place.
-  @[NoInline]
   def self.replace_numbered_placeholders(text : String, & : String -> String) : String
     return text unless text.includes?('$')
     chars = text.chars
@@ -169,7 +154,6 @@ module Grant::TextMatching::CharacterScan
   # *replacement* is written as given (`gsub` with a string would expand `\0`
   # and the like); callers pass identifiers or quoted table names, which hold
   # no backslashes.
-  @[NoInline]
   def self.replace_table_qualifier(text : String, table : String, replacement : String) : String
     needle = "#{table}."
     return text unless text.includes?(needle)
@@ -193,7 +177,6 @@ module Grant::TextMatching::CharacterScan
   # Replaces `query.split(/([a-zA-Z0-9_$']+)/)`: the text between runs of
   # word characters and the runs themselves, alternating, starting and ending
   # with a (possibly empty) gap, as `String#split` with a capture group yields.
-  @[NoInline]
   def self.split_sql_words(query : String) : Array(String)
     return [""] if query.empty?
     chars = query.chars
@@ -218,14 +201,12 @@ module Grant::TextMatching::CharacterScan
   end
 
   # Replaces `word =~ /\d+/`: whether *text* holds a decimal digit.
-  @[NoInline]
   def self.contains_digit?(text : String) : Bool
     text.each_char.any? { |char| CC.digit?(char) }
   end
 
   # Replaces `text =~ /KEYWORD/i` for an ASCII *keyword*: whether *text*
   # contains it, ignoring case.
-  @[NoInline]
   def self.contains_ignoring_case?(text : String, keyword : String) : Bool
     chars = text.chars
     (0..chars.size - keyword.size).any? { |index| keyword_at?(chars, index, keyword) }
@@ -235,7 +216,6 @@ module Grant::TextMatching::CharacterScan
   # `sql.gsub(/\b\d+\b/, "?").gsub(/'[^']*'/, "?").gsub(/\$\d+/, "?").gsub(/\s+/, " ")`:
   # a statement with its literals and placeholders replaced, for grouping
   # statements of the same shape.
-  @[NoInline]
   def self.normalize_sql_shape(sql : String) : String
     shape = replace_standalone_numbers(sql)
     shape = replace_quoted_strings(shape)
@@ -245,7 +225,6 @@ module Grant::TextMatching::CharacterScan
 
   # Replaces `/\bfor\s+(update|share|no\s+key\s+update|key\s+share)\b/i`: a
   # read that takes row locks.
-  @[NoInline]
   def self.locking_read?(sql : String) : Bool
     chars = sql.chars
     chars.each_index do |index|
@@ -261,7 +240,6 @@ module Grant::TextMatching::CharacterScan
 
   # Replaces `/\b(ORDER\s+BY|LIMIT|OFFSET|GROUP\s+BY)\b/i`: whether a raw
   # clause holds SQL that does not belong in a WHERE condition.
-  @[NoInline]
   def self.trailing_clause_keyword?(clause : String) : Bool
     trailing_clause_keyword_in?(clause.chars)
   end
@@ -270,7 +248,6 @@ module Grant::TextMatching::CharacterScan
   # `.trailing_clause_keyword?` words or `HAVING`, each a whole word in any
   # case. Text inside single-quoted literals and double-quoted or backtick
   # identifiers is skipped, so `WHERE title = 'LIMIT'` is a plain condition.
-  @[NoInline]
   def self.sql_after_condition?(clause : String) : Bool
     chars = mask_quoted_text(clause.chars)
     trailing_clause_keyword_in?(chars) || whole_keyword?(chars, "having")
@@ -278,14 +255,12 @@ module Grant::TextMatching::CharacterScan
 
   # Whether a raw clause joins another table: the word `JOIN` in any case,
   # outside quoted literals and identifiers.
-  @[NoInline]
   def self.join_clause?(clause : String) : Bool
     whole_keyword?(mask_quoted_text(clause.chars), "join")
   end
 
   # Replaces `type.sub(/\ATIMESTAMP(\(\d+\))?/i, replacement)`: a column type
   # whose leading `TIMESTAMP` (and its precision) is rewritten.
-  @[NoInline]
   def self.replace_leading_timestamp(type : String, replacement : String) : String
     chars = type.chars
     return type unless keyword_at?(chars, 0, "timestamp")
@@ -299,7 +274,6 @@ module Grant::TextMatching::CharacterScan
 
   # Replaces `/\A(?:'(?:[^'\\]|''|\\.)*'|[-+]?\d+(?:\.\d+)?)\z/`: a MySQL
   # default that is a quoted string or a signed decimal number.
-  @[NoInline]
   def self.mysql_literal_default?(text : String) : Bool
     chars = text.chars
     return quoted_mysql_string?(chars) if chars.first? == '\''
@@ -315,7 +289,6 @@ module Grant::TextMatching::CharacterScan
   # Replaces `/\A(CURRENT_TIMESTAMP|CURRENT_DATE|CURRENT_TIME|NOW|LOCALTIMESTAMP|LOCALTIME)(\(\d*\))?\z/i`
   # (with *mysql*) and `/\ACURRENT_(TIMESTAMP|DATE|TIME)\z/i`: a time keyword
   # that is a column default as written.
-  @[NoInline]
   def self.bare_time_default?(text : String, *, mysql : Bool) : Bool
     chars = text.chars
     unless mysql
@@ -333,7 +306,6 @@ module Grant::TextMatching::CharacterScan
 
   # Replaces the group of `/\A(?:DATETIME|TIMESTAMP|TIME)\((\d+)\)/i`: the
   # fractional digits of a time column type.
-  @[NoInline]
   def self.time_type_precision(type : String) : String?
     chars = type.chars
     {"datetime", "timestamp", "time"}.each do |keyword|
@@ -345,7 +317,6 @@ module Grant::TextMatching::CharacterScan
   end
 
   # Replaces `/\A(CURRENT_TIMESTAMP|CURRENT_TIME|NOW|LOCALTIMESTAMP|LOCALTIME)\z/i`.
-  @[NoInline]
   def self.current_time_keyword?(text : String) : Bool
     chars = text.chars
     {"current_timestamp", "current_time", "now", "localtimestamp", "localtime"}.any? do |keyword|
@@ -354,7 +325,6 @@ module Grant::TextMatching::CharacterScan
   end
 
   # Replaces `text.sub(/\(\d+\)/, "")`: drops the first parenthesized number.
-  @[NoInline]
   def self.remove_parenthesized_number(text : String) : String
     chars = text.chars
     chars.each_with_index do |char, index|
@@ -369,7 +339,6 @@ module Grant::TextMatching::CharacterScan
 
   # Replaces `name.sub(/\s*\(.*\)/, "")`: drops the first parenthesized part
   # (with the white space before it) up to the last `)` on that line.
-  @[NoInline]
   def self.remove_parenthesized_suffix(name : String) : String
     chars = name.chars
     # For each index, the last `)` at or after it on the same line (`.` stops
@@ -395,7 +364,6 @@ module Grant::TextMatching::CharacterScan
   end
 
   # Replaces `clause.sub(/\AWHERE\s+/i, "")`.
-  @[NoInline]
   def self.strip_leading_where(clause : String) : String
     chars = clause.chars
     return clause unless keyword_at?(chars, 0, "where")
@@ -406,7 +374,6 @@ module Grant::TextMatching::CharacterScan
   # Replaces the first group of
   # `/\b(?:FROM|INTO|UPDATE)\s+(?:ONLY\s+)?[`"\[]?([\w.$]+)/i`: the table a
   # statement reads or writes, as written.
-  @[NoInline]
   def self.statement_table(sql : String) : String?
     chars = sql.chars
     chars.each_index do |index|
@@ -428,7 +395,6 @@ module Grant::TextMatching::CharacterScan
   # Replaces `/\A(.+?:\d+(?::\d+)?)(.*)\z/m` (whose two groups rebuild the
   # frame): whether a backtrace frame carries a `:line` after its first
   # character.
-  @[NoInline]
   def self.frame_with_line?(frame : String) : Bool
     chars = frame.chars
     (1...chars.size - 1).any? { |index| chars[index] == ':' && CC.digit?(chars[index + 1]) }
@@ -436,7 +402,6 @@ module Grant::TextMatching::CharacterScan
 
   # Replaces `%r{/(?:share/[\w.-]*crystal[\w.-]*|crystal)/src/}`: whether a
   # path lies in the Crystal standard library.
-  @[NoInline]
   def self.stdlib_path?(path : String) : Bool
     return true if path.includes?("/crystal/src/")
     chars = path.chars
@@ -465,7 +430,6 @@ module Grant::TextMatching::CharacterScan
 
   # Replaces `/\A\$2[abxy]?\$\d{2}\$[.\/A-Za-z0-9]{53}\z/`: the shape of a
   # bcrypt hash.
-  @[NoInline]
   def self.bcrypt_digest?(digest : String) : Bool
     chars = digest.chars
     body_start = bcrypt_body_start(chars) || return false
@@ -478,7 +442,6 @@ module Grant::TextMatching::CharacterScan
 
   # Replaces `template.gsub(/%\{(\w+)\}/) { |whole, match| ... }`: yields each
   # `%{name}` placeholder and its name, and puts the block's result in its place.
-  @[NoInline]
   def self.replace_named_placeholders(template : String, & : String, String -> String) : String
     chars = template.chars
     String.build do |io|
@@ -503,13 +466,11 @@ module Grant::TextMatching::CharacterScan
 
   # Replaces the `/(?:s|x|z|ch|sh)\z/` and `/[^aeiou]y\z/` suffix rules of the
   # English pluralizer.
-  @[NoInline]
   def self.plural_suffix_es?(word : String) : Bool
     word.ends_with?('s') || word.ends_with?('x') || word.ends_with?('z') || word.ends_with?("ch") || word.ends_with?("sh")
   end
 
   # :ditto:
-  @[NoInline]
   def self.consonant_y_ending?(word : String) : Bool
     return false unless word.size >= 2 && word.ends_with?('y')
     !word[word.size - 2].in?('a', 'e', 'i', 'o', 'u')
@@ -517,7 +478,6 @@ module Grant::TextMatching::CharacterScan
 
   # Replaces scanning `/(?<![\w.])"?([A-Za-z_][A-Za-z0-9_]*)"?\.(?=["A-Za-z_])/`:
   # every `table.` qualifier a raw condition names.
-  @[NoInline]
   def self.qualifiers_in(statement : String) : Array(String)
     chars = statement.chars
     found = [] of String
@@ -539,7 +499,6 @@ module Grant::TextMatching::CharacterScan
   # `/\A\s*[A-Za-z_][A-Za-z0-9_]*\(\s*(?:REF(?:\s*,\s*REF)*)?\s*\)(?:\s+(?:asc|desc))?(?:\s+nulls\s+(?:first|last))?\s*\z/i`
   # with `REF = [A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?`: a
   # function applied to column references only.
-  @[NoInline]
   def self.column_function?(text : String) : Bool
     chars = text.chars
     index = skip_spaces(chars, 0)
@@ -563,7 +522,6 @@ module Grant::TextMatching::CharacterScan
 
   # Replaces `/\A\s*([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)?)(?:\s+(asc|desc))?(?:\s+nulls\s+(first|last))?\s*\z/i`:
   # an ORDER BY term naming a column, or `nil`.
-  @[NoInline]
   def self.order_term(term : String) : OrderTerm?
     chars = term.chars
     start = skip_spaces(chars, 0)
@@ -579,7 +537,6 @@ module Grant::TextMatching::CharacterScan
 
   # Replaces `/\s+(asc|desc)(\s+nulls\s+(first|last))?\s*\z/i`: the direction
   # that ends a raw ORDER BY term, or `nil`.
-  @[NoInline]
   def self.raw_direction(part : String) : RawDirection?
     chars = part.chars
     stop = chars.size
@@ -604,7 +561,6 @@ module Grant::TextMatching::CharacterScan
   # Replaces `table.rindex(/\s+as\s+/i)` followed by
   # `table[index..].sub(/\A\s+as\s+/i, "")`: the alias of a joined table, or
   # the table itself when it has none.
-  @[NoInline]
   def self.join_qualifier(table : String) : String
     chars = table.chars
     alias_start = nil
@@ -629,7 +585,6 @@ module Grant::TextMatching::CharacterScan
   # `/\bJOIN\s+([A-Za-z_][A-Za-z0-9_]*)(?:\s+(?:AS\s+)?(?!ON\b|USING\b|INNER\b|LEFT\b|RIGHT\b|FULL\b|CROSS\b|NATURAL\b|JOIN\b)([A-Za-z_][A-Za-z0-9_]*))?/i`
   # and taking `match[2]? || match[1]`: the alias (or table) each raw JOIN
   # makes available.
-  @[NoInline]
   def self.raw_join_targets(clause : String) : Array(String)
     chars = clause.chars
     found = [] of String
@@ -656,7 +611,6 @@ module Grant::TextMatching::CharacterScan
 
   # Replaces scanning `/["`]?([A-Za-z_][A-Za-z0-9_]*)["`]?\s*(?:=|!=|<>|<=|>=|<|>|\bLIKE|\bILIKE)\s*(\?|\$\d+)/i`:
   # every `column <op> placeholder` predicate.
-  @[NoInline]
   def self.comparison_binds(query : String) : Array(ComparisonBind)
     chars = query.chars
     found = [] of ComparisonBind
@@ -682,7 +636,6 @@ module Grant::TextMatching::CharacterScan
 
   # Replaces scanning `/["`]?([A-Za-z_][A-Za-z0-9_]*)["`]?\s+(?:NOT\s+)?IN\s*\(([^)]*)\)/i`
   # and then `/\?|\$(\d+)/` inside the parentheses.
-  @[NoInline]
   def self.in_list_binds(query : String) : Array(InListBind)
     chars = query.chars
     closes = next_close_parens(chars)
@@ -707,7 +660,6 @@ module Grant::TextMatching::CharacterScan
 
   # Replaces `/INSERT\s+INTO\s+\S+\s*\(([^)]*)\)\s*VALUES\s*(.*)/im` and then
   # `/\?|\$(\d+)/` over the VALUES part.
-  @[NoInline]
   def self.insert_binds(query : String) : InsertBinds?
     chars = query.chars
     closes = next_close_parens(chars)
@@ -736,7 +688,6 @@ module Grant::TextMatching::CharacterScan
   end
 
   # Replaces `/\A[\w+\-.]+@[a-z\d\-]+(\.[a-z\d\-]+)*\.[a-z]+\z/i`.
-  @[NoInline]
   def self.email?(value : String) : Bool
     chars = value.chars
     at = chars.index('@') || return false
@@ -768,7 +719,6 @@ module Grant::TextMatching::CharacterScan
 
   # Replaces
   # `/\Ahttps?:\/\/(www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9()@:%_\+.~#?&\/\/=]*)\z/`.
-  @[NoInline]
   def self.url?(value : String) : Bool
     chars = value.chars
     prefix = if chars_at?(chars, 0, "https://".chars)
