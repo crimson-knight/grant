@@ -12,6 +12,11 @@ private def each_code_point(& : Char ->) : Nil
   end
 end
 
+# A packed table (consecutive `first, last` entries) as an array of pairs.
+private def pairs_of(table : Slice(UInt32)) : Array({Int32, Int32})
+  table.each_slice(2).map { |(first, last)| {first.to_i, last.to_i} }.to_a
+end
+
 # The problems with a range table: ranges out of order, overlapping or touching
 # (the generator merges neighbors), reversed, outside Unicode, or holding
 # surrogates.
@@ -37,29 +42,60 @@ describe Grant::CharacterClass do
   describe "its PCRE2 10.43+ tables" do
     it "hold sorted, separate ranges of Unicode scalar values" do
       {
-        "word"  => Grant::CharacterClass.word_ranges,
-        "digit" => Grant::CharacterClass.digit_ranges,
-        "space" => Grant::CharacterClass.space_ranges,
+        "word"  => pairs_of(Grant::CharacterClass::WORD_RANGES),
+        "digit" => pairs_of(Grant::CharacterClass::DIGIT_RANGES),
+        "space" => pairs_of(Grant::CharacterClass::SPACE_RANGES),
       }.each do |name, ranges|
         ranges.should_not be_empty
         range_table_problems(ranges).map { |problem| "#{name}: #{problem}" }.should be_empty
       end
     end
 
+    it "are packed read-only data" do
+      {
+        Grant::CharacterClass::WORD_RANGES,
+        Grant::CharacterClass::DIGIT_RANGES,
+        Grant::CharacterClass::SPACE_RANGES,
+        Grant::CharacterClass::NON_ASCII_LETTER_FOLDS,
+      }.each do |table|
+        table.read_only?.should be_true
+        table.size.even?.should be_true
+      end
+    end
+
     it "agree with the ASCII answers" do
+      word_ranges = pairs_of(Grant::CharacterClass::WORD_RANGES)
+      digit_ranges = pairs_of(Grant::CharacterClass::DIGIT_RANGES)
+      space_ranges = pairs_of(Grant::CharacterClass::SPACE_RANGES)
       (0..0x7F).each do |code|
         char = code.chr
-        in_table?(Grant::CharacterClass.word_ranges, code).should eq(char.ascii_alphanumeric? || char == '_')
-        in_table?(Grant::CharacterClass.digit_ranges, code).should eq(char.ascii_number?)
-        in_table?(Grant::CharacterClass.space_ranges, code).should eq(char == ' ' || '\t' <= char <= '\r')
+        in_table?(word_ranges, code).should eq(char.ascii_alphanumeric? || char == '_')
+        in_table?(digit_ranges, code).should eq(char.ascii_number?)
+        in_table?(space_ranges, code).should eq(char == ' ' || '\t' <= char <= '\r')
+      end
+    end
+
+    it "answer every non-ASCII range edge as the table holds it" do
+      {
+        Grant::CharacterClass::WORD_RANGES  => ->Grant::CharacterClass.word?(Char),
+        Grant::CharacterClass::DIGIT_RANGES => ->Grant::CharacterClass.digit?(Char),
+        Grant::CharacterClass::SPACE_RANGES => ->Grant::CharacterClass.space?(Char),
+      }.each do |table, class_answer|
+        ranges = pairs_of(table)
+        ranges.each do |(first, last)|
+          {first - 1, first, last, last + 1}.each do |code|
+            next if code < 0x80 || 0xD800 <= code <= 0xDFFF || code > 0x10FFFF
+            class_answer.call(code.chr).should eq(in_table?(ranges, code))
+          end
+        end
       end
     end
 
     it "count every digit as a word character and no space as one" do
-      Grant::CharacterClass.digit_ranges.each do |(first, last)|
+      pairs_of(Grant::CharacterClass::DIGIT_RANGES).each do |(first, last)|
         (first..last).each { |code| Grant::CharacterClass.word?(code.chr).should be_true }
       end
-      Grant::CharacterClass.space_ranges.each do |(first, last)|
+      pairs_of(Grant::CharacterClass::SPACE_RANGES).each do |(first, last)|
         (first..last).each { |code| Grant::CharacterClass.word?(code.chr).should be_false }
       end
     end
@@ -87,7 +123,7 @@ describe Grant::CharacterClass do
     end
 
     it "fold only the Kelvin sign and the long s onto ASCII letters" do
-      Grant::CharacterClass.non_ascii_letter_folds.should eq({'\u{212A}' => 'k', 'ſ' => 's'})
+      pairs_of(Grant::CharacterClass::NON_ASCII_LETTER_FOLDS).should eq([{'ſ'.ord, 's'.ord}, {'\u{212A}'.ord, 'k'.ord}])
       Grant::CharacterClass.letter_ignoring_case?('\u{212A}', 'k').should be_true
       Grant::CharacterClass.letter_ignoring_case?('ſ', 's').should be_true
       Grant::CharacterClass.letter_ignoring_case?('ı', 'i').should be_false
