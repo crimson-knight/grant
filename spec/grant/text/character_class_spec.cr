@@ -42,9 +42,9 @@ describe Grant::CharacterClass do
   describe "its PCRE2 10.43+ tables" do
     it "hold sorted, separate ranges of Unicode scalar values" do
       {
-        "word"  => pairs_of(Grant::CharacterClass::WORD_RANGES),
-        "digit" => pairs_of(Grant::CharacterClass::DIGIT_RANGES),
-        "space" => pairs_of(Grant::CharacterClass::SPACE_RANGES),
+        "word"  => pairs_of(Grant::CharacterClass.word_ranges),
+        "digit" => pairs_of(Grant::CharacterClass.digit_ranges),
+        "space" => pairs_of(Grant::CharacterClass.space_ranges),
       }.each do |name, ranges|
         ranges.should_not be_empty
         range_table_problems(ranges).map { |problem| "#{name}: #{problem}" }.should be_empty
@@ -53,10 +53,10 @@ describe Grant::CharacterClass do
 
     it "are packed read-only data" do
       {
-        Grant::CharacterClass::WORD_RANGES,
-        Grant::CharacterClass::DIGIT_RANGES,
-        Grant::CharacterClass::SPACE_RANGES,
-        Grant::CharacterClass::NON_ASCII_LETTER_FOLDS,
+        Grant::CharacterClass.word_ranges,
+        Grant::CharacterClass.digit_ranges,
+        Grant::CharacterClass.space_ranges,
+        Grant::CharacterClass.non_ascii_letter_folds,
       }.each do |table|
         table.read_only?.should be_true
         table.size.even?.should be_true
@@ -64,9 +64,9 @@ describe Grant::CharacterClass do
     end
 
     it "agree with the ASCII answers" do
-      word_ranges = pairs_of(Grant::CharacterClass::WORD_RANGES)
-      digit_ranges = pairs_of(Grant::CharacterClass::DIGIT_RANGES)
-      space_ranges = pairs_of(Grant::CharacterClass::SPACE_RANGES)
+      word_ranges = pairs_of(Grant::CharacterClass.word_ranges)
+      digit_ranges = pairs_of(Grant::CharacterClass.digit_ranges)
+      space_ranges = pairs_of(Grant::CharacterClass.space_ranges)
       (0..0x7F).each do |code|
         char = code.chr
         in_table?(word_ranges, code).should eq(char.ascii_alphanumeric? || char == '_')
@@ -77,9 +77,9 @@ describe Grant::CharacterClass do
 
     it "answer every non-ASCII range edge as the table holds it" do
       {
-        Grant::CharacterClass::WORD_RANGES  => ->Grant::CharacterClass.word?(Char),
-        Grant::CharacterClass::DIGIT_RANGES => ->Grant::CharacterClass.digit?(Char),
-        Grant::CharacterClass::SPACE_RANGES => ->Grant::CharacterClass.space?(Char),
+        Grant::CharacterClass.word_ranges  => ->Grant::CharacterClass.word?(Char),
+        Grant::CharacterClass.digit_ranges => ->Grant::CharacterClass.digit?(Char),
+        Grant::CharacterClass.space_ranges => ->Grant::CharacterClass.space?(Char),
       }.each do |table, class_answer|
         ranges = pairs_of(table)
         ranges.each do |(first, last)|
@@ -92,10 +92,10 @@ describe Grant::CharacterClass do
     end
 
     it "count every digit as a word character and no space as one" do
-      pairs_of(Grant::CharacterClass::DIGIT_RANGES).each do |(first, last)|
+      pairs_of(Grant::CharacterClass.digit_ranges).each do |(first, last)|
         (first..last).each { |code| Grant::CharacterClass.word?(code.chr).should be_true }
       end
-      pairs_of(Grant::CharacterClass::SPACE_RANGES).each do |(first, last)|
+      pairs_of(Grant::CharacterClass.space_ranges).each do |(first, last)|
         (first..last).each { |code| Grant::CharacterClass.word?(code.chr).should be_false }
       end
     end
@@ -123,7 +123,7 @@ describe Grant::CharacterClass do
     end
 
     it "fold only the Kelvin sign and the long s onto ASCII letters" do
-      pairs_of(Grant::CharacterClass::NON_ASCII_LETTER_FOLDS).should eq([{'ſ'.ord, 's'.ord}, {'\u{212A}'.ord, 'k'.ord}])
+      pairs_of(Grant::CharacterClass.non_ascii_letter_folds).should eq([{'ſ'.ord, 's'.ord}, {'\u{212A}'.ord, 'k'.ord}])
       Grant::CharacterClass.letter_ignoring_case?('\u{212A}', 'k').should be_true
       Grant::CharacterClass.letter_ignoring_case?('ſ', 's').should be_true
       Grant::CharacterClass.letter_ignoring_case?('ı', 'i').should be_false

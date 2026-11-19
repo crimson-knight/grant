@@ -18,19 +18,19 @@ module Grant::CharacterClass
   # `\w`: a letter, a number, a nonspacing mark or a connector punctuation.
   def self.word?(char : Char) : Bool
     return char.ascii_alphanumeric? || char == '_' if char.ascii?
-    in_ranges?(char, WORD_RANGES)
+    in_ranges?(char, word_ranges)
   end
 
   # `\d`: a decimal digit in any script.
   def self.digit?(char : Char) : Bool
     return char.ascii_number? if char.ascii?
-    in_ranges?(char, DIGIT_RANGES)
+    in_ranges?(char, digit_ranges)
   end
 
   # `\s`: Unicode white space, including the line and paragraph separators.
   def self.space?(char : Char) : Bool
     return char == ' ' || '\t' <= char <= '\r' if char.ascii?
-    in_ranges?(char, SPACE_RANGES)
+    in_ranges?(char, space_ranges)
   end
 
   # Whether *char* matches the lowercase ASCII *letter* in a case-insensitive
@@ -58,7 +58,7 @@ module Grant::CharacterClass
   # *char*, or `nil` when it matches none.
   private def self.non_ascii_letter_fold(char : Char) : Char?
     code = char.ord.to_u32!
-    folds = NON_ASCII_LETTER_FOLDS
+    folds = non_ascii_letter_folds
     index = first_pair_reaching(folds, code, column: 0)
     return unless index < folds.size && folds.unsafe_fetch(index) == code
     folds.unsafe_fetch(index + 1).chr
@@ -74,18 +74,18 @@ module Grant::CharacterClass
 
   # The slice index of the first pair in *table* whose entry in *column*
   # (0 or 1) is at least *code*, or `table.size` when no pair reaches it. The
-  # pairs are sorted, so this is a binary search.
+  # pairs are sorted, so this is a binary search; each step picks the next
+  # base with a conditional move rather than a branch the CPU must predict.
   private def self.first_pair_reaching(table : Slice(UInt32), code : UInt32, column : Int32) : Int32
-    low = 0
-    high = table.size // 2
-    while low < high
-      middle = (low + high) // 2
-      if table.unsafe_fetch(2 * middle + column) < code
-        low = middle + 1
-      else
-        high = middle
-      end
+    base = 0
+    length = table.size // 2
+    return 0 if length == 0
+    while length > 1
+      half = length // 2
+      base = table.unsafe_fetch(2 * (base + half) + column) < code ? base + half : base
+      length -= half
     end
-    2 * low
+    base += 1 if table.unsafe_fetch(2 * base + column) < code
+    2 * base
   end
 end

@@ -42,21 +42,24 @@ def ranges_for(&) : Array({Int32, Int32})
   ranges
 end
 
-# Writes *pairs* as a read-only `Slice(UInt32)` constant: each pair is two
-# consecutive entries, and the pairs are sorted by their first entry. A slice
-# literal lives in the binary's read-only data, so a table costs its bytes and
-# no code.
+# Writes *pairs* as a method returning a read-only `Slice(UInt32)` literal: each
+# pair is two consecutive entries, and the pairs are sorted by their first
+# entry. A slice literal lives in the binary's read-only data, so a table costs
+# its bytes and no code. A method rather than a constant: once inlined, the
+# table's address and size are compile-time constants instead of loads from a
+# constant's global.
 def emit(io : IO, name : String, comment : String, pairs : Array({Int32, Int32})) : Nil
   io << "  # :nodoc:\n"
   io << "  #\n"
   comment.each_line { |line| io << "  # " << line << '\n' }
-  io << "  " << name << " = Slice(UInt32).literal(\n"
+  io << "  def self." << name << " : Slice(UInt32)\n"
+  io << "    Slice(UInt32).literal(\n"
   pairs.each_slice(4) do |row|
-    io << "    "
+    io << "      "
     row.join(io, ", ") { |(first, second), row_io| row_io << "0x" << first.to_s(16).upcase << ", 0x" << second.to_s(16).upcase }
     io << ",\n"
   end
-  io << "  )\n"
+  io << "    )\n  end\n"
 end
 
 COMMENTS = {
@@ -70,7 +73,7 @@ STDOUT << "# PCRE2 10.43+ library Crystal links. Do not edit it by hand.\n\n"
 STDOUT << "module Grant::CharacterClass\n"
 CLASSES.each_with_index do |(name, pattern), index|
   STDOUT << "\n" if index > 0
-  emit(STDOUT, "#{name.upcase}_RANGES", COMMENTS[name], ranges_for(&.to_s.matches?(pattern)))
+  emit(STDOUT, "#{name}_ranges", COMMENTS[name], ranges_for(&.to_s.matches?(pattern)))
 end
 
 # Non-ASCII code points that a case-insensitive regex matches against an ASCII
@@ -83,5 +86,5 @@ folds = [] of {Int32, Int32}
   end
 end
 STDOUT << "\n"
-emit(STDOUT, "NON_ASCII_LETTER_FOLDS", "Non-ASCII code points that a case-insensitive regex matches against an\nASCII letter, as `code point, lowercase ASCII letter` pairs.", folds.sort!)
+emit(STDOUT, "non_ascii_letter_folds", "Non-ASCII code points that a case-insensitive regex matches against an\nASCII letter, as `code point, lowercase ASCII letter` pairs.", folds.sort!)
 STDOUT << "end\n"
