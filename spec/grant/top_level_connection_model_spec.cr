@@ -43,6 +43,17 @@ require "log/spec"
     belongs_to :notable, polymorphic: true, optional: true
   end
 
+  # Issue #74: a `class_name:` naming the top-level model must not resolve to
+  # `Grant::Connection` when Grant reads the association.
+  class ConnectionProbe < Grant::Base
+    connection {{ adapter_literal }}
+    table top_level_connection_probes
+
+    column id : Int64, primary: true
+    column status_label : String
+
+    belongs_to :upstream, class_name: Connection
+  end
 {% end %}
 
 private def top_level_connection_sql_messages(& : ->) : Array(String)
@@ -60,9 +71,11 @@ describe "A top-level model named Connection" do
   before_all do
     ::Connection.migrator.drop_and_create
     ::ConnectionNote.migrator.drop_and_create
+    ::ConnectionProbe.migrator.drop_and_create
   end
 
   before_each do
+    ::ConnectionProbe.clear
     ::ConnectionNote.clear
     ::Connection.clear
   end
@@ -144,6 +157,17 @@ describe "A top-level model named Connection" do
 
       notes = ::ConnectionNote.includes(:notable).to_a
       notes.first.notable.should be_a(::Connection)
+    end
+  end
+
+  describe "eager loading through class_name:" do
+    it "eager-loads a belongs_to whose class_name: is the top-level model" do
+      target = ::Connection.new(host_address: "db.example.test")
+      target.save!
+      ::ConnectionProbe.create!(status_label: "up", upstream_id: target.id)
+
+      probes = ::ConnectionProbe.includes(:upstream).to_a
+      probes.first.upstream.should be_a(::Connection)
     end
   end
 

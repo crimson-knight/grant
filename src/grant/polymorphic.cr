@@ -580,7 +580,12 @@ module Grant::Polymorphic
       {% end %}
     {% end %}
 
-    @[Grant::Relationship(target: {{class_name.id}}, type: :has_many, polymorphic_as: {{poly_as.id.stringify}},
+    # Resolves `class_name` lazily in this model's own namespace, so Grant code
+    # reading the annotation from inside `Grant` reaches the class the model
+    # meant, and a target defined later still resolves. :nodoc:
+    alias GrantAssociationTarget{{method_name.id.camelcase}} = {{class_name.id}}
+
+    @[Grant::Relationship(target: ::{{@type.name(generic_args: false)}}::GrantAssociationTarget{{method_name.id.camelcase}}, type: :has_many, polymorphic_as: {{poly_as.id.stringify}},
       foreign_key: {{foreign_key.id.stringify}}, type_column: {{type_column.id.stringify}},
       primary_key: {{primary_key_name}}, scope: nil)]
     def {{method_name.id}} : Grant::AssociationCollection(self, {{class_name.id}})
@@ -714,7 +719,12 @@ module Grant::Polymorphic
       {% class_name = options[:class_name] || name.id.camelcase %}
     {% end %}
 
-    @[Grant::Relationship(target: {{class_name.id}}, type: :has_one, polymorphic_as: {{poly_as.id.stringify}},
+    # Resolves `class_name` lazily in this model's own namespace, so Grant code
+    # reading the annotation from inside `Grant` reaches the class the model
+    # meant, and a target defined later still resolves. :nodoc:
+    alias GrantAssociationTarget{{method_name.id.camelcase}} = {{class_name.id}}
+
+    @[Grant::Relationship(target: ::{{@type.name(generic_args: false)}}::GrantAssociationTarget{{method_name.id.camelcase}}, type: :has_one, polymorphic_as: {{poly_as.id.stringify}},
       foreign_key: {{foreign_key.id.stringify}}, type_column: {{type_column.id.stringify}},
       primary_key: {{primary_key_name}}, scope: nil)]
     def {{method_name.id}} : {{class_name.id}}?

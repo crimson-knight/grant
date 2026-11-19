@@ -78,7 +78,12 @@ module Grant::Associations
     {% inverse_of = options[:inverse_of] %}
     Grant::Associations.__composite_check_options("belongs_to", {{options}})
 
-    @[Grant::Relationship(target: {{class_name.id}}, type: :belongs_to, composite: true,
+    # Resolves `class_name` lazily in this model's own namespace, so Grant code
+    # reading the annotation from inside `Grant` reaches the class the model
+    # meant, and a target defined later still resolves. :nodoc:
+    alias GrantAssociationTarget{{method_name.id.camelcase}} = {{class_name.id}}
+
+    @[Grant::Relationship(target: ::{{@type.name(generic_args: false)}}::GrantAssociationTarget{{method_name.id.camelcase}}, type: :belongs_to, composite: true,
       foreign_key: {{foreign_key.map(&.id.stringify).join(",")}},
       primary_key: {{primary_key ? primary_key.map(&.id.stringify).join(",") : ""}}, scope: {{scope}})]
     def {{method_name}} : {{class_name.id}}?
@@ -164,7 +169,12 @@ module Grant::Associations
     {% inverse_of = options[:inverse_of] %}
     Grant::Associations.__composite_check_options("has_many", {{options}})
 
-    @[Grant::Relationship(target: {{class_name.id}}, type: :has_many, composite: true,
+    # Resolves `class_name` lazily in this model's own namespace, so Grant code
+    # reading the annotation from inside `Grant` reaches the class the model
+    # meant, and a target defined later still resolves. :nodoc:
+    alias GrantAssociationTarget{{method_name.id.camelcase}} = {{class_name.id}}
+
+    @[Grant::Relationship(target: ::{{@type.name(generic_args: false)}}::GrantAssociationTarget{{method_name.id.camelcase}}, type: :has_many, composite: true,
       foreign_key: {{foreign_key.map(&.id.stringify).join(",")}},
       primary_key: {{primary_key ? primary_key.map(&.id.stringify).join(",") : ""}}, scope: {{scope}})]
     def {{method_name}} : Grant::CompositeCollection(::{{@type}}, {{class_name.id}})
@@ -240,7 +250,12 @@ module Grant::Associations
     {% inverse_of = options[:inverse_of] %}
     Grant::Associations.__composite_check_options("has_one", {{options}})
 
-    @[Grant::Relationship(target: {{class_name.id}}, type: :has_one, composite: true,
+    # Resolves `class_name` lazily in this model's own namespace, so Grant code
+    # reading the annotation from inside `Grant` reaches the class the model
+    # meant, and a target defined later still resolves. :nodoc:
+    alias GrantAssociationTarget{{method_name.id.camelcase}} = {{class_name.id}}
+
+    @[Grant::Relationship(target: ::{{@type.name(generic_args: false)}}::GrantAssociationTarget{{method_name.id.camelcase}}, type: :has_one, composite: true,
       foreign_key: {{foreign_key.map(&.id.stringify).join(",")}},
       primary_key: {{primary_key ? primary_key.map(&.id.stringify).join(",") : ""}}, scope: {{scope}})]
     def {{method_name}} : {{class_name.id}}?
