@@ -65,6 +65,15 @@ require "./association_options"
 #
 # See `docs/advanced_associations.md` for the full guide.
 module Grant::Associations
+  # Grows by one entry per association declaration at compile time. Its size
+  # alone names the alias each declaration gives its `class_name:` target
+  # (`GrantAssociationTarget17`), so every declaration (including a redeclaration
+  # of the same association) has its own alias and no two can share a name. A
+  # number whose name the model already defines is skipped; names of the form
+  # `GrantAssociationTarget<n>` are reserved for Grant inside a model.
+  # :nodoc:
+  TARGET_ALIAS_SEQUENCE = [] of Nil
+
   include Grant::Polymorphic
   include Grant::DelegatedType
   include Grant::AssociationOptions::DependentCallbacks
@@ -163,7 +172,20 @@ module Grant::Associations
 
     {% inverse_of_bt = options[:inverse_of] %}
 
-    @[Grant::Relationship(target: {{class_name.id}}, type: :belongs_to,
+    # Resolves `class_name` lazily in this model's own namespace, so Grant code
+    # reading the annotation from inside `Grant` reaches the class the model
+    # meant, and a target defined later still resolves. :nodoc:
+    {% grant_target_alias = nil %}
+    {% for _attempt in 1..8 %}
+      {% if grant_target_alias == nil %}
+        {% Grant::Associations::TARGET_ALIAS_SEQUENCE << nil %}
+        {% candidate_alias = "GrantAssociationTarget" + Grant::Associations::TARGET_ALIAS_SEQUENCE.size.stringify %}
+        {% grant_target_alias = candidate_alias unless @type.has_constant?(candidate_alias) %}
+      {% end %}
+    {% end %}
+    alias {{grant_target_alias.id}} = {{class_name.id}}
+
+    @[Grant::Relationship(target: ::{{@type.name(generic_args: false)}}::{{grant_target_alias.id}}, type: :belongs_to,
       primary_key: {{primary_key.id}}, foreign_key: {{foreign_key.id}}, scope: {{scope}})]
     def {{method_name.id}} : {{class_name.id}}?
       if association_loaded?({{method_name.stringify}})
@@ -405,7 +427,20 @@ module Grant::Associations
         {% end %}
       {% end %}
 
-      @[Grant::Relationship(target: {{class_name.id}}, type: :has_one,
+      # Resolves `class_name` lazily in this model's own namespace, so Grant code
+      # reading the annotation from inside `Grant` reaches the class the model
+      # meant, and a target defined later still resolves. :nodoc:
+      {% grant_target_alias = nil %}
+      {% for _attempt in 1..8 %}
+        {% if grant_target_alias == nil %}
+          {% Grant::Associations::TARGET_ALIAS_SEQUENCE << nil %}
+          {% candidate_alias = "GrantAssociationTarget" + Grant::Associations::TARGET_ALIAS_SEQUENCE.size.stringify %}
+          {% grant_target_alias = candidate_alias unless @type.has_constant?(candidate_alias) %}
+        {% end %}
+      {% end %}
+      alias {{grant_target_alias.id}} = {{class_name.id}}
+
+      @[Grant::Relationship(target: ::{{@type.name(generic_args: false)}}::{{grant_target_alias.id}}, type: :has_one,
         primary_key: {{primary_key.id}}, foreign_key: {{foreign_key.id}},
         through: {{through.id}}, source: {{source.id}}, through_association: {{through_is_association}},
         scope: {{scope}})]
@@ -511,7 +546,20 @@ module Grant::Associations
     {% foreign_key_name = foreign_key.stringify.gsub(/:/, "").gsub(/"/, "") %}
     {% primary_key_name = primary_key.stringify.gsub(/:/, "").gsub(/"/, "") %}
 
-    @[Grant::Relationship(target: {{class_name.id}}, type: :has_one,
+    # Resolves `class_name` lazily in this model's own namespace, so Grant code
+    # reading the annotation from inside `Grant` reaches the class the model
+    # meant, and a target defined later still resolves. :nodoc:
+    {% grant_target_alias = nil %}
+    {% for _attempt in 1..8 %}
+      {% if grant_target_alias == nil %}
+        {% Grant::Associations::TARGET_ALIAS_SEQUENCE << nil %}
+        {% candidate_alias = "GrantAssociationTarget" + Grant::Associations::TARGET_ALIAS_SEQUENCE.size.stringify %}
+        {% grant_target_alias = candidate_alias unless @type.has_constant?(candidate_alias) %}
+      {% end %}
+    {% end %}
+    alias {{grant_target_alias.id}} = {{class_name.id}}
+
+    @[Grant::Relationship(target: ::{{@type.name(generic_args: false)}}::{{grant_target_alias.id}}, type: :has_one,
       primary_key: {{primary_key.id}}, foreign_key: {{foreign_key.id}}, scope: {{scope}})]
 
     {% inverse_of = options[:inverse_of] %}
@@ -819,7 +867,20 @@ module Grant::Associations
     # for `:through`. When absent it defaults to the singular form of method_name.
     {% source = options[:source] %}
     {% source = options[:source] || singular_name.id %}
-    @[Grant::Relationship(target: {{class_name.id}}, through: {{through.id}}, type: :has_many,
+    # Resolves `class_name` lazily in this model's own namespace, so Grant code
+    # reading the annotation from inside `Grant` reaches the class the model
+    # meant, and a target defined later still resolves. :nodoc:
+    {% grant_target_alias = nil %}
+    {% for _attempt in 1..8 %}
+      {% if grant_target_alias == nil %}
+        {% Grant::Associations::TARGET_ALIAS_SEQUENCE << nil %}
+        {% candidate_alias = "GrantAssociationTarget" + Grant::Associations::TARGET_ALIAS_SEQUENCE.size.stringify %}
+        {% grant_target_alias = candidate_alias unless @type.has_constant?(candidate_alias) %}
+      {% end %}
+    {% end %}
+    alias {{grant_target_alias.id}} = {{class_name.id}}
+
+    @[Grant::Relationship(target: ::{{@type.name(generic_args: false)}}::{{grant_target_alias.id}}, through: {{through.id}}, type: :has_many,
       primary_key: {{primary_key.id}}, foreign_key: {{foreign_key.id}}, source: {{source.id}},
       owner_primary_key: {{primary_key.id}}, scope: {{scope}})]
     def {{method_name.id}} : Grant::AssociationCollection(self, {{class_name.id}})

@@ -580,7 +580,20 @@ module Grant::Polymorphic
       {% end %}
     {% end %}
 
-    @[Grant::Relationship(target: {{class_name.id}}, type: :has_many, polymorphic_as: {{poly_as.id.stringify}},
+    # Resolves `class_name` lazily in this model's own namespace, so Grant code
+    # reading the annotation from inside `Grant` reaches the class the model
+    # meant, and a target defined later still resolves. :nodoc:
+    {% grant_target_alias = nil %}
+    {% for _attempt in 1..8 %}
+      {% if grant_target_alias == nil %}
+        {% Grant::Associations::TARGET_ALIAS_SEQUENCE << nil %}
+        {% candidate_alias = "GrantAssociationTarget" + Grant::Associations::TARGET_ALIAS_SEQUENCE.size.stringify %}
+        {% grant_target_alias = candidate_alias unless @type.has_constant?(candidate_alias) %}
+      {% end %}
+    {% end %}
+    alias {{grant_target_alias.id}} = {{class_name.id}}
+
+    @[Grant::Relationship(target: ::{{@type.name(generic_args: false)}}::{{grant_target_alias.id}}, type: :has_many, polymorphic_as: {{poly_as.id.stringify}},
       foreign_key: {{foreign_key.id.stringify}}, type_column: {{type_column.id.stringify}},
       primary_key: {{primary_key_name}}, scope: nil)]
     def {{method_name.id}} : Grant::AssociationCollection(self, {{class_name.id}})
@@ -714,7 +727,20 @@ module Grant::Polymorphic
       {% class_name = options[:class_name] || name.id.camelcase %}
     {% end %}
 
-    @[Grant::Relationship(target: {{class_name.id}}, type: :has_one, polymorphic_as: {{poly_as.id.stringify}},
+    # Resolves `class_name` lazily in this model's own namespace, so Grant code
+    # reading the annotation from inside `Grant` reaches the class the model
+    # meant, and a target defined later still resolves. :nodoc:
+    {% grant_target_alias = nil %}
+    {% for _attempt in 1..8 %}
+      {% if grant_target_alias == nil %}
+        {% Grant::Associations::TARGET_ALIAS_SEQUENCE << nil %}
+        {% candidate_alias = "GrantAssociationTarget" + Grant::Associations::TARGET_ALIAS_SEQUENCE.size.stringify %}
+        {% grant_target_alias = candidate_alias unless @type.has_constant?(candidate_alias) %}
+      {% end %}
+    {% end %}
+    alias {{grant_target_alias.id}} = {{class_name.id}}
+
+    @[Grant::Relationship(target: ::{{@type.name(generic_args: false)}}::{{grant_target_alias.id}}, type: :has_one, polymorphic_as: {{poly_as.id.stringify}},
       foreign_key: {{foreign_key.id.stringify}}, type_column: {{type_column.id.stringify}},
       primary_key: {{primary_key_name}}, scope: nil)]
     def {{method_name.id}} : {{class_name.id}}?
