@@ -50,6 +50,11 @@ require "../../spec_helper"
   # the redeclared association keeps its namespaced target.
   class Admin::Post < Grant::Base
     has_many :comments, class_name: Comment
+
+    # `::Comment` and `Comment` are different targets here; the redeclaration
+    # (Admin::Comment) is the one that holds.
+    has_many :thread_comments, class_name: ::Comment, foreign_key: :post_id
+    has_many :thread_comments, class_name: Comment, foreign_key: :post_id
   end
 {% end %}
 
@@ -105,6 +110,13 @@ describe "Association targets named by class_name:" do
       posts = Admin::Post.all.to_a
       Grant::Preloader.new(posts, :comments).call
       posts.first.comments.to_a.map(&.class).uniq.should eq([Admin::Comment])
+    end
+
+    it "eager-loads the target of the latest declaration of a redeclared association" do
+      create_admin_post_with_comments
+
+      post = Admin::Post.includes(:thread_comments).to_a.first
+      post.thread_comments.to_a.map(&.class).uniq.should eq([Admin::Comment])
     end
 
     it "applies an association scope to the target from the model's own namespace" do
