@@ -86,7 +86,7 @@ module Grant::Schema
       end
 
       def self.entry : ::Grant::Schema::MigrationEntry
-        ::Grant::Schema::MigrationEntry.new(version, {{@type.name.stringify}}, -> { {{@type}}.new.as(::Grant::Schema::Migration) })
+        ::Grant::Schema::MigrationEntry.new(version, {{@type.name.stringify}}, -> { ::{{@type}}.new.as(::Grant::Schema::Migration) })
       end
 
       def version : ::Int64

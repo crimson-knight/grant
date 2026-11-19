@@ -419,13 +419,13 @@ module Grant::Encryption
             {{deterministic}},
             {% if typed %}
               ->(record : Grant::Base, value : String?) do
-                record.as({{@type}}).{{attr}} = value.try { |text| Grant::Encryption::Serializer.load(text, {{base}}) }
+                record.as(::{{@type}}).{{attr}} = value.try { |text| Grant::Encryption::Serializer.load(text, {{base}}) }
                 nil
               end,
               column_name: {{attr_name}},
             {% else %}
               ->(record : Grant::Base, value : String?) do
-                record.as({{@type}}).{{attr}} = value
+                record.as(::{{@type}}).{{attr}} = value
               end,
             {% end %}
             options: Grant::Encryption::EncryptedAttribute::Options.new(
@@ -450,15 +450,15 @@ module Grant::Encryption
             ),
             {% if lazy_on %}
               unsealer: ->(record : Grant::Base) do
-                record.as({{@type}}).__unseal_{{attr}}
+                record.as(::{{@type}}).__unseal_{{attr}}
                 nil
               end,
             {% end %}
             plain_reader: ->(record : Grant::Base) do
               {% if typed %}
-                record.as({{@type}}).{{attr}}.try { |value| Grant::Encryption::Serializer.dump(value) }
+                record.as(::{{@type}}).{{attr}}.try { |value| Grant::Encryption::Serializer.dump(value) }
               {% else %}
-                record.as({{@type}}).{{attr}}
+                record.as(::{{@type}}).{{attr}}
               {% end %}
             end,
             {% if typed %}
@@ -490,7 +490,7 @@ module Grant::Encryption
               # Still sealed: the column already holds this ciphertext.
               return Grant::Encryption::Sealed.stored(value) if Grant::Encryption::Sealed.sealed?(value)
             {% end %}
-            {{@type}}.{{attr}}_encrypted_attribute.seal(Grant::Encryption::Serializer.dump(value))
+            ::{{@type}}.{{attr}}_encrypted_attribute.seal(Grant::Encryption::Serializer.dump(value))
           end
 
           def from_rs(result : ::DB::ResultSet) : {{base}}?
@@ -505,7 +505,7 @@ module Grant::Encryption
                 raise Grant::Encryption::UnsupportedTypeError.new("{{@type}}.{{attr_name.id}} is a {{base}} and cannot be read raw inside without_encryption")
               end
             {% end %}
-            Grant::Encryption::Serializer.load({{@type}}.{{attr}}_encrypted_attribute.open(stored), {{base}})
+            Grant::Encryption::Serializer.load(::{{@type}}.{{attr}}_encrypted_attribute.open(stored), {{base}})
           end
         end
 
@@ -655,7 +655,7 @@ module Grant::Encryption
           {{@type.name.stringify}},
           {{attr_name}},
           ->(record : Grant::Base, value : Grant::Columns::Type) : Nil do
-            record.as({{@type}}).{{attr}} = Grant::Columns::VirtualAttributeRegistry.string_value(value)
+            record.as(::{{@type}}).{{attr}} = Grant::Columns::VirtualAttributeRegistry.string_value(value)
             nil
           end
         )

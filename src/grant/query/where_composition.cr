@@ -124,7 +124,12 @@ class Grant::Query::Builder(Model)
         end
       {% else %}
         {% for type in V.union_types %}
-          return add_array_condition(join, field, values) if values.is_a?(::{{ type }})
+          # Every type name in the member is rooted, at any nesting depth: this
+          # code sits inside `Grant`, where an unrooted `Connection` (even inside
+          # `Array(Tuple(Connection, Int64))`) would name `Grant::Connection`
+          # and the condition would be dropped. A named-tuple key (`Foo:`) is left
+          # as written.
+          return add_array_condition(join, field, values) if values.is_a?({{ type.stringify.gsub(/(?<![:\w"])([A-Z]\w*+)(?!:(?!:))/, "::\\1").id }})
         {% end %}
       {% end %}
     {% else %}

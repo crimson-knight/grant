@@ -222,7 +222,7 @@ module Grant::Validators
       end
       \{% else %}
       disable_grant_docs? def self.__validators_for_validation
-        \{{@type.superclass}}.__validators_for_validation + @@validators
+        ::\{{@type.superclass}}.__validators_for_validation + @@validators
       end
       \{% end %}
 
@@ -231,7 +231,7 @@ module Grant::Validators
       # still appending to its parent's class variable, producing incompatible
       # Proc types and registering the validator on the wrong class.
       disable_grant_docs? def self.__add_validator(field : (Symbol | String), message : String | Symbol | Proc(self, Grant::Error::Options, String) | Nil, block : self -> Bool, context : Symbol | Array(Symbol) = :save, code : Symbol? = nil, strict : Proc(String, Exception) | Nil = nil, kind : Symbol = :custom, details : Grant::Error::Options? = nil, info_options : Grant::Error::Options? = nil, conditional : Bool = false)
-        wrapped_block = ->(record : Grant::Base) { block.call(record.as(\{{@type}})) }
+        wrapped_block = ->(record : Grant::Base) { block.call(record.as(::\{{@type}})) }
         contexts = context.is_a?(Array) ? context : [context]
         info = Grant::ValidatorInfo.new(kind, field.to_s, info_options || Grant::Error::Options.new, contexts, conditional)
         @@validators << {field: field.to_s, message: Grant::Error.wrap_message(message), block: wrapped_block, contexts: contexts, code: code, strict: strict, details: details, info: info}

@@ -46,9 +46,11 @@ module Grant::STI
 
   # Registers an STI class for type resolution at compile time.
   macro register_sti_type(name, klass)
-    # The generated loaders run inside the Grant namespace, so a model named
-    # like a Grant type (`Connection`) is stored rooted at the top level.
-    {% Grant::STI::REGISTERED_TYPES[name] = klass.is_a?(Path) && !klass.global? ? parse_type("::#{klass}") : klass %}
+    # Stores a rooted path: the dispatch tables below expand inside `Grant`,
+    # where an unrooted `Connection` would name `Grant::Connection`. The path is
+    # resolved in an escaped block so it resolves at the call site (the model),
+    # the scope the caller wrote it in.
+    \{% Grant::STI::REGISTERED_TYPES[{{name}}] = ({{klass}}).resolve? ? parse_type("::#{({{klass}}).resolve}") : {{klass}} %}
   end
 
   # Raised when a `type` value in the database does not map to a registered
@@ -70,7 +72,7 @@ module Grant::STI
   # registration without re-including the module.
   macro included
     # Register the root itself in the STI registry.
-    Grant::STI.register_sti_type({{@type.name.stringify}}, {{@type}})
+    Grant::STI.register_sti_type({{@type.name.stringify}}, ::{{@type}})
 
     extend Grant::STI::ClassMethods
     include Grant::STI::InstanceMethods
@@ -153,7 +155,7 @@ module Grant::STI
       # included`, so an unescaped @type would resolve to the ROOT at
       # included-expansion time (registering the root repeatedly). Escaping
       # defers resolution to each subclass's own expansion.
-      Grant::STI.register_sti_type(\{{@type.name.stringify}}, \{{@type}})
+      Grant::STI.register_sti_type(\{{@type.name.stringify}}, ::\{{@type}})
 
       # Annotations do not inherit in Crystal, so a subclass would otherwise
       # compute its own table name from its class name. Delegate to the

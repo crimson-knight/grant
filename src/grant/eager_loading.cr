@@ -227,7 +227,7 @@ module Grant::EagerLoading
           if assoc_name == \{{method.name.stringify}}
             \{% unless ann[:polymorphic] %}
               # Nested `includes` load the target's own associations next.
-              Grant::AssociationLoader.enable(\{{target}})
+              Grant::AssociationLoader.enable(::\{{target}})
             \{% end %}
             \{% if ann[:composite] %}
               \{{("__composite_preload_" + method.name.stringify).id}}(records, restriction)
@@ -238,7 +238,7 @@ module Grant::EagerLoading
                   \{{ann[:primary_key] ? ann[:primary_key].id.stringify : nil}})
               \{% else %}
                 loader = ->(values : Array(Grant::Columns::Type)) : Array(Grant::Base) {
-                  relation = \{{target}}.current_scope
+                  relation = ::\{{target}}.current_scope
                   \{% if scope.is_a?(ProcLiteral) %}
                     \{% if scope.args.empty? %}
                       relation = relation.\{{scope.body}}
@@ -256,7 +256,7 @@ module Grant::EagerLoading
               # Legacy `through:` naming a table: no batch form exists, so each
               # record resolves through its own reader (correct, one query each).
               records.each do |record|
-                record.set_loaded_association(assoc_name, record.as(\{{@type}}).\{{method.name.id}})
+                record.set_loaded_association(assoc_name, record.as(::\{{@type}}).\{{method.name.id}})
               end
             \{% elsif ann[:through] %}
               \{% through_name = ann[:through].id.stringify %}
@@ -283,7 +283,7 @@ module Grant::EagerLoading
               \{% end %}
               \{% source_ann = source_method ? source_method.annotation(Grant::Relationship) : nil %}
               \{% if join_model %}
-                Grant::AssociationLoader.enable(\{{join_model}})
+                Grant::AssociationLoader.enable(::\{{join_model}})
               \{% end %}
               \{% unless join_model && source_ann && source_ann[:target].resolve? %}
                 \{% raise "Cannot preload through association #{@type}##{method.name}; declare a resolvable through and source association" %}
@@ -303,9 +303,9 @@ module Grant::EagerLoading
                   records, assoc_name, \{{ann[:through].id.stringify}}, \{{ann[:source].id.stringify}}, \{{ann[:type] == :has_many}})
               \{% else %}
                 \{% nested_key = source_belongs ? (source_ann[:primary_key] ? source_ann[:primary_key].id.stringify : nil) : source_ann[:foreign_key].id.stringify %}
-                nested_key = \{{nested_key}}.as(String?) || \{{target}}.primary_name || raise Grant::Querying::MissingPrimaryKeyError.new(\{{target.stringify + " has no primary key"}})
+                nested_key = \{{nested_key}}.as(String?) || ::\{{target}}.primary_name || raise Grant::Querying::MissingPrimaryKeyError.new(\{{target.stringify + " has no primary key"}})
                 nested_loader = ->(values : Array(Grant::Columns::Type)) : Array(Grant::Base) {
-                  relation = \{{target}}.current_scope
+                  relation = ::\{{target}}.current_scope
                   \{% if scope.is_a?(ProcLiteral) %}
                     \{% if scope.args.empty? %}
                       relation = relation.\{{scope.body}}
@@ -319,14 +319,14 @@ module Grant::EagerLoading
                   records, assoc_name, \{{ann[:through].id.stringify}}, \{{ann[:source].id.stringify}}, \{{ann[:type] == :has_many}},
                   nested_loader,
                   \{{(source_belongs ? source_ann[:foreign_key] : source_ann[:primary_key]).id.stringify}}, nested_key,
-                  \{% if source_ann[:polymorphic] %}\{{source_ann[:type_column].id.stringify}}, \{{target}}.polymorphic_name\{% else %}nil, nil\{% end %})
+                  \{% if source_ann[:polymorphic] %}\{{source_ann[:type_column].id.stringify}}, ::\{{target}}.polymorphic_name\{% else %}nil, nil\{% end %})
               \{% end %}
               \{% else %}
               join_loader = ->(values : Array(Grant::Columns::Type)) : Array(Grant::Base) {
-                Grant::AssociationLoader.where_in(\{{join_model}}.current_scope, \{{(through_belongs ? through_ann[:primary_key] : through_ann[:foreign_key]).id.stringify}}, values).select.map(&.as(Grant::Base))
+                Grant::AssociationLoader.where_in(::\{{join_model}}.current_scope, \{{(through_belongs ? through_ann[:primary_key] : through_ann[:foreign_key]).id.stringify}}, values).select.map(&.as(Grant::Base))
               }
               target_loader = ->(values : Array(Grant::Columns::Type)) : Array(Grant::Base) {
-                relation = \{{target}}.current_scope
+                relation = ::\{{target}}.current_scope
                 \{% if scope.is_a?(ProcLiteral) %}
                   \{% if scope.args.empty? %}
                     relation = relation.\{{scope.body}}
@@ -346,7 +346,7 @@ module Grant::EagerLoading
               \{% end %}
             \{% else %}
               loader = ->(values : Array(Grant::Columns::Type)) : Array(Grant::Base) {
-                relation = \{{target}}.current_scope
+                relation = ::\{{target}}.current_scope
                 \{% if scope.is_a?(ProcLiteral) %}
                   \{% if scope.args.empty? %}
                     relation = relation.\{{scope.body}}
@@ -355,12 +355,12 @@ module Grant::EagerLoading
                   \{% end %}
                 \{% end %}
                 \{% if ann[:polymorphic_as] %}
-                  relation = relation.where(\{{ann[:type_column].id.stringify}}, :eq, \{{@type}}.polymorphic_name)
+                  relation = relation.where(\{{ann[:type_column].id.stringify}}, :eq, ::\{{@type}}.polymorphic_name)
                 \{% end %}
                 \{% if ann[:type] == :has_one %}
                   # The lazy reader takes `first` (lowest key); keep the same row
                   # when several match instead of the implicit newest-first order.
-                  if relation.order_fields.empty? && (target_key = \{{target}}.primary_name)
+                  if relation.order_fields.empty? && (target_key = ::\{{target}}.primary_name)
                     relation.own_order_fields << {field: target_key, direction: Grant::Query::Builder::Sort::Ascending}
                   end
                 \{% end %}

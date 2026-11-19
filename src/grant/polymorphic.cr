@@ -48,9 +48,11 @@ module Grant::Polymorphic
   # `load_polymorphic` can map a stored `*_type` string back to a class. Called
   # for you by the zero-arg `register_polymorphic_type` (see below).
   macro register_polymorphic_type(name, klass)
-    # The generated loaders run inside the Grant namespace, so a model named
-    # like a Grant type (`Connection`) is stored rooted at the top level.
-    {% REGISTERED_TYPES[name] = klass.is_a?(Path) && !klass.global? ? parse_type("::#{klass}") : klass %}
+    # Stores a rooted path: the dispatch tables below expand inside `Grant`,
+    # where an unrooted `Connection` would name `Grant::Connection`. The path is
+    # resolved in an escaped block so it resolves at the call site (the model),
+    # the scope the caller wrote it in.
+    \{% Grant::Polymorphic::REGISTERED_TYPES[{{name}}] = ({{klass}}).resolve? ? parse_type("::#{({{klass}}).resolve}") : {{klass}} %}
   end
 
   # Generate the polymorphic loader after all types are registered
@@ -820,6 +822,6 @@ module Grant::Polymorphic
   # end
   # ```
   macro register_polymorphic_type
-    Grant::Polymorphic.register_polymorphic_type({{@type.name.stringify}}, {{@type}})
+    Grant::Polymorphic.register_polymorphic_type({{@type.name.stringify}}, ::{{@type}})
   end
 end

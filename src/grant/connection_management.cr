@@ -479,8 +479,8 @@ module Grant::ConnectionManagement
       self.shard_config = {} of Symbol => Hash(Symbol, String)
     {% end %}
 
-    Grant::ConnectionHandling.declare({{@type.name.stringify}}, -> { {{@type}}.connection_names })
-    {{@type}}.__apply_connection_options
+    Grant::ConnectionHandling.declare({{@type.name.stringify}}, -> { ::{{@type}}.connection_names })
+    ::{{@type}}.__apply_connection_options
   end
 
   # Marks the class as an abstract connection holder (see `.abstract_class?`).

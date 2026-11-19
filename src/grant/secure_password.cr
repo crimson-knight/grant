@@ -188,7 +188,7 @@ module Grant
           {{ @type.name.stringify }},
           "{{ attr }}{{ suffix.id }}",
           ->(record : Grant::Base, value : Grant::Columns::Type) : Nil do
-            record.as({{ @type }}).{{ attr }}{{ suffix.id }} = Grant::Columns::VirtualAttributeRegistry.string_value(value)
+            record.as(::{{@type}}).{{ attr }}{{ suffix.id }} = Grant::Columns::VirtualAttributeRegistry.string_value(value)
             nil
           end
         )
