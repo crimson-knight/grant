@@ -93,8 +93,8 @@ describe "Association targets named by class_name:" do
 
       post = Admin::Post.includes(:comments).to_a.first
       comments = post.comments.to_a
-      comments.map(&.class).uniq.should eq([Admin::Comment])
-      comments.map(&.body_text).sort.should eq(["flagged", "plain"])
+      comments.map(&.class).uniq!.should eq([Admin::Comment])
+      comments.map(&.body_text).sort!.should eq(["flagged", "plain"])
     end
 
     it "eager-loads a belongs_to target from the model's own namespace" do
@@ -108,7 +108,7 @@ describe "Association targets named by class_name:" do
       create_admin_post_with_comments
 
       post = Admin::Post.includes(:articles).to_a.first
-      post.articles.to_a.map(&.headline_text).uniq.should eq(["v2 ships"])
+      post.articles.to_a.map(&.headline_text).uniq!.should eq(["v2 ships"])
       post.articles.to_a.first.should be_a(Admin::Article)
     end
 
@@ -117,21 +117,21 @@ describe "Association targets named by class_name:" do
 
       posts = Admin::Post.all.to_a
       Grant::Preloader.new(posts, :comments).call
-      posts.first.comments.to_a.map(&.class).uniq.should eq([Admin::Comment])
+      posts.first.comments.to_a.map(&.class).uniq!.should eq([Admin::Comment])
     end
 
     it "eager-loads the target of the latest declaration of a redeclared association" do
       create_admin_post_with_comments
 
       post = Admin::Post.includes(:thread_comments).to_a.first
-      post.thread_comments.to_a.map(&.class).uniq.should eq([Admin::Comment])
+      post.thread_comments.to_a.map(&.class).uniq!.should eq([Admin::Comment])
     end
 
     it "skips an alias name the model already uses for its own type" do
       create_admin_post_with_comments
 
       post = Admin::Post.includes(:guarded_comments).to_a.first
-      post.guarded_comments.to_a.map(&.class).uniq.should eq([Admin::Comment])
+      post.guarded_comments.to_a.map(&.class).uniq!.should eq([Admin::Comment])
     end
 
     it "applies an association scope to the target from the model's own namespace" do
