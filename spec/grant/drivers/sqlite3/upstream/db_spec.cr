@@ -3,6 +3,9 @@ require "spec"
 {% skip_file unless (env("CURRENT_ADAPTER") || "sqlite") == "sqlite" %}
 
 require "./spec_helper"
+# The REGEXP SQL function is opt-in (`require "grant/regex"`); this driver-only
+# spec loads just the function.
+require "../../../../../src/grant/regex/sqlite_regexp_function"
 require "db/spec"
 
 private class NotSupportedType

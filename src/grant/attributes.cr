@@ -68,14 +68,14 @@ module Grant
   module Attributes
     # Whether *name* is matched by any entry of *filters*. String entries match
     # as a case-insensitive substring (like ActiveRecord's `filter_attributes`,
-    # so `"password"` also filters `password_digest`); Regex entries use their
-    # own pattern.
-    def self.filtered?(name : String, filters : Array(String | Regex)) : Bool
+    # so `"password"` also filters `password_digest`); pattern entries (a
+    # `Regex` with `require "grant/regex"`) use their own rule.
+    def self.filtered?(name : String, filters : Array(Grant::AttributeFilter)) : Bool
       filters.any? do |filter|
-        if filter.is_a?(Regex)
-          filter.matches?(name)
-        else
+        if filter.is_a?(String)
           name.downcase.includes?(filter.downcase)
+        else
+          filter.matches?(name)
         end
       end
     end
@@ -205,10 +205,10 @@ module Grant
         false
       end
 
-      # The names (String) and patterns (Regex) redacted by `inspect`: the
-      # global `Grant.settings.filter_attributes` plus any the model adds with
+      # The names (String) and patterns redacted by `inspect`: the global
+      # `Grant.settings.filter_attributes` plus any the model adds with
       # `filter_attributes`.
-      def filter_attributes : Array(String | Regex)
+      def filter_attributes : Array(Grant::AttributeFilter)
         Grant.settings.filter_attributes
       end
     end
@@ -357,24 +357,28 @@ module Grant
 
     # Adds names or patterns to the values `inspect` redacts for this model, on
     # top of `Grant.settings.filter_attributes`. Symbols and strings match as
-    # case-insensitive substrings of the column name.
+    # case-insensitive substrings of the column name. A Regex literal needs
+    # `require "grant/regex"` (after `require "grant"`, before the model).
     #
     # ```
     # class User < Grant::Base
-    #   filter_attributes :token, /secret/i
+    #   filter_attributes :token, :secret
     # end
     # ```
     macro filter_attributes(*names)
       # Bound values of these columns are also redacted from the SQL log.
       Grant::Encryption::LogFilter.track(self)
 
-      def self.filter_attributes : Array(String | Regex)
+      def self.filter_attributes : Array(Grant::AttributeFilter)
         filters = Grant.settings.filter_attributes.dup
         {% for name in names %}
           {% if name.is_a?(RegexLiteral) %}
-            filters << ({{name}}).as(String | Regex)
+            {% unless parse_type("Grant::RegexAttributeNamePattern").resolve? %}
+              {% name.raise "filter_attributes with a Regex needs `require \"grant/regex\"` after `require \"grant\"`" %}
+            {% end %}
+            filters << ::Grant::RegexAttributeNamePattern.new({{name}}).as(::Grant::AttributeFilter)
           {% else %}
-            filters << {{name.id.stringify}}.as(String | Regex)
+            filters << {{name.id.stringify}}.as(::Grant::AttributeFilter)
           {% end %}
         {% end %}
         filters
@@ -601,7 +605,7 @@ module Grant
       io << '>'
     end
 
-    private def inspect_attribute_value(io : IO, name : String, value, filters : Array(String | Regex)) : Nil
+    private def inspect_attribute_value(io : IO, name : String, value, filters : Array(Grant::AttributeFilter)) : Nil
       if value.nil?
         io << "nil"
       elsif Grant::Attributes.filtered?(name, filters) || encrypted_column?(name) || self.class.secure_token_column?(name)

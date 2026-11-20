@@ -1,4 +1,5 @@
 require "../../../spec_helper"
+require "../../../../src/grant/regex"
 
 # Audit defect D6: the `regexp` SQL function SQLite calls from C. A NULL
 # argument or a malformed pattern must reach the caller as an SQL result,

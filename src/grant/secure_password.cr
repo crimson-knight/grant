@@ -39,10 +39,6 @@ module Grant
 
     DEFAULT_COST = 12
 
-    # The shape of a well-formed bcrypt hash: version, two-digit cost, then 22
-    # salt and 31 checksum characters in bcrypt's base64 alphabet.
-    DIGEST_FORMAT = /\A\$2[abxy]?\$\d{2}\$[.\/A-Za-z0-9]{53}\z/
-
     # The bcrypt work factor used by `password=`, read from
     # `Grant.settings.secure_password_cost`.
     def self.cost : Int32
@@ -58,7 +54,9 @@ module Grant
     # True when *plain_text* matches the bcrypt *digest* (constant-time). A
     # malformed digest or an out-of-range password never matches.
     def self.matches?(digest : String?, plain_text : String) : Bool
-      return false unless digest && DIGEST_FORMAT.matches?(digest)
+      # A well-formed bcrypt hash: version, two-digit cost, then 22 salt and 31
+      # checksum characters in bcrypt's base64 alphabet.
+      return false unless digest && Grant::TextMatching.bcrypt_digest?(digest)
       return false unless (1..MAX_PASSWORD_BYTES).includes?(plain_text.bytesize)
       stored = Crypto::Bcrypt::Password.new(digest)
       salt_bytes = Crypto::Bcrypt::Base64.decode(stored.salt, Crypto::Bcrypt::SALT_SIZE)

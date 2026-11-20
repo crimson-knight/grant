@@ -53,6 +53,11 @@ end
 
 ### validates_format_of
 
+Regex support is opt-in: add `require "grant/regex"` after `require "grant"`
+and before the models that use `validates_format_of`, so apps that do not use it
+link no PCRE2. Without it the macro stops at compile time with a message naming
+the require. `validates_email` and `validates_url` need no opt-in.
+
 Validates attributes match or don't match a regular expression.
 
 ```crystal
@@ -109,7 +114,9 @@ length). Default messages come from `Grant::I18n`, so a translator can change th
 
 ### validates_email
 
-Validates email format using a standard email regex.
+Validates email format with a hand-written check that accepts exactly what
+`Grant::Validators::BuiltIn::CommonFormats::EMAIL_REGEX` (available with
+`require "grant/regex"`) matches. It needs no Regex support.
 
 ```crystal
 class Contact < Grant::Base

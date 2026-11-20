@@ -2,7 +2,77 @@
 
 ## Unreleased
 
+## 0.24.0
+
 Minimum Crystal: 1.19.0
+
+### Grant links no PCRE2 by default
+
+Behavior changes:
+
+- **Grant's default path is regex-free.** Model definition, columns,
+  attributes, associations, querying, saving, validating, logging, the
+  migrator and the SQLite and PostgreSQL adapters use hand-written text checks
+  (`Grant::TextMatching`, `Grant::CharacterClass`), so an app built on them
+  links no libpcre2. Each check accepts and rejects exactly what the regular
+  expression it replaces did, including Unicode `\w`/`\d`/`\s` and
+  case-insensitive folds; `spec/grant/text` compares every one with its old
+  pattern. `scripts/check_pcre2_linkage.rb` builds probe apps and fails if
+  their binaries link PCRE2.
+- **`\w`, `\d` and `\s` follow the PCRE2 10.43+ Unicode tables on every
+  platform.** This is Grant's defined semantics: `\w` is a letter, a number, a
+  nonspacing mark or a connector punctuation; `\d` is a decimal digit in any
+  script; `\s` is Unicode white space. The tables are checked in as
+  `src/grant/text/character_class_data.cr`, so the answers do not depend on
+  the system's PCRE2. On a system with an older PCRE2 (10.42 on Ubuntu 24.04,
+  whose `\w` leaves out combining marks such as U+0301 and connector
+  punctuation such as U+203F, and whose Unicode version is older), Grant's
+  checks differ from the regular expressions they replace for text holding
+  those characters. `scripts/generate_character_classes.cr` regenerates the
+  tables and requires PCRE2 10.43 or later; the specs compare Grant with the
+  linked PCRE2 only where it is 10.43 or later and check the tables directly
+  everywhere.
+- **Regex features are opt-in with `require "grant/regex"`** (after
+  `require "grant"`, before the models that use it): `validates_format_of`
+  (and `validates ... format:`), Regex entries in `filter_attributes` and
+  `Grant.settings.filter_attributes`, the SQLite `REGEXP` operator, and the
+  `CommonFormats::EMAIL_REGEX`/`URL_REGEX` constants. Without the require,
+  `validates_format_of` and a Regex `filter_attributes` fail at compile time
+  with a message naming it, and SQLite reports `no such function: REGEXP`.
+- `validates_email` and `validates_url` no longer go through
+  `validates_format_of`; they call `CommonFormats.email?`/`url?` and need no
+  opt-in. Their reflection options carry `format: :email`/`:url` in place of
+  the `with:` pattern.
+- `Grant.settings.filter_attributes` is now an
+  `Array(Grant::AttributeFilter)` (`String | Grant::AttributeNamePattern`).
+  With `grant/regex`, assigning an `Array(String | Regex)` still works.
+- Internal pattern constants were removed: `Grant::Logs::STDLIB_FRAME`,
+  `FRAME_LOCATION`, `TABLE_AFTER`; `Grant::QueryCache::LOCKING_READ`;
+  `Grant::Transaction::SAVEPOINT_NAME_PATTERN`;
+  `Grant::SecurePassword::DIGEST_FORMAT`; `Grant::Locking::Clause::PATTERN`;
+  `Grant::Encryption::LogFilter::COMPARISON`, `IN_LIST`, `INSERT`,
+  `PLACEHOLDER`; `Grant::Query::OrderSupport::RAW_DIRECTION`;
+  `Grant::Query::Builder::ORDER_TERM`; `Grant::Query::JoinSupport::RAW_JOIN_TARGET`;
+  `Grant::Query::SqlExpression::COLUMN_REFERENCE`, `COLUMN_FUNCTION`;
+  `Grant::Schema::MYSQL_LITERAL_DEFAULT`; `Grant::SQLite3::REGEXP_FN`.
+
+### Fixes
+
+- `Model.all(clause, params)` with a raw clause that carries SQL after its
+  condition (`ORDER BY`, `LIMIT`, `OFFSET`, `GROUP BY`, `HAVING`) runs the
+  clause as written instead of wrapping it in `where` and appending a second
+  `ORDER BY` (issue #43). Words inside single-quoted literals and
+  double-quoted or backtick identifiers do not count, so
+  `all("WHERE title = 'LIMIT'")` still filters inside the default scope.
+- `Model.all`, `first` and `sole` recognize a raw `JOIN` in any case as a
+  whole word outside quoted text (they matched only uppercase `"JOIN "`
+  before), so `all("join children on ...")` runs as written.
+- Polymorphic and STI loaders, `Grant::AssociationLoader`, and array
+  conditions in `where` root the model types they generate with `::`, so an
+  app model named like a Grant type (`Connection`) resolves to the app's
+  class, completing the fix of #63 (PR #72).
+- `Model.migrator` compiles in an app that requires only the SQLite adapter
+  (the PostgreSQL table check no longer casts `DB::Any` to `Bool`).
 
 ### PostgreSQL driver fixes
 

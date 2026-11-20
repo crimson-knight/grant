@@ -1,4 +1,5 @@
 require "../../spec_helper"
+require "../../../src/grant/regex"
 
 class V01CustomStrictError < Exception
 end

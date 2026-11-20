@@ -8,7 +8,7 @@ class Grant::Adapter::Pg < Grant::Adapter::Base
   QUOTING_CHAR = '"'
 
   protected def driver_url : String
-    url.sub(/\Apostgres(ql)?:/, "#{Grant::PG::Driver::GRANT_ONLY_SCHEME}:")
+    Grant::TextMatching.replace_postgres_scheme(url, "#{Grant::PG::Driver::GRANT_ONLY_SCHEME}:")
   end
 
   def postgres? : Bool

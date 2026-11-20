@@ -3,6 +3,8 @@ require "db"
 module Grant
 end
 
+require "../../text/text_matching"
+
 require "./pg/*"
 
 module Grant::PG
@@ -44,7 +46,7 @@ module Grant::PG
   # driver even when the app also requires the public `pg` shard, which
   # registers the public schemes too. Any other scheme is returned unchanged.
   def self.grant_only_url(url : String) : String
-    url.sub(/\Apostgres(ql)?:/, "#{Driver::GRANT_ONLY_SCHEME}:")
+    Grant::TextMatching.replace_postgres_scheme(url, "#{Driver::GRANT_ONLY_SCHEME}:")
   end
 
   # ditto

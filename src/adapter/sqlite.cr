@@ -33,7 +33,7 @@ end
 # Sqlite implementation of the Adapter
 class Grant::Adapter::Sqlite < Grant::Adapter::Base
   protected def driver_url : String
-    url.sub(/\Asqlite3:/, "#{Grant::SQLite3::Driver::GRANT_ONLY_SCHEME}:")
+    url.starts_with?("sqlite3:") ? "#{Grant::SQLite3::Driver::GRANT_ONLY_SCHEME}:#{url[8..]}" : url
   end
 
   # :nodoc:
@@ -205,7 +205,7 @@ class Grant::Adapter::Sqlite < Grant::Adapter::Base
   protected def connect_failure_kind(ex : ::DB::ConnectionRefused) : Kind?
     return if Sqlite.memory_url?(url) || !url.starts_with?("sqlite")
 
-    path = url.sub(/\Asqlite3?:(?:\/\/)?/, "").split('?').first
+    path = Grant::TextMatching.strip_sqlite_scheme(url).split('?').first
     return if path.empty?
 
     Dir.exists?(File.dirname(path)) ? nil : Kind::NoDatabase
@@ -735,7 +735,7 @@ class Grant::Adapter::Sqlite < Grant::Adapter::Base
         end
       end
     end
-    pieces.map(&.strip.sub(/\s+(?:ASC|DESC)\z/i, ""))
+    pieces.map { |piece| Grant::TextMatching.strip_trailing_sort_direction(piece.strip) }
   end
 end
 

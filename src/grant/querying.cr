@@ -256,9 +256,12 @@ module Grant::Querying
       if responds_to?(:current_scope)
         clean_clause = clause.strip
         # Fall back to raw_all for clauses that the query builder can't handle:
-        # - JOIN clauses (e.g. from :through associations)
+        # - JOIN clauses in any case (e.g. from :through associations)
         # - Multiple parameters (query.where only accepts a single value)
-        if clean_clause.includes?("JOIN ") || params.size > 1 || clean_clause.upcase.starts_with?("ORDER BY ")
+        # - SQL after the condition (ORDER BY, LIMIT, OFFSET, GROUP BY,
+        #   HAVING), which `where` would wrap and the builder would follow
+        #   with its own ORDER BY (issue #43)
+        if Grant::TextMatching.join_clause?(clean_clause) || params.size > 1 || Grant::TextMatching.sql_after_condition?(clean_clause)
           Collection(self).new(-> { raw_all(clause, params) })
         else
           query = current_scope
@@ -300,9 +303,9 @@ module Grant::Querying
       if responds_to?(:current_scope)
         clean_clause = clause.strip
         # Fall back to raw_all for clauses that the query builder can't handle:
-        # - JOIN clauses (e.g. from :through associations)
+        # - JOIN clauses in any case (e.g. from :through associations)
         # - Multiple parameters (query.where only accepts a single value)
-        if clean_clause.includes?("JOIN ") || params.size > 1 || clean_clause.upcase.starts_with?("ORDER BY ")
+        if Grant::TextMatching.join_clause?(clean_clause) || params.size > 1 || clean_clause.upcase.starts_with?("ORDER BY ")
           all([clean_clause, "LIMIT 1"].join(" "), params, false).first?
         else
           query = current_scope
@@ -411,7 +414,7 @@ module Grant::Querying
       if responds_to?(:current_scope)
         clean_clause = clause.strip
         # Fall back to raw_all for clauses that the query builder can't handle
-        if clean_clause.includes?("JOIN ") || params.size > 1 || clean_clause.upcase.starts_with?("ORDER BY ")
+        if Grant::TextMatching.join_clause?(clean_clause) || params.size > 1 || clean_clause.upcase.starts_with?("ORDER BY ")
           results = all(clause, params, false).to_a
         else
           query = current_scope
@@ -563,10 +566,10 @@ module Grant::Querying
       scope = current_scope
       filter = clause.strip
       unless filter.empty?
-        if filter.matches?(/\b(ORDER\s+BY|LIMIT|OFFSET|GROUP\s+BY)\b/i)
+        if Grant::TextMatching.trailing_clause_keyword?(filter)
           raise ArgumentError.new("find_each/find_in_batches accept only a WHERE clause; use order, limit and offset on the relation instead")
         end
-        scope = scope.where(filter.sub(/\AWHERE\s+/i, ""), params)
+        scope = scope.where(Grant::TextMatching.strip_leading_where(filter), params)
       end
       scope = scope.offset(offset) if offset > 0
       scope

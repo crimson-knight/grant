@@ -69,8 +69,6 @@ class Grant::Query::Builder(Model)
   end
 
   private def scan_qualifiers(statement : String, into qualifiers : Array(String)) : Nil
-    statement.scan(/(?<![\w.])"?([A-Za-z_][A-Za-z0-9_]*)"?\.(?=["A-Za-z_])/) do |match|
-      qualifiers << match[1]
-    end
+    qualifiers.concat(Grant::TextMatching.qualifiers_in(statement))
   end
 end

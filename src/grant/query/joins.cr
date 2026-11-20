@@ -8,14 +8,8 @@ module Grant::Query::JoinSupport
   # The name a joined table is referred to by in the rest of the query: its
   # alias for `"users AS managers"`, the table name otherwise.
   def self.qualifier(table : String) : String
-    if index = table.rindex(/\s+as\s+/i)
-      table[index..].sub(/\A\s+as\s+/i, "")
-    else
-      table
-    end
+    Grant::TextMatching.join_qualifier(table)
   end
-
-  RAW_JOIN_TARGET = /\bJOIN\s+([A-Za-z_][A-Za-z0-9_]*)(?:\s+(?:AS\s+)?(?!ON\b|USING\b|INNER\b|LEFT\b|RIGHT\b|FULL\b|CROSS\b|NATURAL\b|JOIN\b)([A-Za-z_][A-Za-z0-9_]*))?/i
 
   # Every name *clause* makes available to qualify columns with. A raw
   # fragment contributes each table (or its alias) it joins, so
@@ -23,7 +17,7 @@ module Grant::Query::JoinSupport
   def self.qualifiers(clause : Clause) : Array(String)
     return [qualifier(clause[:table])] unless clause[:type] == :raw
 
-    clause[:on].scan(RAW_JOIN_TARGET).map { |match| match[2]? || match[1] }
+    Grant::TextMatching.raw_join_targets(clause[:on])
   end
 
   # `true` when one of *clauses* makes *name* available as a qualifier.
@@ -212,7 +206,7 @@ module Grant::Query::JoinSupport
   end
 
   def self.validated_alias(name : String) : String
-    unless name.matches?(/\A[A-Za-z_][A-Za-z0-9_]*\z/)
+    unless Grant::TextMatching.simple_identifier?(name)
       raise ArgumentError.new("Join alias must be an identifier (got #{name.inspect})")
     end
     name

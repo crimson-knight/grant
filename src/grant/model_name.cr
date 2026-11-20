@@ -117,10 +117,12 @@ struct Grant::ModelName
       return word[0, word.size - singular.size] + irregular_plural if word.ends_with?(singular) && singular.size > 3
     end
 
-    case word
-    when /(?:s|x|z|ch|sh)\z/ then word + "es"
-    when /[^aeiou]y\z/       then word[0, word.size - 1] + "ies"
-    else                          word + "s"
+    if Grant::TextMatching.plural_suffix_es?(word)
+      word + "es"
+    elsif Grant::TextMatching.consonant_y_ending?(word)
+      word[0, word.size - 1] + "ies"
+    else
+      word + "s"
     end
   end
 end

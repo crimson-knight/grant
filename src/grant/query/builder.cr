@@ -631,7 +631,7 @@ class Grant::Query::Builder(Model)
 
   private def structured_field_sql(field : String) : String
     parts = field.split('.')
-    unless parts.size.in?(1..2) && parts.all?(&.matches?(/\A[A-Za-z_][A-Za-z0-9_]*\z/))
+    unless parts.size.in?(1..2) && parts.all? { |part| Grant::TextMatching.simple_identifier?(part) }
       raise ArgumentError.new("Invalid query field #{field.inspect}")
     end
 
@@ -1446,7 +1446,7 @@ class Grant::Query::Builder(Model)
             when Time
               newest.to_utc.to_s("%Y%m%d%H%M%S%6N")
             when String
-              newest.gsub(/[^0-9]/, "")
+              newest.delete { |char| !char.ascii_number? }
             else
               ""
             end

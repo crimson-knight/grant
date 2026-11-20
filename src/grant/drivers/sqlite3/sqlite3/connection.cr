@@ -48,8 +48,12 @@ class Grant::SQLite3::Connection < DB::Connection
   def initialize(options : ::DB::Connection::Options, sqlite3_options : Options)
     super(options)
     check LibSQLite3.open_v2(sqlite3_options.filename, out @db, (Flag::READWRITE | Flag::CREATE), nil)
-    # 2 means 2 arguments; 1 is the code for UTF-8
-    check LibSQLite3.create_function(@db, "regexp", 2, 1, nil, SQLite3::REGEXP_FN, nil, nil)
+    # The `REGEXP` SQL function is opt-in: `require "grant/regex"` defines
+    # `RegexpFunction`, and only then does every connection register it.
+    {% if Grant::SQLite3.has_constant?(:RegexpFunction) %}
+      # 2 means 2 arguments; 1 is the code for UTF-8
+      check LibSQLite3.create_function(@db, "regexp", 2, 1, nil, SQLite3::RegexpFunction::CALLBACK, nil, nil)
+    {% end %}
 
     if pragma_statement = sqlite3_options.pragma_statement
       check LibSQLite3.exec(@db, pragma_statement, nil, nil, nil)

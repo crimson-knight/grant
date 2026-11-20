@@ -1,4 +1,5 @@
 require "../../spec_helper"
+require "../../../src/grant/regex"
 require "../../support/crystal_compiler"
 
 class V01StrongPasswordValidator < Grant::EachValidator

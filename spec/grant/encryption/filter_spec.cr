@@ -1,4 +1,5 @@
 require "../../spec_helper"
+require "../../../src/grant/regex"
 require "../../../src/grant/encryption"
 
 class FilterEncAccount < Grant::Base
@@ -114,6 +115,23 @@ describe "Grant::Encryption SQL log and inspect filtering" do
     Grant::Encryption::LogFilter.filtered_column?("email").should be_true
     Grant::Encryption::LogFilter.filtered_column?("legacy_email_encrypted").should be_true
     Grant::Encryption::LogFilter.filtered_column?("name").should be_false
+  end
+
+  it "returns the binds without reading the statement when no column can be filtered" do
+    Grant::Encryption::LogFilter.reset
+    begin
+      binds = ["secret@example.com"]
+      Grant::Encryption::LogFilter.filtering?.should be_false
+      Grant::Encryption::LogFilter.redact("SELECT * FROM t WHERE email = ?", binds).should be(binds)
+
+      Grant.settings.filter_attributes = ["email"] of String | Regex
+      Grant::Encryption::LogFilter.filtering?.should be_true
+      Grant::Encryption::LogFilter.redact("SELECT * FROM t WHERE email = ?", binds).should eq(["[FILTERED]"])
+    ensure
+      Grant.settings.filter_attributes = [] of String | Regex
+      Grant::Encryption::LogFilter.track(FilterEncAccount)
+      Grant::Encryption::LogFilter.track(FilterEncPlainCard)
+    end
   end
 
   it "keeps inspect masked for both storage forms" do

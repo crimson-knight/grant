@@ -11,10 +11,6 @@ module Grant::Locking
   # User.where(id: 1).lock(NO_KEY_UPDATE).first!
   # ```
   struct Clause
-    # Letters, digits, spaces and the punctuation of an `OF table, table` list;
-    # no quotes, semicolons, parentheses or comment markers can get through.
-    PATTERN = /\A[A-Za-z][A-Za-z0-9_., ]*\z/
-
     getter sql : String
 
     # :nodoc: Called by `Grant::Locking.clause`; use that macro instead.
@@ -23,7 +19,9 @@ module Grant::Locking
     end
 
     private def initialize(sql : String)
-      unless sql.matches?(PATTERN)
+      # Letters, digits, spaces and the punctuation of an `OF table, table` list;
+      # no quotes, semicolons, parentheses or comment markers can get through.
+      unless Grant::TextMatching.lock_clause?(sql)
         raise ArgumentError.new("Invalid lock clause #{sql.inspect}: only letters, digits, spaces, underscores, dots and commas are allowed")
       end
       @sql = sql

@@ -14,3 +14,4 @@
 bin
 .env
 .luna/
+*.db.grant-lock-*

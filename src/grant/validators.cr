@@ -480,7 +480,9 @@ module Grant::Validators
     {% end %}
   end
 
-  # Validates format using regular expressions.
+  # Validates format using regular expressions. Regex support is opt-in:
+  # `require "grant/regex"` after `require "grant"`, before the models that
+  # use it. `validates_email` and `validates_url` need no opt-in.
   #
   # - `with:` — a Regex that the value must match
   # - `without:` — a Regex that the value must NOT match
@@ -488,6 +490,9 @@ module Grant::Validators
   #   `if:` / `unless:`, `on:`, `strict:`
   #
   # ```
+  # require "grant"
+  # require "grant/regex"
+  #
   # validates_format_of :phone, with: /\A\d{3}-\d{3}-\d{4}\z/
   # validates_format_of :username, :nickname, without: /\A(admin|root)\z/, message: "is reserved"
   # ```
@@ -497,19 +502,22 @@ module Grant::Validators
       without_pattern = options[:without]
       message = options[:message]
     %}
+    {% unless parse_type("Grant::Validators::FormatMatching").resolve? %}
+      {% raise "validates_format_of matches a Regex, which is opt-in: add `require \"grant/regex\"` after `require \"grant\"`" %}
+    {% end %}
 
     {% for field in fields %}
       __rule({{field}}, "", :invalid, kind: :format, {{options.double_splat}}) do
         string_value = value.to_s
 
         {% if with_pattern %}
-          unless string_value.matches?({{with_pattern}})
+          unless ::Grant::Validators::FormatMatching.matches?(string_value, {{with_pattern}})
             record.errors.add({{field.id.stringify}}, :invalid, message: Grant::Error.wrap_message({{message}}), value: value)
             next false
           end
         {% end %}
         {% if without_pattern %}
-          if string_value.matches?({{without_pattern}})
+          if ::Grant::Validators::FormatMatching.matches?(string_value, {{without_pattern}})
             record.errors.add({{field.id.stringify}}, :invalid, message: Grant::Error.wrap_message({{message}}), value: value)
             next false
           end
@@ -897,28 +905,46 @@ module Grant::Validators
     {% end %}
   end
 
-  # Validates that a field is a valid email address using
-  # `Grant::Validators::BuiltIn::CommonFormats::EMAIL_REGEX`. Takes the same
-  # options as `validates_format_of` (except `with:`).
+  # Validates that a field is a valid email address with
+  # `Grant::Validators::BuiltIn::CommonFormats.email?`. Takes the same options
+  # as `validates_format_of` (except `with:` and `without:`) and needs no
+  # Regex opt-in.
   #
   # ```
   # validates_email :email
   # validates_email :email, :contact_email, message: "must be a valid email"
   # ```
   macro validates_email(*fields, **options)
-    validates_format_of({{fields.splat}}, with: Grant::Validators::BuiltIn::CommonFormats::EMAIL_REGEX, message: {{options[:message] || :invalid_email}}, {% for k, v in options %}{% unless k.stringify == "message" %}{{k.id}}: {{v}}, {% end %}{% end %})
+    __validates_common_format(email, :invalid_email, {{fields.splat}}, {{options.double_splat}})
   end
 
-  # Validates that a field is a valid URL using
-  # `Grant::Validators::BuiltIn::CommonFormats::URL_REGEX`. Takes the same
-  # options as `validates_format_of` (except `with:`).
+  # Validates that a field is a valid `http`/`https` URL with
+  # `Grant::Validators::BuiltIn::CommonFormats.url?`. Takes the same options
+  # as `validates_format_of` (except `with:` and `without:`) and needs no
+  # Regex opt-in.
   #
   # ```
   # validates_url :website
   # validates_url :homepage, message: "must be a valid URL"
   # ```
   macro validates_url(*fields, **options)
-    validates_format_of({{fields.splat}}, with: Grant::Validators::BuiltIn::CommonFormats::URL_REGEX, message: {{options[:message] || :invalid_url}}, {% for k, v in options %}{% unless k.stringify == "message" %}{{k.id}}: {{v}}, {% end %}{% end %})
+    __validates_common_format(url, :invalid_url, {{fields.splat}}, {{options.double_splat}})
+  end
+
+  # :nodoc:
+  # One rule per field that checks `CommonFormats.<format>?`, recorded as a
+  # `:format` validation like `validates_format_of`.
+  macro __validates_common_format(format, default_message, *fields, **options)
+    {% message = options[:message] || default_message %}
+    {% for field in fields %}
+      __rule({{field}}, "", :invalid, kind: :format, format: {{format.id.symbolize}}, message: {{message}}, {% for key, value in options %}{% unless key.stringify == "message" %}{{key.id}}: {{value}}, {% end %}{% end %}) do
+        unless ::Grant::Validators::BuiltIn::CommonFormats.{{format.id}}?(value.to_s)
+          record.errors.add({{field.id.stringify}}, :invalid, message: Grant::Error.wrap_message({{message}}), value: value)
+          next false
+        end
+        true
+      end
+    {% end %}
   end
 
   # AR-style unified validation macro.

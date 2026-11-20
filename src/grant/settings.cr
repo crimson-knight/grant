@@ -1,3 +1,5 @@
+require "./attribute_filter"
+
 module Grant
   class Settings
     property default_timezone : Time::Location = Time::Location.load(Grant::TIME_ZONE)
@@ -62,10 +64,12 @@ module Grant
     property implicit_order : Bool = false
 
     # Attribute names (String, matched as a case-insensitive substring) and
-    # patterns (Regex) whose values `inspect` prints as `[FILTERED]`, for every
-    # model. Encrypted columns are always filtered. A model adds its own with
-    # `filter_attributes :token`.
-    property filter_attributes : Array(String | Regex) = [] of String | Regex
+    # patterns (`Grant::AttributeNamePattern`) whose values `inspect` prints as
+    # `[FILTERED]`, for every model. Encrypted columns are always filtered. A
+    # model adds its own with `filter_attributes :token`. To filter with a
+    # `Regex`, `require "grant/regex"`, which also accepts an
+    # `Array(String | Regex)` here.
+    property filter_attributes : Array(Grant::AttributeFilter) = [] of Grant::AttributeFilter
 
     # The most `load_async`/`async_*` queries that run at once, across the
     # process. Each one holds a pool connection while it runs, so keep this at

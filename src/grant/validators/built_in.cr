@@ -13,38 +13,34 @@
 # standalone. This file provides shared constants.
 
 module Grant::Validators::BuiltIn
-  # Shared regular-expression constants used by the convenience format
-  # validators (`validates_email`, `validates_url`).
-  #
-  # Reference these directly with `validates_format_of` when you want the same
-  # pattern under a custom message or option set:
-  #
-  # ```
-  # class User < Grant::Base
-  #   column id : Int64, primary: true
-  #   column email : String?
-  #
-  #   validates_format_of :email,
-  #     with: Grant::Validators::BuiltIn::CommonFormats::EMAIL_REGEX,
-  #     message: "must be a valid email"
-  # end
-  # ```
+  # The checks behind the convenience format validators (`validates_email`,
+  # `validates_url`). They are written by hand, so they work without Regex
+  # support; `require "grant/regex"` adds the equivalent `EMAIL_REGEX` and
+  # `URL_REGEX` constants for use with `validates_format_of`.
   module CommonFormats
-    # Case-insensitive pattern matching a conventional `local@domain.tld`
-    # email address. Backs `validates_email`.
+    # Whether *value* is a conventional `local@domain.tld` email address: a
+    # local part of word characters, `+`, `-` and `.`, then a domain of at
+    # least two dot-separated labels of letters, digits and `-`, the last of
+    # letters only (ASCII letters, compared ignoring case). Backs
+    # `validates_email`.
     #
     # ```
-    # "user@example.com".matches?(Grant::Validators::BuiltIn::CommonFormats::EMAIL_REGEX) # => true
-    # "not-an-email".matches?(Grant::Validators::BuiltIn::CommonFormats::EMAIL_REGEX)     # => false
+    # Grant::Validators::BuiltIn::CommonFormats.email?("user@example.com") # => true
+    # Grant::Validators::BuiltIn::CommonFormats.email?("not-an-email")     # => false
     # ```
-    EMAIL_REGEX = /\A[\w+\-.]+@[a-z\d\-]+(\.[a-z\d\-]+)*\.[a-z]+\z/i
+    def self.email?(value : String) : Bool
+      Grant::TextMatching.email?(value)
+    end
 
-    # Pattern matching an `http`/`https` URL. Backs `validates_url`.
+    # Whether *value* is an `http`/`https` URL with a dotted host. Backs
+    # `validates_url`.
     #
     # ```
-    # "https://example.com".matches?(Grant::Validators::BuiltIn::CommonFormats::URL_REGEX) # => true
-    # "ftp://example.com".matches?(Grant::Validators::BuiltIn::CommonFormats::URL_REGEX)   # => false
+    # Grant::Validators::BuiltIn::CommonFormats.url?("https://example.com") # => true
+    # Grant::Validators::BuiltIn::CommonFormats.url?("ftp://example.com")   # => false
     # ```
-    URL_REGEX = /\Ahttps?:\/\/(www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9()@:%_\+.~#?&\/\/=]*)\z/
+    def self.url?(value : String) : Bool
+      Grant::TextMatching.url?(value)
+    end
   end
 end

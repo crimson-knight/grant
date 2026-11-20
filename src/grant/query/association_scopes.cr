@@ -54,10 +54,10 @@ class Grant::Query::Builder(Model)
     values = renderer.numbered_parameters.dup
     return if sql.empty?
 
-    sql = sql.gsub(/\$\d+/, "?") if @db_type.pg?
+    sql = Grant::TextMatching.replace_numbered_placeholders(sql) { "?" } if @db_type.pg?
     table = Model.table_name
     sql = sql.gsub("#{Model.quote(table)}.", "#{qualifier}.")
-    sql = sql.gsub(/(?<![\w."`])#{Regex.escape(table)}\./, "#{qualifier}.")
+    sql = Grant::TextMatching.replace_table_qualifier(sql, table, "#{qualifier}.")
     {sql, values}
   end
 end

@@ -3,6 +3,12 @@
 # Provides tools to detect and analyze potential performance issues like N+1 queries
 #
 module Grant::QueryAnalysis
+  # The kind of *sql* (`"select"`, `"insert"`, `"update"` or `"delete"`, the
+  # first of those words it contains, ignoring case), or `nil`.
+  def self.statement_kind(sql : String) : String?
+    {"select", "insert", "update", "delete"}.find { |kind| Grant::TextMatching.contains_ignoring_case?(sql, kind) }
+  end
+
   # N+1 query detector
   class N1Detector
     # Track queries by model and operation
@@ -116,18 +122,7 @@ module Grant::QueryAnalysis
     end
 
     private def extract_operation(sql : String) : String
-      case sql
-      when /SELECT/i
-        "select"
-      when /INSERT/i
-        "insert"
-      when /UPDATE/i
-        "update"
-      when /DELETE/i
-        "delete"
-      else
-        "unknown"
-      end
+      Grant::QueryAnalysis.statement_kind(sql) || "unknown"
     end
 
     private def similar_queries?(queries : Array(QueryRecord)) : Bool
@@ -142,12 +137,7 @@ module Grant::QueryAnalysis
 
     private def normalize_sql(sql : String) : String
       # Replace specific values with placeholders to find patterns
-      sql
-        .gsub(/\b\d+\b/, "?") # Replace numbers
-        .gsub(/'[^']*'/, "?") # Replace strings
-        .gsub(/\$\d+/, "?")   # Replace numbered params
-        .gsub(/\s+/, " ")     # Normalize whitespace
-        .strip
+      Grant::TextMatching.normalize_sql_shape(sql).strip
     end
 
     record N1Issue,
@@ -284,13 +274,7 @@ module Grant::QueryAnalysis
         # Record for statistics
         if stats = Grant::QueryAnalysis::QueryStats.instance
           if stats.@enabled && model_name
-            operation = case sql
-                        when /SELECT/i then "select"
-                        when /INSERT/i then "insert"
-                        when /UPDATE/i then "update"
-                        when /DELETE/i then "delete"
-                        else                "other"
-                        end
+            operation = Grant::QueryAnalysis.statement_kind(sql) || "other"
 
             stats.record(model_name, operation, duration.total_milliseconds)
           end

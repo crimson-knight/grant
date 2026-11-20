@@ -353,7 +353,7 @@ class Grant::Query::Builder(Model)
   end
 
   private def validate_identifier!(name : String, context : String) : Nil
-    return if name.matches?(/\A[A-Za-z_][A-Za-z0-9_]*\z/)
+    return if Grant::TextMatching.simple_identifier?(name)
     raise ArgumentError.new("#{context}: #{name.inspect} is not a valid identifier")
   end
 
