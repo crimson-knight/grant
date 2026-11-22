@@ -1,4 +1,4 @@
-require "openssl"
+require "../vendor/beryl/crypto"
 require "base64"
 
 module Grant::Encryption
@@ -232,33 +232,9 @@ module Grant::Encryption
       raise KeyError.new("Invalid base64-encoded key: #{ex.message}")
     end
 
-    # HKDF (HMAC-based Key Derivation Function) implementation
-    # Based on RFC 5869
+    # HKDF with SHA-256 (RFC 5869), from Beryl.
     private def self.hkdf(secret : Bytes, salt : String, info : String, length : Int32) : Bytes
-      # Use SHA-256 for HKDF
-      hash_len = 32 # SHA-256 output size
-
-      # Step 1: Extract
-      salt_bytes = salt.to_slice
-      prk = OpenSSL::HMAC.digest(:sha256, salt_bytes, secret)
-
-      # Step 2: Expand
-      n = (length.to_f / hash_len).ceil.to_i
-      okm = Bytes.new(n * hash_len)
-      previous = Bytes.empty
-
-      n.times do |i|
-        data = IO::Memory.new
-        data.write(previous)
-        data.write(info.to_slice)
-        data.write_byte((i + 1).to_u8)
-
-        previous = OpenSSL::HMAC.digest(:sha256, prk, data.to_slice)
-        previous.copy_to(okm + (i * hash_len))
-      end
-
-      # Return only the requested length
-      okm[0, length]
+      Grant::Beryl::Crypto::V1::HKDF(Grant::Beryl::Crypto::V1::SHA256).derive_key(secret, salt: salt, info: info, bytesize: length)
     end
   end
 end

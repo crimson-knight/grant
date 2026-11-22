@@ -15,7 +15,7 @@ database_support: ["postgresql", "mysql", "sqlite"]
 
 # Encrypted Attributes
 
-Comprehensive guide to Grant's transparent encryption system for protecting sensitive data using AES-256-CBC encryption authenticated with HMAC-SHA256 (Encrypt-then-MAC), with support for both deterministic and non-deterministic encryption modes.
+Comprehensive guide to Grant's transparent encryption system for protecting sensitive data using XChaCha20-Poly1305 authenticated encryption (values written by Grant up to 0.24.0, AES-256-CBC with HMAC-SHA256, are still read), with support for both deterministic and non-deterministic encryption modes.
 
 ## Overview
 
@@ -24,7 +24,7 @@ Grant provides transparent encryption/decryption of sensitive data attributes, a
 ### Key Features
 
 - **Transparent Operation**: Work with encrypted attributes as regular attributes
-- **AES-256-CBC + HMAC-SHA256**: Authenticated encryption (Encrypt-then-MAC) providing confidentiality and integrity
+- **XChaCha20-Poly1305**: Authenticated encryption providing confidentiality and integrity; the earlier AES-256-CBC + HMAC-SHA256 format is still read
 - **Dual Modes**: Non-deterministic (default) and deterministic encryption
 - **Query Support**: Search deterministic encrypted fields directly
 - **Key Management**: Secure key derivation with HKDF
@@ -46,7 +46,7 @@ Grant provides transparent encryption/decryption of sensitive data attributes, a
 │            (transparent encrypt/decrypt layer)               │
 ├─────────────────────────────────────────────────────────────┤
 │               Grant::Encryption::Cipher                      │
-│              (AES-256-CBC implementation)                    │
+│        (XChaCha20-Poly1305; reads AES-256-CBC v1)            │
 ├─────────────────────────────────────────────────────────────┤
 │             Grant::Encryption::KeyProvider                   │
 │           (HKDF key derivation & management)                 │

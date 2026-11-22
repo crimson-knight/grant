@@ -1,7 +1,7 @@
 require "json"
 require "base64"
-require "openssl/hmac"
 require "crypto/subtle"
+require "./vendor/beryl/crypto"
 
 # Tamper-proof, optionally expiring signed IDs for a model record, in the style
 # of Rails' `signed_id`.
@@ -146,7 +146,7 @@ module Grant
     end
 
     private def self.mac(secret : String, json : String, context : String) : String
-      digest = OpenSSL::HMAC.digest(:sha256, secret, "#{context}\n#{json}")
+      digest = Grant::Beryl::Crypto::V1::HMAC(Grant::Beryl::Crypto::V1::SHA256).authenticate("#{context}\n#{json}", key: secret)
       Base64.urlsafe_encode(digest, padding: false)
     end
 

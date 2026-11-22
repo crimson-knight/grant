@@ -2,6 +2,51 @@
 
 ## Unreleased
 
+### Grant's cryptography runs on Beryl, and `-Dwithout_openssl` links no OpenSSL
+
+Behavior changes:
+
+- **Encrypted attributes are written in format version 2.** `encrypts`
+  now stores `header (1 byte) | nonce (24 bytes) | ciphertext | tag (16
+  bytes)`: XChaCha20-Poly1305 under a key derived from the attribute key with
+  HKDF-SHA256. A deterministic attribute takes its nonce from HMAC-SHA256 of
+  the plaintext, so equal plaintext still gives equal ciphertext. Values
+  written by Grant up to 0.24.0 (version 1, AES-256-CBC with HMAC-SHA256) are
+  still read, under the current keys and every previous key, and are rewritten
+  in version 2 the next time the record is saved.
+- **A lookup on a deterministic attribute matches both formats.**
+  `where(email: ...)`, `where_email` and `find_by_email` compare with the
+  version 2 ciphertext and with the version 1 ciphertext Grant 0.24.0 would
+  have written, so rows saved before the upgrade are still found. A unique
+  index on a deterministic column sees a version 1 row and a version 2 row of
+  the same plaintext as different values; re-save existing rows (or
+  re-encrypt with `Grant::Encryption::MigrationHelpers`) before relying on
+  that index for new writes.
+- **Rolling back.** Grant 0.24.0 cannot read version 2 values. Roll back only
+  before new values have been written, or keep the newer Grant.
+- `Grant::Encryption::Cipher::VERSION` is now `2`; `VERSION_1`,
+  `payload_version` and `encrypt_in_version_1` are new, and
+  `MIN_PAYLOAD_SIZE` describes version 2 (`MIN_VERSION_1_PAYLOAD_SIZE` the
+  earlier one). `Cipher::ALGORITHM` is removed.
+
+Changed:
+
+- Attribute keys (HKDF-SHA256), signed ids, `generates_token_for` tokens, the
+  replica-selector cookie, advisory-lock ids, the query-cache key and
+  PostgreSQL password authentication (md5 and SCRAM-SHA-256) are computed by a
+  pinned copy of [Beryl](https://github.com/amberframework/beryl) under
+  `src/grant/vendor` (`Grant::Beryl`, pinned by commit and per-file sha256 in
+  `BERYL_VENDORED.json`). Every output is byte-identical to what OpenSSL
+  produced; `spec/grant/encryption/cipher_formats_spec.cr` holds values
+  captured from Grant 0.24.0.
+- OpenSSL is used only for PostgreSQL TLS (and SCRAM-SHA-256-PLUS, which
+  binds to the TLS certificate). An app built with `crystal build
+  -Dwithout_openssl` links neither libssl nor libcrypto on the SQLite and
+  PostgreSQL adapters; in such a build `sslmode=require`, `verify-ca` and
+  `verify-full` raise `Grant::PQ::ConnectionError` naming the flag, and
+  `sslmode=prefer` and `allow` connect without TLS.
+  `scripts/check_openssl_linkage.rb` builds the probes and checks.
+
 ## 0.24.0
 
 Minimum Crystal: 1.19.0

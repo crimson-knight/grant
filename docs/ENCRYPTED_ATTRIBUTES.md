@@ -1,6 +1,6 @@
 # Encrypted Attributes for Grant
 
-Grant provides transparent encryption for sensitive data in your models using AES-256-CBC encryption authenticated with HMAC-SHA256 (Encrypt-then-MAC). This feature allows you to encrypt specific attributes while maintaining the ability to query deterministic fields.
+Grant provides transparent encryption for sensitive data in your models using XChaCha20-Poly1305 authenticated encryption (values written by Grant up to 0.24.0, AES-256-CBC with HMAC-SHA256, are still read). This feature allows you to encrypt specific attributes while maintaining the ability to query deterministic fields.
 
 ## Table of Contents
 
@@ -18,7 +18,7 @@ Grant provides transparent encryption for sensitive data in your models using AE
 ### Features
 
 - **Transparent encryption/decryption** - Work with encrypted attributes as if they were regular attributes
-- **AES-256-CBC with HMAC-SHA256** - Authenticated encryption using Encrypt-then-MAC
+- **XChaCha20-Poly1305** - Authenticated encryption, written in Crystal (Beryl); the earlier AES-256-CBC with HMAC-SHA256 format is still read
 - **Deterministic and non-deterministic encryption** - Choose based on your needs
 - **Query support** - Search deterministic encrypted fields
 - **Key rotation** - Rotate encryption keys without downtime

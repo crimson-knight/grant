@@ -1,4 +1,4 @@
-require "digest/md5"
+require "./vendor/beryl/crypto"
 require "./error_taxonomy"
 
 module Grant
@@ -81,13 +81,13 @@ module Grant
     # The 64-bit integer PostgreSQL takes for *key*: the first eight bytes of
     # its MD5, stable across processes and versions.
     def self.key_to_int64(key : String) : Int64
-      IO::ByteFormat::BigEndian.decode(Int64, Digest::MD5.digest(key)[0, 8])
+      IO::ByteFormat::BigEndian.decode(Int64, Grant::Beryl::Crypto::Compatibility::MD5.digest(key)[0, 8])
     end
 
     # The name MySQL `GET_LOCK` takes (64 characters at most).
     def self.mysql_name(key : String) : String
       name = "grant:#{key}"
-      name.bytesize <= 64 ? name : "grant:#{Digest::MD5.hexdigest(key)}"
+      name.bytesize <= 64 ? name : "grant:#{Grant::Beryl::Crypto::Compatibility::MD5.hexdigest(key)}"
     end
 
     # One attempt to take *key*; `Adapter::Base#try_advisory_lock` calls this.
@@ -163,7 +163,7 @@ module Grant
 
     private def self.sqlite_lock_path(adapter : Grant::Adapter::Base, key : String) : String?
       file = sqlite_database_file(adapter) || return
-      "#{file}.grant-lock-#{Digest::MD5.hexdigest(key)[0, 12]}"
+      "#{file}.grant-lock-#{Grant::Beryl::Crypto::Compatibility::MD5.hexdigest(key)[0, 12]}"
     end
 
     # The database file, or nil for an in-memory database.

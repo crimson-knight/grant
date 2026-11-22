@@ -15,9 +15,9 @@ module Grant::Encryption
           if encrypted_attr = encrypted_attributes[key_str]?
             # Only deterministic fields can be queried
             if encrypted_attr.deterministic
-              encrypted_value = encrypted_attr.query_value(value.to_s)
-              clauses << "#{encrypted_attr.column_name} = ?"
-              params << encrypted_value
+              list_of_values = encrypted_attr.query_values(value.to_s)
+              clauses << "#{encrypted_attr.column_name} IN (#{list_of_values.map { "?" }.join(", ")})"
+              list_of_values.each { |stored_value| params << stored_value }
             else
               raise ArgumentError.new("Cannot query non-deterministic encrypted field: #{key}")
             end

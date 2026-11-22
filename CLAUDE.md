@@ -35,7 +35,8 @@ splits any group that passes `SPEC_GROUP_MAX_RSS_GB` (default 10), and retries.
 | `src/grant/` | Core ORM source: base, columns, query builder, associations, validations, callbacks, etc. |
 | `src/grant/query/` | Query::Builder, assemblers, WhereChain |
 | `src/grant/locking/` | Optimistic and pessimistic locking |
-| `src/grant/encryption/` | Encrypted attributes (AES-256-CBC with HMAC) |
+| `src/grant/encryption/` | Encrypted attributes (XChaCha20-Poly1305, format version 2; still reads AES-256-CBC with HMAC, version 1) |
+| `src/grant/vendor/` | Pinned copy of Beryl (`Grant::Beryl`), the cryptography Grant calls; refresh with Beryl's `scripts/vendor_into.rb`, never by hand |
 | `src/grant/sharding/` | Horizontal sharding (experimental) |
 | `src/grant/async/` | Async query operations |
 | `src/grant/validators/` | Built-in validators (numericality, format, length, etc.) |

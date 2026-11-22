@@ -1,19 +1,30 @@
 require "uri"
-require "digest/md5"
+require "base64"
+require "random/secure"
 require "socket"
 require "socket/tcp_socket"
 require "socket/unix_socket"
-require "openssl"
-require "openssl/hmac"
 require "./notice"
-require "../ext/openssl"
+require "../../../vendor/beryl/crypto"
+{% unless flag?(:without_openssl) %}
+  require "openssl"
+  require "../ext/openssl"
+{% end %}
 
 module Grant::PQ
   record Notification, pid : Int32, channel : String, payload : String
 
+  # The sockets a connection runs over. TLS comes from OpenSSL, so a build
+  # made with `-Dwithout_openssl` has the two plain kinds only.
+  {% if flag?(:without_openssl) %}
+    alias ConnectionSocket = UNIXSocket | TCPSocket
+  {% else %}
+    alias ConnectionSocket = UNIXSocket | TCPSocket | OpenSSL::SSL::Socket::Client
+  {% end %}
+
   # :nodoc:
   class Connection
-    getter soc : UNIXSocket | TCPSocket | OpenSSL::SSL::Socket::Client
+    getter soc : ConnectionSocket
     getter server_parameters = Hash(String, String).new
     getter conninfo : ConnInfo
     property notice_handler = Proc(Notice, Void).new { }
@@ -47,56 +58,71 @@ module Grant::PQ
     def initialize(@soc, @conninfo)
     end
 
-    private def negotiate_ssl
-      write_i32 8
-      write_i32 80877103
-      @soc.flush
+    {% if flag?(:without_openssl) %}
+      # This build has no TLS. `sslmode=prefer` and `sslmode=allow` accept an
+      # unencrypted connection, so they continue without one; a mode that
+      # requires TLS raises.
+      private def negotiate_ssl
+        return unless sslmode_requires_tls?
 
-      if process_ssl_message
-        ctx = ssl_context
-        @soc = OpenSSL::SSL::Socket::Client.new(
-          @soc,
-          context: ctx,
-          sync_close: true,
-          hostname: ssl_hostname
+        close_socket_after_error
+        raise ConnectionError.new(
+          "sslmode=#{@conninfo.sslmode} needs TLS, and this app was built with -Dwithout_openssl. " \
+          "Build it without that flag, or connect with sslmode=disable to a database on a trusted network."
         )
-      elsif sslmode_requires_tls?
-        raise ConnectionError.new("sslmode=#{@conninfo.sslmode} and server did not establish SSL")
       end
-    rescue ex
-      close_socket_after_error
-      raise ex
-    end
+    {% else %}
+      private def negotiate_ssl
+        write_i32 8
+        write_i32 80877103
+        @soc.flush
 
-    private def ssl_context : OpenSSL::SSL::Context::Client
-      context = OpenSSL::SSL::Context::Client.insecure
-      context.default_verify_param = "ssl_server"
-      context.verify_mode = if sslmode_verifies_certificate?
-                              OpenSSL::SSL::VerifyMode::PEER
-                            else
-                              OpenSSL::SSL::VerifyMode::NONE
-                            end
-
-      if sslcert = @conninfo.sslcert
-        context.certificate_chain = sslcert
-      end
-      if sslkey = @conninfo.sslkey
-        context.private_key = sslkey
-      end
-      if sslrootcert = @conninfo.sslrootcert
-        {% if flag?(:win32) %}
-          if sslmode_verifies_certificate?
-            raise ConnectionError.new(
-              "sslmode=#{@conninfo.sslmode}: exclusive sslrootcert trust is unavailable on Windows")
-          end
-        {% end %}
-        context.ca_certificates = sslrootcert
-      elsif sslmode_verifies_certificate?
-        context.set_default_verify_paths
+        if process_ssl_message
+          ctx = ssl_context
+          @soc = OpenSSL::SSL::Socket::Client.new(
+            @soc,
+            context: ctx,
+            sync_close: true,
+            hostname: ssl_hostname
+          )
+        elsif sslmode_requires_tls?
+          raise ConnectionError.new("sslmode=#{@conninfo.sslmode} and server did not establish SSL")
+        end
+      rescue ex
+        close_socket_after_error
+        raise ex
       end
 
-      context
-    end
+      private def ssl_context : OpenSSL::SSL::Context::Client
+        context = OpenSSL::SSL::Context::Client.insecure
+        context.default_verify_param = "ssl_server"
+        context.verify_mode = if sslmode_verifies_certificate?
+                                OpenSSL::SSL::VerifyMode::PEER
+                              else
+                                OpenSSL::SSL::VerifyMode::NONE
+                              end
+
+        if sslcert = @conninfo.sslcert
+          context.certificate_chain = sslcert
+        end
+        if sslkey = @conninfo.sslkey
+          context.private_key = sslkey
+        end
+        if sslrootcert = @conninfo.sslrootcert
+          {% if flag?(:win32) %}
+            if sslmode_verifies_certificate?
+              raise ConnectionError.new(
+                "sslmode=#{@conninfo.sslmode}: exclusive sslrootcert trust is unavailable on Windows")
+            end
+          {% end %}
+          context.ca_certificates = sslrootcert
+        elsif sslmode_verifies_certificate?
+          context.set_default_verify_paths
+        end
+
+        context
+      end
+    {% end %}
 
     private def sslmode_verifies_certificate? : Bool
       @conninfo.sslmode == :"verify-ca" || @conninfo.sslmode == :"verify-full"
@@ -423,15 +449,16 @@ module Grant::PQ
       def initialize(@password : String, @cbind : Bool, soc)
         @client_nonce = Random::Secure.urlsafe_base64(18)
 
-        if @cbind
-          @name = SCRAM_PLUS_NAME
-          cbind_flag = "p=tls-server-end-point"
-          cert = soc.as(OpenSSL::SSL::Socket::Client).peer_certificate
-          @signature = cert.scram_signature
-        else
-          @name = SCRAM_NAME
-          cbind_flag = "n"
-        end
+        @name = SCRAM_NAME
+        cbind_flag = "n"
+        {% unless flag?(:without_openssl) %}
+          if @cbind
+            @name = SCRAM_PLUS_NAME
+            cbind_flag = "p=tls-server-end-point"
+            cert = soc.as(OpenSSL::SSL::Socket::Client).peer_certificate
+            @signature = cert.scram_signature
+          end
+        {% end %}
 
         @client_first_msg = "#{cbind_flag},,n=,r=#{@client_nonce}"
       end
@@ -452,12 +479,14 @@ module Grant::PQ
           # biws == base64 of "n,,"
           client_final_msg_without_proof = "c=biws,r=#{r}"
         end
-        salted_pass = OpenSSL::PKCS5.pbkdf2_hmac(@password, Base64.decode(s), i, algorithm: OpenSSL::Algorithm::SHA256, key_size: 32)
-        server_key = OpenSSL::HMAC.digest(:sha256, salted_pass, "Server Key")
-        client_key = OpenSSL::HMAC.digest(:sha256, salted_pass, "Client Key")
+        salted_pass = Grant::Beryl::Crypto::Compatibility::PBKDF2(Grant::Beryl::Crypto::V1::SHA256).derive_key(
+          @password, salt: Base64.decode(s), iteration_count: i, bytesize: 32
+        )
+        server_key = Grant::Beryl::Crypto::V1::HMAC(Grant::Beryl::Crypto::V1::SHA256).authenticate("Server Key", key: salted_pass)
+        client_key = Grant::Beryl::Crypto::V1::HMAC(Grant::Beryl::Crypto::V1::SHA256).authenticate("Client Key", key: salted_pass)
         auth_msg = "n=,r=#{@client_nonce},#{server_first_msg},#{client_final_msg_without_proof}"
-        client_sig = OpenSSL::HMAC.digest(:sha256, sha256(client_key), auth_msg)
-        @server_sig = OpenSSL::HMAC.digest(:sha256, server_key, auth_msg)
+        client_sig = Grant::Beryl::Crypto::V1::HMAC(Grant::Beryl::Crypto::V1::SHA256).authenticate(auth_msg, key: sha256(client_key))
+        @server_sig = Grant::Beryl::Crypto::V1::HMAC(Grant::Beryl::Crypto::V1::SHA256).authenticate(auth_msg, key: server_key)
         proof = Base64.strict_encode Slice.new(32) { |i| client_key[i].as(UInt8) ^ client_sig[i].as(UInt8) }
         "#{client_final_msg_without_proof},p=#{proof}"
       end
@@ -468,13 +497,13 @@ module Grant::PQ
       end
 
       private def sha256(key)
-        OpenSSL::Digest.new("SHA256").update(key).final
+        Grant::Beryl::Crypto::V1::SHA256.digest(key)
       end
     end
 
     private def handle_auth_sasl(mechanism_list)
       mechs = String.new(mechanism_list).split(Char::ZERO)
-      cbind = if mechs.includes?(SaslContext::SCRAM_PLUS_NAME)
+      cbind = if tls_channel_binding_available? && mechs.includes?(SaslContext::SCRAM_PLUS_NAME)
                 check_auth_method!("scram-sha-256-plus")
                 true
               elsif mechs.includes?(SaslContext::SCRAM_NAME)
@@ -512,10 +541,20 @@ module Grant::PQ
       expect_frame Frame::Authentication
     end
 
-    private def handle_auth_md5(salt)
-      inner = Digest::MD5.hexdigest("#{@conninfo.password}#{@conninfo.user}")
+    # SCRAM-SHA-256-PLUS binds the exchange to the server's TLS certificate,
+    # so it needs a TLS socket.
+    private def tls_channel_binding_available? : Bool
+      {% if flag?(:without_openssl) %}
+        false
+      {% else %}
+        @soc.is_a?(OpenSSL::SSL::Socket::Client)
+      {% end %}
+    end
 
-      pass = Digest::MD5.hexdigest do |ctx|
+    private def handle_auth_md5(salt)
+      inner = Grant::Beryl::Crypto::Compatibility::MD5.hexdigest("#{@conninfo.password}#{@conninfo.user}")
+
+      pass = Grant::Beryl::Crypto::Compatibility::MD5.hexdigest do |ctx|
         ctx.update(inner)
         ctx.update(salt)
       end
