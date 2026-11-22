@@ -20,9 +20,10 @@ require "./encryption/migration_helpers"
 #
 # ### Cipher
 #
-# Values are sealed with **AES-256-CBC** and authenticated with **HMAC-SHA256**
-# (Encrypt-then-MAC). This is *not* AES-GCM — GCM's tag API is not available in
-# Crystal's OpenSSL bindings, so an explicit HMAC provides the integrity check.
+# Values are sealed with **XChaCha20-Poly1305** (format version 2), an
+# authenticated cipher written in Crystal in Beryl; nothing here calls OpenSSL.
+# Values written by Grant up to 0.25.1 (version 1: AES-256-CBC authenticated
+# with HMAC-SHA256) are still read. See `Grant::Encryption::Cipher`.
 # The ciphertext is Base64-encoded before being written to the column.
 #
 # ### Deterministic vs non-deterministic
@@ -664,7 +665,7 @@ module Grant::Encryption
         {% if deterministic %}
           # Class method for querying encrypted attributes
           def self.where_{{attr}}(value : String)
-            where({{attr}}_encrypted: {{attr}}_encrypted_attribute.query_value(value))
+            where({{attr}}_encrypted: {{attr}}_encrypted_attribute.query_values(value))
           end
 
           # Also support find_by for deterministic fields

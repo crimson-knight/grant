@@ -1,4 +1,4 @@
-require "digest/md5"
+require "../vendor/beryl/crypto"
 require "../columns"
 require "../async"
 require "./where_chain"
@@ -1395,7 +1395,7 @@ class Grant::Query::Builder(Model)
   def cache_key : String
     query_assembler = assembler
     sql = query_assembler.select.raw_sql
-    digest = Digest::MD5.hexdigest("#{sql}|#{query_assembler.numbered_parameters.inspect}")
+    digest = Grant::Beryl::Crypto::Compatibility::MD5.hexdigest("#{sql}|#{query_assembler.numbered_parameters.inspect}")
     "#{Model.table_name}/query-#{digest}"
   end
 

@@ -94,12 +94,14 @@ describe "Grant::Encryption transparent same-name columns" do
     sql.should_not contain("ada@example.com")
   end
 
-  it "computes one ciphertext per lookup, not per row" do
+  it "computes one ciphertext per format per lookup, not per row" do
     5.times { |i| TransparentEncUser.create!(email: "user#{i}@example.com") }
     attribute = TransparentEncUser.email_encrypted_attribute
     values = attribute.query_values("user1@example.com")
-    values.size.should eq(1)
+    values.size.should eq(2)
     attribute.query_value("user1@example.com").should eq(values.first)
+    Grant::Encryption::Cipher.payload_version(Base64.decode(values[0])).should eq(2_u8)
+    Grant::Encryption::Cipher.payload_version(Base64.decode(values[1])).should eq(1_u8)
   end
 
   it "refuses to match non-deterministic encrypted attributes by value" do

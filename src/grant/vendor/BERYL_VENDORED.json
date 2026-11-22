@@ -1,0 +1,169 @@
+{
+  "source": "https://github.com/amberframework/beryl",
+  "commit": "6eef806d82e210ba287fec996f934afd627592d3",
+  "namespace": "Grant::Beryl",
+  "made_by": "scripts/vendor_into.rb",
+  "note": "A pinned copy. Change Beryl in its own repository, then run the script again; edits made here fail the check.",
+  "list_of_files": [
+    {
+      "path": "BERYL_LICENSE",
+      "sha256": "11524d843046486034a5d63a59cbffec9b35432152645ad853ba55b5152d4301",
+      "source_sha256": "11524d843046486034a5d63a59cbffec9b35432152645ad853ba55b5152d4301"
+    },
+    {
+      "path": "beryl.cr",
+      "sha256": "aecde91e03c23b0e05984a3c461effaf9c9d636d6faa02dae4dba2d45a11bfe0",
+      "source_sha256": "5342319e3325db017218b157facc9f55fe9098109fa23d7ffeaf6b1f6daf8a0f"
+    },
+    {
+      "path": "beryl/crypto.cr",
+      "sha256": "384b3bac7a716e09244cb48855c00338be9aaddbcff385bc5a2cbb5b07864a1c",
+      "source_sha256": "c7116abd3fe855e700af63bd76207ed1557fc569d3cb41755f3f5fb72212e5b1"
+    },
+    {
+      "path": "beryl/crypto/compatibility.cr",
+      "sha256": "20c714c6e2559f26064e7e0a75833773732a4cd8d4204ad675e47b2945d59a7f",
+      "source_sha256": "6a97d34278672bf7a9e7f9a79fa28f542c77fc5fdf708d41b9ccaf409a384ebb"
+    },
+    {
+      "path": "beryl/crypto/compatibility/advanced_encryption_standard_in_cipher_block_chaining_mode.cr",
+      "sha256": "cdd727f0093d158d774cefe9acb7ee63eb1c984cc2b7884d8eb72db8c7398871",
+      "source_sha256": "770e0999af7e46bf41d6c44fb78043cb56c62ca3319904f27e41c66fa57c32ad"
+    },
+    {
+      "path": "beryl/crypto/compatibility/message_digest_5.cr",
+      "sha256": "bc4252bd9e87dcb74c713e940d6d4ea695170d14fded7ebbc03f377badc97011",
+      "source_sha256": "4afd1a2558a9214cf2e77475e059ebc3b061ddffe6e56b5a1c1e1549b3bea792"
+    },
+    {
+      "path": "beryl/crypto/compatibility/password_based_key_derivation_function_2.cr",
+      "sha256": "18272d5b7849fc61cefcc597cf8880acdbb6d0e11183d051ae7b19d2813acb57",
+      "source_sha256": "c91f87aad26af198ad864385765e96b670579973e3944927ebc9e302812ccaa9"
+    },
+    {
+      "path": "beryl/crypto/compatibility/secure_hash_algorithm_1.cr",
+      "sha256": "02a9b48857c1e2f8404491bb19ef79a1e070e46681f5d410748e8b5d626b48f8",
+      "source_sha256": "bbbbefc791e53f1a6a0dc8cc0d00b951055dae96a5ca7b9931e52a41175b0337"
+    },
+    {
+      "path": "beryl/crypto/declassification.cr",
+      "sha256": "364d8eb82f18bb410e1dbbca782e7824386e1cfd7e27653961c5a1a2f4389e7b",
+      "source_sha256": "f039e9b1d52b7e600cf510ccdf44308613e2afa10f3358a4fa1f7767864659b0"
+    },
+    {
+      "path": "beryl/crypto/error.cr",
+      "sha256": "23e4e246ea2e30c54efcd48716bfee72c3bea7b9e295651b7fdadca86ae6fe49",
+      "source_sha256": "e5b92217d9ac18961cd21186f6eba1523edb6268d67c2621397bb42972e6c944"
+    },
+    {
+      "path": "beryl/crypto/secret_wiping.cr",
+      "sha256": "1ea4c92e1a0dec633703f016ca0abe6a786a49439c3ba38e1c1a50cd16f1a4b4",
+      "source_sha256": "93672e82807fdad137cabbe718c3ec82e796342b784381396816d2d6b484257f"
+    },
+    {
+      "path": "beryl/crypto/v1.cr",
+      "sha256": "aa8a35862ef89a48038317958718ac00da4a1f3acbfa2bf28298a1f0ab189560",
+      "source_sha256": "1d36ea1a0f13e27cb9a150ac34224d5963f13f55b87c59c845591c67e2ff3b47"
+    },
+    {
+      "path": "beryl/crypto/v1/advanced_encryption_standard_in_galois_counter_mode.cr",
+      "sha256": "678cfedd60d1f21ce3422ba566248acc127b298e4f591e9a20d5e83269e5cdcb",
+      "source_sha256": "f6774de5778268f4f7bd1632d27a2b462c5f579616a1274de715f02ea7387e0f"
+    },
+    {
+      "path": "beryl/crypto/v1/authenticated_encryption.cr",
+      "sha256": "90e9a635a4e30bdecfc54f22f3312c6ff541d783e262c95239db5f340107dc3d",
+      "source_sha256": "08fbc15eacbab41d99b96c4b48863311ede7a8a418938636ba5e9054cb7bba13"
+    },
+    {
+      "path": "beryl/crypto/v1/authenticated_encryption_with_chacha20_and_poly1305.cr",
+      "sha256": "7897cb701a4108c72858bd1307083999167cdbf855ee9de702386a2b305e6eb0",
+      "source_sha256": "94110e62e54283103cb91d9e791fe8722c1e5d1815ac2c5bdf527fd4c2d24e56"
+    },
+    {
+      "path": "beryl/crypto/v1/authenticated_encryption_with_extended_nonce_chacha20_and_poly1305.cr",
+      "sha256": "2c4499f323914dcdd589fdd4dfa7125ffedf6d328cf21e736f7a35413a3d409d",
+      "source_sha256": "f8b6569395c8c79c179a87447ccd087a2a31c4915fdf3feecf450c640077f66b"
+    },
+    {
+      "path": "beryl/crypto/v1/bitsliced_advanced_encryption_standard.cr",
+      "sha256": "c1201ff14f6433c4a4980a41a2e6109f3ef3bc180ad5f0c966801aa2636e2d71",
+      "source_sha256": "3ef0fa5c59e557d1ff0ed7fb6b6be08072107e6a25cd606cbb35fb450af5ee64"
+    },
+    {
+      "path": "beryl/crypto/v1/block_hash_function.cr",
+      "sha256": "cfd463a613e4c1ee1beaa4b7dbc47628a18606a3a5e61a3a77c0a3355973873f",
+      "source_sha256": "c67c8738db2e206007a5ecb66ec953a548ba5fe962a3b160a5dcc2f1e6fceb0b"
+    },
+    {
+      "path": "beryl/crypto/v1/chacha20_stream_cipher.cr",
+      "sha256": "098614943f1946782dca0e829a7d0abd2e92e38fe5fa9c72967a908e983c5520",
+      "source_sha256": "62a2d9b053781a49180525c319005fb7f64ec86a4cde3243948e60501645fe2a"
+    },
+    {
+      "path": "beryl/crypto/v1/galois_hash.cr",
+      "sha256": "334170d9c896f77995c992b16967cca4c39ca5cef114f89a52a4fb4a45c50923",
+      "source_sha256": "0a0eac16a82366f7449967280e1c553f2d24fdc6cd425d2f4cb77aebbac854e7"
+    },
+    {
+      "path": "beryl/crypto/v1/hash_based_key_derivation_function.cr",
+      "sha256": "a3fc5bff060a34ac894c2719611b251814cdf283feb6b3d2ca8ee0fd2f8dfe4c",
+      "source_sha256": "09b49416ce1f8b5ae86e2735fb410af7f98bf9938b2aaec5697214ee8a17751e"
+    },
+    {
+      "path": "beryl/crypto/v1/hash_based_message_authentication_code.cr",
+      "sha256": "d3133005b23056b4030d1765ee0bd791f11fee61110fcda362c9cc425d886a44",
+      "source_sha256": "90c1b9194faec0d30b685284f8d352885c46a2c5f3820e5b740f3cc610782681"
+    },
+    {
+      "path": "beryl/crypto/v1/poly1305_one_time_authenticator.cr",
+      "sha256": "6688cded038611a530d6a65dddd68e36960f2e9cd59dcc8ff01173760d5cbdb4",
+      "source_sha256": "3a94173e2bff5ccf5146736925a3fc9f6140ebab4d3da43713c41416ffdab075"
+    },
+    {
+      "path": "beryl/crypto/v1/secure_hash_with_224_bit_digest.cr",
+      "sha256": "01f5208b3274c12c47b38f18a63243386657901de32159efccb5317ff458fbf6",
+      "source_sha256": "e9407b99ca16457cc8bb2c3939845035a55c00fa0dca58b198b296b18916de98"
+    },
+    {
+      "path": "beryl/crypto/v1/secure_hash_with_256_bit_digest.cr",
+      "sha256": "8c776b51f4072de502a68d88d5a0112b599eb5b652f3dc54674dd4a3d25e083d",
+      "source_sha256": "0b292ecfeccda9eb3b53a87aee633f98db0dd9bc308de811062a143a8028d2fc"
+    },
+    {
+      "path": "beryl/crypto/v1/secure_hash_with_32_bit_words.cr",
+      "sha256": "ae85e39ba7b7c712135c9b0798c03cbb510f9aa278567622f66692b5485b30b4",
+      "source_sha256": "f6df25da05e038e98da904c1d541e0b2e1de026a30f3b2ef0b02a8bb5479ae01"
+    },
+    {
+      "path": "beryl/crypto/v1/secure_hash_with_384_bit_digest.cr",
+      "sha256": "f7b058e2fbaa692a1d82c470a1a79730c7f7afdb388ff676f64891aca0be5092",
+      "source_sha256": "5dbf3e21e819adba6de6bc7f4c61e111e47dcff2a60149f9e0d1c0972e36962a"
+    },
+    {
+      "path": "beryl/crypto/v1/secure_hash_with_512_bit_digest.cr",
+      "sha256": "244e29d8dd22da24b3816313bf619304f0ebe23d14c01f9a174b7d23de686ee4",
+      "source_sha256": "aebb6fdcdd39c527f114d5bcada1ddb39bf0a9e2881575f909626f8a3d610bbf"
+    },
+    {
+      "path": "beryl/crypto/v1/secure_hash_with_512_bit_state_and_256_bit_digest.cr",
+      "sha256": "3baa0cd7728fecfe82f270657292fa65f155d60098c9be54481ca9f7143c361c",
+      "source_sha256": "abd1819eecaf025f8a4e518db3c18adcf1ce8898377669acf3924bb81a77c7ee"
+    },
+    {
+      "path": "beryl/crypto/v1/secure_hash_with_64_bit_words.cr",
+      "sha256": "21be16ae22387d761d069262f961dedd6b5f86694022d0c4cb696a2e25229fd8",
+      "source_sha256": "1b86c52e897fc5cd62c472b1625dc56de2b5c29007b813a7b01990fe693f73dc"
+    },
+    {
+      "path": "beryl/error.cr",
+      "sha256": "ff72dc93b66f2d3e56e396e3fecd7fc3030c250f55961546928218c3e6bc9b85",
+      "source_sha256": "d965b644fb08afeea4e1ff7820acb5999ba2ab700a72762a5675b74e8cccdb05"
+    },
+    {
+      "path": "beryl/version.cr",
+      "sha256": "597125e5cad26dd57b7c824e3748126ca934a3d8643fab252a41a49a9b7ee722",
+      "source_sha256": "32b308b620f417741e0f463f643827a1a76a62e939de2f83030f98173da4935b"
+    }
+  ]
+}

@@ -201,14 +201,27 @@ module Grant::Encryption
       seal(plain)
     end
 
-    # The values a lookup should match: the ciphertext and, while
+    # The values a lookup should match: the ciphertext in the current format,
+    # the ciphertext as format version 1 wrote it (rows saved by Grant up to
+    # 0.25.1, until they are saved again) and, while
     # `support_unencrypted_data` is on, the plaintext rows that predate
     # encryption.
     def query_values(plain : String) : Array(String)
-      sealed = query_value(plain)
-      return [sealed] unless support_unencrypted_data?
+      list_of_values = [query_value(plain), seal_in_version_1(plain)]
+      if support_unencrypted_data?
+        list_of_values << (@options.downcase? || @options.ignore_case? ? plain.downcase : plain)
+      end
+      list_of_values.uniq
+    end
+
+    # `seal` as Grant up to 0.25.1 wrote it, for lookups only.
+    private def seal_in_version_1(plain : String) : String
+      return plain if Encryption.current_context.encryption_disabled?
+
       text = @options.downcase? || @options.ignore_case? ? plain.downcase : plain
-      sealed == text ? [sealed] : [sealed, text]
+      threshold = @options.compress_threshold || Config.compress_threshold
+      text = Compression.encode(text, @options.compress?, threshold)
+      Base64.strict_encode(Cipher.encrypt_in_version_1(text, write_key, @deterministic))
     end
 
     # Encrypt a value

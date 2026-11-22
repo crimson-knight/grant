@@ -46,6 +46,27 @@ describe "Grant::Encryption Database Integration" do
     EncryptedUser.clear
   end
 
+  describe "rows written in format version 1 (Grant up to 0.25.1)" do
+    it "finds a deterministic value stored in version 1, reads it and rewrites it in version 2 on save" do
+      key = Grant::Encryption::KeyProvider.derive_key("EncryptedUser", "email", true)
+      stored_in_version_1 = Base64.strict_encode(Grant::Encryption::Cipher.encrypt_in_version_1("old@example.com", key, true))
+      user = EncryptedUser.create!(name: "Old Row", email: "placeholder@example.com", ssn: "1")
+      EncryptedUser.where(id: user.id).update_all(email_encrypted: stored_in_version_1)
+
+      found = EncryptedUser.where(email: "old@example.com").first
+      found.should_not be_nil
+      found_user = found.not_nil!
+      found_user.id.should eq(user.id)
+      found_user.email.should eq("old@example.com")
+      EncryptedUser.where_email("old@example.com").first.not_nil!.id.should eq(user.id)
+
+      found_user.email = "old@example.com"
+      found_user.name = "Old Row, saved again"
+      found_user.save!
+      EncryptedUser.where(email: "old@example.com").first.not_nil!.id.should eq(user.id)
+    end
+  end
+
   describe "database persistence" do
     it "saves and retrieves encrypted data" do
       user = EncryptedUser.new(

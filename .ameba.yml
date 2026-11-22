@@ -10,6 +10,8 @@ Excluded:
   # Grant's owned database drivers keep the upstream code as written; Grant's own
   # driver specs in spec/grant/drivers/ are linted, the carried upstream ones are not.
   - src/grant/drivers/**/*.cr
+  # The pinned copy of Beryl is checked in its own repository and must match its recorded hashes.
+  - src/grant/vendor/**/*.cr
   - spec/grant/drivers/*/upstream/**/*.cr
 
 # Grant writes macro interpolations as `{{x}}`; `crystal tool format` owns layout.

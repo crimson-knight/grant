@@ -1,5 +1,6 @@
 require "http/server"
-require "openssl/hmac"
+require "crypto/subtle"
+require "../vendor/beryl/crypto"
 require "../../grant"
 
 module Grant
@@ -62,7 +63,7 @@ module Grant
         end
 
         private def sign(stamp : String) : String
-          OpenSSL::HMAC.hexdigest(:sha256, @secret, stamp)
+          Grant::Beryl::Crypto::V1::HMAC(Grant::Beryl::Crypto::V1::SHA256).authenticate(stamp, key: @secret).hexstring
         end
       end
 

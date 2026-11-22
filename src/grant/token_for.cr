@@ -1,6 +1,5 @@
 require "json"
 require "base64"
-require "openssl/hmac"
 require "./signed_id"
 
 # Data-invalidating, expiring tokens for a model record, in the style of Rails'
