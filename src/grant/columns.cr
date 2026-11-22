@@ -221,8 +221,8 @@ module Grant::Columns
     # PostgreSQL and JSON text elsewhere. No converter needs to be declared.
     {% converter = "Grant::Converters::JsonDocument".id if converter == nil && not_nilable_type.resolve == JSON::Any %}
     # A BigDecimal column stores exact decimal text; `scale:` also rounds on assignment.
-    {% is_big_decimal = Grant::BIG_DECIMAL_SUPPORT && not_nilable_type.resolve.name.stringify == "BigDecimal" %}
-    {% converter = "Grant::Converters::Decimal".id if converter == nil && is_big_decimal %}
+    {% big_decimal_column = Grant::BIG_DECIMAL_SUPPORT && not_nilable_type.resolve.name.stringify == "BigDecimal" %}
+    {% converter = "Grant::Converters::Decimal".id if converter == nil && big_decimal_column %}
     # Int8, Int16 and limited integers are bound and read as Int64 (drivers have nothing narrower).
     {% converter = parse_type("Grant::Converters::SmallInteger(#{not_nilable_type.resolve.id})") if converter == nil && !primary_option && (not_nilable_type.resolve == Int8 || not_nilable_type.resolve == Int16 || (options[:limit] && (not_nilable_type.resolve == Int32 || not_nilable_type.resolve == Int64))) %}
     {% if not_nilable_type.resolve == JSON::Any %}
@@ -376,7 +376,7 @@ module Grant::Columns
 
     # Assignment hook applied by the setter (see `normalizes`).
     private def __assign_hook_{{decl.var.id}}(value)
-      {% if options[:scale] && is_big_decimal %}
+      {% if options[:scale] && big_decimal_column %}
         value.is_a?(BigDecimal) ? value.round({{options[:scale]}}, mode: :ties_away) : value
       {% else %}
         value
