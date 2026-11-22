@@ -2,7 +2,22 @@
 
 ## Unreleased
 
+## 0.25.0 - 2026-11-22
+
+Minimum Crystal: 1.19.0
+
 ### Grant links no GMP by default
+
+**BigDecimal support is now opt-in.** An app with `BigDecimal` columns adds
+`require "grant/big_decimal"` above `require "grant"`:
+
+```crystal
+require "grant/big_decimal"
+require "grant"
+```
+
+Without that line such an app stops at compile time with a message that names
+it. An app without decimal columns needs no change and no longer links libgmp.
 
 Behavior changes:
 
@@ -32,6 +47,12 @@ Behavior changes:
   `src/grant/converters/small_integer.cr` (`Grant::Converters::SmallInteger`)
   and `src/grant/big_decimal/decimal_converter.cr`
   (`Grant::Converters::Decimal`).
+
+Fixes:
+
+- **A `BigDecimal` column on MySQL reads every digit.** crystal-mysql decodes
+  a DECIMAL as a `Float64`, so a value past about 17 significant digits came
+  back rounded. Grant now reads a DECIMAL as the exact text MySQL sends.
 
 ## 0.24.0
 
