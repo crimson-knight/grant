@@ -193,5 +193,21 @@ describe "A top-level model named Connection" do
         ::ConnectionNote.where(body: values).to_a
       end
     end
+
+    # The member types of the union are rooted by the substitutions in
+    # `Grant::Query::TypeNameRooting`, which the compiler runs in a macro.
+    it "matches a union of an id array and a range array under a column" do
+      first_note = ::ConnectionNote.create!(body: "first")
+      second_note = ::ConnectionNote.create!(body: "second")
+      ::ConnectionNote.create!(body: "third")
+      first_id = first_note.id.not_nil!
+      second_id = second_note.id.not_nil!
+
+      list_of_ids = ENV["GRANT_NEVER_SET_FOR_THIS_SPEC"]? ? [first_id..second_id] : [first_id, second_id]
+      ::ConnectionNote.where(id: list_of_ids).to_a.map(&.body).sort!.should eq(["first", "second"])
+
+      list_of_ranges = ENV["GRANT_NEVER_SET_FOR_THIS_SPEC"]? ? [first_id] : [first_id..second_id]
+      ::ConnectionNote.where(id: list_of_ranges).to_a.map(&.body).sort!.should eq(["first", "second"])
+    end
   end
 end

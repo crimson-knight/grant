@@ -1,5 +1,6 @@
 require "../../spec_helper"
 require "../../support/linked_pcre2"
+require "../../support/pcre2_only_pattern"
 
 # Each `Grant::TextMatching` method replaces a regular expression Grant used on
 # its default path. These specs run the original expression and the
@@ -75,6 +76,39 @@ end
 IDENTIFIER_TOKENS = ["a", "Z", "_", "0", "9", ".", " ", "-", "users", "id", "K"]
 SQL_TOKENS        = [" ", "  ", "SELECT", "select", "FROM", "from", "INTO", "UPDATE", "ONLY", "only", "users", "\"users\"", "`t`", "[t]", "public.users", "$x", "WHERE", "where", "id", "=", "?", "$1", "$12", ",", "(", ")", "'a'", "'", "1", "42", "x1", "ORDER", "BY", "by", "LIMIT", "OFFSET", "GROUP", "for", "FOR", "update", "share", "SHARE", "no", "key", "KEY", "KEY", "ſHARE", "NOT", "IN", "in", "LIKE", "ILIKE", "liKe", "!=", "<>", "<=", ">=", "<", ">", "INSERT", "VALUES", "values", "JOIN", "join", "AS", "as", "ON", "USING", "INNER", "LEFT", "posts", "p", ".", "\""]
 
+# Inputs with the answers the lookaround patterns Grant used to ship give
+# them. Every Regex engine checks the hand-written code against these; where
+# the engine is PCRE2 the old patterns are checked against them as well, and
+# against the whole fuzz corpus.
+QUALIFIER_EXAMPLES = {
+  ""                                      => [] of String,
+  "users.name = ?"                        => ["users"],
+  "\"users\".\"name\" = ?"                => ["users"],
+  "users.name = posts.title"              => ["users", "posts"],
+  "public.users.name"                     => ["public"],
+  "a.\"b\".c"                             => ["a", "b"],
+  "x.1"                                   => [] of String,
+  "users. name"                           => [] of String,
+  "1users.name"                           => [] of String,
+  "(users.id IN (?)) AND comments.id = ?" => ["users", "comments"],
+  "é.name AND _t.x"                       => ["_t"],
+}
+
+RAW_JOIN_TARGET_EXAMPLES = {
+  ""                                                              => [] of String,
+  "INNER JOIN posts ON posts.author_id = authors.id"              => ["posts"],
+  "INNER JOIN authors AS writers ON writers.id = posts.author_id" => ["writers"],
+  "LEFT JOIN authors writers ON writers.id = posts.author_id"     => ["writers"],
+  "join posts using (author_id)"                                  => ["posts"],
+  "JOIN posts JOIN comments ON comments.post_id = posts.id"       => ["posts", "comments"],
+  "JOIN posts LEFT JOIN comments c ON c.post_id = posts.id"       => ["posts", "c"],
+  "CROSS JOIN tags NATURAL JOIN labels"                           => ["tags", "labels"],
+  "JOIN posts ONx"                                                => ["ONx"],
+  "JOIN posts as onward ON onward.id = 1"                         => ["onward"],
+  "REJOIN posts"                                                  => [] of String,
+  "JOIN 1posts"                                                   => [] of String,
+}
+
 describe Grant::TextMatching do
   unless LinkedPCRE2.follows_grant_tables?
     pending "compares inputs that hold a character the linked PCRE2 answers differently (#{LinkedPCRE2::PENDING_REASON})"
@@ -132,8 +166,17 @@ describe Grant::TextMatching do
 
   it "rewrites table qualifiers like gsub(/(?<![\\w.\"`])users\\./)" do
     tokens = ["users", ".", "name", "\"", "`", "x", " ", "_", "1", "(", "p_users"]
-    mismatches(inputs_for(tokens)) { |text| {text.gsub(/(?<![\w."`])#{Regex.escape("users")}\./, "q."), TM.replace_table_qualifier(text, "users", "q.")} }.should be_empty
-    mismatches(inputs_for(tokens + ["us.ers"])) { |text| {text.gsub(/(?<![\w."`])#{Regex.escape("us.ers")}\./, "q."), TM.replace_table_qualifier(text, "us.ers", "q.")} }.should be_empty
+    # The same substitution without lookbehind: the character in front is
+    # captured and written back.
+    mismatches(inputs_for(tokens)) { |text| {text.gsub(/(^|[^\w."`])#{Regex.escape("users")}\./) { |_, match| "#{match[1]}q." }, TM.replace_table_qualifier(text, "users", "q.")} }.should be_empty
+    mismatches(inputs_for(tokens + ["us.ers"])) { |text| {text.gsub(/(^|[^\w."`])#{Regex.escape("us.ers")}\./) { |_, match| "#{match[1]}q." }, TM.replace_table_qualifier(text, "us.ers", "q.")} }.should be_empty
+
+    if pattern_with_lookbehind = PCRE2OnlyPattern.compile?(%q{(?<![\w."`])users\.})
+      mismatches(inputs_for(tokens)) { |text| {text.gsub(pattern_with_lookbehind, "q."), TM.replace_table_qualifier(text, "users", "q.")} }.should be_empty
+    end
+    if pattern_for_dotted_name = PCRE2OnlyPattern.compile?(%q{(?<![\w."`])us\.ers\.})
+      mismatches(inputs_for(tokens + ["us.ers"])) { |text| {text.gsub(pattern_for_dotted_name, "q."), TM.replace_table_qualifier(text, "us.ers", "q.")} }.should be_empty
+    end
   end
 
   it "splits SQL into words like split(/([a-zA-Z0-9_$']+)/)" do
@@ -283,11 +326,20 @@ describe Grant::TextMatching do
 
   it "finds qualifiers like the old association reference scan" do
     tokens = ["users", "\"users\"", ".", "\"", "name", " ", "=", "?", "_", "1", "x.y", "é", "AND"]
-    mismatches(inputs_for(tokens)) do |text|
-      old = [] of String
-      text.scan(/(?<![\w.])"?([A-Za-z_][A-Za-z0-9_]*)"?\.(?=["A-Za-z_])/) { |match| old << match[1] }
-      {old, TM.qualifiers_in(text)}
-    end.should be_empty
+    QUALIFIER_EXAMPLES.each do |text, list_of_qualifiers|
+      TM.qualifiers_in(text).should eq(list_of_qualifiers), "for #{text.inspect}"
+    end
+
+    if pattern_with_lookaround = PCRE2OnlyPattern.compile?(%q{(?<![\w.])"?([A-Za-z_][A-Za-z0-9_]*)"?\.(?=["A-Za-z_])})
+      QUALIFIER_EXAMPLES.each do |text, list_of_qualifiers|
+        text.scan(pattern_with_lookaround).map(&.[1]).should eq(list_of_qualifiers), "for #{text.inspect}"
+      end
+      mismatches(inputs_for(tokens)) do |text|
+        old = [] of String
+        text.scan(pattern_with_lookaround) { |match| old << match[1] }
+        {old, TM.qualifiers_in(text)}
+      end.should be_empty
+    end
   end
 
   it "recognizes column functions like the old SqlExpression::COLUMN_FUNCTION" do
@@ -324,9 +376,18 @@ describe Grant::TextMatching do
   end
 
   it "finds raw join targets like the old JoinSupport::RAW_JOIN_TARGET" do
-    pattern = /\bJOIN\s+([A-Za-z_][A-Za-z0-9_]*)(?:\s+(?:AS\s+)?(?!ON\b|USING\b|INNER\b|LEFT\b|RIGHT\b|FULL\b|CROSS\b|NATURAL\b|JOIN\b)([A-Za-z_][A-Za-z0-9_]*))?/i
-    tokens = SQL_TOKENS + ["CROSS", "NATURAL", "FULL", "RIGHT", "uſing", "ONx", "authors", "a"]
-    mismatches(inputs_for(tokens)) { |text| {text.scan(pattern).map { |match| match[2]? || match[1] }, TM.raw_join_targets(text)} }.should be_empty
+    RAW_JOIN_TARGET_EXAMPLES.each do |text, list_of_targets|
+      TM.raw_join_targets(text).should eq(list_of_targets), "for #{text.inspect}"
+    end
+
+    # The shape Grant shipped as RAW_JOIN_TARGET through 0.23.4.
+    if pattern = PCRE2OnlyPattern.compile?(%q{\bJOIN\s+([A-Za-z_][A-Za-z0-9_]*)(?:\s+(?:AS\s+)?(?!ON\b|USING\b|INNER\b|LEFT\b|RIGHT\b|FULL\b|CROSS\b|NATURAL\b|JOIN\b)([A-Za-z_][A-Za-z0-9_]*))?}, Regex::Options::IGNORE_CASE)
+      RAW_JOIN_TARGET_EXAMPLES.each do |text, list_of_targets|
+        text.scan(pattern).map { |match| match[2]? || match[1] }.should eq(list_of_targets), "for #{text.inspect}"
+      end
+      tokens = SQL_TOKENS + ["CROSS", "NATURAL", "FULL", "RIGHT", "uſing", "ONx", "authors", "a"]
+      mismatches(inputs_for(tokens)) { |text| {text.scan(pattern).map { |match| match[2]? || match[1] }, TM.raw_join_targets(text)} }.should be_empty
+    end
   end
 
   it "finds comparison binds like the old Encryption::LogFilter::COMPARISON" do

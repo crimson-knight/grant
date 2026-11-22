@@ -2,6 +2,44 @@
 
 ## Unreleased
 
+## 0.25.1 - 2026-11-22
+
+Minimum Crystal: 1.19.0
+
+### Every regex in Grant runs on Mica
+
+crystal-alpha 1.21.0-incremental-6 makes Mica the default `Regex` engine.
+Mica runs in linear time and leaves out lookaround, backreferences, atomic
+groups and possessive quantifiers. Grant 0.25.0 still had two patterns that
+use them:
+
+- **Fix: `where` with a union of arrays compiles on a Mica-default
+  compiler.** `where(id: list)` where `list` is, for example,
+  `Array(Int64) | Array(Range(Int64, Int64))` roots each member type in a
+  macro, and the macro ran a pattern with lookbehind, a possessive
+  quantifier and a nested lookahead. The compiler runs macro regexes on its
+  own engine, so the build stopped with `lookbehind is not supported by the
+  Mica regex engine`, and `-Duse_pcre2` did not help. The rooting is now
+  three substitutions without lookaround (`Grant::Query::TypeNameRooting`);
+  on PCRE2 they give the text the old pattern gave.
+- **Fix: a table rebuild no longer raises on Mica.** The check for a column
+  name inside a constraint, index or trigger
+  (`Grant::Schema::TableRebuild::Scanner.mentions?`) built a lookaround
+  pattern at run time, which raised `Regex::UnsupportedSyntaxError` on Mica.
+  It now consumes the neighboring characters instead.
+- The lookahead in `RAW_JOIN_TARGET` (`src/grant/query/joins.cr`) left Grant
+  in 0.24.0. An app on Grant 0.23.4 or older that uses joins does not compile
+  on a Mica-default compiler; upgrade to this release.
+- The specs that compare Grant's hand-written text checks with the patterns
+  they replaced now build each lookaround pattern at run time: on PCRE2 the
+  comparison runs over the whole fuzz corpus, and on every engine the
+  hand-written code is checked against fixed examples.
+- CI checks every regex in `src`, `spec`, `scripts`, `bench` and `examples`
+  against Mica's dialect (`scripts/check_regex_literals.cr` from
+  amberframework/mica, pinned by commit), including code no spec reaches.
+
+No API changes.
+
 ## 0.25.0 - 2026-11-22
 
 Minimum Crystal: 1.19.0
