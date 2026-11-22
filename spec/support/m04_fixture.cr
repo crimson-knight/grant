@@ -1,5 +1,6 @@
 require "../spec_helper"
 require "../../src/grant/regex"
+require "./pcre2_only_pattern"
 
 # A schema with every feature the dumper round-trips: types, defaults,
 # comments, auto and composite primary keys, partial, expression, descending and
@@ -8,8 +9,9 @@ require "../../src/grant/regex"
 # jsonb/gin, operator classes, INCLUDE, deferrable keys and exclusions.
 module M04Fixture
   TABLES = %w[m04_dump_cycle_a m04_dump_cycle_b m04_dump_notes m04_dump_memberships m04_dump_accounts m04_dump_pg]
-  # Every table that is not the fixture's is left out of the dump.
-  ONLY_FIXTURE = [/\A(?!m04_dump_)/] of (String | Regex)
+  # Every table that is not the fixture's is left out of the dump. The pattern
+  # is written without lookahead, so every Regex engine compiles it.
+  ONLY_FIXTURE = [PCRE2OnlyPattern.not_starting_with("m04_dump_")] of (String | Regex)
 
   def self.adapter : Grant::Adapter::Base
     Grant::ConnectionRegistry.get_adapter(CURRENT_ADAPTER)

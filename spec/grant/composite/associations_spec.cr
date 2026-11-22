@@ -147,7 +147,7 @@ describe "composite foreign keys on associations" do
       statements = capture_statements { item.order }
       where = where_part(statements.find!(&.starts_with?("SELECT")))
       where.should contain("shop_id")
-      where.should match(/(?<![A-Za-z_])id(?![A-Za-z_])/)
+      where.should match(/(?:^|[^A-Za-z_])id(?:$|[^A-Za-z_])/)
     end
 
     it "assigning a parent copies its key into the foreign key columns" do

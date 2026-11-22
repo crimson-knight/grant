@@ -27,7 +27,7 @@ end
 # Every persistence statement must name both constraint columns in its WHERE.
 private def carries_constraints?(sql : String) : Bool
   predicate = where_part(sql)
-  predicate.includes?("tenant_id") && predicate.matches?(/(?<![A-Za-z_])id(?![A-Za-z_])/)
+  predicate.includes?("tenant_id") && predicate.matches?(/(?:^|[^A-Za-z_])id(?:$|[^A-Za-z_])/)
 end
 
 private def writes(statements : Array(String)) : Array(String)

@@ -267,10 +267,13 @@ module Grant::Schema
         items
       end
 
-      # True when *text* uses *name* as an identifier.
+      # True when *text* uses *name* as an identifier: no word character
+      # comes right before it or right after it. The pattern consumes those
+      # neighbors instead of looking around them, so every regex engine
+      # compiles it.
       def self.mentions?(text : ::String, name : ::String) : Bool
         escaped = Regex.escape(name)
-        text.matches?(/(?<![\w])["`\[]?#{escaped}["`\]]?(?![\w])/i)
+        text.matches?(/(?:^|[^\w])["`\[]?#{escaped}["`\]]?(?:$|[^\w])/i)
       end
 
       # Lowercase column names inside the first parenthesis pair of a
