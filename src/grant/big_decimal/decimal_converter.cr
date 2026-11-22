@@ -25,7 +25,9 @@ module Grant::Converters
     end
 
     def from_rs(result : ::DB::ResultSet) : ::BigDecimal?
-      value = result.read
+      # MySQL result sets hand a DECIMAL over as its exact text (see
+      # src/adapter/mysql.cr); the driver alone would round it to a Float64.
+      value = result.responds_to?(:read_keeping_decimal_text) ? result.read_keeping_decimal_text : result.read
       case value
       when Nil          then nil
       when ::BigDecimal then value
