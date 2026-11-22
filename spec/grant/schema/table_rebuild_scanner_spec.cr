@@ -39,7 +39,7 @@ describe Grant::Schema::TableRebuild::Scanner do
 
   it "answers as the lookaround pattern of Grant 0.25.0 answered" do
     list_of_checked_examples = MENTION_EXAMPLES.compact_map do |(text, name), mentioned|
-      pattern_of_grant_0_25_0 = PCRE2OnlyPattern.compile?(%q{(?<![\w])["`\[]?} + Regex.escape(name) + %q{["`\]]?(?![\w])}, Regex::Options::IGNORE_CASE)
+      pattern_of_grant_0_25_0 = PCRE2OnlyPattern.compile?(%q((?<![\w])["`\[]?) + Regex.escape(name) + %q(["`\]]?(?![\w])), Regex::Options::IGNORE_CASE)
       next unless pattern_of_grant_0_25_0
       text.matches?(pattern_of_grant_0_25_0).should eq(mentioned), "for #{name.inspect} in #{text.inspect}"
       text

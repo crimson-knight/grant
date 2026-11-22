@@ -171,10 +171,10 @@ describe Grant::TextMatching do
     mismatches(inputs_for(tokens)) { |text| {text.gsub(/(^|[^\w."`])#{Regex.escape("users")}\./) { |_, match| "#{match[1]}q." }, TM.replace_table_qualifier(text, "users", "q.")} }.should be_empty
     mismatches(inputs_for(tokens + ["us.ers"])) { |text| {text.gsub(/(^|[^\w."`])#{Regex.escape("us.ers")}\./) { |_, match| "#{match[1]}q." }, TM.replace_table_qualifier(text, "us.ers", "q.")} }.should be_empty
 
-    if pattern_with_lookbehind = PCRE2OnlyPattern.compile?(%q{(?<![\w."`])users\.})
+    if pattern_with_lookbehind = PCRE2OnlyPattern.compile?(%q((?<![\w."`])users\.))
       mismatches(inputs_for(tokens)) { |text| {text.gsub(pattern_with_lookbehind, "q."), TM.replace_table_qualifier(text, "users", "q.")} }.should be_empty
     end
-    if pattern_for_dotted_name = PCRE2OnlyPattern.compile?(%q{(?<![\w."`])us\.ers\.})
+    if pattern_for_dotted_name = PCRE2OnlyPattern.compile?(%q((?<![\w."`])us\.ers\.))
       mismatches(inputs_for(tokens + ["us.ers"])) { |text| {text.gsub(pattern_for_dotted_name, "q."), TM.replace_table_qualifier(text, "us.ers", "q.")} }.should be_empty
     end
   end
@@ -330,7 +330,7 @@ describe Grant::TextMatching do
       TM.qualifiers_in(text).should eq(list_of_qualifiers), "for #{text.inspect}"
     end
 
-    if pattern_with_lookaround = PCRE2OnlyPattern.compile?(%q{(?<![\w.])"?([A-Za-z_][A-Za-z0-9_]*)"?\.(?=["A-Za-z_])})
+    if pattern_with_lookaround = PCRE2OnlyPattern.compile?(%q((?<![\w.])"?([A-Za-z_][A-Za-z0-9_]*)"?\.(?=["A-Za-z_])))
       QUALIFIER_EXAMPLES.each do |text, list_of_qualifiers|
         text.scan(pattern_with_lookaround).map(&.[1]).should eq(list_of_qualifiers), "for #{text.inspect}"
       end
@@ -381,7 +381,7 @@ describe Grant::TextMatching do
     end
 
     # The shape Grant shipped as RAW_JOIN_TARGET through 0.23.4.
-    if pattern = PCRE2OnlyPattern.compile?(%q{\bJOIN\s+([A-Za-z_][A-Za-z0-9_]*)(?:\s+(?:AS\s+)?(?!ON\b|USING\b|INNER\b|LEFT\b|RIGHT\b|FULL\b|CROSS\b|NATURAL\b|JOIN\b)([A-Za-z_][A-Za-z0-9_]*))?}, Regex::Options::IGNORE_CASE)
+    if pattern = PCRE2OnlyPattern.compile?(%q(\bJOIN\s+([A-Za-z_][A-Za-z0-9_]*)(?:\s+(?:AS\s+)?(?!ON\b|USING\b|INNER\b|LEFT\b|RIGHT\b|FULL\b|CROSS\b|NATURAL\b|JOIN\b)([A-Za-z_][A-Za-z0-9_]*))?), Regex::Options::IGNORE_CASE)
       RAW_JOIN_TARGET_EXAMPLES.each do |text, list_of_targets|
         text.scan(pattern).map { |match| match[2]? || match[1] }.should eq(list_of_targets), "for #{text.inspect}"
       end

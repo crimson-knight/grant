@@ -17,7 +17,7 @@ module PCRE2OnlyPattern
   # not start with *prefix*: at each character of the prefix the text ends,
   # differs, or goes on to the next character.
   def self.not_starting_with(prefix : String) : Regex
-    source = prefix.chars.reverse.reduce("") do |rest_of_prefix, char|
+    source = prefix.chars.reverse!.reduce("") do |rest_of_prefix, char|
       escaped = Regex.escape(char.to_s)
       rest_of_prefix.empty? ? "(?:\\z|[^#{escaped}])" : "(?:\\z|[^#{escaped}]|#{escaped}#{rest_of_prefix})"
     end

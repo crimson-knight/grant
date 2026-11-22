@@ -15,7 +15,7 @@ end
 
 # What Grant 0.25.0 ran: one pattern with lookbehind, a possessive
 # quantifier and a nested lookahead.
-private PATTERN_OF_GRANT_0_25_0 = PCRE2OnlyPattern.compile?(%q{(?<![:\w"])([A-Z]\w*+)(?!:(?!:))})
+private PATTERN_OF_GRANT_0_25_0 = PCRE2OnlyPattern.compile?(%q((?<![:\w"])([A-Z]\w*+)(?!:(?!:))))
 
 private EXPECTED_ROOTED_NAMES = {
   "Int64"                                           => "::Int64",
