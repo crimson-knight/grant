@@ -2,6 +2,11 @@ require "mysql"
 require "../src/grant/drivers/pg/pg"
 require "../src/grant/drivers/sqlite3/sqlite3"
 
+# The suite runs with BigDecimal support compiled in, as an app that requires
+# `grant/big_decimal` has it. `spec/grant/big_decimal_opt_in_spec.cr` and
+# `scripts/check_gmp_linkage.rb` build programs on the default path.
+require "../src/grant/big_decimal"
+
 # Enable test mode for HealthMonitor to prevent background fibers in tests
 require "../src/grant"
 Grant::HealthMonitor.test_mode = true

@@ -2,6 +2,37 @@
 
 ## Unreleased
 
+### Grant links no GMP by default
+
+Behavior changes:
+
+- **Grant's default path requires `big` nowhere**, so an app without decimal
+  columns links no libgmp. Before, eight source files required `big`, and
+  every app linked GMP for its memory hook alone.
+  `scripts/check_gmp_linkage.rb` builds probe apps and fails if their binaries
+  link GMP; CI runs it.
+- **BigDecimal support is opt-in with `require "grant/big_decimal"`, before
+  `require "grant"`**: `BigDecimal` columns (`precision:`, `scale:`),
+  `BigDecimal` and `Array(BigDecimal)` in `Grant::Columns::Type`, `BigDecimal`
+  in `Grant::Schema::DefaultLiteral` and `Grant::Query::Builder::SumValue`,
+  and `sum(as: BigDecimal)`. With the require, every one behaves as in 0.24.0.
+  The require comes first because those types are fixed as Grant loads; an
+  app that requires `big` before `grant` has the support without the file.
+  `Grant::BIG_DECIMAL_SUPPORT` is true when it is compiled in.
+- **To upgrade an app that has `BigDecimal` columns**, add
+  `require "grant/big_decimal"` above its `require "grant"`. Without it, a
+  `BigDecimal` column, `sum(as: BigDecimal)` and a late
+  `require "grant/big_decimal"` stop at compile time with a message naming
+  the require.
+- **Without the support, the sum of an expression or joined column** is an
+  `Int64` when it is a whole number in range and a `Float64` otherwise (it was
+  an `Int64` or a `BigDecimal`). Sums of integer and float columns are
+  unchanged, and `sum(as: Int64)` still raises for a sum with a fraction.
+- `src/grant/converters/decimal.cr` is now
+  `src/grant/converters/small_integer.cr` (`Grant::Converters::SmallInteger`)
+  and `src/grant/big_decimal/decimal_converter.cr`
+  (`Grant::Converters::Decimal`).
+
 ## 0.24.0
 
 Minimum Crystal: 1.19.0
