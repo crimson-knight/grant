@@ -1,4 +1,5 @@
 require "../spec_helper"
+require "digest/crc32"
 require "../support/statement_recorder"
 require "../../src/grant/test_fixtures"
 require "../../src/grant/spec_support/transactional"

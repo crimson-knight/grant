@@ -1,7 +1,7 @@
 require "yaml"
-require "digest/crc32"
 require "uuid"
 require "../grant"
+require "./vendor/mica/deflate"
 
 # YAML fixtures for specs (ActiveRecord's `FixtureSet`): one file per table,
 # rows named by a label, ids derived from the label so a fixture can point at
@@ -116,7 +116,7 @@ module Grant::TestFixtures
 
   # The id `label` gets: the CRC32 of the label modulo `MAX_ID`.
   def self.identify(label : Symbol | String) : Int64
-    Digest::CRC32.checksum(label.to_s).to_i64 % MAX_ID
+    Grant::Mica::Deflate::CRC32.update(0_u32, label.to_s.to_slice).to_i64 % MAX_ID
   end
 
   # The UUID `label` gets, for models with a UUID primary key.

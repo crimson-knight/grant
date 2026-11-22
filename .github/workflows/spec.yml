@@ -133,6 +133,12 @@ jobs:
         run: ruby scripts/check_gmp_linkage.rb
         env:
           CRYSTAL: crystal
+      - name: Check that Grant links no libz
+        # Builds the probe apps in scripts/linkage; the Compress::Zlib control
+        # probe must link libz, so the check is known to be able to fail.
+        run: ruby scripts/check_zlib_linkage.rb
+        env:
+          CRYSTAL: crystal
       - name: Run tests
         # The whole suite compiled as one program needs about 20 GB of RAM; a
         # runner has 16 GB. spec-groups.sh compiles one group at a time.
