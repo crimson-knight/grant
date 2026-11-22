@@ -12,6 +12,16 @@ module Grant
     property cleanup_error : ::Exception?
   end
 
+  # Whether `BigDecimal` support is compiled in: true when `BigDecimal` was
+  # already defined as Grant loaded (`require "grant/big_decimal"`, or
+  # `require "big"`, before `require "grant"`). Grant requires `big` nowhere on
+  # its default path, so an app without decimal columns links no GMP.
+  {% if @top_level.has_constant?("BigDecimal") %}
+    BIG_DECIMAL_SUPPORT = true
+  {% else %}
+    BIG_DECIMAL_SUPPORT = false
+  {% end %}
+
   TIME_ZONE       = "UTC"
   DATETIME_FORMAT = "%F %X.%6N%z"
 
@@ -53,3 +63,7 @@ require "./grant/scale"
 require "./grant/middleware/query_cache"
 require "./grant/database_configurations"
 require "./grant/parity"
+
+{% if Grant::BIG_DECIMAL_SUPPORT %}
+  require "./grant/big_decimal/*"
+{% end %}

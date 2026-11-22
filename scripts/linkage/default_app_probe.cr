@@ -1,7 +1,8 @@
 # A program shaped like a default Amber app's use of Grant on SQLite: models
 # with associations, built-in validations, normalization, querying, saving,
-# transactions and verbose query logs. `scripts/check_pcre2_linkage.rb` builds
-# it and requires that the binary links no PCRE2, then runs it.
+# transactions, sums and verbose query logs. `scripts/check_pcre2_linkage.rb`
+# and `scripts/check_gmp_linkage.rb` build it and require that the binary
+# links no PCRE2 and no GMP, then run it.
 require "../../src/grant"
 require "../../src/adapter/sqlite"
 
@@ -59,6 +60,11 @@ puts Article.long_reads.pluck(:title).inspect
 puts Article.all("WHERE word_count > ? ORDER BY id DESC LIMIT 1", [100] of Grant::Columns::Type).map(&.title).inspect
 puts Article.order("lower(title) asc").reverse_order.first.try(&.title)
 puts author.articles.count
+puts Article.sum(:word_count)
+puts Article.all.sum("word_count * 1.5")
+puts Article.all.sum(:word_count, as: Int64)
+puts Article.where(id: Article.all.ids.map(&.as(Int64))).in_chunks(of: 1).sum(:word_count)
+puts Article.avg(:word_count)
 puts Author.find_by(full_name: "Ada Lovelace").inspect
 
 invalid = Author.new(full_name: "", contact_email: "not-an-email", homepage_url: "ftp://example.com")

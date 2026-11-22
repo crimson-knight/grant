@@ -1,5 +1,3 @@
-require "big"
-require "big/json"
 require "json"
 require "uuid"
 require "uuid/json"
@@ -18,8 +16,15 @@ class Grant::ColumnPlan
 end
 
 module Grant::Columns
-  alias SupportedArrayTypes = Array(String) | Array(Int16) | Array(Int32) | Array(Int64) | Array(Float32) | Array(Float64) | Array(Bool) | Array(UUID) | Array(Time) | Array(BigDecimal)
-  alias Type = DB::Any | SupportedArrayTypes | UUID | BigDecimal | Int8 | Int16
+  # `BigDecimal` and `Array(BigDecimal)` are column values only when
+  # `Grant::BIG_DECIMAL_SUPPORT` is true (see `grant/big_decimal`).
+  {% if Grant::BIG_DECIMAL_SUPPORT %}
+    alias SupportedArrayTypes = Array(String) | Array(Int16) | Array(Int32) | Array(Int64) | Array(Float32) | Array(Float64) | Array(Bool) | Array(UUID) | Array(Time) | Array(BigDecimal)
+    alias Type = DB::Any | SupportedArrayTypes | UUID | BigDecimal | Int8 | Int16
+  {% else %}
+    alias SupportedArrayTypes = Array(String) | Array(Int16) | Array(Int32) | Array(Int64) | Array(Float32) | Array(Float64) | Array(Bool) | Array(UUID) | Array(Time)
+    alias Type = DB::Any | SupportedArrayTypes | UUID | Int8 | Int16
+  {% end %}
 
   # Virtual attributes can participate in model mass assignment without
   # becoming database columns. Encrypted attributes register their setters
@@ -194,6 +199,13 @@ module Grant::Columns
   # Defines a column *decl* with the given *options*.
   macro column(decl, **options)
     {% type = decl.type %}
+    {% unless Grant::BIG_DECIMAL_SUPPORT %}
+      {% for declared_type in (type.is_a?(Union) ? type.types : [type]) %}
+        {% if ["BigDecimal", "::BigDecimal", "Array(BigDecimal)", "Array(::BigDecimal)", "::Array(BigDecimal)", "::Array(::BigDecimal)"].includes?(declared_type.stringify) %}
+          {% raise "The column #{@type.name}##{decl.var} is a BigDecimal, and Grant's BigDecimal support is opt-in: add `require \"grant/big_decimal\"` before `require \"grant\"`." %}
+        {% end %}
+      {% end %}
+    {% end %}
     {% not_nilable_type = type.is_a?(Path) ? type.resolve : (type.is_a?(Union) ? type.types.reject(&.resolve.nilable?).first : (type.is_a?(Generic) ? type.resolve : type)) %}
 
     # Raise an exception if the delc type has more than 2 union types or if it has 2 types without nil
@@ -209,7 +221,8 @@ module Grant::Columns
     # PostgreSQL and JSON text elsewhere. No converter needs to be declared.
     {% converter = "Grant::Converters::JsonDocument".id if converter == nil && not_nilable_type.resolve == JSON::Any %}
     # A BigDecimal column stores exact decimal text; `scale:` also rounds on assignment.
-    {% converter = "Grant::Converters::Decimal".id if converter == nil && not_nilable_type.resolve == BigDecimal %}
+    {% big_decimal_column = Grant::BIG_DECIMAL_SUPPORT && not_nilable_type.resolve.name.stringify == "BigDecimal" %}
+    {% converter = "Grant::Converters::Decimal".id if converter == nil && big_decimal_column %}
     # Int8, Int16 and limited integers are bound and read as Int64 (drivers have nothing narrower).
     {% converter = parse_type("Grant::Converters::SmallInteger(#{not_nilable_type.resolve.id})") if converter == nil && !primary_option && (not_nilable_type.resolve == Int8 || not_nilable_type.resolve == Int16 || (options[:limit] && (not_nilable_type.resolve == Int32 || not_nilable_type.resolve == Int64))) %}
     {% if not_nilable_type.resolve == JSON::Any %}
@@ -363,7 +376,7 @@ module Grant::Columns
 
     # Assignment hook applied by the setter (see `normalizes`).
     private def __assign_hook_{{decl.var.id}}(value)
-      {% if options[:scale] && not_nilable_type.resolve == BigDecimal %}
+      {% if options[:scale] && big_decimal_column %}
         value.is_a?(BigDecimal) ? value.round({{options[:scale]}}, mode: :ties_away) : value
       {% else %}
         value

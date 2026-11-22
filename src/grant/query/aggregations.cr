@@ -1,4 +1,3 @@
-require "big"
 require "./builder"
 require "./executors/aggregate"
 
@@ -31,8 +30,14 @@ end
 class Grant::Query::Builder(Model)
   # An exact sum: `Int64` for integer columns, `Float64` for float columns,
   # `Int64` or `BigDecimal` when the column type is not known at compile time
-  # (an expression, a joined column).
-  alias SumValue = Int64 | Float64 | BigDecimal
+  # (an expression, a joined column). Without `grant/big_decimal` there is no
+  # `BigDecimal`: such a sum is an `Int64` when it is a whole number in range
+  # and a `Float64` otherwise.
+  {% if Grant::BIG_DECIMAL_SUPPORT %}
+    alias SumValue = Int64 | Float64 | BigDecimal
+  {% else %}
+    alias SumValue = Int64 | Float64
+  {% end %}
 
   alias SumResult = SumValue | Hash(Grant::Columns::Type, SumValue) | Hash(Array(Grant::Columns::Type), SumValue)
   alias AverageResult = Float64? | Hash(Grant::Columns::Type, Float64?) | Hash(Array(Grant::Columns::Type), Float64?)
@@ -80,7 +85,8 @@ class Grant::Query::Builder(Model)
 
   # The sum of *column* over the relation. An integer column gives an exact
   # `Int64` (no Float64 rounding above 2**53), a float column a `Float64`, and
-  # an expression or joined column an `Int64` or `BigDecimal`. An empty relation
+  # an expression or joined column an `Int64` or `BigDecimal` (see `SumValue`
+  # for apps without `grant/big_decimal`). An empty relation
   # sums to zero. A grouped relation returns one `Hash` entry per group from a
   # single GROUP BY statement.
   #
@@ -110,7 +116,7 @@ class Grant::Query::Builder(Model)
 
   # The sum as exactly *type* (`Int64`, `Float64` or `BigDecimal`). Raises
   # `ArgumentError` on a grouped relation or when the sum has a fraction and
-  # *type* is `Int64`.
+  # *type* is `Int64`. `BigDecimal` needs `require "grant/big_decimal"`.
   #
   # ```
   # Invoice.sum(:total, as: BigDecimal) # => 1250.75
@@ -313,7 +319,11 @@ class Grant::Query::Builder(Model)
     when Float then value.to_f64
     when Int   then value.to_i64
     when String
-      value.to_i64? || BigDecimal.new(value)
+      {% if Grant::BIG_DECIMAL_SUPPORT %}
+        value.to_i64? || BigDecimal.new(value)
+      {% else %}
+        value.to_i64? || value.to_f64
+      {% end %}
     else zero
     end
   end
@@ -325,48 +335,103 @@ class Grant::Query::Builder(Model)
   # Converts the database's text form of a number to exactly *type*.
   private def numeric_from_text(text : String, type : T.class) : T forall T
     {% if T == Int64 %}
-      text.to_i64? || begin
-        decimal = BigDecimal.new(text)
-        raise ArgumentError.new("#{text} does not fit Int64 exactly") unless decimal == decimal.trunc && decimal.abs <= Int64::MAX
-        decimal.to_i64
-      end
+      {% if Grant::BIG_DECIMAL_SUPPORT %}
+        text.to_i64? || begin
+          decimal = BigDecimal.new(text)
+          raise ArgumentError.new("#{text} does not fit Int64 exactly") unless decimal == decimal.trunc && decimal.abs <= Int64::MAX
+          decimal.to_i64
+        end
+      {% else %}
+        text.to_i64? || whole_number_from_decimal_text(text)
+      {% end %}
     {% elsif T == Float64 %}
       text.to_f64
-    {% elsif T == BigDecimal %}
+    {% elsif T.stringify == "BigDecimal" && Grant::BIG_DECIMAL_SUPPORT %}
       BigDecimal.new(text)
+    {% elsif T.stringify == "BigDecimal" %}
+      {% raise "sum(as: BigDecimal) needs Grant's BigDecimal support: add `require \"grant/big_decimal\"` before `require \"grant\"`." %}
     {% else %}
       {% raise "sum(as:) takes Int64, Float64 or BigDecimal, not #{T}" %}
     {% end %}
   end
 
+  {% unless Grant::BIG_DECIMAL_SUPPORT %}
+    # The `Int64` a decimal text with an all-zero fraction stands for
+    # (`"1250.00"` is 1250). Raises `ArgumentError` for any other text.
+    private def whole_number_from_decimal_text(text : String) : Int64
+      whole, _, fraction = text.partition('.')
+      value = whole.to_i64?
+      if value && fraction.each_char.all?('0')
+        value
+      else
+        raise ArgumentError.new("#{text} does not fit Int64 exactly")
+      end
+    end
+  {% end %}
+
   # ---- IN-list chunking -----------------------------------------------------
 
-  private def chunked_decimal_total(column : String) : BigDecimal
+  {% if Grant::BIG_DECIMAL_SUPPORT %}
+    # The running total of the chunk sums: an exact decimal.
+    private alias ChunkTotal = BigDecimal
+
+    private def empty_chunk_total : ChunkTotal
+      BigDecimal.new(0)
+    end
+
+    private def add_chunk_sum(total : ChunkTotal, sum_text : String) : ChunkTotal
+      total + BigDecimal.new(sum_text)
+    end
+  {% else %}
+    # The running total of the chunk sums. Without `grant/big_decimal` it is
+    # an exact `Int64` while every chunk sum is a whole number and the total
+    # stays in range, and a `Float64` from then on.
+    private alias ChunkTotal = Int64 | Float64
+
+    private def empty_chunk_total : ChunkTotal
+      0_i64
+    end
+
+    private def add_chunk_sum(total : ChunkTotal, sum_text : String) : ChunkTotal
+      chunk_sum = sum_text.to_i64?
+      if total.is_a?(Int64) && chunk_sum
+        whole_total = total.to_i128 + chunk_sum
+        return whole_total.to_i64 if Int64::MIN <= whole_total <= Int64::MAX
+      end
+      total.to_f64 + sum_text.to_f64
+    end
+  {% end %}
+
+  private def chunked_decimal_total(column : String) : ChunkTotal
     if group_fields.any? || @limit || @offset || distinct?
       raise ArgumentError.new("sum with a chunked IN list cannot preserve group, limit, offset or distinct")
     end
-    total = BigDecimal.new(0)
+    total = empty_chunk_total
     each_in_chunk do |chunk_query|
       text = chunk_query.aggregate_rows("SUM", column, :text, false).first?.try(&.[1])
-      total += BigDecimal.new(text) if text.is_a?(String)
+      total = add_chunk_sum(total, text) if text.is_a?(String)
     end
     total
   end
 
   private def chunked_sum(column : String, kind : Symbol, zero : SumValue) : SumValue
     total = chunked_decimal_total(column)
-    kind == :float ? total.to_f64 : (total.to_s.to_i64? || total)
+    {% if Grant::BIG_DECIMAL_SUPPORT %}
+      kind == :float ? total.to_f64 : (total.to_s.to_i64? || total)
+    {% else %}
+      kind == :float ? total.to_f64 : total
+    {% end %}
   end
 
   private def chunked_average(column : String) : Float64?
     if group_fields.any? || @limit || @offset || distinct?
       raise ArgumentError.new("avg with a chunked IN list cannot preserve group, limit, offset or distinct")
     end
-    total = BigDecimal.new(0)
+    total = empty_chunk_total
     counted = 0_i64
     each_in_chunk do |chunk_query|
       sum_text = chunk_query.aggregate_rows("SUM", column, :text, false).first?.try(&.[1])
-      total += BigDecimal.new(sum_text) if sum_text.is_a?(String)
+      total = add_chunk_sum(total, sum_text) if sum_text.is_a?(String)
       counted += count_of_rows(chunk_query.aggregate_rows("COUNT", column, :none, false))
     end
     counted.zero? ? nil : total.to_f64 / counted

@@ -1,4 +1,3 @@
-require "big"
 require "./query_router"
 
 module Grant::Sharding
@@ -386,7 +385,11 @@ module Grant::Sharding
       elsif a.is_a?(Float64) || b.is_a?(Float64)
         a.to_f64 + b.to_f64
       else
-        BigDecimal.new(a.to_s) + BigDecimal.new(b.to_s)
+        {% if Grant::BIG_DECIMAL_SUPPORT %}
+          BigDecimal.new(a.to_s) + BigDecimal.new(b.to_s)
+        {% else %}
+          a.to_f64 + b.to_f64
+        {% end %}
       end
     end
 

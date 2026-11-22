@@ -105,6 +105,12 @@ jobs:
           crystal: ${{ matrix.crystal }}
       - name: Install shards
         run: shards install --frozen --skip-postinstall --skip-executables
+      - name: Check that the default path links no GMP
+        # Builds the probe apps in scripts/linkage; the BigDecimal control
+        # probe must link GMP, so the check is known to be able to fail.
+        run: ruby scripts/check_gmp_linkage.rb
+        env:
+          CRYSTAL: crystal
       - name: Run tests
         # The whole suite compiled as one program needs about 20 GB of RAM; a
         # runner has 16 GB. spec-groups.sh compiles one group at a time.

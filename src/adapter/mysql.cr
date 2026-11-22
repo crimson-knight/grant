@@ -599,6 +599,37 @@ class Grant::Adapter::Mysql < Grant::Adapter::Base
   end
 end
 
+# crystal-mysql decodes every DECIMAL as a `Float64`, which keeps about 17
+# significant digits. A `BigDecimal` column reads through these methods
+# instead (see `Grant::Converters::Decimal.from_rs`), so a DECIMAL arrives as
+# the exact text MySQL sent; every other column reads as `read` does.
+class MySql::ResultSet
+  def read_keeping_decimal_text
+    mysql_read do |row_packet, column|
+      if column.column_type == MySql::Type::NewDecimal
+        row_packet.read_lenenc_string
+      else
+        value = column.column_type.read(row_packet)
+        value.is_a?(Bytes) && column.character_set != 63 ? ::String.new(value) : value
+      end
+    end
+  end
+end
+
+class MySql::TextResultSet
+  def read_keeping_decimal_text
+    mysql_read do |row_packet, column, length|
+      text = row_packet.read_string(length)
+      if column.column_type == MySql::Type::NewDecimal
+        text
+      else
+        value = column.column_type.parse(text)
+        value.is_a?(Bytes) && column.character_set != 63 ? ::String.new(value) : value
+      end
+    end
+  end
+end
+
 require "./mysql_test_helpers"
 
 Grant::Adapter::Registry.register(Grant::Adapter::Mysql, "mysql", "mysql2")

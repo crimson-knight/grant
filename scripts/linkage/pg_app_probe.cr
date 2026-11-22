@@ -1,5 +1,6 @@
 # The PostgreSQL side of `default_app_probe.cr`. `scripts/check_pcre2_linkage.rb`
-# only builds it (no server is needed) and requires that it links no PCRE2.
+# and `scripts/check_gmp_linkage.rb` only build it (no server is needed) and
+# require that it links no PCRE2 and no GMP.
 require "../../src/grant"
 require "../../src/adapter/pg"
 
