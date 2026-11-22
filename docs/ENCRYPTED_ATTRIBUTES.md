@@ -1,6 +1,6 @@
 # Encrypted Attributes for Grant
 
-Grant provides transparent encryption for sensitive data in your models using XChaCha20-Poly1305 authenticated encryption (values written by Grant up to 0.24.0, AES-256-CBC with HMAC-SHA256, are still read). This feature allows you to encrypt specific attributes while maintaining the ability to query deterministic fields.
+Grant provides transparent encryption for sensitive data in your models using XChaCha20-Poly1305 authenticated encryption (values written by Grant up to 0.25.0, AES-256-CBC with HMAC-SHA256, are still read). This feature allows you to encrypt specific attributes while maintaining the ability to query deterministic fields.
 
 ## Table of Contents
 

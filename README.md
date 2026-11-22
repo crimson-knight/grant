@@ -51,6 +51,35 @@ compile time with a message naming the require, and SQLite reports
 opt-in. `scripts/check_pcre2_linkage.rb` builds probe apps and checks that
 their binaries link no PCRE2.
 
+## BigDecimal support is opt-in
+
+Grant's default path requires Crystal's `big` nowhere, so an app without
+decimal columns links no GMP. BigDecimal support loads only when you ask for
+it, before `grant`:
+
+```crystal
+require "grant/big_decimal" # before grant
+require "grant"
+require "grant/adapter/sqlite"
+```
+
+`require "grant/big_decimal"` turns on:
+
+- `column price : BigDecimal` (with `precision:` and `scale:`)
+- `BigDecimal` values in queries, mass assignment and dirty tracking
+  (`Grant::Columns::Type`), and as column defaults in schema statements
+- exact `BigDecimal` sums: `sum(:price)` on a decimal column or expression,
+  and `sum(:price, as: BigDecimal)`
+
+The column value types are fixed as Grant loads, which is why the require
+comes first; `Grant::BIG_DECIMAL_SUPPORT` tells which way an app was built. An
+app that already requires `big` before `grant` has the support without this
+file. Without it, a `BigDecimal` column and `sum(as: BigDecimal)` stop at
+compile time with a message naming the require, and the sum of an expression
+or joined column is an `Int64` when it is a whole number in range and a
+`Float64` otherwise. `scripts/check_gmp_linkage.rb` builds probe apps and
+checks that their binaries link no GMP.
+
 ## Comprehensive Feature Examples
 
 Here are 3 example models that demonstrate every feature available in Grant:

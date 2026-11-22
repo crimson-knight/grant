@@ -22,7 +22,7 @@ require "./encryption/migration_helpers"
 #
 # Values are sealed with **XChaCha20-Poly1305** (format version 2), an
 # authenticated cipher written in Crystal in Beryl; nothing here calls OpenSSL.
-# Values written by Grant up to 0.24.0 (version 1: AES-256-CBC authenticated
+# Values written by Grant up to 0.25.0 (version 1: AES-256-CBC authenticated
 # with HMAC-SHA256) are still read. See `Grant::Encryption::Cipher`.
 # The ciphertext is Base64-encoded before being written to the column.
 #

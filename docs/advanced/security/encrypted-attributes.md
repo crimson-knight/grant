@@ -15,7 +15,7 @@ database_support: ["postgresql", "mysql", "sqlite"]
 
 # Encrypted Attributes
 
-Comprehensive guide to Grant's transparent encryption system for protecting sensitive data using XChaCha20-Poly1305 authenticated encryption (values written by Grant up to 0.24.0, AES-256-CBC with HMAC-SHA256, are still read), with support for both deterministic and non-deterministic encryption modes.
+Comprehensive guide to Grant's transparent encryption system for protecting sensitive data using XChaCha20-Poly1305 authenticated encryption (values written by Grant up to 0.25.0, AES-256-CBC with HMAC-SHA256, are still read), with support for both deterministic and non-deterministic encryption modes.
 
 ## Overview
 

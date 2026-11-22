@@ -11,18 +11,18 @@ Behavior changes:
   bytes)`: XChaCha20-Poly1305 under a key derived from the attribute key with
   HKDF-SHA256. A deterministic attribute takes its nonce from HMAC-SHA256 of
   the plaintext, so equal plaintext still gives equal ciphertext. Values
-  written by Grant up to 0.24.0 (version 1, AES-256-CBC with HMAC-SHA256) are
+  written by Grant up to 0.25.0 (version 1, AES-256-CBC with HMAC-SHA256) are
   still read, under the current keys and every previous key, and are rewritten
   in version 2 the next time the record is saved.
 - **A lookup on a deterministic attribute matches both formats.**
   `where(email: ...)`, `where_email` and `find_by_email` compare with the
-  version 2 ciphertext and with the version 1 ciphertext Grant 0.24.0 would
-  have written, so rows saved before the upgrade are still found. A unique
+  version 2 ciphertext and with the version 1 ciphertext Grant 0.25.0 and
+  earlier wrote, so rows saved before the upgrade are still found. A unique
   index on a deterministic column sees a version 1 row and a version 2 row of
   the same plaintext as different values; re-save existing rows (or
   re-encrypt with `Grant::Encryption::MigrationHelpers`) before relying on
   that index for new writes.
-- **Rolling back.** Grant 0.24.0 cannot read version 2 values. Roll back only
+- **Rolling back.** Grant 0.25.0 and earlier cannot read version 2 values. Roll back only
   before new values have been written, or keep the newer Grant.
 - `Grant::Encryption::Cipher::VERSION` is now `2`; `VERSION_1`,
   `payload_version` and `encrypt_in_version_1` are new, and
@@ -46,6 +46,58 @@ Changed:
   `verify-full` raise `Grant::PQ::ConnectionError` naming the flag, and
   `sslmode=prefer` and `allow` connect without TLS.
   `scripts/check_openssl_linkage.rb` builds the probes and checks.
+
+## 0.25.0 - 2026-11-22
+
+Minimum Crystal: 1.19.0
+
+### Grant links no GMP by default
+
+**BigDecimal support is now opt-in.** An app with `BigDecimal` columns adds
+`require "grant/big_decimal"` above `require "grant"`:
+
+```crystal
+require "grant/big_decimal"
+require "grant"
+```
+
+Without that line such an app stops at compile time with a message that names
+it. An app without decimal columns needs no change and no longer links libgmp.
+
+Behavior changes:
+
+- **Grant's default path requires `big` nowhere**, so an app without decimal
+  columns links no libgmp. Before, eight source files required `big`, and
+  every app linked GMP for its memory hook alone.
+  `scripts/check_gmp_linkage.rb` builds probe apps and fails if their binaries
+  link GMP; CI runs it.
+- **BigDecimal support is opt-in with `require "grant/big_decimal"`, before
+  `require "grant"`**: `BigDecimal` columns (`precision:`, `scale:`),
+  `BigDecimal` and `Array(BigDecimal)` in `Grant::Columns::Type`, `BigDecimal`
+  in `Grant::Schema::DefaultLiteral` and `Grant::Query::Builder::SumValue`,
+  and `sum(as: BigDecimal)`. With the require, every one behaves as in 0.24.0.
+  The require comes first because those types are fixed as Grant loads; an
+  app that requires `big` before `grant` has the support without the file.
+  `Grant::BIG_DECIMAL_SUPPORT` is true when it is compiled in.
+- **To upgrade an app that has `BigDecimal` columns**, add
+  `require "grant/big_decimal"` above its `require "grant"`. Without it, a
+  `BigDecimal` column, `sum(as: BigDecimal)` and a late
+  `require "grant/big_decimal"` stop at compile time with a message naming
+  the require.
+- **Without the support, the sum of an expression or joined column** is an
+  `Int64` when it is a whole number in range and a `Float64` otherwise (it was
+  an `Int64` or a `BigDecimal`). Sums of integer and float columns are
+  unchanged, and `sum(as: Int64)` still raises for a sum with a fraction.
+- `src/grant/converters/decimal.cr` is now
+  `src/grant/converters/small_integer.cr` (`Grant::Converters::SmallInteger`)
+  and `src/grant/big_decimal/decimal_converter.cr`
+  (`Grant::Converters::Decimal`).
+
+Fixes:
+
+- **A `BigDecimal` column on MySQL reads every digit.** crystal-mysql decodes
+  a DECIMAL as a `Float64`, so a value past about 17 significant digits came
+  back rounded. Grant now reads a DECIMAL as the exact text MySQL sends.
 
 ## 0.24.0
 

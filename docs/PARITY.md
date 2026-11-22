@@ -1,6 +1,6 @@
 # Grant / ActiveRecord 8 parity
 
-- Grant version: `0.24.0`
+- Grant version: `0.25.0`
 - Generated for commit: `69989489dcc5b493620e3a468b3a1eb2851c1748`
 Baseline score source: commit `32b69d8`.
 

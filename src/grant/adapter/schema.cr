@@ -1,4 +1,3 @@
-require "big"
 require "../../adapter/base"
 
 module Grant::Schema
@@ -12,8 +11,13 @@ module Grant::Schema
   class InvalidDefinition < Grant::ErrorBase
   end
 
-  # A Crystal value usable as a SQL column default.
-  alias DefaultLiteral = ::String | Int8 | Int16 | Int32 | Int64 | Float32 | Float64 | BigDecimal | Bool | ::Time?
+  # A Crystal value usable as a SQL column default. A `BigDecimal` is one when
+  # `Grant::BIG_DECIMAL_SUPPORT` is true (see `grant/big_decimal`).
+  {% if Grant::BIG_DECIMAL_SUPPORT %}
+    alias DefaultLiteral = ::String | Int8 | Int16 | Int32 | Int64 | Float32 | Float64 | BigDecimal | Bool | ::Time?
+  {% else %}
+    alias DefaultLiteral = ::String | Int8 | Int16 | Int32 | Int64 | Float32 | Float64 | Bool | ::Time?
+  {% end %}
 
   # The SQL flavor a schema statement is written in. Statements are built from
   # a dialect alone, so the SQL for every adapter can be asserted without a
@@ -55,10 +59,10 @@ module Grant::Schema
     # Quotes a value as a SQL literal.
     def quote_literal(value : DefaultLiteral) : String
       case value
-      in Nil                                                     then "NULL"
-      in Bool                                                    then value ? "TRUE" : "FALSE"
-      in Int8, Int16, Int32, Int64, Float32, Float64, BigDecimal then value.to_s
-      in Time                                                    then "'#{value.to_utc.to_s("%F %T.%6N")}'"
+      in Nil    then "NULL"
+      in Bool   then value ? "TRUE" : "FALSE"
+      in Number then value.to_s
+      in Time   then "'#{value.to_utc.to_s("%F %T.%6N")}'"
       in String
         escaped = value.gsub("'", "''")
         escaped = escaped.gsub("\\", "\\\\") if mysql?
