@@ -19,7 +19,7 @@ module Grant::Encryption
   #
   #     header (1 byte) | initialization vector (16 bytes) | ciphertext | HMAC tag (32 bytes)
   #
-  # AES-256-CBC with HMAC-SHA256, the format of Grant up to 0.25.0. `decrypt`
+  # AES-256-CBC with HMAC-SHA256, the format of Grant up to 0.25.1. `decrypt`
   # reads it for as long as such values exist, and `encrypt_in_version_1`
   # reproduces the deterministic form so a lookup still finds rows written
   # before the upgrade.

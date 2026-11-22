@@ -203,7 +203,7 @@ module Grant::Encryption
 
     # The values a lookup should match: the ciphertext in the current format,
     # the ciphertext as format version 1 wrote it (rows saved by Grant up to
-    # 0.25.0, until they are saved again) and, while
+    # 0.25.1, until they are saved again) and, while
     # `support_unencrypted_data` is on, the plaintext rows that predate
     # encryption.
     def query_values(plain : String) : Array(String)
@@ -214,7 +214,7 @@ module Grant::Encryption
       list_of_values.uniq
     end
 
-    # `seal` as Grant up to 0.25.0 wrote it, for lookups only.
+    # `seal` as Grant up to 0.25.1 wrote it, for lookups only.
     private def seal_in_version_1(plain : String) : String
       return plain if Encryption.current_context.encryption_disabled?
 

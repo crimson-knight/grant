@@ -46,7 +46,7 @@ describe "Grant::Encryption Database Integration" do
     EncryptedUser.clear
   end
 
-  describe "rows written in format version 1 (Grant up to 0.25.0)" do
+  describe "rows written in format version 1 (Grant up to 0.25.1)" do
     it "finds a deterministic value stored in version 1, reads it and rewrites it in version 2 on save" do
       key = Grant::Encryption::KeyProvider.derive_key("EncryptedUser", "email", true)
       stored_in_version_1 = Base64.strict_encode(Grant::Encryption::Cipher.encrypt_in_version_1("old@example.com", key, true))

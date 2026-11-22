@@ -1,4 +1,5 @@
 require "./builder"
+require "./type_name_rooting"
 
 # Resolves which columns a joined table can be queried on. `where(posts:
 # {published: true})` and qualified fields (`"posts.published"`) check the
@@ -128,8 +129,8 @@ class Grant::Query::Builder(Model)
           # code sits inside `Grant`, where an unrooted `Connection` (even inside
           # `Array(Tuple(Connection, Int64))`) would name `Grant::Connection`
           # and the condition would be dropped. A named-tuple key (`Foo:`) is left
-          # as written.
-          return add_array_condition(join, field, values) if values.is_a?({{ type.stringify.gsub(/(?<![:\w"])([A-Z]\w*+)(?!:(?!:))/, "::\\1").id }})
+          # as written. `Grant::Query::TypeNameRooting` holds the substitutions.
+          return add_array_condition(join, field, values) if values.is_a?({{ type.stringify.gsub(Grant::Query::TypeNameRooting::NAMED_TUPLE_KEY, Grant::Query::TypeNameRooting::MARKED_NAMED_TUPLE_KEY).gsub(Grant::Query::TypeNameRooting::UNROOTED_NAME, Grant::Query::TypeNameRooting::ROOTED_NAME).gsub(Grant::Query::TypeNameRooting::KEY_MARK_PATTERN, "").id }})
         {% end %}
       {% end %}
     {% else %}
