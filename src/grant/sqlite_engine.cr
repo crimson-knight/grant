@@ -3,7 +3,10 @@
 # type, overflow chains, the record format, the schema table, the freelist,
 # pointer-map pages and committed frames of a `-wal` file (G1), and, opened
 # with `read_write: true`, writes through a rollback journal
-# (`journal_mode=DELETE`) under the same POSIX locks C SQLite takes (G2).
+# (`journal_mode=DELETE`) under the same POSIX locks C SQLite takes (G2), or
+# through a write-ahead log (`journal_mode=WAL`) with C SQLite's `-wal` and
+# `-shm` formats and wal-index locks, so the engine and `sqlite3` processes
+# read and write one database at the same time (G5).
 #
 # `Database.open(path)` opens a file read-only and never writes it, nor its
 # `-wal` or `-shm` file. Every structural fact read from disk is checked
@@ -43,6 +46,9 @@ require "./sqlite_engine/database_header"
 require "./sqlite_engine/byte_source"
 require "./sqlite_engine/file_system"
 require "./sqlite_engine/memory_file_system"
+require "./sqlite_engine/shared_memory"
+require "./sqlite_engine/wal_index"
+require "./sqlite_engine/write_ahead_log"
 require "./sqlite_engine/rollback_journal"
 require "./sqlite_engine/wal_reader"
 require "./sqlite_engine/pager"

@@ -39,6 +39,12 @@ module Grant::SQLiteEngine
     abstract def open(path : String) : DatabaseFile
     abstract def exists?(path : String) : Bool
     abstract def delete(path : String) : Nil
+
+    # Opens (creating) the wal-index file *path* for one connection. File
+    # systems the engine provides keep it as an ordinary file of theirs.
+    def open_shared_memory(path : String) : SharedMemory
+      FileSharedMemory.new(open(path))
+    end
   end
 
   # The operating system's files, with the POSIX advisory locks C SQLite
@@ -55,6 +61,10 @@ module Grant::SQLiteEngine
 
     def delete(path : String) : Nil
       File.delete?(path)
+    end
+
+    def open_shared_memory(path : String) : SharedMemory
+      MappedSharedMemory.new(path)
     end
   end
 
@@ -147,10 +157,13 @@ module Grant::SQLiteEngine
       @file.truncate(size)
     end
 
+    # Closing a descriptor drops every POSIX lock the process holds on the
+    # file, so while other connections of this process still have it open
+    # the descriptor is kept (as os_unix.c's unused list does) and closed
+    # with the last one.
     def close : Nil
       unlock(LockLevel::None)
-      @shared_locks.release(self)
-      @file.close
+      @shared_locks.release(self, @file)
     end
 
     def lock(level : LockLevel) : Bool
@@ -169,7 +182,12 @@ module Grant::SQLiteEngine
         end
         held = @shared_locks.process_level
         if level > held
-          return false unless process_lock(level, held)
+          unless process_lock(level, held)
+            # A refused EXCLUSIVE from SHARED keeps no RESERVED or PENDING
+            # byte (C's pager unlocks after a busy hot-journal or close).
+            process_unlock(held) if held == LockLevel::Shared && level.exclusive?
+            return false
+          end
         end
         @lock_level = level
         @shared_locks.set(self, level)
@@ -263,8 +281,21 @@ module Grant::SQLiteEngine
         @levels[file.object_id] = level
       end
 
-      def release(file : DatabaseFile) : Nil
-        synchronize { @levels.delete(file.object_id) }
+      @list_of_unused_files = [] of File
+
+      # Forgets *file*'s lock and closes *descriptor*, or keeps it open
+      # while another connection of the process still uses the file.
+      def release(file : DatabaseFile, descriptor : File) : Nil
+        synchronize do
+          @levels.delete(file.object_id)
+          if @levels.empty?
+            @list_of_unused_files.each(&.close)
+            @list_of_unused_files.clear
+            descriptor.close
+          else
+            @list_of_unused_files << descriptor
+          end
+        end
       end
 
       def highest_other(file : DatabaseFile) : LockLevel

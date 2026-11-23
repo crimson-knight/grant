@@ -138,14 +138,24 @@ module SQLiteEngineWriteDriver
     outcome.list_of_unexpected << "#{operation.op}: #{error.class}: #{error.message}"
   end
 
-  # Writes *sequence* to *path* through the engine.
-  def self.build(sequence : Sequence, path : String) : Outcome
+  # Writes *sequence* to *path* through the engine. In WAL mode the engine
+  # commits with synchronous=NORMAL (Grant's setting) and checkpoints
+  # automatically; *checks* runs while the engine still has the database
+  # open, so sqlite3 reads the frames through the engine's wal-index.
+  def self.build(sequence : Sequence, path : String, wal : Bool = false, & : ->) : Outcome
     File.delete?(path)
     outcome = Outcome.new
-    database = Grant::SQLiteEngine::Database.open(path, read_write: true, page_size: sequence.page_size, text_encoding: sequence.text_encoding)
+    database = Grant::SQLiteEngine::Database.open(path, read_write: true, page_size: sequence.page_size, text_encoding: sequence.text_encoding,
+      journal_mode: wal ? Grant::SQLiteEngine::JournalMode::Wal : nil,
+      synchronous: wal ? Grant::SQLiteEngine::Synchronous::Normal : Grant::SQLiteEngine::Synchronous::Full)
     sequence.list_of_units.each { |unit| apply_unit(database, unit, outcome) }
+    yield
     database.close
     outcome
+  end
+
+  def self.build(sequence : Sequence, path : String, wal : Bool = false) : Outcome
+    build(sequence, path, wal) { }
   end
 
   def self.ruby(arguments : Array(String)) : Nil
@@ -178,7 +188,11 @@ module SQLiteEngineWriteDriver
 
   # Generates, applies and checks *count* sequences from *seed*, in chunks
   # so the files never pile up. Failing files are copied to *keep* when set.
-  def self.run(count : Int32, seed : Int64, size : String = "regular", chunk : Int32 = 200, keep : String? = nil) : Summary
+  #
+  # With *wal*, both sides write in journal_mode=WAL, and every tenth
+  # sequence is read by sqlite3 (integrity_check and a row count) while the
+  # engine still holds it open with frames in the WAL.
+  def self.run(count : Int32, seed : Int64, size : String = "regular", chunk : Int32 = 200, keep : String? = nil, wal : Bool = false) : Summary
     failures = [] of String
     unexpected = [] of String
     operations = 0
@@ -188,20 +202,27 @@ module SQLiteEngineWriteDriver
       batch = Math.min(chunk, count - start)
       directory = Path[Dir.tempdir] / "grant-sqlite-engine-writes-#{Process.pid}-#{start}"
       Dir.mkdir_p(directory)
-      ruby(["sequences", directory.to_s, "--count", batch.to_s, "--seed", seed.to_s, "--start", start.to_s, "--size", size])
+      ruby(["sequences", directory.to_s, "--count", batch.to_s, "--seed", seed.to_s, "--start", start.to_s, "--size", size, "--wal", wal ? "1" : "0"])
       ruby(["verify", directory.to_s, "c"])
       batch.times do |offset|
         name = "seq_%05d" % (start + offset)
         sequence = Sequence.from_json(File.read(directory / "#{name}.json"))
         operations += sequence.list_of_operations.size
-        outcome = build(sequence, (directory / "#{name}.e.db").to_s)
+        engine_path = (directory / "#{name}.e.db").to_s
+        outcome = build(sequence, engine_path, wal) do
+          if wal && (start + offset) % 10 == 0
+            if problem = live_wal_problem(engine_path)
+              failures << "#{name}: #{problem}"
+            end
+          end
+        end
         File.write(directory / "#{name}.e.errors", ([outcome.errors.to_s] + outcome.list_of_messages).join('\n'))
         outcome.list_of_unexpected.first(3).each { |message| unexpected << "#{name} (seed #{sequence.seed}): #{message}" }
       end
       ruby(["verify", directory.to_s, "e"])
       batch.times do |offset|
         name = "seq_%05d" % (start + offset)
-        problem = check(directory, name)
+        problem = check(directory, name, wal)
         rows += File.read(directory / "#{name}.c.expected").count('\n') if File.exists?(directory / "#{name}.c.expected")
         next unless problem
         failures << "#{name}: #{problem}"
@@ -216,10 +237,25 @@ module SQLiteEngineWriteDriver
     Summary.new(count, operations, rows, failures, unexpected)
   end
 
+  # sqlite3 reading a database the engine holds open in WAL mode: the
+  # integrity check passes, and it reads the same rows as a later read of
+  # the checkpointed file (checked in `check`).
+  def self.live_wal_problem(path : String) : String?
+    output = IO::Memory.new
+    status = Process.run("sqlite3", [path, "PRAGMA integrity_check;"], output: output, error: output)
+    return "sqlite3 on the live WAL database: #{output.to_s.strip[0, 300]}" unless status.success? && output.to_s == "ok\n"
+    nil
+  end
+
   # The first way the engine's file differs from the C file, or nil.
-  def self.check(directory : Path, name : String) : String?
+  def self.check(directory : Path, name : String, wal : Bool = false) : String?
     integrity = File.read(directory / "#{name}.e.integrity")
     return "integrity_check: #{integrity.strip[0, 400]}" unless integrity == "ok\n"
+    if wal
+      header = Bytes.new(20)
+      File.open(directory / "#{name}.e.db", "rb") { |file| file.read_fully(header) }
+      return "the engine's file is not in WAL mode (header bytes 18, 19: #{header[18]}, #{header[19]})" unless header[18] == 2 && header[19] == 2
+    end
     c_errors = File.read(directory / "#{name}.c.errors").strip
     e_errors = File.read(directory / "#{name}.e.errors").lines.first?.to_s.strip
     return "sqlite3 rejected #{c_errors} statements, the engine #{e_errors}" unless c_errors == e_errors

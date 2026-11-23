@@ -25,6 +25,15 @@ module SQLiteWriteOracle
 
   # A C connection and an engine session, on two files in *directory*.
   class Pair
+    # Both sides write in journal_mode=WAL. The engine's file is then read
+    # by a child process (`dump_command`), never by C in this process: POSIX
+    # locks belong to the process, so a C connection here would take the
+    # engine's locks for its own and, closing, remove the engine's live WAL.
+    class_property? wal = false
+    # The program and arguments that print `Pair.child_dump` of a path
+    # given as the last argument.
+    class_property dump_command : Array(String) = [] of String
+
     getter c_path : String
     getter engine_path : String
     getter c_connection : SQLiteQueryOracle::Connection
@@ -44,12 +53,35 @@ module SQLiteWriteOracle
         File.delete?("#{path}-journal")
       end
       @c_connection = SQLiteQueryOracle::Connection.new(@c_path)
+      @c_connection.query("PRAGMA journal_mode=WAL") if Pair.wal?
       @session = Pair.open_session(@engine_path)
     end
 
     def self.open_session(path : String) : Grant::SQLiteEngine::Query::Session
       pager = Grant::SQLiteEngine::Pager.open_read_write(Grant::SQLiteEngine::PosixFileSystem.new, path)
-      Grant::SQLiteEngine::Query::Session.new(Grant::SQLiteEngine::Database.new(pager, File.realpath(path)))
+      database = Grant::SQLiteEngine::Database.new(pager, File.realpath(path))
+      database.journal_mode = Grant::SQLiteEngine::JournalMode::Wal if Pair.wal?
+      Grant::SQLiteEngine::Query::Session.new(database)
+    end
+
+    # integrity_check's rows, then the dump, of the file at *path*, as JSON.
+    def self.child_dump(path : String) : String
+      connection = SQLiteQueryOracle::Connection.new(path)
+      begin
+        integrity = connection.query("PRAGMA integrity_check")
+        status = integrity.error.nil? && integrity.list_of_rows == [["ok"] of Value] ? "ok" : "#{integrity.list_of_rows.first(5)} #{integrity.error}"
+        ([status] + dump(connection)).to_json
+      ensure
+        connection.close
+      end
+    end
+
+    private def child_engine_dump : Array(String)
+      command = Pair.dump_command
+      output = IO::Memory.new
+      status = Process.run(command.first, command[1..] + [@engine_path], output: output, error: output)
+      raise "the dump process failed: #{output.to_s[0, 400]}" unless status.success?
+      Array(String).from_json(output.to_s)
     end
 
     def close : Nil
@@ -69,8 +101,15 @@ module SQLiteWriteOracle
       StepResult.new(outcome, LibWriteOracle.changes64(handle), LibWriteOracle.last_insert_rowid(handle), delta)
     end
 
+    # Runs *sql* under the statement read lock, as Grant's driver does (in
+    # WAL mode the read lock is the snapshot the statement reads).
     def engine_step(sql : String, parameters : Array(Value) = [] of Value) : StepResult
-      outcome = SQLiteQueryOracle.engine_query(@session, sql, parameters)
+      @session.begin_statement_read
+      outcome = begin
+        SQLiteQueryOracle.engine_query(@session, sql, parameters)
+      ensure
+        @session.end_statement_read
+      end
       delta = @session.total_changes - @engine_total
       @engine_total = @session.total_changes
       StepResult.new(outcome, @session.changes, @session.last_insert_rowid, delta)
@@ -125,22 +164,29 @@ module SQLiteWriteOracle
     # without root pages, every table's rows by rowid, sqlite_sequence),
     # or C's integrity_check failure on the engine's file; nil when equal.
     def file_difference : String?
+      if Pair.wal?
+        list = child_engine_dump
+        return "integrity_check of the engine's file: #{list.first}" unless list.first == "ok"
+        return compare_dumps(Pair.dump(@c_connection), list[1..])
+      end
       engine_reader = SQLiteQueryOracle::Connection.new(@engine_path)
       begin
         integrity = engine_reader.query("PRAGMA integrity_check")
         unless integrity.error.nil? && integrity.list_of_rows == [["ok"] of Value]
           return "integrity_check of the engine's file: #{integrity.list_of_rows.first(5)} #{integrity.error}"
         end
-        expected = Pair.dump(@c_connection)
-        actual = Pair.dump(engine_reader)
-        return if expected == actual
-        expected.each_with_index do |line, index|
-          return "file contents at line #{index}: C #{line}, engine #{actual[index]? || "(end)"}" if actual[index]? != line
-        end
-        "file contents: engine has #{actual.size - expected.size} more lines: #{actual[expected.size]?}"
+        compare_dumps(Pair.dump(@c_connection), Pair.dump(engine_reader))
       ensure
         engine_reader.close
       end
+    end
+
+    private def compare_dumps(expected : Array(String), actual : Array(String)) : String?
+      return if expected == actual
+      expected.each_with_index do |line, index|
+        return "file contents at line #{index}: C #{line}, engine #{actual[index]? || "(end)"}" if actual[index]? != line
+      end
+      "file contents: engine has #{actual.size - expected.size} more lines: #{actual[expected.size]?}"
     end
 
     # A logical dump through C: schema rows, then each table's rows.

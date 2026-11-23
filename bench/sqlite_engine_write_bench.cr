@@ -1,20 +1,23 @@
 # bench/sqlite_engine_write_bench.cr
 #
-# Interleaved A/B of Grant's pure-Crystal SQLite writer (milestone G2)
-# against the C library, both in journal_mode=DELETE with synchronous=FULL:
-# the two alternate for ROUNDS rounds (order flipped every round), and each
+# Interleaved A/B of Grant's pure-Crystal SQLite writer against the C
+# library, both in the same journal mode and synchronous setting
+# (journal_mode=DELETE with synchronous=FULL unless named): the two
+# alternate for ROUNDS rounds (order flipped every round), and each
 # workload reports the median ratio as "N× as fast" or "N× slower" with the
 # range of the middle rounds.
 #
 #   crystal-alpha build --release bench/sqlite_engine_write_bench.cr -o sqlite_engine_write_bench
-#   ./sqlite_engine_write_bench [directory] [rounds]
+#   ./sqlite_engine_write_bench [directory] [rounds] [delete|wal] [full|normal]
 #
 # Workloads, each on its own copy of the files so neither side sees the
 # other's work: 200,000 inserts in one transaction into an empty table;
-# 1,000 inserts each in its own transaction; 10,000 updates by rowid and
-# 10,000 deletes by rowid, each in one transaction, on a 200,000-row table
-# the sqlite3 tool built. The C side runs prepared statements with bound
-# values; the engine side calls its typed write API (no SQL).
+# 1,000 inserts each in its own transaction; the same with a second
+# connection reading the new row after every commit; 10,000 updates by
+# rowid and 10,000 deletes by rowid, each in one transaction, on a
+# 200,000-row table the sqlite3 tool built. The C side runs prepared
+# statements with bound values; the engine side calls its typed write API
+# (no SQL).
 #
 # Only this benchmark links libsqlite3; the engine itself links no native
 # library.
@@ -43,6 +46,7 @@ end
 
 module SQLiteEngineWriteBench
   OPEN_READ_WRITE_CREATE =       6
+  ROW                    =     100
   DONE                   =     101
   ROWS                   = 200_000
   SINGLE_INSERTS         =   1_000
@@ -53,6 +57,9 @@ module SQLiteEngineWriteBench
 
   alias Value = Grant::SQLiteEngine::Value
 
+  class_property journal_mode = "delete"
+  class_property synchronous = "full"
+
   def self.row(number : Int64) : Array(Value)
     [number, "label #{number * 7919 % ROWS}", number * 3 - ROWS, number / 7.0, "p" * (20 + number % 80)] of Value
   end
@@ -61,7 +68,7 @@ module SQLiteEngineWriteBench
     handle = Pointer(Void).null
     code = LibSQLite3Writer.open_v2(path, pointerof(handle), OPEN_READ_WRITE_CREATE, nil)
     raise "sqlite3_open_v2 failed with #{code}" unless code == 0
-    c_exec(handle, "PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL;")
+    c_exec(handle, "PRAGMA journal_mode=#{journal_mode}; PRAGMA synchronous=#{synchronous};")
     yield handle
     LibSQLite3Writer.close_v2(handle)
   end
@@ -97,7 +104,9 @@ module SQLiteEngineWriteBench
   end
 
   def self.engine_open(path : String) : Grant::SQLiteEngine::Database
-    Grant::SQLiteEngine::Database.open(path, read_write: true)
+    Grant::SQLiteEngine::Database.open(path, read_write: true,
+      journal_mode: journal_mode == "wal" ? Grant::SQLiteEngine::JournalMode::Wal : Grant::SQLiteEngine::JournalMode::Delete,
+      synchronous: synchronous == "normal" ? Grant::SQLiteEngine::Synchronous::Normal : Grant::SQLiteEngine::Synchronous::Full)
   end
 
   # Fresh files for one run: an empty table, or a copy of the 200,000-row
@@ -105,7 +114,7 @@ module SQLiteEngineWriteBench
   def self.prepare(directory : String, name : String, base : String?) : String
     path = File.join(directory, name)
     File.delete?(path)
-    File.delete?("#{path}-journal")
+    %w[-journal -wal -shm].each { |suffix| File.delete?("#{path}#{suffix}") }
     if base
       FileUtils.cp(base, path)
     else
@@ -150,6 +159,34 @@ module SQLiteEngineWriteBench
               c_run(statement)
             end
             LibSQLite3Writer.finalize(statement)
+          end
+        }),
+      Workload.new("single-row insert transactions, 1,000, a second connection reading after each", false,
+        ->(path : String) {
+          database = engine_open(path)
+          reader = engine_open(path)
+          (1_i64..SINGLE_INSERTS).each do |number|
+            database.insert("items", nil, row(number))
+            raise "the reader missed row #{number}" unless reader.find_row("items", number)
+          end
+          reader.close
+          database.close
+        },
+        ->(path : String) {
+          c_open(path) do |handle|
+            c_open(path) do |reader|
+              statement = c_prepare(handle, "INSERT INTO items VALUES (?, ?, ?, ?, ?)")
+              query = c_prepare(reader, "SELECT payload FROM items WHERE rowid = ?")
+              (1_i64..SINGLE_INSERTS).each do |number|
+                c_bind_row(statement, row(number), 1)
+                c_run(statement)
+                LibSQLite3Writer.bind_int64(query, 1, number)
+                raise "the reader missed row #{number}" unless LibSQLite3Writer.step(query) == ROW
+                LibSQLite3Writer.reset(query)
+              end
+              LibSQLite3Writer.finalize(query)
+              LibSQLite3Writer.finalize(statement)
+            end
           end
         }),
       Workload.new("update by rowid, 10,000 in one transaction", true,
@@ -234,7 +271,7 @@ module SQLiteEngineWriteBench
     updates = Array(Int64).new(CHANGES) { random.rand(1_i64..ROWS.to_i64) }
     deletes = (1_i64..ROWS.to_i64).to_a.shuffle(random).first(CHANGES)
     STDOUT.puts "C library: SQLite #{String.new(LibSQLite3Writer.libversion)} (#{String.new(LibSQLite3Writer.sourceid)})"
-    STDOUT.puts "Rounds: #{rounds}, order alternating (engine first on even rounds); journal_mode=DELETE, synchronous=FULL on both"
+    STDOUT.puts "Rounds: #{rounds}, order alternating (engine first on even rounds); journal_mode=#{journal_mode.upcase}, synchronous=#{synchronous.upcase} on both"
     workloads(updates, deletes).each do |workload|
       source = workload.base ? base : nil
       engine_path = prepare(directory, "engine.db", source)
@@ -270,4 +307,6 @@ end
 
 directory = ARGV[0]? || File.join(Dir.tempdir, "grant_sqlite_engine_write_bench")
 rounds = (ARGV[1]? || "10").to_i
+SQLiteEngineWriteBench.journal_mode = ARGV[2]? || "delete"
+SQLiteEngineWriteBench.synchronous = ARGV[3]? || "full"
 SQLiteEngineWriteBench.run(directory, rounds)

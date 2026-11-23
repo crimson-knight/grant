@@ -21,3 +21,20 @@ describe "Grant::SQLiteEngine random write sequences" do
     summary.list_of_unexpected.should be_empty
   end
 end
+
+# The same sequences in journal_mode=WAL on both sides. The nightly run sets
+# SQLITE_ENGINE_WAL_WRITE_SEQUENCES=10000.
+describe "Grant::SQLiteEngine random write sequences in WAL mode" do
+  count = ENV.fetch("SQLITE_ENGINE_WAL_WRITE_SEQUENCES", "20").to_i
+  seed = (ENV["SQLITE_ENGINE_WRITE_SEED"]? || DEFAULT_WRITE_SEED).to_i64
+
+  it "writes WAL files C SQLite accepts and reads as its own (#{count} sequences, seed #{seed})" do
+    summary = SQLiteEngineWriteDriver.run(count, seed, keep: ENV["SQLITE_ENGINE_WRITE_FAILURES"]?, wal: true)
+    STDOUT.puts "\n  random writes in WAL mode: #{summary.sequences} sequences, seed #{seed}, #{summary.operations} operations, " \
+                "#{summary.rows_compared} dump lines compared, #{summary.list_of_failures.size} failures"
+    summary.list_of_failures.first(10).each { |failure| STDOUT.puts "  #{failure}" }
+    summary.list_of_unexpected.first(10).each { |message| STDOUT.puts "  unexpected: #{message}" }
+    summary.list_of_failures.should be_empty
+    summary.list_of_unexpected.should be_empty
+  end
+end
