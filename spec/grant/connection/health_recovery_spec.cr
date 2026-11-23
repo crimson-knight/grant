@@ -1,15 +1,18 @@
 require "./pool_spec_support"
 
-# An adapter whose health probe fails on demand and can be made slow, standing
-# in for a database that goes down and comes back.
+# An adapter whose health probe fails on demand and can be made to hang,
+# standing in for a database that goes down and comes back. While a gate is
+# set, every probe blocks until the example sends on it.
 class C02FlakyAdapter < Grant::Adapter::Sqlite
   property? failing : Bool = false
-  property probe_delay : Time::Span = 0.seconds
+  property probe_gate : Channel(Nil)? = nil
   getter probes : Int32 = 0
 
   def ping : Nil
     @probes += 1
-    sleep @probe_delay if @probe_delay > 0.seconds
+    if gate = @probe_gate
+      gate.receive
+    end
     raise IO::Error.new("connection refused") if failing?
   end
 end
@@ -60,30 +63,35 @@ describe Grant::HealthMonitor do
 
   it "treats a probe that outlives health_check_timeout as unhealthy" do
     adapter = C02FlakyAdapter.new("c02_flaky:writing", "sqlite3::memory:")
-    adapter.probe_delay = 300.milliseconds
+    gate = Channel(Nil).new
+    adapter.probe_gate = gate
     monitor = Grant::HealthMonitor.new(adapter, flaky_spec(health_check_timeout: 50.milliseconds))
 
+    # The probe cannot answer until the gate opens, so only the timeout ends the check.
     monitor.check_health_now.should be_false
     monitor.healthy?.should be_false
+    gate.send(nil)
   end
 
   it "leaves no fiber behind after a probe times out and starts no second probe while one is stuck" do
     adapter = C02FlakyAdapter.new("c02_flaky:writing", "sqlite3::memory:")
-    adapter.probe_delay = 250.milliseconds
+    gate = Channel(Nil).new
+    adapter.probe_gate = gate
     monitor = Grant::HealthMonitor.new(adapter, flaky_spec(health_check_timeout: 30.milliseconds))
     Fiber.yield
     baseline = fiber_count
 
-    # Five checks while the first probe is still sleeping: one probe fiber.
+    # Five checks while the first probe is stuck at the gate: one probe fiber.
     5.times { monitor.check_health_now.should be_false }
     adapter.probes.should eq 1
     fiber_count.should be <= baseline + 1
 
-    # The stuck probe delivers into the buffered channel and exits.
-    sleep 400.milliseconds
+    # Once the probe can answer, it delivers into the buffered channel and exits.
+    adapter.probe_gate = nil
+    gate.send(nil)
+    wait_until(10.seconds) { fiber_count <= baseline }
     fiber_count.should be <= baseline
 
-    adapter.probe_delay = 0.seconds
     monitor.check_health_now.should be_true
     adapter.probes.should eq 2
   end
@@ -95,17 +103,35 @@ describe Grant::HealthMonitor do
     monitor = Grant::HealthMonitor.new(adapter, flaky_spec(health_check_interval: 20.milliseconds))
     monitor.start
 
-    wait_until(2.seconds) { !monitor.healthy? }
+    wait_until(10.seconds) { !monitor.healthy? }
     monitor.healthy?.should be_false
 
     adapter.failing = false
-    wait_until(2.seconds) { monitor.healthy? }
+    wait_until(10.seconds) { monitor.healthy? }
     monitor.healthy?.should be_true
 
+    # Once its timer fiber has finished, nothing is left that could probe.
     monitor.stop
+    wait_until(10.seconds) { !monitor.monitoring? }
+    monitor.monitoring?.should be_false
     probes_at_stop = adapter.probes
-    sleep 100.milliseconds
+    5.times { Fiber.yield }
     adapter.probes.should eq probes_at_stop
+  end
+
+  it "reports monitoring? from start until the timer fiber has stopped" do
+    Grant::HealthMonitor.test_mode = false
+    adapter = C02FlakyAdapter.new("c02_flaky:writing", "sqlite3::memory:")
+    monitor = Grant::HealthMonitor.new(adapter, flaky_spec(health_check_interval: 1.hour))
+    monitor.monitoring?.should be_false
+
+    monitor.start
+    monitor.monitoring?.should be_true
+
+    monitor.stop
+    wait_until(10.seconds) { !monitor.monitoring? }
+    monitor.monitoring?.should be_false
+    adapter.probes.should eq 0
   end
 
   it "routes get_adapter away from an unhealthy connection and back once it recovers" do

@@ -34,15 +34,26 @@ private def w6_idle_adapter(verify_idle_after : Time::Span?) : Grant::Adapter::B
 end
 
 # Makes every idle connection of *adapter* dead: terminates the PostgreSQL
-# backends, or arms the SQLite probe to fail once.
+# backends, or arms the SQLite probe to fail once. The timeout form of
+# pg_terminate_backend returns only once each backend has exited, so the next
+# statement meets a dead socket however quickly it follows.
 private def w6_kill_idle_connections(adapter : Grant::Adapter::Base) : Nil
   if W6C04.pg?
     DB.open(W6C04.pg_url("postgres")) do |db|
-      db.exec "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '#{W6C04.database_name("w6_idle")}' AND pid <> pg_backend_pid()"
+      db.exec "SELECT pg_terminate_backend(pid, 10000) FROM pg_stat_activity WHERE datname = '#{W6C04.database_name("w6_idle")}' AND pid <> pg_backend_pid()"
     end
   else
     adapter.as(W6ProbeSqlite).dead_probes = 1
   end
+end
+
+# Marks the pool's one idle connection as last used *by* ago, so the next
+# checkout finds it past `verify_idle_after` without the example sleeping.
+# Each example's pool opens a single connection and uses it serially.
+private def w6_backdate_idle_connection(adapter : Grant::Adapter::Base, by : Time::Span) : Nil
+  connection = adapter.database.checkout
+  connection.grant_last_used_ticks -= by.total_milliseconds.to_i64
+  connection.release
 end
 
 private def w6_probes(adapter : Grant::Adapter::Base) : Int32
@@ -67,9 +78,9 @@ describe "idle connection verification (#{CURRENT_ADAPTER})" do
   end
 
   it "replaces a dead idle connection with one probe instead of failing the write" do
-    adapter = w6_idle_adapter(20.milliseconds)
+    adapter = w6_idle_adapter(1.hour)
     W6IdleThing.create!(label: "before")
-    sleep 40.milliseconds
+    w6_backdate_idle_connection(adapter, 2.hours)
     w6_kill_idle_connections(adapter)
 
     W6IdleThing.create!(label: "after the restart").persisted?.should be_true
@@ -77,9 +88,9 @@ describe "idle connection verification (#{CURRENT_ADAPTER})" do
   end
 
   it "starts a transaction on a connection that went stale while idle" do
-    adapter = w6_idle_adapter(20.milliseconds)
+    adapter = w6_idle_adapter(1.hour)
     W6IdleThing.create!(label: "warm")
-    sleep 40.milliseconds
+    w6_backdate_idle_connection(adapter, 2.hours)
     w6_kill_idle_connections(adapter)
 
     W6IdleThing.transaction { W6IdleThing.create!(label: "inside a transaction") }
@@ -87,18 +98,18 @@ describe "idle connection verification (#{CURRENT_ADAPTER})" do
   end
 
   it "reads through a dead idle connection" do
-    adapter = w6_idle_adapter(20.milliseconds)
+    adapter = w6_idle_adapter(1.hour)
     W6IdleThing.create!(label: "readable")
-    sleep 40.milliseconds
+    w6_backdate_idle_connection(adapter, 2.hours)
     w6_kill_idle_connections(adapter)
 
     W6IdleThing.where(label: "readable").count.should eq 1
   end
 
   it "keeps the pool within its size when it discards a dead connection" do
-    adapter = w6_idle_adapter(20.milliseconds)
+    adapter = w6_idle_adapter(1.hour)
     W6IdleThing.create!(label: "pool")
-    sleep 40.milliseconds
+    w6_backdate_idle_connection(adapter, 2.hours)
     w6_kill_idle_connections(adapter)
     W6IdleThing.count
 
@@ -117,9 +128,9 @@ describe "idle connection verification (#{CURRENT_ADAPTER})" do
   end
 
   it "probes once after the idle threshold, not on every checkout" do
-    adapter = w6_idle_adapter(30.milliseconds)
+    adapter = w6_idle_adapter(1.hour)
     W6IdleThing.count
-    sleep 60.milliseconds
+    w6_backdate_idle_connection(adapter, 2.hours)
 
     statements = StatementRecorder.statements do
       50.times { W6IdleThing.count }
@@ -156,7 +167,7 @@ describe "idle connection verification (#{CURRENT_ADAPTER})" do
   end
 
   it "rebuilds the pool on reconnect!" do
-    adapter = w6_idle_adapter(20.milliseconds)
+    adapter = w6_idle_adapter(1.hour)
     W6IdleThing.create!(label: "first")
 
     adapter.reconnect!

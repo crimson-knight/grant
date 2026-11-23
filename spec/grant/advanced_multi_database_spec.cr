@@ -113,21 +113,24 @@ describe "Advanced Multi-Database Support" do
       tracker.mark_write
       tracker.can_use_replica?(1.second).should be_false
 
-      # After waiting, can use replica again
-      sleep(0.1.seconds)
-      tracker.can_use_replica?(0.05.seconds).should be_true
+      # Once the last write is older than the wait period, can use replica again
+      tracker.last_write_time = Time.instant - 2.seconds
+      tracker.can_use_replica?(1.second).should be_true
     end
 
     it "supports sticky sessions" do
       tracker = Grant::ConnectionManagement::ReplicaLagTracker.new
 
-      # Stick to primary for 1 second
-      tracker.stick_to_primary(1.second)
+      # Stick to primary for an hour
+      tracker.stick_to_primary(1.hour)
       tracker.can_use_replica?(0.seconds).should be_false
 
-      # Still stuck after short wait
-      sleep(0.1.seconds)
+      # Still stuck while the window lasts, back on the replica once it ends
+      tracker.mark_write
+      tracker.last_write_time = Time.instant - 1.second
       tracker.can_use_replica?(0.seconds).should be_false
+      tracker.sticky_until = Time.instant - 1.second
+      tracker.can_use_replica?(0.seconds).should be_true
     end
   end
 

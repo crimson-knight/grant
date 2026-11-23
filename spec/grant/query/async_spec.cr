@@ -78,6 +78,9 @@ describe "async queries" do
       with_async_pool_size(2) do
         running = Atomic(Int32).new(0)
         peak = Atomic(Int32).new(0)
+        # Every block stays inside its slot until the gate closes, so the
+        # blocks that got a slot are all running at once when it is counted.
+        gate = Channel(Nil).new
         results = Array(Grant::Async::Result(Int32)).new
         8.times do |index|
           results << Grant::Async::Result(Int32).new do
@@ -86,14 +89,24 @@ describe "async queries" do
               seen = peak.get
               break if now <= seen || peak.compare_and_set(seen, now)[1]
             end
-            sleep 20.milliseconds
+            gate.receive?
             running.sub(1)
             index
           end
         end
+
+        deadline = Time.instant + 30.seconds
+        until running.get == 2 || Time.instant > deadline
+          sleep 1.millisecond
+        end
+        # Two blocks hold the two slots; the other six are waiting for one.
+        running.get.should eq 2
+        5.times { Fiber.yield }
+        running.get.should eq 2
+
+        gate.close
         results.map(&.wait).should eq (0...8).to_a
-        peak.get.should be <= 2
-        peak.get.should be >= 1
+        peak.get.should eq 2
       end
     end
 

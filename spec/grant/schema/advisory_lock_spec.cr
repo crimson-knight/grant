@@ -8,39 +8,53 @@ end
 describe "advisory locks" do
   it "serializes two fibers that want the same key" do
     events = [] of String
+    inside = Channel(Nil).new
+    release = Channel(Nil).new
     done = Channel(Nil).new
-    2.times do |index|
-      spawn do
-        Grant.with_advisory_lock("m03-serial", M03Fixture.adapter, 5.seconds) do
-          events << "enter#{index}"
-          sleep 60.milliseconds
-          events << "leave#{index}"
-        end
-        done.send(nil)
+    spawn do
+      Grant.with_advisory_lock("m03-serial", M03Fixture.adapter, 30.seconds) do
+        events << "enter0"
+        inside.send(nil)
+        release.receive
+        events << "leave0"
       end
+      done.send(nil)
     end
+    inside.receive
+
+    # While the first fiber holds the key, a second taker cannot get in at all.
+    expect_raises(Grant::AdvisoryLockTimeout) do
+      Grant.with_advisory_lock("m03-serial", M03Fixture.adapter, Time::Span.zero) { events << "overlap" }
+    end
+    spawn do
+      Grant.with_advisory_lock("m03-serial", M03Fixture.adapter, 30.seconds) do
+        events << "enter1"
+        events << "leave1"
+      end
+      done.send(nil)
+    end
+    release.send(nil)
     2.times { done.receive }
-    events.size.should eq 4
-    # Each entry is followed at once by its own exit: the critical sections never overlap.
-    events[0][5].should eq events[1][5]
-    events[2][5].should eq events[3][5]
+    events.should eq ["enter0", "leave0", "enter1", "leave1"]
   end
 
   it "lets different keys run side by side" do
     inside = Channel(Nil).new
     release = Channel(Nil).new
+    finished = Channel(Nil).new
     spawn do
       Grant.with_advisory_lock("m03-key-a", M03Fixture.adapter) do
         inside.send(nil)
         release.receive
       end
+      finished.send(nil)
     end
     inside.receive
     reached = false
-    Grant.with_advisory_lock("m03-key-b", M03Fixture.adapter, 1.second) { reached = true }
+    Grant.with_advisory_lock("m03-key-b", M03Fixture.adapter, Time::Span.zero) { reached = true }
     reached.should be_true
     release.send(nil)
-    sleep 10.milliseconds
+    finished.receive
   end
 
   it "times out while another holder keeps the key, then succeeds once it lets go" do
@@ -106,7 +120,7 @@ describe "advisory locks" do
           expect_raises(Grant::AdvisoryLockTimeout) do
             Grant.with_advisory_lock(key, M03Fixture.adapter, 150.milliseconds) { }
           end
-          M03Fixture.adapter.open { |db| db.scalar("SELECT pg_terminate_backend(#{pid})") }
+          M03Fixture.adapter.open { |db| db.scalar("SELECT pg_terminate_backend(#{pid}, 10000)") }
         end
       rescue DB::Error
         # The terminated connection reports its own death; the lock is what matters.
@@ -114,7 +128,7 @@ describe "advisory locks" do
         foreign.close rescue nil
       end
       reached = false
-      Grant.with_advisory_lock(key, M03Fixture.adapter, 3.seconds) { reached = true }
+      Grant.with_advisory_lock(key, M03Fixture.adapter, 30.seconds) { reached = true }
       reached.should be_true
     end
   end

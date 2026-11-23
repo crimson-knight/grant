@@ -153,23 +153,23 @@ describe "Multi-Database Unit Tests" do
       tracker.mark_write
       tracker.can_use_replica?(2.seconds).should be_false
 
-      # After waiting, can use replica
-      sleep(2.1.seconds)
+      # Once the last write is older than the wait period, can use replica
+      tracker.last_write_time = Time.instant - 3.seconds
       tracker.can_use_replica?(2.seconds).should be_true
     end
 
     it "implements sticky sessions" do
       tracker = Grant::ConnectionManagement::ReplicaLagTracker.new
 
-      # Stick to primary for 3 seconds
-      tracker.stick_to_primary(3.seconds)
+      # Stick to primary for an hour
+      tracker.stick_to_primary(1.hour)
 
-      # Cannot use replica during sticky period
+      # Cannot use replica during sticky period, even with no recent writes
       tracker.can_use_replica?(0.seconds).should be_false
 
-      # Even with no recent writes
-      sleep(1.seconds)
-      tracker.can_use_replica?(0.seconds).should be_false
+      # Once the window has ended, can use replica
+      tracker.sticky_until = Time.instant - 1.second
+      tracker.can_use_replica?(0.seconds).should be_true
     end
   end
 

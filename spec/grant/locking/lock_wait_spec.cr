@@ -49,6 +49,25 @@ private def lock_wait_spec_holding(id : Int64, mode : Grant::Locking::LockMode =
   end
 end
 
+# Sessions of this database blocked waiting for a row lock right now.
+private def lock_wait_spec_blocked_sessions : Int64
+  sql = if LockWaitSpecJob.adapter.postgres?
+          "SELECT COUNT(*) FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND datname = current_database()"
+        else
+          "SELECT COUNT(*) FROM information_schema.innodb_trx WHERE trx_state = 'LOCK WAIT'"
+        end
+  LockWaitSpecJob.adapter.open { |db| db.scalar(sql).as(Int).to_i64 }
+end
+
+# Polls until the block returns true, failing the example after *timeout*.
+private def lock_wait_spec_wait_until(description : String, timeout : Time::Span = 30.seconds, & : -> Bool) : Nil
+  deadline = Time.instant + timeout
+  until yield
+    raise "timed out after #{timeout} waiting until #{description}" if Time.instant > deadline
+    sleep 10.milliseconds
+  end
+end
+
 private def lock_wait_spec_real_locks? : Bool
   LockWaitSpecJob.adapter.supports_lock_mode?(Grant::Locking::LockMode::Update)
 end
@@ -154,7 +173,8 @@ describe "Row lock waits" do
             waiter_done.send(nil)
           end
 
-          sleep 150.milliseconds
+          # The waiter's FOR UPDATE is seen blocked on the server before the holder lets go.
+          lock_wait_spec_wait_until("the waiter blocks on the held row") { lock_wait_spec_blocked_sessions >= 1 }
           events << "holder still holds"
           events.should eq(["holder still holds"])
         end
