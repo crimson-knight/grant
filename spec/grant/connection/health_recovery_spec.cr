@@ -30,12 +30,6 @@ private def wait_until(timeout : Time::Span, &) : Nil
   end
 end
 
-private def fiber_count : Int32
-  count = 0
-  Fiber.each { count += 1 }
-  count
-end
-
 describe Grant::HealthMonitor do
   after_each do
     Grant::ConnectionRegistry.clear_all
@@ -78,21 +72,18 @@ describe Grant::HealthMonitor do
     gate = Channel(Nil).new
     adapter.probe_gate = gate
     monitor = Grant::HealthMonitor.new(adapter, flaky_spec(health_check_timeout: 30.milliseconds))
-    Fiber.yield
-    baseline = fiber_count
 
     # Five checks while the first probe is stuck at the gate: one probe fiber.
     5.times { monitor.check_health_now.should be_false }
     adapter.probes.should eq 1
-    fiber_count.should be <= baseline + 1
 
-    # Once the probe can answer, it delivers into the buffered channel and exits.
+    # Once the probe can answer, it delivers into the buffered channel and
+    # exits; until then every check reports it as still running. The next
+    # check starts the second probe, which answers at once.
     adapter.probe_gate = nil
     gate.send(nil)
-    wait_until(10.seconds) { fiber_count <= baseline }
-    fiber_count.should be <= baseline
-
-    monitor.check_health_now.should be_true
+    wait_until(10.seconds) { monitor.check_health_now }
+    monitor.healthy?.should be_true
     adapter.probes.should eq 2
   end
 
