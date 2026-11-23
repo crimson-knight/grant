@@ -10,9 +10,14 @@
 # retried; a single file over the limit is reported as a failure.
 #
 # Usage:
-#   scripts/spec-groups.sh [--list] [--only <dir>]... [adapter ...]
+#   scripts/spec-groups.sh [--list] [--only <dir>]... [--shard <k>/<n>] [adapter ...]
 #
 # --only may be given more than once to run several directories.
+# --shard k/n runs only the k-th of n near-equal slices of the groups (1-based),
+# so n CI jobs can run the suite side by side. Each group carries a cost
+# estimate (its spec files, weighted per directory by SPEC_GROUP_WEIGHTS) and
+# the groups are dealt heaviest first to the lightest slice, so every slice
+# gets about the same compile and run time.
 #
 # Adapters default to $CURRENT_ADAPTER, or sqlite. Each adapter uses the same
 # environment the specs already read (PG_DATABASE_URL, SQLITE_DATABASE_URL,
@@ -22,6 +27,13 @@
 #   CRYSTAL                 compiler to run (default: crystal)
 #   SPEC_GROUP_MAX_RSS_GB   per-group memory ceiling in GB (default: 10)
 #   SPEC_GROUP_MAX_FILES    spec files per group (default: 12)
+#   SPEC_GROUP_DIR_MAX_FILES  per-directory override, "dir=n dir=n" (default:
+#                           spec/grant/associations=6: its files define the most
+#                           models, and 12 of them peaked near 13 GB)
+#   SPEC_GROUP_WEIGHTS      per-directory cost of one spec file for --shard,
+#                           "dir=n dir=n" (default: spec/grant/associations=3);
+#                           any other file costs 1, and every group adds a fixed
+#                           cost of 4 for compiling Grant and the spec models
 #   SPEC_GROUP_LOG_DIR      where per-group logs go (default: .crystal-cache/spec-groups)
 #   SPEC_GROUP_FAILURE_LINES  lines of a failed group's log to print (default: 200)
 #   SPEC_GROUP_INCREMENTAL  1 forces --incremental on, 0 forces it off; unset, it is
@@ -78,12 +90,22 @@ esac
 list_only=false
 only=()
 adapters=()
+shard=""
+dir_max_files="${SPEC_GROUP_DIR_MAX_FILES-spec/grant/associations=6}"
+dir_weights="${SPEC_GROUP_WEIGHTS-spec/grant/associations=3}"
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --list) list_only=true ;;
     --only) shift; only+=("${1%/}") ;;
-    -h|--help) sed -n '2,41p' "$0"; exit 0 ;;
+    --shard)
+      shift
+      shard="$1"
+      if ! [[ "$shard" =~ ^[0-9]+/[0-9]+$ ]] || [ "${shard%/*}" -lt 1 ] || [ "${shard%/*}" -gt "${shard#*/}" ]; then
+        echo "--shard takes k/n with 1 <= k <= n, not $shard" >&2; exit 2
+      fi
+      ;;
+    -h|--help) sed -n '2,53p' "$0"; exit 0 ;;
     *) adapters+=("$1") ;;
   esac
   shift
@@ -100,27 +122,66 @@ while IFS= read -r dir; do
 done < <(find spec -type d | sort)
 [ ${#only[@]} -gt 0 ] && dirs=("${only[@]}")
 
+# The value "dir=n" entry of *table* gives for *dir*, or *fallback*.
+dir_setting() {
+  local table="$1" dir="$2" fallback="$3" entry
+  for entry in $table; do
+    if [ "${entry%=*}" = "$dir" ]; then
+      echo "${entry##*=}"
+      return
+    fi
+  done
+  echo "$fallback"
+}
+
 groups=()
 for dir in "${dirs[@]}"; do
   count=$(ls "$dir"/*_spec.cr | wc -l | tr -d ' ')
-  if [ "$count" -le "$max_files" ]; then
+  limit=$(dir_setting "$dir_max_files" "$dir" "$max_files")
+  if [ "$count" -le "$limit" ]; then
     groups+=("$dir")
   else
-    chunks=$(( (count + max_files - 1) / max_files ))
+    chunks=$(( (count + limit - 1) / limit ))
     for n in $(seq 1 "$chunks"); do groups+=("$dir#$n"); done
   fi
 done
 
 # The spec files of a group, one per line.
 group_files() {
-  local dir="${1%%#*}" n
+  local dir="${1%%#*}" n limit
   if [ "$1" = "$dir" ]; then
     ls "$dir"/*_spec.cr
   else
     n="${1##*#}"
-    ls "$dir"/*_spec.cr | sed -n "$(( (n - 1) * max_files + 1 )),$(( n * max_files ))p"
+    limit=$(dir_setting "$dir_max_files" "$dir" "$max_files")
+    ls "$dir"/*_spec.cr | sed -n "$(( (n - 1) * limit + 1 )),$(( n * limit ))p"
   fi
 }
+
+# Keeps the groups of slice k of n: heaviest group first, each to the slice
+# with the least estimated cost so far (ties go to the lower slice).
+if [ -n "$shard" ]; then
+  shard_index=$(( ${shard%/*} - 1 ))
+  shard_count="${shard#*/}"
+  weighted=()
+  for group in "${groups[@]}"; do
+    files=$(group_files "$group" | wc -l | tr -d ' ')
+    weight=$(( 4 + files * $(dir_setting "$dir_weights" "${group%%#*}" 1) ))
+    weighted+=("$weight $group")
+  done
+  loads=()
+  for _ in $(seq 1 "$shard_count"); do loads+=(0); done
+  kept=()
+  while read -r weight group; do
+    lightest=0
+    for i in "${!loads[@]}"; do
+      [ "${loads[$i]}" -lt "${loads[$lightest]}" ] && lightest=$i
+    done
+    loads[lightest]=$(( loads[lightest] + weight ))
+    [ "$lightest" -eq "$shard_index" ] && kept+=("$group")
+  done < <(printf '%s\n' "${weighted[@]}" | sort -k1,1nr -k2,2)
+  groups=(${kept[@]+"${kept[@]}"})
+fi
 
 if $list_only; then
   for group in "${groups[@]}"; do

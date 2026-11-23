@@ -9,9 +9,17 @@ on:
 permissions:
   contents: read
 
+# The suite runs in six slices side by side (spec-groups.sh --shard), as the
+# database jobs in spec.yml do, so no slice comes near its timeout.
 jobs:
   minimum-crystal:
+    name: minimum-crystal (${{ matrix.shard }}/6)
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6]
     steps:
       - name: Download source
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -42,12 +50,13 @@ jobs:
       - name: Install shards
         run: shards install --frozen --skip-postinstall --skip-executables
       - name: Type-check Grant
+        if: matrix.shard == 1
         run: crystal build --no-codegen src/grant.cr
       - name: Run tests
         # The whole suite compiled as one program needs about 20 GB of RAM; a
         # runner has 16 GB. spec-groups.sh compiles one group at a time.
-        timeout-minutes: 60
-        run: scripts/spec-groups.sh sqlite
+        timeout-minutes: 25
+        run: scripts/spec-groups.sh --shard ${{ matrix.shard }}/6 sqlite
         env:
           CRYSTAL: crystal
           SPEC_GROUP_INCREMENTAL: "0"
