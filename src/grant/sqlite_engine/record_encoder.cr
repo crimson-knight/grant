@@ -132,28 +132,32 @@ module Grant::SQLiteEngine
   # Builds records (fileformat2.html §2.1): the header of serial types, then
   # the values, each integer in the fewest bytes that hold it.
   module RecordEncoder
+    # A buffer records are encoded into again and again, growing to the
+    # largest; each record is a view of it, valid until the next.
+    class EncodeBuffer
+      @bytes = Bytes.new(256)
+
+      def take(size : Int32) : Bytes
+        @bytes = Bytes.new(Math.max(size, @bytes.size * 2)) if size > @bytes.size
+        @bytes[0, size]
+      end
+    end
+
     # Encodes *values*, text in *encoding*. Schema format 4 and later store
     # the integers 0 and 1 in the header alone (serial types 8 and 9).
     def self.encode(values : Array(Value), encoding : TextEncoding, schema_format : UInt32 = 4_u32) : Bytes
-      list_of_serial_types = Array(Int64).new(values.size)
-      list_of_contents = Array(Bytes?).new(values.size)
+      encode(values.size, encoding, schema_format) { |index| values.unsafe_fetch(index) }
+    end
+
+    # Encodes the *count* values the block gives for each index (it is
+    # called more than once per value). With *buffer*, the record is a view
+    # of the buffer's bytes, valid until the buffer is used again.
+    def self.encode(count : Int32, encoding : TextEncoding, schema_format : UInt32, buffer : EncodeBuffer? = nil,
+                    & : Int32 -> Value) : Bytes
       header_body = 0
       content_size = 0_i64
-      values.each do |value|
-        content = nil
-        serial_type = case value
-                      when Nil     then 0_i64
-                      when Int64   then integer_serial_type(value, schema_format)
-                      when Float64 then value.nan? ? 0_i64 : 7_i64
-                      when String
-                        content = text_bytes(value, encoding)
-                        content.size.to_i64 * 2 + 13
-                      else
-                        content = value
-                        value.size.to_i64 * 2 + 12
-                      end
-        list_of_serial_types << serial_type
-        list_of_contents << content
+      count.times do |index|
+        serial_type = serial_type_of(yield(index), encoding, schema_format)
         header_body += Varint.size(serial_type)
         content_size += Record.content_size(serial_type, 0_u32)
       end
@@ -165,21 +169,47 @@ module Grant::SQLiteEngine
       if total > Limits::MAX_RECORD_BYTES
         raise LimitExceeded.new("SQLITE_MAX_LENGTH", "a record of #{total} bytes is larger than #{Limits::MAX_RECORD_BYTES}")
       end
-      record = Bytes.new(total.to_i32)
+      record = buffer ? buffer.take(total.to_i32) : Bytes.new(total.to_i32)
       position = Varint.encode(header_size.to_i64, record, 0)
-      list_of_serial_types.each { |serial_type| position += Varint.encode(serial_type, record, position) }
-      values.each_with_index do |value, index|
-        serial_type = list_of_serial_types.unsafe_fetch(index)
-        if content = list_of_contents.unsafe_fetch(index)
+      count.times do |index|
+        position += Varint.encode(serial_type_of(yield(index), encoding, schema_format), record, position)
+      end
+      count.times do |index|
+        value = yield index
+        case value
+        when Int64
+          serial_type = integer_serial_type(value, schema_format)
+          if serial_type < 7
+            position += write_integer(record, position, value, Record.content_size(serial_type, 0_u32).to_i32)
+          end
+        when Float64
+          position += write_integer(record, position, value.unsafe_as(Int64), 8) unless value.nan?
+        when String
+          content = text_bytes(value, encoding)
           (record + position).copy_from(content.to_unsafe, content.size)
           position += content.size
-        elsif value.is_a?(Int64) && serial_type < 7
-          position += write_integer(record, position, value, Record.content_size(serial_type, 0_u32).to_i32)
-        elsif value.is_a?(Float64) && serial_type == 7
-          position += write_integer(record, position, value.unsafe_as(Int64), 8)
+        when Bytes
+          (record + position).copy_from(value.to_unsafe, value.size)
+          position += value.size
         end
       end
       record
+    end
+
+    # The serial type that stores *value*.
+    private def self.serial_type_of(value : Value, encoding : TextEncoding, schema_format : UInt32) : Int64
+      case value
+      when Nil     then 0_i64
+      when Int64   then integer_serial_type(value, schema_format)
+      when Float64 then value.nan? ? 0_i64 : 7_i64
+      when String  then text_size(value, encoding) * 2 + 13
+      else              value.size.to_i64 * 2 + 12
+      end
+    end
+
+    # The byte count of *text* in *encoding*, without converting UTF-8.
+    private def self.text_size(text : String, encoding : TextEncoding) : Int64
+      encoding.utf8? ? text.bytesize.to_i64 : text_bytes(text, encoding).size.to_i64
     end
 
     # The smallest serial type that holds *value*.

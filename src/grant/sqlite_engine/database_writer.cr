@@ -50,6 +50,8 @@ module Grant::SQLiteEngine
     @table_layouts = {} of String => TableLayout
     # Page copies and cell lists every b-tree change on this database borrows.
     @btree_scratch = BTreeScratch.new
+    # The buffer write_row encodes each table record into.
+    @record_buffer = RecordEncoder::EncodeBuffer.new
 
     # Opens *path*. With `read_write: true` the database is created when the
     # file does not exist, a hot journal is rolled back, and the write API
@@ -365,9 +367,16 @@ module Grant::SQLiteEngine
       end
     end
 
+    # One writer while the text encoding and schema format stay the same.
     private def btree_writer : BTreeWriter
-      BTreeWriter.new(@pager, text_encoding, header.try(&.schema_format) || 4_u32, @btree_scratch)
+      encoding = text_encoding
+      schema_format = header.try(&.schema_format) || 4_u32
+      writer = @btree_writer
+      return writer if writer && writer.writes?(encoding, schema_format)
+      @btree_writer = BTreeWriter.new(@pager, encoding, schema_format, @btree_scratch)
     end
+
+    @btree_writer : BTreeWriter?
 
     private def schema_changed : Nil
       cookie = @pager.header_field(Pager::SCHEMA_COOKIE_OFFSET)

@@ -2,6 +2,9 @@ module Grant::SQLiteEngine::Query
   # BEGIN, COMMIT/END, ROLLBACK [TO], SAVEPOINT and RELEASE
   # (lang_transaction.html, lang_savepoint.html).
   class TransactionPlan < StatementPlan
+    # What every run returns: no rows (PlanProducer only reads it).
+    NO_ROWS = [] of Array(Value)
+
     def initialize(@session : Session, @statement : SQL::Statement)
     end
 
@@ -23,7 +26,7 @@ module Grant::SQLiteEngine::Query
       when SQL::Release
         @session.release(statement.name.value)
       end
-      [] of Array(Value)
+      NO_ROWS
     end
   end
 end

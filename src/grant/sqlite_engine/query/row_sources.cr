@@ -203,6 +203,15 @@ module Grant::SQLiteEngine::Query
 
     def open(frame : Frame) : Nil
       @table.check_readable
+      if @key_expressions.size == 1
+        # One key (rowid = ?): the list is refilled, nothing allocated.
+        @keys.clear
+        key = ValueSemantics.apply_affinity(@key_expressions[0].evaluate(frame), ExpressionAffinity::Numeric)
+        @keys << key if key.is_a?(Int64)
+        @position = 0
+        @cursor ||= TableCursor.new(@database, @table.root_page)
+        return
+      end
       keys = Set(Int64).new
       @key_expressions.each do |expression|
         key = ValueSemantics.apply_affinity(expression.evaluate(frame), ExpressionAffinity::Numeric)

@@ -32,7 +32,7 @@ module Grant::SQLiteEngine::Query
       @write_tables.clear
       @child_tables = nil
       @database.forget_layouts
-      list_of_secondary_databases.each(&.forget_layouts)
+      each_secondary_database(&.forget_layouts)
     end
 
     # The rules for writing rows of *name*, or nil when there is no such
@@ -82,7 +82,7 @@ module Grant::SQLiteEngine::Query
     @secondary_marks = {} of Database => Hash(Int32, Int32)
 
     private def join_secondary_writes : Nil
-      list_of_secondary_databases.each { |database| join_one_write(database) }
+      each_secondary_database { |database| join_one_write(database) }
     end
 
     private def join_one_write(database : Database) : Nil
@@ -94,7 +94,7 @@ module Grant::SQLiteEngine::Query
     end
 
     private def each_secondary_in_write(& : Database ->) : Nil
-      list_of_secondary_databases.each do |database|
+      each_secondary_database do |database|
         yield database if database.pager.in_write_transaction?
       end
     end

@@ -149,6 +149,9 @@ module Grant::SQLiteEngine::Query
     # frame they were computed for.
     private def frame_for_run : Frame
       if @runs_a_plan
+        # Without parameters the frame holds nothing: one serves every such
+        # statement of the session.
+        return @session.frame_without_parameters if @parameter_count == 0
         frame = @plan_frame ||= Frame.new(0, 0, Array(Value).new(@parameter_count, nil), @session)
         ValueBuffer.refill(frame.list_of_parameters, @parameters)
         return frame

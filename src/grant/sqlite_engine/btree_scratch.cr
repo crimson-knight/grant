@@ -25,14 +25,18 @@ module Grant::SQLiteEngine
       @pages_in_use, @cell_lists_in_use = mark
     end
 
-    # A buffer of *size* bytes, its contents undefined.
+    # The buffer the entries of index b-trees are encoded into.
+    getter record_buffer = RecordEncoder::EncodeBuffer.new
+
+    # *size* bytes (a page copy or a cell), their contents undefined.
     def page(size : Int32) : Bytes
       index = @pages_in_use
       @pages_in_use += 1
       if index < @list_of_pages.size
         buffer = @list_of_pages[index]
-        return buffer if buffer.size == size
-        return @list_of_pages[index] = Bytes.new(size)
+        return buffer[0, size] if buffer.size >= size
+        buffer = @list_of_pages[index] = Bytes.new(size)
+        return buffer
       end
       buffer = Bytes.new(size)
       @list_of_pages << buffer if index < KEPT_LIMIT

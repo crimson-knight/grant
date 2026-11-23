@@ -8,6 +8,9 @@ module Grant::SQLiteEngine::Query
 
     @compiled : CompiledSelect
     @slot : Int32
+
+    # The snapshot of a target found by rowid, which nothing reads or changes.
+    NO_SNAPSHOT = [] of Value
     # The index the rows are read through (nil: the table, in rowid order).
     getter scan_index_root : UInt32?
 
@@ -52,7 +55,9 @@ module Grant::SQLiteEngine::Query
           next unless taken.add?(rowid)
         end
         frame.complete_row(@slot)
-        rows << {rowid, frame.list_of_rows[@slot].dup, values}
+        # A rowid table finds the row again by its rowid; only a WITHOUT
+        # ROWID table reads the snapshot (its primary key).
+        rows << {rowid, rowid ? NO_SNAPSHOT : frame.list_of_rows[@slot].dup, values}
       end
       rows
     end

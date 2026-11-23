@@ -32,7 +32,14 @@ module Grant::SQLiteEngine
     abstract def write_u16(offset : Int32, value : UInt16) : Nil
 
     # Copies *count* bytes at *offset* into a new buffer.
-    abstract def read_bytes(offset : Int32, count : Int32) : Bytes
+    def read_bytes(offset : Int32, count : Int32) : Bytes
+      bytes = Bytes.new(count)
+      read_into(offset, bytes)
+      bytes
+    end
+
+    # Copies the bytes at *offset* into all of *buffer*.
+    abstract def read_into(offset : Int32, buffer : Bytes) : Nil
     abstract def write_bytes(offset : Int32, bytes : Bytes) : Nil
 
     # Sets *count* bytes from *offset* to zero.
@@ -182,10 +189,8 @@ module Grant::SQLiteEngine
       address(offset).as(UInt16*).value = value
     end
 
-    def read_bytes(offset : Int32, count : Int32) : Bytes
-      bytes = Bytes.new(count)
-      bytes.to_unsafe.copy_from(address(offset), count)
-      bytes
+    def read_into(offset : Int32, buffer : Bytes) : Nil
+      buffer.to_unsafe.copy_from(address(offset), buffer.size)
     end
 
     def write_bytes(offset : Int32, bytes : Bytes) : Nil
@@ -344,10 +349,8 @@ module Grant::SQLiteEngine
       write_bytes(offset, bytes)
     end
 
-    def read_bytes(offset : Int32, count : Int32) : Bytes
-      bytes = Bytes.new(count)
-      @file.read_at(offset.to_i64, bytes)
-      bytes
+    def read_into(offset : Int32, buffer : Bytes) : Nil
+      @file.read_at(offset.to_i64, buffer)
     end
 
     def write_bytes(offset : Int32, bytes : Bytes) : Nil

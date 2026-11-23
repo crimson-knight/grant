@@ -28,6 +28,11 @@ module Grant::SQLiteEngine
                    @scratch : BTreeScratch = BTreeScratch.new)
     end
 
+    # Whether this writer encodes text as *encoding* under *schema_format*.
+    def writes?(encoding : TextEncoding, schema_format : UInt32) : Bool
+      @encoding == encoding && @schema_format == schema_format
+    end
+
     # Runs one change of the tree; the page copies and cell lists it borrows
     # go back to the scratch space when it ends.
     private def borrowing_scratch(&)
@@ -96,7 +101,7 @@ module Grant::SQLiteEngine
     private def table_insert_borrowing(root : UInt32, rowid : Int64, record : Bytes, replace : Bool) : Bool
       path, leaf, index, found = seek_rowid(root, rowid)
       return false if found && !replace
-      cell = build_cell(PageType::LeafTable, record, rowid)
+      cell = build_cell(PageType::LeafTable, record, rowid, scratch: true)
       editor = PageEditor.new(@pager.page_for_write(leaf), leaf, usable)
       if found
         old = editor.cell(index)
@@ -242,7 +247,8 @@ module Grant::SQLiteEngine
     private def index_insert_borrowing(root : UInt32, key : Array(Value), comparator : KeyComparator) : Nil
       path, page_number, index, found, _leaf = seek_key(root, key, comparator)
       raise CorruptDatabase.new("index b-tree already holds the entry", page_number) if found
-      cell = build_cell(PageType::LeafIndex, RecordEncoder.encode(key, @encoding, @schema_format))
+      record = RecordEncoder.encode(key.size, @encoding, @schema_format, @scratch.record_buffer) { |index| key.unsafe_fetch(index) }
+      cell = build_cell(PageType::LeafIndex, record, scratch: true)
       editor = PageEditor.new(@pager.page_for_write(page_number), page_number, usable)
       return if editor.insert_cell(index, cell)
       node = load_node(page_number)
@@ -356,12 +362,16 @@ module Grant::SQLiteEngine
     # A leaf cell holding *payload*: its size, the rowid for a table leaf,
     # the bytes kept on the page and, when it spills, the first page of the
     # overflow chain that holds the rest.
-    def build_cell(page_type : PageType, payload : Bytes, rowid : Int64 = 0_i64) : Bytes
+    #
+    # With *scratch*, the cell is borrowed from the scratch space (inside a
+    # change that returns it).
+    def build_cell(page_type : PageType, payload : Bytes, rowid : Int64 = 0_i64, *, scratch : Bool = false) : Bytes
       table_leaf = page_type.leaf_table?
       local = PageEditor.local_payload_size(usable, payload.size.to_i64, table_leaf)
       header = Varint.size(payload.size.to_i64) + (table_leaf ? Varint.size(rowid) : 0)
       spills = local < payload.size
-      cell = Bytes.new(header + local + (spills ? 4 : 0))
+      size = header + local + (spills ? 4 : 0)
+      cell = scratch ? @scratch.page(size) : Bytes.new(size)
       position = Varint.encode(payload.size.to_i64, cell, 0)
       position += Varint.encode(rowid, cell, position) if table_leaf
       (cell + position).copy_from(payload.to_unsafe, local)
