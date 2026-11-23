@@ -365,7 +365,7 @@ module Grant::SQLiteEngine
         raise CorruptDatabase.new("WAL page size #{@header.page_size} differs from the database page size #{page_size}")
       end
       frame_size = FRAME_HEADER_SIZE + page_size
-      buffer = Bytes.new(frame_size * list_of_pages.size)
+      buffer = frame_buffer(frame_size * list_of_pages.size)
       checksum = @header.frame_checksum
       salts = @header.salt_bytes
       list_of_pages.each_with_index do |(page_number, image), position|
@@ -392,6 +392,19 @@ module Grant::SQLiteEngine
       @header.frame_checksum = checksum
       write_index_header
       update_frame_map
+    end
+
+    # The frames of one commit are built in one buffer kept between commits:
+    # a fresh one per commit is a large allocation, and large allocations
+    # are what start the garbage collector. A commit larger than
+    # FRAME_BUFFER_LIMIT gets a buffer of its own that is not kept.
+    @frame_buffer = Bytes.empty
+    FRAME_BUFFER_LIMIT = 1 << 20
+
+    private def frame_buffer(size : Int32) : Bytes
+      return Bytes.new(size) if size > FRAME_BUFFER_LIMIT
+      @frame_buffer = Bytes.new(Math.min(Math.max(size, @frame_buffer.size * 2), FRAME_BUFFER_LIMIT)) if @frame_buffer.size < size
+      @frame_buffer[0, size]
     end
 
     # walRestartLog: a writer that reads the database file alone (read mark

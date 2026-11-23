@@ -188,7 +188,7 @@ module Grant::SQLiteEngine::Query
       # NOT NULL, in column order. REPLACE puts the DEFAULT in and the
       # column is checked again only after every other column (C's second
       # pass), so a later column's failure is the one reported.
-      list_of_replaced = [] of ColumnRule
+      list_of_replaced = nil.as(Array(ColumnRule)?)
       table.list_of_columns.each do |column|
         action = column.not_null
         next unless action
@@ -199,7 +199,7 @@ module Grant::SQLiteEngine::Query
         if action.replace?
           if column.default_expression
             row[column.position] = default_value(table, column)
-            list_of_replaced << column
+            (list_of_replaced ||= [] of ColumnRule) << column
             next
           end
           action = ConflictAction::Abort
@@ -207,12 +207,11 @@ module Grant::SQLiteEngine::Query
         return {InsertResult::Ignored, rowid, row, nil} if action.ignore?
         raise ConstraintError.new("NOT NULL constraint failed: #{table.name}.#{column.column_name}", action)
       end
-      list_of_replaced.each do |column|
+      list_of_replaced.try &.each do |column|
         next unless row[column.position].nil?
         raise ConstraintError.new("NOT NULL constraint failed: #{table.name}.#{column.column_name}", ConflictAction::Abort)
       end
-      stored = database.stored_values(definition, row)
-      stored.each_with_index { |value, index| row[index] = value }
+      database.store_values!(definition, row)
       if (alias_index = table.rowid_alias) && rowid
         row[alias_index] = rowid
       end
@@ -270,8 +269,7 @@ module Grant::SQLiteEngine::Query
         rowid_checked = true
       end
       # nil stands for a WITHOUT ROWID table's PRIMARY KEY.
-      ordered = table.list_of_indexes.map(&.as(IndexRule?))
-      ordered.insert(table.primary_key_position, nil) if table.without_rowid?
+      ordered = table.list_of_rules_in_check_order
       if upsert
         targeted = upsert.list_of_clauses.compact_map(&.index_rule).uniq!.map(&.as(IndexRule?))
         targeted.unshift(nil) if table.without_rowid? && upsert.list_of_clauses.first?.try(&.targets_rowid?)

@@ -20,6 +20,11 @@ module Grant::SQLiteEngine
       stored_row(definition, values)
     end
 
+    # `stored_values` written over *values* itself.
+    def store_values!(definition : TableDefinition, values : Array(Value)) : Array(Value)
+      stored_row!(definition, values)
+    end
+
     # True when the rowid table holds a row with *rowid*.
     def row_exists?(layout : TableLayout, rowid : Int64) : Bool
       btree_writer.table_contains?(layout.entry.root_page, rowid)
@@ -38,7 +43,7 @@ module Grant::SQLiteEngine
       key_count = layout.list_of_primary_key_positions.size
       found = btree_writer.index_first_at_least(layout.entry.root_page, record, key_count, comparator)
       return unless found && comparator.compare(found, record, key_count) == 0
-      stored_row(layout.definition, RowMapping.new(layout.table_name, layout.definition).map(nil, found))
+      stored_row!(layout.definition, layout.row_mapping.map(nil, found))
     end
 
     # The existing entry of *index* whose key equals *entry*'s key, or nil.

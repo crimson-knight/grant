@@ -112,7 +112,7 @@ module Grant::SQLiteEngine::Query
         end
         run.statement_journal = journal
         targets = @targets.collect(list_of_parameters)
-        if !@table.without_rowid? && in_rowid_order
+        if !@table.without_rowid? && in_rowid_order && targets.size > 1
           targets = targets.sort_by { |target| target[0] || 0_i64 }
         elsif @table.without_rowid? && !WithoutRowidScan.primary_key_changed?(@table, positions)
           read = @statement.assignments.map(&.value)
@@ -183,7 +183,7 @@ module Grant::SQLiteEngine::Query
         end
         run.statement_journal = journal
         targets = @targets.collect(list_of_parameters)
-        if !@table.without_rowid? && in_rowid_order
+        if !@table.without_rowid? && in_rowid_order && targets.size > 1
           targets = targets.sort_by { |target| target[0] || 0_i64 }
         elsif @table.without_rowid? && !in_rowid_order
           if layout = WithoutRowidScan.scan_layout(@table, @statement.where, [] of SQL::Expression)
