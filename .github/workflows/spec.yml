@@ -69,6 +69,10 @@ jobs:
   # Crystal fails here. See docs/RELEASING.md.
   minimum-crystal:
     uses: ./.github/workflows/minimum-crystal.yml
+    with:
+      # sqlite-spec already runs the SQLite suite on this version; while the
+      # floor equals it, minimum-crystal only installs and type-checks.
+      latest-crystal: "1.21.0"
 
   # Informational: the latest patch of the minor version below the floor
   # should NOT compile. If it does, the floor may be higher than necessary.
@@ -107,13 +111,20 @@ jobs:
           fi
           echo "Grant does not compile on Crystal $BELOW, as expected for the declared floor."
 
+  # The database suites run in six slices each (spec-groups.sh --shard), side
+  # by side, so no job comes near its timeout. Compiling each group is most of
+  # the cost; the slices are balanced on an estimate of it. A slice that runs
+  # past 25 minutes is a regression to look at, not a reason to raise the limit.
   sqlite-spec:
+    name: sqlite-spec (${{ matrix.crystal }}, ${{ matrix.shard }}/6)
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
         # Latest Crystal; minimum-crystal covers the floor from shard.yml.
         crystal: [1.21.0]
+        shard: [1, 2, 3, 4, 5, 6]
     steps:
       - name: Download source
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -130,20 +141,22 @@ jobs:
       - name: Check that the default path links no GMP
         # Builds the probe apps in scripts/linkage; the BigDecimal control
         # probe must link GMP, so the check is known to be able to fail.
+        if: matrix.shard == 1
         run: ruby scripts/check_gmp_linkage.rb
         env:
           CRYSTAL: crystal
       - name: Check that Grant links no libz
         # Builds the probe apps in scripts/linkage; the Compress::Zlib control
         # probe must link libz, so the check is known to be able to fail.
+        if: matrix.shard == 2
         run: ruby scripts/check_zlib_linkage.rb
         env:
           CRYSTAL: crystal
       - name: Run tests
         # The whole suite compiled as one program needs about 20 GB of RAM; a
         # runner has 16 GB. spec-groups.sh compiles one group at a time.
-        timeout-minutes: 60
-        run: scripts/spec-groups.sh sqlite
+        timeout-minutes: 25
+        run: scripts/spec-groups.sh --shard ${{ matrix.shard }}/6 sqlite
         env:
           CRYSTAL: crystal
           SPEC_GROUP_INCREMENTAL: "0"
@@ -152,21 +165,34 @@ jobs:
           SQLITE_DATABASE_URL: sqlite3:./grant.db
           SQLITE_REPLICA_URL: sqlite3:./grant_replica.db
 
+  # MySQL 8.0 and 9.x both default to caching_sha2_password, and the grant
+  # user is pinned to it below, so every connection these jobs open goes
+  # through Grant's caching_sha2_password handshake (Thread 3b). No
+  # mysql_native_password override anywhere.
   mysql-spec:
+    name: mysql-spec (${{ matrix.crystal }}, MySQL ${{ matrix.mysql.version }}, ${{ matrix.shard }}/6)
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
         # Latest Crystal; minimum-crystal covers the floor from shard.yml.
         crystal: [1.21.0]
+        mysql:
+          - version: "8.0"
+            digest: "7dcddc01f13bab2f15cde676d44d01f61fc9f99fe7785e86196dfc07d358ae2b"
+          - version: "9.0"
+            digest: "92dc869678019f65d761155dacac660a904f6245bfe1b7997da0a73b2bfc68c9"
+        shard: [1, 2, 3, 4, 5, 6]
     services:
       mysql-primary:
-        image: mysql:8.0@sha256:7dcddc01f13bab2f15cde676d44d01f61fc9f99fe7785e86196dfc07d358ae2b
+        image: "mysql:${{ matrix.mysql.version }}@sha256:${{ matrix.mysql.digest }}"
         options: >-
-          --health-cmd "mysqladmin ping"
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -u root -ppassword"
           --health-interval 10s
           --health-timeout 5s
-          --health-retries 5
+          --health-retries 10
+          --health-start-period 30s
         env:
           MYSQL_ROOT_PASSWORD: password
           MYSQL_DATABASE: grant_db
@@ -175,12 +201,13 @@ jobs:
         ports:
           - 3306:3306
       mysql-replica:
-        image: mysql:8.0@sha256:7dcddc01f13bab2f15cde676d44d01f61fc9f99fe7785e86196dfc07d358ae2b
+        image: "mysql:${{ matrix.mysql.version }}@sha256:${{ matrix.mysql.digest }}"
         options: >-
-          --health-cmd "mysqladmin ping"
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -u root -ppassword"
           --health-interval 10s
           --health-timeout 5s
-          --health-retries 5
+          --health-retries 10
+          --health-start-period 30s
         env:
           MYSQL_ROOT_PASSWORD: password
           MYSQL_DATABASE: grant_replica_db
@@ -201,109 +228,44 @@ jobs:
           crystal: ${{ matrix.crystal }}
       - name: Install shards
         run: shards install --frozen --skip-postinstall --skip-executables
-      - name: Let the grant user create scratch databases
+      - name: Pin caching_sha2_password and let the grant user create scratch databases
         # The schema and task specs create and drop their own databases.
         run: |
-          mysql -h 127.0.0.1 -P 3306 -u root -ppassword <<'SQL'
-          GRANT ALL PRIVILEGES ON *.* TO 'grant'@'%';
-          FLUSH PRIVILEGES;
-          SELECT VERSION();
-          SQL
-      - name: Run tests
-        # The whole suite compiled as one program needs about 20 GB of RAM; a
-        # runner has 16 GB. spec-groups.sh compiles one group at a time.
-        timeout-minutes: 60
-        run: scripts/spec-groups.sh mysql
-        env:
-          CRYSTAL: crystal
-          SPEC_GROUP_INCREMENTAL: "0"
-          SPEC_GROUP_MAX_RSS_GB: "13"
-          CURRENT_ADAPTER: mysql
-          MYSQL_DATABASE_URL: mysql://grant:password@localhost:3306/grant_db
-          MYSQL_REPLICA_URL: mysql://grant:password@localhost:3307/grant_replica_db
-
-  # Dedicated job exercising the DEFAULT caching_sha2_password auth plugin on
-  # both MySQL 8.x and MySQL 9.x (Thread 3b). No mysql_native_password override
-  # anywhere — this validates Grant's caching_sha2_password handshake against a
-  # default-configured server. Mirrors docker-compose.test.yml (mysql8/mysql9).
-  mysql-caching-sha2-spec:
-    runs-on: ubuntu-24.04
-    strategy:
-      fail-fast: false
-      matrix:
-        crystal: [1.21.0]
-        mysql:
-          - version: "8.0"
-            digest: "7dcddc01f13bab2f15cde676d44d01f61fc9f99fe7785e86196dfc07d358ae2b"
-          - version: "9.0"
-            digest: "92dc869678019f65d761155dacac660a904f6245bfe1b7997da0a73b2bfc68c9"
-    services:
-      mysql:
-        image: "mysql:${{ matrix.mysql.version }}@sha256:${{ matrix.mysql.digest }}"
-        # NOTE: no --default-authentication-plugin override. MySQL 8.0+ and
-        # 9.x default to caching_sha2_password.
-        options: >-
-          --health-cmd "mysqladmin ping -h 127.0.0.1 -u root -ppassword"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 10
-          --health-start-period 30s
-        env:
-          MYSQL_ROOT_PASSWORD: password
-          MYSQL_DATABASE: grant_db
-          MYSQL_USER: grant
-          MYSQL_PASSWORD: password
-        ports:
-          - 3306:3306
-    steps:
-      - name: Download source
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-      - name: Refresh apt package index
-        # install-crystal apt-installs libevent and friends without updating
-        # the index first, and the runner image's index goes stale.
-        run: sudo apt-get update
-      - name: Install Crystal
-        uses: crystal-lang/install-crystal@d8ef131ecec0352ce0e39b81b0a6d95def58fe2f # v1
-        with:
-          crystal: ${{ matrix.crystal }}
-      - name: Install shards
-        run: shards install --frozen --skip-postinstall --skip-executables
-      - name: Ensure grant user uses caching_sha2_password
-        # The entrypoint already creates MYSQL_USER with the server default
-        # plugin, but we pin it explicitly so the test intent is unambiguous,
-        # and we confirm the plugin assignment in the job log.
-        run: |
-          mysql -h 127.0.0.1 -P 3306 -u root -ppassword <<'SQL'
+          for port in 3306 3307; do
+            mysql -h 127.0.0.1 -P $port -u root -ppassword <<'SQL'
           ALTER USER 'grant'@'%' IDENTIFIED WITH caching_sha2_password BY 'password';
-          -- The schema and task specs create and drop scratch databases.
           GRANT ALL PRIVILEGES ON *.* TO 'grant'@'%';
           FLUSH PRIVILEGES;
           SELECT user, host, plugin FROM mysql.user WHERE user = 'grant';
           SELECT VERSION();
           SQL
-      - name: Verify caching_sha2_password auth for grant user
+          done
+      - name: Verify caching_sha2_password auth for the grant user
         run: |
           mysqladmin ping -h 127.0.0.1 -P 3306 -u grant -ppassword | grep "mysqld is alive"
       - name: Run tests
         # The whole suite compiled as one program needs about 20 GB of RAM; a
         # runner has 16 GB. spec-groups.sh compiles one group at a time.
-        timeout-minutes: 60
-        run: scripts/spec-groups.sh mysql
+        timeout-minutes: 25
+        run: scripts/spec-groups.sh --shard ${{ matrix.shard }}/6 mysql
         env:
           CRYSTAL: crystal
           SPEC_GROUP_INCREMENTAL: "0"
           SPEC_GROUP_MAX_RSS_GB: "13"
           CURRENT_ADAPTER: mysql
           MYSQL_DATABASE_URL: mysql://grant:password@127.0.0.1:3306/grant_db
-          MYSQL_REPLICA_URL: mysql://grant:password@127.0.0.1:3306/grant_db
+          MYSQL_REPLICA_URL: mysql://grant:password@127.0.0.1:3307/grant_replica_db
 
   psql-spec:
+    name: psql-spec (${{ matrix.crystal }}, ${{ matrix.shard }}/6)
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
         # Latest Crystal; minimum-crystal covers the floor from shard.yml.
         crystal: [1.21.0]
+        shard: [1, 2, 3, 4, 5, 6]
     services:
       postgres-primary:
         image: postgres:16@sha256:a3b7f434b2dc57ce85a67e171163eb8ab1a1ebcb39d27484661f26b1dfbe30d6
@@ -347,8 +309,9 @@ jobs:
       - name: Run tests
         # The whole suite compiled as one program needs about 20 GB of RAM; a
         # runner has 16 GB. spec-groups.sh compiles one group at a time.
-        timeout-minutes: 60
-        run: scripts/spec-groups.sh pg
+        # spec/grant/sharding and spec/grant/composite are among the groups.
+        timeout-minutes: 25
+        run: scripts/spec-groups.sh --shard ${{ matrix.shard }}/6 pg
         env:
           CRYSTAL: crystal
           SPEC_GROUP_INCREMENTAL: "0"
@@ -356,48 +319,3 @@ jobs:
           CURRENT_ADAPTER: pg
           PG_DATABASE_URL: postgres://grant:password@localhost:5432/grant_db
           PG_REPLICA_URL: postgres://grant:password@localhost:5433/grant_replica_db
-
-  sharding-spec:
-    runs-on: ubuntu-24.04
-    strategy:
-      fail-fast: false
-      matrix:
-        crystal: [1.21.0]
-    services:
-      # The sharding specs create and drop their own shard databases on this
-      # server (spec/support/w6_c04_support.cr), so one server is enough.
-      postgres:
-        image: postgres:16@sha256:a3b7f434b2dc57ce85a67e171163eb8ab1a1ebcb39d27484661f26b1dfbe30d6
-        env:
-          POSTGRES_USER: grant
-          POSTGRES_PASSWORD: password
-          POSTGRES_DB: grant_db
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-        ports:
-          - 5432:5432
-    steps:
-      - name: Download source
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-      - name: Refresh apt package index
-        # install-crystal apt-installs libevent and friends without updating
-        # the index first, and the runner image's index goes stale.
-        run: sudo apt-get update
-      - name: Install Crystal
-        uses: crystal-lang/install-crystal@d8ef131ecec0352ce0e39b81b0a6d95def58fe2f # v1
-        with:
-          crystal: ${{ matrix.crystal }}
-      - name: Install shards
-        run: shards install --frozen --skip-postinstall --skip-executables
-      - name: Run sharding tests
-        timeout-minutes: 30
-        run: scripts/spec-groups.sh --only spec/grant/sharding --only spec/grant/composite pg
-        env:
-          CRYSTAL: crystal
-          SPEC_GROUP_INCREMENTAL: "0"
-          SPEC_GROUP_MAX_RSS_GB: "13"
-          CURRENT_ADAPTER: pg
-          PG_DATABASE_URL: postgres://grant:password@localhost:5432/grant_db

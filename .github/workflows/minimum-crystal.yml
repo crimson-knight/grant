@@ -5,6 +5,14 @@ name: minimum-crystal
 # shard.yml's crystal: floor (see docs/RELEASING.md).
 on:
   workflow_call:
+    inputs:
+      latest-crystal:
+        # The Crystal version the caller already runs the SQLite suite on. When
+        # the floor is that same version, the suite is not run a second time
+        # here; Grant is still installed and type-checked on the floor.
+        description: Crystal version the caller's own SQLite suite uses
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -43,10 +51,16 @@ jobs:
         run: shards install --frozen --skip-postinstall --skip-executables
       - name: Type-check Grant
         run: crystal build --no-codegen src/grant.cr
+      - name: Note the suite already run on this version
+        if: steps.floor.outputs.version == inputs.latest-crystal
+        env:
+          FLOOR: ${{ steps.floor.outputs.version }}
+        run: echo "::notice::The floor $FLOOR is the version sqlite-spec runs the SQLite suite on; not running it twice."
       - name: Run tests
         # The whole suite compiled as one program needs about 20 GB of RAM; a
         # runner has 16 GB. spec-groups.sh compiles one group at a time.
-        timeout-minutes: 60
+        if: steps.floor.outputs.version != inputs.latest-crystal
+        timeout-minutes: 90
         run: scripts/spec-groups.sh sqlite
         env:
           CRYSTAL: crystal
