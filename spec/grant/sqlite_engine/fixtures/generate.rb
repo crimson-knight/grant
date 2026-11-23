@@ -563,16 +563,18 @@ def run_random(out_dir, count, seed)
   manifest
 end
 
-mode, out_dir = ARGV[0], ARGV[1]
-abort "usage: generate.rb standard|random|corpus OUT_DIR [--count N] [--seed S] [--corpus PATH]" unless %w[standard random corpus].include?(mode) && out_dir
-options = ARGV[2..].each_slice(2).to_h
-FileUtils.mkdir_p(out_dir)
-seed = Integer(options.fetch("--seed", (Time.now.to_i % 1_000_000).to_s))
-entries = case mode
-          when "standard" then run_standard(out_dir)
-          when "random" then run_random(out_dir, Integer(options.fetch("--count", "50")), seed)
-          else run_corpus(out_dir, options.fetch("--corpus"), seed)
-          end
-version = sqlite3(":memory:", "SELECT sqlite_version() || ' ' || sqlite_source_id();").strip
-File.write(File.join(out_dir, "manifest.json"), JSON.pretty_generate("mode" => mode, "seed" => seed, "sqlite3_version" => version, "legacy_real_defaults" => LEGACY_REAL_DEFAULTS, "fixtures" => entries))
-puts "#{mode}: #{entries.size} fixtures, seed #{seed}, sqlite3 #{version}"
+if __FILE__ == $PROGRAM_NAME
+  mode, out_dir = ARGV[0], ARGV[1]
+  abort "usage: generate.rb standard|random|corpus OUT_DIR [--count N] [--seed S] [--corpus PATH]" unless %w[standard random corpus].include?(mode) && out_dir
+  options = ARGV[2..].each_slice(2).to_h
+  FileUtils.mkdir_p(out_dir)
+  seed = Integer(options.fetch("--seed", (Time.now.to_i % 1_000_000).to_s))
+  entries = case mode
+            when "standard" then run_standard(out_dir)
+            when "random" then run_random(out_dir, Integer(options.fetch("--count", "50")), seed)
+            else run_corpus(out_dir, options.fetch("--corpus"), seed)
+            end
+  version = sqlite3(":memory:", "SELECT sqlite_version() || ' ' || sqlite_source_id();").strip
+  File.write(File.join(out_dir, "manifest.json"), JSON.pretty_generate("mode" => mode, "seed" => seed, "sqlite3_version" => version, "legacy_real_defaults" => LEGACY_REAL_DEFAULTS, "fixtures" => entries))
+  puts "#{mode}: #{entries.size} fixtures, seed #{seed}, sqlite3 #{version}"
+end

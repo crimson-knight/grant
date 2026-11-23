@@ -44,7 +44,7 @@ module Grant::SQLiteEngine
     # SQLite renders a REAL as text with 15 significant digits, or as many
     # more as it takes to read back the same double, always with a decimal
     # point in the mantissa ("1.0e+20", "100.0").
-    protected def self.real_to_text(value : Float64) : String
+    def self.real_to_text(value : Float64) : String
       return value > 0 ? "Inf" : "-Inf" if value.infinite?
       text = "%.15g" % value
       text = "%.16g" % value unless Affinity.parse_real_literal(text) == value
@@ -55,11 +55,9 @@ module Grant::SQLiteEngine
     end
 
     protected def self.numeric_from(value : Value) : Value
-      if value.is_a?(Float64)
-        whole = value.trunc
-        return whole.to_i64 if whole == value && whole.abs < 9.007199254740992e15
-        return value
-      end
+      # sqlite3VdbeIntegerAffinity: a REAL that equals an INTEGER strictly
+      # inside the Int64 range becomes that INTEGER.
+      return StoredValue.whole_number(value) if value.is_a?(Float64)
       return value unless value.is_a?(String)
       trimmed = value.strip
       if integer = trimmed.to_i64?(whitespace: false, underscore: false, prefix: false, strict: true)

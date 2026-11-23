@@ -24,3 +24,42 @@ module Grant::SQLiteEngine
     end
   end
 end
+
+module Grant::SQLiteEngine
+  module Varint
+    # Bytes *value* takes as a varint.
+    def self.size(value : Int64) : Int32
+      unsigned = value.to_u64!
+      return 9 if unsigned > 0x00ff_ffff_ffff_ffff_u64
+      length = 1
+      while unsigned > 0x7f_u64
+        unsigned >>= 7
+        length += 1
+      end
+      length
+    end
+
+    # Writes *value* at *offset* and returns the bytes written
+    # (fileformat2.html §1.6, sqlite3PutVarint).
+    def self.encode(value : Int64, bytes : Bytes, offset : Int32) : Int32
+      unsigned = value.to_u64!
+      if unsigned > 0x00ff_ffff_ffff_ffff_u64
+        bytes[offset + 8] = unsigned.to_u8!
+        unsigned >>= 8
+        7.downto(0) do |index|
+          bytes[offset + index] = ((unsigned & 0x7f_u64) | 0x80_u64).to_u8!
+          unsigned >>= 7
+        end
+        return 9
+      end
+      length = size(value)
+      (length - 1).downto(0) do |index|
+        byte = (unsigned & 0x7f_u64).to_u8!
+        byte |= 0x80_u8 if index < length - 1
+        bytes[offset + index] = byte
+        unsigned >>= 7
+      end
+      length
+    end
+  end
+end

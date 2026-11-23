@@ -26,5 +26,20 @@ module Grant::SQLiteEngine
 
     # fileformat2.html §1.4: SQLite reserves page numbers up to 2^32 - 2.
     MAX_PAGE_NUMBER = 4_294_967_294_u32
+
+    # limits.html: SQLITE_MAX_LENGTH also bounds a whole row, so a record
+    # the writer builds may not be larger than this.
+    MAX_RECORD_BYTES = 1_000_000_000
+
+    # limits.html: SQLITE_MAX_SQL_LENGTH. SQLite allows 1,000,000,000 bytes;
+    # Grant stores CREATE statements of at most 1 MiB (plan section 4).
+    MAX_SQL_BYTES = 1_048_576
+
+    # pragma.html#pragma_page_size: the page size of a new database.
+    DEFAULT_PAGE_SIZE = 4_096
+
+    # pragma.html#pragma_cache_size: SQLite's default cache_size of -2000
+    # means 2,000 KiB of pages.
+    DEFAULT_CACHE_KIBIBYTES = 2_000
   end
 end

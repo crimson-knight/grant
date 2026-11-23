@@ -59,6 +59,20 @@ Lint/SpecFilename:
 # Existing query assemblers, adapters and schema code dispatch over many cases; refactoring them is separate work.
 Metrics/CyclomaticComplexity:
   Excluded:
+    # Grant's SQLite engine ports btree.c, pager.c and vdbeaux.c routines
+    # (balance_nonroot, freeSpace, journal playback, record compare) and keeps
+    # them shaped like the C they are checked against; its spec drivers walk
+    # every crash variant and operation kind in one place.
+    - src/grant/sqlite_engine/btree_writer.cr
+    - src/grant/sqlite_engine/create_statement.cr
+    - src/grant/sqlite_engine/database_writer.cr
+    - src/grant/sqlite_engine/key_comparator.cr
+    - src/grant/sqlite_engine/pager.cr
+    - src/grant/sqlite_engine/record_encoder.cr
+    - src/grant/sqlite_engine/rollback_journal.cr
+    - spec/support/sqlite_engine/crash_driver.cr
+    - spec/support/sqlite_engine/crash_file.cr
+    - spec/support/sqlite_engine/write_driver.cr
     - spec/support/simple_virtual_sharding.cr
     - src/adapter/mysql.cr
     - src/adapter/placeholder_scanner.cr
