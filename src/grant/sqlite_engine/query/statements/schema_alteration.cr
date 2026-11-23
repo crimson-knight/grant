@@ -132,11 +132,11 @@ module Grant::SQLiteEngine::Query
         previous = index > 0 ? tokens[index - 1] : nil
         following = tokens[index + 1]?
         named = case
-                when previous.nil?                     then false
-                when previous.kind.table? && own       then type == "table"
-                when previous.kind.exists? && own      then type == "table"
-                when previous.kind.references?         then true
-                when previous.kind.on? && own          then type == "index"
+                when previous.nil?                then false
+                when previous.kind.table? && own  then type == "table"
+                when previous.kind.exists? && own then type == "table"
+                when previous.kind.references?    then true
+                when previous.kind.on? && own     then type == "index"
                 when type == "view"
                   previous.kind.from? || previous.kind.join_keyword? || previous.kind.join? ||
                     (previous.kind.comma? && view_from_list?(tokens, index)) || following.try(&.kind.dot?) || false
@@ -195,6 +195,20 @@ module Grant::SQLiteEngine::Query
                   end
         next if new_sql == sql
         [type, name, record_table, root, new_sql] of Value
+      end
+      @session.reset_schema
+      check_indexes_after("after rename")
+    end
+
+    # renameTestSchema with double-quoted strings off: every index must
+    # still name columns of its table.
+    private def check_indexes_after(moment : String) : Nil
+      database.schema.list_of_indexes.each do |entry|
+        sql = entry.sql
+        next unless sql
+        if missing = missing_index_column(entry, sql)
+          raise SQLError.new("error in index #{entry.object_name} #{moment}: no such column: #{missing}")
+        end
       end
     end
 
@@ -416,11 +430,18 @@ module Grant::SQLiteEngine::Query
     # or view that names the dropped column fails the statement.
     private def check_after_drop(table_name : String, column_name : String) : Nil
       info = @session.table(table_name) || return
-      info.list_of_indexes.each do |index|
-        sql = index.entry.sql
+      # renameTestSchema re-reads every index in schema order, with
+      # double-quoted strings off: an index of this table that names the
+      # column, or of any table that names no column at all, fails.
+      database.schema.list_of_indexes.each do |entry|
+        sql = entry.sql
         next unless sql
-        if SchemaAlteration.tokens(sql).any?(&.same_name?(column_name))
-          raise SQLError.new("error in index #{index.entry.object_name} after drop column: no such column: #{column_name}")
+        if entry.table_name.compare(table_name, case_insensitive: true) == 0
+          if SchemaAlteration.tokens(sql).any?(&.same_name?(column_name))
+            raise SQLError.new("error in index #{entry.object_name} after drop column: no such column: #{column_name}")
+          end
+        elsif missing = missing_index_column(entry, sql)
+          raise SQLError.new("error in index #{entry.object_name} after drop column: no such column: #{missing}")
         end
       end
       sql = info.entry.sql || return
@@ -449,6 +470,23 @@ module Grant::SQLiteEngine::Query
           raise SQLError.new("error in view #{entry.object_name} after drop column: #{error.message}")
         end
       end
+    end
+
+    # The first indexed name of *entry* that is no column of its table.
+    private def missing_index_column(entry : SchemaEntry, sql : String) : String?
+      statement = SQL::Parser.parse_schema(sql)
+      return unless statement.is_a?(SQL::CreateIndex)
+      table = @session.table(entry.table_name) || return
+      statement.columns.each do |term|
+        expression = term.expression
+        while expression.is_a?(SQL::Collate)
+          expression = expression.operand
+        end
+        next unless expression.is_a?(SQL::ColumnReference) && expression.table.nil?
+        name = expression.column.value
+        return name if table.column_index(name).nil? && !RowidName.rowid?(table, name)
+      end
+      nil
     end
 
     # The CREATE TABLE text without column *position* (sqlite3AlterDropColumn).

@@ -23,12 +23,12 @@ module Grant::SQLiteEngine::Query
              when SQL::CreateTable, SQL::CreateIndex, SQL::CreateView, SQL::Drop, SQL::AlterTable,
                   SQL::CreateTrigger, SQL::CreateVirtualTable
                SchemaPlan.new(session, statement, text)
-             when SQL::Explain    then ExplainPlan.new(session, statement)
-             when SQL::Analyze    then NoRowsPlan.new
-             when SQL::Reindex    then NoRowsPlan.new
-             when SQL::Vacuum     then NoRowsPlan.new
-             when SQL::Attach     then raise UnsupportedSQL.new("ATTACH (the engine opens one database per connection)")
-             when SQL::Detach     then raise UnsupportedSQL.new("DETACH")
+             when SQL::Explain then ExplainPlan.new(session, statement)
+             when SQL::Analyze then NoRowsPlan.new
+             when SQL::Reindex then NoRowsPlan.new
+             when SQL::Vacuum  then NoRowsPlan.new
+             when SQL::Attach  then raise UnsupportedSQL.new("ATTACH (the engine opens one database per connection)")
+             when SQL::Detach  then raise UnsupportedSQL.new("DETACH")
              else
                raise UnsupportedSQL.new("#{PreparedQuery.statement_kind(statement)} statements")
              end
@@ -86,6 +86,7 @@ module Grant::SQLiteEngine::Query
         @plan = StatementCompiler.compile(@session, @statement, @text)
       end
       @position = 0
+      @session.finish_pending_commit
       @rows = begin
         @plan.run(frame.list_of_parameters)
       rescue error : SQLError | UnsupportedSQL
@@ -103,10 +104,14 @@ module Grant::SQLiteEngine::Query
       end
     end
 
+    # After the last row, an autocommit write that returned rows commits.
     def next_row(frame : Frame) : Array(Value)?
-      row = @rows[@position]?
-      @position += 1 if row
-      row
+      if row = @rows[@position]?
+        @position += 1
+        return row
+      end
+      @session.finish_pending_commit
+      nil
     end
 
     def list_of_column_names : Array(String)

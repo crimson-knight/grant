@@ -98,7 +98,7 @@ module Grant::SQLiteEngine::Query
 
     def run(list_of_parameters : Array(Value)) : Array(Array(Value))
       returned = [] of Array(Value)
-      @session.run_write(list_of_parameters) do |run|
+      @session.run_write(list_of_parameters, returning: !@returning.nil?) do |run|
         targets = @targets.collect(list_of_parameters)
         positions = @assignments.list_of_positions
         targets.each do |rowid, snapshot, values|
@@ -113,7 +113,10 @@ module Grant::SQLiteEngine::Query
               new_row[position] = values[index]
             end
           end
-          new_rowid, stored = run.update_row(@table, rowid, old, new_row, explicit_rowid, @override, positions)
+          # A row an IGNORE conflict skipped returns nothing.
+          updated = run.update_row(@table, rowid, old, new_row, explicit_rowid, @override, positions)
+          next unless updated
+          new_rowid, stored = updated
           if program = @returning
             pseudo = @returning_pseudo || raise Error.new("RETURNING without its row")
             pseudo.row = stored
@@ -151,7 +154,7 @@ module Grant::SQLiteEngine::Query
 
     def run(list_of_parameters : Array(Value)) : Array(Array(Value))
       returned = [] of Array(Value)
-      @session.run_write(list_of_parameters) do |run|
+      @session.run_write(list_of_parameters, returning: !@returning.nil?) do |run|
         targets = @targets.collect(list_of_parameters)
         targets.each do |rowid, snapshot, _values|
           old = rowid ? run.database.row_at(@table.layout, rowid) : run.database.row_with_key_of(@table.layout, snapshot)

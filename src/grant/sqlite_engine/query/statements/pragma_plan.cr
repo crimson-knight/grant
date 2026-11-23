@@ -9,22 +9,22 @@ module Grant::SQLiteEngine::Query
     # PRAGMAs that only report a value the engine keeps for the session,
     # with C's default and the column name of the row they return.
     REMEMBERED = {
-      "synchronous"        => {2_i64, "synchronous"},
-      "cache_size"         => {-2000_i64, "cache_size"},
-      "wal_autocheckpoint" => {1000_i64, "wal_autocheckpoint"},
-      "temp_store"         => {0_i64, "temp_store"},
-      "recursive_triggers" => {0_i64, "recursive_triggers"},
-      "automatic_index"    => {1_i64, "automatic_index"},
-      "legacy_alter_table" => {0_i64, "legacy_alter_table"},
-      "case_sensitive_like" => {0_i64, "case_sensitive_like"},
-      "secure_delete"      => {0_i64, "secure_delete"},
-      "cell_size_check"    => {0_i64, "cell_size_check"},
-      "mmap_size"          => {0_i64, "mmap_size"},
-      "query_only"         => {0_i64, "query_only"},
+      "synchronous"               => {2_i64, "synchronous"},
+      "cache_size"                => {-2000_i64, "cache_size"},
+      "wal_autocheckpoint"        => {1000_i64, "wal_autocheckpoint"},
+      "temp_store"                => {0_i64, "temp_store"},
+      "recursive_triggers"        => {0_i64, "recursive_triggers"},
+      "automatic_index"           => {1_i64, "automatic_index"},
+      "legacy_alter_table"        => {0_i64, "legacy_alter_table"},
+      "case_sensitive_like"       => {0_i64, "case_sensitive_like"},
+      "secure_delete"             => {0_i64, "secure_delete"},
+      "cell_size_check"           => {0_i64, "cell_size_check"},
+      "mmap_size"                 => {0_i64, "mmap_size"},
+      "query_only"                => {0_i64, "query_only"},
       "reverse_unordered_selects" => {0_i64, "reverse_unordered_selects"},
-      "trusted_schema"     => {1_i64, "trusted_schema"},
-      "max_page_count"     => {4294967294_i64, "max_page_count"},
-      "threads"            => {0_i64, "threads"},
+      "trusted_schema"            => {1_i64, "trusted_schema"},
+      "max_page_count"            => {4294967294_i64, "max_page_count"},
+      "threads"                   => {0_i64, "threads"},
     }
 
     # PRAGMAs that answer with one row named after themselves.
@@ -44,10 +44,10 @@ module Grant::SQLiteEngine::Query
       @list_of_column_names = case name
                               when "table_info", "table_xinfo", "index_list", "index_info", "index_xinfo", "foreign_key_list"
                                 Catalog.function_columns("pragma_#{name}")
-                              when "database_list"         then %w[seq name file]
+                              when "database_list"                  then %w[seq name file]
                               when "integrity_check", "quick_check" then [name]
-                              when "busy_timeout"          then %w[timeout]
-                              when "foreign_key_check"     then %w[table rowid parent fkid]
+                              when "busy_timeout"                   then %w[timeout]
+                              when "foreign_key_check"              then %w[table rowid parent fkid]
                               else
                                 if REMEMBERED.has_key?(name)
                                   @statement.value && !SETTING_RETURNS_ROW.includes?(name) ? [] of String : [REMEMBERED[name][1]]

@@ -83,6 +83,9 @@ module Grant::SQLiteEngine::Query
     end
 
     private def self.type_text(type_name : SQL::TypeName) : String
+      if source_text = type_name.source_text
+        return source_text
+      end
       words = type_name.words.map(&.text).join(' ')
       return words if type_name.arguments.empty?
       "#{words}(#{type_name.arguments.join(',')})"

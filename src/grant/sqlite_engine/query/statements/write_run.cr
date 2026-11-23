@@ -75,6 +75,9 @@ module Grant::SQLiteEngine::Query
           rowid = WriteRun.must_be_int(candidate)
         end
         row[alias_index] = rowid if alias_index
+        # autoIncStep: the new rowid counts toward sqlite_sequence before
+        # any constraint is checked, so an ignored row still moves it.
+        note_autoincrement(table, rowid)
       end
       compute_generated(table, row, rowid)
       result = check_constraints(table, rowid, row, nil, override, upsert)
@@ -87,11 +90,8 @@ module Grant::SQLiteEngine::Query
         parent_added(table, rowid, row)
       end
       database.write_row(table.layout, rowid, row, table.list_of_index_layouts.select { |index| index_includes?(table, index, row, rowid) })
-      if rowid
-        note_autoincrement(table, rowid)
-        if @nested == 0 && !@silent
-          @session.last_insert_rowid = rowid
-        end
+      if rowid && @nested == 0 && !@silent
+        @session.last_insert_rowid = rowid
       end
       count_change
       {InsertResult::Inserted, rowid, row}
@@ -244,6 +244,10 @@ module Grant::SQLiteEngine::Query
         return outcome if outcome
         rowid_checked = true
       end
+      if table.without_rowid?
+        outcome = check_primary_key(table, row, old, unique_override, upsert, clause_for_all)
+        return outcome if outcome
+      end
       ordered = table.list_of_indexes
       if upsert
         targeted = upsert.list_of_clauses.compact_map(&.index_rule)
@@ -310,6 +314,36 @@ module Grant::SQLiteEngine::Query
       else
         column = table.rowid_alias.try { |index| table.list_of_columns[index].column_name } || "rowid"
         raise ConstraintError.new("UNIQUE constraint failed: #{table.name}.#{column}", action)
+      end
+    end
+
+    # The PRIMARY KEY of a WITHOUT ROWID table (nil when it passes or
+    # REPLACE resolved it): the table's own b-tree holds the key.
+    private def check_primary_key(table : WriteTable, row : Array(Value), old : {Int64?, Array(Value)}?,
+                                  unique_override : ConflictAction, upsert : UpsertPlan?,
+                                  clause_for_all : UpsertClause?) : {InsertResult, Int64?, Array(Value), {Int64?, Array(Value)}?}?
+      existing = database.row_with_key_of(table.layout, row) || return
+      positions = table.layout.list_of_primary_key_positions
+      key = positions.map { |position| existing[position] }
+      return if old && same_row?(table, key, old)
+      action = table.primary_key_conflict
+      action = unique_override unless unique_override.default?
+      action = ConflictAction::Abort if action.default?
+      clause = upsert.try(&.clause_for_rowid) || clause_for_all
+      if clause && upsert
+        action = clause.do_update? ? ConflictAction::Update : ConflictAction::Ignore
+      end
+      case action
+      when .ignore?
+        {InsertResult::Ignored, nil.as(Int64?), row, nil}
+      when .update?
+        upsert_update(table, {nil.as(Int64?), existing}, row, clause || raise Error.new("upsert without a clause"))
+      when .replace?
+        delete_row(table, nil, existing, replace: true)
+        nil
+      else
+        columns = positions.map { |position| "#{table.name}.#{table.list_of_columns[position].column_name}" }
+        raise ConstraintError.new("UNIQUE constraint failed: #{columns.join(", ")}", action)
       end
     end
 
@@ -427,8 +461,9 @@ module Grant::SQLiteEngine::Query
           new_row[position] = values[index]
         end
       end
-      rowid, stored = update_row(table, target[0], target[1], new_row, explicit_rowid, ConflictAction::Abort, clause.list_of_positions)
-      {InsertResult::Upserted, rowid, stored, nil}
+      updated = update_row(table, target[0], target[1], new_row, explicit_rowid, ConflictAction::Abort, clause.list_of_positions)
+      return {InsertResult::Ignored, target[0], target[1], nil} unless updated
+      {InsertResult::Upserted, updated[0], updated[1], nil}
     end
 
     # --- UPDATE -------------------------------------------------------------
@@ -436,26 +471,26 @@ module Grant::SQLiteEngine::Query
     # Replaces the row *old_row* at *old_rowid* by *new_row* (declared order,
     # before affinity). *explicit_rowid* is a new rowid set by name.
     # *list_of_changed* holds the positions the statement assigned (-1 for
-    # the rowid). Returns the rowid and the row as stored.
+    # the rowid). Returns the rowid and the row as stored, or nil for a row
+    # an IGNORE conflict skipped.
     def update_row(table : WriteTable, old_rowid : Int64?, old_row : Array(Value), new_row : Array(Value),
-                   explicit_rowid : Value, override : ConflictAction, list_of_changed : Array(Int32)) : {Int64?, Array(Value)}
+                   explicit_rowid : Value, override : ConflictAction, list_of_changed : Array(Int32)) : {Int64?, Array(Value)}?
       rowid = old_rowid
       unless table.without_rowid?
         if alias_index = table.rowid_alias
           if list_of_changed.includes?(alias_index)
-            candidate = new_row[alias_index]
-            # An UPDATE that sets the INTEGER PRIMARY KEY to NULL picks a new
-            # rowid as an INSERT would.
-            rowid = candidate.nil? ? new_rowid(table) : WriteRun.must_be_int(candidate)
+            # OP_MustBeInt: an UPDATE that sets the INTEGER PRIMARY KEY to
+            # NULL is "datatype mismatch".
+            rowid = WriteRun.must_be_int(new_row[alias_index])
           end
           new_row[alias_index] = rowid
         elsif list_of_changed.includes?(-1)
-          rowid = explicit_rowid.nil? ? new_rowid(table) : WriteRun.must_be_int(explicit_rowid)
+          rowid = WriteRun.must_be_int(explicit_rowid)
         end
       end
       compute_generated(table, new_row, rowid)
       result = check_constraints(table, rowid, new_row, {old_rowid, old_row}, override, nil)
-      return {old_rowid, old_row} if result[0].ignored?
+      return if result[0].ignored?
       if foreign_keys?
         child_removed(table, old_row, new_row, list_of_changed)
         parent_removed(table, old_rowid, old_row, new_row, list_of_changed)
@@ -467,7 +502,6 @@ module Grant::SQLiteEngine::Query
         delete_row(table, replaced[0], replaced[1], replace: true)
       end
       database.write_row(table.layout, rowid, new_row, layouts.select { |index| index_includes?(table, index, new_row, rowid) })
-      note_autoincrement(table, rowid) if rowid
       if foreign_keys?
         child_added(table, new_row, old_row, list_of_changed)
         parent_added(table, rowid, new_row, old_row, list_of_changed)

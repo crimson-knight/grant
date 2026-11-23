@@ -115,6 +115,11 @@ module Grant::SQLiteEngine::Query
           if names.size == 1 && (alias_index = info.rowid_alias) && upsert.target_where.nil? &&
              info.list_of_column_names[alias_index].compare(names[0][0], case_insensitive: true) == 0
             rowid_target = true
+          elsif table.without_rowid? && upsert.target_where.nil? && names.all? { |name| name[1].nil? } &&
+                names.map { |name| name[0].downcase }.sort == table.definition.list_of_primary_key_columns.map(&.downcase).sort
+            # A WITHOUT ROWID table's PRIMARY KEY is its own key, checked as
+            # the rowid is.
+            rowid_target = true
           else
             rule = table.list_of_indexes.find { |candidate| UpsertPlan.matches?(candidate, info, names, upsert.target_where) }
             raise SQLError.new("ON CONFLICT clause does not match any PRIMARY KEY or UNIQUE constraint") unless rule

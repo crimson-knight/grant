@@ -78,7 +78,9 @@ module Grant::SQLiteEngine::Query
       database.schema.list_of_entries.find { |entry| entry.object_name.compare(name, case_insensitive: true) == 0 }
     end
 
-    private def check_new_object(name : String, if_not_exists : Bool, kind : String) : Bool
+    # *written* is the name as the statement wrote it: sqlite3StartTable
+    # reports a table or view that exists with %T, quotes and all.
+    private def check_new_object(name : String, written : String, if_not_exists : Bool, kind : String) : Bool
       if existing = entry_named(name)
         return false if if_not_exists && existing.object_type == kind
         if existing.index?
@@ -87,7 +89,7 @@ module Grant::SQLiteEngine::Query
         if kind == "index"
           raise SQLError.new("there is already a table named #{name}")
         end
-        raise SQLError.new("#{existing.object_type == "view" ? "view" : "table"} #{name} already exists")
+        raise SQLError.new("#{existing.object_type == "view" ? "view" : "table"} #{written} already exists")
       end
       if name.downcase.starts_with?("sqlite_")
         raise SQLError.new("object name reserved for internal use: #{name}")
@@ -97,7 +99,7 @@ module Grant::SQLiteEngine::Query
 
     private def create_table(statement : SQL::CreateTable, run : WriteRun) : Nil
       name = statement.name.value
-      return unless check_new_object(name, statement.if_not_exists, "table")
+      return unless check_new_object(name, statement.name.text, statement.if_not_exists, "table")
       if query = statement.as_select
         create_table_as(name, query, run)
         return
@@ -184,17 +186,22 @@ module Grant::SQLiteEngine::Query
         end
         if expression.is_a?(SQL::ColumnReference) && expression.table.nil? && info.column_index(expression.column.value).nil?
           unless RowidName.rowid?(info, expression.column.value)
+            # A double-quoted name that is no column reads as a string
+            # (DQS in DDL), which makes an expression index.
+            if expression.column.text.starts_with?('"')
+              raise UnsupportedSQL.new("expression in index #{name} (the string #{expression.column.text})")
+            end
             raise SQLError.new("no such column: #{expression.column.value}")
           end
         end
       end
-      return unless check_new_object(name, statement.if_not_exists, "index")
+      return unless check_new_object(name, statement.name.text, statement.if_not_exists, "index")
       database.create_index_from(@text, run)
     end
 
     private def create_view(statement : SQL::CreateView) : Nil
       name = statement.name.value
-      return unless check_new_object(name, statement.if_not_exists, "view")
+      return unless check_new_object(name, statement.name.text, statement.if_not_exists, "view")
       database.add_schema_row("view", name, name, 0_u32, "CREATE VIEW #{SchemaPlan.text_from_name(@text, statement.name)}")
       database.note_schema_change
     end

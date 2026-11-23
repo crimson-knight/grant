@@ -202,6 +202,24 @@ module Grant::SQLiteEngine
       end
     end
 
+    # Takes (or shares) the SHARED lock for reads that span several calls,
+    # such as one statement stepped a row at a time; each call is matched
+    # by one `release_read_lock`. Raises `Busy` when a writer holds the
+    # file exclusively.
+    def acquire_read_lock : Nil
+      file = @file
+      return unless file
+      begin_read(file) if @read_depth == 0 && !@in_write_transaction
+      @read_depth += 1
+    end
+
+    def release_read_lock : Nil
+      file = @file
+      return unless file && @read_depth > 0
+      @read_depth -= 1
+      file.unlock(LockLevel::None) if @read_depth == 0 && !@in_write_transaction
+    end
+
     private def begin_read(file : DatabaseFile) : Nil
       raise Busy.new unless file.lock(LockLevel::Shared)
       begin
@@ -302,13 +320,15 @@ module Grant::SQLiteEngine
         finish_transaction(file)
         return
       end
+      # The EXCLUSIVE lock first, so a commit refused while another
+      # connection reads can be tried again unchanged.
+      raise Busy.new unless file.lock(LockLevel::Exclusive)
       page_one = page_for_write(1_u32)
       counter = get_u32(page_one, CHANGE_COUNTER_OFFSET) &+ 1
       put_u32(page_one, CHANGE_COUNTER_OFFSET, counter)
       put_u32(page_one, PAGE_COUNT_OFFSET, @page_count)
       put_u32(page_one, VERSION_VALID_FOR_OFFSET, counter)
       put_u32(page_one, VERSION_NUMBER_OFFSET, WRITER_VERSION_NUMBER)
-      raise Busy.new unless file.lock(LockLevel::Exclusive)
       file_system = writer_file_system
       journal_path = RollbackJournal.path_for(@path)
       journal = file_system.open(journal_path)

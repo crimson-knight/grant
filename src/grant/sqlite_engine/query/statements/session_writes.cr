@@ -69,14 +69,27 @@ module Grant::SQLiteEngine::Query
     # --- Transactions -------------------------------------------------------
 
     # Takes the write lock for the open transaction or for one statement,
-    # waiting up to busy_timeout for another connection to finish.
+    # waiting up to busy_timeout for another connection to finish. The
+    # SAVEPOINTs of a deferred transaction declared before its first write
+    # open in the pager here.
     def begin_write_transaction : Nil
       pager = @database.pager
       return if pager.in_write_transaction?
+      wait_while_busy { pager.begin_write }
+      refresh_after_other_connections
+      @list_of_savepoints.each_with_index do |mark, position|
+        next unless mark.depth < 0
+        @list_of_savepoints[position] = mark.copy_with(depth: pager.open_savepoint)
+      end
+    end
+
+    # Runs *block* until it stops raising Busy, for up to busy_timeout
+    # milliseconds (sqlite3_busy_timeout), then raises "database is locked".
+    private def wait_while_busy(& : ->) : Nil
       deadline = Time.instant + @busy_timeout.milliseconds
       loop do
         begin
-          pager.begin_write
+          yield
           return
         rescue Busy
           raise SQLError.new("database is locked", 5) if Time.instant >= deadline
@@ -85,12 +98,42 @@ module Grant::SQLiteEngine::Query
       end
     end
 
-    # BEGIN: opens a transaction. The write lock is taken at once (the
-    # engine has one writer per file; DEFERRED differs from IMMEDIATE only
-    # in when SQLITE_BUSY can arrive).
-    def begin_transaction : Nil
+    @seen_generation = 0
+    @holds_transaction_read_lock = false
+
+    # A statement starts reading: a SHARED lock for the statement, and in a
+    # transaction one more held until it ends, as C keeps SHARED from the
+    # first read to COMMIT. Pages and schema another connection changed are
+    # dropped first.
+    def begin_statement_read : Nil
+      pager = @database.pager
+      wait_while_busy { pager.acquire_read_lock }
+      if @in_transaction && !@holds_transaction_read_lock
+        pager.acquire_read_lock
+        @holds_transaction_read_lock = true
+      end
+      refresh_after_other_connections
+    end
+
+    def end_statement_read : Nil
+      @database.pager.release_read_lock
+    end
+
+    # The schema cache goes when the pager reloaded what another
+    # connection committed.
+    private def refresh_after_other_connections : Nil
+      generation = @database.pager.generation
+      return if generation == @seen_generation
+      @seen_generation = generation
+      reset_schema
+    end
+
+    # BEGIN: opens a transaction. IMMEDIATE and EXCLUSIVE take the write
+    # lock at once; DEFERRED takes it at the first write, so connections
+    # that only read never wait for one another.
+    def begin_transaction(immediate : Bool = false) : Nil
       raise SQLError.new("cannot start a transaction within a transaction") if @in_transaction
-      begin_write_transaction
+      begin_write_transaction if immediate
       @in_transaction = true
       @opened_by_savepoint = false
       @deferred_violations = 0_i64
@@ -120,15 +163,20 @@ module Grant::SQLiteEngine::Query
       @opened_by_savepoint = false
       @list_of_savepoints.clear
       @deferred_violations = 0_i64
+      if @holds_transaction_read_lock
+        @holds_transaction_read_lock = false
+        @database.pager.release_read_lock
+      end
     end
 
+    # SAVEPOINT: a pager savepoint once the transaction writes (depth -1
+    # until then, since nothing before the first write needs undoing).
     def savepoint(name : String) : Nil
       unless @in_transaction
         begin_transaction
         @opened_by_savepoint = true
       end
-      begin_write_transaction
-      depth = @database.pager.open_savepoint
+      depth = @database.pager.in_write_transaction? ? @database.pager.open_savepoint : -1
       @list_of_savepoints << SavepointMark.new(name, depth, @deferred_violations)
     end
 
@@ -147,7 +195,7 @@ module Grant::SQLiteEngine::Query
         return
       end
       mark = @list_of_savepoints[position]
-      @database.pager.release_savepoint(mark.depth)
+      @database.pager.release_savepoint(mark.depth) if mark.depth >= 0
       @list_of_savepoints.delete_at(position..)
     end
 
@@ -155,7 +203,7 @@ module Grant::SQLiteEngine::Query
     def rollback_to(name : String) : Nil
       position = savepoint_position(name)
       mark = @list_of_savepoints[position]
-      @database.pager.rollback_to_savepoint(mark.depth)
+      @database.pager.rollback_to_savepoint(mark.depth) if mark.depth >= 0
       @list_of_savepoints.delete_at((position + 1)..)
       @deferred_violations = mark.deferred_violations
       reset_schema
@@ -166,24 +214,30 @@ module Grant::SQLiteEngine::Query
     # statement (ABORT), keeps its earlier changes (FAIL) or ends the
     # transaction (ROLLBACK); changes() and total_changes() count the rows
     # of a statement that finished.
-    def run_write(list_of_parameters : Array(Value), counts_changes : Bool = true, & : WriteRun -> T) : T forall T
+    #
+    # With *returning*, an autocommit statement that returned rows keeps
+    # its transaction open until those rows are read (or the statement is
+    # reset), as C commits at OP_Halt: `finish_pending_commit`.
+    def run_write(list_of_parameters : Array(Value), counts_changes : Bool = true, returning : Bool = false, & : WriteRun -> T) : T forall T
+      finish_pending_commit
       autocommit = !@in_transaction
       begin_write_transaction
       pager = @database.pager
       depth = pager.open_savepoint
       saved_deferred = @deferred_violations
       run = WriteRun.new(self, list_of_parameters)
+      hold = false
       begin
         result = yield run
         run.finish_autoincrement
-        if run.immediate_violations > 0 || (autocommit && @deferred_violations > 0)
+        hold = autocommit && returning && result.is_a?(Array) && !result.empty?
+        if run.immediate_violations > 0 || (autocommit && !hold && @deferred_violations > 0)
           raise ConstraintError.new("FOREIGN KEY constraint failed")
         end
       rescue error : ConstraintError
         if error.action.fail?
           pager.release_savepoint(depth)
-          pager.commit if autocommit
-          @deferred_violations = 0_i64 if autocommit
+          commit_statement_transaction if autocommit
           record_changes(run.changes) if counts_changes
         elsif error.action.rollback?
           pager.rollback
@@ -201,12 +255,48 @@ module Grant::SQLiteEngine::Query
         raise error
       end
       pager.release_savepoint(depth)
-      if autocommit
-        pager.commit
-        @deferred_violations = 0_i64
-      end
       record_changes(run.changes) if counts_changes
+      if autocommit
+        if hold
+          @pending_commit = true
+        else
+          commit_statement_transaction
+        end
+      end
       result
+    end
+
+    # An autocommit statement's RETURNING rows are still being read.
+    getter? pending_commit = false
+
+    # Commits the transaction of an autocommit statement that returned
+    # rows: deferred foreign keys must hold, and a reader of another
+    # connection can refuse the commit ("database is locked"). A failed
+    # commit undoes the statement.
+    def finish_pending_commit : Nil
+      return unless @pending_commit
+      @pending_commit = false
+      if @deferred_violations > 0
+        @database.pager.rollback
+        @deferred_violations = 0_i64
+        reset_schema
+        raise ConstraintError.new("FOREIGN KEY constraint failed")
+      end
+      commit_statement_transaction
+    end
+
+    # Commits one autocommit statement's transaction, waiting up to
+    # busy_timeout for readers; a commit still refused rolls back.
+    private def commit_statement_transaction : Nil
+      pager = @database.pager
+      @deferred_violations = 0_i64
+      begin
+        wait_while_busy { pager.commit }
+      rescue error
+        pager.rollback
+        reset_schema
+        raise error
+      end
     end
 
     private def undo_statement(depth : Int32, autocommit : Bool, saved_deferred : Int64) : Nil

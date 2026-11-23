@@ -12,7 +12,7 @@ module Grant::SQLiteEngine::Query
 
     def self.from(resolution : SQL::ConflictResolution?) : ConflictAction
       case resolution
-      when Nil then Default
+      when Nil        then Default
       when .rollback? then Rollback
       when .abort?    then Abort
       when .fail?     then Fail
@@ -89,6 +89,9 @@ module Grant::SQLiteEngine::Query
     getter list_of_indexes : Array(IndexRule)
     getter list_of_foreign_keys = [] of ForeignKeyRule
     getter rowid_conflict = ConflictAction::Default
+    # The PRIMARY KEY's conflict action of a WITHOUT ROWID table, whose key
+    # is the table b-tree's own (it has no separate index).
+    getter primary_key_conflict = ConflictAction::Default
     # Compiled expressions, kept while the schema stays the same.
     property check_programs : Array(RowProgram)? = nil
     getter partial_programs = {} of String => RowProgram
@@ -108,6 +111,7 @@ module Grant::SQLiteEngine::Query
           CheckRule.new(names[index]? || check.constraint_name, check.expression)
         end
       end
+      read_primary_key(constraint_conflicts) if without_rowid?
       rules = @table_info.list_of_indexes.map do |index|
         IndexRule.new(index, index_conflict(index, constraint_conflicts), partial_where(index), columns_text(index))
       end
@@ -139,6 +143,19 @@ module Grant::SQLiteEngine::Query
 
     def list_of_index_layouts : Array(IndexLayout)
       @table_info.list_of_indexes
+    end
+
+    # convertToWithoutRowidTable: every PRIMARY KEY column without a NOT
+    # NULL of its own is NOT NULL (ABORT).
+    private def read_primary_key(constraint_conflicts : Array({Array(String), ConflictAction})) : Nil
+      key_names = definition.list_of_primary_key_columns.map(&.downcase)
+      @list_of_columns.each do |rule|
+        next unless key_names.includes?(rule.column_name.downcase)
+        rule.not_null ||= ConflictAction::Abort
+      end
+      if found = constraint_conflicts.find { |names, _| names.sort == key_names.sort }
+        @primary_key_conflict = found[1]
+      end
     end
 
     private def read_constraints(statement : SQL::CreateTable, constraint_conflicts : Array({Array(String), ConflictAction})) : Nil

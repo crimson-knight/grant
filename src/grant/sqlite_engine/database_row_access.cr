@@ -187,7 +187,7 @@ module Grant::SQLiteEngine
     def write_header_field(offset : Int32, value : UInt32) : Nil
       @pager.set_header_field(offset, value)
     end
-  
+
     # CREATE INDEX inside a write statement: the index is filled from the
     # table's rows (only those a partial index's WHERE accepts) and a
     # UNIQUE index with two equal keys fails with C's message.

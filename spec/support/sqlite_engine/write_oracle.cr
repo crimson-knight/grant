@@ -29,6 +29,11 @@ module SQLiteWriteOracle
     getter engine_path : String
     getter c_connection : SQLiteQueryOracle::Connection
     getter session : Grant::SQLiteEngine::Query::Session
+    # False after a statement only C ran changed changes(), until both run
+    # the next INSERT, UPDATE or DELETE.
+    property? changes_in_step = true
+    # The same for last_insert_rowid(), until both run the next INSERT.
+    property? rowid_in_step = true
 
     def initialize(@directory : String, name : String = "db")
       Dir.mkdir_p(@directory)
@@ -79,18 +84,35 @@ module SQLiteWriteOracle
       Pair.difference(expected, actual, ordered)
     end
 
-    def self.difference(expected : StepResult, actual : StepResult, ordered : Bool) : String?
+    def self.difference(expected : StepResult, actual : StepResult, ordered : Bool, compare_changes : Bool = true, compare_rowid : Bool = true) : String?
       if found = SQLiteQueryOracle.difference(expected.outcome, actual.outcome, ordered)
         return found
       end
-      return "changes(): C #{expected.changes}, engine #{actual.changes}" if expected.changes != actual.changes
-      if expected.last_insert_rowid != actual.last_insert_rowid
+      if compare_changes && expected.changes != actual.changes
+        return "changes(): C #{expected.changes}, engine #{actual.changes}"
+      end
+      if compare_rowid && expected.last_insert_rowid != actual.last_insert_rowid
         return "last_insert_rowid(): C #{expected.last_insert_rowid}, engine #{actual.last_insert_rowid}"
       end
       if expected.total_changes != actual.total_changes
         return "total_changes() grew by: C #{expected.total_changes}, engine #{actual.total_changes}"
       end
       nil
+    end
+
+    # Replaces the engine's file with a copy of C's, after a statement the
+    # engine skipped wrote to C's file, so later statements start from the
+    # same rows. The session's foreign_keys setting carries over.
+    def copy_c_file_to_engine : Nil
+      foreign_keys = @session.foreign_keys?
+      @session.database.close
+      File.delete?("#{@engine_path}-journal")
+      FileUtils.cp(@c_path, @engine_path)
+      @session = Pair.open_session(@engine_path)
+      @session.foreign_keys = foreign_keys
+      @engine_total = 0_i64
+      @changes_in_step = false
+      @rowid_in_step = false
     end
 
     # True when C is outside a transaction (so both files hold committed

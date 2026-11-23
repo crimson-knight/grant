@@ -88,25 +88,122 @@ end
 
 # Runs one statement on both and records the outcome.
 module WriteStep
+  # Names created by statements the engine skipped (an ATTACH schema, a
+  # TEMP table): a later statement that fails on one of them is counted as
+  # depending on the skipped statement.
+  class_getter list_of_skipped_names = [] of String
+  # C wrote rows or schema in a statement the engine skipped; the engine's
+  # file takes a copy of C's at the next point outside a transaction.
+  class_property? copy_pending = false
+
   def self.run(pair : SQLiteWriteOracle::Pair, sql : String, parameters : Array(Value), report : WriteReport,
                context : String, ordered : Bool) : Bool
     report.count("statements")
+    if copy_pending? && pair.autocommit? && !pair.session.in_transaction?
+      pair.copy_c_file_to_engine
+      report.count("engine file copied from C after a skipped write")
+      self.copy_pending = false
+    end
     expected = pair.c_step(sql, parameters)
     actual = begin
       pair.engine_step(sql, parameters)
     rescue error : Grant::SQLiteEngine::UnsupportedSQL
       report.skip("engine: #{error.message}", sql)
-      # Keep the engine's file in step with C's where the statement wrote.
+      note_skipped(sql)
+      self.copy_pending = true if expected.outcome.error.nil? && writes?(sql)
+      if expected.outcome.error.nil? && dml?(sql)
+        pair.changes_in_step = false
+        pair.rowid_in_step = false
+      end
       return false
     end
+    expected = WriteStep.normalized(expected, pair, sql)
     report.count("C errors") if expected.outcome.error
     report.count("rows compared", expected.outcome.list_of_rows.size.to_i64)
-    if difference = SQLiteWriteOracle::Pair.difference(expected, actual, ordered)
+    if difference = SQLiteWriteOracle::Pair.difference(expected, actual, ordered, pair.changes_in_step?, pair.rowid_in_step?)
+      if name = skipped_name_behind(sql, expected, actual)
+        report.skip("downstream of a skipped statement (#{name})", sql)
+        if dml?(sql)
+          pair.changes_in_step = false
+          pair.rowid_in_step = false
+        end
+        # One side failed where the other wrote: the table the statement
+        # names now differs between the two files too.
+        if expected.outcome.error.nil? != actual.outcome.error.nil?
+          if target = target_table(sql)
+            list_of_skipped_names << target unless list_of_skipped_names.includes?(target)
+          end
+        end
+        return false
+      end
       report.difference("#{context}\n  #{sql}\n  parameters #{parameters.inspect}\n  #{difference}")
       return false
     end
+    if expected.outcome.error.nil?
+      pair.changes_in_step = true if dml?(sql)
+      pair.rowid_in_step = true if sql.matches?(/\A\s*(INSERT|REPLACE)\b/i)
+    end
     report.count("statements matching C")
     true
+  end
+
+  # The skipped name a differing statement depends on: named in the
+  # statement, in either error, or in every row only one side returned.
+  private def self.skipped_name_behind(sql : String, expected : SQLiteWriteOracle::StepResult,
+                                       actual : SQLiteWriteOracle::StepResult) : String?
+    return if list_of_skipped_names.empty?
+    texts = [sql, expected.outcome.error || "", actual.outcome.error || ""]
+    if name = list_of_skipped_names.find { |skipped| texts.any? { |text| mentions?(text, skipped) } }
+      return name
+    end
+    c_only = expected.outcome.list_of_rows.map(&.inspect) - actual.outcome.list_of_rows.map(&.inspect)
+    engine_only = actual.outcome.list_of_rows.map(&.inspect) - expected.outcome.list_of_rows.map(&.inspect)
+    rows = c_only + engine_only
+    return if rows.empty?
+    list_of_skipped_names.find { |skipped| rows.all? { |row| mentions?(row, skipped) } }
+  end
+
+  private def self.mentions?(text : String, name : String) : Bool
+    text.matches?(/(?<![\w])#{Regex.escape(name)}(?![\w])/i)
+  end
+
+  private def self.target_table(sql : String) : String?
+    if match = sql.match(/\A\s*(?:ALTER\s+TABLE|DROP\s+TABLE(?:\s+IF\s+EXISTS)?|INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+["`\[]?(\w+)/im)
+      match[1]
+    end
+  end
+
+  private def self.note_skipped(sql : String) : Nil
+    if match = sql.match(/\A\s*ATTACH\b.*\bAS\s+["`\[]?(\w+)/im)
+      list_of_skipped_names << match[1]
+    elsif match = sql.match(/\A\s*CREATE\s+TEMP(?:ORARY)?\s+(?:TABLE|VIEW)\s+(?:IF\s+NOT\s+EXISTS\s+)?["`\[]?(\w+)/im)
+      list_of_skipped_names << match[1]
+    elsif match = sql.match(/\A\s*CREATE\s+(?:UNIQUE\s+)?INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?["`\[]?(\w+)/im)
+      list_of_skipped_names << match[1]
+    end
+  end
+
+  def self.writes?(sql : String) : Bool
+    sql.matches?(/\A\s*(INSERT|REPLACE|UPDATE|DELETE|CREATE|DROP|ALTER|PRAGMA)\b/i) && !sql.matches?(/\A\s*CREATE\s+TEMP/i)
+  end
+
+  def self.dml?(sql : String) : Bool
+    sql.matches?(/\A\s*(INSERT|REPLACE|UPDATE|DELETE|WITH)\b/i)
+  end
+
+  # Columns that cannot match by design: EXPLAIN QUERY PLAN's third column
+  # (C's opcode address, documented as unused) and the file name each
+  # connection reports for its own database.
+  def self.normalized(result : SQLiteWriteOracle::StepResult, pair : SQLiteWriteOracle::Pair, sql : String) : SQLiteWriteOracle::StepResult
+    outcome = result.outcome
+    rows = outcome.list_of_rows
+    if sql.matches?(/\A\s*EXPLAIN\s+QUERY\s+PLAN\b/i)
+      rows = rows.map { |row| row.map_with_index { |value, index| index == 2 ? 0_i64.as(Value) : value } }
+    end
+    c_path = File.realpath(pair.c_path)
+    engine_path = File.realpath(pair.engine_path)
+    rows = rows.map { |row| row.map { |value| value == c_path ? engine_path.as(Value) : value } }
+    result.copy_with(outcome: outcome.copy_with(list_of_rows: rows))
   end
 
   def self.ordered?(sql : String) : Bool
@@ -152,20 +249,20 @@ class CorpusReplay
 
   def self.value(random : Random, position : Int32) : Value
     case random.rand(20)
-    when 0      then nil
-    when 1, 2   then "v#{random.rand(6)}"
-    when 3      then random.rand(6) + 0.5
-    when 4      then "2026-11-#{10 + random.rand(9)} 10:00:00.000000"
-    else             (random.rand(8) + 1).to_i64
+    when 0    then nil
+    when 1, 2 then "v#{random.rand(6)}"
+    when 3    then random.rand(6) + 0.5
+    when 4    then "2026-11-#{10 + random.rand(9)} 10:00:00.000000"
+    else           (random.rand(8) + 1).to_i64
     end
   end
 end
 
 # Random schemas and write sequences.
 class RandomWrites
-  TYPES = ["INTEGER", "VARCHAR(20)", "TEXT", "REAL", "NUMERIC", "BOOL", "DATETIME", "BLOB", ""]
+  TYPES     = ["INTEGER", "VARCHAR(20)", "TEXT", "REAL", "NUMERIC", "BOOL", "DATETIME", "BLOB", ""]
   CONFLICTS = ["", "OR IGNORE ", "OR REPLACE ", "OR FAIL ", "OR ABORT ", "OR ROLLBACK "]
-  ACTIONS = ["", " ON DELETE CASCADE", " ON DELETE SET NULL", " ON DELETE RESTRICT", " ON UPDATE CASCADE", " ON DELETE SET DEFAULT"]
+  ACTIONS   = ["", " ON DELETE CASCADE", " ON DELETE SET NULL", " ON DELETE RESTRICT", " ON UPDATE CASCADE", " ON DELETE SET DEFAULT"]
 
   record Column, name : String, type : String, unique : Bool, not_null : Bool
 
@@ -176,15 +273,15 @@ class RandomWrites
 
   def value : String
     case @random.rand(14)
-    when 0     then "NULL"
-    when 1     then "'a'"
-    when 2     then "'B'"
-    when 3     then "'b'"
-    when 4     then "1.5"
-    when 5     then "'3'"
-    when 6     then "x'01'"
-    when 7     then "-1"
-    else            (@random.rand(6)).to_s
+    when 0 then "NULL"
+    when 1 then "'a'"
+    when 2 then "'B'"
+    when 3 then "'b'"
+    when 4 then "1.5"
+    when 5 then "'3'"
+    when 6 then "x'01'"
+    when 7 then "-1"
+    else        (@random.rand(6)).to_s
     end
   end
 
@@ -306,13 +403,13 @@ class RandomWrites
       savepoints << name
       "SAVEPOINT #{name}"
     when 15
-      if name = savepoints.sample?(@random)
+      if !savepoints.empty? && (name = savepoints.sample(@random))
         "ROLLBACK TO #{name}"
       else
         "ROLLBACK"
       end
     when 16
-      if name = savepoints.sample?(@random)
+      if !savepoints.empty? && (name = savepoints.sample(@random))
         "RELEASE #{name}"
       else
         "SELECT * FROM #{table.name} ORDER BY rowid"
@@ -338,13 +435,26 @@ class RandomDifferential
       generator = RandomWrites.new(random)
       directory = File.join(@work, "sequence")
       pair = SQLiteWriteOracle::Pair.new(directory, "random")
+      WriteStep.copy_pending = false
+      WriteStep.list_of_skipped_names.clear
       begin
         statements, tables = generator.schema
         savepoints = [] of String
-        statements.each { |sql| WriteStep.run(pair, sql, [] of Value, @report, "sequence #{number} (seed #{@seed})", true) }
+        trace = [] of String
+        traced = false
+        step = ->(sql : String, ordered : Bool) do
+          before = @report.list_of_differences.size
+          trace << sql
+          WriteStep.run(pair, sql, [] of Value, @report, "sequence #{number} (seed #{@seed})", ordered)
+          if !traced && @report.list_of_differences.size > before
+            traced = true
+            @report.list_of_differences[-1] += "\n  statements of the sequence so far:\n" + trace.map { |line| "    #{line}" }.join('\n')
+          end
+        end
+        statements.each { |sql| step.call(sql, true) }
         (random.rand(20) + 5).times do
           sql = generator.statement(tables, savepoints)
-          WriteStep.run(pair, sql, [] of Value, @report, "sequence #{number} (seed #{@seed})", WriteStep.ordered?(sql))
+          step.call(sql, WriteStep.ordered?(sql))
           savepoints.clear if sql.matches?(/\A(COMMIT|ROLLBACK\z|BEGIN)/)
         end
         pair.c_step("ROLLBACK") unless pair.autocommit?

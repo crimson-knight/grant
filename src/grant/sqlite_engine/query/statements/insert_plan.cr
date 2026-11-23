@@ -76,8 +76,10 @@ module Grant::SQLiteEngine::Query
 
     def run(list_of_parameters : Array(Value)) : Array(Array(Value))
       returned = [] of Array(Value)
-      @session.run_write(list_of_parameters) do |run|
-        run.single_row = (@source.nil? || single_values_row?) && !(@override.replace? && !@table.list_of_indexes.empty?)
+      @session.run_write(list_of_parameters, returning: !@returning.nil?) do |run|
+        # sqlite3BeginWriteOperation(pSelect || pTrigger): a RETURNING clause
+        # is a trigger, so its INSERT is never a single-row write.
+        run.single_row = (@source.nil? || single_values_row?) && !(@override.replace? && !@table.list_of_indexes.empty?) && @returning.nil?
         run.open_autoincrement(@table)
         each_source_row(list_of_parameters) do |values|
           row = Array(Value).new(@table.list_of_columns.size, nil)

@@ -56,8 +56,14 @@ module Grant::SQLite3
       end
 
       def prepare(sql : String) : {Int32, Engine::PreparedStatement}
-        query = @session.prepare(sql)
+        @session.begin_statement_read
+        query = begin
+          @session.prepare(sql)
+        ensure
+          @session.end_statement_read
+        end
         succeed
+        @open_statement_count += 1
         {Engine::OK_CODE, PreparedStatement.new(self, query).as(Engine::PreparedStatement)}
       rescue error : SQLiteEngine::SQLError
         {fail(error.result_code, error.message || "SQL error"), FailedStatement.new.as(Engine::PreparedStatement)}
@@ -108,7 +114,19 @@ module Grant::SQLite3
         exec("COMMIT")
       end
 
+      # Statements prepared and not yet finalized.
+      @open_statement_count = 0
+
+      # :nodoc:
+      protected def statement_finalized : Nil
+        @open_statement_count -= 1
+      end
+
+      # sqlite3_close: refused while a statement is unfinalized.
       def close : Int32
+        if @open_statement_count > 0
+          return fail(5, "unable to close due to unfinalized statements or unfinished backups")
+        end
         @engine_database.close
         Engine::OK_CODE
       end
@@ -161,14 +179,31 @@ module Grant::SQLite3
         Engine::OK_CODE
       end
 
+      # True from the first step until the statement finishes or resets:
+      # the session holds a SHARED lock for it meanwhile.
+      @reading = false
+
       def step : Int32
+        unless @reading
+          @database.session.begin_statement_read
+          @reading = true
+        end
         @last_code = @query.step ? Engine::ROW_CODE : Engine::DONE_CODE
+        finish_reading unless @last_code == Engine::ROW_CODE
         @database.succeed
         @last_code
       rescue error : SQLiteEngine::SQLError
+        finish_reading
         @last_code = @database.fail(error.result_code, error.message || "SQL error")
       rescue error : SQLiteEngine::Error
+        finish_reading
         @last_code = @database.fail(Engine::ERROR_CODE, error.message || "SQL error")
+      end
+
+      private def finish_reading : Nil
+        return unless @reading
+        @reading = false
+        @database.session.end_statement_read
       end
 
       def column_count : Int32
@@ -205,15 +240,32 @@ module Grant::SQLite3
         SQLiteEngine::Query::ValueSemantics.blob(value(index)) || Bytes.empty
       end
 
+      # A reset ends the statement, committing an autocommit write whose
+      # RETURNING rows were not all read; its failure is the reset's result,
+      # as sqlite3_reset reports it.
       def reset : Int32
         @query.reset
+        finish_reading
+        begin
+          @database.session.finish_pending_commit
+        rescue error : SQLiteEngine::SQLError
+          @last_code = Engine::OK_CODE
+          return @database.fail(error.result_code, error.message || "SQL error")
+        end
         code = @last_code
         @last_code = Engine::OK_CODE
         code == Engine::ROW_CODE || code == Engine::DONE_CODE ? Engine::OK_CODE : code
       end
 
+      @finalized = false
+
       def finalize_statement : Int32
-        reset
+        code = reset
+        unless @finalized
+          @finalized = true
+          @database.statement_finalized
+        end
+        code
       end
 
       private def value(index : Int32) : SQLiteEngine::Value

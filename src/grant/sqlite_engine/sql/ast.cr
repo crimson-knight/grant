@@ -346,6 +346,13 @@ module Grant::SQLiteEngine::SQL
   # parentheses (`VARCHAR(255)`, `DECIMAL(10, 2)`).
   define_node TypeName, Node, words : Array(Name), arguments : Array(String)
 
+  class TypeName
+    # The type as written, from its first word to its closing parenthesis
+    # (parse.y's typetoken span), which C keeps as the column's declared
+    # type: `DECIMAL(12, 10)` keeps its space.
+    property source_text : String? = nil
+  end
+
   # The REFERENCES clause of a foreign key.
   define_node ForeignKeyAction, Node, event : String, action : String
 
