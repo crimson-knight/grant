@@ -726,12 +726,12 @@ module Grant::SQLiteEngine::Query
       if table = column.table
         entry = entries.find { |candidate| candidate.match_name.compare(table.value, case_insensitive: true) == 0 }
         raise SQLError.new("no such table: #{table.value}") unless entry
-        entry.list_of_columns.each_with_index { |_, index| append_column(entry, index, expanded, syntax, aliases, spans) }
+        entry.visible_column_count.times { |index| append_column(entry, index, expanded, syntax, aliases, spans) }
         return
       end
       raise SQLError.new("no tables specified") if entries.empty?
       entries.each do |entry|
-        entry.list_of_columns.each_with_index do |_, index|
+        entry.visible_column_count.times do |index|
           next if entry.merged_columns.includes?(index)
           append_column(entry, index, expanded, syntax, aliases, spans)
         end
@@ -754,6 +754,9 @@ module Grant::SQLiteEngine::Query
     end
 
     protected def rowid_expression(entry : FromEntry) : Expr
+      if rowid_column = entry.rowid_column
+        return column_expression(entry, rowid_column)
+      end
       table = entry.table
       name = "rowid"
       if table && (alias_index = table.rowid_alias)
