@@ -70,23 +70,30 @@ describe Grant::PoolReaper do
     end
   end
 
+  # `max_age` counts from the moment a connection is opened, so the time spent
+  # opening the pool (a SCRAM handshake costs tens of milliseconds per
+  # connection) is part of every connection's age. The max_age examples move
+  # the limit instead of sleeping past it, so no setup time can age a
+  # connection out before the example expects.
   it "retires idle connections that outlived max_age" do
-    adapter = C02Support.establish("c02_reaper", pool_size: 5, initial_pool_size: 1, max_idle_pool_size: 5, max_age: 250.milliseconds)
+    adapter = C02Support.establish("c02_reaper", pool_size: 5, initial_pool_size: 1, max_idle_pool_size: 5, max_age: 1.hour)
     hold_connections(adapter, 3)
     reaper = Grant::PoolReaper.new(adapter, 1.minute)
 
     reaper.sweep.should eq 0
-    sleep 300.milliseconds
+    adapter.pool_stat.idle.should eq 3
+
+    adapter.max_age = Time::Span.zero
     reaper.sweep.should eq 3
     adapter.pool_stat.connections.should eq 0
     adapter.open(&.scalar("SELECT 1")).should eq 1
   end
 
   it "closes a connection that passed max_age while it was checked out when it is returned" do
-    adapter = C02Support.establish("c02_reaper", pool_size: 5, initial_pool_size: 1, max_idle_pool_size: 5, max_age: 250.milliseconds)
+    adapter = C02Support.establish("c02_reaper", pool_size: 5, initial_pool_size: 1, max_idle_pool_size: 5, max_age: 1.hour)
 
     adapter.open do |connection|
-      sleep 300.milliseconds
+      adapter.max_age = Time::Span.zero
       connection.scalar("SELECT 1").should eq 1
     end
 
