@@ -65,9 +65,17 @@ module Grant::SQLiteEngine::Query
       result
     end
 
+    # The root page of the index the captured table is read through (nil:
+    # the table b-tree, in rowid order).
+    getter captured_index_root : UInt32? = nil
+
     private def choose_access(step : JoinStep, terms : Array(Expr), available : Set(Int32), context : QueryContext) : RowSource
       return step.base_source if step.base_source.is_a?(PseudoRowSource)
-      previous_def
+      source = previous_def
+      if source.is_a?(IndexLookupSource) && source.slot == @captured_slot
+        @captured_index_root = source.root_page
+      end
+      source
     end
 
     private def simple_count_table(core : SQL::SelectClause, steps : Array(JoinStep), order_by : Array(SQL::OrderingTerm)) : TableInfo?
@@ -118,5 +126,14 @@ module Grant::SQLiteEngine::Query
       producer.open(frame)
       producer.next_row(frame)
     end
+  end
+end
+
+module Grant::SQLiteEngine::Query
+  class IndexLookupSource
+    # The frame slot and index b-tree of the rows it reads (for a write
+    # statement's row order).
+    getter slot : Int32
+    getter root_page : UInt32
   end
 end

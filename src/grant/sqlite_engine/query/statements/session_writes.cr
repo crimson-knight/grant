@@ -88,13 +88,11 @@ module Grant::SQLiteEngine::Query
     private def wait_while_busy(& : ->) : Nil
       deadline = Time.instant + @busy_timeout.milliseconds
       loop do
-        begin
-          yield
-          return
-        rescue Busy
-          raise SQLError.new("database is locked", 5) if Time.instant >= deadline
-          sleep 1.millisecond
-        end
+        yield
+        return
+      rescue Busy
+        raise SQLError.new("database is locked", 5) if Time.instant >= deadline
+        sleep 1.millisecond
       end
     end
 

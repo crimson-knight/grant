@@ -72,6 +72,24 @@ module WriteStatementsSpecFixture
       "UPDATE memberships SET role = upper(role) WHERE user_id = 1",
       "SELECT rowid, * FROM memberships",
     ],
+    "without rowid key check order" => [
+      "CREATE TABLE a (c0, c2 UNIQUE, PRIMARY KEY (c0)) WITHOUT ROWID",
+      "INSERT INTO a VALUES (1, 1)",
+      "INSERT INTO a VALUES (1, 1)",
+      "CREATE TABLE b (c0 PRIMARY KEY, c2 UNIQUE) WITHOUT ROWID",
+      "INSERT INTO b VALUES (1, 1)",
+      "INSERT INTO b VALUES (1, 1)",
+      "CREATE TABLE c (c0 UNIQUE, c2 UNIQUE, PRIMARY KEY (c0)) WITHOUT ROWID",
+      "INSERT INTO c VALUES (1, 1)",
+      "INSERT INTO c VALUES (1, 1)",
+      "CREATE TABLE d (c0 UNIQUE, c2 UNIQUE, c3 UNIQUE, PRIMARY KEY (c2)) WITHOUT ROWID",
+      "INSERT INTO d VALUES (1, 1, 1)",
+      "INSERT INTO d VALUES (1, 1, 1)",
+      "CREATE TABLE e (c0 UNIQUE, c2 UNIQUE, PRIMARY KEY (c0)) WITHOUT ROWID",
+      "CREATE UNIQUE INDEX e1 ON e (c2, c0)",
+      "INSERT INTO e VALUES (1, 1)",
+      "INSERT INTO e VALUES (1, 1)",
+    ],
     "check constraints" => [
       "CREATE TABLE c (a INTEGER CHECK (a > 0), b TEXT, CONSTRAINT b_len CHECK (length(b) < 5), CHECK( a < 100 ))",
       "INSERT INTO c VALUES (1, 'ok')",
@@ -288,7 +306,16 @@ module WriteStatementsSpecFixture
 end
 
 describe "Grant::SQLiteEngine::Query write statements" do
+  # Scenarios whose C answers changed in releases before 3.51.0 (DROP
+  # COLUMN's index checks): compared only against the reference library.
+  reference_only = {"schema changes"}
+  linked = SQLiteSQLOracle.version.split(' ').first
+  library_is_reference = linked.split('.').map(&.to_i) >= [3, 51, 0]
   WriteStatementsSpecFixture::SCENARIOS.each do |name, statements|
+    if reference_only.includes?(name) && !library_is_reference
+      pending "matches C SQLite 3.51.0: #{name} (the linked libsqlite3 is #{linked})"
+      next
+    end
     it "matches C SQLite: #{name}" do
       failures = WriteStatementsSpecFixture.run(name, statements)
       failures.should eq([] of String)

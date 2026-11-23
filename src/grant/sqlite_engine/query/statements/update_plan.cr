@@ -8,6 +8,8 @@ module Grant::SQLiteEngine::Query
 
     @compiled : CompiledSelect
     @slot : Int32
+    # The index the rows are read through (nil: the table, in rowid order).
+    getter scan_index_root : UInt32?
 
     def initialize(@session : Session, table : TableInfo, reference : SQL::QualifiedTable, indexed_by : SQL::Name?,
                    not_indexed : Bool, columns : Array(SQL::ResultColumn), from : SQL::From?, where : SQL::Expression?,
@@ -29,6 +31,7 @@ module Grant::SQLiteEngine::Query
       compiler.capture_name = reference.name.value
       @compiled = compiler.compile(statement)
       @slot = compiler.captured_slot || raise Error.new("the target table of a write was not compiled")
+      @scan_index_root = compiler.captured_index_root
       @list_of_column_names = @compiled.list_of_column_names
     end
 
@@ -104,6 +107,9 @@ module Grant::SQLiteEngine::Query
         positions = @assignments.list_of_positions
         run.statement_journal = StatementJournal.for_update(@session, @table, @statement, @override, positions)
         targets = @targets.collect(list_of_parameters)
+        if !@table.without_rowid? && StatementJournal.update_in_rowid_order?(@session, @table, @statement, @override, positions, @targets.scan_index_root)
+          targets = targets.sort_by { |target| target[0] || 0_i64 }
+        end
         targets.each do |rowid, snapshot, values|
           old = rowid ? run.database.row_at(@table.layout, rowid) : run.database.row_with_key_of(@table.layout, snapshot)
           next unless old
@@ -162,6 +168,9 @@ module Grant::SQLiteEngine::Query
       @session.run_write(list_of_parameters, returning: !@returning.nil?) do |run|
         run.statement_journal = StatementJournal.for_delete(@session, @table, @statement)
         targets = @targets.collect(list_of_parameters)
+        if !@table.without_rowid? && StatementJournal.delete_in_rowid_order?(@session, @table, @statement)
+          targets = targets.sort_by { |target| target[0] || 0_i64 }
+        end
         targets.each do |rowid, snapshot, _values|
           old = rowid ? run.database.row_at(@table.layout, rowid) : run.database.row_with_key_of(@table.layout, snapshot)
           next unless old

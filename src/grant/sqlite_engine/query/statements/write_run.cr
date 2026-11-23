@@ -255,16 +255,20 @@ module Grant::SQLiteEngine::Query
         return outcome if outcome
         rowid_checked = true
       end
-      if table.without_rowid?
-        outcome = check_primary_key(table, row, old, unique_override, upsert, clause_for_all)
-        return outcome if outcome
-      end
-      ordered = table.list_of_indexes
+      # nil stands for a WITHOUT ROWID table's PRIMARY KEY.
+      ordered = table.list_of_indexes.map(&.as(IndexRule?))
+      ordered.insert(table.primary_key_position, nil) if table.without_rowid?
       if upsert
-        targeted = upsert.list_of_clauses.compact_map(&.index_rule)
-        ordered = targeted.uniq + ordered.reject { |rule| targeted.includes?(rule) }
+        targeted = upsert.list_of_clauses.compact_map(&.index_rule).uniq.map(&.as(IndexRule?))
+        targeted.unshift(nil) if table.without_rowid? && upsert.list_of_clauses.first?.try(&.targets_rowid?)
+        ordered = targeted + ordered.reject { |rule| targeted.includes?(rule) }
       end
       ordered.each do |rule|
+        unless rule
+          outcome = check_primary_key(table, row, old, unique_override, upsert, clause_for_all)
+          return outcome if outcome
+          next
+        end
         next unless rule.unique?
         index = rule.layout
         next unless index_includes?(table, index, row, rowid)
@@ -311,7 +315,7 @@ module Grant::SQLiteEngine::Query
     private def check_rowid(table : WriteTable, rowid : Int64?, row : Array(Value), old : {Int64?, Array(Value)}?,
                             action : ConflictAction, clause : UpsertClause?,
                             upsert : UpsertPlan?) : {InsertResult, Int64?, Array(Value), {Int64?, Array(Value)}?}?
-      return unless rowid && !table.without_rowid?
+      return if rowid.nil? || table.without_rowid?
       return if old && old[0] == rowid
       return unless database.row_exists?(table.layout, rowid)
       case action
@@ -403,7 +407,7 @@ module Grant::SQLiteEngine::Query
 
     # Whether a partial index holds the row (its WHERE is true).
     def index_includes?(table : WriteTable, index : IndexLayout, row : Array(Value), rowid : Int64?) : Bool
-      rule = table.list_of_indexes.find { |candidate| candidate.layout.same?(index) }
+      rule = table.list_of_indexes.find(&.layout.same?(index))
       where = rule.try(&.where)
       return true unless where
       program = table.partial_programs[index.entry.object_name] ||= begin
@@ -561,7 +565,7 @@ module Grant::SQLiteEngine::Query
         lookup = parent_lookup(rule)
         next unless lookup
         values = rule.list_of_child_positions.map { |position| row[position].as(Value) }
-        next if values.any?(&.nil?)
+        next if values.any?(Nil)
         next if lookup.self_reference?(row, values)
         next if lookup.parent_exists?(values)
         if @single_row && @nested == 0 && !rule.deferred? && !@session.defer_foreign_keys? && old_row.nil?
@@ -579,7 +583,7 @@ module Grant::SQLiteEngine::Query
         lookup = parent_lookup(rule)
         next unless lookup
         values = rule.list_of_child_positions.map { |position| row[position].as(Value) }
-        next if values.any?(&.nil?)
+        next if values.any?(Nil)
         count_violation(rule, -1) unless lookup.parent_exists?(values)
       end
     end
@@ -592,7 +596,7 @@ module Grant::SQLiteEngine::Query
         next unless touches?(parent_positions, list_of_changed, table)
         next if old_row.nil? && !rule.deferred? && !@session.defer_foreign_keys? && @immediate_violations == 0
         key = parent_positions.map { |position| (position == table.rowid_alias ? rowid : row[position]).as(Value) }
-        next if key.any?(&.nil?)
+        next if key.any?(Nil)
         count = matching_children(child_table, rule, table, parent_positions, key).size
         count_violation(rule, -count.to_i64) if count > 0
       end
@@ -605,7 +609,7 @@ module Grant::SQLiteEngine::Query
       referencing(table).each do |child_table, rule, parent_positions|
         next unless touches?(parent_positions, list_of_changed, table)
         key = parent_positions.map { |position| (position == table.rowid_alias ? rowid : row[position]).as(Value) }
-        next if key.any?(&.nil?)
+        next if key.any?(Nil)
         count = matching_children(child_table, rule, table, parent_positions, key).size
         count_violation(rule, count.to_i64) if count > 0
       end
@@ -620,7 +624,7 @@ module Grant::SQLiteEngine::Query
         action = new_row ? rule.on_update : rule.on_delete
         next if action == "NO ACTION"
         key = parent_positions.map { |position| old_row[position].as(Value) }
-        next if key.any?(&.nil?)
+        next if key.any?(Nil)
         if changed_row = new_row
           new_key = parent_positions.map { |position| changed_row[position].as(Value) }
           next if key.zip(new_key).all? { |left, right| ValueSemantics.compare(left, right) == 0 && left.class == right.class }

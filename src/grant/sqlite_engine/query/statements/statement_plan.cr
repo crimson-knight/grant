@@ -52,7 +52,7 @@ module Grant::SQLiteEngine::Query
         assignment.columns.each_with_index do |column, offset|
           position = table.column_index(column.value)
           if position.nil?
-            raise SQLError.new("no such column: #{column.value}") unless RowidName.rowid?(table, column.value) && !table.without_rowid?
+            raise SQLError.new("no such column: #{column.value}") if !RowidName.rowid?(table, column.value) || table.without_rowid?
             position = table.rowid_alias || -1
           end
           if generated.includes?(position)
@@ -85,7 +85,7 @@ module Grant::SQLiteEngine::Query
 
     # sqlite3UpsertOfIndex for an index.
     def clause_for(rule : IndexRule) : UpsertClause?
-      @list_of_clauses.find { |clause| clause.index_rule.same?(rule) } || @list_of_clauses.find(&.untargeted?)
+      @list_of_clauses.find(&.index_rule.same?(rule)) || @list_of_clauses.find(&.untargeted?)
     end
 
     def self.compile(table : WriteTable, upserts : Array(SQL::Upsert), target_name : String) : UpsertPlan?
@@ -116,7 +116,7 @@ module Grant::SQLiteEngine::Query
              info.list_of_column_names[alias_index].compare(names[0][0], case_insensitive: true) == 0
             rowid_target = true
           elsif table.without_rowid? && upsert.target_where.nil? && names.all? { |name| name[1].nil? } &&
-                names.map { |name| name[0].downcase }.sort == table.definition.list_of_primary_key_columns.map(&.downcase).sort
+                names.map(&.[0].downcase).sort! == table.definition.list_of_primary_key_columns.map(&.downcase).sort!
             # A WITHOUT ROWID table's PRIMARY KEY is its own key, checked as
             # the rowid is.
             rowid_target = true

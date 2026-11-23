@@ -93,11 +93,11 @@ module Grant::SQLiteEngine::Query
         raise error
       rescue error : ConstraintViolation
         raise ConstraintError.new(error.message || "constraint failed")
-      rescue error : Busy
+      rescue Busy
         raise SQLError.new("database is locked", 5)
       rescue error : CorruptDatabase
         raise SQLError.new(error.message || "database disk image is malformed", 11)
-      rescue error : ReadOnlyDatabase
+      rescue ReadOnlyDatabase
         raise SQLError.new("attempt to write a readonly database", 8)
       rescue error : Error
         raise SQLError.new(error.message || "SQL logic error")

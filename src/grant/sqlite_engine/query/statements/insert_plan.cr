@@ -35,7 +35,7 @@ module Grant::SQLiteEngine::Query
                     columns.map do |column|
                       position = info.column_index(column.value)
                       if position.nil?
-                        unless RowidName.rowid?(info, column.value) && !info.without_rowid?
+                        if !RowidName.rowid?(info, column.value) || info.without_rowid?
                           raise SQLError.new("table #{info.name} has no column named #{column.value}")
                         end
                         position = info.rowid_alias || -1
@@ -141,7 +141,7 @@ module Grant::SQLiteEngine::Query
       while row = producer.next_row(frame)
         rows << row
       end
-      rows.each { |row| yield row }
+      rows.each { |each_row| yield each_row }
     end
   end
 end

@@ -92,6 +92,9 @@ module Grant::SQLiteEngine::Query
     # The PRIMARY KEY's conflict action of a WITHOUT ROWID table, whose key
     # is the table b-tree's own (it has no separate index).
     getter primary_key_conflict = ConflictAction::Default
+    # Where a WITHOUT ROWID table's PRIMARY KEY sits in `list_of_indexes`'
+    # check order: C checks it as the index it was created as.
+    getter primary_key_position = 0
     # Compiled expressions, kept while the schema stays the same.
     property check_programs : Array(RowProgram)? = nil
     getter partial_programs = {} of String => RowProgram
@@ -119,6 +122,28 @@ module Grant::SQLiteEngine::Query
       # list, then moves REPLACE indexes to the end.
       rules.reverse!
       @list_of_indexes = rules.reject(&.conflict.replace?) + rules.select(&.conflict.replace?)
+      @primary_key_position = primary_key_slot(rules) if without_rowid?
+    end
+
+    # The PRIMARY KEY of a WITHOUT ROWID table is the automatic index whose
+    # number sqlite_master lacks (its b-tree is the table's). Indexes created
+    # after it (higher numbers, then CREATE INDEX) are checked before it;
+    # REPLACE indexes, and a REPLACE key, go last.
+    private def primary_key_slot(rules : Array(IndexRule)) : Int32
+      prefix = "sqlite_autoindex_#{name}_"
+      numbers = rules.compact_map do |rule|
+        object_name = rule.layout.entry.object_name
+        object_name.starts_with?(prefix) ? object_name[prefix.size..].to_i? : nil
+      end.to_set
+      key_number = (1..).find { |number| !numbers.includes?(number) } || 1
+      newer = ->(rule : IndexRule) do
+        object_name = rule.layout.entry.object_name
+        number = object_name.starts_with?(prefix) ? object_name[prefix.size..].to_i? : nil
+        number.nil? || number > key_number
+      end
+      action = @primary_key_conflict
+      return @list_of_indexes.size if action.replace?
+      @list_of_indexes.count { |rule| !rule.conflict.replace? && newer.call(rule) }
     end
 
     def name : String

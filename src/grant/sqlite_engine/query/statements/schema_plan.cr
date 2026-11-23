@@ -51,19 +51,17 @@ module Grant::SQLiteEngine::Query
       counts = statement.is_a?(SQL::Drop) && statement.kind.table? && @session.foreign_keys? &&
                !@session.list_of_child_tables(statement.name.value).empty? && !@session.table(statement.name.value).nil?
       @session.run_write(list_of_parameters, counts_changes: counts) do |run|
-        begin
-          case statement
-          when SQL::CreateTable then create_table(statement, run)
-          when SQL::CreateIndex then create_index(statement, run)
-          when SQL::CreateView  then create_view(statement)
-          when SQL::Drop        then drop(statement, run)
-          when SQL::AlterTable  then SchemaAlteration.new(@session, run, statement, @text).perform
-          end
-        rescue error : SchemaError
-          raise SQLError.new(error.message || "schema error")
-        rescue error : ConstraintViolation
-          raise ConstraintError.new(error.message || "constraint failed")
+        case statement
+        when SQL::CreateTable then create_table(statement, run)
+        when SQL::CreateIndex then create_index(statement, run)
+        when SQL::CreateView  then create_view(statement)
+        when SQL::Drop        then drop(statement, run)
+        when SQL::AlterTable  then SchemaAlteration.new(@session, run, statement, @text).perform
         end
+      rescue error : SchemaError
+        raise SQLError.new(error.message || "schema error")
+      rescue error : ConstraintViolation
+        raise ConstraintError.new(error.message || "constraint failed")
       end
       @session.reset_schema
       [] of Array(Value)
@@ -125,7 +123,7 @@ module Grant::SQLiteEngine::Query
       table = run.table(name)
       run.silent = true
       begin
-        rows.each { |row| run.insert_row(table, row.dup, nil, ConflictAction::Abort) }
+        rows.each { |each_row| run.insert_row(table, each_row.dup, nil, ConflictAction::Abort) }
       ensure
         run.silent = false
       end

@@ -1,0 +1,30 @@
+module Grant::SQLiteEngine::Query
+  # A prepared statement compiled before the schema changed (its tables
+  # dropped and created again, so their root pages moved) compiles again
+  # from its text when it next starts, as sqlite3_step re-prepares on
+  # SQLITE_SCHEMA. The schema cookie in the database header tells.
+  class PreparedQuery
+    @sql = ""
+    @compiled_schema_cookie : UInt32? = nil
+
+    def initialize(@session : Session, sql : String)
+      previous_def
+      @sql = sql
+      @compiled_schema_cookie = @session.database.header.try(&.schema_cookie)
+    end
+
+    def step : Bool
+      recompile_after_schema_change if @frame.nil? && !@done
+      previous_def
+    end
+
+    private def recompile_after_schema_change : Nil
+      cookie = @session.database.header.try(&.schema_cookie)
+      return if cookie == @compiled_schema_cookie
+      fresh = @session.prepare(@sql)
+      @compiled = fresh.@compiled
+      @list_of_column_names = fresh.list_of_column_names
+      @compiled_schema_cookie = fresh.@compiled_schema_cookie
+    end
+  end
+end

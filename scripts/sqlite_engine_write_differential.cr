@@ -74,9 +74,9 @@ class WriteReport
     summary = String.build do |io|
       io << title << '\n'
       io << "C SQLite " << String.new(SQLiteSQLOracle::LibOracle.libversion) << ' ' << String.new(SQLiteSQLOracle::LibOracle.sourceid) << '\n'
-      @counts.keys.sort.each { |key| io << key << ": " << @counts[key] << '\n' }
+      @counts.keys.sort!.each { |key| io << key << ": " << @counts[key] << '\n' }
       io << "skipped, by reason:\n"
-      @skipped.keys.sort.each do |key|
+      @skipped.keys.sort!.each do |key|
         io << "  " << key << ": " << @skipped[key] << '\n'
         @list_of_examples[key].each { |example| io << "      e.g. " << example << '\n' }
       end
@@ -164,7 +164,7 @@ module WriteStep
   end
 
   private def self.mentions?(text : String, name : String) : Bool
-    text.matches?(/(?<![\w])#{Regex.escape(name)}(?![\w])/i)
+    text.matches?(/(?:^|\W)#{Regex.escape(name)}(?:\W|$)/i)
   end
 
   private def self.target_table(sql : String) : String?
@@ -461,7 +461,8 @@ class RandomDifferential
         pair.engine_step("ROLLBACK") if pair.session.in_transaction?
         @report.count("sequences")
         if difference = pair.file_difference
-          @report.difference("files after sequence #{number} (seed #{@seed})\n  #{difference}")
+          statements_text = traced ? "" : "\n  statements of the sequence:\n" + trace.map { |line| "    #{line}" }.join('\n')
+          @report.difference("files after sequence #{number} (seed #{@seed})\n  #{difference}#{statements_text}")
         end
       ensure
         pair.close
