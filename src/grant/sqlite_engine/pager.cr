@@ -3,12 +3,11 @@ module Grant::SQLiteEngine
   class SavepointLevel
     getter images = {} of UInt32 => Bytes?
     getter page_count : UInt32
-    # False for a statement C runs without a statement journal: the level
-    # keeps no page images of its own (pages it changes are imaged for the
-    # level around it), so it cannot be rolled back once it wrote.
+    # False for an autocommit statement C runs without a statement
+    # journal: the level keeps no page images of its own (pages it changes
+    # are imaged for the level around it, if any). A failure rolls the
+    # whole transaction back, so nothing reads the images.
     property? keeps_images = true
-    # Whether a page changed while this level was innermost.
-    property? written = false
 
     def initialize(@page_count : UInt32)
     end
@@ -18,7 +17,6 @@ module Grant::SQLiteEngine
       @images.clear
       @page_count = page_count
       @keeps_images = true
-      @written = false
       self
     end
   end
@@ -721,22 +719,11 @@ module Grant::SQLiteEngine
       @list_of_savepoint_levels.last?.try(&.keeps_images = false)
     end
 
-    # Whether rolling back to level *depth* restores the pages: false when
-    # a level from there inward changed pages without imaging them.
-    def savepoint_restorable?(depth : Int32) : Bool
-      return true if depth < 1
-      (depth - 1...@list_of_savepoint_levels.size).none? do |index|
-        level = @list_of_savepoint_levels[index]
-        !level.keeps_images? && level.written?
-      end
-    end
-
     # The level that images a page changed now: the innermost one, or the
     # one around it when the innermost keeps no images.
     private def imaging_level : SavepointLevel?
       level = @list_of_savepoint_levels.last?
-      return level unless level && !level.keeps_images?
-      level.written = true
+      return level if level.nil? || level.keeps_images?
       @list_of_savepoint_levels.size >= 2 ? @list_of_savepoint_levels[-2] : nil
     end
 

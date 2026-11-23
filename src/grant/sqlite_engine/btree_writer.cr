@@ -373,14 +373,14 @@ module Grant::SQLiteEngine
       first
     end
 
-    # Releases the overflow chain of *cell*, if it has one.
     # Whether *cell* keeps part of its payload on overflow pages.
     private def spills?(cell : Bytes, page_type : PageType) : Bool
       start = page_type.interior_index? ? 4 : 0
-      size, length = Varint.decode(cell, start)
+      size, _length = Varint.decode(cell, start)
       PageEditor.local_payload_size(usable, size, page_type.leaf_table?) < size
     end
 
+    # Releases the overflow chain of *cell*, if it has one.
     def free_overflow(cell : Bytes, page_type : PageType) : Nil
       start = page_type.interior_index? ? 4 : 0
       size, length = Varint.decode(cell, start)

@@ -31,11 +31,16 @@ module Grant::SQLiteEngine::Query
     # without one a runtime error keeps the rows already written.
     getter? statement_journal = true
 
-    # Without a statement journal, C checks every constraint of the one
-    # row before writing it, so the statement's savepoint level images no
-    # pages (copying each page the transaction already changed).
+    # Whether the statement is its own transaction (no BEGIN or SAVEPOINT
+    # around it).
+    property? autocommit = false
+
+    # An autocommit statement without a statement journal images no pages
+    # in its savepoint level: a failure rolls the whole transaction back
+    # from the WAL or the rollback journal. Inside a transaction the level
+    # keeps its images, so a failed statement is undone alone.
     def statement_journal=(value : Bool) : Bool
-      @session.database.pager.skip_savepoint_images unless value
+      @session.database.pager.skip_savepoint_images if autocommit? && !value
       @statement_journal = value
     end
 

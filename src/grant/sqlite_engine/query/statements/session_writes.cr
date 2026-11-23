@@ -342,6 +342,7 @@ module Grant::SQLiteEngine::Query
       depth = open_savepoint_everywhere
       saved_deferred = @deferred_violations
       run = WriteRun.new(self, list_of_parameters)
+      run.autocommit = autocommit
       hold = false
       begin
         result = yield run
@@ -430,11 +431,6 @@ module Grant::SQLiteEngine::Query
       if autocommit
         rollback_everywhere
         @deferred_violations = 0_i64
-      elsif pager.in_write_transaction? && !pager.savepoint_restorable?(depth)
-        # A statement without a statement journal failed after it wrote:
-        # its changes cannot be undone alone, so the transaction goes.
-        rollback_everywhere
-        end_transaction
       elsif pager.in_write_transaction?
         rollback_to_savepoint_everywhere(depth)
         release_savepoint_everywhere(depth)
