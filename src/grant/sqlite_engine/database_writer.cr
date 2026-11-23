@@ -48,6 +48,8 @@ module Grant::SQLiteEngine
     SEQUENCE_TABLE_SQL = "CREATE TABLE sqlite_sequence(name,seq)"
 
     @table_layouts = {} of String => TableLayout
+    # Page copies and cell lists every b-tree change on this database borrows.
+    @btree_scratch = BTreeScratch.new
 
     # Opens *path*. With `read_write: true` the database is created when the
     # file does not exist, a hot journal is rolled back, and the write API
@@ -364,7 +366,7 @@ module Grant::SQLiteEngine
     end
 
     private def btree_writer : BTreeWriter
-      BTreeWriter.new(@pager, text_encoding, header.try(&.schema_format) || 4_u32)
+      BTreeWriter.new(@pager, text_encoding, header.try(&.schema_format) || 4_u32, @btree_scratch)
     end
 
     private def schema_changed : Nil

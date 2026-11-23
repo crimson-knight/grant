@@ -113,18 +113,25 @@ module Grant::SQLiteEngine
     # page of many small cells costs one allocation (as balance_nonroot
     # copies cells into one scratch buffer).
     def list_of_cells : Array(Bytes)
+      list_of_cells(@data.dup, [] of Bytes)
+    end
+
+    # Every cell, in order, as slices of *copy* (which receives the page)
+    # appended to *list*: a caller that keeps scratch buffers copies a page
+    # without allocating.
+    def list_of_cells(copy : Bytes, list : Array(Bytes)) : Array(Bytes)
       type = page_type
       count = cell_count
       pointers = @header_offset + PageEditor.header_size(type)
       pointers_end = pointers + count * 2
       raise CorruptDatabase.new("cell pointer array runs past the usable size", @number) if pointers_end > Math.min(@usable_size, @data.size)
-      copy = @data.dup
+      copy.copy_from(@data.to_unsafe, @data.size)
       data = @data
       # A leaf index cell whose payload size fits one varint byte and stays
       # on the page is that byte and the payload (the common case).
       index_leaf = type.leaf_index?
       max_local = ((@usable_size - 12) * 64 // 255) - 23
-      Array(Bytes).new(count) do |index|
+      count.times do |index|
         at = pointers + index * 2
         offset = (data.unsafe_fetch(at).to_i32 << 8) | data.unsafe_fetch(at + 1)
         if offset < pointers_end || offset >= @usable_size
@@ -137,8 +144,9 @@ module Grant::SQLiteEngine
                  PageEditor.cell_content_size(data, offset, type, @usable_size, @number)
                end
         raise CorruptDatabase.new("cell #{index} runs past the usable size", @number) if offset + size > @usable_size
-        copy[offset, size]
+        list << copy[offset, size]
       end
+      list
     end
 
     # Free bytes: the gap between the pointer array and the content area,

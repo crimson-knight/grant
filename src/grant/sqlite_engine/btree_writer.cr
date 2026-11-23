@@ -24,7 +24,19 @@ module Grant::SQLiteEngine
     # the cell count for the right child).
     alias PathEntry = {UInt32, Int32}
 
-    def initialize(@pager : Pager, @encoding : TextEncoding, @schema_format : UInt32 = 4_u32)
+    def initialize(@pager : Pager, @encoding : TextEncoding, @schema_format : UInt32 = 4_u32,
+                   @scratch : BTreeScratch = BTreeScratch.new)
+    end
+
+    # Runs one change of the tree; the page copies and cell lists it borrows
+    # go back to the scratch space when it ends.
+    private def borrowing_scratch(&)
+      mark = @scratch.mark
+      begin
+        yield
+      ensure
+        @scratch.release(mark)
+      end
     end
 
     private def usable : Int32
@@ -43,6 +55,10 @@ module Grant::SQLiteEngine
     # Releases every page of the b-tree rooted at *root*, its overflow
     # chains, and the root itself, to the freelist.
     def free_tree(root : UInt32) : Nil
+      borrowing_scratch { free_tree_pages(root) }
+    end
+
+    private def free_tree_pages(root : UInt32) : Nil
       stack = [{root, 0}]
       seen = Set(UInt32).new
       while entry = stack.pop?
@@ -74,6 +90,10 @@ module Grant::SQLiteEngine
     end
 
     private def table_insert(root : UInt32, rowid : Int64, record : Bytes, *, replace : Bool) : Bool
+      borrowing_scratch { table_insert_borrowing(root, rowid, record, replace) }
+    end
+
+    private def table_insert_borrowing(root : UInt32, rowid : Int64, record : Bytes, replace : Bool) : Bool
       path, leaf, index, found = seek_rowid(root, rowid)
       return false if found && !replace
       cell = build_cell(PageType::LeafTable, record, rowid)
@@ -105,6 +125,10 @@ module Grant::SQLiteEngine
 
     # Deletes the row with *rowid*. Returns false when there is none.
     def table_delete(root : UInt32, rowid : Int64) : Bool
+      borrowing_scratch { table_delete_borrowing(root, rowid) }
+    end
+
+    private def table_delete_borrowing(root : UInt32, rowid : Int64) : Bool
       path, leaf, index, found = seek_rowid(root, rowid)
       return false unless found
       editor = PageEditor.new(@pager.page_for_write(leaf), leaf, usable)
@@ -212,6 +236,10 @@ module Grant::SQLiteEngine
 
     # Adds the entry *key* (already in stored form) to the index b-tree.
     def index_insert(root : UInt32, key : Array(Value), comparator : KeyComparator) : Nil
+      borrowing_scratch { index_insert_borrowing(root, key, comparator) }
+    end
+
+    private def index_insert_borrowing(root : UInt32, key : Array(Value), comparator : KeyComparator) : Nil
       path, page_number, index, found, _leaf = seek_key(root, key, comparator)
       raise CorruptDatabase.new("index b-tree already holds the entry", page_number) if found
       cell = build_cell(PageType::LeafIndex, RecordEncoder.encode(key, @encoding, @schema_format))
@@ -226,6 +254,10 @@ module Grant::SQLiteEngine
     # An entry on an interior page is replaced by its predecessor, the
     # largest entry of its left subtree, as sqlite3BtreeDelete does.
     def index_delete(root : UInt32, key : Array(Value), comparator : KeyComparator) : Bool
+      borrowing_scratch { index_delete_borrowing(root, key, comparator) }
+    end
+
+    private def index_delete_borrowing(root : UInt32, key : Array(Value), comparator : KeyComparator) : Bool
       path, page_number, index, found, leaf = seek_key(root, key, comparator)
       return false unless found
       if leaf
@@ -405,9 +437,11 @@ module Grant::SQLiteEngine
     # --- Balancing --------------------------------------------------------
 
     private def load_node(page_number : UInt32) : TreeNode
-      editor = PageEditor.new(@pager.read_page(page_number), page_number, usable)
+      data = @pager.read_page(page_number)
+      editor = PageEditor.new(data, page_number, usable)
       type = editor.page_type
-      TreeNode.new(page_number, type, editor.list_of_cells, type.interior? ? editor.right_child : 0_u32)
+      list_of_cells = editor.list_of_cells(@scratch.page(data.size), @scratch.cell_list)
+      TreeNode.new(page_number, type, list_of_cells, type.interior? ? editor.right_child : 0_u32)
     end
 
     private def write_node(node : TreeNode) : Nil
@@ -557,7 +591,7 @@ module Grant::SQLiteEngine
           raise CorruptDatabase.new("#{sibling.page_type} page beside a #{type} page", sibling.page_number)
         end
       end
-      cells = Array(Bytes).new(siblings.sum(&.list_of_cells.size) + siblings.size)
+      cells = @scratch.cell_list
       siblings.each_with_index do |sibling, position|
         cells.concat(sibling.list_of_cells)
         next if position == siblings.size - 1
@@ -601,8 +635,8 @@ module Grant::SQLiteEngine
       # The parent's cells before *first* and after *last* keep their
       # children and dividers; only the run between is built again.
       old_cells = parent.list_of_cells
-      kept_after = last < old_cells.size ? old_cells[(last + 1)..] : [] of Bytes
-      list_of_cells = old_cells[0, first]
+      list_of_cells = @scratch.cell_list
+      first.times { |position| list_of_cells << old_cells[position] }
       new_pages.each_with_index do |page_number, position|
         divider = if position < new_dividers.size
                     new_dividers[position]
@@ -611,7 +645,7 @@ module Grant::SQLiteEngine
                   end
         list_of_cells << with_child(page_number, divider) if divider
       end
-      list_of_cells.concat(kept_after)
+      (last + 1).upto(old_cells.size - 1) { |position| list_of_cells << old_cells[position] }
       parent.list_of_cells = list_of_cells
       parent.right_child = last < old_cells.size ? parent.right_child : new_pages.last
     end
