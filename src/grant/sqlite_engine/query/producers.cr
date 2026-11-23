@@ -152,21 +152,38 @@ module Grant::SQLiteEngine::Query
 
     # The result row, or nil when DISTINCT has seen it.
     private def project(frame : Frame) : Array(Value)?
+      column_count = @list_of_columns.size
+      width = column_count + @list_of_extras.size
+      if @lending && @lent_row.size == width
+        # The lent row keeps its width from row to row; its values are
+        # replaced.
+        row = @lent_row
+        @list_of_columns.each_with_index { |column, position| row.unsafe_put(position, Expr.value_of(column, frame)) }
+        if seen = @seen
+          return unless seen.add?(distinct_key(row))
+        end
+        @list_of_extras.each_with_index { |extra, position| row.unsafe_put(column_count + position, Expr.value_of(extra, frame)) }
+        return row
+      end
       if @lending
         row = @lent_row
         row.clear
       else
-        row = Array(Value).new(@list_of_columns.size + @list_of_extras.size)
+        row = Array(Value).new(width)
       end
       @list_of_columns.each { |column| row << Expr.value_of(column, frame) }
       if seen = @seen
-        key = Array(EqualityKey).new(@list_of_columns.size) do |index|
-          ValueSemantics.equality_key(row[index], @list_of_column_collations[index]? || Collation::Binary)
-        end
-        return unless seen.add?(key)
+        return unless seen.add?(distinct_key(row))
       end
       @list_of_extras.each { |extra| row << Expr.value_of(extra, frame) }
       row
+    end
+
+    # The DISTINCT key of the result columns at the front of *row*.
+    private def distinct_key(row : Array(Value)) : Array(EqualityKey)
+      Array(EqualityKey).new(@list_of_columns.size) do |index|
+        ValueSemantics.equality_key(row[index], @list_of_column_collations[index]? || Collation::Binary)
+      end
     end
 
     private def next_streaming_row(frame : Frame, aggregation : Aggregation) : Array(Value)?
@@ -178,14 +195,22 @@ module Grant::SQLiteEngine::Query
         # frame gets its rows back after the group is shown.
         saved_rows = @saved_rows
         saved_rowids = @saved_rowids
-        saved_rows.clear
-        saved_rowids.clear
         saved_pending = @saved_pending
-        saved_pending.clear
-        slots.each do |slot|
-          saved_rows << frame.list_of_rows[slot]
-          saved_rowids << frame.list_of_rowids[slot]
-          saved_pending << frame.list_of_pending[slot]
+        if saved_rows.size == slots.size
+          slots.each_with_index do |slot, position|
+            saved_rows.unsafe_put(position, frame.list_of_rows[slot])
+            saved_rowids.unsafe_put(position, frame.list_of_rowids[slot])
+            saved_pending.unsafe_put(position, frame.list_of_pending[slot])
+          end
+        else
+          saved_rows.clear
+          saved_rowids.clear
+          saved_pending.clear
+          slots.each do |slot|
+            saved_rows << frame.list_of_rows[slot]
+            saved_rowids << frame.list_of_rowids[slot]
+            saved_pending << frame.list_of_pending[slot]
+          end
         end
         restore(frame, group, aggregation)
         row = nil
@@ -220,8 +245,13 @@ module Grant::SQLiteEngine::Query
         # Rows arrive in group order, so a row starts a new group when its
         # key compares unequal to the current group's (OP_Compare).
         scratch = @scratch_keys
-        scratch.clear
-        aggregation.list_of_group_keys.each { |key| scratch << Expr.value_of(key, frame) }
+        group_keys = aggregation.list_of_group_keys
+        if scratch.size == group_keys.size
+          group_keys.each_with_index { |key, position| scratch.unsafe_put(position, Expr.value_of(key, frame)) }
+        else
+          scratch.clear
+          group_keys.each { |key| scratch << Expr.value_of(key, frame) }
+        end
         current = @current
         if current && same_group_key?(scratch, current.list_of_key_values, aggregation.list_of_key_collations)
           step_group(frame, current, aggregation, first: false)

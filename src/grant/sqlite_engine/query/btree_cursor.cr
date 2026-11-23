@@ -279,10 +279,17 @@ module Grant::SQLiteEngine::Query
       settle_leaf
     end
 
+    # The probe of the seek under way when it is one integer on an
+    # ascending column; `compare_entry` then reads stored integer keys
+    # straight from the page.
+    @integer_target : Int64? = nil
+
     # Moves to the first entry whose key columns compare at least (or, with
     # *strict*, greater than) *probe*. *current_below* says the caller
     # already found the current entry below *probe*.
     def seek(probe : Array(Value), strict : Bool = false, current_below : Bool = false) : Bool
+      key = probe.size == 1 ? probe.unsafe_fetch(0) : nil
+      @integer_target = key.is_a?(Int64) && !@order.descending[0]? ? key : nil
       # sqlite3BtreeIndexMoveto: when the cursor sits on a leaf whose keys
       # span the target, the search stays in that leaf.
       if @valid && @built_generation == pager.generation && (top = @stack.top?) && top.page.page_type.leaf?
@@ -447,6 +454,11 @@ module Grant::SQLiteEngine::Query
     # of one integer against a stored integer compares the two directly
     # (vdbeRecordCompareInt); anything else goes through `compare_prefix`.
     private def compare_entry(page : BTreePage, index : Int32, probe : Array(Value)) : Int32
+      if (target = @integer_target) && (payload = page.local_index_payload(index))
+        if stored = RecordColumns.leading_integer(payload)
+          return stored <=> target
+        end
+      end
       payload = entry_payload(page, index)
       if probe.size == 1 && (key = probe.unsafe_fetch(0)).is_a?(Int64)
         if comparison = RecordColumns.compare_integer_key(payload, key)

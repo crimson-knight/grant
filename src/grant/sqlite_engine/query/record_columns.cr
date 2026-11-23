@@ -272,6 +272,21 @@ module Grant::SQLiteEngine::Query
       stored <=> key
     end
 
+    # The first value of *payload* when the record header is one byte of
+    # serial types and that value is an integer; nil otherwise (the reading
+    # `compare_integer_key` makes).
+    @[AlwaysInline]
+    def self.leading_integer(payload : Bytes) : Int64?
+      return if payload.size < 2
+      header_size = payload.unsafe_fetch(0)
+      serial_type = payload.unsafe_fetch(1)
+      return unless 2 <= header_size < 0x80_u8 && 0 < serial_type <= 9 && serial_type != 7
+      return serial_type.to_i64 - 8 if serial_type >= 8
+      size = FIXED_SIZES.unsafe_fetch(serial_type)
+      return if header_size.to_i64 + size > payload.size
+      signed_integer(payload, header_size.to_i32, size.to_i32)
+    end
+
     # The two values of a record of exactly two integers (an index entry of
     # one integer key and the rowid), read as `decode_into` reads them; nil
     # for any other record.
@@ -350,7 +365,10 @@ module Grant::SQLiteEngine::Query
     # The big-endian two's-complement integer of *size* bytes at *offset*.
     def self.signed_integer(payload : Bytes, offset : Int32, size : Int32) : Int64
       value = payload.unsafe_fetch(offset).to_i8!.to_i64
-      index = 1
+      return value if size == 1
+      value = (value << 8) | payload.unsafe_fetch(offset + 1)
+      return value if size == 2
+      index = 2
       while index < size
         value = (value << 8) | payload.unsafe_fetch(offset + index)
         index += 1

@@ -322,19 +322,23 @@ module Grant::SQLiteEngine::Query
       # The probe, seek key and cursors are kept from one open to the next
       # (an inner join opens this source once per outer row).
       probe = @probe
-      probe.clear
+      in_place = probe.size == @equal.size
+      probe.clear unless in_place
       @key_was_integer = false
       @equal.each_with_index do |(expression, affinity), position|
         raw = Expr.value_of(expression, frame)
         converted = ValueSemantics.apply_record_affinity(raw, affinity)
         @empty = true if converted.nil?
         @key_was_integer = raw.is_a?(Int64) && converted == raw if position == 0
-        probe << converted
+        if in_place
+          probe.unsafe_put(position, converted)
+        else
+          probe << converted
+        end
       end
       @strict_low = false
       seek_key = @seek_key
-      seek_key.clear
-      seek_key.concat(probe)
+      seek_key.replace(probe)
       if low = @low
         raw = low[0].evaluate(frame)
         value = ValueSemantics.apply_record_affinity(raw, low[1])
