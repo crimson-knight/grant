@@ -137,7 +137,12 @@ module Grant::SQLiteEngine
         table = schema.table_definition(table_entry)
         definition.list_of_key_terms.each do |term|
           column_name = term.column_name
-          raise SchemaError.new("no such column: #{column_name}") if column_name && table.column_index(column_name).nil?
+          # A double-quoted name that is no column is read as a string
+          # literal (SQLite's double-quoted string literals, quirks.html §8),
+          # which makes the term an expression.
+          if column_name && table.column_index(column_name).nil? && !sql.includes?(%("#{column_name}"))
+            raise SchemaError.new("no such column: #{column_name}")
+          end
           if collation = term.collation
             Collation.named(collation)
           end

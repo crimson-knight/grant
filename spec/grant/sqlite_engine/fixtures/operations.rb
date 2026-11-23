@@ -365,6 +365,14 @@ TYPED_COLUMN_SQL = "CASE typeof(%1$s) WHEN 'null' THEN 'null' " \
 def run_corpus_rows(out_dir, corpus_path, seed)
   creates = File.readlines(corpus_path, chomp: true).grep(/\A\s*CREATE\s+(TABLE|UNIQUE INDEX|INDEX)\b/i).reject { |sql| sql.include?("?") }
   entry = run_corpus(out_dir, corpus_path, seed).first
+  # Which statements sqlite3 accepted, in order, on a database of its own.
+  probe = File.join(out_dir, "acceptance.db")
+  FileUtils.rm_f(probe)
+  accepted = creates.map do |sql|
+    _output, _error, status = Open3.capture3(SQLITE3, probe, stdin_data: "#{sql.sub(/;?\s*\z/, '')};")
+    status.success?
+  end
+  FileUtils.rm_f(probe)
   database = File.join(out_dir, "grant_corpus_schema.db")
   tables = JSON.parse(sqlite3(database, "SELECT name, sql FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY rowid;", "-json").then { |out| out.strip.empty? ? "[]" : out })
   rows = []
@@ -382,7 +390,7 @@ def run_corpus_rows(out_dir, corpus_path, seed)
     end
   end
   verify(database)
-  File.write(File.join(out_dir, "corpus.json"), JSON.generate("statements" => creates, "rows" => rows, "manifest" => entry))
+  File.write(File.join(out_dir, "corpus.json"), JSON.generate("statements" => creates, "accepted" => accepted, "rows" => rows, "manifest" => entry))
 end
 
 if __FILE__ == $PROGRAM_NAME

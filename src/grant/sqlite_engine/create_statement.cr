@@ -64,6 +64,9 @@ module Grant::SQLiteEngine
       end
       name = tokens[position]? || raise UnsupportedSQL.new("CREATE statement without a name")
       if tokens[position + 1]?.try(&.text.==("."))
+        database_name = CreateStatement.unquote(name.text)
+        raise UnsupportedSQL.new("TEMP schema objects") if database_name.compare("temp", case_insensitive: true) == 0
+        raise SchemaError.new("unknown database #{database_name}") unless database_name.compare("main", case_insensitive: true) == 0
         name = tokens[position + 2]? || raise UnsupportedSQL.new("CREATE statement without a name")
       end
       @object_name = CreateStatement.unquote(name.text)
