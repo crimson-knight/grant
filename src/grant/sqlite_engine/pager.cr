@@ -57,6 +57,12 @@ module Grant::SQLiteEngine
     # SQLITE_DEFAULT_WAL_AUTOCHECKPOINT: a commit that leaves at least this
     # many frames in the WAL runs a passive checkpoint.
     DEFAULT_WAL_AUTOCHECKPOINT = 1_000
+    # How long an open waits for the SHARED lock it reads the header under.
+    # sqlite3_open_v2 takes no lock, so another connection's brief
+    # EXCLUSIVE (a rollback-journal commit, or the last WAL connection
+    # checkpointing as it closes) never fails an open in C; the engine
+    # waits it out on C's busy-handler schedule instead of failing.
+    OPEN_LOCK_WAIT = 5.seconds
 
     # PRAGMA synchronous: FULL (sync at every commit) by default, as C's
     # default build.
@@ -120,7 +126,7 @@ module Grant::SQLiteEngine
       raise ArgumentError.new("page_size #{page_size} is not a power of two from 512 to 65536") unless valid_size
       file = file_system.open(path)
       begin
-        raise Busy.new unless file.lock(LockLevel::Shared)
+        raise Busy.new unless BusyWait.attempt(OPEN_LOCK_WAIT) { file.lock(LockLevel::Shared) }
         pager = begin
           roll_back_hot_journal(file_system, path, file)
           # pagerOpenWalIfPresent: a WAL beside an empty database is stale.

@@ -157,8 +157,9 @@ module SQLiteEngineModelBench
       end
     end
     Dir.delete(File.join(report_dir, "work")) rescue nil
-    File.write(File.join(report_dir, "model_bench.md"), report.to_s)
-    puts report.to_s
+    text = report.to_s
+    File.write(File.join(report_dir, "model_bench.md"), text)
+    puts text
   end
 end
 
