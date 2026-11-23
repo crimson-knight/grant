@@ -111,6 +111,8 @@ Metrics/CyclomaticComplexity:
     - src/grant/sharding/query_router.cr
     - src/grant/sharding/range_resolver.cr
     - src/grant/sharding/resolvers/time_range_resolver.cr
+    # The SQLite engine's tokenizer and parser follow tokenize.c and parse.y one case per token class or rule.
+    - src/grant/sqlite_engine/sql/*.cr
     - src/grant/validators.cr
 
 # Renaming these Bool accessors to `?` forms changes Grant's public API; that is the owner's decision.
