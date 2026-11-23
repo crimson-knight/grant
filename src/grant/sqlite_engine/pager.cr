@@ -36,6 +36,8 @@ module Grant::SQLiteEngine
     # Counts the times cached pages were dropped (another connection's commit,
     # a rollback); a cached schema older than this is stale.
     getter generation = 0
+    # Pages changed since the pager opened (any page_for_write call).
+    getter change_count = 0_u64
 
     @cache = {} of UInt32 => Bytes
 
@@ -377,6 +379,7 @@ module Grant::SQLiteEngine
     # it.
     def page_for_write(page_number : UInt32) : Bytes
       raise Error.new("no write transaction is open") unless @in_write_transaction
+      @change_count &+= 1
       if buffer = @dirty[page_number]?
         if images = @statement_images
           images[page_number] = buffer.dup unless images.has_key?(page_number)

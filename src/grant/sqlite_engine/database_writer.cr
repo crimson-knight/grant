@@ -71,6 +71,7 @@ module Grant::SQLiteEngine
         @pager.rollback
         raise error
       end
+      raise Error.new("the transaction was rolled back by a failed write") unless @pager.in_write_transaction?
       begin
         @pager.commit
       rescue error
@@ -160,7 +161,11 @@ module Grant::SQLiteEngine
         root = writer.create_tree(table: false)
         insert_schema_row(writer, "index", name, table_entry.object_name, root, statement.stored_sql)
         layout = IndexLayout.build(SchemaEntry.new("index", name, table_entry.object_name, root, statement.stored_sql), table, text_encoding)
-        list_of_rows.each { |rowid, values| add_index_entry(writer, layout, table_entry.object_name, values, rowid) }
+        list_of_rows.each do |rowid, values|
+          entry = layout.entry_for(values, rowid)
+          check_unique(writer, layout, table_entry.object_name, entry)
+          writer.index_insert(root, entry, layout.comparator)
+        end
         schema_changed
         true
       end
@@ -204,7 +209,7 @@ module Grant::SQLiteEngine
     # and the result is nil. Raises `ConstraintViolation` and keeps nothing
     # when a UNIQUE, PRIMARY KEY, NOT NULL or STRICT rule fails.
     def insert(table_name : String, rowid : Int64?, values : Array(Value)) : Int64?
-      write_statement do
+      write_statement(journal: false) do
         insert_row(table_layout(table_name), rowid, values, update_sequence: true)
       end
     end
@@ -241,7 +246,7 @@ module Grant::SQLiteEngine
     # Deletes the row with *rowid* and its index entries. Returns false when
     # there is no such row.
     def delete(table_name : String, rowid : Int64) : Bool
-      write_statement do
+      write_statement(journal: false) do
         layout = table_layout(table_name)
         raise UnsupportedSQL.new("rowid lookup in WITHOUT ROWID table #{layout.table_name}") if layout.definition.without_rowid?
         old = read_row(layout, rowid)
@@ -254,7 +259,7 @@ module Grant::SQLiteEngine
     # Deletes the row of a WITHOUT ROWID table whose primary key equals
     # *key*.
     def delete(table_name : String, key : Array(Value)) : Bool
-      write_statement do
+      write_statement(journal: false) do
         layout = table_layout(table_name)
         old = read_row_by_key(layout, key)
         next false unless old
@@ -267,7 +272,18 @@ module Grant::SQLiteEngine
 
     # Runs one write: inside a transaction as a statement that is undone
     # alone when it raises, otherwise in a transaction of its own.
-    private def write_statement(& : -> T) : T forall T
+    private def write_statement(*, journal : Bool = true, & : -> T) : T forall T
+      if @pager.in_write_transaction? && !journal
+        changes = @pager.change_count
+        begin
+          return yield
+        rescue error
+          # A failure after a page changed (out of pages, an I/O error)
+          # ends the transaction, as it does in SQLite.
+          @pager.rollback unless @pager.change_count == changes
+          raise error
+        end
+      end
       if @pager.in_write_transaction?
         @pager.begin_statement
         begin
@@ -412,8 +428,10 @@ module Grant::SQLiteEngine
         if existing && comparator.compare(existing, record, key_count) == 0
           raise ConstraintViolation.new(ConstraintViolation::Kind::PrimaryKey, key_columns_text(layout, layout.list_of_primary_key_positions))
         end
+        entries = layout.list_of_indexes.map { |index| index.entry_for(row, nil) }
+        layout.list_of_indexes.each_with_index { |index, position| check_unique(writer, index, layout.table_name, entries[position]) }
         writer.index_insert(layout.entry.root_page, record, comparator)
-        layout.list_of_indexes.each { |index| add_index_entry(writer, index, layout.table_name, row, nil) }
+        layout.list_of_indexes.each_with_index { |index, position| writer.index_insert(index.entry.root_page, entries[position], index.comparator) }
         return nil
       end
       if alias_index
@@ -427,14 +445,22 @@ module Grant::SQLiteEngine
         end
       end
       rowid ||= new_rowid(writer, layout)
-      if writer.table_record(layout.entry.root_page, rowid)
-        name = alias_index ? columns[alias_index].column_name : "rowid"
-        raise ConstraintViolation.new(ConstraintViolation::Kind::PrimaryKey, "#{layout.table_name}.#{name}")
-      end
       row[alias_index] = rowid if alias_index
-      record = layout.list_of_stored_positions.map { |position| position == alias_index ? nil : row[position] }
-      writer.table_insert(layout.entry.root_page, rowid, RecordEncoder.encode(record, text_encoding, writer_schema_format))
-      layout.list_of_indexes.each { |index| add_index_entry(writer, index, layout.table_name, row, rowid) }
+      record = RecordEncoder.encode(layout.list_of_stored_positions.map { |position| position == alias_index ? nil : row[position] }, text_encoding, writer_schema_format)
+      key_name = alias_index ? columns[alias_index].column_name : "rowid"
+      entries = layout.list_of_indexes.map { |index| index.entry_for(row, rowid) }
+      # Every constraint is checked before the first page changes, the
+      # rowid first as SQLite does, so a refused row leaves no trace.
+      unless entries.empty?
+        if writer.table_contains?(layout.entry.root_page, rowid)
+          raise ConstraintViolation.new(ConstraintViolation::Kind::PrimaryKey, "#{layout.table_name}.#{key_name}")
+        end
+        layout.list_of_indexes.each_with_index { |index, position| check_unique(writer, index, layout.table_name, entries[position]) }
+      end
+      unless writer.table_insert_new(layout.entry.root_page, rowid, record)
+        raise ConstraintViolation.new(ConstraintViolation::Kind::PrimaryKey, "#{layout.table_name}.#{key_name}")
+      end
+      layout.list_of_indexes.each_with_index { |index, position| writer.index_insert(index.entry.root_page, entries[position], index.comparator) }
       record_sequence(writer, layout.table_name, rowid) if update_sequence && definition.autoincrement?
       rowid
     end
@@ -452,8 +478,9 @@ private def writer_schema_format : UInt32
       header.try(&.schema_format) || 4_u32
     end
 
-    private def add_index_entry(writer : BTreeWriter, index : IndexLayout, table_name : String, row : Array(Value), rowid : Int64?) : Nil
-      entry = index.entry_for(row, rowid)
+    # Raises when a UNIQUE index already holds *entry*'s key (NULLs are
+    # distinct, so a key holding one never conflicts).
+    private def check_unique(writer : BTreeWriter, index : IndexLayout, table_name : String, entry : Array(Value)) : Nil
       key_count = index.key_count
       if index.unique? && (0...key_count).none? { |position| entry[position].nil? }
         existing = writer.index_first_at_least(index.entry.root_page, entry, key_count, index.comparator)
@@ -462,7 +489,6 @@ private def writer_schema_format : UInt32
           raise ConstraintViolation.new(kind, "#{table_name} (index #{index.entry.object_name})")
         end
       end
-      writer.index_insert(index.entry.root_page, entry, index.comparator)
     end
 
     private def key_columns_text(layout : TableLayout, positions : Array(Int32)) : String

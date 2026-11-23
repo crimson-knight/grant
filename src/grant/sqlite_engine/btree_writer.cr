@@ -64,7 +64,18 @@ module Grant::SQLiteEngine
 
     # Stores *record* under *rowid*, replacing the row with that rowid.
     def table_insert(root : UInt32, rowid : Int64, record : Bytes) : Nil
+      table_insert(root, rowid, record, replace: true)
+    end
+
+    # Adds the row unless *rowid* is already present, in one descent of the
+    # tree; returns false (changing nothing) when it is.
+    def table_insert_new(root : UInt32, rowid : Int64, record : Bytes) : Bool
+      table_insert(root, rowid, record, replace: false)
+    end
+
+    private def table_insert(root : UInt32, rowid : Int64, record : Bytes, *, replace : Bool) : Bool
       path, leaf, index, found = seek_rowid(root, rowid)
+      return false if found && !replace
       cell = build_cell(PageType::LeafTable, record, rowid)
       editor = PageEditor.new(@pager.page_for_write(leaf), leaf, usable)
       if found
@@ -73,15 +84,16 @@ module Grant::SQLiteEngine
       end
       if editor.insert_cell(index, cell)
         balance(path, load_node(leaf)) if found && underfull?(path, editor)
-        return
+        return true
+      end
+      if !found && index == editor.cell_count && quick_balance_possible?(path)
+        balance_quick(path, editor, cell)
+        return true
       end
       node = load_node(leaf)
       node.list_of_cells.insert(index, cell)
-      if !found && index == node.list_of_cells.size - 1 && quick_balance_possible?(path)
-        balance_quick(path, node)
-      else
-        balance(path, node)
-      end
+      balance(path, node)
+      true
     end
 
     # Deletes the row with *rowid*. Returns false when there is none.
@@ -101,6 +113,11 @@ module Grant::SQLiteEngine
       return unless found
       page = BTreePage.read(@pager, leaf)
       PayloadReader.read(@pager, page, page.payload(index)).dup
+    end
+
+    # Whether the table holds a row with *rowid*.
+    def table_contains?(root : UInt32, rowid : Int64) : Bool
+      seek_rowid(root, rowid)[3]
     end
 
     # The largest rowid of the table, or nil when it is empty.
@@ -380,16 +397,24 @@ module Grant::SQLiteEngine
     # balance_quick: a row appended past the end of the rightmost leaf goes
     # to a new right sibling of its own, leaving the full leaf full, as
     # SQLite does for ascending inserts.
-    private def balance_quick(path : Array(PathEntry), node : TreeNode) : Nil
-      new_cell = node.list_of_cells.pop
-      last_rowid = cell_rowid(node.list_of_cells.last)
+    private def balance_quick(path : Array(PathEntry), leaf : PageEditor, new_cell : Bytes) : Nil
+      last_rowid = cell_rowid(leaf.cell(leaf.cell_count - 1))
       new_page = @pager.allocate_page
       write_node(TreeNode.new(new_page, PageType::LeafTable, [new_cell], 0_u32))
       parent_number, _child_index = path.pop
-      parent = load_node(parent_number)
-      parent.list_of_cells << interior_table_cell(node.page_number, last_rowid)
-      parent.right_child = new_page
-      balance(path, parent)
+      divider = interior_table_cell(leaf.number, last_rowid)
+      parent = PageEditor.new(@pager.page_for_write(parent_number), parent_number, usable)
+      # The divider goes after the parent's last cell, and the new leaf
+      # becomes its right child; only when the parent is full does it need
+      # balancing (SQLite's balance_quick, then balance of the parent).
+      if parent.insert_cell(parent.cell_count, divider)
+        parent.right_child = new_page
+        return
+      end
+      node = load_node(parent_number)
+      node.list_of_cells << divider
+      node.right_child = new_page
+      balance(path, node)
     end
 
     private def cell_rowid(cell : Bytes) : Int64
