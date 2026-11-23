@@ -31,14 +31,21 @@ class Grant::SQLite3::Statement < DB::Statement
     arg_refs.push(ref.to_unsafe)
   end
 
+  # :nodoc:
+  #
+  # The compiled statement in the connection's engine.
+  getter engine_statement : Engine::PreparedStatement
+
   def initialize(connection, command)
     super(connection, command)
-    check LibSQLite3.prepare_v2(sqlite3_connection, command, command.bytesize + 1, out @stmt, nil)
+    sqlite3_connection.capture_prepared_statement(command)
+    prepare_code, @engine_statement = sqlite3_connection.engine_database.prepare(command)
+    check prepare_code
   end
 
   protected def perform_query(args : Enumerable) : DB::ResultSet
     clear_arg_refs
-    LibSQLite3.reset(self)
+    @engine_statement.reset
     @last_step_failed = false
     args.each_with_index(1) do |arg, index|
       bind_arg(index, arg)
@@ -48,25 +55,24 @@ class Grant::SQLite3::Statement < DB::Statement
 
   protected def perform_exec(args : Enumerable) : DB::ExecResult
     clear_arg_refs
-    LibSQLite3.reset(self.to_unsafe)
+    @engine_statement.reset
     @last_step_failed = false
     args.each_with_index(1) do |arg, index|
       bind_arg(index, arg)
     end
 
     # exec
-    step = uninitialized LibSQLite3::Code
-    loop do
-      step = LibSQLite3::Code.new LibSQLite3.step(self)
-      break unless step == LibSQLite3::Code::ROW
+    step_code = Engine::ROW_CODE
+    while step_code == Engine::ROW_CODE
+      step_code = @engine_statement.step
     end
-    unless step == LibSQLite3::Code::DONE
+    unless step_code == Engine::DONE_CODE
       record_step_failure
       raise Exception.new(sqlite3_connection)
     end
 
-    rows_affected = LibSQLite3.changes(sqlite3_connection).to_i64
-    last_id = LibSQLite3.last_insert_rowid(sqlite3_connection)
+    rows_affected = sqlite3_connection.engine_database.changes
+    last_id = sqlite3_connection.engine_database.last_insert_rowid
 
     DB::ExecResult.new rows_affected, last_id
   end
@@ -82,7 +88,7 @@ class Grant::SQLite3::Statement < DB::Statement
     clear_arg_refs
     return if @finalized
     @finalized = true
-    finalize_code = LibSQLite3.finalize(self)
+    finalize_code = @engine_statement.finalize_statement
     return if finalize_code == 0 || @last_step_failed
     # Finalize freed the statement whatever it returned, so it is marked
     # closed before the error is raised; DB::Disposable would otherwise
@@ -92,57 +98,29 @@ class Grant::SQLite3::Statement < DB::Statement
   end
 
   private def bind_arg(index, value : Nil)
-    check LibSQLite3.bind_null(self, index)
+    check @engine_statement.bind_null(index)
   end
 
   private def bind_arg(index, value : Bool)
-    check LibSQLite3.bind_int(self, index, value ? 1 : 0)
+    check @engine_statement.bind_int64(index, value ? 1_i64 : 0_i64)
   end
 
-  private def bind_arg(index, value : UInt8)
-    check LibSQLite3.bind_int(self, index, value.to_i)
+  private def bind_arg(index, value : Int8 | Int16 | Int32 | Int64 | UInt8 | UInt16 | UInt32)
+    check @engine_statement.bind_int64(index, value.to_i64)
   end
 
-  private def bind_arg(index, value : UInt16)
-    check LibSQLite3.bind_int(self, index, value.to_i)
-  end
-
-  private def bind_arg(index, value : UInt32)
-    check LibSQLite3.bind_int64(self, index, value.to_i64)
-  end
-
-  private def bind_arg(index, value : Int8)
-    check LibSQLite3.bind_int(self, index, value.to_i)
-  end
-
-  private def bind_arg(index, value : Int16)
-    check LibSQLite3.bind_int(self, index, value.to_i)
-  end
-
-  private def bind_arg(index, value : Int32)
-    check LibSQLite3.bind_int(self, index, value)
-  end
-
-  private def bind_arg(index, value : Int64)
-    check LibSQLite3.bind_int64(self, index, value)
-  end
-
-  private def bind_arg(index, value : Float32)
-    check LibSQLite3.bind_double(self, index, value.to_f64)
-  end
-
-  private def bind_arg(index, value : Float64)
-    check LibSQLite3.bind_double(self, index, value)
+  private def bind_arg(index, value : Float32 | Float64)
+    check @engine_statement.bind_double(index, value.to_f64)
   end
 
   private def bind_arg(index, value : String)
     track_arg_ref(value)
-    check LibSQLite3.bind_text(self, index, value, value.bytesize, nil)
+    check @engine_statement.bind_text(index, value)
   end
 
   private def bind_arg(index, value : Bytes)
     track_arg_ref(value)
-    check LibSQLite3.bind_blob(self, index, value, value.size, nil)
+    check @engine_statement.bind_blob(index, value)
   end
 
   private def bind_arg(index, value : Time)
@@ -159,9 +137,5 @@ class Grant::SQLite3::Statement < DB::Statement
 
   protected def sqlite3_connection
     @connection.as(Connection)
-  end
-
-  def to_unsafe
-    @stmt
   end
 end

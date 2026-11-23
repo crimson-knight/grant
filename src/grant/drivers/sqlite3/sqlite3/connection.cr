@@ -45,21 +45,41 @@ class Grant::SQLite3::Connection < DB::Connection
     end
   end
 
+  # :nodoc:
+  #
+  # The open database of the engine `Grant.settings.sqlite_engine` named
+  # when this connection opened.
+  getter engine_database : Engine::Database
+
   def initialize(options : ::DB::Connection::Options, sqlite3_options : Options)
     super(options)
-    check LibSQLite3.open_v2(sqlite3_options.filename, out @db, (Flag::READWRITE | Flag::CREATE), nil)
+    @engine_database = Connection.open_engine_database(sqlite3_options)
+  end
+
+  # :nodoc:
+  #
+  # Opens *sqlite3_options*' file with the selected engine, registers the
+  # `REGEXP` function when the app requires it, and runs the URL's PRAGMA
+  # string. Any failure refuses the connection.
+  def self.open_engine_database(sqlite3_options : Options) : Engine::Database
+    open_code, engine_database = Engine.selected.open(sqlite3_options.filename)
+    check(engine_database, open_code)
     # The `REGEXP` SQL function is opt-in: `require "grant/regex"` defines
     # `RegexpFunction`, and only then does every connection register it.
     {% if Grant::SQLite3.has_constant?(:RegexpFunction) %}
-      # 2 means 2 arguments; 1 is the code for UTF-8
-      check LibSQLite3.create_function(@db, "regexp", 2, 1, nil, SQLite3::RegexpFunction::CALLBACK, nil, nil)
+      check(engine_database, engine_database.create_function("regexp", SQLite3::RegexpFunction::ARGUMENT_COUNT) { |arguments| SQLite3::RegexpFunction.call(arguments) })
     {% end %}
 
     if pragma_statement = sqlite3_options.pragma_statement
-      check LibSQLite3.exec(@db, pragma_statement, nil, nil, nil)
+      check(engine_database, engine_database.exec(pragma_statement))
     end
+    engine_database
   rescue
     raise DB::ConnectionRefused.new
+  end
+
+  private def self.check(engine_database : Engine::Database, code : Int32) : Nil
+    raise Exception.new(engine_database) unless code == Engine::OK_CODE
   end
 
   def self.filename(uri : URI)
@@ -68,6 +88,19 @@ class Grant::SQLite3::Connection < DB::Connection
 
   def build_prepared_statement(query) : Statement
     Statement.new(self, query)
+  end
+
+  # :nodoc:
+  #
+  # Writes *query* to `Grant.settings.sqlite_statement_capture`, when it is
+  # set, as one line: a newline inside the statement becomes a space, as in
+  # the committed corpus `spec/grant/sqlite_engine/corpus/grant_sql_corpus.txt`.
+  def capture_prepared_statement(query : String) : Nil
+    {% if Grant.has_constant?(:Settings) %}
+      if capture = Grant.settings.sqlite_statement_capture
+        capture.print(query.gsub('\n', ' ') + '\n')
+      end
+    {% end %}
   end
 
   def build_unprepared_statement(query) : Statement
@@ -102,7 +135,7 @@ class Grant::SQLite3::Connection < DB::Connection
     @statements_cache.clear
 
     unless @handle_closed
-      close_code = LibSQLite3.close(self)
+      close_code = @engine_database.close
       unless close_code == 0
         @statement_error_awaiting_close = first_statement_error
         raise Exception.new(self)
@@ -150,23 +183,9 @@ class Grant::SQLite3::Connection < DB::Connection
   # Dump the database to another SQLite3 database. This can be used for backing up a SQLite3 Database
   # to disk or the opposite
   def dump(to : SQLite3::Connection)
-    backup_item = LibSQLite3.backup_init(to.@db, "main", @db, "main")
-    if backup_item.null?
-      raise Exception.new(to.@db)
+    unless @engine_database.backup_to(to.engine_database) == Engine::OK_CODE
+      raise Exception.new(to)
     end
-    code = LibSQLite3.backup_step(backup_item, -1)
-
-    if code != LibSQLite3::Code::DONE
-      raise Exception.new(to.@db)
-    end
-    code = LibSQLite3.backup_finish(backup_item)
-    if code != LibSQLite3::Code::OKAY
-      raise Exception.new(to.@db)
-    end
-  end
-
-  def to_unsafe
-    @db
   end
 
   private def check(code)

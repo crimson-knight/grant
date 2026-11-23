@@ -92,6 +92,32 @@ module Grant
       @query_cache_max_entries = size
     end
 
+    # The engines `sqlite_engine` accepts.
+    SQLITE_ENGINES = {:libsqlite3, :grant}
+
+    # The engine Grant's SQLite driver runs SQL with. Each connection reads it
+    # when it opens, so set it in `config/initializers/grant.cr` before the
+    # first query.
+    #
+    # - `:libsqlite3` (default) — the system's C SQLite library.
+    # - `:grant` — Grant's pure-Crystal engine (`Grant::SQLiteEngine`). It
+    #   opens database files; running SQL arrives with milestone G4, and until
+    #   then every statement raises `Grant::SQLiteEngine::UnsupportedSQL`.
+    getter sqlite_engine : Symbol = :libsqlite3
+
+    def sqlite_engine=(engine : Symbol)
+      unless SQLITE_ENGINES.includes?(engine)
+        raise ArgumentError.new("sqlite_engine must be :libsqlite3 or :grant (got #{engine.inspect})")
+      end
+      @sqlite_engine = engine
+    end
+
+    # When set, every statement a Grant SQLite connection prepares is written
+    # here, one per line, with each newline inside a statement written as a
+    # space. Grant's spec suite sets it from `GRANT_SQL_CAPTURE` to record the
+    # SQL corpus the pure-Crystal engine is tested against.
+    property sqlite_statement_capture : IO? = nil
+
     def index_hint_mode=(mode : Symbol)
       unless {:warn, :strict, :ignore}.includes?(mode)
         raise ArgumentError.new("index_hint_mode must be :warn, :strict, or :ignore (got #{mode.inspect})")

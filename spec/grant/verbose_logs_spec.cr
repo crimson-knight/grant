@@ -114,6 +114,18 @@ describe Grant::Logs do
       Grant::Logs.source_location(frames).should eq("/app/src/users_controller.cr:12:5 in 'index'")
     end
 
+    it "skips the standard library this program was compiled against, wherever it lives" do
+      root = Grant::Logs::STDLIB_SOURCE_ROOT.should_not be_nil
+      File.exists?(File.join(root, "object.cr")).should be_true
+      frames = [
+        "#{Grant::Logs::GRANT_SOURCE_ROOT}/grant/log.cr:54:7 in '->'",
+        "#{root}/spec/example.cr:50:13 in 'internal_run'",
+        "/app/spec/users_spec.cr:7:3 in '->'",
+      ]
+
+      Grant::Logs.source_location(frames).should eq("/app/spec/users_spec.cr:7:3 in '->'")
+    end
+
     it "returns nil when every frame is internal" do
       Grant::Logs.source_location(["#{Grant::Logs::GRANT_SOURCE_ROOT}/grant/base.cr:10:5 in 'find'"]).should be_nil
     end
