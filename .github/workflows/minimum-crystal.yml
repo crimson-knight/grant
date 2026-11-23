@@ -51,15 +51,23 @@ jobs:
         run: shards install --frozen --skip-postinstall --skip-executables
       - name: Type-check Grant
         run: crystal build --no-codegen src/grant.cr
-      - name: Note the suite already run on this version
-        if: steps.floor.outputs.version == inputs.latest-crystal
+      - name: Decide whether the floor needs its own SQLite suite run
+        id: suite
         env:
           FLOOR: ${{ steps.floor.outputs.version }}
-        run: echo "::notice::The floor $FLOOR is the version sqlite-spec runs the SQLite suite on; not running it twice."
+          LATEST: ${{ inputs.latest-crystal }}
+        run: |
+          echo "Floor: $FLOOR; the caller's SQLite suite runs on: ${LATEST:-(none)}"
+          if [ "$FLOOR" = "$LATEST" ]; then
+            echo "::notice::The floor $FLOOR is the version sqlite-spec runs the SQLite suite on; not running it twice."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
       - name: Run tests
         # The whole suite compiled as one program needs about 20 GB of RAM; a
         # runner has 16 GB. spec-groups.sh compiles one group at a time.
-        if: steps.floor.outputs.version != inputs.latest-crystal
+        if: steps.suite.outputs.run == 'true'
         timeout-minutes: 90
         run: scripts/spec-groups.sh sqlite
         env:
