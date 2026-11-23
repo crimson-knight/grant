@@ -35,6 +35,12 @@ module SelectSpecFixture
     INSERT INTO pairs VALUES ('x', 'y'), ('a', 'b'), ('a', 'c');
     CREATE TABLE named (a, b, c, PRIMARY KEY(a) UNIQUE (b) CONSTRAINT one CHECK(c < 10) CONSTRAINT two);
     INSERT INTO named VALUES (1, 2, 3);
+    CREATE TABLE seek_keys (k, v INTEGER);
+    CREATE INDEX index_seek_keys_on_k ON seek_keys (k);
+    INSERT INTO seek_keys SELECT (x * x) % 997, x FROM (WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c WHERE x < 1500) SELECT x FROM c);
+    INSERT INTO seek_keys VALUES (NULL, 0), (2.5, -1), ('t', -2), (500.0, -3), (996, -4), (996, -5);
+    CREATE TABLE probes (x INTEGER PRIMARY KEY);
+    INSERT INTO probes SELECT x FROM (WITH RECURSIVE c(x) AS (SELECT 0 UNION ALL SELECT x + 1 FROM c WHERE x < 1000) SELECT x FROM c) WHERE x % 7 = 0 OR x % 31 = 1 OR x > 990;
     SQL
 
   QUERIES = [
@@ -226,6 +232,32 @@ module SelectSpecFixture
     {"SELECT id FROM users WHERE (SELECT count(*) FROM (SELECT 1 UNION ALL SELECT sum(users.age))) ORDER BY id", [] of Grant::SQLiteEngine::Value},
     {"SELECT id FROM users WHERE (SELECT count(*) FROM (SELECT sum(users.age))) ORDER BY id", [] of Grant::SQLiteEngine::Value},
     {"WITH RECURSIVE c(i) AS (SELECT * UNION ALL SELECT i + 1 FROM c WHERE i < 3) SELECT i FROM c", [] of Grant::SQLiteEngine::Value},
+    # Scan terms decided from the stored record (ScanTest): numbers against
+    # numbers, a REAL column holding an integer, NULL, IS, text against a
+    # number, and literal-prefix LIKE on a NOCASE column.
+    {"SELECT id, score FROM users WHERE score > ? AND age >= ?", [3_i64, 17.5] of Grant::SQLiteEngine::Value},
+    {"SELECT id FROM users WHERE ? <= score", [3_i64] of Grant::SQLiteEngine::Value},
+    {"SELECT id FROM users WHERE score IS ? OR id = 4", [3.0] of Grant::SQLiteEngine::Value},
+    {"SELECT id FROM users WHERE age IS NOT ? AND score < 100", [36_i64] of Grant::SQLiteEngine::Value},
+    {"SELECT id FROM users WHERE age > ?", ["20"] of Grant::SQLiteEngine::Value},
+    {"SELECT id, name FROM users WHERE name LIKE ? AND age > 1", ["a%"] of Grant::SQLiteEngine::Value},
+    {"SELECT id FROM posts WHERE rank > ? AND title LIKE 'F%'", [5_i64] of Grant::SQLiteEngine::Value},
+    {"SELECT id, flag FROM users WHERE flag = ? AND name NOT LIKE ?", [1_i64, "c%"] of Grant::SQLiteEngine::Value},
+    # Columns a test decided are decoded when something else reads them: a
+    # correlated subquery, a bare column of a group, a LEFT JOIN's right
+    # side, and a later term evaluated the general way.
+    {"SELECT u.id, (SELECT count(*) FROM posts p WHERE p.title LIKE 'F%' AND p.user_id = u.id AND u.score > 1) FROM users u WHERE u.score > ?", [0_i64] of Grant::SQLiteEngine::Value},
+    {"SELECT flag, name, max(age) FROM users WHERE name LIKE '%' AND score > -10 GROUP BY flag", [] of Grant::SQLiteEngine::Value},
+    {"SELECT u.name, p.title, p.rank FROM users u LEFT JOIN posts p ON p.user_id = u.id AND p.rank > 1 WHERE u.score > 0 ORDER BY u.id, p.id", [] of Grant::SQLiteEngine::Value},
+    {"SELECT id, score FROM users WHERE score > ? AND score + 0 < 9", [0_i64] of Grant::SQLiteEngine::Value},
+    # Index seeks that move forward within a leaf of integer keys:
+    # equality, a strict lower bound, and keys past the last entry.
+    {"SELECT p.x, s.v FROM probes p JOIN seek_keys s ON s.k = p.x ORDER BY p.x, s.v", [] of Grant::SQLiteEngine::Value},
+    {"SELECT p.x, count(s.v) FROM probes p JOIN seek_keys s ON s.k = p.x WHERE p.x > ? GROUP BY p.x ORDER BY p.x LIMIT 40", [100_i64] of Grant::SQLiteEngine::Value},
+    {"SELECT p.x, s.k, s.v FROM probes p JOIN seek_keys s ON s.k > p.x AND s.k <= p.x + 2 ORDER BY p.x, s.k, s.v", [] of Grant::SQLiteEngine::Value},
+    # A column read before the decided one leaves it pending; the decided
+    # column read afterwards is decoded then.
+    {"SELECT name, id, age, score FROM users WHERE age > ? AND score > ? ORDER BY id DESC", [20_i64, 1_i64] of Grant::SQLiteEngine::Value},
   ]
 end
 

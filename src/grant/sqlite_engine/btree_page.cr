@@ -73,6 +73,7 @@ module Grant::SQLiteEngine
 
     # Offset of cell *index* on the page, checked to lie after the pointer
     # array and inside the usable size.
+    @[AlwaysInline]
     def cell_offset(index : Int32) : Int32
       # The pointer array was checked to lie inside the page.
       pointer = if 0 <= index < @cell_count
@@ -114,6 +115,40 @@ module Grant::SQLiteEngine
       size, size_length = varint(offset, index)
       key, key_length = varint(offset + size_length, index)
       {key, payload_location(index, offset + size_length + key_length, size, true)}
+    end
+
+    # The rowid and payload of leaf table cell *index* when the payload lies
+    # wholly on the page (no overflow), as `table_leaf_cell` and
+    # `PayloadReader.read` would give them; nil otherwise, and for a cell
+    # those checks would reject, so the caller takes that path and its
+    # error.
+    @[AlwaysInline]
+    def local_table_leaf_cell(index : Int32) : {Int64, Bytes}?
+      offset = cell_offset(index)
+      size, size_length = varint(offset, index)
+      key, key_length = varint(offset + size_length, index)
+      start = offset + size_length + key_length
+      return unless 0 <= size <= @usable_size - 35 && start + size <= @usable_size
+      {key, Bytes.new(@data.to_unsafe + start, size.to_i32, read_only: @data.read_only?)}
+    end
+
+    # The payload of index cell *index* (leaf or interior) when it lies
+    # wholly on the page, as `payload` and `PayloadReader.read` would give
+    # it; nil otherwise, and for a cell those checks would reject.
+    @[AlwaysInline]
+    def local_index_payload(index : Int32) : Bytes?
+      offset = cell_offset(index)
+      if @page_type.interior_index?
+        return if offset + 4 > @usable_size
+        offset += 4
+      elsif !@page_type.leaf_index?
+        return
+      end
+      size, size_length = varint(offset, index)
+      start = offset + size_length
+      max_local = ((@usable_size - 12) * 64 // 255) - 23
+      return unless 0 <= size <= max_local && start + size <= @usable_size
+      Bytes.new(@data.to_unsafe + start, size.to_i32, read_only: @data.read_only?)
     end
 
     # Payload location of a leaf table cell, a leaf index cell or an interior
@@ -173,10 +208,16 @@ module Grant::SQLiteEngine
       corrupt("child page #{child} is outside 1..#{@page_count}") if child == 0 || child > @page_count
     end
 
+    @[AlwaysInline]
     private def varint(offset : Int32, index : Int32) : {Int64, Int32}
       value, length = Varint.decode(@data, offset, @usable_size)
-      corrupt("cell #{index} varint runs past the usable size") if length == 0
+      varint_past_usable_size(index) if length == 0
       {value, length}
+    end
+
+    @[NoInline]
+    private def varint_past_usable_size(index : Int32) : NoReturn
+      corrupt("cell #{index} varint runs past the usable size")
     end
 
     private def u16(offset : Int32) : Int32

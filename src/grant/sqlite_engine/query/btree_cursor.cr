@@ -5,7 +5,7 @@ module Grant::SQLiteEngine::Query
   # is already on the stack (a cycle) or a tree deeper than
   # `Limits::MAX_BTREE_DEPTH` is `CorruptDatabase`.
   abstract class BTreeCursor
-    @stack = [] of {BTreePage, Int32}
+    @stack = CursorPath.new
     @valid = false
 
     def initialize(@database : Database, @root_page : UInt32)
@@ -24,7 +24,7 @@ module Grant::SQLiteEngine::Query
       if @stack.size >= Limits::MAX_BTREE_DEPTH
         raise CorruptDatabase.new("b-tree is deeper than #{Limits::MAX_BTREE_DEPTH} pages", number)
       end
-      if @stack.any? { |frame| frame[0].number == number }
+      if @stack.reaches?(number)
         raise CorruptDatabase.new("b-tree reaches the page twice", number)
       end
       page = BTreePage.read(pager, number)
@@ -63,6 +63,61 @@ module Grant::SQLiteEngine::Query
     end
   end
 
+  # The pages from a b-tree's root to a cursor's entry, each with the cell
+  # index the cursor took there. Levels are objects reused from one descent
+  # to the next, so a step moves an index in place.
+  class CursorPath
+    # One page of the path and the cell index taken on it.
+    class Level
+      property page : BTreePage
+      property index : Int32
+
+      def initialize(@page : BTreePage, @index : Int32)
+      end
+    end
+
+    @list_of_levels = [] of Level
+    getter size = 0
+
+    def push(page : BTreePage, index : Int32) : Nil
+      if @size < @list_of_levels.size
+        level = @list_of_levels.unsafe_fetch(@size)
+        level.page = page
+        level.index = index
+      else
+        @list_of_levels << Level.new(page, index)
+      end
+      @size += 1
+    end
+
+    def pop : Nil
+      @size -= 1 if @size > 0
+    end
+
+    def clear : Nil
+      @size = 0
+    end
+
+    def empty? : Bool
+      @size == 0
+    end
+
+    # The deepest level; the path must not be empty.
+    def top : Level
+      @list_of_levels.unsafe_fetch(@size - 1)
+    end
+
+    def top? : Level?
+      @size > 0 ? top : nil
+    end
+
+    # True when a level of the path is page *number*.
+    def reaches?(number : UInt32) : Bool
+      @size.times { |depth| return true if @list_of_levels.unsafe_fetch(depth).page.number == number }
+      false
+    end
+  end
+
   # A cursor over a table b-tree, in rowid order.
   class TableCursor < BTreeCursor
     @row_header = RecordHeader.new
@@ -85,7 +140,7 @@ module Grant::SQLiteEngine::Query
       loop do
         page = open_page(number, table: true)
         index = lower_bound(page, rowid)
-        @stack << {page, index}
+        @stack.push(page, index)
         break if page.page_type.leaf?
         number = child_of(page, index)
       end
@@ -95,32 +150,31 @@ module Grant::SQLiteEngine::Query
     # Moves to the next row.
     def advance : Bool
       return false unless @valid
-      last = @stack.size - 1
-      page, index = @stack.unsafe_fetch(last)
-      @stack.unsafe_put(last, {page, index + 1})
+      top = @stack.top
+      index = top.index + 1
+      top.index = index
       # The next cell of the same leaf needs no climb.
-      return true if index + 1 < page.cell_count
+      return true if index < top.page.cell_count
       settle
     end
 
     def rowid : Int64
-      page, index = @stack[-1]
-      page.rowid(index)
+      top = @stack.top
+      top.page.rowid(top.index)
     end
 
     def record : Array(Value)
-      page, index = @stack[-1]
-      _rowid, location = page.table_leaf_cell(index)
+      top = @stack.top
+      page = top.page
+      _rowid, location = page.table_leaf_cell(top.index)
       Record.decode(PayloadReader.read(pager, page, location), @database.text_encoding, page.number)
     end
 
     # Decodes the current row of *table* into *into* in declared column
     # order, with only the columns *use* marks; returns its rowid.
     def row(table : TableInfo, use : ColumnUse, into : Array(Value)) : Int64
-      page, index = @stack.unsafe_fetch(@stack.size - 1)
-      rowid, location = page.table_leaf_cell(index)
       header = @row_header
-      header.parse(PayloadReader.read(pager, page, location), page.number)
+      rowid = header(header)
       table.decode_row(rowid, header, @database.text_encoding, use, into)
       rowid
     end
@@ -128,9 +182,16 @@ module Grant::SQLiteEngine::Query
     # Reads the current row's record header into *header*; returns its
     # rowid.
     def header(into header : RecordHeader) : Int64
-      page, index = @stack.unsafe_fetch(@stack.size - 1)
-      rowid, location = page.table_leaf_cell(index)
-      header.parse(PayloadReader.read(pager, page, location), page.number)
+      top = @stack.top
+      page = top.page
+      index = top.index
+      if cell = page.local_table_leaf_cell(index)
+        rowid, payload = cell
+      else
+        rowid, location = page.table_leaf_cell(index)
+        payload = PayloadReader.read(pager, page, location)
+      end
+      header.parse(payload, page.number)
       rowid
     end
 
@@ -138,8 +199,8 @@ module Grant::SQLiteEngine::Query
     # next row there is.
     private def settle : Bool
       loop do
-        page, index = @stack[-1]
-        if index < page.cell_count
+        top = @stack.top
+        if top.index < top.page.cell_count
           @valid = true
           return true
         end
@@ -149,10 +210,11 @@ module Grant::SQLiteEngine::Query
             @valid = false
             return false
           end
-          parent, child = @stack[-1]
-          if child < parent.cell_count
-            @stack[-1] = {parent, child + 1}
-            descend_leftmost(child_of(parent, child + 1))
+          parent = @stack.top
+          child = parent.index
+          if child < parent.page.cell_count
+            parent.index = child + 1
+            descend_leftmost(child_of(parent.page, child + 1))
             break
           end
           @stack.pop
@@ -163,7 +225,7 @@ module Grant::SQLiteEngine::Query
     private def descend_leftmost(number : UInt32) : Nil
       loop do
         page = open_page(number, table: true)
-        @stack << {page, 0}
+        @stack.push(page, 0)
         break if page.page_type.leaf?
         number = child_of(page, 0)
       end
@@ -217,21 +279,38 @@ module Grant::SQLiteEngine::Query
       settle_leaf
     end
 
+    # The probe of the seek under way when it is one integer on an
+    # ascending column; `compare_entry` then reads stored integer keys
+    # straight from the page.
+    @integer_target : Int64? = nil
+
     # Moves to the first entry whose key columns compare at least (or, with
-    # *strict*, greater than) *probe*.
-    def seek(probe : Array(Value), strict : Bool = false) : Bool
+    # *strict*, greater than) *probe*. *current_below* says the caller
+    # already found the current entry below *probe*.
+    def seek(probe : Array(Value), strict : Bool = false, current_below : Bool = false) : Bool
+      key = probe.size == 1 ? probe.unsafe_fetch(0) : nil
+      @integer_target = key.is_a?(Int64) && !@order.descending[0]? ? key : nil
       # sqlite3BtreeIndexMoveto: when the cursor sits on a leaf whose keys
       # span the target, the search stays in that leaf.
-      if @valid && @built_generation == pager.generation && (top = @stack.last?) && top[0].page_type.leaf?
-        leaf = top[0]
-        # A join probes in ascending order, so the target is usually a
-        # few entries past the current one.
-        if forward = forward_bound(leaf, top[1], probe, strict)
-          @stack[-1] = {leaf, forward}
-          return settle_leaf
+      if @valid && @built_generation == pager.generation && (top = @stack.top?) && top.page.page_type.leaf?
+        leaf = top.page
+        index = top.index
+        if index < leaf.cell_count
+          if current_below || below?(leaf, index, probe, strict)
+            # A join probes in ascending order, so the target is usually a
+            # few entries past the current one.
+            if forward = forward_bound(leaf, index, probe, strict)
+              top.index = forward
+              return settle_leaf
+            end
+          elsif index > 0 && below?(leaf, index - 1, probe, strict)
+            # The cursor already sits on the target: the previous probe
+            # stopped at the first entry past its key, where this one starts.
+            return settle_leaf
+          end
         end
         if leaf_spans?(leaf, probe, strict)
-          @stack[-1] = {leaf, bound(leaf, probe, strict)}
+          top.index = bound(leaf, probe, strict)
           return settle_leaf
         end
       end
@@ -242,7 +321,7 @@ module Grant::SQLiteEngine::Query
       loop do
         page = open_page(number, table: false)
         index = bound(page, probe, strict)
-        @stack << {page, index}
+        @stack.push(page, index)
         break if page.page_type.leaf?
         number = child_of(page, index)
       end
@@ -251,32 +330,45 @@ module Grant::SQLiteEngine::Query
 
     def advance : Bool
       return false unless @valid
-      page, index = @stack[-1]
-      if page.page_type.leaf?
-        @stack[-1] = {page, index + 1}
-        return settle_leaf
-      end
-      # On interior cell `index`: continue in the subtree to its right.
-      @stack[-1] = {page, index + 1}
-      descend_leftmost(child_of(page, index + 1))
+      top = @stack.top
+      index = top.index + 1
+      top.index = index
+      return settle_leaf if top.page.page_type.leaf?
+      # On an interior cell: continue in the subtree to its right.
+      descend_leftmost(child_of(top.page, index))
       settle_leaf
     end
 
     def record : Array(Value)
-      page, index = @stack[-1]
-      Record.decode(PayloadReader.read(pager, page, page.payload(index)), @database.text_encoding, page.number)
+      top = @stack.top
+      Record.decode(entry_payload(top.page, top.index), @database.text_encoding, top.page.number)
     end
 
     # The current entry decoded into *into*.
     def record(into : Array(Value)) : Array(Value)
-      page, index = @stack.unsafe_fetch(@stack.size - 1)
-      RecordColumns.decode_into(PayloadReader.read(pager, page, page.payload(index)), @database.text_encoding, page.number, into)
+      top = @stack.top
+      page = top.page
+      RecordColumns.decode_into(entry_payload(page, top.index), @database.text_encoding, page.number, into)
+    end
+
+    # The current entry's two values when it is an integer key and an
+    # integer rowid held on the page; nil otherwise.
+    def integer_pair : {Int64, Int64}?
+      top = @stack.top
+      payload = top.page.local_index_payload(top.index)
+      payload ? RecordColumns.integer_pair(payload) : nil
+    end
+
+    # The payload of entry *index* of *page*: a slice of the page when it
+    # does not spill, read through the overflow chain otherwise.
+    private def entry_payload(page : BTreePage, index : Int32) : Bytes
+      page.local_index_payload(index) || PayloadReader.read(pager, page, page.payload(index))
     end
 
     private def descend_leftmost(number : UInt32) : Nil
       loop do
         page = open_page(number, table: false)
-        @stack << {page, 0}
+        @stack.push(page, 0)
         break if page.page_type.leaf?
         number = child_of(page, 0)
       end
@@ -285,8 +377,8 @@ module Grant::SQLiteEngine::Query
     # From a leaf position, moves to the entry there: the leaf cell, or
     # the next interior cell up the stack once the leaf is used up.
     private def settle_leaf : Bool
-      page, index = @stack[-1]
-      if index < page.cell_count
+      top = @stack.top
+      if top.index < top.page.cell_count
         @valid = true
         return true
       end
@@ -296,8 +388,8 @@ module Grant::SQLiteEngine::Query
           @valid = false
           return false
         end
-        parent, child = @stack[-1]
-        if child < parent.cell_count
+        parent = @stack.top
+        if parent.index < parent.page.cell_count
           @valid = true
           return true
         end
@@ -306,6 +398,12 @@ module Grant::SQLiteEngine::Query
     end
 
     @built_generation = -1
+
+    # True when the cursor is on an entry of the tree as it is now (no
+    # write since it moved there).
+    def positioned? : Bool
+      @valid && @built_generation == pager.generation
+    end
 
     # Forgets the position, so the next seek starts from the root (a new
     # execution may follow writes this connection made).
@@ -320,21 +418,30 @@ module Grant::SQLiteEngine::Query
     private def leaf_spans?(leaf : BTreePage, probe : Array(Value), strict : Bool) : Bool
       count = leaf.cell_count
       return false if count == 0
-      encoding = @database.text_encoding
-      first = RecordColumns.compare_prefix(PayloadReader.read(pager, leaf, leaf.payload(0)), encoding, leaf.number, probe, @order)
+      first = compare_entry(leaf, 0, probe)
       return false unless strict ? first <= 0 : first < 0
-      last = RecordColumns.compare_prefix(PayloadReader.read(pager, leaf, leaf.payload(count - 1)), encoding, leaf.number, probe, @order)
+      last = compare_entry(leaf, count - 1, probe)
       strict ? last > 0 : last >= 0
     end
 
     # The first leaf entry at least (with *strict*, greater than) *probe*
-    # when the entry at *index* is below it and a later entry of *leaf* is
-    # not; nil otherwise. Steps ahead 1, 2, 4... entries, then searches the
-    # last step.
+    # when a later entry of *leaf* than *index* (an entry below it) is not
+    # below it; nil otherwise. Steps ahead 1, 2, 4... entries, then
+    # searches the last step.
     private def forward_bound(leaf : BTreePage, index : Int32, probe : Array(Value), strict : Bool) : Int32?
       count = leaf.cell_count
-      return if index >= count
-      return unless below?(leaf, index, probe, strict)
+      if (target = @integer_target) && (last = integer_key_at(leaf, count - 1))
+        return if last < target || (strict && last == target)
+        first = integer_key_at(leaf, index)
+        if first && count - index > 8 && last > first
+          # Integer keys: start where the target would sit if the keys
+          # between the current entry and the last were evenly spread.
+          fraction = (target.to_f64 - first.to_f64) / (last.to_f64 - first.to_f64)
+          span = count - 1 - index
+          guess = index + (fraction * span).to_i32.clamp(1, span)
+          return bound_from(leaf, index, guess, probe, strict)
+        end
+      end
       low = index + 1
       step = 1
       loop do
@@ -348,20 +455,70 @@ module Grant::SQLiteEngine::Query
       end
     end
 
+    # The first entry of *leaf* at least (with *strict*, greater than)
+    # *probe*, searched from *guess*: entry *index* is below the probe and
+    # the leaf's last entry is not. Steps 1, 2, 4... entries up or down from
+    # the guess, then searches the last step.
+    private def bound_from(leaf : BTreePage, index : Int32, guess : Int32, probe : Array(Value), strict : Bool) : Int32
+      last = leaf.cell_count - 1
+      step = 1
+      if below?(leaf, guess, probe, strict)
+        low = guess + 1
+        loop do
+          candidate = guess + step
+          return bound(leaf, probe, strict, low, last) if candidate >= last
+          return bound(leaf, probe, strict, low, candidate) unless below?(leaf, candidate, probe, strict)
+          low = candidate + 1
+          step *= 2
+        end
+      else
+        high = guess
+        loop do
+          candidate = guess - step
+          return bound(leaf, probe, strict, index + 1, high) if candidate <= index
+          return bound(leaf, probe, strict, candidate + 1, high) if below?(leaf, candidate, probe, strict)
+          high = candidate
+          step *= 2
+        end
+      end
+    end
+
+    # The integer key of entry *index* of *leaf* (see
+    # `RecordColumns.leading_integer`); nil when it is not one.
+    private def integer_key_at(leaf : BTreePage, index : Int32) : Int64?
+      payload = leaf.local_index_payload(index)
+      payload ? RecordColumns.leading_integer(payload) : nil
+    end
+
     # True when the entry at *index* sorts before the first entry *seek*
     # wants.
     private def below?(page : BTreePage, index : Int32, probe : Array(Value), strict : Bool) : Bool
-      comparison = RecordColumns.compare_prefix(PayloadReader.read(pager, page, page.payload(index)), @database.text_encoding,
-        page.number, probe, @order)
+      comparison = compare_entry(page, index, probe)
       comparison < 0 || (strict && comparison == 0)
     end
 
+    # Compares entry *index* of *page* with *probe* in index order. A probe
+    # of one integer against a stored integer compares the two directly
+    # (vdbeRecordCompareInt); anything else goes through `compare_prefix`.
+    private def compare_entry(page : BTreePage, index : Int32, probe : Array(Value)) : Int32
+      if (target = @integer_target) && (payload = page.local_index_payload(index))
+        if stored = RecordColumns.leading_integer(payload)
+          return stored <=> target
+        end
+      end
+      payload = entry_payload(page, index)
+      if probe.size == 1 && (key = probe.unsafe_fetch(0)).is_a?(Int64)
+        if comparison = RecordColumns.compare_integer_key(payload, key)
+          return @order.descending[0]? ? -comparison : comparison
+        end
+      end
+      RecordColumns.compare_prefix(payload, @database.text_encoding, page.number, probe, @order)
+    end
+
     private def bound(page : BTreePage, probe : Array(Value), strict : Bool, low : Int32 = 0, high : Int32 = page.cell_count) : Int32
-      encoding = @database.text_encoding
       while low < high
         middle = (low + high) // 2
-        comparison = RecordColumns.compare_prefix(PayloadReader.read(pager, page, page.payload(middle)), encoding, page.number,
-          probe, @order)
+        comparison = compare_entry(page, middle, probe)
         if comparison < 0 || (strict && comparison == 0)
           low = middle + 1
         else
