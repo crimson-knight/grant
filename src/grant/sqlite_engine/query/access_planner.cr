@@ -103,14 +103,19 @@ module Grant::SQLiteEngine::Query
       return {SingleRowSource.new.as(RowSource), where} if steps.empty?
       slot_position = {} of Int32 => Int32
       steps.each_with_index { |step, index| slot_position[step.entry.slot] = index }
-      terms = ExpressionWalk.conjuncts(where)
-      constant_terms, terms = terms.partition { |term| ExpressionWalk.constant_term?(term) }
+      # sqlite3ProcessJoin ANDs every inner join's ON onto the end of WHERE.
+      where_terms = ExpressionWalk.conjuncts(where)
+      steps.each { |step| where_terms.concat(ExpressionWalk.conjuncts(step.on)) unless step.left_join? }
       # sqlite3SimplifyJoin... (select.c, "LEFT JOIN simplification"): a
       # LEFT JOIN whose right table a WHERE term needs non-NULL runs as an
       # inner join, its ON terms joining the WHERE terms.
       outer = steps.map_with_index do |step, index|
-        step.left_join? && index > 0 && terms.none? { |term| ExpressionWalk.implies_non_null_row?(term, step.entry.slot) }
+        step.left_join? && index > 0 && where_terms.none? { |term| ExpressionWalk.implies_non_null_row?(term, step.entry.slot) }
       end
+      steps.each_with_index do |step, index|
+        where_terms.concat(ExpressionWalk.conjuncts(step.on)) if step.left_join? && !outer[index]
+      end
+      constant_terms, terms = where_terms.partition { |term| ExpressionWalk.constant_term?(term) }
       pushed = Array(Array(Expr)).new(steps.size) { [] of Expr }
       residual = [] of Expr
       terms.each do |term|
@@ -130,10 +135,10 @@ module Grant::SQLiteEngine::Query
           source = JoinSource.new(source, access, step.on, true, [step.entry.slot])
           next
         end
-        # The WHERE terms, then the ON terms (sqlite3ProcessJoin appends ON
-        # to WHERE); the equalities an index or rowid seek would use first,
-        # since SQLite consumes those in the seek.
-        step_terms = pushed[index] + ExpressionWalk.conjuncts(step.on)
+        # The WHERE terms this step completes (ON terms of inner joins among
+        # them, after the WHERE's own); the equalities an index or rowid
+        # seek would use first, since SQLite consumes those in the seek.
+        step_terms = pushed[index]
         access = choose_access(step, step_terms, available, context)
         seeks, others = step_terms.partition { |term| seek_term?(term, step.entry, available, context) }
         if filter = ExpressionWalk.conjunction(seeks + others)

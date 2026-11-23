@@ -6,9 +6,13 @@ module Grant::SQLiteEngine::Query
       # The source used when no index or rowid path applies.
       getter base_source : RowSource
       getter? left_join : Bool
-      getter on : Expr?
+      property on : Expr?
+      # The ON clause, compiled after WHERE (sqlite3ProcessJoin ANDs it onto
+      # the end of WHERE before names are resolved).
+      getter on_syntax : SQL::Expression?
 
-      def initialize(@entry : FromEntry, @base_source : RowSource, @left_join : Bool, @on : Expr?)
+      def initialize(@entry : FromEntry, @base_source : RowSource, @left_join : Bool, @on : Expr?,
+                     @on_syntax : SQL::Expression? = nil)
       end
     end
 
@@ -56,11 +60,7 @@ module Grant::SQLiteEngine::Query
           on = conditions.reduce { |all, condition| LogicalExpr.new(true, all, condition).as(Expr) } unless conditions.empty?
         end
         context.list_of_entries << entry
-        if on_syntax = item.on
-          compiled = compile_expression(on_syntax, context)
-          on = on ? LogicalExpr.new(true, on, compiled) : compiled
-        end
-        steps << JoinStep.new(entry, source, left_join, on)
+        steps << JoinStep.new(entry, source, left_join, on, item.on)
       end
       steps
     end
@@ -79,6 +79,22 @@ module Grant::SQLiteEngine::Query
         compile_table_function(source, context)
       else
         raise UnsupportedSQL.new("parenthesized join in FROM")
+      end
+    end
+
+    # Compiles each step's ON clause as the tail of WHERE: every FROM entry
+    # is visible; a LEFT JOIN ON naming a table to its right is an error.
+    private def compile_join_conditions(steps : Array(JoinStep), context : QueryContext) : Nil
+      steps.each_with_index do |step, index|
+        syntax = step.on_syntax
+        next unless syntax
+        compiled = resolve_expression(syntax, context)
+        later = steps[(index + 1)..].map(&.entry.slot).to_set
+        if step.left_join? && !(ExpressionWalk.slots(compiled) & later).empty?
+          raise SQLError.new("ON clause references tables to its right")
+        end
+        existing = step.on
+        step.on = existing ? LogicalExpr.new(true, existing, compiled) : compiled
       end
     end
 

@@ -436,6 +436,7 @@ module Grant::SQLiteEngine::Query
         late_error = "misuse of aggregate: #{misuse[1]}()"
         nil
       end
+      compile_join_conditions(steps, context)
       context.aggregates = collector
       names = (0...expanded.size).map { |index| result_name(aliases[index], expanded[index], spans[index], index) }
       sort_keys = [] of SortKey

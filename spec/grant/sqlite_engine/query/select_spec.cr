@@ -151,6 +151,11 @@ module SelectSpecFixture
     {"WITH t(x) AS (VALUES(1) UNION ALL SELECT x + 1 FROM t LIMIT 1, 3) SELECT x FROM t", [] of Grant::SQLiteEngine::Value},
     {"SELECT name FROM users UNION SELECT title FROM posts ORDER BY users.name", [] of Grant::SQLiteEngine::Value},
     {"SELECT quote(CAST(x'cf27e8' AS TEXT))", [] of Grant::SQLiteEngine::Value},
+    {"SELECT count(*) FROM users LEFT JOIN posts ON no_c = 1 WHERE no_d IS NULL", [] of Grant::SQLiteEngine::Value},
+    {"SELECT no_r FROM users LEFT JOIN posts ON no_c = 1", [] of Grant::SQLiteEngine::Value},
+    {"SELECT count(*) FROM users JOIN posts ON users.id = nodes.id JOIN nodes", [] of Grant::SQLiteEngine::Value},
+    {"SELECT count(*) FROM users LEFT JOIN posts ON users.id = nodes.id JOIN nodes", [] of Grant::SQLiteEngine::Value},
+    {"SELECT users.id, posts.id FROM users LEFT JOIN posts ON posts.user_id = users.id AND users.age > 20 ORDER BY 1, 2", [] of Grant::SQLiteEngine::Value},
     {"SELECT id FROM users WHERE random() > 0 OR 1 ORDER BY id", [] of Grant::SQLiteEngine::Value},
     {"SELECT level, count(*) FROM ranked GROUP BY level", [] of Grant::SQLiteEngine::Value},
     {"SELECT u.id, p.id FROM users u LEFT JOIN posts p ON p.user_id = u.id WHERE p.rank > 2 ORDER BY 1, 2", [] of Grant::SQLiteEngine::Value},
@@ -174,8 +179,9 @@ describe "Grant::SQLiteEngine::Query SELECT" do
   session = Grant::SQLiteEngine::Query::Session.new(database)
 
   # The engine follows C SQLite 3.51.0; these cases show behavior older
-  # libraries lack (OP_IfEmpty before INTERSECT and EXCEPT).
-  reference_only = {"SELECT 1 WHERE 0 INTERSECT SELECT abs(-9223372036854775807 - 1)"}
+  # libraries lack (OP_IfEmpty before INTERSECT and EXCEPT; quote() of an
+  # infinity as 9.0e+999).
+  reference_only = {"SELECT 1 WHERE 0 INTERSECT SELECT abs(-9223372036854775807 - 1)", "SELECT quote(1e999), quote(-1e999), quote(0.1)"}
   library_is_reference = SQLiteSQLOracle.version.split(' ').first.split('.').map(&.to_i) >= [3, 51, 0]
 
   SelectSpecFixture::QUERIES.each do |(sql, parameters)|
