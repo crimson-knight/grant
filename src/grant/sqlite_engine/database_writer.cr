@@ -533,9 +533,13 @@ private def writer_schema_format : UInt32
       positions = layout.list_of_primary_key_positions
       raise ArgumentError.new("#{layout.table_name} has a #{positions.size}-column primary key") unless key.size == positions.size
       columns = definition.list_of_columns
+      # A key is matched as a WHERE clause compares a column with a value:
+      # text takes the column's numeric affinity, numbers its TEXT affinity
+      # (none for STRICT ANY), and nothing else is converted.
       stored_key = key.map_with_index do |value, position|
         column = columns[positions[position]]
-        definition.strict? ? StoredValue.for_strict_column(column.declared_type, column.column_name, value) : StoredValue.for_affinity(column.affinity, value)
+        any = definition.strict? && column.declared_type.compare("ANY", case_insensitive: true) == 0
+        any ? value : StoredValue.for_comparison(column.affinity, value)
       end
       found = btree_writer.index_first_at_least(layout.entry.root_page, stored_key, positions.size, comparator)
       return unless found && comparator.compare(found, stored_key, positions.size) == 0

@@ -388,19 +388,29 @@ module Grant::SQLiteEngine
     # lang_createtable.html, "ROWID and the INTEGER PRIMARY KEY": a single
     # primary key column whose declared type is exactly INTEGER aliases the
     # rowid, except when declared "INTEGER PRIMARY KEY DESC" as a column
-    # constraint, and never in a WITHOUT ROWID table.
+    # constraint, and never in a WITHOUT ROWID table. There SQLite creates
+    # that key's index only at the end of the statement
+    # (convertToWithoutRowidTable), so the UNIQUE constraints before it take
+    # the lower automatic index numbers.
     private def resolve_rowid_alias : Nil
-      return if @without_rowid || @list_of_primary_key_columns.size != 1
+      return if @list_of_primary_key_columns.size != 1
       index = column_index(@list_of_primary_key_columns.first)
       return unless index
       column = @list_of_columns[index]
       return unless column.declared_type.compare("INTEGER", case_insensitive: true) == 0
       return if column.primary_key_descending?
+      key_constraint = @list_of_unique_constraints.index { |columns| columns.size == 1 && columns.first.compare(column.column_name, case_insensitive: true) == 0 }
+      if @without_rowid
+        if key_constraint
+          @list_of_unique_constraints << @list_of_unique_constraints.delete_at(key_constraint)
+          @list_of_unique_constraint_terms << @list_of_unique_constraint_terms.delete_at(key_constraint)
+        end
+        return
+      end
       @rowid_alias_index = index
-      alias_constraint = @list_of_unique_constraints.index { |columns| columns.size == 1 && columns.first.compare(column.column_name, case_insensitive: true) == 0 }
-      if alias_constraint
-        @list_of_unique_constraints.delete_at(alias_constraint)
-        @list_of_unique_constraint_terms.delete_at(alias_constraint)
+      if key_constraint
+        @list_of_unique_constraints.delete_at(key_constraint)
+        @list_of_unique_constraint_terms.delete_at(key_constraint)
       end
     end
 

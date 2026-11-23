@@ -27,6 +27,17 @@ module Grant::SQLiteEngine
       end
     end
 
+    # The value a comparison with a column of *affinity* uses (OP_Eq):
+    # numeric affinities convert text only, TEXT affinity converts numbers,
+    # and an INTEGER or REAL is compared exactly as it is.
+    def self.for_comparison(affinity : Affinity, value : Value) : Value
+      return for_affinity(affinity, value) if affinity.text?
+      return value unless affinity.numeric? || affinity.integer? || affinity.real?
+      return value unless value.is_a?(String)
+      number = number_from_text(value)
+      number.nil? ? value : number
+    end
+
     # The value a STRICT column of *declared_type* stores, or raises
     # `ConstraintViolation` (Datatype) naming *column_name*.
     def self.for_strict_column(declared_type : String, column_name : String, value : Value) : Value

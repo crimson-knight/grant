@@ -138,14 +138,35 @@ end
 
 # --- Operations -----------------------------------------------------------
 
+# SQLite's text for a REAL changed in 3.52 (17 digits when 15 do not
+# read back the same double, and plain notation up to 1e17); a REAL bound
+# for a TEXT-affinity column is kept to values every version renders the
+# same way.
+def text_affinity?(type)
+  upper = type.upcase
+  !upper.include?("INT") && %w[CHAR CLOB TEXT].any? { |word| upper.include?(word) }
+end
+
+def version_stable_real?(value)
+  return true if value.zero? || value.infinite?
+  value.abs < 1e12 && (value * 8).round == value * 8
+end
+
+def steer(random, column, typed)
+  json = typed.first
+  return typed unless json.is_a?(Hash) && json.key?("r") && text_affinity?(column["type"])
+  value = [json["r"]].pack("H*").unpack1("G")
+  version_stable_real?(value) ? typed : typed_real(random.rand(-99_999..99_999) / 8.0)
+end
+
 def row_values(random, table, alias_value)
-  table["columns"].each_with_index.map do |_column, index|
+  table["columns"].each_with_index.map do |column, index|
     if index == table["alias"]
       alias_value.nil? ? NULL_VALUE : typed_integer(alias_value)
     elsif table["key"].include?(index)
-      key_value(random)
+      steer(random, column, key_value(random))
     else
-      typed_value(random)
+      steer(random, column, typed_value(random))
     end
   end
 end
