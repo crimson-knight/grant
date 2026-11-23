@@ -20,7 +20,7 @@ module Grant
         if arguments.size != ARGUMENT_COUNT
           raise ArgumentError.new("regexp expects #{ARGUMENT_COUNT} arguments, got #{arguments.size}")
         end
-        return nil if arguments.any?(Nil)
+        return if arguments.any?(Nil)
 
         matches?(arguments[0], arguments[1]) ? 1_i64 : 0_i64
       end
