@@ -17,7 +17,6 @@ module Grant::SQLiteEngine::Query
       statement = @statement
       case statement
       when SQL::CreateTable
-        raise UnsupportedSQL.new("TEMP tables (the temp schema)") if statement.temporary
         check_schema_name(statement.schema)
       when SQL::CreateIndex
         check_schema_name(statement.schema)
@@ -25,12 +24,20 @@ module Grant::SQLiteEngine::Query
         raise UnsupportedSQL.new("TEMP views (the temp schema)") if statement.temporary
         check_schema_name(statement.schema)
       when SQL::Drop
-        check_schema_name(statement.schema)
+        if (schema = statement.schema) && !@session.schema?(schema.value)
+          # sqlite3LocateTable finds nothing in a schema the connection
+          # lacks; IF EXISTS makes that no error.
+          @drops_nothing = true
+          return if statement.if_exists
+          raise SQLError.new("no such #{statement.kind.to_s.downcase}: #{schema.value}.#{statement.name.value}")
+        end
         if statement.kind.trigger?
           raise SQLError.new("no such trigger: #{statement.name.value}") unless statement.if_exists
         end
       when SQL::AlterTable
-        check_schema_name(statement.schema)
+        if (schema = statement.schema) && !@session.schema?(schema.value)
+          raise SQLError.new("no such table: #{schema.value}.#{statement.table.value}")
+        end
       when SQL::CreateTrigger
         raise UnsupportedSQL.new("triggers (CREATE TRIGGER)")
       when SQL::CreateVirtualTable
@@ -40,17 +47,51 @@ module Grant::SQLiteEngine::Query
 
     private def check_schema_name(schema : SQL::Name?) : Nil
       return unless schema
-      return if schema.same?("main")
-      raise UnsupportedSQL.new("the temp schema") if schema.same?("temp")
+      return if @session.schema?(schema.value)
       raise SQLError.new("unknown database #{schema.value}")
     end
 
+    # The database the statement changes: the one it names; for CREATE
+    # TABLE, temp when it says TEMP; for CREATE INDEX the database of its
+    # table; for DROP the first database holding the object, temp first.
+    @target : Database? = nil
+
+    private def choose_target(statement : SQL::Statement) : Nil
+      schema = case statement
+               when SQL::CreateTable, SQL::CreateIndex, SQL::Drop then statement.schema.try(&.value)
+               end
+      if schema
+        @target = @session.database_named(schema)
+        return
+      end
+      case statement
+      when SQL::CreateTable
+        @target = statement.temporary ? @session.temp_database! : @session.database
+      when SQL::CreateIndex
+        @target = @session.table(statement.table.value).try(&.database)
+      when SQL::Drop
+        name = statement.name.value
+        @target = @session.list_of_databases.find do |candidate|
+          candidate.page_count > 0 && candidate.schema.list_of_entries.any? { |entry| entry.object_name.compare(name, case_insensitive: true) == 0 }
+        end
+      end
+    end
+
+    private def schema_name : String
+      @session.schema_name_of(database)
+    end
+
+    # DROP ... IF EXISTS naming a schema the connection lacks.
+    @drops_nothing = false
+
     def run(list_of_parameters : Array(Value)) : Array(Array(Value))
+      return [] of Array(Value) if @drops_nothing
       statement = @statement
       # sqlite3FkDropTable runs a DELETE first, which sets changes().
       counts = statement.is_a?(SQL::Drop) && statement.kind.table? && @session.foreign_keys? &&
                !@session.list_of_child_tables(statement.name.value).empty? && !@session.table(statement.name.value).nil?
       @session.run_write(list_of_parameters, counts_changes: counts) do |run|
+        choose_target(statement)
         case statement
         when SQL::CreateTable then create_table(statement, run)
         when SQL::CreateIndex then create_index(statement, run)
@@ -68,7 +109,7 @@ module Grant::SQLiteEngine::Query
     end
 
     private def database : Database
-      @session.database
+      @target || @session.database
     end
 
     private def entry_named(name : String) : SchemaEntry?
@@ -102,7 +143,7 @@ module Grant::SQLiteEngine::Query
         create_table_as(name, query, run)
         return
       end
-      database.create_table(@text)
+      database.create_table(@text, schema_name)
     end
 
     # CREATE TABLE ... AS SELECT: columns named and typed from the query
@@ -120,7 +161,7 @@ module Grant::SQLiteEngine::Query
       while row = plan.producer.next_row(frame)
         rows << row
       end
-      table = run.table(name)
+      table = run.table(name, schema_name)
       run.silent = true
       begin
         rows.each { |each_row| run.insert_row(table, each_row.dup, nil, ConflictAction::Abort) }
@@ -170,13 +211,10 @@ module Grant::SQLiteEngine::Query
       if @session.view(table_name)
         raise SQLError.new("views may not be indexed")
       end
-      unless @session.table(table_name)
-        raise SQLError.new("no such table: main.#{table_name}")
-      end
+      info = @session.table(table_name, statement.schema.try(&.value)) || raise SQLError.new("no such table: #{schema_name}.#{table_name}")
       if table_name.downcase.starts_with?("sqlite_")
         raise SQLError.new("table #{table_name} may not be indexed")
       end
-      info = @session.table(table_name) || raise SQLError.new("no such table: main.#{table_name}")
       statement.columns.each do |term|
         expression = term.expression
         while expression.is_a?(SQL::Collate)
@@ -186,9 +224,7 @@ module Grant::SQLiteEngine::Query
           unless RowidName.rowid?(info, expression.column.value)
             # A double-quoted name that is no column reads as a string
             # (DQS in DDL), which makes an expression index.
-            if expression.column.text.starts_with?('"')
-              raise UnsupportedSQL.new("expression in index #{name} (the string #{expression.column.text})")
-            end
+            next if expression.column.text.starts_with?('"')
             raise SQLError.new("no such column: #{expression.column.value}")
           end
         end
@@ -258,7 +294,7 @@ module Grant::SQLiteEngine::Query
     # left without its parent fails the DROP.
     private def drop_table_rows(name : String, run : WriteRun) : Nil
       return if @session.list_of_child_tables(name).empty?
-      table = run.table(name)
+      table = run.table(name, schema_name)
       rows = [] of {Int64?, Array(Value)}
       run.cursor_rows(table) { |rowid, row| rows << {rowid, row} }
       rows.each { |rowid, row| run.delete_row(table, rowid, row) }

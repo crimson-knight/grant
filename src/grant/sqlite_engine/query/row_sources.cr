@@ -290,7 +290,7 @@ module Grant::SQLiteEngine::Query
       probe.clear
       @equal.each do |expression, affinity|
         converted = ValueSemantics.apply_record_affinity(expression.evaluate(frame), affinity)
-        @empty = true if converted.nil?
+        @empty = true if converted.nil? && !expression.is_a?(IsKeyExpr)
         probe << converted
       end
       @strict_low = false
@@ -546,5 +546,29 @@ module Grant::SQLiteEngine::Query
 
     # A row with no columns reads NULL for every column.
     NULL_ROW = [] of Value
+  end
+end
+
+module Grant::SQLiteEngine::Query
+  # The value of an index equality that came from `x IS NULL` or `x IS y`
+  # (WO_ISNULL, WO_IS): a NULL here seeks the index's NULL entries, where
+  # a NULL from `x = y` finds no rows.
+  class IsKeyExpr < Expr
+    getter operand : Expr
+
+    def initialize(@operand : Expr)
+    end
+
+    def evaluate(frame : Frame) : Value
+      @operand.evaluate(frame)
+    end
+
+    def children : Array(Expr)
+      [@operand] of Expr
+    end
+
+    def constant? : Bool
+      @operand.constant?
+    end
   end
 end

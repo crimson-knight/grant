@@ -533,6 +533,7 @@ module Grant::SQLiteEngine::Query
           Bytes.new(Math.max(size, 0_i64).to_i32)
         end,
       ]
+      list.concat(JsonFunctions.list_of_definitions)
       table = {} of String => Array(Definition)
       list.each { |definition| (table[definition.name] ||= [] of Definition) << definition }
       table

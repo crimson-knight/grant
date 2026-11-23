@@ -86,9 +86,9 @@ module Grant::SQLiteEngine
     # UNIQUE and PRIMARY KEY constraints and, for AUTOINCREMENT, the
     # sqlite_sequence table. Returns false when IF NOT EXISTS names an
     # existing table.
-    def create_table(sql : String) : Bool
+    def create_table(sql : String, attached_as : String? = nil) : Bool
       write_statement do
-        statement = CreateStatement.table(sql)
+        statement = CreateStatement.table(sql, attached_as)
         definition = parse_table(sql)
         name = statement.object_name
         if existing = find_entry(name)
@@ -117,9 +117,9 @@ module Grant::SQLiteEngine
 
     # Creates the index *sql* declares and fills it from the table's rows.
     # Returns false when IF NOT EXISTS names an existing index.
-    def create_index(sql : String) : Bool
+    def create_index(sql : String, attached_as : String? = nil) : Bool
       write_statement do
-        statement = CreateStatement.index(sql)
+        statement = CreateStatement.index(sql, attached_as)
         definition = begin
           IndexDefinition.parse(sql)
         rescue error : SchemaTokenizer::Malformed
@@ -154,8 +154,8 @@ module Grant::SQLiteEngine
         each_row(table_entry) do |row|
           list_of_rows << {row.rowid, stored_row(table, row.values)}
         end
-        if reason = layout.unsupported_reason
-          raise UnsupportedSQL.new(reason) unless list_of_rows.empty?
+        if layout.needs_evaluation? && !list_of_rows.empty?
+          raise UnsupportedSQL.new("index #{name} on existing rows outside a SQL session (its WHERE or expression terms)")
         end
         writer = btree_writer
         root = writer.create_tree(table: false)
@@ -405,8 +405,8 @@ module Grant::SQLiteEngine
         raise UnsupportedSQL.new("writing generated column #{layout.table_name}.#{generated.column_name}")
       end
       layout.list_of_indexes.each do |index|
-        if reason = index.unsupported_reason
-          raise UnsupportedSQL.new(reason)
+        if index.needs_evaluation?
+          raise UnsupportedSQL.new("writing index #{index.entry.object_name} outside a SQL session (its WHERE or expression terms)")
         end
       end
       row = stored_row(definition, values)
