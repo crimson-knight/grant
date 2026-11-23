@@ -186,9 +186,7 @@ module Grant::SQLiteEngine::Query
           unless RowidName.rowid?(info, expression.column.value)
             # A double-quoted name that is no column reads as a string
             # (DQS in DDL), which makes an expression index.
-            if expression.column.text.starts_with?('"')
-              raise UnsupportedSQL.new("expression in index #{name} (the string #{expression.column.text})")
-            end
+            next if expression.column.text.starts_with?('"')
             raise SQLError.new("no such column: #{expression.column.value}")
           end
         end

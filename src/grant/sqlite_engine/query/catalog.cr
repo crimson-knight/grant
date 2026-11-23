@@ -122,11 +122,9 @@ module Grant::SQLiteEngine::Query
       return [] of Array(Value) unless table
       rows = [] of Array(Value)
       key_columns = layout.comparator.list_of_key_columns
-      sql = layout.entry.sql
-      terms = sql ? IndexDefinition.parse(sql).list_of_key_terms : nil
       layout.list_of_key_positions.each_with_index do |position, key_index|
-        expression = terms && terms[key_index]?.try(&.column_name).nil?
-        column_number = expression ? -2_i64 : position.to_i64
+        expression = position == IndexLayout::EXPRESSION
+        column_number = position.to_i64
         column_name = expression ? nil : table.list_of_column_names[position]
         row = [key_index.to_i64, column_number, column_name] of Value
         if extended

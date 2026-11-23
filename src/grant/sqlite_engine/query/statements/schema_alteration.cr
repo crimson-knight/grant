@@ -422,7 +422,7 @@ module Grant::SQLiteEngine::Query
       raise UnsupportedSQL.new("DROP COLUMN of a WITHOUT ROWID table") if layout.definition.without_rowid?
       rows.each do |rowid, row|
         row.delete_at(position)
-        database.write_row(layout, rowid, database.stored_values(layout.definition, row), [] of IndexLayout)
+        database.write_row(layout, rowid, database.stored_values(layout.definition, row), [] of {IndexLayout, Array(Value)})
       end
     end
 

@@ -243,7 +243,7 @@ module Grant::SQLiteEngine::Query
       best = nil
       best_score = 0
       table.list_of_indexes.reverse_each do |layout|
-        next if layout.unsupported_reason
+        next if layout.needs_evaluation?
         if hint = entry.indexed_by
           next unless layout.entry.object_name.compare(hint, case_insensitive: true) == 0
         end

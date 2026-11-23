@@ -154,8 +154,8 @@ module Grant::SQLiteEngine
         each_row(table_entry) do |row|
           list_of_rows << {row.rowid, stored_row(table, row.values)}
         end
-        if reason = layout.unsupported_reason
-          raise UnsupportedSQL.new(reason) unless list_of_rows.empty?
+        if layout.needs_evaluation? && !list_of_rows.empty?
+          raise UnsupportedSQL.new("index #{name} on existing rows outside a SQL session (its WHERE or expression terms)")
         end
         writer = btree_writer
         root = writer.create_tree(table: false)
@@ -405,8 +405,8 @@ module Grant::SQLiteEngine
         raise UnsupportedSQL.new("writing generated column #{layout.table_name}.#{generated.column_name}")
       end
       layout.list_of_indexes.each do |index|
-        if reason = index.unsupported_reason
-          raise UnsupportedSQL.new(reason)
+        if index.needs_evaluation?
+          raise UnsupportedSQL.new("writing index #{index.entry.object_name} outside a SQL session (its WHERE or expression terms)")
         end
       end
       row = stored_row(definition, values)

@@ -196,7 +196,7 @@ module Grant::SQLiteEngine::Query
             table.list_of_index_layouts.each do |index|
               next unless run.index_includes?(table, index, row, rowid)
               counts[index.entry.object_name] += 1
-              entry_values = index.entry_for(database.stored_values(table.definition, row), rowid)
+              entry_values = run.index_entry(table, index, database.stored_values(table.definition, row), rowid)
               matched = database.index_entry_matching(index, entry_values)
               if matched.nil? && entry_values[0, index.key_count].none?(Nil)
                 problems << "row #{rowid} missing from index #{index.entry.object_name}"

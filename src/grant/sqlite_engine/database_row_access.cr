@@ -83,7 +83,9 @@ module Grant::SQLiteEngine
     # affinities have them) and its index entries. *rowid* is nil for a
     # WITHOUT ROWID table. An existing row with the same rowid is replaced
     # in the table b-tree; the caller removed its index entries.
-    def write_row(layout : TableLayout, rowid : Int64?, row : Array(Value), list_of_indexes : Array(IndexLayout)) : Nil
+    #
+    # *list_of_entries* pairs each index that holds the row with its entry.
+    def write_row(layout : TableLayout, rowid : Int64?, row : Array(Value), list_of_entries : Array({IndexLayout, Array(Value)})) : Nil
       writer = btree_writer
       if rowid
         alias_index = layout.definition.rowid_alias_index
@@ -94,17 +96,17 @@ module Grant::SQLiteEngine
         comparator = layout.comparator || raise Error.new("WITHOUT ROWID table #{layout.table_name} has no key order")
         writer.index_insert(layout.entry.root_page, layout.list_of_stored_positions.map { |position| row[position] }, comparator)
       end
-      list_of_indexes.each do |index|
-        writer.index_insert(index.entry.root_page, index.entry_for(row, rowid), index.comparator)
+      list_of_entries.each do |index, entry|
+        writer.index_insert(index.entry.root_page, entry, index.comparator)
       end
     end
 
-    # Removes the row (declared order, as stored) and the entries of
-    # *list_of_indexes* that hold it.
-    def remove_row(layout : TableLayout, rowid : Int64?, row : Array(Value), list_of_indexes : Array(IndexLayout)) : Nil
+    # Removes the row (declared order, as stored) and its index entries
+    # (*list_of_entries*: each index that holds it with its entry).
+    def remove_row(layout : TableLayout, rowid : Int64?, row : Array(Value), list_of_entries : Array({IndexLayout, Array(Value)})) : Nil
       writer = btree_writer
-      list_of_indexes.each do |index|
-        unless writer.index_delete(index.entry.root_page, index.entry_for(row, rowid), index.comparator)
+      list_of_entries.each do |index, entry|
+        unless writer.index_delete(index.entry.root_page, entry, index.comparator)
           raise CorruptDatabase.new("index #{index.entry.object_name} has no entry for a row of #{layout.table_name}", index.entry.root_page)
         end
       end
@@ -118,10 +120,10 @@ module Grant::SQLiteEngine
 
     # Removes the index entries of the row only (REPLACE of a conflicting
     # rowid: the table entry is overwritten by the new row).
-    def remove_index_entries(rowid : Int64?, row : Array(Value), list_of_indexes : Array(IndexLayout)) : Nil
+    def remove_index_entries(list_of_entries : Array({IndexLayout, Array(Value)})) : Nil
       writer = btree_writer
-      list_of_indexes.each do |index|
-        writer.index_delete(index.entry.root_page, index.entry_for(row, rowid), index.comparator)
+      list_of_entries.each do |index, entry|
+        writer.index_delete(index.entry.root_page, entry, index.comparator)
       end
     end
 
@@ -216,18 +218,17 @@ module Grant::SQLiteEngine
       run.session.reset_schema
       write_table = run.table(table_entry.object_name)
       rule = write_table.list_of_indexes.find { |candidate| candidate.layout.entry.object_name == name }
-      if reason = layout.unsupported_reason
-        raise UnsupportedSQL.new(reason) if reason.starts_with?("expression")
-      end
+      # Expression terms resolve against the table now, as
+      # sqlite3ResolveSelfReference does, even when it holds no rows.
+      run.check_index_expressions(write_table, rule) if rule
       rows = [] of {Int64?, Array(Value)}
       run.cursor_rows(write_table) { |rowid, row| rows << {rowid, row} }
       rows.each do |rowid, row|
         values = stored_row(table, row)
         next if rule && !run.index_includes?(write_table, rule.layout, values, rowid)
-        entry = layout.entry_for(values, rowid)
+        entry = rule ? run.index_entry(write_table, rule.layout, values, rowid) : layout.entry_for(values, rowid)
         if layout.unique? && index_entry_matching(layout, entry)
-          columns = rule.try(&.columns_text) || name
-          raise Query::ConstraintError.new("UNIQUE constraint failed: #{columns}")
+          raise Query::ConstraintError.new(rule ? run.unique_message(rule) : "UNIQUE constraint failed: #{name}")
         end
         writer.index_insert(root, entry, layout.comparator)
       end

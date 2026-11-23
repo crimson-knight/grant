@@ -92,7 +92,7 @@ module Grant::SQLiteEngine::Query
         child_added(table, row)
         parent_added(table, rowid, row)
       end
-      database.write_row(table.layout, rowid, row, table.list_of_index_layouts.select { |index| index_includes?(table, index, row, rowid) })
+      database.write_row(table.layout, rowid, row, index_entries(table, row, rowid))
       if rowid && @nested == 0 && !@silent
         @session.last_insert_rowid = rowid
       end
@@ -272,7 +272,7 @@ module Grant::SQLiteEngine::Query
         next unless rule.unique?
         index = rule.layout
         next unless index_includes?(table, index, row, rowid)
-        entry = index.entry_for(row, rowid)
+        entry = index_entry(table, index, row, rowid)
         existing = database.index_entry_matching(index, entry)
         next unless existing
         existing_key = existing_key_of(table, index, existing)
@@ -296,7 +296,7 @@ module Grant::SQLiteEngine::Query
             delete_row(table, victim[0], victim[1], replace: true)
           end
         else
-          raise ConstraintError.new(unique_message(table, rule), action)
+          raise ConstraintError.new(unique_message(rule), action)
         end
       end
       unless rowid_checked
@@ -362,8 +362,10 @@ module Grant::SQLiteEngine::Query
       end
     end
 
-    private def unique_message(table : WriteTable, rule : IndexRule) : String
-      if rule.layout.unsupported_reason.try(&.starts_with?("expression"))
+    # C names the columns, or for an index with an expression term the
+    # index (sqlite3UniqueConstraint).
+    def unique_message(rule : IndexRule) : String
+      if rule.layout.has_expressions?
         return "UNIQUE constraint failed: index '#{rule.layout.entry.object_name}'"
       end
       "UNIQUE constraint failed: #{rule.columns_text}"
@@ -402,6 +404,49 @@ module Grant::SQLiteEngine::Query
         table.layout.list_of_primary_key_positions.each_with_index { |position, offset| probe[position] = key[offset] }
         found = database.row_with_key_of(table.layout, probe)
         found ? {nil.as(Int64?), found} : nil
+      end
+    end
+
+    # The entry of *index* for the row: the key terms (expression terms
+    # evaluated over the row, sqlite3ExprCodeLoadIndexColumn) and the rowid
+    # or primary key.
+    def index_entry(table : WriteTable, index : IndexLayout, row : Array(Value), rowid : Int64?) : Array(Value)
+      return index.entry_for(row, rowid) unless index.has_expressions?
+      rule = table.list_of_indexes.find(&.layout.same?(index)) ||
+             table.list_of_indexes.find { |candidate| candidate.layout.entry.object_name == index.entry.object_name } ||
+             raise Error.new("index #{index.entry.object_name} is not an index of #{table.name}")
+      program = key_expression_program(table, rule)
+      pseudo = program.list_of_pseudo_tables[0]
+      pseudo.row = row
+      pseudo.rowid = rowid
+      values = program.evaluate(@list_of_parameters) || raise Error.new("index #{index.entry.object_name} expressions gave no row")
+      index.entry_for(row, rowid, values)
+    end
+
+    # Compiles the expression terms of *rule*, raising what C's
+    # sqlite3ResolveSelfReference reports for them.
+    def check_index_expressions(table : WriteTable, rule : IndexRule) : Nil
+      return if rule.list_of_key_expressions.empty?
+      rule.list_of_key_expressions.each do |expression|
+        if expression.to_sql.matches?(/\bSELECT\b/i)
+          raise SQLError.new("subqueries prohibited in index expressions")
+        end
+      end
+      key_expression_program(table, rule)
+    end
+
+    private def key_expression_program(table : WriteTable, rule : IndexRule) : RowProgram
+      table.key_expression_programs[rule.layout.entry.object_name] ||= begin
+        pseudo = PseudoTable.new(table.name, table.table_info)
+        RowProgram.new(@session, RowProgram.columns(rule.list_of_key_expressions), [pseudo])
+      end
+    end
+
+    # Each index of *table* that holds the row, with the row's entry.
+    def index_entries(table : WriteTable, row : Array(Value), rowid : Int64?) : Array({IndexLayout, Array(Value)})
+      table.list_of_index_layouts.compact_map do |index|
+        next unless index_includes?(table, index, row, rowid)
+        {index, index_entry(table, index, row, rowid)}
       end
     end
 
@@ -510,13 +555,11 @@ module Grant::SQLiteEngine::Query
         child_removed(table, old_row, new_row, list_of_changed)
         parent_removed(table, old_rowid, old_row, new_row, list_of_changed)
       end
-      layouts = table.list_of_index_layouts
-      database.remove_row(table.layout, old_rowid, old_row,
-        layouts.select { |index| index_includes?(table, index, old_row, old_rowid) })
+      database.remove_row(table.layout, old_rowid, old_row, index_entries(table, old_row, old_rowid))
       if replaced = result[3]
         delete_row(table, replaced[0], replaced[1], replace: true)
       end
-      database.write_row(table.layout, rowid, new_row, layouts.select { |index| index_includes?(table, index, new_row, rowid) })
+      database.write_row(table.layout, rowid, new_row, index_entries(table, new_row, rowid))
       if foreign_keys?
         child_added(table, new_row, old_row, list_of_changed)
         parent_added(table, rowid, new_row, old_row, list_of_changed)
@@ -535,8 +578,7 @@ module Grant::SQLiteEngine::Query
         child_removed(table, row)
         parent_removed(table, rowid, row)
       end
-      layouts = table.list_of_index_layouts.select { |index| index_includes?(table, index, row, rowid) }
-      database.remove_row(table.layout, rowid, row, layouts)
+      database.remove_row(table.layout, rowid, row, index_entries(table, row, rowid))
       parent_actions(table, row, nil) if foreign_keys?
       count_change unless replace
     end

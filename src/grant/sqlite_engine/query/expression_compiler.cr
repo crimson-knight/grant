@@ -490,7 +490,7 @@ module Grant::SQLiteEngine::Query
       return false if comparison >= ExpressionAffinity::Numeric && !index_affinity.numeric?
       required = Query.binary_collation(left, column)
       table.list_of_indexes.reverse_each do |layout|
-        next if layout.unsupported_reason
+        next if layout.needs_evaluation?
         next unless layout.list_of_key_positions.first? == position
         key = layout.comparator.list_of_key_columns.first?
         next unless key && key.collation == required
