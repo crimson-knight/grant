@@ -6,6 +6,12 @@ module Grant::SQLiteEngine::Query
     # The next row, or nil when there are no more.
     abstract def next_row(frame : Frame) : Array(Value)?
 
+    # Tells the producer its caller reads each row before asking for the
+    # next one and keeps none, so it may hand out one array refilled for
+    # every row (C SQLite's result registers). By default rows are fresh.
+    def lend_rows : Nil
+    end
+
     # For the top-level ORDER BY: whether the row last returned sorted equal
     # to the one before it (nil when the output has no defined order).
     def tied_with_previous? : Bool?
@@ -59,12 +65,12 @@ module Grant::SQLiteEngine::Query
       @list_of_rowids = Array(Int64?).new(slot_count, nil)
     end
 
-    # Makes this finished group a new one, keeping its arrays.
-    def recycle(key_values : Array(Value), accumulators : Array(AggregateFunctions::Accumulator),
-                distinct_sets : Array(Set(Array(EqualityKey))?)) : Nil
-      @list_of_key_values.replace(key_values)
-      @list_of_accumulators = accumulators
-      @list_of_distinct_sets = distinct_sets
+    # Makes this finished group a new one with *key_values*, keeping its
+    # arrays, accumulators and DISTINCT sets (emptied).
+    def recycle(key_values : Array(Value)) : Nil
+      ValueBuffer.refill(@list_of_key_values, key_values)
+      @list_of_accumulators.each(&.reset)
+      @list_of_distinct_sets.each { |set| set.try &.clear }
     end
   end
 
@@ -94,8 +100,12 @@ module Grant::SQLiteEngine::Query
       if aggregation = @aggregation
         if @streaming
           @source.open(frame)
+          # A group left unfinished by the last execution (a LIMIT stopped
+          # it) is kept for reuse with the shown ones.
+          if unfinished = @current
+            @list_of_spare_groups << unfinished
+          end
           @current = nil
-          @spare_group = nil
           @source_done = false
         else
           @groups = collect_groups(frame, aggregation)
@@ -133,18 +143,47 @@ module Grant::SQLiteEngine::Query
       nil
     end
 
+    @lending = false
+    @lent_row = [] of Value
+
+    def lend_rows : Nil
+      @lending = true
+    end
+
     # The result row, or nil when DISTINCT has seen it.
     private def project(frame : Frame) : Array(Value)?
-      row = Array(Value).new(@list_of_columns.size + @list_of_extras.size)
-      @list_of_columns.each { |column| row << column.evaluate(frame) }
-      if seen = @seen
-        key = Array(EqualityKey).new(@list_of_columns.size) do |index|
-          ValueSemantics.equality_key(row[index], @list_of_column_collations[index]? || Collation::Binary)
+      column_count = @list_of_columns.size
+      width = column_count + @list_of_extras.size
+      if @lending && @lent_row.size == width
+        # The lent row keeps its width from row to row; its values are
+        # replaced.
+        row = @lent_row
+        @list_of_columns.each_with_index { |column, position| row.unsafe_put(position, Expr.value_of(column, frame)) }
+        if seen = @seen
+          return unless seen.add?(distinct_key(row))
         end
-        return unless seen.add?(key)
+        @list_of_extras.each_with_index { |extra, position| row.unsafe_put(column_count + position, Expr.value_of(extra, frame)) }
+        return row
       end
-      @list_of_extras.each { |extra| row << extra.evaluate(frame) }
+      if @lending
+        row = @lent_row
+        row.clear
+      else
+        row = Array(Value).new(width)
+      end
+      @list_of_columns.each { |column| row << Expr.value_of(column, frame) }
+      if seen = @seen
+        return unless seen.add?(distinct_key(row))
+      end
+      @list_of_extras.each { |extra| row << Expr.value_of(extra, frame) }
       row
+    end
+
+    # The DISTINCT key of the result columns at the front of *row*.
+    private def distinct_key(row : Array(Value)) : Array(EqualityKey)
+      Array(EqualityKey).new(@list_of_columns.size) do |index|
+        ValueSemantics.equality_key(row[index], @list_of_column_collations[index]? || Collation::Binary)
+      end
     end
 
     private def next_streaming_row(frame : Frame, aggregation : Aggregation) : Array(Value)?
@@ -156,11 +195,22 @@ module Grant::SQLiteEngine::Query
         # frame gets its rows back after the group is shown.
         saved_rows = @saved_rows
         saved_rowids = @saved_rowids
-        saved_rows.clear
-        saved_rowids.clear
-        slots.each do |slot|
-          saved_rows << frame.list_of_rows[slot]
-          saved_rowids << frame.list_of_rowids[slot]
+        saved_pending = @saved_pending
+        if saved_rows.size == slots.size
+          slots.each_with_index do |slot, position|
+            saved_rows.unsafe_put(position, frame.list_of_rows[slot])
+            saved_rowids.unsafe_put(position, frame.list_of_rowids[slot])
+            saved_pending.unsafe_put(position, frame.list_of_pending[slot])
+          end
+        else
+          saved_rows.clear
+          saved_rowids.clear
+          saved_pending.clear
+          slots.each do |slot|
+            saved_rows << frame.list_of_rows[slot]
+            saved_rowids << frame.list_of_rowids[slot]
+            saved_pending << frame.list_of_pending[slot]
+          end
         end
         restore(frame, group, aggregation)
         row = nil
@@ -170,10 +220,11 @@ module Grant::SQLiteEngine::Query
         slots.each_with_index do |slot, position|
           frame.list_of_rows[slot] = saved_rows[position]
           frame.list_of_rowids[slot] = saved_rowids[position]
+          frame.list_of_pending[slot] = saved_pending[position]
         end
         # Nothing holds the shown group's arrays now; the group after the
         # current one reuses them.
-        @spare_group = group
+        @list_of_spare_groups << group
         return row if row
       end
     end
@@ -194,14 +245,19 @@ module Grant::SQLiteEngine::Query
         # Rows arrive in group order, so a row starts a new group when its
         # key compares unequal to the current group's (OP_Compare).
         scratch = @scratch_keys
-        scratch.clear
-        aggregation.list_of_group_keys.each { |key| scratch << key.evaluate(frame) }
+        group_keys = aggregation.list_of_group_keys
+        if scratch.size == group_keys.size
+          group_keys.each_with_index { |key, position| scratch.unsafe_put(position, Expr.value_of(key, frame)) }
+        else
+          scratch.clear
+          group_keys.each { |key| scratch << Expr.value_of(key, frame) }
+        end
         current = @current
         if current && same_group_key?(scratch, current.list_of_key_values, aggregation.list_of_key_collations)
           step_group(frame, current, aggregation, first: false)
           next
         end
-        group = recycled_group(scratch, calls) || new_group(scratch.dup, calls, aggregation.list_of_slots.size)
+        group = recycled_group(scratch) || new_group(scratch.dup, calls, aggregation.list_of_slots.size)
         step_group(frame, group, aggregation, first: true)
         @current = group
         return current if current
@@ -214,15 +270,15 @@ module Grant::SQLiteEngine::Query
     @scratch_keys = [] of Value
     @saved_rows = [] of Array(Value)
     @saved_rowids = [] of Int64?
-    @spare_group : Group? = nil
+    @saved_pending = [] of TableScanSource?
+    # Finished groups whose arrays and accumulators the next groups reuse,
+    # kept from one execution to the next.
+    @list_of_spare_groups = [] of Group
 
-    private def recycled_group(keys : Array(Value), calls : Array(AggregateCall)) : Group?
-      spare = @spare_group
+    private def recycled_group(keys : Array(Value)) : Group?
+      spare = @list_of_spare_groups.pop?
       return unless spare
-      @spare_group = nil
-      accumulators = calls.map { |call| AggregateFunctions::Accumulator.for(call.kind, call.collation) }
-      distinct_sets = calls.map { |call| call.distinct? ? Set(Array(EqualityKey)).new : nil }
-      spare.recycle(keys, accumulators, distinct_sets)
+      spare.recycle(keys)
       spare
     end
 
@@ -257,14 +313,22 @@ module Grant::SQLiteEngine::Query
         if filter = call.filter
           next unless filter.holds?(frame)
         end
-        arguments = argument_buffer(index)
         list_of_arguments = call.list_of_arguments
+        # One argument (or count's none) without DISTINCT needs no argument
+        # array.
+        if list_of_arguments.size <= 1 && group.list_of_distinct_sets.unsafe_fetch(index).nil?
+          accumulator = group.list_of_accumulators.unsafe_fetch(index)
+          accumulator.step_one(list_of_arguments.empty? ? nil : Expr.value_of(list_of_arguments.unsafe_fetch(0), frame))
+          deciding_hit = accumulator.hit? if call.min_or_max?
+          next
+        end
+        arguments = argument_buffer(index)
         # The buffer keeps its size from row to row; its values are replaced.
         if arguments.size == list_of_arguments.size
-          list_of_arguments.each_with_index { |argument, position| arguments.unsafe_put(position, argument.evaluate(frame)) }
+          list_of_arguments.each_with_index { |argument, position| arguments.unsafe_put(position, Expr.value_of(argument, frame)) }
         else
           arguments.clear
-          list_of_arguments.each { |argument| arguments << argument.evaluate(frame) }
+          list_of_arguments.each { |argument| arguments << Expr.value_of(argument, frame) }
         end
         if distinct_set = group.list_of_distinct_sets[index]
           next if arguments.any?(Nil) && !call.kind.count_rows?
@@ -278,7 +342,8 @@ module Grant::SQLiteEngine::Query
       if first || deciding_hit
         aggregation.list_of_slots.each_with_index do |slot, position|
           # Table sources refill one array per row, so the group keeps a copy.
-          group.list_of_rows.unsafe_fetch(position).replace(frame.list_of_rows[slot])
+          frame.complete_row(slot)
+          ValueBuffer.refill(group.list_of_rows.unsafe_fetch(position), frame.list_of_rows[slot])
           group.list_of_rowids[position] = frame.list_of_rowids[slot]
         end
       end
@@ -313,7 +378,7 @@ module Grant::SQLiteEngine::Query
         # The key arrays are reused for each row and copied only for a
         # new group.
         key_values.clear
-        keys.each { |key| key_values << key.evaluate(frame) }
+        keys.each { |key| key_values << Expr.value_of(key, frame) }
         hash_key.clear
         key_values.each_with_index { |value, index| hash_key << ValueSemantics.equality_key(value, collations[index]) }
         group = groups[hash_key]?
@@ -347,6 +412,7 @@ module Grant::SQLiteEngine::Query
       aggregation.list_of_slots.each_with_index do |slot, position|
         frame.list_of_rows[slot] = group.list_of_rows[position]
         frame.list_of_rowids[slot] = group.list_of_rowids[position]
+        frame.list_of_pending[slot] = nil
       end
       aggregation.list_of_calls.each_with_index do |call, index|
         frame.list_of_aggregate_values[call.result_index] = group.list_of_accumulators[index].finish
@@ -469,6 +535,11 @@ module Grant::SQLiteEngine::Query
       @position = 0
     end
 
+    # Rows that pass through are copied aside and cut in place, never kept.
+    def lend_rows : Nil
+      @input.lend_rows if @presorted
+    end
+
     def compare(left : Array(Value), right : Array(Value)) : Int32
       SortProducer.compare(@list_of_keys, left, right)
     end
@@ -545,6 +616,10 @@ module Grant::SQLiteEngine::Query
       end
     end
 
+    def lend_rows : Nil
+      @input.lend_rows
+    end
+
     def next_row(frame : Frame) : Array(Value)?
       return if @remaining == 0
       row = @input.next_row(frame)
@@ -586,6 +661,11 @@ module Grant::SQLiteEngine::Query
 
     def open(frame : Frame) : Nil
       @input.open(frame)
+    end
+
+    # Each row is copied as it is converted.
+    def lend_rows : Nil
+      @input.lend_rows
     end
 
     def next_row(frame : Frame) : Array(Value)?

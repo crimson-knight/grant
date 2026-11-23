@@ -11,16 +11,74 @@ module Grant::SQLiteEngine::Query
     getter list_of_aggregate_values : Array(Value)
     getter list_of_parameters : Array(Value)
     getter session : Session
+    # Per slot, the table scan whose current row still has values to
+    # decode (columns only its WHERE tests read, decided from the stored
+    # record); nil when the row in the slot is complete.
+    getter list_of_pending : Array(TableScanSource?)
 
     def initialize(slot_count : Int32, aggregate_count : Int32, @list_of_parameters : Array(Value), @session : Session)
       @list_of_rows = Array(Array(Value)).new(slot_count) { [] of Value }
       @list_of_rowids = Array(Int64?).new(slot_count, nil)
       @list_of_aggregate_values = Array(Value).new(aggregate_count, nil)
+      @list_of_pending = Array(TableScanSource?).new(slot_count, nil)
+    end
+
+    # Decodes what the row in *slot* still lacks, before anything reads it.
+    @[AlwaysInline]
+    def complete_row(slot : Int32) : Nil
+      if pending = @list_of_pending.unsafe_fetch(slot)
+        pending.complete_row(self)
+      end
+    end
+
+    # Decodes the row in *slot* when *column* is one it still lacks.
+    @[AlwaysInline]
+    def complete_column(slot : Int32, column : Int32) : Nil
+      if pending = @list_of_pending.unsafe_fetch(slot)
+        pending.complete_row(self) if pending.lacks?(column)
+      end
+    end
+  end
+
+  # Value arrays a query refills row after row.
+  module ValueBuffer
+    # Makes *target* hold *source*'s values, overwriting them in place when
+    # the two have the same size (the usual case for a refilled buffer).
+    @[AlwaysInline]
+    def self.refill(target : Array(Value), source : Array(Value)) : Nil
+      size = source.size
+      if target.size == size
+        size.times { |position| target.unsafe_put(position, source.unsafe_fetch(position)) }
+      else
+        target.replace(source)
+      end
     end
   end
 
   # A compiled expression: names already resolved to frame slots.
   abstract class Expr
+    # `evaluate` behind one out-of-line call. A hot loop that calls
+    # `evaluate` on an expression of unknown class otherwise inlines the
+    # dispatch over every expression class, and the differing union
+    # results of those branches spill to the stack on every call.
+    # The commonest classes (a column, a rowid, a bound parameter, a
+    # constant, an aggregate result) are tested first, so their calls skip
+    # the full dispatch.
+    @[NoInline]
+    def self.value_of(expression : Expr, frame : Frame) : Value
+      return expression.evaluate(frame) if expression.is_a?(ColumnExpr)
+      return expression.evaluate(frame) if expression.is_a?(RowidExpr)
+      return expression.evaluate(frame) if expression.is_a?(ParameterExpr)
+      return expression.evaluate(frame) if expression.is_a?(ConstantExpr)
+      return expression.evaluate(frame) if expression.is_a?(AggregateResultExpr)
+      value_of_any(expression, frame)
+    end
+
+    @[NoInline]
+    private def self.value_of_any(expression : Expr, frame : Frame) : Value
+      expression.evaluate(frame)
+    end
+
     # sqlite3ExprAffinity.
     def affinity : ExpressionAffinity
       ExpressionAffinity::None
@@ -121,12 +179,15 @@ module Grant::SQLiteEngine::Query
     getter column_affinity : ExpressionAffinity
     getter column_collation : Collation
     getter declared_name : String
+    # An integer this column reads is shown as a real.
+    getter? realify : Bool
 
     def initialize(@slot : Int32, @column : Int32, @column_affinity : ExpressionAffinity, @column_collation : Collation,
                    @declared_name : String, @realify : Bool = false)
     end
 
     def evaluate(frame : Frame) : Value
+      frame.complete_column(@slot, @column)
       value = frame.list_of_rows.unsafe_fetch(@slot)[@column]? || nil
       return value.to_f64 if @realify && value.is_a?(Int64)
       value

@@ -134,7 +134,7 @@ module SQLiteQueryOracle
     rows = [] of Array(Value)
     ties = [] of Bool
     while query.step
-      rows << query.row
+      rows << query.row.dup
       ties << (query.tied_with_previous? || false)
       break if rows.size >= row_limit
     end

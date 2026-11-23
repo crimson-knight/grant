@@ -8,6 +8,8 @@ module Grant::SQLiteEngine::Query
     # The text of each named parameter (`:name`, `@name`, `$name`, `?NNN`)
     # and its number.
     getter parameter_numbers : Hash(String, Int32)
+    # The current row. It holds until the next `step` or `reset` (as C's
+    # column values do); copy it to keep it.
     getter row = [] of Value
 
     @compiled : CompiledSelect
@@ -44,6 +46,9 @@ module Grant::SQLiteEngine::Query
         raise SQLError.new("too many SQL variables")
       end
       @compiled = Compiler.new(@session).compile(select_statement)
+      # Callers read `row` before the next step, so the producer may reuse
+      # one array for every row.
+      @compiled.producer.lend_rows
       @list_of_column_names = @compiled.list_of_column_names
       @parameters = Array(Value).new(@parameter_count, nil)
     end
@@ -106,7 +111,7 @@ module Grant::SQLiteEngine::Query
     def all_rows : Array(Array(Value))
       rows = [] of Array(Value)
       while step
-        rows << @row
+        rows << @row.dup
       end
       rows
     end

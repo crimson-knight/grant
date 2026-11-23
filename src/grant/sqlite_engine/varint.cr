@@ -6,12 +6,26 @@ module Grant::SQLiteEngine
     # Decodes the varint at *offset*, which must end before *limit*. Returns
     # the value and the number of bytes it used, or a length of 0 when the
     # varint runs past *limit* (the caller names the page in its error).
+    @[AlwaysInline]
     def self.decode(bytes : Bytes, offset : Int32, limit : Int32 = bytes.size) : {Int64, Int32}
-      limit = Math.min(limit, bytes.size)
-      if offset < limit && offset >= 0
+      # Most varints are one or two bytes (cell sizes, rowids below 16384);
+      # those are decoded where they are used.
+      if 0 <= offset && offset + 1 < limit && offset + 1 < bytes.size
+        first = bytes.unsafe_fetch(offset)
+        return {first.to_i64, 1} if first < 0x80_u8
+        second = bytes.unsafe_fetch(offset + 1)
+        return {((first & 0x7f_u8).to_i64 << 7) | second, 2} if second < 0x80_u8
+      elsif 0 <= offset < limit && offset < bytes.size
         first = bytes.unsafe_fetch(offset)
         return {first.to_i64, 1} if first < 0x80_u8
       end
+      decode_long(bytes, offset, limit)
+    end
+
+    # `decode` for a varint of two bytes or more (or one out of range).
+    @[NoInline]
+    def self.decode_long(bytes : Bytes, offset : Int32, limit : Int32) : {Int64, Int32}
+      limit = Math.min(limit, bytes.size)
       result = 0_u64
       index = 0
       while index < 8

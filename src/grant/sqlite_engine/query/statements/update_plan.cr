@@ -48,6 +48,7 @@ module Grant::SQLiteEngine::Query
         if rowid
           next unless seen.add?(rowid)
         end
+        frame.complete_row(@slot)
         rows << {rowid, frame.list_of_rows[@slot].dup, values}
       end
       rows

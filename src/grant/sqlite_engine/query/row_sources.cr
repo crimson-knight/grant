@@ -54,10 +54,15 @@ module Grant::SQLiteEngine::Query
     @list_of_terms = [] of {Expr, Set(Int32)?}
     @list_of_term_positions = [] of Array(Int32)
     @rest_positions = [] of Int32
-    # Per term, the stored position of the column a literal-prefix LIKE
-    # tests, so a row whose stored text fails the prefix is rejected before
-    # the text is decoded.
-    @list_of_like_shortcuts = [] of {Int32, LikeExpr}?
+    # Per term, the test that decides it from the stored record when the
+    # stored value allows (`ScanTest`), so a row a term rejects is often
+    # rejected before any of its values is decoded.
+    @list_of_tests = [] of ScanTest?
+    # Terms of the current row a test passed without decoding their
+    # columns; those columns are decoded before a later term or the query
+    # reads them.
+    @list_of_undecoded = [] of Int32
+    @pending_rowid = 0_i64
     @masks_ready = false
     @header = RecordHeader.new
 
@@ -82,18 +87,9 @@ module Grant::SQLiteEngine::Query
         positions
       end
       @rest_positions = (0...wanted.size).select { |position| wanted[position] && !decoded[position] }
-      @list_of_like_shortcuts = @list_of_terms.map { |(term, _)| like_shortcut(term) }
+      encoding = @database.text_encoding
+      @list_of_tests = @list_of_terms.map { |(term, _)| ScanTest.for(term, @slot, @table, encoding) }
       @masks_ready = true
-    end
-
-    private def like_shortcut(term : Expr) : {Int32, LikeExpr}?
-      return unless term.is_a?(LikeExpr)
-      operand = term.operand
-      pattern = term.pattern
-      return unless operand.is_a?(ColumnExpr) && operand.slot == @slot && operand.column != @table.rowid_alias
-      return unless pattern.is_a?(ParameterExpr) || pattern.is_a?(ConstantExpr)
-      position = @table.stored_position(operand.column)
-      position ? {position, term} : nil
     end
 
     def advance(frame : Frame) : Bool
@@ -120,6 +116,8 @@ module Grant::SQLiteEngine::Query
     private def advance_filtered(frame : Frame, cursor : TableCursor) : Bool
       prepare_masks unless @masks_ready
       encoding = @database.text_encoding
+      undecoded = @list_of_undecoded
+      frame.list_of_pending[@slot] = nil if frame.list_of_pending.unsafe_fetch(@slot)
       loop do
         moved = @started ? cursor.advance : cursor.first
         @started = true
@@ -130,26 +128,63 @@ module Grant::SQLiteEngine::Query
         @table.clear_row(@buffer) unless @buffer.size == @table.list_of_column_names.size
         frame.list_of_rowids[@slot] = rowid
         frame.list_of_rows[@slot] = @buffer
-        passed = true
-        @list_of_terms.each_with_index do |(term, _), index|
-          if encoding.utf8? && (shortcut = @list_of_like_shortcuts.unsafe_fetch(index))
-            position, like = shortcut
-            if @header.has?(position) && (text = @header.text_bytes(position)) && like.prefix_verdict(frame, text) == false
-              passed = false
-              break
-            end
+        undecoded.clear unless undecoded.empty?
+        if passes_terms?(frame, rowid, encoding, undecoded)
+          # The columns of terms a test decided are decoded only when
+          # something reads the row (`complete_row`); a column only such a
+          # term reads is never decoded, as with C's OP_Column.
+          unless undecoded.empty?
+            frame.list_of_pending[@slot] = self
+            @pending_rowid = rowid
           end
-          @table.fill_columns(@header, rowid, @list_of_term_positions.unsafe_fetch(index), encoding, @buffer)
-          next if term.holds?(frame)
-          passed = false
-          break
-        end
-        if passed
           @table.fill_columns(@header, rowid, @rest_positions, encoding, @buffer)
           return true
         end
         frame.session.tick
       end
+    end
+
+    # True when *column* is one a test passed without decoding on the
+    # current row (a term that reads the whole row lacks every column).
+    def lacks?(column : Int32) : Bool
+      @list_of_undecoded.any? do |index|
+        columns = @list_of_terms.unsafe_fetch(index)[1]
+        columns.nil? || columns.includes?(column)
+      end
+    end
+
+    # Decodes the columns of the current row that tests passed without
+    # decoding (see `Frame#complete_row`).
+    def complete_row(frame : Frame) : Nil
+      frame.list_of_pending[@slot] = nil
+      encoding = @database.text_encoding
+      @list_of_undecoded.each { |index| fill_term_columns(index, @pending_rowid, encoding) }
+      @list_of_undecoded.clear
+    end
+
+    # Tests the current row against every term in order, as C codes them.
+    private def passes_terms?(frame : Frame, rowid : Int64, encoding : TextEncoding, undecoded : Array(Int32)) : Bool
+      @list_of_terms.each_with_index do |(term, _), index|
+        if test = @list_of_tests.unsafe_fetch(index)
+          verdict = test.verdict(@header, frame)
+          return false if verdict == false
+          if verdict
+            undecoded << index
+            next
+          end
+        end
+        unless undecoded.empty?
+          undecoded.each { |earlier| fill_term_columns(earlier, rowid, encoding) }
+          undecoded.clear
+        end
+        fill_term_columns(index, rowid, encoding)
+        return false unless term.holds?(frame)
+      end
+      true
+    end
+
+    private def fill_term_columns(index : Int32, rowid : Int64, encoding : TextEncoding) : Nil
+      @table.fill_columns(@header, rowid, @list_of_term_positions.unsafe_fetch(index), encoding, @buffer)
     end
   end
 
@@ -287,16 +322,23 @@ module Grant::SQLiteEngine::Query
       # The probe, seek key and cursors are kept from one open to the next
       # (an inner join opens this source once per outer row).
       probe = @probe
-      probe.clear
-      @equal.each do |expression, affinity|
-        converted = ValueSemantics.apply_record_affinity(expression.evaluate(frame), affinity)
+      in_place = probe.size == @equal.size
+      probe.clear unless in_place
+      @key_was_integer = false
+      @equal.each_with_index do |(expression, affinity), position|
+        raw = Expr.value_of(expression, frame)
+        converted = ValueSemantics.apply_record_affinity(raw, affinity)
         @empty = true if converted.nil? && !expression.is_a?(IsKeyExpr)
-        probe << converted
+        @key_was_integer = raw.is_a?(Int64) && converted == raw if position == 0
+        if in_place
+          probe.unsafe_put(position, converted)
+        else
+          probe << converted
+        end
       end
       @strict_low = false
       seek_key = @seek_key
-      seek_key.clear
-      seek_key.concat(probe)
+      ValueBuffer.refill(seek_key, probe)
       if low = @low
         raw = low[0].evaluate(frame)
         value = ValueSemantics.apply_record_affinity(raw, low[1])
@@ -326,9 +368,91 @@ module Grant::SQLiteEngine::Query
         @opened_for = frame
       end
       @table_cursor ||= TableCursor.new(@database, @table.root_page)
+      # A join probes in ascending key order: the last lookup stopped on
+      # the first entry past its key, so when this key is larger, every
+      # entry before the cursor is below it and the cursor is where the
+      # seek would start (OP_SeekGE on a cursor already in place).
+      @resume = @can_resume && !@empty && !probe.empty? && @low.nil? && @high_bound.nil? &&
+                index_cursor.positioned? && probe_after_last?(probe)
+      @can_resume = false
+      # One integer key on an ascending column, no range: entries holding an
+      # integer key and the rowid are read without building values.
+      first_key = probe.first?
+      @integer_probe = probe.size == 1 && first_key.is_a?(Int64) && @low.nil? && @high_bound.nil? &&
+                       !@order.descending[0]? ? first_key : nil
+    end
+
+    @integer_probe : Int64? = nil
+    # The first key value was an integer before affinity conversion.
+    @key_was_integer = false
+    # The current row's integer key equals the probe's unconverted integer
+    # value, so `column = value` on the seek's own terms holds for it.
+    getter? equality_verified = false
+    @integer_covering : Int32? = nil
+    @integer_covering_known = false
+
+    # The one key column a covering index gives when its entries are an
+    # integer key and the rowid; nil otherwise.
+    private def integer_covering_column : Int32?
+      return @integer_covering if @integer_covering_known
+      @integer_covering_known = true
+      covering = @covering
+      return unless covering && covering.size == 1 && covering_holds?(covering)
+      column = covering[0]
+      @integer_covering = @table.list_of_affinities[column].real? ? nil : column
+    end
+
+    # True when *probe* sorts after the key the last lookup stopped past;
+    # one integer against one integer on an ascending column compares
+    # directly.
+    private def probe_after_last?(probe : Array(Value)) : Bool
+      key = probe.first?
+      last = @resume_after.first?
+      if probe.size == 1 && @resume_after.size == 1 && key.is_a?(Int64) && last.is_a?(Int64) && !@order.descending[0]?
+        return key > last
+      end
+      @order.compare(probe, @resume_after) > 0
+    end
+
+    # True when the cursor's entry sorts before the probe.
+    private def entry_below_probe?(cursor : IndexCursor) : Bool
+      if (probe_key = @integer_probe) && (pair = cursor.integer_pair)
+        return pair[0] < probe_key
+      end
+      @order.compare(cursor.record(@entry), @probe) < 0
+    end
+
+    # True when *term* is `column = value` (or IS) on the index's one key
+    # column with the very value expression the seek uses: for a row read
+    # with `equality_verified?`, both sides are the same integer.
+    def seek_equality?(term : Expr) : Bool
+      return false unless @equal.size == 1 && term.is_a?(ComparisonExpr)
+      return false unless term.operator.equal? || term.operator.is?
+      covering = @covering
+      return false unless covering && covering.size >= 1
+      value = @equal[0][0]
+      key_column = covering[0]
+      left = term.left
+      right = term.right
+      key_side?(left, key_column) && right.same?(value) || key_side?(right, key_column) && left.same?(value)
+    end
+
+    private def key_side?(expression : Expr, key_column : Int32) : Bool
+      expression.is_a?(ColumnExpr) && expression.slot == @slot && expression.column == key_column
+    end
+
+    # Ends the lookup on an entry past the key; the cursor rests there.
+    private def stop_past_key : Bool
+      @empty = true
+      @can_resume = true
+      ValueBuffer.refill(@resume_after, @probe)
+      false
     end
 
     @opened_for : Frame? = nil
+    @resume = false
+    @can_resume = false
+    @resume_after = [] of Value
 
     # True when converting a bound kept its value exactly: an entry equal
     # to a rounded bound may still pass the WHERE term, so only an exact
@@ -364,14 +488,43 @@ module Grant::SQLiteEngine::Query
       table_cursor = @table_cursor
       return false unless index_cursor && table_cursor
       loop do
-        moved = @started ? index_cursor.advance : (@seek_key.empty? ? index_cursor.first : index_cursor.seek(@seek_key, @strict_low))
-        @started = true
-        return false unless moved
-        entry = index_cursor.record(@entry)
-        unless @probe.empty? || @order.compare(entry, @probe) == 0
-          @empty = true
-          return false
+        if @resume
+          # The current entry is the first that may hold the key; one
+          # below it means the key lies further on.
+          @resume = false
+          @started = true
+          if entry_below_probe?(index_cursor)
+            return false unless index_cursor.seek(@seek_key, @strict_low, current_below: true)
+          end
+        else
+          moved = @started ? index_cursor.advance : (@seek_key.empty? ? index_cursor.first : index_cursor.seek(@seek_key, @strict_low))
+          @started = true
+          return false unless moved
         end
+        if (probe_key = @integer_probe) && (pair = index_cursor.integer_pair)
+          key, rowid = pair
+          return stop_past_key unless key == probe_key
+          @equality_verified = @key_was_integer
+          if column = integer_covering_column
+            buffer = @buffer
+            @table.clear_row(buffer) unless buffer.size == @table.list_of_column_names.size
+            buffer.unsafe_put(column, key)
+            if alias_index = @table.rowid_alias
+              buffer.unsafe_put(alias_index, rowid)
+            end
+            frame.list_of_rows[@slot] = buffer
+            frame.list_of_rowids[@slot] = rowid
+            return true
+          end
+          next unless table_cursor.seek(rowid) && table_cursor.rowid == rowid
+          table_cursor.row(@table, @use, @buffer)
+          frame.list_of_rows[@slot] = @buffer
+          frame.list_of_rowids[@slot] = rowid
+          return true
+        end
+        @equality_verified = false
+        entry = index_cursor.record(@entry)
+        return stop_past_key unless @probe.empty? || @order.compare(entry, @probe) == 0
         if @has_high
           position = @probe.size
           collation = @order.collations[position]? || Collation::Binary
@@ -468,7 +621,16 @@ module Grant::SQLiteEngine::Query
 
   # Rows of a source that satisfy a condition.
   class FilterSource < RowSource
+    # The index lookup whose seek equality is this whole condition, so a
+    # row it verified passes without evaluating it (C codes no test for a
+    # term the index seek consumed).
+    @verifying_lookup : IndexLookupSource? = nil
+
     def initialize(@source : RowSource, @condition : Expr)
+      source = @source
+      if source.is_a?(IndexLookupSource) && source.seek_equality?(@condition)
+        @verifying_lookup = source
+      end
     end
 
     def open(frame : Frame) : Nil
@@ -476,7 +638,9 @@ module Grant::SQLiteEngine::Query
     end
 
     def advance(frame : Frame) : Bool
+      lookup = @verifying_lookup
       while @source.advance(frame)
+        return true if lookup && lookup.equality_verified?
         return true if @condition.holds?(frame)
       end
       false
@@ -538,6 +702,7 @@ module Grant::SQLiteEngine::Query
           @right_slots.each do |slot|
             frame.list_of_rows[slot] = NULL_ROW
             frame.list_of_rowids[slot] = nil
+            frame.list_of_pending[slot] = nil
           end
           return true
         end
