@@ -6,6 +6,12 @@ module Grant::SQLiteEngine::Query
     # The next row, or nil when there are no more.
     abstract def next_row(frame : Frame) : Array(Value)?
 
+    # Tells the producer its caller reads each row before asking for the
+    # next one and keeps none, so it may hand out one array refilled for
+    # every row (C SQLite's result registers). By default rows are fresh.
+    def lend_rows : Nil
+    end
+
     # For the top-level ORDER BY: whether the row last returned sorted equal
     # to the one before it (nil when the output has no defined order).
     def tied_with_previous? : Bool?
@@ -133,9 +139,21 @@ module Grant::SQLiteEngine::Query
       nil
     end
 
+    @lending = false
+    @lent_row = [] of Value
+
+    def lend_rows : Nil
+      @lending = true
+    end
+
     # The result row, or nil when DISTINCT has seen it.
     private def project(frame : Frame) : Array(Value)?
-      row = Array(Value).new(@list_of_columns.size + @list_of_extras.size)
+      if @lending
+        row = @lent_row
+        row.clear
+      else
+        row = Array(Value).new(@list_of_columns.size + @list_of_extras.size)
+      end
       @list_of_columns.each { |column| row << column.evaluate(frame) }
       if seen = @seen
         key = Array(EqualityKey).new(@list_of_columns.size) do |index|
@@ -467,6 +485,11 @@ module Grant::SQLiteEngine::Query
       @position = 0
     end
 
+    # Rows that pass through are copied aside and cut in place, never kept.
+    def lend_rows : Nil
+      @input.lend_rows if @presorted
+    end
+
     def compare(left : Array(Value), right : Array(Value)) : Int32
       SortProducer.compare(@list_of_keys, left, right)
     end
@@ -543,6 +566,10 @@ module Grant::SQLiteEngine::Query
       end
     end
 
+    def lend_rows : Nil
+      @input.lend_rows
+    end
+
     def next_row(frame : Frame) : Array(Value)?
       return if @remaining == 0
       row = @input.next_row(frame)
@@ -584,6 +611,11 @@ module Grant::SQLiteEngine::Query
 
     def open(frame : Frame) : Nil
       @input.open(frame)
+    end
+
+    # Each row is copied as it is converted.
+    def lend_rows : Nil
+      @input.lend_rows
     end
 
     def next_row(frame : Frame) : Array(Value)?

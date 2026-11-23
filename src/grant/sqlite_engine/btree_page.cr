@@ -116,6 +116,38 @@ module Grant::SQLiteEngine
       {key, payload_location(index, offset + size_length + key_length, size, true)}
     end
 
+    # The rowid and payload of leaf table cell *index* when the payload lies
+    # wholly on the page (no overflow), as `table_leaf_cell` and
+    # `PayloadReader.read` would give them; nil otherwise, and for a cell
+    # those checks would reject, so the caller takes that path and its
+    # error.
+    def local_table_leaf_cell(index : Int32) : {Int64, Bytes}?
+      offset = cell_offset(index)
+      size, size_length = varint(offset, index)
+      key, key_length = varint(offset + size_length, index)
+      start = offset + size_length + key_length
+      return unless 0 <= size <= @usable_size - 35 && start + size <= @usable_size
+      {key, Bytes.new(@data.to_unsafe + start, size.to_i32, read_only: @data.read_only?)}
+    end
+
+    # The payload of index cell *index* (leaf or interior) when it lies
+    # wholly on the page, as `payload` and `PayloadReader.read` would give
+    # it; nil otherwise, and for a cell those checks would reject.
+    def local_index_payload(index : Int32) : Bytes?
+      offset = cell_offset(index)
+      if @page_type.interior_index?
+        return if offset + 4 > @usable_size
+        offset += 4
+      elsif !@page_type.leaf_index?
+        return
+      end
+      size, size_length = varint(offset, index)
+      start = offset + size_length
+      max_local = ((@usable_size - 12) * 64 // 255) - 23
+      return unless 0 <= size <= max_local && start + size <= @usable_size
+      Bytes.new(@data.to_unsafe + start, size.to_i32, read_only: @data.read_only?)
+    end
+
     # Payload location of a leaf table cell, a leaf index cell or an interior
     # index cell. Interior table cells have no payload.
     def payload(index : Int32) : PayloadLocation

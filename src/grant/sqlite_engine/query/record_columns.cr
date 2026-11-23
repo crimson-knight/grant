@@ -81,9 +81,8 @@ module Grant::SQLiteEngine::Query
 
     # True when the record holds a value at stored *position*.
     def has?(position : Int32) : Bool
-      while @count <= position && @position < @header_end
-        read_entry
-      end
+      return true if position < @count
+      read_through(position)
       @count > position
     end
 
@@ -124,35 +123,45 @@ module Grant::SQLiteEngine::Query
       @payload[@offsets[position], @sizes[position]]
     end
 
-    private def read_entry : Nil
+    # Reads header entries until the one at *position* or the header end.
+    # The loop keeps its state in locals and stores it once at the end.
+    private def read_through(position : Int32) : Nil
       payload = @payload
-      byte = payload.unsafe_fetch(@position)
-      if byte < 0x80_u8
-        serial_type = byte.to_i64
-        @position += 1
-      else
-        serial_type, used = Varint.decode(payload, @position, @header_end)
-        corrupt("record serial type varint is truncated") if used == 0
-        @position += used
+      payload_size = payload.size
+      header_end = @header_end
+      cursor = @position
+      body = @body
+      count = @count
+      while count <= position && cursor < header_end
+        byte = payload.unsafe_fetch(cursor)
+        if byte < 0x80_u8
+          serial_type = byte.to_i64
+          cursor += 1
+        else
+          serial_type, used = Varint.decode(payload, cursor, header_end)
+          corrupt("record serial type varint is truncated") if used == 0
+          cursor += used
+        end
+        corrupt("record has more than #{Record::MAX_RECORD_COLUMNS} columns") if count >= Record::MAX_RECORD_COLUMNS
+        size = if serial_type >= 12
+                 (serial_type - 12) >> 1
+               elsif serial_type >= 0
+                 RecordColumns::FIXED_SIZES.unsafe_fetch(serial_type)
+               else
+                 Record.content_size(serial_type, @page_number)
+               end
+        corrupt("serial type #{serial_type} is reserved") if size < 0
+        corrupt("record value of serial type #{serial_type} runs past the payload") if body.to_i64 + size > payload_size
+        grow if count == @capacity
+        @serial_types[count] = serial_type
+        @offsets[count] = body
+        @sizes[count] = size.to_i32
+        body += size.to_i32
+        count += 1
       end
-      corrupt("record has more than #{Record::MAX_RECORD_COLUMNS} columns") if @count >= Record::MAX_RECORD_COLUMNS
-      size = if serial_type >= 12
-               (serial_type - 12) >> 1
-             elsif serial_type >= 0
-               RecordColumns::FIXED_SIZES.unsafe_fetch(serial_type)
-             else
-               Record.content_size(serial_type, @page_number)
-             end
-      corrupt("serial type #{serial_type} is reserved") if size < 0
-      if @body.to_i64 + size > payload.size
-        corrupt("record value of serial type #{serial_type} runs past the payload")
-      end
-      grow if @count == @capacity
-      @serial_types[@count] = serial_type
-      @offsets[@count] = @body
-      @sizes[@count] = size.to_i32
-      @body += size.to_i32
-      @count += 1
+      @position = cursor
+      @body = body
+      @count = count
     end
 
     private def grow : Nil

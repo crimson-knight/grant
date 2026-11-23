@@ -117,10 +117,8 @@ module Grant::SQLiteEngine::Query
     # Decodes the current row of *table* into *into* in declared column
     # order, with only the columns *use* marks; returns its rowid.
     def row(table : TableInfo, use : ColumnUse, into : Array(Value)) : Int64
-      page, index = @stack.unsafe_fetch(@stack.size - 1)
-      rowid, location = page.table_leaf_cell(index)
       header = @row_header
-      header.parse(PayloadReader.read(pager, page, location), page.number)
+      rowid = header(header)
       table.decode_row(rowid, header, @database.text_encoding, use, into)
       rowid
     end
@@ -129,8 +127,13 @@ module Grant::SQLiteEngine::Query
     # rowid.
     def header(into header : RecordHeader) : Int64
       page, index = @stack.unsafe_fetch(@stack.size - 1)
-      rowid, location = page.table_leaf_cell(index)
-      header.parse(PayloadReader.read(pager, page, location), page.number)
+      if cell = page.local_table_leaf_cell(index)
+        rowid, payload = cell
+      else
+        rowid, location = page.table_leaf_cell(index)
+        payload = PayloadReader.read(pager, page, location)
+      end
+      header.parse(payload, page.number)
       rowid
     end
 
@@ -264,13 +267,19 @@ module Grant::SQLiteEngine::Query
 
     def record : Array(Value)
       page, index = @stack[-1]
-      Record.decode(PayloadReader.read(pager, page, page.payload(index)), @database.text_encoding, page.number)
+      Record.decode(entry_payload(page, index), @database.text_encoding, page.number)
     end
 
     # The current entry decoded into *into*.
     def record(into : Array(Value)) : Array(Value)
       page, index = @stack.unsafe_fetch(@stack.size - 1)
-      RecordColumns.decode_into(PayloadReader.read(pager, page, page.payload(index)), @database.text_encoding, page.number, into)
+      RecordColumns.decode_into(entry_payload(page, index), @database.text_encoding, page.number, into)
+    end
+
+    # The payload of entry *index* of *page*: a slice of the page when it
+    # does not spill, read through the overflow chain otherwise.
+    private def entry_payload(page : BTreePage, index : Int32) : Bytes
+      page.local_index_payload(index) || PayloadReader.read(pager, page, page.payload(index))
     end
 
     private def descend_leftmost(number : UInt32) : Nil
@@ -321,9 +330,9 @@ module Grant::SQLiteEngine::Query
       count = leaf.cell_count
       return false if count == 0
       encoding = @database.text_encoding
-      first = RecordColumns.compare_prefix(PayloadReader.read(pager, leaf, leaf.payload(0)), encoding, leaf.number, probe, @order)
+      first = RecordColumns.compare_prefix(entry_payload(leaf, 0), encoding, leaf.number, probe, @order)
       return false unless strict ? first <= 0 : first < 0
-      last = RecordColumns.compare_prefix(PayloadReader.read(pager, leaf, leaf.payload(count - 1)), encoding, leaf.number, probe, @order)
+      last = RecordColumns.compare_prefix(entry_payload(leaf, count - 1), encoding, leaf.number, probe, @order)
       strict ? last > 0 : last >= 0
     end
 
@@ -351,7 +360,7 @@ module Grant::SQLiteEngine::Query
     # True when the entry at *index* sorts before the first entry *seek*
     # wants.
     private def below?(page : BTreePage, index : Int32, probe : Array(Value), strict : Bool) : Bool
-      comparison = RecordColumns.compare_prefix(PayloadReader.read(pager, page, page.payload(index)), @database.text_encoding,
+      comparison = RecordColumns.compare_prefix(entry_payload(page, index), @database.text_encoding,
         page.number, probe, @order)
       comparison < 0 || (strict && comparison == 0)
     end
@@ -360,7 +369,7 @@ module Grant::SQLiteEngine::Query
       encoding = @database.text_encoding
       while low < high
         middle = (low + high) // 2
-        comparison = RecordColumns.compare_prefix(PayloadReader.read(pager, page, page.payload(middle)), encoding, page.number,
+        comparison = RecordColumns.compare_prefix(entry_payload(page, middle), encoding, page.number,
           probe, @order)
         if comparison < 0 || (strict && comparison == 0)
           low = middle + 1
