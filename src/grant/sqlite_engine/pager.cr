@@ -12,6 +12,15 @@ module Grant::SQLiteEngine
 
     def initialize(@page_count : UInt32)
     end
+
+    # Makes a released level a new one, keeping its emptied image table.
+    def reopen(page_count : UInt32) : self
+      @images.clear
+      @page_count = page_count
+      @keeps_images = true
+      @written = false
+      self
+    end
   end
 
   # Reads pages by number from the database file, overlaid with the committed
@@ -696,7 +705,8 @@ module Grant::SQLiteEngine
     # depth (1 for the outermost).
     def open_savepoint : Int32
       raise Error.new("no write transaction is open") unless @in_write_transaction
-      @list_of_savepoint_levels << SavepointLevel.new(@page_count)
+      level = @spare_levels.pop?.try(&.reopen(@page_count)) || SavepointLevel.new(@page_count)
+      @list_of_savepoint_levels << level
       @list_of_savepoint_levels.size
     end
 
@@ -744,8 +754,14 @@ module Grant::SQLiteEngine
             recycle_image(image)
           end
         end
+        @spare_levels << level if @spare_levels.size < SPARE_LEVEL_LIMIT
       end
     end
+
+    # Released savepoint levels, reopened for the next statement instead of
+    # allocating a level (and its image table) per statement.
+    @spare_levels = [] of SavepointLevel
+    SPARE_LEVEL_LIMIT = 8
 
     # Page images savepoint levels no longer hold, kept to take the next
     # image without allocating (a savepoint per statement images every page

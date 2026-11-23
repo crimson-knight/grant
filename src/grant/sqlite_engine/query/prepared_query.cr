@@ -22,6 +22,11 @@ module Grant::SQLiteEngine::Query
     getter? reads_database = true
     @frame : Frame? = nil
     @done = false
+    # Whether the statement runs through a plan (anything but a SELECT).
+    @runs_a_plan = false
+    @plan_frame : Frame? = nil
+    # The row of a query that has none: one empty array for every run.
+    @no_row = [] of Value
 
     def initialize(@session : Session, sql : String)
       prepared = begin
@@ -46,6 +51,7 @@ module Grant::SQLiteEngine::Query
         @compiled = CompiledSelect.new(producer, plan.list_of_column_names, 0, 0, false)
         @list_of_column_names = @compiled.list_of_column_names
         @parameters = Array(Value).new(@parameter_count, nil)
+        @runs_a_plan = true
         return
       end
       @parameter_count, @parameter_numbers = ParameterScan.scan(select_statement)
@@ -92,14 +98,14 @@ module Grant::SQLiteEngine::Query
     def step : Bool
       return false if @done
       frame = @frame ||= begin
-        new_frame = Frame.new(@compiled.slot_count, @compiled.aggregate_count, @parameters.dup, @session)
+        new_frame = frame_for_run
         @compiled.producer.open(new_frame)
         new_frame
       end
       next_row = @compiled.producer.next_row(frame)
       unless next_row
         @done = true
-        @row = [] of Value
+        @row = @no_row
         return false
       end
       @row = next_row
@@ -117,7 +123,20 @@ module Grant::SQLiteEngine::Query
     def reset : Nil
       @frame = nil
       @done = false
-      @row = [] of Value
+      @row = @no_row
+    end
+
+    # A statement run through its plan reads only the parameters from its
+    # frame, so it keeps one frame and copies the bindings into it. A
+    # SELECT gets a new frame each run: uncorrelated subqueries remember the
+    # frame they were computed for.
+    private def frame_for_run : Frame
+      if @runs_a_plan
+        frame = @plan_frame ||= Frame.new(0, 0, Array(Value).new(@parameter_count, nil), @session)
+        ValueBuffer.refill(frame.list_of_parameters, @parameters)
+        return frame
+      end
+      Frame.new(@compiled.slot_count, @compiled.aggregate_count, @parameters.dup, @session)
     end
 
     # Every row the query returns.

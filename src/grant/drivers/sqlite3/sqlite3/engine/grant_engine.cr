@@ -57,10 +57,29 @@ module Grant::SQLite3
 
       # Statements that compile without reading the schema: BEGIN, COMMIT,
       # END, ROLLBACK, SAVEPOINT and RELEASE.
-      TRANSACTION_CONTROL = /\A\s*(BEGIN|COMMIT|END|ROLLBACK|SAVEPOINT|RELEASE)\b/i
+      TRANSACTION_CONTROL = %w[BEGIN COMMIT END ROLLBACK SAVEPOINT RELEASE]
+
+      # Whether *sql*'s first word is one of TRANSACTION_CONTROL, read
+      # without a regular expression since every prepare asks.
+      def self.transaction_control?(sql : String) : Bool
+        bytes = sql.to_slice
+        start = 0
+        while start < bytes.size && bytes[start].unsafe_chr.ascii_whitespace?
+          start += 1
+        end
+        finish = start
+        while finish < bytes.size && bytes[finish].unsafe_chr.ascii_letter?
+          finish += 1
+        end
+        return false if finish == start || (finish < bytes.size && (bytes[finish].unsafe_chr.ascii_alphanumeric? || bytes[finish] == 0x5f_u8))
+        word = bytes[start, finish - start]
+        TRANSACTION_CONTROL.any? do |keyword|
+          keyword.bytesize == word.size && (0...word.size).all? { |index| keyword.to_unsafe[index] == word[index] & 0xdf_u8 }
+        end
+      end
 
       def prepare(sql : String) : {Int32, Engine::PreparedStatement}
-        query = if TRANSACTION_CONTROL.matches?(sql)
+        query = if Database.transaction_control?(sql)
                   @session.prepare(sql)
                 else
                   @session.begin_statement_read

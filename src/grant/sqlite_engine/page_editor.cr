@@ -195,7 +195,7 @@ module Grant::SQLiteEngine
 
     # Rewrites the page holding *list_of_cells* in order, packed at the end
     # of the page with no freeblocks.
-    def rebuild(page_type : PageType, list_of_cells : Array(Bytes), right_child : UInt32) : Nil
+    def rebuild(page_type : PageType, list_of_cells : Indexable(Bytes), right_child : UInt32) : Nil
       initialize_page(page_type)
       self.right_child = right_child if page_type.interior?
       top = @usable_size

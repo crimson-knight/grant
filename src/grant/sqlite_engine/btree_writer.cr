@@ -557,7 +557,7 @@ module Grant::SQLiteEngine
           raise CorruptDatabase.new("#{sibling.page_type} page beside a #{type} page", sibling.page_number)
         end
       end
-      cells = [] of Bytes
+      cells = Array(Bytes).new(siblings.sum(&.list_of_cells.size) + siblings.size)
       siblings.each_with_index do |sibling, position|
         cells.concat(sibling.list_of_cells)
         next if position == siblings.size - 1
@@ -578,7 +578,8 @@ module Grant::SQLiteEngine
       old_pages.each_with_index { |page_number, position| @pager.free_page(page_number) if position >= page_total }
       new_dividers = [] of Bytes
       page_total.times do |position|
-        list_of_group_cells = cells[starts[position], counts[position]]
+        # A view of the run, read before `cells` changes again.
+        list_of_group_cells = Slice.new(cells.to_unsafe + starts[position], counts[position], read_only: true)
         right = type.interior? ? final_right : 0_u32
         if position < page_total - 1
           if type.leaf_table?
@@ -594,7 +595,8 @@ module Grant::SQLiteEngine
             end
           end
         end
-        write_node(TreeNode.new(new_pages[position], type, list_of_group_cells, right))
+        editor = PageEditor.new(@pager.page_for_write(new_pages[position]), new_pages[position], usable)
+        editor.rebuild(type, list_of_group_cells, right)
       end
       # The parent's cells before *first* and after *last* keep their
       # children and dividers; only the run between is built again.
