@@ -535,13 +535,15 @@ def real_affinity?(declared_type)
   %w[REAL FLOA DOUB].any? { |word| upper.include?(word) }
 end
 
-# True when this sqlite3 reads the whole-number REAL default of a column
-# added by ALTER TABLE back as INTEGER for rows written before the ALTER
-# (Ubuntu 24.04's 3.45.1 does; 3.51 and later return REAL, which is what the
-# engine returns). Probed once per run.
+# True when this sqlite3 reads a whole-number REAL default (69, 69.0 or
+# -0.0) of a column added by ALTER TABLE back as INTEGER for rows written
+# before the ALTER (Ubuntu 24.04's 3.45.1 does; 3.51 and later return REAL,
+# which is what the engine returns). Probed once per run.
 LEGACY_REAL_DEFAULTS = begin
-  probe = "CREATE TABLE probe(a); INSERT INTO probe VALUES (1); ALTER TABLE probe ADD COLUMN b REAL DEFAULT 69.0; SELECT typeof(b) FROM probe;"
-  sqlite3(":memory:", probe).strip == "integer"
+  probe = "CREATE TABLE probe(a); INSERT INTO probe VALUES (1); " \
+          "ALTER TABLE probe ADD COLUMN b REAL DEFAULT 69; ALTER TABLE probe ADD COLUMN c REAL DEFAULT 69.0; " \
+          "ALTER TABLE probe ADD COLUMN d REAL DEFAULT -0.0; SELECT typeof(b), typeof(c), typeof(d) FROM probe;"
+  sqlite3(":memory:", probe).include?("integer")
 end
 
 def run_random(out_dir, count, seed)
