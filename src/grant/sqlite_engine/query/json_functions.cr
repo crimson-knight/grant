@@ -16,9 +16,9 @@ module Grant::SQLiteEngine::Query
 
     def self.list_of_definitions : Array(Definition)
       [
-        definition("json", 1, 1) { |arguments| json(arguments[0]) },
-        definition("json_extract", 0, -1) { |arguments| extract(arguments, ExtractMode::Extract) },
-        definition("->", 2, 2) { |arguments| extract(arguments, ExtractMode::JsonText) },
+        definition_with_subtype("json", 1, 1) { |arguments, session| json(arguments[0], session) },
+        definition_with_subtype("json_extract", 0, -1) { |arguments, session| extract(arguments, ExtractMode::Extract, session) },
+        definition_with_subtype("->", 2, 2) { |arguments, session| extract(arguments, ExtractMode::JsonText, session) },
         definition("->>", 2, 2) { |arguments| extract(arguments, ExtractMode::SqlValue) },
         definition("json_type", 1, 2) { |arguments| type(arguments) },
         definition("json_valid", 1, 2) { |arguments| valid(arguments) },
@@ -31,14 +31,24 @@ module Grant::SQLiteEngine::Query
       Definition.new(name, minimum, maximum, ->(arguments : Array(Value), _context : ScalarFunctions::CallContext) { implementation.call(arguments) })
     end
 
-    # json(X): the minified text of X (jsonRemoveFunc with no paths).
-    def self.json(argument : Value) : Value
+    # A function whose results may carry JSON_SUBTYPE, which it sets on
+    # the session as C calls sqlite3_result_subtype.
+    private def self.definition_with_subtype(name : String, minimum : Int32, maximum : Int32,
+                                             &implementation : Array(Value), Session -> Value) : Definition
+      Definition.new(name, minimum, maximum, ->(arguments : Array(Value), context : ScalarFunctions::CallContext) { implementation.call(arguments, context.session) })
+    end
+
+    # json(X): the minified text of X (jsonRemoveFunc with no paths), with
+    # JSON_SUBTYPE.
+    def self.json(argument : Value, session : Session? = nil) : Value
       document = Json.parse_argument(argument) || return
+      session.try(&.result_subtype = Json::SUBTYPE)
       document.text_at(0)
     end
 
-    # jsonExtractFunc.
-    def self.extract(arguments : Array(Value), mode : ExtractMode) : Value
+    # jsonExtractFunc: JSON text results (every -> result, a json_extract
+    # container, a json_extract of several paths) carry JSON_SUBTYPE.
+    def self.extract(arguments : Array(Value), mode : ExtractMode, session : Session? = nil) : Value
       return if arguments.size < 2
       document = Json.parse_argument(arguments[0]) || return
       many = arguments.size > 2
@@ -63,8 +73,12 @@ module Grant::SQLiteEngine::Query
             output.separate
             document.render(found, output)
           elsif mode.json_text?
+            session.try(&.result_subtype = Json::SUBTYPE)
             return document.text_at(found)
           else
+            if mode.extract? && document.type_at(found) >= Json::ARRAY
+              session.try(&.result_subtype = Json::SUBTYPE)
+            end
             return document.sql_value(found)
           end
         elsif found == Json::LOOKUP_NOTFOUND
@@ -79,6 +93,7 @@ module Grant::SQLiteEngine::Query
       end
       output.write_byte(']'.ord.to_u8)
       raise Json.malformed if output.malformed?
+      session.try(&.result_subtype = Json::SUBTYPE)
       output.to_s
     end
 
@@ -175,9 +190,13 @@ module Grant::SQLiteEngine::Query
 
   # json_each(JSON [, ROOT]) and json_tree(JSON [, ROOT]) as C's virtual
   # table cursor walks them (jsonEachFilter, jsonEachNext, jsonEachColumn):
-  # key, value, type, atom, id, parent, fullkey, path.
+  # key, value, type, atom, id, parent, fullkey, path, then the HIDDEN
+  # columns json and root, then the cursor's rowid (jsonEachRowid: rows
+  # counted from 0).
   class JsonEachProducer < Producer
-    COLUMNS = %w[key value type atom id parent fullkey path]
+    COLUMNS              = %w[key value type atom id parent fullkey path json root rowid]
+    VISIBLE_COLUMN_COUNT =  8
+    ROWID_COLUMN         = 10
 
     record Parent, head : Int32, value : Int32, finish : Int32, path_size : Int32, key : Int64
 
@@ -249,7 +268,8 @@ module Grant::SQLiteEngine::Query
       document = @document || return
       return if @index >= @finish
       row = [key(document), value(document), type(document), atom(document), @index.to_i64, parent,
-             full_key(document), String.new(@path.to_slice[0, path_length(document)])] of Value
+             full_key(document), String.new(@path.to_slice[0, path_length(document)]),
+             document.source_text || document.blob, String.new(@path.to_slice[0, @root_size]), @row_number.to_i64] of Value
       advance(document)
       row
     end

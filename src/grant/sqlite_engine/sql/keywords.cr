@@ -61,6 +61,40 @@ module Grant::SQLiteEngine::SQL
     # The longest keyword, CURRENT_TIMESTAMP.
     MAX_KEYWORD_SIZE = 17
 
+    # TABLE by length and first letter (bucket `length * 26 + letter`), so
+    # the tokenizer finds a keyword by comparing the bytes it holds,
+    # without building a String for each word.
+    BUCKETS = begin
+      buckets = Array(Array({Bytes, TokenKind})).new((MAX_KEYWORD_SIZE + 1) * 26) { [] of {Bytes, TokenKind} }
+      TABLE.each do |word, kind|
+        buckets[word.bytesize * 26 + (word.byte_at(0) - 'A'.ord)] << {word.to_slice, kind}
+      end
+      buckets
+    end
+
+    # The keyword spelled by *length* bytes of *bytes* from *start* (any
+    # case), or nil.
+    def self.lookup(bytes : Bytes, start : Int32, length : Int32) : TokenKind?
+      return if length < 2 || length > MAX_KEYWORD_SIZE
+      first = upper(bytes[start])
+      return unless first >= 'A'.ord && first <= 'Z'.ord
+      BUCKETS[length * 26 + (first - 'A'.ord)].each do |(word, kind)|
+        matched = true
+        1.upto(length - 1) do |index|
+          if upper(bytes[start + index]) != word.unsafe_fetch(index)
+            matched = false
+            break
+          end
+        end
+        return kind if matched
+      end
+      nil
+    end
+
+    private def self.upper(byte : UInt8) : UInt8
+      byte >= 'a'.ord && byte <= 'z'.ord ? byte - 32 : byte
+    end
+
     # parse.y's `%fallback ID` list for a default build: these keywords
     # stand as identifiers wherever the grammar has no use for them as
     # keywords. WINDOW, OVER and FILTER are decided by the tokenizer instead

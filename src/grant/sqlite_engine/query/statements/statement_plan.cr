@@ -10,6 +10,20 @@ module Grant::SQLiteEngine::Query
     # The schema generation the plan was compiled against; a plan older
     # than the session's schema is compiled again before it runs.
     property schema_generation = 0
+
+    # What the plan learned about its statement journal and row order for
+    # one setting of PRAGMA foreign_keys, the only input to those choices
+    # that changes without the schema (whose change compiles the plan
+    # again): worked out on the first run, not on every run.
+    @journal_choices : Tuple(Bool, Bool, Bool)? = nil
+    @journal_choices_foreign_keys = false
+
+    protected def journal_choices(foreign_keys : Bool, & : -> Tuple(Bool, Bool, Bool)) : Tuple(Bool, Bool, Bool)
+      choices = @journal_choices
+      return choices if choices && @journal_choices_foreign_keys == foreign_keys
+      @journal_choices_foreign_keys = foreign_keys
+      @journal_choices = yield
+    end
   end
 
   # Names a write statement may use for the rowid of a table that has no

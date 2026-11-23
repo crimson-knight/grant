@@ -79,7 +79,14 @@ module Grant::SQLiteEngine
       cell = build_cell(PageType::LeafTable, record, rowid)
       editor = PageEditor.new(@pager.page_for_write(leaf), leaf, usable)
       if found
-        free_overflow(editor.cell(index), PageType::LeafTable)
+        old = editor.cell(index)
+        if old.size == cell.size && !spills?(old, PageType::LeafTable) && !spills?(cell, PageType::LeafTable)
+          # btreeOverwriteCell: a row of the same size is written over the
+          # old one in place.
+          old.copy_from(cell.to_unsafe, cell.size)
+          return true
+        end
+        free_overflow(old, PageType::LeafTable)
         editor.remove_cell(index)
       end
       if editor.insert_cell(index, cell)
@@ -291,7 +298,8 @@ module Grant::SQLiteEngine
         equal = false
         while low < high
           middle = (low + high) // 2
-          result = comparator.compare(entry_record(page, middle), key)
+          payload = PayloadReader.read(@pager, page, page.payload(middle))
+          result = comparator.compare_record(payload, key) || comparator.compare(Record.decode(payload, @encoding, page.number), key)
           if result < 0
             low = middle + 1
           else
@@ -363,6 +371,13 @@ module Grant::SQLiteEngine
         position += chunk
       end
       first
+    end
+
+    # Whether *cell* keeps part of its payload on overflow pages.
+    private def spills?(cell : Bytes, page_type : PageType) : Bool
+      start = page_type.interior_index? ? 4 : 0
+      size, _length = Varint.decode(cell, start)
+      PageEditor.local_payload_size(usable, size, page_type.leaf_table?) < size
     end
 
     # Releases the overflow chain of *cell*, if it has one.
@@ -542,7 +557,7 @@ module Grant::SQLiteEngine
           raise CorruptDatabase.new("#{sibling.page_type} page beside a #{type} page", sibling.page_number)
         end
       end
-      cells = [] of Bytes
+      cells = Array(Bytes).new(siblings.sum(&.list_of_cells.size) + siblings.size)
       siblings.each_with_index do |sibling, position|
         cells.concat(sibling.list_of_cells)
         next if position == siblings.size - 1
@@ -556,15 +571,17 @@ module Grant::SQLiteEngine
       end
       final_right = siblings.last.right_child
       consume = !type.leaf_table?
-      groups, divider_positions = distribute(cells, consume, PageEditor.capacity(2_u32, type, usable))
+      starts, counts, divider_positions = distribute(cells, consume, PageEditor.capacity(2_u32, type, usable))
+      page_total = starts.size
       old_pages = siblings.map(&.page_number)
-      new_pages = Array(UInt32).new(groups.size) { |position| position < old_pages.size ? old_pages[position] : @pager.allocate_page }
-      old_pages.each_with_index { |page_number, position| @pager.free_page(page_number) if position >= groups.size }
+      new_pages = Array(UInt32).new(page_total) { |position| position < old_pages.size ? old_pages[position] : @pager.allocate_page }
+      old_pages.each_with_index { |page_number, position| @pager.free_page(page_number) if position >= page_total }
       new_dividers = [] of Bytes
-      groups.each_with_index do |group, position|
-        list_of_group_cells = group.map { |cell_position| cells[cell_position] }
+      page_total.times do |position|
+        # A view of the run, read before `cells` changes again.
+        list_of_group_cells = Slice.new(cells.to_unsafe + starts[position], counts[position], read_only: true)
         right = type.interior? ? final_right : 0_u32
-        if position < groups.size - 1
+        if position < page_total - 1
           if type.leaf_table?
             last_cell = list_of_group_cells.last? || raise Error.new("empty page while splitting a table leaf")
             new_dividers << interior_table_cell(0_u32, cell_rowid(last_cell))[4..]
@@ -578,63 +595,83 @@ module Grant::SQLiteEngine
             end
           end
         end
-        write_node(TreeNode.new(new_pages[position], type, list_of_group_cells, right))
+        editor = PageEditor.new(@pager.page_for_write(new_pages[position]), new_pages[position], usable)
+        editor.rebuild(type, list_of_group_cells, right)
       end
-      list_of_children[first..last] = new_pages
-      list_of_dividers[first...last] = new_dividers
-      parent.list_of_cells = list_of_dividers.map_with_index { |divider, position| with_child(list_of_children[position], divider) }
-      parent.right_child = list_of_children.last
+      # The parent's cells before *first* and after *last* keep their
+      # children and dividers; only the run between is built again.
+      old_cells = parent.list_of_cells
+      kept_after = last < old_cells.size ? old_cells[(last + 1)..] : [] of Bytes
+      list_of_cells = old_cells[0, first]
+      new_pages.each_with_index do |page_number, position|
+        divider = if position < new_dividers.size
+                    new_dividers[position]
+                  elsif last < old_cells.size
+                    list_of_dividers[last]
+                  end
+        list_of_cells << with_child(page_number, divider) if divider
+      end
+      list_of_cells.concat(kept_after)
+      parent.list_of_cells = list_of_cells
+      parent.right_child = last < old_cells.size ? parent.right_child : new_pages.last
     end
 
     # Splits *cells* into the fewest pages of *capacity*, then evens them
     # out right to left. With *consume*, the cell between two pages moves up
     # to the parent as their divider (index pages and interior pages).
-    # Returns the cell positions of each page and of each divider.
-    private def distribute(cells : Array(Bytes), consume : Bool, capacity : Int32) : {Array(Array(Int32)), Array(Int32)}
-      groups = [[] of Int32]
+    # Each page takes a run of consecutive cells: returns the first cell
+    # and the cell count of each page, and the cell position of each
+    # divider.
+    private def distribute(cells : Array(Bytes), consume : Bool, capacity : Int32) : {Array(Int32), Array(Int32), Array(Int32)}
+      starts = [0]
+      counts = [0]
       used = [0]
       dividers = [] of Int32
       cells.each_with_index do |cell, position|
         cost = PageEditor.cost(cell.size)
         if used.last + cost <= capacity
-          groups.last << position
+          counts[-1] += 1
           used[-1] += cost
         elsif consume
           dividers << position
-          groups << [] of Int32
+          starts << position + 1
+          counts << 0
           used << 0
         else
-          groups << [position]
+          starts << position
+          counts << 1
           used << cost
         end
       end
-      if consume && groups.size > 1 && groups.last.empty?
+      if consume && starts.size > 1 && counts.last == 0
+        # The last page is empty: the last divider moves down into it and
+        # the previous page's last cell becomes the divider.
         moved_down = dividers.pop
-        groups.pop
-        used.pop
-        moved_up = groups.last.pop
-        used[-1] -= PageEditor.cost(cells[moved_up].size)
+        moved_up = starts[-2] + counts[-2] - 1
+        counts[-2] -= 1
+        used[-2] -= PageEditor.cost(cells[moved_up].size)
         dividers << moved_up
-        groups << [moved_down]
-        used << PageEditor.cost(cells[moved_down].size)
+        starts[-1] = moved_down
+        counts[-1] = 1
+        used[-1] = PageEditor.cost(cells[moved_down].size)
       end
-      (groups.size - 1).downto(1) do |right|
+      (starts.size - 1).downto(1) do |right|
         loop do
-          left = groups[right - 1]
-          break if left.size <= 1
-          leaving = left.last
+          break if counts[right - 1] <= 1
+          leaving = starts[right - 1] + counts[right - 1] - 1
           arriving = consume ? dividers[right - 1] : leaving
           new_right = used[right] + PageEditor.cost(cells[arriving].size)
           new_left = used[right - 1] - PageEditor.cost(cells[leaving].size)
           break if new_right > capacity || new_right > new_left
-          groups[right].unshift(arriving)
-          left.pop
+          starts[right] = arriving
+          counts[right] += 1
+          counts[right - 1] -= 1
           used[right] = new_right
           used[right - 1] = new_left
           dividers[right - 1] = leaving if consume
         end
       end
-      {groups, dividers}
+      {starts, counts, dividers}
     end
 
     private def get_u32(bytes : Bytes, offset : Int32) : UInt32

@@ -29,7 +29,21 @@ module Grant::SQLiteEngine::Query
     property? single_row = false
     # C would give the statement a statement journal (`StatementJournal`);
     # without one a runtime error keeps the rows already written.
-    property? statement_journal = true
+    getter? statement_journal = true
+
+    # Whether the statement is its own transaction (no BEGIN or SAVEPOINT
+    # around it).
+    property? autocommit = false
+
+    # An autocommit statement without a statement journal images no pages
+    # in its savepoint level: a failure rolls the whole transaction back
+    # from the WAL or the rollback journal. Inside a transaction the level
+    # keeps its images, so a failed statement is undone alone.
+    def statement_journal=(value : Bool) : Bool
+      @session.database.pager.skip_savepoint_images if autocommit? && !value
+      @statement_journal = value
+    end
+
     # Rows CREATE TABLE ... AS SELECT copies count nowhere.
     property? silent = false
     # FOREIGN KEY violations of immediate constraints still open in this
@@ -179,7 +193,7 @@ module Grant::SQLiteEngine::Query
       # NOT NULL, in column order. REPLACE puts the DEFAULT in and the
       # column is checked again only after every other column (C's second
       # pass), so a later column's failure is the one reported.
-      list_of_replaced = [] of ColumnRule
+      list_of_replaced = nil.as(Array(ColumnRule)?)
       table.list_of_columns.each do |column|
         action = column.not_null
         next unless action
@@ -190,7 +204,7 @@ module Grant::SQLiteEngine::Query
         if action.replace?
           if column.default_expression
             row[column.position] = default_value(table, column)
-            list_of_replaced << column
+            (list_of_replaced ||= [] of ColumnRule) << column
             next
           end
           action = ConflictAction::Abort
@@ -198,12 +212,11 @@ module Grant::SQLiteEngine::Query
         return {InsertResult::Ignored, rowid, row, nil} if action.ignore?
         raise ConstraintError.new("NOT NULL constraint failed: #{table.name}.#{column.column_name}", action)
       end
-      list_of_replaced.each do |column|
+      list_of_replaced.try &.each do |column|
         next unless row[column.position].nil?
         raise ConstraintError.new("NOT NULL constraint failed: #{table.name}.#{column.column_name}", ConflictAction::Abort)
       end
-      stored = database.stored_values(definition, row)
-      stored.each_with_index { |value, index| row[index] = value }
+      database.store_values!(definition, row)
       if (alias_index = table.rowid_alias) && rowid
         row[alias_index] = rowid
       end
@@ -261,8 +274,7 @@ module Grant::SQLiteEngine::Query
         rowid_checked = true
       end
       # nil stands for a WITHOUT ROWID table's PRIMARY KEY.
-      ordered = table.list_of_indexes.map(&.as(IndexRule?))
-      ordered.insert(table.primary_key_position, nil) if table.without_rowid?
+      ordered = table.list_of_rules_in_check_order
       if upsert
         targeted = upsert.list_of_clauses.compact_map(&.index_rule).uniq!.map(&.as(IndexRule?))
         targeted.unshift(nil) if table.without_rowid? && upsert.list_of_clauses.first?.try(&.targets_rowid?)
@@ -448,6 +460,25 @@ module Grant::SQLiteEngine::Query
     end
 
     # Each index of *table* that holds the row, with the row's entry.
+    # The entries of *list* that *other* does not hold with the same key
+    # (each value the same storage class and value).
+    def self.entries_not_in(list : Array({IndexLayout, Array(Value)}), other : Array({IndexLayout, Array(Value)})) : Array({IndexLayout, Array(Value)})
+      list.reject do |(index, key)|
+        other.any? { |(other_index, other_key)| other_index.same?(index) && WriteRun.same_key?(key, other_key) }
+      end
+    end
+
+    def self.same_key?(left : Array(Value), right : Array(Value)) : Bool
+      return false unless left.size == right.size
+      left.each_with_index do |value, position|
+        other = right[position]
+        return false unless value.class == other.class && value == other
+        # -0.0 equals 0.0 but is stored with its own bits.
+        return false if value.is_a?(Float64) && other.is_a?(Float64) && value.unsafe_as(UInt64) != other.unsafe_as(UInt64)
+      end
+      true
+    end
+
     def index_entries(table : WriteTable, row : Array(Value), rowid : Int64?) : Array({IndexLayout, Array(Value)})
       table.list_of_index_layouts.compact_map do |index|
         next unless index_includes?(table, index, row, rowid)
@@ -560,11 +591,21 @@ module Grant::SQLiteEngine::Query
         child_removed(table, old_row, new_row, list_of_changed)
         parent_removed(table, old_rowid, old_row, new_row, list_of_changed)
       end
-      table.database.remove_row(table.layout, old_rowid, old_row, index_entries(table, old_row, old_rowid))
-      if replaced = result[3]
-        delete_row(table, replaced[0], replaced[1], replace: true)
+      old_entries = index_entries(table, old_row, old_rowid)
+      new_entries = index_entries(table, new_row, rowid)
+      if rowid && rowid == old_rowid && result[3].nil?
+        # The row keeps its rowid: its cell is overwritten in place, and only
+        # the index entries whose keys changed move (C leaves an index whose
+        # columns the UPDATE does not change alone).
+        table.database.remove_index_entries(table.layout, WriteRun.entries_not_in(old_entries, new_entries))
+        table.database.write_row(table.layout, rowid, new_row, WriteRun.entries_not_in(new_entries, old_entries))
+      else
+        table.database.remove_row(table.layout, old_rowid, old_row, old_entries)
+        if replaced = result[3]
+          delete_row(table, replaced[0], replaced[1], replace: true)
+        end
+        table.database.write_row(table.layout, rowid, new_row, new_entries)
       end
-      table.database.write_row(table.layout, rowid, new_row, index_entries(table, new_row, rowid))
       if foreign_keys?
         child_added(table, new_row, old_row, list_of_changed)
         parent_added(table, rowid, new_row, old_row, list_of_changed)

@@ -55,13 +55,40 @@ module Grant::SQLite3
         fail(Engine::ERROR_CODE, error.message || "syntax error")
       end
 
-      def prepare(sql : String) : {Int32, Engine::PreparedStatement}
-        @session.begin_statement_read
-        query = begin
-          @session.prepare(sql)
-        ensure
-          @session.end_statement_read
+      # Statements that compile without reading the schema: BEGIN, COMMIT,
+      # END, ROLLBACK, SAVEPOINT and RELEASE.
+      TRANSACTION_CONTROL = %w[BEGIN COMMIT END ROLLBACK SAVEPOINT RELEASE]
+
+      # Whether *sql*'s first word is one of TRANSACTION_CONTROL, read
+      # without a regular expression since every prepare asks.
+      def self.transaction_control?(sql : String) : Bool
+        bytes = sql.to_slice
+        start = 0
+        while start < bytes.size && bytes[start].unsafe_chr.ascii_whitespace?
+          start += 1
         end
+        finish = start
+        while finish < bytes.size && bytes[finish].unsafe_chr.ascii_letter?
+          finish += 1
+        end
+        return false if finish == start || (finish < bytes.size && (bytes[finish].unsafe_chr.ascii_alphanumeric? || bytes[finish] == 0x5f_u8))
+        word = bytes[start, finish - start]
+        TRANSACTION_CONTROL.any? do |keyword|
+          keyword.bytesize == word.size && (0...word.size).all? { |index| keyword.to_unsafe[index] == word[index] & 0xdf_u8 }
+        end
+      end
+
+      def prepare(sql : String) : {Int32, Engine::PreparedStatement}
+        query = if Database.transaction_control?(sql)
+                  @session.prepare(sql)
+                else
+                  @session.begin_statement_read
+                  begin
+                    @session.prepare(sql)
+                  ensure
+                    @session.end_statement_read
+                  end
+                end
         succeed
         @open_statement_count += 1
         {Engine::OK_CODE, PreparedStatement.new(self, query).as(Engine::PreparedStatement)}
@@ -184,7 +211,7 @@ module Grant::SQLite3
       @reading = false
 
       def step : Int32
-        unless @reading
+        if !@reading && @query.reads_database?
           @database.session.begin_statement_read
           @reading = true
         end

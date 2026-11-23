@@ -608,19 +608,27 @@ class TestsDifferential
     nil
   end
 
-  # Temp schemas arrive with G4b item 6: an engine "no such table" for a
-  # temp schema table, or for a name the C connection holds in its temp
-  # schema, is counted apart.
-  TEMP_SCHEMA_NAMES = {"sqlite_temp_master", "sqlite_temp_schema", "temp.sqlite_master", "temp.sqlite_schema"}
+  # The temp schema belongs to a connection: objects C's connection made
+  # there (CREATE VIEW temp.v, CREATE TEMP TRIGGER) are not in the file,
+  # so the engine's fresh session cannot see them. A difference is counted
+  # apart when the engine reports no such table for a temp schema table
+  # or for a name C holds in its temp schema, or when the statement reads
+  # the temp schema table while C's temp schema holds objects.
+  TEMP_SCHEMA_NAMES  = {"sqlite_temp_master", "sqlite_temp_schema", "temp.sqlite_master", "temp.sqlite_schema"}
+  TEMP_SCHEMA_READ   = /\b(sqlite_temp_master|sqlite_temp_schema|temp\s*\.\s*sqlite_(master|schema))\b/i
+  TEMP_SCHEMA_REASON = "out of scope: an object of the C connection's own temp schema"
 
-  def self.temp_schema(connection : SQLiteQueryOracle::Connection, actual : SQLiteQueryOracle::Outcome) : String?
+  def self.temp_schema(connection : SQLiteQueryOracle::Connection, sql : String, actual : SQLiteQueryOracle::Outcome) : String?
     message = actual.error
-    return unless message && message.starts_with?("no such table: ")
+    unless message && message.starts_with?("no such table: ")
+      return unless TEMP_SCHEMA_READ.matches?(sql)
+      objects = connection.query("SELECT 1 FROM sqlite_temp_schema LIMIT 1")
+      return objects.list_of_rows.empty? ? nil : TEMP_SCHEMA_REASON
+    end
     name = message.lchop("no such table: ").downcase
-    reason = "out of scope: a temp schema object (G4b item 6)"
-    return reason if TEMP_SCHEMA_NAMES.includes?(name) || name.starts_with?("temp.")
+    return TEMP_SCHEMA_REASON if TEMP_SCHEMA_NAMES.includes?(name) || name.starts_with?("temp.")
     temp = connection.query("SELECT 1 FROM sqlite_temp_schema WHERE lower(name) = ?", [name] of SQLiteQueryOracle::Value)
-    temp.list_of_rows.empty? ? nil : reason
+    temp.list_of_rows.empty? ? nil : TEMP_SCHEMA_REASON
   end
 
   RANDOM_FUNCTIONS = /\b(random|randomblob)\s*\(/i
@@ -661,7 +669,7 @@ class TestsDifferential
         @report.skip("LIMIT without ORDER BY (rows SQL leaves open)", "#{file}: #{sql}")
         return
       end
-      if difference && (reason = TestsDifferential.out_of_scope(sql, expected, actual) || TestsDifferential.temp_schema(connection, actual))
+      if difference && (reason = TestsDifferential.out_of_scope(sql, expected, actual) || TestsDifferential.temp_schema(connection, sql, actual))
         @report.skip(reason, "#{file}: #{sql}")
         return
       end

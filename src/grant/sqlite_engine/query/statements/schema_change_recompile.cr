@@ -5,7 +5,7 @@ module Grant::SQLiteEngine::Query
   # SQLITE_SCHEMA. The schema cookies of the main and temp databases tell.
   class PreparedQuery
     @sql = ""
-    @compiled_schema_cookie = [] of UInt32?
+    @compiled_schema_cookie : SchemaStamp? = nil
 
     def initialize(@session : Session, sql : String)
       previous_def

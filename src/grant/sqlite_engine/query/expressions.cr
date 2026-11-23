@@ -90,6 +90,13 @@ module Grant::SQLiteEngine::Query
 
     abstract def evaluate(frame : Frame) : Value
 
+    # The value with its subtype (sqlite3_value_subtype): 0 except where a
+    # function set one (json.c's JSON_SUBTYPE) and the value reached here
+    # without passing through a column. Only subtype() asks for it.
+    def value_with_subtype(frame : Frame) : {Value, UInt8}
+      {evaluate(frame), 0_u8}
+    end
+
     # The expressions sqlite3ExprCollSeq descends into when this expression
     # carries an explicit COLLATE: the left operand, then the right, then
     # the arguments.
@@ -258,6 +265,10 @@ module Grant::SQLiteEngine::Query
 
     def evaluate(frame : Frame) : Value
       @operand.evaluate(frame)
+    end
+
+    def value_with_subtype(frame : Frame) : {Value, UInt8}
+      @operand.value_with_subtype(frame)
     end
 
     def affinity : ExpressionAffinity
@@ -821,6 +832,32 @@ module Grant::SQLiteEngine::Query
       @else_result.try(&.evaluate(frame))
     end
 
+    def value_with_subtype(frame : Frame) : {Value, UInt8}
+      if result = chosen_result(frame)
+        return result.value_with_subtype(frame)
+      end
+      {nil, 0_u8}
+    end
+
+    # The branch evaluate takes.
+    private def chosen_result(frame : Frame) : Expr?
+      operand = @operand
+      if (comparisons = @comparisons) && operand
+        value = operand.evaluate(frame)
+        comparisons.each_with_index do |comparison, index|
+          candidate = @conditions[index].evaluate(frame)
+          if ComparisonExpr.compare_values(ComparisonOperator::Equal, value, candidate, comparison.comparison_affinity, comparison.collation) == 1_i64
+            return @results[index]
+          end
+        end
+      else
+        @conditions.each_with_index do |condition, index|
+          return @results[index] if condition.holds?(frame)
+        end
+      end
+      @else_result
+    end
+
     def collation_children : Array(Expr)
       list = [] of Expr
       if operand = @operand
@@ -854,6 +891,14 @@ module Grant::SQLiteEngine::Query
       nil
     end
 
+    def value_with_subtype(frame : Frame) : {Value, UInt8}
+      @arguments.each do |argument|
+        result = argument.value_with_subtype(frame)
+        return result unless result[0].nil?
+      end
+      {nil, 0_u8}
+    end
+
     def collation_children : Array(Expr)
       @arguments
     end
@@ -879,6 +924,15 @@ module Grant::SQLiteEngine::Query
       index < @arguments.size ? @arguments[index].evaluate(frame) : nil
     end
 
+    def value_with_subtype(frame : Frame) : {Value, UInt8}
+      index = 0
+      while index + 1 < @arguments.size
+        return @arguments[index + 1].value_with_subtype(frame) if @arguments[index].holds?(frame)
+        index += 2
+      end
+      index < @arguments.size ? @arguments[index].value_with_subtype(frame) : {nil, 0_u8}
+    end
+
     def collation_children : Array(Expr)
       @arguments
     end
@@ -897,6 +951,10 @@ module Grant::SQLiteEngine::Query
 
     def evaluate(frame : Frame) : Value
       @operand.evaluate(frame)
+    end
+
+    def value_with_subtype(frame : Frame) : {Value, UInt8}
+      @operand.value_with_subtype(frame)
     end
 
     def collation_children : Array(Expr)
@@ -935,12 +993,36 @@ module Grant::SQLiteEngine::Query
       @definition.implementation.call(values, ScalarFunctions::CallContext.new(@collation, frame.session))
     end
 
+    # The implementation sets the session's result subtype as C's calls
+    # sqlite3_result_subtype; a NULL result carries none.
+    def value_with_subtype(frame : Frame) : {Value, UInt8}
+      values = Array(Value).new(@arguments.size) { |index| @arguments.unsafe_fetch(index).evaluate(frame) }
+      session = frame.session
+      session.result_subtype = 0_u8
+      value = @definition.implementation.call(values, ScalarFunctions::CallContext.new(@collation, session))
+      {value, value.nil? ? 0_u8 : session.result_subtype}
+    end
+
     def collation_children : Array(Expr)
       @arguments
     end
 
     def constant? : Bool
       @deterministic && @arguments.all?(&.constant?)
+    end
+  end
+
+  # subtype(X): the subtype of X's value (func.c subtypeFunc).
+  class SubtypeExpr < Expr
+    def initialize(@operand : Expr)
+    end
+
+    def evaluate(frame : Frame) : Value
+      @operand.value_with_subtype(frame)[1].to_i64
+    end
+
+    def constant? : Bool
+      @operand.constant?
     end
   end
 

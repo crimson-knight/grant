@@ -41,7 +41,7 @@ module Grant::SQLiteEngine::Query
           names = if using
                     using.map(&.value)
                   else
-                    entry.list_of_columns.map(&.name).select do |name|
+                    entry.list_of_columns.first(entry.visible_column_count).map(&.name).select do |name|
                       context.list_of_entries.any?(&.column_index(name))
                     end
                   end
@@ -191,7 +191,8 @@ module Grant::SQLiteEngine::Query
         end
         plan = compile_view(view)
         slot = allocate_slot
-        entry = FromEntry.new(alias_name, slot, subquery_columns(plan, view.list_of_column_names, view_name: name), nil)
+        entry = FromEntry.new(alias_name, slot, subquery_columns(plan, view.list_of_column_names, view_name: name), nil,
+          database: @session.database)
         return {entry, MaterializedSource.new(slot, plan.producer, false).as(RowSource)}
       end
       table = @session.table(name, schema)
@@ -443,14 +444,16 @@ module Grant::SQLiteEngine::Query
         columns = JsonEachProducer::COLUMNS.map { |column_name| SourceColumn.new(column_name, ExpressionAffinity::Blob, Collation::Binary) }
         correlated = arguments.any? { |argument| !argument.constant? }
         producer = JsonEachProducer.new(arguments, recursive: name == "json_tree")
-        return {FromEntry.new(alias_name, slot, columns, nil), MaterializedSource.new(slot, producer, correlated).as(RowSource)}
+        entry = FromEntry.new(alias_name, slot, columns, nil, visible_column_count: JsonEachProducer::VISIBLE_COLUMN_COUNT,
+          rowid_column: JsonEachProducer::ROWID_COLUMN, database: @session.database)
+        return {entry, MaterializedSource.new(slot, producer, correlated).as(RowSource)}
       end
       raise UnsupportedSQL.new("JSON table function #{display_name} (milestone G6)") if name.in?("jsonb_each", "jsonb_tree")
       producer = Catalog.function_producer(name, arguments, @session) || raise SQLError.new("no such table: #{display_name}")
       slot = allocate_slot
       columns = Catalog.function_columns(name).map { |column_name| SourceColumn.new(column_name, ExpressionAffinity::Blob, Collation::Binary) }
       correlated = arguments.any? { |argument| !argument.constant? }
-      {FromEntry.new(alias_name, slot, columns, nil), MaterializedSource.new(slot, producer, correlated).as(RowSource)}
+      {FromEntry.new(alias_name, slot, columns, nil, database: @session.database), MaterializedSource.new(slot, producer, correlated).as(RowSource)}
     end
   end
 

@@ -257,14 +257,19 @@ module Grant::SQLiteEngine::Query
     private def resolve_column(reference : SQL::ColumnReference, context : QueryContext) : Expr
       column_name = reference.column.value
       table_name = reference.table.try(&.value)
-      if schema = reference.schema
-        unless @session.schema?(schema.value)
-          raise SQLError.new("no such column: #{schema.value}.#{table_name}.#{column_name}")
+      schema_name = reference.schema.try(&.value)
+      if schema_name
+        unless @session.schema?(schema_name)
+          raise SQLError.new("no such column: #{schema_name}.#{table_name}.#{column_name}")
         end
+        # lookupName: a schema-qualified name matches only FROM entries of
+        # that schema's tables.
+        schema_database = @session.existing_database_named(schema_name)
+        return unresolved_column(schema_name, table_name, column_name) unless schema_database
       end
       current = context
       while current
-        if found = resolve_in(current, column_name, table_name)
+        if found = resolve_in(current, column_name, table_name, schema_database)
           mark_correlated(context, current, found)
           return found
         end
@@ -297,7 +302,17 @@ module Grant::SQLiteEngine::Query
         return TrueFalseExpr.new(true) if column_name.compare("true", case_insensitive: true) == 0
         return TrueFalseExpr.new(false) if column_name.compare("false", case_insensitive: true) == 0
       end
-      full = table_name ? "#{table_name}.#{column_name}" : column_name
+      unresolved_column(schema_name, table_name, column_name)
+    end
+
+    private def unresolved_column(schema_name : String?, table_name : String?, column_name : String) : NoReturn
+      full = if schema_name
+               "#{schema_name}.#{table_name}.#{column_name}"
+             elsif table_name
+               "#{table_name}.#{column_name}"
+             else
+               column_name
+             end
       raise SQLError.new("no such column: #{full}")
     end
 
@@ -326,9 +341,11 @@ module Grant::SQLiteEngine::Query
     end
 
     # lookupName within one query level.
-    private def resolve_in(context : QueryContext, column_name : String, table_name : String?) : Expr?
+    private def resolve_in(context : QueryContext, column_name : String, table_name : String?,
+                           schema_database : Database? = nil) : Expr?
       matches = [] of Expr
       candidates = context.list_of_entries.select do |entry|
+        next false if schema_database && !schema_database.same?(entry.database)
         table_name.nil? || entry.match_name.compare(table_name, case_insensitive: true) == 0
       end
       candidates.each do |entry|
@@ -734,6 +751,9 @@ module Grant::SQLiteEngine::Query
       when "iif", "if"
         raise SQLError.new("wrong number of arguments to function #{name}()") if count < 2
         return IifExpr.new(call.arguments.map { |argument| compile_expression(argument, context) })
+      when "subtype"
+        raise SQLError.new("wrong number of arguments to function #{name}()") unless count == 1
+        return SubtypeExpr.new(compile_expression(call.arguments[0], context))
       when "likely", "unlikely"
         raise SQLError.new("wrong number of arguments to function #{name}()") unless count == 1
         return PassThroughExpr.new(compile_expression(call.arguments[0], context))

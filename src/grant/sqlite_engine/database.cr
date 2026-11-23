@@ -288,7 +288,8 @@ module Grant::SQLiteEngine
     end
 
     # Maps a stored record to the table's declared columns.
-    private struct RowMapping
+    # :nodoc:
+    struct RowMapping
       @stored_order : Array(Int32)
       @column_count : Int32
       @in_place : Bool

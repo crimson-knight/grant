@@ -342,6 +342,7 @@ module Grant::SQLiteEngine::Query
       depth = open_savepoint_everywhere
       saved_deferred = @deferred_violations
       run = WriteRun.new(self, list_of_parameters)
+      run.autocommit = autocommit
       hold = false
       begin
         result = yield run

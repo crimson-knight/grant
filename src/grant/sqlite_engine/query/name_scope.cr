@@ -21,17 +21,37 @@ module Grant::SQLiteEngine::Query
     property? not_indexed = false
     # The columns the compiled query reads from this entry's rows.
     getter column_use = ColumnUse.new
+    # How many leading columns `*` and NATURAL joins see; the rest are
+    # HIDDEN columns of a table-valued function (json_each's json and
+    # root), found only by name.
+    getter visible_column_count : Int32
+    # For a table-valued function, the column holding the rowid its cursor
+    # reports (xRowid); never found by its own name.
+    getter rowid_column : Int32?
+    # The database whose schema a `schema.table.column` name must match:
+    # a table's own, main for a view or table-valued function, nil for a
+    # subquery or CTE (no schema matches it).
+    getter database : Database?
 
-    def initialize(@match_name : String, @slot : Int32, @list_of_columns : Array(SourceColumn), @table : TableInfo?)
+    def initialize(@match_name : String, @slot : Int32, @list_of_columns : Array(SourceColumn), @table : TableInfo?,
+                   visible_column_count : Int32? = nil, @rowid_column : Int32? = nil, database : Database? = nil)
+      @visible_column_count = visible_column_count || @list_of_columns.size
+      @database = database || @table.try(&.database)
     end
 
     def has_rowid? : Bool
+      return true if @rowid_column
       table = @table
       !table.nil? && !table.without_rowid?
     end
 
     def column_index(name : String) : Int32?
-      @list_of_columns.index { |column| column.name.compare(name, case_insensitive: true) == 0 }
+      rowid_column = @rowid_column
+      @list_of_columns.each_with_index do |column, index|
+        next if index == rowid_column
+        return index if column.name.compare(name, case_insensitive: true) == 0
+      end
+      nil
     end
   end
 

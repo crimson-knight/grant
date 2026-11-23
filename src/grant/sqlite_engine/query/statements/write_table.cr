@@ -98,6 +98,14 @@ module Grant::SQLiteEngine::Query
     # Where a WITHOUT ROWID table's PRIMARY KEY sits in `list_of_indexes`'
     # check order: C checks it as the index it was created as.
     getter primary_key_position = 0
+
+    # The order unique keys are checked in without an upsert: every index,
+    # with nil standing for a WITHOUT ROWID table's PRIMARY KEY.
+    getter list_of_rules_in_check_order : Array(IndexRule?) do
+      ordered = list_of_indexes.map(&.as(IndexRule?))
+      ordered.insert(primary_key_position, nil) if without_rowid?
+      ordered
+    end
     # Compiled expressions, kept while the schema stays the same.
     property check_programs : Array(RowProgram)? = nil
     getter partial_programs = {} of String => RowProgram

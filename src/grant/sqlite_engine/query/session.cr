@@ -2,6 +2,12 @@ module Grant::SQLiteEngine::Query
   # A view: its column names (when the CREATE VIEW lists them) and query.
   record ViewInfo, name : String, list_of_column_names : Array(String)?, query : SQL::SelectStatement
 
+  # The schema cookies of a connection's databases: main, temp (nil until
+  # it exists), and the attached ones in attach order (nil with none
+  # attached, so the common stamp allocates nothing). Statements and the
+  # session's schema cache compare stamps to see a schema change.
+  record SchemaStamp, main : UInt32?, temp : UInt32?, list_of_attached : Array(UInt32?)?
+
   # A connection to one database for running SQL: the schema as the
   # compiler sees it, the functions the application registered, and the
   # counters `changes()` and `last_insert_rowid()` report.
@@ -29,11 +35,18 @@ module Grant::SQLiteEngine::Query
     property changes = 0_i64
     property last_insert_rowid = 0_i64
     property total_changes = 0_i64
+    # The subtype the running scalar function gave its result
+    # (sqlite3_result_subtype), read by FunctionExpr#value_with_subtype.
+    property result_subtype = 0_u8
 
     @user_functions = {} of String => Hash(Int32, UserFunction)
+    # Tables found by a name without a schema, keyed by the name as the
+    # statement spelled it (spellings that differ in case each get an
+    # entry), and by schema and name.
     @tables = {} of String => TableInfo?
+    @qualified_tables = {} of {String, String} => TableInfo?
     @views = {} of String => ViewInfo?
-    @schema_stamp = [] of UInt32?
+    @schema_stamp : SchemaStamp? = nil
 
     # The connection's TEMP database (schema "temp"), held in memory and
     # created when a statement first needs it, as C opens it lazily; it
@@ -60,6 +73,14 @@ module Grant::SQLiteEngine::Query
     def database_named(schema : String) : Database?
       return @database if schema.compare("main", case_insensitive: true) == 0
       return temp_database! if schema.compare("temp", case_insensitive: true) == 0
+      attached_named(schema)
+    end
+
+    # The database *schema* names, without bringing the temp database into
+    # being: nil for "temp" before it exists, as for an unknown name.
+    def existing_database_named(schema : String) : Database?
+      return @database if schema.compare("main", case_insensitive: true) == 0
+      return @temp_database if schema.compare("temp", case_insensitive: true) == 0
       attached_named(schema)
     end
 
@@ -143,11 +164,11 @@ module Grant::SQLiteEngine::Query
 
     # The schema cookie of every database, main first: a statement compiled
     # under other cookies compiles again.
-    def schema_stamp : Array(UInt32?)
-      stamp = [@database.header.try(&.schema_cookie)] of UInt32?
-      stamp << @temp_database.try(&.header).try(&.schema_cookie)
-      @list_of_attached.each { |(_, database)| stamp << database.header.try(&.schema_cookie) }
-      stamp
+    def schema_stamp : SchemaStamp
+      main = @database.header.try(&.schema_cookie)
+      temp = @temp_database.try(&.header).try(&.schema_cookie)
+      return SchemaStamp.new(main, temp, nil) if @list_of_attached.empty?
+      SchemaStamp.new(main, temp, @list_of_attached.map { |(_, database)| database.header.try(&.schema_cookie) })
     end
 
     def initialize(@database : Database)
@@ -202,37 +223,43 @@ module Grant::SQLiteEngine::Query
     # temp first).
     def table(name : String, schema : String? = nil) : TableInfo?
       check_schema
-      key = "#{schema.try(&.downcase)}\0#{name.downcase}"
-      return @tables[key] if @tables.has_key?(key)
-      @tables[key] = if schema
-                       database = database_named(schema)
-                       database ? load_table(name, database, qualified: true) : nil
-                     else
-                       found = nil
-                       list_of_databases.each do |database|
-                         break if found = load_table(name, database, qualified: false)
-                       end
-                       found
-                     end
+      if schema
+        key = {schema, name}
+        return @qualified_tables[key] if @qualified_tables.has_key?(key)
+        database = database_named(schema)
+        return @qualified_tables[key] = database ? load_table(name, database, qualified: true) : nil
+      end
+      return @tables[name] if @tables.has_key?(name)
+      found = nil
+      each_database_in_search_order do |database|
+        break if found = load_table(name, database, qualified: false)
+      end
+      @tables[name] = found
     end
 
     def view(name : String) : ViewInfo?
       check_schema
-      key = name.downcase
-      return @views[key] if @views.has_key?(key)
-      @views[key] = load_view(name)
+      return @views[name] if @views.has_key?(name)
+      @views[name] = load_view(name)
     end
 
     # The databases a name without a schema is looked for in: temp,
     # main, then the attached ones in attach order.
     def list_of_databases : Array(Database)
       list = [] of Database
-      if temp = @temp_database
-        list << temp
-      end
-      list << @database
-      @list_of_attached.each { |(_, database)| list << database }
+      each_database_in_search_order { |database| list << database }
       list
+    end
+
+    # Yields the databases in the order of list_of_databases without
+    # building the list: with no temp database and nothing attached, only
+    # main.
+    def each_database_in_search_order(& : Database ->) : Nil
+      if temp = @temp_database
+        yield temp
+      end
+      yield @database
+      @list_of_attached.each { |(_, database)| yield database }
     end
 
     # The layout of the index named *name*, or nil.
@@ -250,6 +277,7 @@ module Grant::SQLiteEngine::Query
     # reads it again.
     def reset_schema : Nil
       @tables.clear
+      @qualified_tables.clear
       @views.clear
     end
 

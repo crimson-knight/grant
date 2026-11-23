@@ -3,8 +3,21 @@ module Grant::SQLiteEngine
   class SavepointLevel
     getter images = {} of UInt32 => Bytes?
     getter page_count : UInt32
+    # False for an autocommit statement C runs without a statement
+    # journal: the level keeps no page images of its own (pages it changes
+    # are imaged for the level around it, if any). A failure rolls the
+    # whole transaction back, so nothing reads the images.
+    property? keeps_images = true
 
     def initialize(@page_count : UInt32)
+    end
+
+    # Makes a released level a new one, keeping its emptied image table.
+    def reopen(page_count : UInt32) : self
+      @images.clear
+      @page_count = page_count
+      @keeps_images = true
+      self
     end
   end
 
@@ -690,7 +703,8 @@ module Grant::SQLiteEngine
     # depth (1 for the outermost).
     def open_savepoint : Int32
       raise Error.new("no write transaction is open") unless @in_write_transaction
-      @list_of_savepoint_levels << SavepointLevel.new(@page_count)
+      level = @spare_levels.pop?.try(&.reopen(@page_count)) || SavepointLevel.new(@page_count)
+      @list_of_savepoint_levels << level
       @list_of_savepoint_levels.size
     end
 
@@ -699,18 +713,59 @@ module Grant::SQLiteEngine
       @list_of_savepoint_levels.size
     end
 
+    # Stops the innermost level from imaging the pages it changes (see
+    # `SavepointLevel#keeps_images?`).
+    def skip_savepoint_images : Nil
+      @list_of_savepoint_levels.last?.try(&.keeps_images = false)
+    end
+
+    # The level that images a page changed now: the innermost one, or the
+    # one around it when the innermost keeps no images.
+    private def imaging_level : SavepointLevel?
+      level = @list_of_savepoint_levels.last?
+      return level if level.nil? || level.keeps_images?
+      @list_of_savepoint_levels.size >= 2 ? @list_of_savepoint_levels[-2] : nil
+    end
+
     # Closes the levels from *depth* inward, keeping their changes: each
     # page image a closed level kept passes to the level around it, unless
     # that level already holds an older one.
     def release_savepoint(depth : Int32) : Nil
       while @list_of_savepoint_levels.size >= depth && !@list_of_savepoint_levels.empty?
         level = @list_of_savepoint_levels.pop
-        if parent = @list_of_savepoint_levels.last?
-          level.images.each do |page_number, image|
-            parent.images[page_number] = image unless parent.images.has_key?(page_number)
+        parent = @list_of_savepoint_levels.last?
+        level.images.each do |page_number, image|
+          if parent && !parent.images.has_key?(page_number)
+            parent.images[page_number] = image
+          elsif image
+            recycle_image(image)
           end
         end
+        @spare_levels << level if @spare_levels.size < SPARE_LEVEL_LIMIT
       end
+    end
+
+    # Released savepoint levels, reopened for the next statement instead of
+    # allocating a level (and its image table) per statement.
+    @spare_levels = [] of SavepointLevel
+    SPARE_LEVEL_LIMIT = 8
+
+    # Page images savepoint levels no longer hold, kept to take the next
+    # image without allocating (a savepoint per statement images every page
+    # the transaction already changed, as C's sub-journal does).
+    @spare_images = [] of Bytes
+    SPARE_IMAGE_LIMIT = 64
+
+    private def recycle_image(image : Bytes) : Nil
+      @spare_images << image if @spare_images.size < SPARE_IMAGE_LIMIT && image.size == @page_size
+    end
+
+    private def image_of(buffer : Bytes) : Bytes
+      if (spare = @spare_images.pop?) && spare.size == buffer.size
+        spare.copy_from(buffer.to_unsafe, buffer.size)
+        return spare
+      end
+      buffer.dup
     end
 
     # Puts every page back as it was when level *depth* opened, innermost
@@ -726,8 +781,9 @@ module Grant::SQLiteEngine
           if image
             if buffer = @dirty[page_number]?
               buffer.copy_from(image.to_unsafe, image.size)
+              recycle_image(image)
             else
-              @dirty[page_number] = image.dup
+              @dirty[page_number] = image
             end
           else
             @dirty.delete(page_number)
@@ -750,16 +806,18 @@ module Grant::SQLiteEngine
       raise Error.new("no write transaction is open") unless @in_write_transaction
       @change_count &+= 1
       if buffer = @dirty[page_number]?
-        if level = @list_of_savepoint_levels.last?
-          level.images[page_number] = buffer.dup unless level.images.has_key?(page_number)
+        if level = imaging_level
+          level.images[page_number] = image_of(buffer) unless level.images.has_key?(page_number)
         end
         return buffer
       end
       buffer = page_number <= @page_count ? read_page(page_number) : Bytes.new(@page_size)
-      if page_number <= @original_page_count && !@journal_images.has_key?(page_number)
+      # A rollback journal needs each page's original; in WAL mode a rollback
+      # reads the originals back from the snapshot.
+      if @wal_log.nil? && page_number <= @original_page_count && !@journal_images.has_key?(page_number)
         @journal_images[page_number] = buffer.dup
       end
-      if level = @list_of_savepoint_levels.last?
+      if level = imaging_level
         level.images[page_number] = nil unless level.images.has_key?(page_number)
       end
       @dirty[page_number] = buffer

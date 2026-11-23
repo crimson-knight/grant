@@ -87,6 +87,20 @@ module JsonSpecFixture
       "SELECT EXISTS (SELECT 1 FROM json_each('[{\"a\":1},{\"a\":2}]', '$') AS e WHERE CASE WHEN e.type = 'object' THEN (json_extract(e.value, '$.a') = 2) ELSE 0 END)",
       "SELECT json_extract('[1,2]', '$[1]') + 1, typeof(json_extract('{\"a\":[1]}', '$.a')), typeof('[1]' -> '$'), typeof('[1]' ->> '$')",
       "SELECT json_type('{\"a\":1}', 'x'), json_type('{\"a\":1}', '$.a.b')",
+      # The rowid json_each reports and its HIDDEN json and root columns.
+      "SELECT rowid, oid, _rowid_, key, value, json, root FROM json_each('[1,[2],{\"a\":3}]')",
+      "SELECT jx.rowid, jx.id, jx.json, jx.root, jx.fullkey FROM json_tree('{\"a\":[1,{\"b\":2}]}', '$.a') AS jx",
+      "SELECT rowid, json, root FROM json_each(x'cb1b31')",
+      "SELECT * FROM json_each('[1]') AS a NATURAL JOIN json_each('[1]') AS b",
+      # subtype() and the JSON_SUBTYPE of JSON text results.
+      "SELECT subtype(1), subtype(json('[1]')), subtype('[1]' -> '$'), subtype('[1]' ->> '$'), subtype(json(NULL))",
+      "SELECT subtype(json_extract('{\"a\":[1]}', '$.a')), subtype(json_extract('{\"b\":2}', '$.b')), subtype(json_extract('{\"c\":\"[1]\"}', '$.c'))",
+      "SELECT subtype(json_extract('{\"a\":1}', '$.a', '$.b')), subtype('{\"a\":null}' -> 'a'), subtype(NULL -> 'a'), subtype('{}' -> 'a')",
+      "SELECT subtype(CASE WHEN 1 THEN json('{}') END), subtype(iif(0, 1, json('[]'))), subtype(coalesce(NULL, json('1'))), subtype(likely(json('2')))",
+      "SELECT subtype(x) FROM (SELECT json('[1]') AS x)",
+      "WITH t(a) AS MATERIALIZED (SELECT json(1)) SELECT subtype(a) FROM t",
+      "SELECT subtype(json_extract(json('{\"a\":1}'), '$.a'))",
+      "SELECT subtype(json('{'))",
     ].each { |sql| list << {sql, [] of V} }
     list
   end

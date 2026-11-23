@@ -26,6 +26,10 @@ module Grant::SQLiteEngine
     def table_name : String
       @entry.object_name
     end
+
+    # How a stored record of this table maps to its declared columns, built
+    # on first use and kept for the layout's life.
+    getter row_mapping : Database::RowMapping { Database::RowMapping.new(table_name, definition) }
   end
 
   # The write API: schema changes, row inserts, updates and deletes, and
@@ -434,6 +438,23 @@ module Grant::SQLiteEngine
       @table_layouts[key] = TableLayout.new(entry, definition, layouts, text_encoding)
     end
 
+    # `stored_row` in *values* itself, for an array the caller owns (a row
+    # just decoded from its record).
+    private def stored_row!(definition : TableDefinition, values : Array(Value)) : Array(Value)
+      columns = definition.list_of_columns
+      strict = definition.strict?
+      values.size.times do |position|
+        column = columns[position]
+        value = values.unsafe_fetch(position)
+        values[position] = if strict
+                             StoredValue.for_strict_column(column.declared_type, column.column_name, value)
+                           else
+                             StoredValue.for_affinity(column.affinity, value)
+                           end
+      end
+      values
+    end
+
     # The values a row stores, column by column: STRICT type checks, or the
     # column affinity's conversion.
     private def stored_row(definition : TableDefinition, values : Array(Value)) : Array(Value)
@@ -607,7 +628,7 @@ module Grant::SQLiteEngine
       record = btree_writer.table_record(layout.entry.root_page, rowid)
       return unless record
       values = Record.decode(record, text_encoding, layout.entry.root_page)
-      stored_row(layout.definition, RowMapping.new(layout.table_name, layout.definition).map(rowid, values))
+      stored_row!(layout.definition, layout.row_mapping.map(rowid, values))
     end
 
     private def read_row_by_key(layout : TableLayout, key : Array(Value)) : Array(Value)?
@@ -627,7 +648,7 @@ module Grant::SQLiteEngine
       end
       found = btree_writer.index_first_at_least(layout.entry.root_page, stored_key, positions.size, comparator)
       return unless found && comparator.compare(found, stored_key, positions.size) == 0
-      stored_row(definition, RowMapping.new(layout.table_name, definition).map(nil, found))
+      stored_row!(definition, layout.row_mapping.map(nil, found))
     end
 
     private def delete_row(layout : TableLayout, row : Array(Value), rowid : Int64?) : Nil

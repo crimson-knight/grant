@@ -4,9 +4,10 @@ module Grant::SQLiteEngine::Query
   # reads that format, so lookups, rendered text, the ids json_each reports
   # and the errors are C's. Ported: json(), json_extract() with -> and ->>,
   # json_type(), json_valid(), json_array_length(), json_error_position(),
-  # and the json_each / json_tree table functions. The functions that build
-  # or edit JSON (json_array, json_object, json_set, ...) depend on SQLite's
-  # value subtypes and stay out of scope (milestone G6).
+  # and the json_each / json_tree table functions, with the JSON_SUBTYPE
+  # their JSON text results carry (read by subtype()). The functions that
+  # build or edit JSON (json_array, json_object, json_set, ...) read
+  # argument subtypes and stay out of scope (milestone G6).
   module Json
     NULL    =  0_u8
     TRUE    =  1_u8
@@ -21,6 +22,9 @@ module Grant::SQLiteEngine::Query
     TEXTRAW = 10_u8
     ARRAY   = 11_u8
     OBJECT  = 12_u8
+
+    # The subtype json.c gives JSON text results (JSON_SUBTYPE, "J").
+    SUBTYPE = 74_u8
 
     TYPE_NAMES = {"null", "true", "false", "integer", "integer", "real", "real", "text", "text", "text", "text", "array", "object"}
 
