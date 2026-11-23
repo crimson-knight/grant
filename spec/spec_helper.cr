@@ -11,6 +11,13 @@ require "../src/grant/big_decimal"
 require "../src/grant"
 Grant::HealthMonitor.test_mode = true
 
+# GRANT_SQL_CAPTURE names a file that receives every statement a SQLite
+# connection prepares, one per line (scripts/capture_sql_corpus.sh sets it).
+GRANT_SQL_CAPTURE_IO = if capture_path = ENV["GRANT_SQL_CAPTURE"]?
+                         File.open(capture_path, "a").tap(&.sync = true)
+                       end
+Grant.settings.sqlite_statement_capture = GRANT_SQL_CAPTURE_IO
+
 CURRENT_ADAPTER = ENV["CURRENT_ADAPTER"]? || "sqlite"
 ADAPTER_URL     = ENV["#{CURRENT_ADAPTER.upcase}_DATABASE_URL"]? || if CURRENT_ADAPTER == "sqlite"
   "sqlite3:./grant_green.db"
@@ -110,6 +117,8 @@ private def restore_default_spec_runtime_state
   Grant.settings.default_timezone = Grant::TIME_ZONE
   Grant.settings.index_hint_mode = :warn
   Grant.settings.in_clause_limit = 1000
+  Grant.settings.sqlite_engine = :libsqlite3
+  Grant.settings.sqlite_statement_capture = GRANT_SQL_CAPTURE_IO
   Grant::Tenant.clear
   Grant::HealthMonitor.test_mode = true
 

@@ -133,6 +133,14 @@ module Grant
       fun value_bytes = {{ symbol_prefix + "sqlite3_value_bytes" }}(SQLite3Value) : Int32
       fun result_null = {{ symbol_prefix + "sqlite3_result_null" }}(SQLite3Context) : Nil
       fun result_error = {{ symbol_prefix + "sqlite3_result_error" }}(SQLite3Context, UInt8*, Int32) : Nil
+      fun user_data = {{ symbol_prefix + "sqlite3_user_data" }}(SQLite3Context) : Void*
+      fun value_int64 = {{ symbol_prefix + "sqlite3_value_int64" }}(SQLite3Value) : Int64
+      fun value_double = {{ symbol_prefix + "sqlite3_value_double" }}(SQLite3Value) : Float64
+      fun value_blob = {{ symbol_prefix + "sqlite3_value_blob" }}(SQLite3Value) : UInt8*
+      fun result_int64 = {{ symbol_prefix + "sqlite3_result_int64" }}(SQLite3Context, Int64) : Nil
+      fun result_double = {{ symbol_prefix + "sqlite3_result_double" }}(SQLite3Context, Float64) : Nil
+      fun result_text = {{ symbol_prefix + "sqlite3_result_text" }}(SQLite3Context, UInt8*, Int32, Void*) : Nil
+      fun result_blob = {{ symbol_prefix + "sqlite3_result_blob" }}(SQLite3Context, UInt8*, Int32, Void*) : Nil
     end
   {% end %}
 end
