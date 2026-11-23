@@ -606,6 +606,8 @@ module Grant::SQLiteEngine
       written_cookie = written_first_page ? get_u32(written_first_page, SCHEMA_COOKIE_OFFSET) : nil
       @rightmost_path_hint = nil
       @dirty.each_key { |page_number| @cache.delete(page_number) }
+      # Page 1 below comes from the snapshot, not from the rolled-back pages.
+      @dirty.clear
       @page_count = @original_page_count
       if @page_count == 0
         @page_size = 0
