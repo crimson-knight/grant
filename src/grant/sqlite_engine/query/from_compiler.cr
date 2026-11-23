@@ -291,12 +291,8 @@ module Grant::SQLiteEngine::Query
         sort_key(term, position, columns[position].collation)
       end
       limit = query.limit
-      limit_expression = limit.try do |clause|
-        comma_count = clause.comma_form ? clause.offset : nil
-        compile_expression(comma_count || clause.count, recursive_context)
-      end
-      offset_expression = limit.try { |clause| (clause.comma_form ? clause.count : clause.offset).try { |expression| compile_expression(expression, recursive_context) } }
-      offset_expression = nil if limit && limit.comma_form && limit.offset.nil?
+      limit_expression = limit.try { |clause| compile_expression(clause.count, recursive_context) }
+      offset_expression = limit.try(&.offset).try { |expression| compile_expression(expression, recursive_context) }
       producer = RecursiveProducer.new(initial_plan.producer, recursive_plan.producer, queue_row, operator.union_all?,
         columns.map(&.collation), order_keys, limit_expression, offset_expression, RECURSIVE_ROW_BUDGET)
       outer = initial_plan.outer_slots | recursive_plan.outer_slots

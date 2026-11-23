@@ -8,7 +8,7 @@ module Grant::SQLiteEngine::Query
     end
   end
 
-  {% for name in %w[CollateExpr UnaryPlusExpr CastExpr NegateExpr BitNotExpr NotExpr NullTestExpr PassThroughExpr] %}
+  {% for name in %w[CollateExpr UnaryPlusExpr CastExpr NegateExpr BitNotExpr NotExpr NullTestExpr PassThroughExpr TruthExpr] %}
     class {{name.id}}
       def children : Array(Expr)
         [@operand] of Expr

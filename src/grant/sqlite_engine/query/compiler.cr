@@ -127,10 +127,7 @@ module Grant::SQLiteEngine::Query
       count = compile_expression(limit.count, context)
       offset = limit.offset.try { |expression| compile_expression(expression, context) }
       context.aliases_visible = saved
-      # `LIMIT a, b` means OFFSET a LIMIT b.
-      if limit.comma_form && offset
-        count, offset = offset, count
-      end
+      # The parser stores `LIMIT a, b` as count b, offset a.
       {count, offset}
     end
 
@@ -280,6 +277,19 @@ module Grant::SQLiteEngine::Query
           end
         end
       end
+      # resolveOrderByTermToExprList: a column reference resolves against
+      # each SELECT's FROM and matches a result column naming that column.
+      if position.nil? && expression.is_a?(SQL::ColumnReference)
+        plans.each_with_index do |plan, plan_index|
+          break if position
+          resolved = begin
+            compile_expression(expression, contexts[plan_index])
+          rescue SQLError
+            next
+          end
+          position = plan.list_of_columns.index { |column| same_column?(column, resolved) }
+        end
+      end
       raise SQLError.new("#{Compiler.ordinal(index + 1)} ORDER BY term does not match any column in the result set") unless position
       sort_key(term, position, explicit || collations[position])
     end
@@ -396,9 +406,11 @@ module Grant::SQLiteEngine::Query
         alias_name = aliases[index]
         context.list_of_aliases << {alias_name, expression} if alias_name && expression
       end
+      # resolveSelectStep: GROUP BY or an aggregate in the result set makes
+      # an aggregate query (HAVING alone does not).
       aggregate = !core.group_by.empty? || core.columns.any? { |column| column.is_a?(SQL::ExpressionColumn) && contains_aggregate?(column.expression) } ||
-                  (having = core.having) && contains_aggregate?(having) ||
                   order_by.any? { |term| contains_aggregate?(term.expression) }
+      context.aggregate_query = aggregate
       collector = aggregate ? AggregateCollector.new : nil
       # resolveSelectStep's order: the result set, HAVING, WHERE, ORDER BY,
       # then GROUP BY; it decides which unknown name an error reports.
@@ -413,7 +425,17 @@ module Grant::SQLiteEngine::Query
       context.aliases_visible = true
       having_expression = core.having.try { |expression| resolve_expression(expression, context) }
       context.aggregates = nil
-      where = core.where.try { |expression| resolve_expression(expression, context) }
+      # An aggregate query resolves aggregates in WHERE (NC_AllowAgg stays
+      # set) and fails only when generating code for them.
+      late_error = nil
+      where = begin
+        core.where.try { |expression| resolve_expression(expression, context) }
+      rescue error : ResolveError
+        misuse = aggregate ? (error.message || "").match(/\Amisuse of aggregate function (.+)\(\)\z/) : nil
+        raise error unless misuse
+        late_error = "misuse of aggregate: #{misuse[1]}()"
+        nil
+      end
       context.aggregates = collector
       names = (0...expanded.size).map { |index| result_name(aliases[index], expanded[index], spans[index], index) }
       sort_keys = [] of SortKey
@@ -446,6 +468,9 @@ module Grant::SQLiteEngine::Query
         end
         if position = integer_term(term, syntax.size, "GROUP", index)
           group_syntax = syntax[position]
+          if group_syntax && contains_aggregate?(group_syntax)
+            raise SQLError.new("aggregate functions are not allowed in the GROUP BY clause")
+          end
           group_keys << (group_syntax ? resolve_expression(group_syntax, context) : expanded[position])
         else
           group_keys << resolve_expression(term, context)
@@ -458,20 +483,65 @@ module Grant::SQLiteEngine::Query
         slots = context.list_of_entries.map(&.slot)
         aggregation = Aggregation.new(group_keys, key_collations, collector.list_of_calls, having_expression, slots)
       end
+      if collector.nil? && !core.distinct.distinct?
+        local = context.list_of_entries.map(&.slot).to_set
+        sort_keys = sort_keys.reject do |key|
+          term = extras[key.position - expanded.size]?
+          term && pinned_by_equality?(term, key.collation, where, local)
+        end
+      end
       source, where = plan_access(steps, where, context)
       column_collations = expanded.map { |column| column.collation_sequence || Collation::Binary }
       producer = CoreProducer.new(source, where, expanded, extras, aggregation, core.distinct.distinct?, column_collations).as(Producer)
-      if (table = simple_count_table(core, steps, order_by))
+      if table = simple_count_table(core, steps, order_by)
         producer = TableCountProducer.new(@session.database, table)
       end
+      raise SQLError.new(late_error) if late_error
       CorePlan.new(producer, expanded, names, aliases, syntax, sort_keys)
+    end
+
+    # wherePathSatisfiesOrderBy: an ORDER BY term that is a column a WHERE
+    # term pins with `=`, IS or IS NULL to a value from outside this query's
+    # FROM needs no sorting (with `=` and IS, when the comparison's
+    # collation is the term's). Rows that differ only there keep scan order.
+    private def pinned_by_equality?(term : Expr, collation : Collation, where : Expr?, local : Set(Int32)) : Bool
+      column = term
+      while column.is_a?(CollateExpr) || column.is_a?(PassThroughExpr)
+        column = column.children.first
+      end
+      return false unless column.is_a?(ColumnExpr) || column.is_a?(RowidExpr)
+      ExpressionWalk.conjuncts(where).any? do |conjunct|
+        if conjunct.is_a?(NullTestExpr)
+          !conjunct.negated? && same_column?(conjunct.operand, column)
+        elsif conjunct.is_a?(ComparisonExpr) && (conjunct.operator.equal? || conjunct.operator.is?)
+          other = if same_column?(conjunct.left, column)
+                    conjunct.right
+                  elsif same_column?(conjunct.right, column)
+                    conjunct.left
+                  end
+          other && (ExpressionWalk.slots(other) & local).empty? &&
+            Query.binary_collation(conjunct.left, conjunct.right) == collation
+        else
+          false
+        end
+      end
+    end
+
+    private def same_column?(expression : Expr, column : Expr) : Bool
+      if expression.is_a?(ColumnExpr) && column.is_a?(ColumnExpr)
+        expression.slot == column.slot && expression.column == column.column
+      elsif expression.is_a?(RowidExpr) && column.is_a?(RowidExpr)
+        expression.slot == column.slot
+      else
+        false
+      end
     end
 
     # isSimpleCount: one table, no WHERE, GROUP BY or HAVING, and a result
     # that is exactly count(*).
     private def simple_count_table(core : SQL::SelectClause, steps : Array(JoinStep), order_by : Array(SQL::OrderingTerm)) : TableInfo?
       return unless steps.size == 1 && core.where.nil? && core.group_by.empty? && core.having.nil? && order_by.empty?
-      return unless core.columns.size == 1 && !core.distinct.distinct?
+      return if core.columns.size != 1 || core.distinct.distinct?
       column = core.columns[0]
       return unless column.is_a?(SQL::ExpressionColumn)
       call = column.expression

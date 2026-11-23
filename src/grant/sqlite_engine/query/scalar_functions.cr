@@ -297,6 +297,8 @@ module Grant::SQLiteEngine::Query
     def self.quote(argument : Value) : Value
       case argument
       when Float64
+        # quoteFunc's "%!0.15g" writes an infinity as 9.0e+999.
+        return argument > 0 ? "9.0e+999" : "-9.0e+999" if argument.infinite?
         rendered = NumericText.format_float(argument, NumericText::FloatFormat::Generic, 15, alternate_form_2: true)
         if NumericText.ato_f(rendered).value != argument
           rendered = NumericText.format_float(argument, NumericText::FloatFormat::Exponential, 20, alternate_form_2: true)
@@ -307,9 +309,18 @@ module Grant::SQLiteEngine::Query
       when Bytes
         "X'#{hex(argument)}'"
       when String
-        cut = argument.byte_index(0_u8)
-        body = cut ? argument.byte_slice(0, cut) : argument
-        "'#{body.gsub('\'', "''")}'"
+        # quoteFunc doubles each quote byte and copies every other byte as
+        # it is (invalid UTF-8 included), stopping at a NUL.
+        bytes = argument.to_slice
+        cut = bytes.index(0_u8) || bytes.size
+        String.build(cut + 2) do |io|
+          io.write_byte(0x27_u8)
+          bytes[0, cut].each do |byte|
+            io.write_byte(byte)
+            io.write_byte(byte) if byte == 0x27_u8
+          end
+          io.write_byte(0x27_u8)
+        end
       else
         "NULL"
       end

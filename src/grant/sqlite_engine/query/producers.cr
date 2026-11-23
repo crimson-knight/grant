@@ -503,8 +503,12 @@ module Grant::SQLiteEngine::Query
   # With UNION a row already queued once is not queued again; an ORDER BY
   # makes the queue a priority queue; LIMIT stops the output.
   class RecursiveProducer < Producer
-    @output = [] of Array(Value)
-    @position = 0
+    @queue = Deque(Array(Value)).new
+    @seen : Set(Array(EqualityKey))? = nil
+    @remaining = -1_i64
+    @skip = 0_i64
+    @produced = 0_i64
+    @stepped : Array(Value)? = nil
 
     def initialize(@initial : Producer, @recursive : Producer, @queue_row : QueueRowSource, @union_all : Bool,
                    @list_of_collations : Array(Collation), @list_of_order_keys : Array(SortKey), @limit : Expr?,
@@ -520,38 +524,49 @@ module Grant::SQLiteEngine::Query
       if offset_expression = @offset
         skip = Math.max(LimitProducer.integer_or_mismatch(offset_expression.evaluate(frame)), 0_i64)
       end
-      seen = @union_all ? nil : Set(Array(EqualityKey)).new
-      queue = Deque(Array(Value)).new
-      output = [] of Array(Value)
-      produced = 0_i64
-      enqueue = ->(row : Array(Value)) do
-        if seen
-          return unless seen.add?(row.map_with_index { |value, index| ValueSemantics.equality_key(value, @list_of_collations[index]? || Collation::Binary) })
-        end
-        insert(queue, row)
-      end
+      @seen = @union_all ? nil : Set(Array(EqualityKey)).new
+      @queue = Deque(Array(Value)).new
+      @produced = 0_i64
+      @remaining = limit
+      @skip = skip
+      @stepped = nil
       @initial.open(frame)
       while row = @initial.next_row(frame)
-        enqueue.call(row)
+        enqueue(row)
       end
-      until queue.empty? || limit == 0
-        row = queue.shift
-        produced += 1
-        raise SQLError.new("recursive query produced more than #{@row_budget} rows") if produced > @row_budget
-        if skip > 0
-          skip -= 1
-        else
-          output << row
-          limit -= 1 if limit > 0
-        end
-        @queue_row.current = row
-        @recursive.open(frame)
-        while next_row = @recursive.next_row(frame)
-          enqueue.call(next_row)
-        end
+    end
+
+    private def enqueue(row : Array(Value)) : Nil
+      if seen = @seen
+        return unless seen.add?(row.map_with_index { |value, index| ValueSemantics.equality_key(value, @list_of_collations[index]? || Collation::Binary) })
       end
-      @output = output
-      @position = 0
+      insert(@queue, row)
+    end
+
+    # generateWithRecursiveQuery: a row taken from the queue is output, and
+    # its recursive step runs when the next row is wanted.
+    def next_row(frame : Frame) : Array(Value)?
+      loop do
+        if stepped = @stepped
+          @stepped = nil
+          @queue_row.current = stepped
+          @recursive.open(frame)
+          while next_row = @recursive.next_row(frame)
+            enqueue(next_row)
+          end
+        end
+        return if @queue.empty? || @remaining == 0
+        row = @queue.shift
+        @produced += 1
+        raise SQLError.new("recursive query produced more than #{@row_budget} rows") if @produced > @row_budget
+        @stepped = row
+        if @skip > 0
+          @skip -= 1
+          next
+        end
+        @remaining -= 1 if @remaining > 0
+        return row
+      end
     end
 
     # Adds a row to the queue: at the end, or after every row that sorts
@@ -581,13 +596,6 @@ module Grant::SQLiteEngine::Query
         return comparison if comparison != 0
       end
       0
-    end
-
-    def next_row(frame : Frame) : Array(Value)?
-      return if @position >= @output.size
-      row = @output[@position]
-      @position += 1
-      row
     end
   end
 end

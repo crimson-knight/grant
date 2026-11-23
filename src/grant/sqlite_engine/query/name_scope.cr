@@ -82,6 +82,8 @@ module Grant::SQLiteEngine::Query
     # Collects aggregate calls while compiling the result columns, HAVING
     # and ORDER BY of an aggregate query.
     property aggregates : AggregateCollector? = nil
+    # True for a query with GROUP BY or an aggregate in its result set.
+    property? aggregate_query = false
     # Set when an expression of this query (or a query inside it) refers to
     # a row of an enclosing query.
     property? correlated = false

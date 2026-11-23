@@ -339,6 +339,35 @@ module Grant::SQLiteEngine::Query
     end
   end
 
+  # TRUE or FALSE (TK_TRUEFALSE): an unresolved TRUE/FALSE identifier, or
+  # `x IN ()`, which the parser replaces with one.
+  class TrueFalseExpr < ConstantExpr
+    def initialize(truth : Bool)
+      super(truth ? 1_i64 : 0_i64)
+    end
+
+    def true? : Bool
+      value == 1_i64
+    end
+  end
+
+  # `x IS [NOT] TRUE` and `x IS [NOT] FALSE` (TK_TRUTH, OP_IsTrue): never
+  # NULL; a NULL operand is not TRUE and not FALSE.
+  class TruthExpr < Expr
+    def initialize(@operand : Expr, @against_true : Bool, @negated : Bool)
+    end
+
+    def evaluate(frame : Frame) : Value
+      truth = ValueSemantics.truth(@operand.evaluate(frame))
+      matches = truth.nil? ? false : truth == @against_true
+      matches != @negated ? 1_i64 : 0_i64
+    end
+
+    def constant? : Bool
+      @operand.constant?
+    end
+  end
+
   class NotExpr < Expr
     def initialize(@operand : Expr)
       mark_collate_from({@operand})

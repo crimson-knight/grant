@@ -72,6 +72,7 @@ class DifferentialReport
     equal_values:     "rows differing only in which of several equal values is shown",
     evaluation_order: "integer overflow raised by one engine only (rows reached in plan order)",
     offset_by_match:  "C's OFFSET skipped one row per EXISTS match (its rows are not a window of its own full result)",
+    summation_order:  "sum(), avg() or total() of reals equal to 12 digits (reals added in plan order)",
   }
 
   def difference(text : String) : Nil
@@ -127,6 +128,12 @@ module QueryDifferential
     if difference && [expected.error, actual.error].compact == ["integer overflow"]
       return {nil, expected, :evaluation_order}
     end
+    # sum(), avg() and total() of reals add in the order the plan reads
+    # rows (join order, index order), which moves the last bits.
+    if difference && expected.error.nil? && actual.error.nil? && statement.to_sql =~ /\b(sum|avg|total)\(/i &&
+       SQLiteQueryOracle.difference(rounded(expected), rounded(actual), ordered, folded: groups_rows?(statement)).nil?
+      return {nil, expected, :summation_order}
+    end
     if difference && expected.error.nil? && actual.error.nil? &&
        offset_counted_per_match?(connection, statement, parameters, expected, actual)
       return {nil, expected, :offset_by_match}
@@ -161,6 +168,9 @@ module QueryDifferential
     ordered = !statement.order_by.empty?
     full_expected = connection.query(unlimited, parameters)
     full_actual = SQLiteQueryOracle.engine_query(session, unlimited, parameters)
+    # Both raise the same error over every row; which rows a LIMIT returns
+    # before reaching it follows the plan.
+    return true if full_expected.error && full_expected.error == full_actual.error && !ordered
     folded = groups_rows?(statement)
     return false if SQLiteQueryOracle.difference(full_expected, full_actual, ordered, folded: folded)
     limited = actual.list_of_rows.map { |row| folded ? folded_row_token(row) : SQLiteQueryOracle.row_token(row) }
@@ -178,6 +188,14 @@ module QueryDifferential
     end
   end
 
+  # *outcome* with each real rounded to 12 significant digits.
+  def self.rounded(outcome : Outcome) : Outcome
+    rows = outcome.list_of_rows.map do |row|
+      row.map { |value| value.is_a?(Float64) && value.finite? ? ("%.12g" % value).to_f : value }
+    end
+    Outcome.new(outcome.list_of_column_names, rows, outcome.error, outcome.list_of_ties)
+  end
+
   def self.folded_row_token(row : Array(Value)) : String
     row.map { |value| SQLiteQueryOracle.folded_token(value) }.join('|')
   end
@@ -190,8 +208,9 @@ module QueryDifferential
                                      parameters : Array(Value), expected : Outcome, actual : Outcome) : Bool
     limit = statement.limit
     return false unless limit && statement.to_sql.includes?("EXISTS")
-    count, offset = limit.comma_form ? {limit.offset, limit.count} : {limit.count, limit.offset}
-    return false unless count && offset
+    count = limit.count
+    offset = limit.offset
+    return false unless offset
     bounds_sql = "SELECT CAST((#{count.to_sql}) AS INTEGER), CAST((#{offset.to_sql}) AS INTEGER)"
     return false if bounds_sql.includes?('?')
     bounds = connection.query(bounds_sql, [] of Value).list_of_rows.first?
@@ -349,7 +368,7 @@ class CorpusDifferential
     end
     database = Grant::SQLiteEngine::Database.open(path)
     session = Grant::SQLiteEngine::Query::Session.new(database)
-    entries.each_with_index do |(sql, statement), _|
+    entries.each do |(sql, statement)|
       count = connection.parameter_count(sql) || 0
       bindings = count == 0 ? 1 : @bindings
       bindings.times do

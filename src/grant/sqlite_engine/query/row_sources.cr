@@ -250,8 +250,12 @@ module Grant::SQLiteEngine::Query
   # Rows computed by a query (a subquery or view in FROM, a CTE, VALUES,
   # a table-valued function), kept for the execution unless the query
   # refers to an outer row.
+  # Rows are read from the producer as the outer query asks for them (a
+  # co-routine, so an outer LIMIT stops an unbounded recursive CTE) and
+  # kept, so a later pass for the next outer row reads them again.
   class MaterializedSource < RowSource
-    @rows : Array(Array(Value))? = nil
+    @rows = [] of Array(Value)
+    @exhausted = false
     @computed_for : Frame? = nil
     @position = 0
 
@@ -259,13 +263,10 @@ module Grant::SQLiteEngine::Query
     end
 
     def open(frame : Frame) : Nil
-      if @correlated || !@computed_for.same?(frame) || @rows.nil?
-        rows = [] of Array(Value)
+      if @correlated || !@computed_for.same?(frame)
+        @rows = [] of Array(Value)
+        @exhausted = false
         @producer.open(frame)
-        while row = @producer.next_row(frame)
-          rows << row
-        end
-        @rows = rows
         @computed_for = frame
       end
       @position = 0
@@ -273,9 +274,16 @@ module Grant::SQLiteEngine::Query
 
     def advance(frame : Frame) : Bool
       frame.session.tick
-      rows = @rows
-      return false unless rows && @position < rows.size
-      frame.list_of_rows[@slot] = rows[@position]
+      if @position >= @rows.size
+        return false if @exhausted
+        row = @producer.next_row(frame)
+        unless row
+          @exhausted = true
+          return false
+        end
+        @rows << row
+      end
+      frame.list_of_rows[@slot] = @rows[@position]
       frame.list_of_rowids[@slot] = nil
       @position += 1
       true

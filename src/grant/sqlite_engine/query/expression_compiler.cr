@@ -67,13 +67,14 @@ module Grant::SQLiteEngine::Query
       end
     end
 
-    # A name error the resolver records and walks on past (sqlite3ErrorMsg
-    # replaces the message, nNcErr counts it): within one expression the
-    # last such error is the one reported.
+    # A name error the resolver records and walks on past (lookupName turns
+    # the name into NULL and counts nNcErr): within one expression the first
+    # such error, in walk order, is the one reported; a function's own error
+    # comes after its arguments'.
     CONTINUING_ERROR = /\A(no such column|ambiguous column name|no such function|wrong number of arguments|misuse of aggregate)/
 
     # Compiles one expression the way sqlite3ResolveExprNames walks it: name
-    # errors are recorded and the walk goes on; the last one is raised.
+    # errors are recorded and the walk goes on; the first one is raised.
     def resolve_expression(expression : SQL::Expression, context : QueryContext) : Expr
       saved = @list_of_name_errors
       errors = [] of SQLError
@@ -83,8 +84,8 @@ module Grant::SQLiteEngine::Query
       ensure
         @list_of_name_errors = saved
       end
-      if last = errors.last?
-        raise ResolveError.new(last.message || "SQL error", last.result_code)
+      if first = errors.first?
+        raise ResolveError.new(first.message || "SQL error", first.result_code)
       end
       compiled
     end
@@ -92,7 +93,7 @@ module Grant::SQLiteEngine::Query
     # Records *error* when an expression is being resolved; false otherwise.
     private def record_name_error(error : SQLError) : Bool
       errors = @list_of_name_errors
-      return false unless errors && !error.is_a?(ResolveError) && CONTINUING_ERROR.matches?(error.message || "")
+      return false if errors.nil? || error.is_a?(ResolveError) || !CONTINUING_ERROR.matches?(error.message || "")
       errors << error
       true
     end
@@ -238,6 +239,9 @@ module Grant::SQLiteEngine::Query
         if table_name.nil? && current.aliases_visible?
           if alias_entry = current.list_of_aliases.find { |entry| entry[0].compare(column_name, case_insensitive: true) == 0 }
             if current.same?(context)
+              if current.aggregates.nil? && !current.aggregate_query? && contains_aggregate?(alias_entry[1])
+                raise SQLError.new("misuse of aliased aggregate #{alias_entry[0]}")
+              end
               saved = current.aliases_visible?
               current.aliases_visible = false
               compiled = compile_expression(alias_entry[1], current)
@@ -254,8 +258,8 @@ module Grant::SQLiteEngine::Query
       end
       if table_name.nil?
         # sqlite3ExprIdToTrueFalse: an unresolved TRUE or FALSE is 1 or 0.
-        return ConstantExpr.new(1_i64) if column_name.compare("true", case_insensitive: true) == 0
-        return ConstantExpr.new(0_i64) if column_name.compare("false", case_insensitive: true) == 0
+        return TrueFalseExpr.new(true) if column_name.compare("true", case_insensitive: true) == 0
+        return TrueFalseExpr.new(false) if column_name.compare("false", case_insensitive: true) == 0
       end
       full = table_name ? "#{table_name}.#{column_name}" : column_name
       raise SQLError.new("no such column: #{full}")
@@ -358,6 +362,14 @@ module Grant::SQLiteEngine::Query
     end
 
     private def compile_comparison(operator : ComparisonOperator, left : Expr, right : Expr) : Expr
+      # resolveExprStep: IS and IS NOT against TRUE or FALSE are truth tests.
+      truth = right
+      while truth.is_a?(CollateExpr) || truth.is_a?(PassThroughExpr)
+        truth = truth.children.first
+      end
+      if (operator.is? || operator.is_not?) && truth.is_a?(TrueFalseExpr) && !left.is_a?(VectorExpr)
+        return TruthExpr.new(left, truth.true?, operator.is_not?)
+      end
       left_vector = left.as?(VectorExpr)
       right_vector = right.as?(VectorExpr)
       if left_vector || right_vector
@@ -408,6 +420,9 @@ module Grant::SQLiteEngine::Query
     end
 
     private def compile_in_list(expression : SQL::InList, context : QueryContext) : Expr
+      # The parser replaces `x IN ()` with FALSE (`NOT IN ()` with TRUE) and
+      # drops x unresolved.
+      return TrueFalseExpr.new(expression.negated) if expression.values.empty?
       operand = compile_expression(expression.operand, context)
       values = expression.values.map { |value| compile_expression(value, context) }
       if vector = operand.as?(VectorExpr)
@@ -456,8 +471,8 @@ module Grant::SQLiteEngine::Query
                                          context : QueryContext) : Bool
       return false unless query.with_clause.nil? && query.cores.size == 1 && query.limit.nil? && plan.outer_slots.empty?
       core = query.cores[0]
-      return false unless core.is_a?(SQL::SelectClause) && !core.distinct.distinct? && core.where.nil? &&
-                          core.group_by.empty? && core.having.nil?
+      return false unless core.is_a?(SQL::SelectClause)
+      return false if core.distinct.distinct? || core.where || !core.group_by.empty? || core.having
       return false if core.columns.any? { |column| !column.is_a?(SQL::ExpressionColumn) || contains_aggregate?(column.expression) }
       from = core.from
       return false unless from && from.items.size == 1
@@ -564,18 +579,17 @@ module Grant::SQLiteEngine::Query
       when "printf", "format", "json", "json_extract", "date", "time", "datetime", "julianday", "strftime", "unixepoch"
         raise UnsupportedSQL.new("function #{name}()")
       end
-      definition = ScalarFunctions.lookup(lower, count)
-      if definition.nil? && JSON_FUNCTION_NAME.matches?(lower)
+      if !ScalarFunctions.known?(lower) && JSON_FUNCTION_NAME.matches?(lower)
         raise UnsupportedSQL.new("JSON function #{name}() (milestone G6)")
       end
-      unless definition
-        error = SQLError.new("no such function: #{name}")
+      # The arguments resolve before the function's own errors are reported.
+      arguments = call.arguments.map { |argument| compile_expression(argument, context) }
+      definition = begin
+        ScalarFunctions.lookup(lower, count) || raise SQLError.new("no such function: #{name}")
+      rescue error : SQLError
         raise error unless record_name_error(error)
-        # resolveExprStep reports the function, then walks its arguments.
-        call.arguments.each { |argument| compile_expression(argument, context) }
         return ConstantExpr.new(nil)
       end
-      arguments = call.arguments.map { |argument| compile_expression(argument, context) }
       FunctionExpr.new(definition, arguments)
     end
 
