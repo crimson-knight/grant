@@ -155,6 +155,11 @@ module Grant::SQLiteEngine::Query
       @table_info.name
     end
 
+    # The database holding the table (main or temp).
+    def database : Database
+      @table_info.database
+    end
+
     def definition : TableDefinition
       @table_info.definition
     end

@@ -37,7 +37,7 @@ module Grant::SQLiteEngine::Query
       when "pragma_foreign_key_list"
         foreign_key_list(argument, session)
       when "pragma_database_list"
-        [[0_i64, "main", session.database.file_name] of Value]
+        session.database_list_rows
       else
         [] of Array(Value)
       end
@@ -92,7 +92,7 @@ module Grant::SQLiteEngine::Query
     end
 
     private def self.indexes_of(table : TableInfo, session : Session) : Array(SchemaEntry)
-      session.database.schema.list_of_indexes.select do |entry|
+      table.database.schema.list_of_indexes.select do |entry|
         entry.table_name.compare(table.name, case_insensitive: true) == 0
       end.reverse!
     end

@@ -226,7 +226,7 @@ module Grant::SQLiteEngine::Query
       column_name = reference.column.value
       table_name = reference.table.try(&.value)
       if schema = reference.schema
-        unless schema.value.compare("main", case_insensitive: true) == 0
+        unless schema.value.compare("main", case_insensitive: true) == 0 || schema.value.compare("temp", case_insensitive: true) == 0
           raise SQLError.new("no such column: #{schema.value}.#{table_name}.#{column_name}")
         end
       end
@@ -328,11 +328,13 @@ module Grant::SQLiteEngine::Query
 
     private def compile_binary(expression : SQL::BinaryOperation, context : QueryContext) : Expr
       operator = expression.operator
-      if operator.extract? || operator.extract_text?
-        raise UnsupportedSQL.new("the -> and ->> operators (JSON)")
-      end
       left = compile_expression(expression.left, context)
       right = compile_expression(expression.right, context)
+      if operator.extract? || operator.extract_text?
+        # The parser makes `a -> b` the function "->" of two arguments.
+        definition = ScalarFunctions.lookup(operator.extract? ? "->" : "->>", 2) || raise Error.new("JSON operator missing")
+        return FunctionExpr.new(definition, [left, right] of Expr)
+      end
       case operator
       when .or?          then LogicalExpr.new(false, left, right)
       when .and?         then LogicalExpr.new(true, left, right)
@@ -523,7 +525,8 @@ module Grant::SQLiteEngine::Query
 
     # ---------------------------------------------------------- functions
 
-    # The JSON functions of json.c, which arrive with milestone G6.
+    # The JSON functions of json.c not yet ported (those that build or edit
+    # JSON, which need value subtypes) arrive with milestone G6.
     JSON_FUNCTION_NAME = /\Ajsonb?(_[a-z_]+)?\z/
 
     private def compile_function(call : SQL::FunctionCall, context : QueryContext) : Expr
@@ -576,7 +579,7 @@ module Grant::SQLiteEngine::Query
           raise SQLError.new("second argument to likelihood() must be a constant between 0.0 and 1.0")
         end
         return PassThroughExpr.new(compile_expression(call.arguments[0], context))
-      when "printf", "format", "json", "json_extract", "date", "time", "datetime", "julianday", "strftime", "unixepoch"
+      when "printf", "format", "date", "time", "datetime", "julianday", "strftime", "unixepoch"
         raise UnsupportedSQL.new("function #{name}()")
       end
       if !ScalarFunctions.known?(lower) && JSON_FUNCTION_NAME.matches?(lower)

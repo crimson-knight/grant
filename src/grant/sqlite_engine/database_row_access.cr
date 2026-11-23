@@ -216,7 +216,7 @@ module Grant::SQLiteEngine
       layout = IndexLayout.build(SchemaEntry.new("index", name, table_entry.object_name, root, statement.stored_sql), table, text_encoding)
       schema_changed
       run.session.reset_schema
-      write_table = run.table(table_entry.object_name)
+      write_table = run.table(table_entry.object_name, run.session.schema_name_of(self))
       rule = write_table.list_of_indexes.find { |candidate| candidate.layout.entry.object_name == name }
       # Expression terms resolve against the table now, as
       # sqlite3ResolveSelfReference does, even when it holds no rows.

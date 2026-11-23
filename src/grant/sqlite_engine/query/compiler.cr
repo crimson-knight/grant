@@ -495,7 +495,7 @@ module Grant::SQLiteEngine::Query
       column_collations = expanded.map { |column| column.collation_sequence || Collation::Binary }
       producer = CoreProducer.new(source, where, expanded, extras, aggregation, core.distinct.distinct?, column_collations).as(Producer)
       if table = simple_count_table(core, steps, order_by)
-        producer = TableCountProducer.new(@session.database, table)
+        producer = TableCountProducer.new(table.database, table)
       end
       raise SQLError.new(late_error) if late_error
       CorePlan.new(producer, expanded, names, aliases, syntax, sort_keys)

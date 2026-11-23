@@ -47,8 +47,10 @@ module Grant::SQLiteEngine
         end
         expect.call("INDEX")
       else
+        # TEMP goes where the caller puts the table (a session's temp
+        # database); the stored text starts "CREATE TABLE " either way.
         if tokens[position]?.try { |token| token.keyword?("TEMP") || token.keyword?("TEMPORARY") }
-          raise UnsupportedSQL.new("TEMP tables")
+          position += 1
         end
         if tokens[position]?.try(&.keyword?("VIRTUAL"))
           raise UnsupportedSQL.new("virtual tables")
@@ -65,8 +67,8 @@ module Grant::SQLiteEngine
       name = tokens[position]? || raise UnsupportedSQL.new("CREATE statement without a name")
       if tokens[position + 1]?.try(&.text.==("."))
         database_name = CreateStatement.unquote(name.text)
-        raise UnsupportedSQL.new("TEMP schema objects") if database_name.compare("temp", case_insensitive: true) == 0
-        raise SchemaError.new("unknown database #{database_name}") unless database_name.compare("main", case_insensitive: true) == 0
+        known = database_name.compare("main", case_insensitive: true) == 0 || database_name.compare("temp", case_insensitive: true) == 0
+        raise SchemaError.new("unknown database #{database_name}") unless known
         name = tokens[position + 2]? || raise UnsupportedSQL.new("CREATE statement without a name")
       end
       @object_name = CreateStatement.unquote(name.text)

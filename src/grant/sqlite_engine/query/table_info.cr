@@ -9,12 +9,15 @@ module Grant::SQLiteEngine::Query
     getter list_of_affinities : Array(ExpressionAffinity)
     getter list_of_collations : Array(Collation)
     getter list_of_indexes : Array(IndexLayout)
+    # The database holding the table: the main file, or the connection's
+    # temp database.
+    getter database : Database
 
     @stored_order : Array(Int32)
     @in_place : Bool
     @real_columns : Array(Int32)
 
-    def initialize(@entry : SchemaEntry, @definition : TableDefinition, @list_of_indexes : Array(IndexLayout))
+    def initialize(@entry : SchemaEntry, @definition : TableDefinition, @list_of_indexes : Array(IndexLayout), @database : Database)
       columns = @definition.list_of_columns
       @list_of_column_names = columns.map(&.column_name)
       @list_of_affinities = columns.map { |column| ExpressionAffinity.from(column.affinity) }

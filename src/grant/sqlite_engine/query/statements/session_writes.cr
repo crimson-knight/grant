@@ -32,33 +32,37 @@ module Grant::SQLiteEngine::Query
       @write_tables.clear
       @child_tables = nil
       @database.forget_layouts
+      @temp_database.try(&.forget_layouts)
     end
 
     # The rules for writing rows of *name*, or nil when there is no such
     # table.
-    def write_table(name : String) : WriteTable?
-      info = table(name)
+    def write_table(name : String, schema : String? = nil) : WriteTable?
+      info = table(name, schema)
       return unless info
-      key = name.downcase
+      key = "#{schema.try(&.downcase)}\0#{name.downcase}"
       cached = @write_tables[key]?
       return cached if cached && cached.table_info.same?(info)
       info.check_readable
-      @write_tables[key] = WriteTable.new(info, @database.write_layout(info.name))
+      @write_tables[key] = WriteTable.new(info, info.database.write_layout(info.name))
     end
 
     # The tables whose foreign keys name *parent* (lower case names).
     def list_of_child_tables(parent : String) : Array(String)
       map = @child_tables ||= begin
         found = {} of String => Array(String)
-        @database.schema.list_of_tables.each do |entry|
-          next unless entry.has_a_btree?
-          sql = entry.sql
-          next unless sql && sql.matches?(/references/i)
-          rules = write_table(entry.object_name)
-          next unless rules
-          rules.list_of_foreign_keys.each do |rule|
-            list = found[rule.parent_table.downcase] ||= [] of String
-            list << entry.object_name unless list.includes?(entry.object_name)
+        list_of_databases.each do |database|
+          next if database.page_count == 0
+          database.schema.list_of_tables.each do |entry|
+            next unless entry.has_a_btree?
+            sql = entry.sql
+            next unless sql && sql.matches?(/references/i)
+            rules = write_table(entry.object_name, schema_name_of(database))
+            next unless rules
+            rules.list_of_foreign_keys.each do |rule|
+              list = found[rule.parent_table.downcase] ||= [] of String
+              list << entry.object_name unless list.includes?(entry.object_name)
+            end
           end
         end
         found
@@ -67,6 +71,66 @@ module Grant::SQLiteEngine::Query
     end
 
     # --- Transactions -------------------------------------------------------
+    #
+    # The temp database's pager follows the main pager's transaction: it
+    # joins a write transaction when one is open, keeps a savepoint for
+    # each main savepoint opened while it takes part (`@temp_marks`, main
+    # depth to temp depth), and commits or rolls back with it. A rollback
+    # to a savepoint opened before temp joined undoes all of temp's part.
+
+    @temp_marks = {} of Int32 => Int32
+
+    private def join_temp_write : Nil
+      temp = @temp_database
+      return unless temp
+      temp.pager.begin_write unless temp.pager.in_write_transaction?
+    end
+
+    private def open_savepoint_everywhere : Int32
+      depth = @database.pager.open_savepoint
+      if (temp = @temp_database) && temp.pager.in_write_transaction?
+        @temp_marks[depth] = temp.pager.open_savepoint
+      end
+      depth
+    end
+
+    private def release_savepoint_everywhere(depth : Int32) : Nil
+      @database.pager.release_savepoint(depth)
+      if (temp_depth = @temp_marks[depth]?) && (temp = @temp_database) && temp.pager.in_write_transaction?
+        temp.pager.release_savepoint(temp_depth)
+      end
+      @temp_marks.reject! { |main_depth, _| main_depth >= depth }
+    end
+
+    private def rollback_to_savepoint_everywhere(depth : Int32) : Nil
+      @database.pager.rollback_to_savepoint(depth)
+      temp = @temp_database
+      return unless temp && temp.pager.in_write_transaction?
+      if temp_depth = @temp_marks[depth]?
+        temp.pager.rollback_to_savepoint(temp_depth)
+        @temp_marks.reject! { |main_depth, _| main_depth > depth }
+      else
+        temp.pager.rollback
+        @temp_marks.clear
+        temp.pager.begin_write
+      end
+    end
+
+    private def commit_everywhere : Nil
+      @database.pager.commit
+      if (temp = @temp_database) && temp.pager.in_write_transaction?
+        temp.pager.commit
+      end
+      @temp_marks.clear
+    end
+
+    private def rollback_everywhere : Nil
+      @database.pager.rollback
+      if (temp = @temp_database) && temp.pager.in_write_transaction?
+        temp.pager.rollback
+      end
+      @temp_marks.clear
+    end
 
     # Takes the write lock for the open transaction or for one statement,
     # waiting up to busy_timeout for another connection to finish. The
@@ -74,12 +138,16 @@ module Grant::SQLiteEngine::Query
     # open in the pager here.
     def begin_write_transaction : Nil
       pager = @database.pager
-      return if pager.in_write_transaction?
+      if pager.in_write_transaction?
+        join_temp_write
+        return
+      end
       wait_while_busy { pager.begin_write }
+      join_temp_write
       refresh_after_other_connections
       @list_of_savepoints.each_with_index do |mark, position|
         next unless mark.depth < 0
-        @list_of_savepoints[position] = mark.copy_with(depth: pager.open_savepoint)
+        @list_of_savepoints[position] = mark.copy_with(depth: open_savepoint_everywhere)
       end
     end
 
@@ -143,15 +211,14 @@ module Grant::SQLiteEngine::Query
       if @deferred_violations > 0
         raise ConstraintError.new("FOREIGN KEY constraint failed")
       end
-      pager = @database.pager
-      pager.commit if pager.in_write_transaction?
+      commit_everywhere if @database.pager.in_write_transaction?
       end_transaction
     end
 
     # ROLLBACK of the whole transaction.
     def rollback_transaction : Nil
       raise SQLError.new("cannot rollback - no transaction is active") unless @in_transaction
-      @database.pager.rollback
+      rollback_everywhere
       end_transaction
       reset_schema
     end
@@ -174,7 +241,7 @@ module Grant::SQLiteEngine::Query
         begin_transaction
         @opened_by_savepoint = true
       end
-      depth = @database.pager.in_write_transaction? ? @database.pager.open_savepoint : -1
+      depth = @database.pager.in_write_transaction? ? open_savepoint_everywhere : -1
       @list_of_savepoints << SavepointMark.new(name, depth, @deferred_violations)
     end
 
@@ -193,7 +260,7 @@ module Grant::SQLiteEngine::Query
         return
       end
       mark = @list_of_savepoints[position]
-      @database.pager.release_savepoint(mark.depth) if mark.depth >= 0
+      release_savepoint_everywhere(mark.depth) if mark.depth >= 0
       @list_of_savepoints.delete_at(position..)
     end
 
@@ -201,7 +268,7 @@ module Grant::SQLiteEngine::Query
     def rollback_to(name : String) : Nil
       position = savepoint_position(name)
       mark = @list_of_savepoints[position]
-      @database.pager.rollback_to_savepoint(mark.depth) if mark.depth >= 0
+      rollback_to_savepoint_everywhere(mark.depth) if mark.depth >= 0
       @list_of_savepoints.delete_at((position + 1)..)
       @deferred_violations = mark.deferred_violations
       reset_schema
@@ -221,7 +288,7 @@ module Grant::SQLiteEngine::Query
       autocommit = !@in_transaction
       begin_write_transaction
       pager = @database.pager
-      depth = pager.open_savepoint
+      depth = open_savepoint_everywhere
       saved_deferred = @deferred_violations
       run = WriteRun.new(self, list_of_parameters)
       hold = false
@@ -240,11 +307,11 @@ module Grant::SQLiteEngine::Query
           error = ConstraintError.new("FOREIGN KEY constraint failed")
         end
         if error.action.fail?
-          pager.release_savepoint(depth)
+          release_savepoint_everywhere(depth)
           commit_statement_transaction if autocommit
           record_changes(run.changes) if counts_changes
         elsif error.action.rollback?
-          pager.rollback
+          rollback_everywhere
           end_transaction
           reset_schema
           record_changes(0_i64) if counts_changes
@@ -255,14 +322,14 @@ module Grant::SQLiteEngine::Query
         raise error
       rescue error
         if !autocommit && !run.statement_journal? && error.is_a?(SQLError) && pager.in_write_transaction?
-          pager.release_savepoint(depth)
+          release_savepoint_everywhere(depth)
         else
           undo_statement(depth, autocommit, saved_deferred)
         end
         record_changes(0_i64) if counts_changes
         raise error
       end
-      pager.release_savepoint(depth)
+      release_savepoint_everywhere(depth)
       record_changes(run.changes) if counts_changes
       if autocommit
         if hold
@@ -285,7 +352,7 @@ module Grant::SQLiteEngine::Query
       return unless @pending_commit
       @pending_commit = false
       if @deferred_violations > 0
-        @database.pager.rollback
+        rollback_everywhere
         @deferred_violations = 0_i64
         reset_schema
         raise ConstraintError.new("FOREIGN KEY constraint failed")
@@ -296,12 +363,15 @@ module Grant::SQLiteEngine::Query
     # Commits one autocommit statement's transaction, waiting up to
     # busy_timeout for readers; a commit still refused rolls back.
     private def commit_statement_transaction : Nil
-      pager = @database.pager
       @deferred_violations = 0_i64
       begin
-        wait_while_busy { pager.commit }
+        wait_while_busy { @database.pager.commit }
+        if (temp = @temp_database) && temp.pager.in_write_transaction?
+          temp.pager.commit
+        end
+        @temp_marks.clear
       rescue error
-        pager.rollback
+        rollback_everywhere
         reset_schema
         raise error
       end
@@ -310,11 +380,11 @@ module Grant::SQLiteEngine::Query
     private def undo_statement(depth : Int32, autocommit : Bool, saved_deferred : Int64) : Nil
       pager = @database.pager
       if autocommit
-        pager.rollback
+        rollback_everywhere
         @deferred_violations = 0_i64
       elsif pager.in_write_transaction?
-        pager.rollback_to_savepoint(depth)
-        pager.release_savepoint(depth)
+        rollback_to_savepoint_everywhere(depth)
+        release_savepoint_everywhere(depth)
         @deferred_violations = saved_deferred
       end
       reset_schema

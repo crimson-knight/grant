@@ -177,19 +177,17 @@ module Grant::SQLiteEngine::Query
           return {entry, MaterializedSource.new(slot, plan.producer, !plan.outer_slots.empty?).as(RowSource)}
         end
       end
-      if schema && !schema.compare("main", case_insensitive: true).zero?
-        if schema.compare("temp", case_insensitive: true).zero?
-          raise SQLError.new("no such table: #{schema}.#{name}")
-        end
+      temp_schema = schema && schema.compare("temp", case_insensitive: true).zero?
+      if schema && !temp_schema && !schema.compare("main", case_insensitive: true).zero?
         raise SQLError.new("no such table: #{schema}.#{name}")
       end
-      if view = @session.view(name)
+      if !temp_schema && (view = @session.view(name))
         plan = compile_view(view)
         slot = allocate_slot
         entry = FromEntry.new(alias_name, slot, subquery_columns(plan, view.list_of_column_names, view_name: name), nil)
         return {entry, MaterializedSource.new(slot, plan.producer, false).as(RowSource)}
       end
-      table = @session.table(name)
+      table = @session.table(name, schema)
       # An eponymous table-valued function (pragma_database_list) named
       # without arguments reads as a table.
       if table.nil? && (Catalog::COLUMNS.has_key?(name.downcase) || name.downcase.in?("json_each", "json_tree"))
@@ -212,7 +210,7 @@ module Grant::SQLiteEngine::Query
         entry.indexed_by = indexed_by.value
       end
       entry.not_indexed = reference.not_indexed
-      {entry, TableScanSource.new(@session.database, table, slot).as(RowSource)}
+      {entry, TableScanSource.new(table.database, table, slot).as(RowSource)}
     end
 
     # A CTE's body, compiled once per reference. A recursive CTE whose body
@@ -344,7 +342,17 @@ module Grant::SQLiteEngine::Query
 
     private def catalog_source(display_name : String, alias_name : String, arguments : Array(Expr)) : {FromEntry, RowSource}
       name = display_name.downcase
-      raise UnsupportedSQL.new("JSON table function #{display_name} (milestone G6)") if name.in?("json_each", "json_tree", "jsonb_each", "jsonb_tree")
+      if name.in?("json_each", "json_tree")
+        if arguments.size > 2
+          raise SQLError.new("too many arguments on #{display_name}() - max 2")
+        end
+        slot = allocate_slot
+        columns = JsonEachProducer::COLUMNS.map { |column_name| SourceColumn.new(column_name, ExpressionAffinity::Blob, Collation::Binary) }
+        correlated = arguments.any? { |argument| !argument.constant? }
+        producer = JsonEachProducer.new(arguments, recursive: name == "json_tree")
+        return {FromEntry.new(alias_name, slot, columns, nil), MaterializedSource.new(slot, producer, correlated).as(RowSource)}
+      end
+      raise UnsupportedSQL.new("JSON table function #{display_name} (milestone G6)") if name.in?("jsonb_each", "jsonb_tree")
       producer = Catalog.function_producer(name, arguments, @session) || raise SQLError.new("no such table: #{display_name}")
       slot = allocate_slot
       columns = Catalog.function_columns(name).map { |column_name| SourceColumn.new(column_name, ExpressionAffinity::Blob, Collation::Binary) }

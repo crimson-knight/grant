@@ -18,8 +18,10 @@ module Grant::SQLiteEngine::Query
     # The SQLite release whose behavior the engine reproduces.
     SQLITE_VERSION = "3.51.0"
 
-    MASTER_SQL   = "CREATE TABLE sqlite_master(type text,name text,tbl_name text,rootpage int,sql text)"
-    MASTER_NAMES = %w[sqlite_master sqlite_schema]
+    MASTER_SQL        = "CREATE TABLE sqlite_master(type text,name text,tbl_name text,rootpage int,sql text)"
+    MASTER_NAMES      = %w[sqlite_master sqlite_schema]
+    TEMP_MASTER_SQL   = "CREATE TABLE sqlite_temp_master(type text,name text,tbl_name text,rootpage int,sql text)"
+    TEMP_MASTER_NAMES = %w[sqlite_temp_master sqlite_temp_schema]
 
     alias UserFunction = Array(Value) -> Value
 
@@ -31,7 +33,47 @@ module Grant::SQLiteEngine::Query
     @user_functions = {} of String => Hash(Int32, UserFunction)
     @tables = {} of String => TableInfo?
     @views = {} of String => ViewInfo?
-    @schema_cookie : UInt32? = nil
+    @schema_stamp : {UInt32?, UInt32?} = {nil, nil}
+
+    # The connection's TEMP database (schema "temp"), held in memory and
+    # created when a statement first needs it, as C opens it lazily; it
+    # goes when the session does.
+    getter temp_database : Database? = nil
+
+    # The temp database, created on first use. Inside an open write
+    # transaction it joins that transaction, so ROLLBACK undoes its
+    # changes with the main file's.
+    def temp_database! : Database
+      database = @temp_database ||= Database.new(Pager.open_read_write(MemoryFileSystem.new, ":memory:"))
+      join_temp_write if @database.pager.in_write_transaction?
+      database
+    end
+
+    # The database a schema name means: "main", "temp", or nil when the
+    # name is no database of this connection.
+    def database_named(schema : String) : Database?
+      return @database if schema.compare("main", case_insensitive: true) == 0
+      return temp_database! if schema.compare("temp", case_insensitive: true) == 0
+      nil
+    end
+
+    # PRAGMA database_list: main, and temp once it exists.
+    def database_list_rows : Array(Array(Value))
+      rows = [[0_i64, "main", @database.file_name] of Value]
+      rows << [1_i64, "temp", ""] of Value if @temp_database
+      rows
+    end
+
+    # The schema name of *database* ("main" or "temp").
+    def schema_name_of(database : Database) : String
+      database.same?(@temp_database) ? "temp" : "main"
+    end
+
+    # The schema cookies of the main and temp databases: a statement
+    # compiled under other cookies compiles again.
+    def schema_stamp : {UInt32?, UInt32?}
+      {@database.header.try(&.schema_cookie), @temp_database.try(&.header).try(&.schema_cookie)}
+    end
 
     def initialize(@database : Database)
     end
@@ -80,12 +122,20 @@ module Grant::SQLiteEngine::Query
       PreparedQuery.new(self, sql)
     end
 
-    # The table named *name*, or nil.
-    def table(name : String) : TableInfo?
+    # The table named *name*, or nil: without a *schema*, a TEMP table
+    # hides a main table of the same name (sqlite3LocateTable searches
+    # temp first).
+    def table(name : String, schema : String? = nil) : TableInfo?
       check_schema
-      key = name.downcase
+      key = "#{schema.try(&.downcase)}\0#{name.downcase}"
       return @tables[key] if @tables.has_key?(key)
-      @tables[key] = load_table(name)
+      @tables[key] = if schema
+                       database = database_named(schema)
+                       database ? load_table(name, database, qualified: true) : nil
+                     else
+                       temp = @temp_database
+                       (temp ? load_table(name, temp, qualified: false) : nil) || load_table(name, @database, qualified: false)
+                     end
     end
 
     def view(name : String) : ViewInfo?
@@ -95,11 +145,21 @@ module Grant::SQLiteEngine::Query
       @views[key] = load_view(name)
     end
 
+    # The databases a name without a schema is looked for in, temp first.
+    def list_of_databases : Array(Database)
+      temp = @temp_database
+      temp ? [temp, @database] : [@database]
+    end
+
     # The layout of the index named *name*, or nil.
     def index_layout(name : String) : IndexLayout?
-      entry = @database.schema.list_of_indexes.find { |candidate| candidate.object_name.compare(name, case_insensitive: true) == 0 }
-      return unless entry
-      table(entry.table_name).try(&.list_of_indexes.find { |layout| layout.entry.object_name == entry.object_name })
+      list_of_databases.each do |database|
+        next if database.page_count == 0
+        entry = database.schema.list_of_indexes.find { |candidate| candidate.object_name.compare(name, case_insensitive: true) == 0 }
+        next unless entry
+        return table(entry.table_name, schema_name_of(database)).try(&.list_of_indexes.find { |layout| layout.entry.object_name == entry.object_name })
+      end
+      nil
     end
 
     # Forgets what was learned about the schema, so the next statement
@@ -110,31 +170,48 @@ module Grant::SQLiteEngine::Query
     end
 
     private def check_schema : Nil
-      cookie = @database.header.try(&.schema_cookie)
-      return if cookie == @schema_cookie
-      @schema_cookie = cookie
+      stamp = schema_stamp
+      return if stamp == @schema_stamp
+      @schema_stamp = stamp
       reset_schema
     end
 
-    private def load_table(name : String) : TableInfo?
-      if MASTER_NAMES.includes?(name.downcase)
-        entry = SchemaEntry.new("table", "sqlite_master", "sqlite_master", 1_u32, MASTER_SQL)
-        return TableInfo.new(entry, TableDefinition.parse(MASTER_SQL), [] of IndexLayout)
+    # *qualified*: the statement named the schema.
+    private def load_table(name : String, database : Database, qualified : Bool) : TableInfo?
+      lower = name.downcase
+      temp = database.same?(@temp_database)
+      if MASTER_NAMES.includes?(lower) || TEMP_MASTER_NAMES.includes?(lower)
+        # Each database's schema table is sqlite_master to a name
+        # qualified with it; unqualified, sqlite_master is main's and
+        # sqlite_temp_master temp's (whose database then comes into being).
+        if TEMP_MASTER_NAMES.includes?(lower)
+          return if !temp && qualified
+          unless temp
+            database = temp_database!
+            temp = true
+          end
+        else
+          return if temp && !qualified
+        end
+        sql = temp ? TEMP_MASTER_SQL : MASTER_SQL
+        object_name = temp ? "sqlite_temp_master" : "sqlite_master"
+        entry = SchemaEntry.new("table", object_name, object_name, 1_u32, sql)
+        return TableInfo.new(entry, TableDefinition.parse(sql), [] of IndexLayout, database)
       end
-      return if @database.page_count == 0
-      entry = @database.schema.list_of_entries.find do |candidate|
+      return if database.page_count == 0
+      entry = database.schema.list_of_entries.find do |candidate|
         candidate.table? && candidate.object_name.compare(name, case_insensitive: true) == 0
       end
       return unless entry
       unless entry.has_a_btree?
         raise UnsupportedSQL.new("virtual table #{entry.object_name}")
       end
-      definition = @database.schema.table_definition(entry)
-      indexes = @database.schema.list_of_indexes.select do |index_entry|
+      definition = database.schema.table_definition(entry)
+      indexes = database.schema.list_of_indexes.select do |index_entry|
         index_entry.table_name.compare(entry.object_name, case_insensitive: true) == 0
       end
-      layouts = indexes.map { |index_entry| IndexLayout.build(index_entry, definition, @database.text_encoding) }
-      TableInfo.new(entry, definition, layouts)
+      layouts = indexes.map { |index_entry| IndexLayout.build(index_entry, definition, database.text_encoding) }
+      TableInfo.new(entry, definition, layouts, database)
     end
 
     private def load_view(name : String) : ViewInfo?

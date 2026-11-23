@@ -202,7 +202,7 @@ module Grant::SQLiteEngine::Query
       entry = step.entry
       table = entry.table
       return step.base_source if table.nil? || table.without_rowid?
-      database = @session.database
+      database = table.database
       low = nil.as(Expr?)
       high = nil.as(Expr?)
       terms.each do |term|
@@ -269,7 +269,7 @@ module Grant::SQLiteEngine::Query
         if score > best_score
           best_score = score
           order = IndexOrder.new(key_columns.map(&.collation), key_columns.map(&.descending))
-          best = IndexLookupSource.new(@session.database, table, entry.slot, order, layout.entry.root_page, equal,
+          best = IndexLookupSource.new(table.database, table, entry.slot, order, layout.entry.root_page, equal,
             range_low, range_high)
         end
       end

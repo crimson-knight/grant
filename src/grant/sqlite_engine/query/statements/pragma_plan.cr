@@ -67,7 +67,7 @@ module Grant::SQLiteEngine::Query
         return [] of Array(Value) unless value
         Catalog.rows("pragma_#{name}", value, @session)
       when "database_list"
-        [[0_i64, "main", @session.database.file_name] of Value]
+        @session.database_list_rows
       when "foreign_keys"
         return [[@session.foreign_keys? ? 1_i64 : 0_i64] of Value] unless value
         @session.foreign_keys = PragmaPlan.boolean(value) unless @session.in_transaction?

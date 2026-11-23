@@ -15,18 +15,18 @@ module Grant::SQLiteEngine::Query
 
     def initialize(@session : Session, @statement : SQL::Insert)
       table_name = @statement.table.name.value
-      if schema = @statement.table.schema
-        unless schema.same?("main")
-          raise SQLError.new(schema.same?("temp") ? "no such table: #{schema.value}.#{table_name}" : "unknown database #{schema.value}")
-        end
+      schema = @statement.table.schema
+      if schema && !schema.same?("main") && !schema.same?("temp")
+        raise SQLError.new("unknown database #{schema.value}")
       end
+      schema_text = schema.try(&.value)
       if @session.view(table_name)
         raise SQLError.new("cannot modify #{table_name} because it is a view")
       end
-      if Session::MASTER_NAMES.includes?(table_name.downcase)
+      if Session::MASTER_NAMES.includes?(table_name.downcase) || Session::TEMP_MASTER_NAMES.includes?(table_name.downcase)
         raise SQLError.new("table #{table_name} may not be modified")
       end
-      @table = @session.write_table(table_name) || raise SQLError.new("no such table: #{table_name}")
+      @table = @session.write_table(table_name, schema_text) || raise SQLError.new("no such table: #{schema_text ? "#{schema_text}." : ""}#{table_name}")
       info = @table.table_info
       @target_name = @statement.table.alias_name.try(&.value) || info.name
       @override = @statement.verb.replace? ? ConflictAction::Replace : ConflictAction.from(@statement.conflict)
