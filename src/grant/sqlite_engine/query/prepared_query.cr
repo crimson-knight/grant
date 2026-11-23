@@ -28,7 +28,24 @@ module Grant::SQLiteEngine::Query
     # The row of a query that has none: one empty array for every run.
     @no_row = [] of Value
 
+    # A statement with no parameters has no parameter names; every such
+    # statement shares this table, which nothing changes.
+    NO_PARAMETER_NAMES = {} of String => Int32
+
     def initialize(@session : Session, sql : String)
+      # SAVEPOINT and RELEASE of a bare name skip the parser: an ORM sends a
+      # new name around every row it writes in a transaction.
+      if statement = SQL::SavepointText.parse(sql)
+        plan = StatementCompiler.compile(@session, statement, sql)
+        @parameter_count = 0
+        @parameter_numbers = NO_PARAMETER_NAMES
+        @reads_database = false
+        @compiled = CompiledSelect.new(PlanProducer.new(@session, plan, statement, sql), plan.list_of_column_names, 0, 0, false)
+        @list_of_column_names = @compiled.list_of_column_names
+        @parameters = [] of Value
+        @runs_a_plan = true
+        return
+      end
       prepared = begin
         SQL::Parser.parse_prepared(sql)
       rescue error : SQL::ParseError
