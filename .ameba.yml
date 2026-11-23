@@ -71,6 +71,9 @@ Metrics/CyclomaticComplexity:
     - src/grant/sqlite_engine/record_encoder.cr
     - src/grant/sqlite_engine/rollback_journal.cr
     - spec/support/sqlite_engine/crash_driver.cr
+    # The write-ahead log ports wal.c (walTryBeginRead, walCheckpoint,
+    # walIndexRecover), kept in the shape of the C it shares files with.
+    - src/grant/sqlite_engine/write_ahead_log.cr
     # The query executor ports resolve.c, expr.c, select.c and where.c
     # dispatch (one case per operator, clause or plan shape) and its
     # differential and generator scripts walk every comparison rule.

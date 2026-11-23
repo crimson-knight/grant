@@ -10,10 +10,10 @@
 # Each round runs one worker process per engine, the order flipping every
 # round, so the two engines take turns on the same machine. A worker opens a
 # fresh database file, runs every workload once, checks the rows it wrote,
-# and prints its times. Two configurations run: Grant's default connection
-# (journal_mode=wal, synchronous=normal, which the engine keeps as a
-# rollback journal until milestone G5) and the like-for-like one
-# (journal_mode=delete, synchronous=full on both engines).
+# and prints its times. Three configurations run, each the same on both
+# engines: Grant's default connection (journal_mode=wal,
+# synchronous=normal), WAL with synchronous=full, and a rollback journal
+# (journal_mode=delete, synchronous=full).
 #
 # Prints the median of each engine's times and the median of the per-round
 # ratios, reported as "N× as fast" or "N× slower".
@@ -25,6 +25,7 @@ module SQLiteEngineModelBench
   WORKLOADS      = %w[create update destroy transaction_batch]
   CONFIGURATIONS = {
     "default"       => "",
+    "wal_full"      => "?synchronous=full",
     "like_for_like" => "?journal_mode=delete&synchronous=full",
   }
 

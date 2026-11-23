@@ -54,6 +54,25 @@ module Grant::SQLiteEngine
 
     @cache = {} of UInt32 => Bytes
 
+    # SQLITE_DEFAULT_WAL_AUTOCHECKPOINT: a commit that leaves at least this
+    # many frames in the WAL runs a passive checkpoint.
+    DEFAULT_WAL_AUTOCHECKPOINT = 1_000
+
+    # PRAGMA synchronous: FULL (sync at every commit) by default, as C's
+    # default build.
+    getter synchronous : Synchronous = Synchronous::Full
+    # PRAGMA wal_autocheckpoint; 0 or less turns it off.
+    property wal_autocheckpoint : Int32 = DEFAULT_WAL_AUTOCHECKPOINT
+    # How long a checkpoint or `Database#transaction` waits for another
+    # connection's lock (sqlite3_busy_timeout).
+    property busy_timeout : Time::Span = Time::Span.zero
+
+    # The WAL in use when the database is in WAL mode.
+    @wal_log : WriteAheadLog? = nil
+    @checkpoint_due = false
+    # Set while leaving WAL mode, when the header still says WAL.
+    @leaving_wal = false
+
     # Read-write state.
     @file : DatabaseFile? = nil
     @file_system : FileSystem? = nil
@@ -86,31 +105,43 @@ module Grant::SQLiteEngine
 
     # Opens *path* for reading and writing through *file_system*, creating
     # an empty database when the file does not exist. A hot journal left by
-    # a crash is rolled back first. *page_size* and *text_encoding* apply
-    # only when the first transaction creates the database. *cache_pages*
-    # bounds the clean pages kept in memory; nil sizes the cache as SQLite's
-    # default of 2,000 KiB.
+    # a crash is rolled back first. A database whose header says WAL (or
+    # that has a `-wal` file) opens in WAL mode and holds a SHARED lock on
+    # the database file until it closes, as C does. *page_size* and
+    # *text_encoding* apply only when the first transaction creates the
+    # database. *cache_pages* bounds the clean pages kept in memory; nil
+    # sizes the cache as SQLite's default of 2,000 KiB.
     def self.open_read_write(file_system : FileSystem, path : String, cache_pages : Int32? = nil,
                              page_size : Int32 = Limits::DEFAULT_PAGE_SIZE,
-                             text_encoding : TextEncoding = TextEncoding::UTF8) : Pager
+                             text_encoding : TextEncoding = TextEncoding::UTF8,
+                             synchronous : Synchronous = Synchronous::Full,
+                             wal_autocheckpoint : Int32 = DEFAULT_WAL_AUTOCHECKPOINT) : Pager
       valid_size = page_size >= Limits::MIN_PAGE_SIZE && page_size <= Limits::MAX_PAGE_SIZE && (page_size & (page_size - 1)) == 0
       raise ArgumentError.new("page_size #{page_size} is not a power of two from 512 to 65536") unless valid_size
       file = file_system.open(path)
-      wal_path = "#{path}-wal"
-      wal = file_system.exists?(wal_path) ? file_system.open(wal_path) : nil
+      pager = nil
       begin
         raise Busy.new unless file.lock(LockLevel::Shared)
         begin
           roll_back_hot_journal(file_system, path, file)
-          pager = new(file, wal)
+          # pagerOpenWalIfPresent: a WAL beside an empty database is stale.
+          wal_path = WriteAheadLog.path_for(path)
+          file_system.delete(wal_path) if file.size == 0 && file_system.exists?(wal_path)
+          opened = new(file, nil)
+          opened.attach_writer(file_system, path, file, page_size, text_encoding, cache_pages)
+          opened.synchronous = synchronous
+          opened.wal_autocheckpoint = wal_autocheckpoint
+          if opened.wal_wanted?
+            opened.open_log
+            opened.load_log_snapshot
+          end
+          pager = opened
         ensure
-          file.unlock(LockLevel::None)
+          file.unlock(LockLevel::None) unless pager && pager.wal_mode?
         end
-        pager.attach_writer(file_system, path, file, page_size, text_encoding, cache_pages)
         pager
       rescue error
         file.close
-        wal.try &.close
         raise error
       end
     end
@@ -119,6 +150,47 @@ module Grant::SQLiteEngine
                                 @new_text_encoding : TextEncoding, cache_pages : Int32?) : Nil
       page_size = @page_size > 0 ? @page_size : @new_page_size
       @cache_pages = cache_pages || Math.max(16, Limits::DEFAULT_CACHE_KIBIBYTES * 1024 // page_size)
+    end
+
+    def synchronous=(level : Synchronous) : Synchronous
+      @wal_log.try { |log| log.synchronous = level }
+      @synchronous = level
+    end
+
+    # True in WAL mode (journal_mode=WAL).
+    def wal_mode? : Bool
+      !@wal_log.nil?
+    end
+
+    # The WAL in use, for checks and reports; nil outside WAL mode.
+    def write_ahead_log : WriteAheadLog?
+      @wal_log
+    end
+
+    # lockBtree: a header whose read version is 2 asks for WAL mode, and
+    # so does a `-wal` file left beside the database.
+    protected def wal_wanted? : Bool
+      return false if @leaving_wal || @path.empty? || writer_file_system.is_a?(MemoryFileSystem)
+      return true if @header.try(&.read_format_version) == 2
+      writer_file_system.exists?(WriteAheadLog.path_for(@path))
+    end
+
+    # Starts using the WAL.
+    protected def open_log : Nil
+      @wal_log = WriteAheadLog.new(writer_file_system, @path, @synchronous)
+    end
+
+    # Loads the WAL snapshot once at open, so the header and page count
+    # describe the database as the WAL has it. While another connection
+    # recovers the WAL this waits for the first locked read instead.
+    protected def load_log_snapshot : Nil
+      log = @wal_log
+      return unless log
+      begin
+        reload if log.begin_read
+        log.end_read
+      rescue Busy
+      end
     end
 
     def writable? : Bool
@@ -147,7 +219,8 @@ module Grant::SQLiteEngine
       check_page_number(page_number)
       buffer = Bytes.new(@page_size)
       wal = @wal
-      unless wal && wal.read_page(page_number, buffer)
+      log = @wal_log
+      unless (log && log.read_page(page_number, buffer)) || (wal && wal.read_page(page_number, buffer))
         offset = (page_number.to_i64 - 1) * @page_size
         read = @main.read_at(offset, buffer)
         raise CorruptDatabase.new("page is past the end of the file", page_number) if read < @page_size
@@ -174,9 +247,17 @@ module Grant::SQLiteEngine
       (PENDING_BYTE_OFFSET // @page_size + 1).to_u32
     end
 
+    # Closes the files. In WAL mode the last connection to the database (the
+    # one that gets its EXCLUSIVE lock) checkpoints the WAL and removes the
+    # `-wal` and `-shm` files, as sqlite3WalClose does.
     def close : Nil
       rollback if @in_write_transaction
       if file = @file
+        if log = @wal_log
+          log.end_read
+          log.close(file, exclusive: file.lock(LockLevel::Exclusive))
+          @wal_log = nil
+        end
         file.unlock(LockLevel::None)
       end
       @main.close
@@ -198,7 +279,7 @@ module Grant::SQLiteEngine
         yield
       ensure
         @read_depth -= 1
-        file.unlock(LockLevel::None) if @read_depth == 0 && !@in_write_transaction
+        end_read(file) if @read_depth == 0 && !@in_write_transaction
       end
     end
 
@@ -217,21 +298,149 @@ module Grant::SQLiteEngine
       file = @file
       return unless file && @read_depth > 0
       @read_depth -= 1
-      file.unlock(LockLevel::None) if @read_depth == 0 && !@in_write_transaction
+      end_read(file) if @read_depth == 0 && !@in_write_transaction
     end
 
+    # In WAL mode a read takes a read mark on the WAL snapshot (the SHARED
+    # lock on the database file is held from open to close); otherwise it
+    # takes the SHARED lock. Cached pages go when another connection
+    # committed. A rollback-journal database whose header says WAL after
+    # another connection's commit switches to WAL mode here.
     private def begin_read(file : DatabaseFile) : Nil
+      if log = @wal_log
+        reload if log.begin_read
+        return
+      end
       raise Busy.new unless file.lock(LockLevel::Shared)
       begin
-        if Pager.roll_back_hot_journal(writer_file_system, @path, file)
+        reloaded = false
+        if Pager.roll_back_hot_journal(writer_file_system, @path, file) || changed_on_disk?(file)
           reload
-        elsif changed_on_disk?(file)
-          reload
+          reloaded = true
+        end
+        if reloaded && wal_wanted?
+          open_log
+          log = @wal_log
+          reload if log && log.begin_read
         end
       rescue error
+        @wal_log.try &.close(file, exclusive: false)
+        @wal_log = nil
         file.unlock(LockLevel::None)
         raise error
       end
+    end
+
+    # Ends a read: the read mark in WAL mode, then a checkpoint the last
+    # commit made due; the SHARED lock otherwise.
+    private def end_read(file : DatabaseFile) : Nil
+      if log = @wal_log
+        log.end_read
+        run_due_checkpoint
+      else
+        file.unlock(LockLevel::None)
+      end
+    end
+
+    # The automatic checkpoint (sqlite3WalDefaultHook): passive, run once no
+    # read is open; its failure is not the commit's.
+    private def run_due_checkpoint : Nil
+      return unless @checkpoint_due
+      @checkpoint_due = false
+      begin
+        checkpoint(CheckpointMode::Passive)
+      rescue Error
+      end
+    end
+
+    # Runs a checkpoint (PRAGMA wal_checkpoint) outside a write
+    # transaction; the connection's own read mark, if any, is dropped for
+    # it and taken again afterward. Outside WAL mode it does nothing.
+    def checkpoint(mode : CheckpointMode = CheckpointMode::Passive) : CheckpointResult
+      log = @wal_log
+      return CheckpointResult.new(false, -1, -1) unless log
+      raise Error.new("database table is locked") if @in_write_transaction
+      was_reading = log.reading?
+      log.end_read
+      begin
+        log.checkpoint(mode, writer_file, mode.passive? ? nil : @busy_timeout)
+      ensure
+        reload if was_reading && log.begin_read
+      end
+    end
+
+    # PRAGMA journal_mode=WAL: writes 2 into header bytes 18 and 19 in a
+    # rollback-journal transaction (sqlite3BtreeSetVersion), creating the
+    # database when it is empty, then uses the WAL. Raises `Busy` when
+    # another connection keeps the write from committing.
+    def enter_wal_mode : Nil
+      return if wal_mode?
+      if @in_write_transaction || @read_depth > 1
+        raise Error.new("cannot change into wal mode from within a transaction")
+      end
+      set_file_format_version(2_u8)
+      # WAL mode holds SHARED on the database file until the connection closes.
+      raise Busy.new unless writer_file.lock(LockLevel::Shared)
+      open_log
+      log = @wal_log
+      reload if log && @read_depth > 0 && log.begin_read
+    end
+
+    # PRAGMA journal_mode=DELETE from WAL mode (sqlite3PagerCloseWal): needs
+    # the EXCLUSIVE lock, so no other connection may have the database
+    # open; checkpoints and removes the WAL, then writes 1 into header bytes
+    # 18 and 19. Raises `Busy` when another connection has it open.
+    def leave_wal_mode : Nil
+      log = @wal_log
+      return unless log
+      if @in_write_transaction || @read_depth > 1
+        raise Error.new("cannot change out of wal mode from within a transaction")
+      end
+      file = writer_file
+      was_reading = log.reading?
+      log.end_read
+      unless file.lock(LockLevel::Exclusive)
+        reload if was_reading && log.begin_read
+        raise Busy.new
+      end
+      log.close(file, exclusive: true)
+      @wal_log = nil
+      @leaving_wal = true
+      begin
+        reload
+        set_file_format_version(1_u8)
+      ensure
+        @leaving_wal = false
+        file.unlock(@read_depth > 0 ? LockLevel::Shared : LockLevel::None)
+      end
+    end
+
+    # Writes *version* into header bytes 18 and 19 when they differ, in a
+    # transaction of its own, waiting up to busy_timeout for other
+    # connections.
+    private def set_file_format_version(version : UInt8) : Nil
+      done = BusyWait.attempt(@busy_timeout) do
+        begin_write
+        begin
+          page = read_page(1_u32)
+          if page[18] != version || page[19] != version
+            page = page_for_write(1_u32)
+            page[18] = version
+            page[19] = version
+          end
+          commit
+          true
+        rescue error : Busy
+          rollback
+          false
+        rescue error
+          rollback
+          raise error
+        end
+      rescue Busy
+        false
+      end
+      raise Busy.new unless done
     end
 
     # SQLite compares header bytes 24..39 (the change counter and the page
@@ -281,28 +490,36 @@ module Grant::SQLiteEngine
     # --- Write transactions --------------------------------------------
 
     # Starts a write transaction: SHARED then RESERVED locks, so other
-    # connections may still read but not write. Raises `Busy` when another
-    # connection is writing and `UnsupportedSQL` for a WAL or auto-vacuum
-    # database.
-    def begin_write : Nil
+    # connections may still read but not write; in WAL mode, the WAL's
+    # WRITE lock. Raises `Busy` when another connection is writing and
+    # `UnsupportedSQL` for an auto-vacuum database.
+    #
+    # In WAL mode, a connection whose snapshot is older than the last
+    # commit moves to the newest snapshot when *refresh_snapshot* is set
+    # (nothing it read is kept), and otherwise raises `BusySnapshot`.
+    def begin_write(refresh_snapshot : Bool = true) : Nil
       file = @file
       raise ReadOnlyDatabase.new unless file
       raise Error.new("a write transaction is already open") if @in_write_transaction
       begin_read(file) if @read_depth == 0
+      if log = @wal_log
+        begin
+          reload if log.begin_write(refresh_snapshot)
+        rescue error
+          end_read(file) if @read_depth == 0
+          raise error
+        end
+        check_writable_header { log.end_write; end_read(file) if @read_depth == 0 }
+        @in_write_transaction = true
+        @original_page_count = @page_count
+        create_first_page if @page_count == 0
+        return
+      end
       unless file.lock(LockLevel::Reserved)
         file.unlock(LockLevel::None) if @read_depth == 0
         raise Busy.new
       end
-      if current_header = @header
-        if @wal || current_header.write_format_version == 2
-          file.unlock(LockLevel::None) if @read_depth == 0
-          raise UnsupportedSQL.new("writing a database in WAL mode (journal_mode=WAL)")
-        end
-        if current_header.has_pointer_map_pages?
-          file.unlock(LockLevel::None) if @read_depth == 0
-          raise UnsupportedSQL.new("writing an auto_vacuum database")
-        end
-      end
+      check_writable_header { file.unlock(LockLevel::None) if @read_depth == 0 }
       # A journal left behind that was not hot (empty, or zeroed) is stale.
       writer_file_system.delete(RollbackJournal.path_for(@path))
       @in_write_transaction = true
@@ -310,14 +527,34 @@ module Grant::SQLiteEngine
       create_first_page if @page_count == 0
     end
 
+    # Yields (to release the locks just taken) and raises for a header the
+    # writer does not write: a newer file format, or auto-vacuum.
+    private def check_writable_header(&) : Nil
+      current_header = @header
+      return unless current_header
+      if current_header.write_format_version > 2
+        yield
+        raise ReadOnlyDatabase.new
+      end
+      if current_header.has_pointer_map_pages?
+        yield
+        raise UnsupportedSQL.new("writing an auto_vacuum database")
+      end
+    end
+
     # Commits the open write transaction: takes the EXCLUSIVE lock, writes
     # and syncs the journal, writes and syncs the changed pages, then
-    # deletes the journal, which is the moment the transaction commits.
+    # deletes the journal, which is the moment the transaction commits. In
+    # WAL mode it appends the changed pages to the WAL instead.
     def commit : Nil
       file = writer_file
       raise Error.new("no write transaction is open") unless @in_write_transaction
       if @dirty.empty?
         finish_transaction(file)
+        return
+      end
+      if log = @wal_log
+        commit_to_log(log, file)
         return
       end
       # The EXCLUSIVE lock first, so a commit refused while another
@@ -366,12 +603,42 @@ module Grant::SQLiteEngine
       finish_transaction(file)
     end
 
+    # pagerWalFrames: page 1 is written only when the transaction changed
+    # it or the database grew, and then carries the next change counter
+    # (pager_write_changecounter); the changed pages within the database's
+    # size become frames, the last one the commit frame.
+    private def commit_to_log(log : WriteAheadLog, file : DatabaseFile) : Nil
+      if @dirty.has_key?(1_u32) || get_u32(read_page(1_u32), PAGE_COUNT_OFFSET) != @page_count
+        page_one = page_for_write(1_u32)
+        counter = get_u32(page_one, CHANGE_COUNTER_OFFSET) &+ 1
+        put_u32(page_one, CHANGE_COUNTER_OFFSET, counter)
+        put_u32(page_one, PAGE_COUNT_OFFSET, @page_count)
+        put_u32(page_one, VERSION_VALID_FOR_OFFSET, counter)
+        put_u32(page_one, VERSION_NUMBER_OFFSET, WRITER_VERSION_NUMBER)
+      end
+      list_of_pages = [] of {UInt32, Bytes}
+      @dirty.keys.sort!.each do |page_number|
+        list_of_pages << {page_number, @dirty[page_number]} if page_number <= @page_count
+      end
+      log.commit(list_of_pages, @page_count, @page_size)
+      @dirty.each { |page_number, buffer| @cache[page_number] = buffer }
+      @header = DatabaseHeader.parse(read_page(1_u32))
+      autocheckpoint = @wal_autocheckpoint
+      @checkpoint_due = true if autocheckpoint > 0 && log.frame_count >= autocheckpoint
+      finish_transaction(file)
+    end
+
     private def finish_transaction(file : DatabaseFile) : Nil
       @dirty.clear
       @journal_images.clear
       @list_of_savepoint_levels.clear
       @in_write_transaction = false
-      file.unlock(@read_depth > 0 ? LockLevel::Shared : LockLevel::None)
+      if log = @wal_log
+        log.end_write
+        end_read(file) if @read_depth == 0
+      else
+        file.unlock(@read_depth > 0 ? LockLevel::Shared : LockLevel::None)
+      end
     end
 
     private def read_page_after_rollback(page_number : UInt32) : Bytes
@@ -564,6 +831,10 @@ module Grant::SQLiteEngine
       if wal && wal.page_size != header.page_size
         raise CorruptDatabase.new("WAL page size #{wal.page_size} differs from the database page size #{header.page_size}")
       end
+      log = @wal_log
+      if log && log.frame_count > 0 && log.header.page_size != header.page_size
+        raise CorruptDatabase.new("WAL page size #{log.header.page_size} differs from the database page size #{header.page_size}")
+      end
       @header = header
       @page_size = header.page_size
       @usable_size = header.usable_size
@@ -598,6 +869,13 @@ module Grant::SQLiteEngine
     end
 
     private def read_first_page(wal : WalReader?) : Bytes?
+      if log = @wal_log
+        log_page_size = log.header.page_size
+        if log_page_size > 0
+          buffer = Bytes.new(log_page_size)
+          return buffer if log.read_page(1_u32, buffer)
+        end
+      end
       if wal
         buffer = Bytes.new(wal.page_size)
         return buffer if wal.read_page(1_u32, buffer)
@@ -620,7 +898,17 @@ module Grant::SQLiteEngine
     # file size. A committed WAL transaction records its own size.
     private def count_pages(header : DatabaseHeader, wal : WalReader?) : UInt32
       return wal.committed_page_count if wal
+      # sqlite3WalDbsize: the snapshot's size, when the WAL records one.
+      if (log = @wal_log) && log.reading? && log.database_page_count > 0
+        return log.database_page_count
+      end
       file_pages = (@main.size // header.page_size)
+      # A WAL database read before its WAL: the file may be shorter than the
+      # header says (a checkpoint stopped midway); the first read takes the
+      # size from the WAL.
+      if header.read_format_version == 2 && header.header_page_count_valid?
+        return Math.max(header.header_page_count, file_pages.to_u32)
+      end
       if header.header_page_count_valid?
         if header.header_page_count > file_pages
           raise CorruptDatabase.new("header says #{header.header_page_count} pages but the file holds #{file_pages}", 1_u32)

@@ -72,10 +72,32 @@ module Grant::SQLiteEngine::Query
     # waiting up to busy_timeout for another connection to finish. The
     # SAVEPOINTs of a deferred transaction declared before its first write
     # open in the pager here.
+    #
+    # In WAL mode a transaction that already read keeps its snapshot, so a
+    # busy WRITE lock or a newer commit fails at once ("database is
+    # locked"), as C skips the busy handler once a read transaction is
+    # open. A statement that starts a write moves to the newest snapshot;
+    # when that changed the schema, the statement fails with
+    # SQLITE_SCHEMA rather than run a plan compiled for the old one.
     def begin_write_transaction : Nil
       pager = @database.pager
       return if pager.in_write_transaction?
-      wait_while_busy { pager.begin_write }
+      if pager.wal_mode? && @transaction_snapshot_pinned
+        begin
+          pager.begin_write(refresh_snapshot: false)
+        rescue Busy
+          raise SQLError.new("database is locked", 5)
+        end
+      else
+        generation = pager.generation
+        cookie = @database.header.try(&.schema_cookie)
+        wait_while_busy { pager.begin_write }
+        if pager.wal_mode? && pager.generation != generation && @database.header.try(&.schema_cookie) != cookie
+          pager.rollback
+          reset_schema
+          raise SQLError.new("database schema has changed", 17)
+        end
+      end
       refresh_after_other_connections
       @list_of_savepoints.each_with_index do |mark, position|
         next unless mark.depth < 0
@@ -115,7 +137,12 @@ module Grant::SQLiteEngine::Query
 
     def end_statement_read : Nil
       @database.pager.release_read_lock
+      @transaction_snapshot_pinned = true if @holds_transaction_read_lock
     end
+
+    # A statement of the open transaction finished under its read lock, so
+    # the transaction has read from its snapshot.
+    @transaction_snapshot_pinned = false
 
     # The schema cache goes when the pager reloaded what another
     # connection committed.
@@ -158,6 +185,7 @@ module Grant::SQLiteEngine::Query
 
     private def end_transaction : Nil
       @in_transaction = false
+      @transaction_snapshot_pinned = false
       @opened_by_savepoint = false
       @list_of_savepoints.clear
       @deferred_violations = 0_i64

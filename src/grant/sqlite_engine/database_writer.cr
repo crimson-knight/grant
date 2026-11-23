@@ -32,6 +32,13 @@ module Grant::SQLiteEngine
   # transactions. No SQL is parsed or run; CREATE statements are stored as
   # SQLite stores them, and the values of a row arrive in declared column
   # order.
+  # The journal modes the writer implements: a rollback journal deleted at
+  # each commit, and the write-ahead log.
+  enum JournalMode
+    Delete
+    Wal
+  end
+
   class Database
     SEQUENCE_TABLE     = "sqlite_sequence"
     SEQUENCE_TABLE_SQL = "CREATE TABLE sqlite_sequence(name,seq)"
@@ -44,11 +51,51 @@ module Grant::SQLiteEngine
     # write creates; *cache_pages* bounds the pages kept in memory (nil sizes
     # the cache as SQLite's cache_size -2000 does); *file_system* is where
     # the files live (the crash simulator passes its own).
+    #
+    # *journal_mode* switches the database to WAL or back to a rollback
+    # journal once it is open (nil keeps the mode its header records).
+    # *synchronous* is PRAGMA synchronous, *wal_autocheckpoint* the WAL
+    # size in frames that starts a passive checkpoint, and *busy_timeout*
+    # how long a write or checkpoint waits for another connection.
     def self.open(path : String | Path, *, read_write : Bool, cache_pages : Int32? = nil,
                   page_size : Int32 = Limits::DEFAULT_PAGE_SIZE, text_encoding : TextEncoding = TextEncoding::UTF8,
-                  file_system : FileSystem = PosixFileSystem.new) : Database
+                  file_system : FileSystem = PosixFileSystem.new, journal_mode : JournalMode? = nil,
+                  synchronous : Synchronous = Synchronous::Full,
+                  wal_autocheckpoint : Int32 = Pager::DEFAULT_WAL_AUTOCHECKPOINT,
+                  busy_timeout : Time::Span = Time::Span.zero) : Database
       return open(path) unless read_write
-      new(Pager.open_read_write(file_system, path.to_s, cache_pages, page_size, text_encoding))
+      pager = Pager.open_read_write(file_system, path.to_s, cache_pages, page_size, text_encoding, synchronous, wal_autocheckpoint)
+      pager.busy_timeout = busy_timeout
+      database = new(pager)
+      begin
+        database.journal_mode = journal_mode if journal_mode
+      rescue error
+        database.close
+        raise error
+      end
+      database
+    end
+
+    # The journal mode the database is in.
+    def journal_mode : JournalMode
+      @pager.wal_mode? ? JournalMode::Wal : JournalMode::Delete
+    end
+
+    # Switches between a rollback journal and WAL (PRAGMA journal_mode).
+    # Leaving WAL mode raises `Busy` while another connection has the
+    # database open.
+    def journal_mode=(mode : JournalMode) : JournalMode
+      if mode.wal?
+        @pager.enter_wal_mode
+      else
+        @pager.leave_wal_mode
+      end
+      mode
+    end
+
+    # Copies WAL frames into the database file (PRAGMA wal_checkpoint).
+    def checkpoint(mode : CheckpointMode = CheckpointMode::Passive) : CheckpointResult
+      @pager.checkpoint(mode)
     end
 
     def read_write? : Bool
@@ -61,7 +108,13 @@ module Grant::SQLiteEngine
     # lock.
     def transaction(& : Database ->) : Nil
       raise Error.new("transactions do not nest") if @pager.in_write_transaction?
-      @pager.begin_write
+      began = BusyWait.attempt(@pager.busy_timeout) do
+        @pager.begin_write
+        true
+      rescue Busy
+        false
+      end
+      raise Busy.new unless began
       begin
         yield self
       rescue Rollback

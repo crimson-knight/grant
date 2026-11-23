@@ -192,11 +192,12 @@ describe "Grant::SQLiteEngine writes" do
     recovered.close
   end
 
-  it "refuses to write a WAL database" do
+  it "writes a database C left in WAL mode, in WAL mode" do
     path = temporary_database("wal")
     sqlite3(path, "PRAGMA journal_mode=WAL; CREATE TABLE t(a);")
     database = Engine::Database.open(path, read_write: true)
-    expect_raises(Engine::UnsupportedSQL, /WAL/) { database.insert("t", nil, values(1_i64)) }
+    database.insert("t", nil, values(1_i64))
     database.close
+    sqlite3(path, "PRAGMA journal_mode; SELECT a FROM t;").should eq("wal\n1\n")
   end
 end

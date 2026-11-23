@@ -47,6 +47,7 @@ module Grant::SQLiteEngine::Query
                               when "database_list"                  then %w[seq name file]
                               when "integrity_check", "quick_check" then [name]
                               when "busy_timeout"                   then %w[timeout]
+                              when "wal_checkpoint"                 then %w[busy log checkpointed]
                               when "foreign_key_check"              then %w[table rowid parent fkid]
                               else
                                 if REMEMBERED.has_key?(name)
@@ -79,10 +80,13 @@ module Grant::SQLiteEngine::Query
       when "busy_timeout"
         if value
           @session.busy_timeout = Math.max(value.to_i? || 0, 0)
+          @session.database.pager.busy_timeout = @session.busy_timeout.milliseconds
         end
         [[@session.busy_timeout.to_i64] of Value]
       when "journal_mode"
         journal_mode(value)
+      when "wal_checkpoint"
+        wal_checkpoint(value)
       when "user_version", "application_id"
         offset = name == "user_version" ? USER_VERSION_OFFSET : APPLICATION_ID_OFFSET
         if value
@@ -112,6 +116,7 @@ module Grant::SQLiteEngine::Query
           if value
             number = PragmaPlan.integer(value) || PragmaPlan.named_level(name, value)
             @session.pragma_values[name] = number
+            apply_to_pager(name, number)
             return SETTING_RETURNS_ROW.includes?(name) ? [[number] of Value] : [] of Array(Value)
           end
           return [[@session.pragma_values[name]? || remembered[0]] of Value]
@@ -120,19 +125,58 @@ module Grant::SQLiteEngine::Query
       end
     end
 
-    # journal_mode: the engine writes with a rollback journal (WAL arrives
-    # with milestone G5), so a request for WAL leaves the mode at DELETE
-    # and reports it, as C reports the mode it kept when a change is
-    # refused; an in-memory database reports "memory".
+    JOURNAL_MODES = %w[delete persist off truncate memory wal]
+
+    # journal_mode: WAL, or a rollback journal (the engine deletes it at
+    # each commit whichever rollback mode is named, and reports the mode
+    # named). Changing into or out of WAL is refused inside a transaction,
+    # and leaving WAL needs every other connection closed. An in-memory
+    # database reports "memory".
     private def journal_mode(value : String?) : Array(Array(Value))
       if @session.database.file_name.empty?
         return [["memory"] of Value]
       end
-      mode = value.try(&.downcase) || "delete"
-      mode = "delete" if mode == "wal"
-      kept = @session.pragma_values["journal_mode"]?
-      @session.pragma_values["journal_mode"] = mode if value
-      [[value ? mode : (kept || "delete")] of Value]
+      pager = @session.database.pager
+      current = pager.wal_mode? ? "wal" : (@session.pragma_values["journal_mode"]?.as?(String) || "delete")
+      mode = value.try(&.downcase)
+      return [[current] of Value] unless mode && JOURNAL_MODES.includes?(mode)
+      if mode == "wal" || pager.wal_mode?
+        if mode != current && @session.in_transaction?
+          raise SQLError.new("cannot change #{mode == "wal" ? "into" : "out of"} wal mode from within a transaction")
+        end
+        begin
+          mode == "wal" ? pager.enter_wal_mode : pager.leave_wal_mode
+        rescue Busy
+          raise SQLError.new("database is locked", 5)
+        end
+      end
+      @session.pragma_values["journal_mode"] = mode
+      [[mode] of Value]
+    end
+
+    # wal_checkpoint(MODE): busy, the WAL's frames and the frames copied;
+    # 0, -1, -1 outside WAL mode. Refused inside a transaction.
+    private def wal_checkpoint(value : String?) : Array(Array(Value))
+      raise SQLError.new("database table is locked", 6) if @session.in_transaction?
+      mode = case value.try(&.downcase)
+             when "full"     then CheckpointMode::Full
+             when "restart"  then CheckpointMode::Restart
+             when "truncate" then CheckpointMode::Truncate
+             else                 CheckpointMode::Passive
+             end
+      result = @session.database.pager.checkpoint(mode)
+      [[result.busy ? 1_i64 : 0_i64, result.log_frames.to_i64, result.checkpointed_frames.to_i64] of Value]
+    end
+
+    # synchronous and wal_autocheckpoint act on the pager as well.
+    private def apply_to_pager(name : String, number : Int64) : Nil
+      pager = @session.database.pager
+      case name
+      when "synchronous"
+        pager.synchronous = Synchronous.from_value(number.clamp(0_i64, 3_i64).to_i32)
+      when "wal_autocheckpoint"
+        pager.wal_autocheckpoint = number.clamp(Int32::MIN.to_i64, Int32::MAX.to_i64).to_i32
+      end
     end
 
     private def header_field(offset : Int32) : UInt32

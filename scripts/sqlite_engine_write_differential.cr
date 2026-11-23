@@ -472,10 +472,16 @@ class RandomDifferential
   end
 end
 
-mode = ARGV[0]? || abort "usage: replay CORPUS SEED REPORT_DIR | random SEED COUNT WORKERS REPORT_DIR"
+mode = ARGV[0]? || abort "usage: replay CORPUS SEED REPORT_DIR | random SEED COUNT WORKERS REPORT_DIR | dump PATH " \
+                         "(SQLITE_ENGINE_DIFF_JOURNAL=wal runs both sides in WAL mode)"
 started = Time.instant
 report = WriteReport.new
+SQLiteWriteOracle::Pair.wal = ENV["SQLITE_ENGINE_DIFF_JOURNAL"]? == "wal"
+SQLiteWriteOracle::Pair.dump_command = [Process.executable_path || PROGRAM_NAME, "dump"]
 case mode
+when "dump"
+  print SQLiteWriteOracle::Pair.child_dump(ARGV[1])
+  exit
 when "replay"
   corpus, seed, directory = ARGV[1], ARGV[2].to_i64, ARGV[3]
   work = File.join(directory, "work")
