@@ -142,7 +142,7 @@ module Grant::SQLiteEngine::Query
           corrupt("record serial type varint is truncated") if used == 0
           cursor += used
         end
-        corrupt("record has more than #{Record::MAX_RECORD_COLUMNS} columns") if count >= Record::MAX_RECORD_COLUMNS
+        too_many_columns if count >= Record::MAX_RECORD_COLUMNS
         size = if serial_type >= 12
                  (serial_type - 12) >> 1
                elsif serial_type >= 0
@@ -150,8 +150,8 @@ module Grant::SQLiteEngine::Query
                else
                  Record.content_size(serial_type, @page_number)
                end
-        corrupt("serial type #{serial_type} is reserved") if size < 0
-        corrupt("record value of serial type #{serial_type} runs past the payload") if body.to_i64 + size > payload_size
+        reserved_serial_type(serial_type) if size < 0
+        value_past_payload(serial_type) if body.to_i64 + size > payload_size
         grow if count == @capacity
         @serial_types[count] = serial_type
         @offsets[count] = body
@@ -164,6 +164,22 @@ module Grant::SQLiteEngine::Query
       @count = count
     end
 
+    @[NoInline]
+    private def too_many_columns : NoReturn
+      corrupt("record has more than #{Record::MAX_RECORD_COLUMNS} columns")
+    end
+
+    @[NoInline]
+    private def reserved_serial_type(serial_type : Int64) : NoReturn
+      corrupt("serial type #{serial_type} is reserved")
+    end
+
+    @[NoInline]
+    private def value_past_payload(serial_type : Int64) : NoReturn
+      corrupt("record value of serial type #{serial_type} runs past the payload")
+    end
+
+    @[NoInline]
     private def grow : Nil
       capacity = @capacity * 2
       @serial_types = @serial_types.realloc(capacity)

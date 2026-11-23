@@ -208,10 +208,16 @@ module Grant::SQLiteEngine
       corrupt("child page #{child} is outside 1..#{@page_count}") if child == 0 || child > @page_count
     end
 
+    @[AlwaysInline]
     private def varint(offset : Int32, index : Int32) : {Int64, Int32}
       value, length = Varint.decode(@data, offset, @usable_size)
-      corrupt("cell #{index} varint runs past the usable size") if length == 0
+      varint_past_usable_size(index) if length == 0
       {value, length}
+    end
+
+    @[NoInline]
+    private def varint_past_usable_size(index : Int32) : NoReturn
+      corrupt("cell #{index} varint runs past the usable size")
     end
 
     private def u16(offset : Int32) : Int32
