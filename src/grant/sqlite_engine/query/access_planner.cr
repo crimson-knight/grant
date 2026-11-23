@@ -21,6 +21,21 @@ module Grant::SQLiteEngine::Query
       into
     end
 
+    # The columns of the entry in *slot* that *expression* reads; nil when
+    # a subquery in it reads that entry (its columns are not visible here).
+    def self.columns_of(expression : Expr, slot : Int32, into : Set(Int32) = Set(Int32).new) : Set(Int32)?
+      case expression
+      when ColumnExpr
+        into << expression.column if expression.slot == slot
+      when SubqueryExpr
+        return if expression.list_of_outer_slots.includes?(slot)
+        expression.children.each { |child| return unless columns_of(child, slot, into) }
+      else
+        expression.children.each { |child| return unless columns_of(child, slot, into) }
+      end
+      into
+    end
+
     NONDETERMINISTIC = %w[random randomblob changes total_changes last_insert_rowid]
 
     # sqlite3ExprIsConstantNotJoin: a term that reads no row, no subquery,
@@ -98,9 +113,14 @@ module Grant::SQLiteEngine::Query
     # the best rowid or index path its WHERE or ON terms allow, WHERE terms
     # applied as soon as every entry they read has a row (but never inside
     # the right side of a LEFT JOIN, where NULL rows must reach them).
-    # Returns the source and the WHERE terms left for after the joins.
-    private def plan_access(steps : Array(JoinStep), where : Expr?, context : QueryContext) : {RowSource, Expr?}
-      return {SingleRowSource.new.as(RowSource), where} if steps.empty?
+    # Returns the source, the WHERE terms left for after the joins, and
+    # whether the rows come in *ordering* (the first entry is read in an
+    # order that gives it when that is cheaper than sorting).
+    private def plan_access(steps : Array(JoinStep), where : Expr?, context : QueryContext,
+                            ordering : Array(OrderTerm) = [] of OrderTerm, limit_rows : Float64? = nil) : {RowSource, Expr?, Bool}
+      return {SingleRowSource.new.as(RowSource), where, false} if steps.empty?
+      check_partial_index_hints(steps, where)
+      ordered = false
       slot_position = {} of Int32 => Int32
       steps.each_with_index { |step, index| slot_position[step.entry.slot] = index }
       # sqlite3ProcessJoin ANDs every inner join's ON onto the end of WHERE.
@@ -131,7 +151,7 @@ module Grant::SQLiteEngine::Query
       steps.each_with_index do |step, index|
         available = steps[0, index].map(&.entry.slot).to_set
         if outer[index]
-          access = choose_access(step, ExpressionWalk.conjuncts(step.on), available, context)
+          access = choose_access(step, ExpressionWalk.conjuncts(step.on), available, context).source
           source = JoinSource.new(source, access, step.on, true, [step.entry.slot])
           next
         end
@@ -139,9 +159,20 @@ module Grant::SQLiteEngine::Query
         # them, after the WHERE's own); the equalities an index or rowid
         # seek would use first, since SQLite consumes those in the seek.
         step_terms = pushed[index]
-        access = choose_access(step, step_terms, available, context)
+        if index == 0
+          # A LIMIT stops a join only through its first entry's rows.
+          choice, ordered = choose_ordered_access(step, step_terms, context, ordering, steps.size == 1 ? limit_rows : nil)
+          access = choice.source
+        else
+          access = choose_access(step, step_terms, available, context).source
+        end
         seeks, others = step_terms.partition { |term| seek_term?(term, step.entry, available, context) }
-        if filter = ExpressionWalk.conjunction(seeks + others)
+        filter_terms = seeks + others
+        scan = access.as?(TableScanSource)
+        if scan && !filter_terms.empty? && (table = step.entry.table) && !table.without_rowid?
+          slot = step.entry.slot
+          scan.filter_by(filter_terms.map { |term| {term, ExpressionWalk.columns_of(term, slot)} })
+        elsif filter = ExpressionWalk.conjunction(filter_terms)
           access = FilterSource.new(access, filter)
         end
         source = index == 0 ? access : JoinSource.new(source, access, nil, false, [step.entry.slot])
@@ -149,7 +180,7 @@ module Grant::SQLiteEngine::Query
       if gate = ExpressionWalk.conjunction(constant_terms)
         source = ConstantGateSource.new(source, gate)
       end
-      {source, ExpressionWalk.conjunction(residual)}
+      {source, ExpressionWalk.conjunction(residual), ordered}
     end
 
     # An equality between a column (or rowid) of *entry* and a value known
@@ -198,17 +229,23 @@ module Grant::SQLiteEngine::Query
       nil
     end
 
-    private def choose_access(step : JoinStep, terms : Array(Expr), available : Set(Int32), context : QueryContext) : RowSource
+    private def choose_access(step : JoinStep, terms : Array(Expr), available : Set(Int32), context : QueryContext) : AccessChoice
       entry = step.entry
       table = entry.table
-      return step.base_source if table.nil? || table.without_rowid?
+      rows_order = [OrderElement.new(entry.slot, nil, Collation::Binary, false, true)]
+      if table.nil? || table.without_rowid?
+        return AccessChoice.new(step.base_source, DEFAULT_TABLE_ROWS, DEFAULT_TABLE_ROWS, [] of OrderElement, [] of Int32)
+      end
       database = @session.database
+      seek_cost = Math.log2(DEFAULT_TABLE_ROWS)
       low = nil.as(Expr?)
       high = nil.as(Expr?)
       terms.each do |term|
         if term.is_a?(InListExpr) && !term.negated? && rowid_of?(term.operand, entry) &&
            term.list.all? { |value| available?(value, entry.slot, available, context) }
-          return RowidLookupSource.new(database, table, entry.slot, term.list)
+          keys = term.list.size.to_f64
+          return AccessChoice.new(RowidLookupSource.new(database, table, entry.slot, term.list, entry.column_use),
+            keys * seek_cost, keys, rows_order, [] of Int32)
         end
         oriented = oriented(term, entry, available, context)
         next unless oriented
@@ -216,7 +253,8 @@ module Grant::SQLiteEngine::Query
         next unless rowid_of?(column, entry)
         case operator
         when .equal?
-          return RowidLookupSource.new(database, table, entry.slot, [other])
+          return AccessChoice.new(RowidLookupSource.new(database, table, entry.slot, [other], entry.column_use),
+            seek_cost, 1.0, rows_order, [] of Int32)
         when .greater?, .greater_or_equal?
           low ||= other
         when .less?, .less_or_equal?
@@ -229,16 +267,36 @@ module Grant::SQLiteEngine::Query
         end
       end
       if low || high
-        return RowidRangeSource.new(database, table, entry.slot, low, high)
+        rows = DEFAULT_TABLE_ROWS
+        rows /= 4.0 if low
+        rows /= 4.0 if high
+        rows /= 4.0 if low && high
+        return AccessChoice.new(RowidRangeSource.new(database, table, entry.slot, low, high, entry.column_use),
+          3.0 * rows + seek_cost, rows, rows_order, [] of Int32)
       end
-      step.base_source
+      AccessChoice.new(step.base_source, 3.0 * DEFAULT_TABLE_ROWS, DEFAULT_TABLE_ROWS, rows_order, [] of Int32)
+    end
+
+    # INDEXED BY a partial index needs a WHERE that implies the index's
+    # WHERE (whereLoopAddBtree skips it otherwise), so with no WHERE at all
+    # the query has no plan.
+    private def check_partial_index_hints(steps : Array(JoinStep), where : Expr?) : Nil
+      return if where
+      steps.each do |step|
+        hint = step.entry.indexed_by
+        table = step.entry.table
+        next unless hint && table
+        layout = table.list_of_indexes.find { |candidate| candidate.entry.object_name.compare(hint, case_insensitive: true) == 0 }
+        next unless layout && layout.unsupported_reason.try(&.starts_with?("partial index"))
+        raise SQLError.new("no query solution")
+      end
     end
 
     # The index whose leading key columns the most equality terms fix. On a
     # tie the newest index wins, as C walks pTab->pIndex (newest first) and
     # keeps the first of equal cost.
     private def choose_index(step : JoinStep, table : TableInfo, terms : Array(Expr), available : Set(Int32),
-                             context : QueryContext) : RowSource?
+                             context : QueryContext) : AccessChoice?
       entry = step.entry
       best = nil
       best_score = 0
@@ -255,7 +313,7 @@ module Grant::SQLiteEngine::Query
           key = key_columns[key_index]
           found = find_index_term(terms, entry, position, key, table, available, context, equality: true)
           if found
-            equal << found
+            equal << {found[0], found[1]}
             next
           end
           unless key.descending
@@ -268,9 +326,7 @@ module Grant::SQLiteEngine::Query
         score += 2 if layout.unique? && equal.size == layout.key_count
         if score > best_score
           best_score = score
-          order = IndexOrder.new(key_columns.map(&.collation), key_columns.map(&.descending))
-          best = IndexLookupSource.new(@session.database, table, entry.slot, order, layout.entry.root_page, equal,
-            range_low, range_high)
+          best = index_choice(entry, table, layout, equal, range_low, range_high)
         end
       end
       best
@@ -282,7 +338,7 @@ module Grant::SQLiteEngine::Query
     # and the affinity to convert it with before seeking.
     private def find_index_term(terms : Array(Expr), entry : FromEntry, position : Int32, key : KeyColumn, table : TableInfo,
                                 available : Set(Int32), context : QueryContext, equality : Bool,
-                                lower : Bool = true) : {Expr, ExpressionAffinity}?
+                                lower : Bool = true) : {Expr, ExpressionAffinity, Bool}?
       column_affinity = table.list_of_affinities[position]
       terms.each do |term|
         oriented = oriented(term, entry, available, context)
@@ -307,7 +363,7 @@ module Grant::SQLiteEngine::Query
                  end
         next unless usable
         conversion = affinity < ExpressionAffinity::Text ? ExpressionAffinity::None : column_affinity
-        return {other, conversion}
+        return {other, conversion, operator.greater? || operator.less?}
       end
       nil
     end

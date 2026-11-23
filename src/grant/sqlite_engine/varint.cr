@@ -7,6 +7,11 @@ module Grant::SQLiteEngine
     # the value and the number of bytes it used, or a length of 0 when the
     # varint runs past *limit* (the caller names the page in its error).
     def self.decode(bytes : Bytes, offset : Int32, limit : Int32 = bytes.size) : {Int64, Int32}
+      limit = Math.min(limit, bytes.size)
+      if offset < limit && offset >= 0
+        first = bytes.unsafe_fetch(offset)
+        return {first.to_i64, 1} if first < 0x80_u8
+      end
       result = 0_u64
       index = 0
       while index < 8
