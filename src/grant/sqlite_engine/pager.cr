@@ -649,7 +649,6 @@ module Grant::SQLiteEngine
       @dirty.keys.sort!.each do |page_number|
         list_of_pages << {page_number, @dirty[page_number]} if page_number <= @page_count
       end
-      STDERR.puts "G4DTRACE commit #{list_of_pages.map(&.[0])}" if ENV["G4D_TRACE"]?
       log.commit(list_of_pages, @page_count, @page_size)
       @dirty.each { |page_number, buffer| @cache[page_number] = buffer }
       @header = DatabaseHeader.parse(read_page(1_u32))
