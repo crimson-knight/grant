@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- The vendored copy of Beryl under `src/grant/vendor` (`Grant::Beryl`) moves from
+  `6eef806d` (B2, portable code) to amberframework/beryl `7d678c08`
+  (F1, amberframework/beryl#3, and F2, amberframework/beryl#4), pinned by
+  commit and per-file sha256 in `BERYL_VENDORED.json`. SHA-2, HMAC, AES-GCM,
+  ChaCha20-Poly1305 and XChaCha20-Poly1305 run on the processor's SHA, AES,
+  carry-less multiply and vector instructions on Apple Silicon, Linux AArch64
+  and x86-64, and on portable code elsewhere; Beryl measures every hash, HMAC
+  and AEAD at least as fast as OpenSSL 4.1.0 on an Apple M1 Max. The bytes
+  each one produces are unchanged.
+
 ### Grant's cryptography runs on Beryl, and `-Dwithout_openssl` links no OpenSSL
 
 Behavior changes:
