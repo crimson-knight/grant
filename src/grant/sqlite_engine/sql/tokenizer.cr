@@ -91,11 +91,13 @@ module Grant::SQLiteEngine::SQL
 
     # sqlite3GetToken: the kind and byte length of the token at *start*,
     # and whether it is whitespace or a comment.
+    # A vertical tab continues whitespace but cannot start it (CC_ILLEGAL
+    # in aiClass, while sqlite3Isspace accepts it).
     private def scan(start : Int32) : {TokenKind, Int32, Bool}
       bytes = @bytes
       byte = bytes[start]
       case byte
-      when ' '.ord, '\t'.ord, '\n'.ord, '\f'.ord, '\r'.ord, 0x0b
+      when ' '.ord, '\t'.ord, '\n'.ord, '\f'.ord, '\r'.ord
         position = start + 1
         while position < bytes.size && space?(bytes[position])
           position += 1

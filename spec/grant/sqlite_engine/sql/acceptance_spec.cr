@@ -29,10 +29,12 @@ describe "Grant::SQLiteEngine::SQL acceptance against C SQLite" do
     disagreements.should be_empty
   end
 
+  # Complete statements only: the oracle ends the text with a semicolon, so
+  # C reports incomplete input as an error near that semicolon.
   it "rejects with C's message where both parsers reject" do
     [
-      "SELECT * FROM",
-      "SELECT 1 +",
+      "SELECT * FROM t WHERE ORDER",
+      "SELECT 1 + * 2",
       "CREATE TABLE t(a, a)",
       "CREATE TABLE t(a PRIMARY KEY, b PRIMARY KEY)",
       "CREATE TABLE t(a TEXT PRIMARY KEY AUTOINCREMENT)",

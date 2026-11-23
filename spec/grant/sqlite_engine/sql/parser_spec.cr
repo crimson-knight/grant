@@ -146,9 +146,11 @@ describe SQL::Parser do
     parse_error("SELECT 1 FROM").message.should eq("incomplete input")
     parse_error("SELECT * FROM t WHERE").message.should eq("incomplete input")
     parse_error("SELECT 1 + ;").message.should eq(%(near ";": syntax error))
-    parse_error("SELECT 'abc").message.should eq(%(unrecognized token: "'abc")) # secret-scan-gate:allow (SQL tokenizer test text)
+    parse_error("SELECT 'abc").message.should eq(%(unrecognized token: "'abc"))   # secret-scan-gate:allow (SQL tokenizer test text)
     parse_error("SELECT 12abc").message.should eq(%(unrecognized token: "12abc")) # secret-scan-gate:allow (SQL tokenizer test text)
-    parse_error("SELECT 1__0").message.should eq(%(unrecognized token: "1__0")) # secret-scan-gate:allow (SQL tokenizer test text)
+    parse_error("SELECT 1__0").message.should eq(%(unrecognized token: "1__0"))   # secret-scan-gate:allow (SQL tokenizer test text)
+    parse_error("\vSELECT 1").message.should eq(%(unrecognized token: "\v"))      # secret-scan-gate:allow (SQL tokenizer test text)
+    SQL::Parser.parse(" \vSELECT 1").should_not be_nil
   end
 
   it "raises the errors SQLite's grammar actions raise" do
