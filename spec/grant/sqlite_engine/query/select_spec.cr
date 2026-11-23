@@ -226,6 +226,17 @@ module SelectSpecFixture
     {"SELECT id FROM users WHERE (SELECT count(*) FROM (SELECT 1 UNION ALL SELECT sum(users.age))) ORDER BY id", [] of Grant::SQLiteEngine::Value},
     {"SELECT id FROM users WHERE (SELECT count(*) FROM (SELECT sum(users.age))) ORDER BY id", [] of Grant::SQLiteEngine::Value},
     {"WITH RECURSIVE c(i) AS (SELECT * UNION ALL SELECT i + 1 FROM c WHERE i < 3) SELECT i FROM c", [] of Grant::SQLiteEngine::Value},
+    # Scan terms decided from the stored record (ScanTest): numbers against
+    # numbers, a REAL column holding an integer, NULL, IS, text against a
+    # number, and literal-prefix LIKE on a NOCASE column.
+    {"SELECT id, score FROM users WHERE score > ? AND age >= ?", [3_i64, 17.5] of Grant::SQLiteEngine::Value},
+    {"SELECT id FROM users WHERE ? <= score", [3_i64] of Grant::SQLiteEngine::Value},
+    {"SELECT id FROM users WHERE score IS ? OR id = 4", [3.0] of Grant::SQLiteEngine::Value},
+    {"SELECT id FROM users WHERE age IS NOT ? AND score < 100", [36_i64] of Grant::SQLiteEngine::Value},
+    {"SELECT id FROM users WHERE age > ?", ["20"] of Grant::SQLiteEngine::Value},
+    {"SELECT id, name FROM users WHERE name LIKE ? AND age > 1", ["a%"] of Grant::SQLiteEngine::Value},
+    {"SELECT id FROM posts WHERE rank > ? AND title LIKE 'F%'", [5_i64] of Grant::SQLiteEngine::Value},
+    {"SELECT id, flag FROM users WHERE flag = ? AND name NOT LIKE ?", [1_i64, "c%"] of Grant::SQLiteEngine::Value},
   ]
 end
 

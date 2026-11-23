@@ -59,12 +59,12 @@ module Grant::SQLiteEngine::Query
       @list_of_rowids = Array(Int64?).new(slot_count, nil)
     end
 
-    # Makes this finished group a new one, keeping its arrays.
-    def recycle(key_values : Array(Value), accumulators : Array(AggregateFunctions::Accumulator),
-                distinct_sets : Array(Set(Array(EqualityKey))?)) : Nil
+    # Makes this finished group a new one with *key_values*, keeping its
+    # arrays, accumulators and DISTINCT sets (emptied).
+    def recycle(key_values : Array(Value)) : Nil
       @list_of_key_values.replace(key_values)
-      @list_of_accumulators = accumulators
-      @list_of_distinct_sets = distinct_sets
+      @list_of_accumulators.each(&.reset)
+      @list_of_distinct_sets.each { |set| set.try &.clear }
     end
   end
 
@@ -201,7 +201,7 @@ module Grant::SQLiteEngine::Query
           step_group(frame, current, aggregation, first: false)
           next
         end
-        group = recycled_group(scratch, calls) || new_group(scratch.dup, calls, aggregation.list_of_slots.size)
+        group = recycled_group(scratch) || new_group(scratch.dup, calls, aggregation.list_of_slots.size)
         step_group(frame, group, aggregation, first: true)
         @current = group
         return current if current
@@ -216,13 +216,11 @@ module Grant::SQLiteEngine::Query
     @saved_rowids = [] of Int64?
     @spare_group : Group? = nil
 
-    private def recycled_group(keys : Array(Value), calls : Array(AggregateCall)) : Group?
+    private def recycled_group(keys : Array(Value)) : Group?
       spare = @spare_group
       return unless spare
       @spare_group = nil
-      accumulators = calls.map { |call| AggregateFunctions::Accumulator.for(call.kind, call.collation) }
-      distinct_sets = calls.map { |call| call.distinct? ? Set(Array(EqualityKey)).new : nil }
-      spare.recycle(keys, accumulators, distinct_sets)
+      spare.recycle(keys)
       spare
     end
 

@@ -58,9 +58,12 @@ module Grant::SQLiteEngine::Query
     @position = 0
     @body = 0
     @count = 0
-    @list_of_serial_types = [] of Int64
-    @list_of_offsets = [] of Int32
-    @list_of_sizes = [] of Int32
+    # Per entry read: its serial type, body offset and size, in buffers
+    # that grow to the widest record seen and are reused for every row.
+    @capacity = 16
+    @serial_types = Pointer(Int64).malloc(16)
+    @offsets = Pointer(Int32).malloc(16)
+    @sizes = Pointer(Int32).malloc(16)
 
     def parse(payload : Bytes, page_number : UInt32) : Nil
       @payload = payload
@@ -86,16 +89,39 @@ module Grant::SQLiteEngine::Query
 
     # The value at stored *position*, which `has?` found.
     def value(position : Int32, encoding : TextEncoding) : Value
-      RecordColumns.value(@payload, @list_of_offsets.unsafe_fetch(position), @list_of_serial_types.unsafe_fetch(position),
-        @list_of_sizes.unsafe_fetch(position), encoding)
+      RecordColumns.value(@payload, @offsets[position], @serial_types[position],
+        @sizes[position], encoding)
+    end
+
+    # The serial type at stored *position*, which `has?` found.
+    def serial_type(position : Int32) : Int64
+      @serial_types[position]
+    end
+
+    # The value at stored *position*, which `has?` found, when it is an
+    # integer or a real other than NaN; nil otherwise (NULL, text, a blob,
+    # or a NaN, which reads as NULL).
+    def number(position : Int32) : Int64 | Float64 | Nil
+      serial_type = @serial_types[position]
+      return if serial_type == 0 || serial_type > 9
+      offset = @offsets[position]
+      case serial_type
+      when 8 then 0_i64
+      when 9 then 1_i64
+      when 7
+        real = RecordColumns.signed_integer(@payload, offset, 8).to_u64!.unsafe_as(Float64)
+        real.nan? ? nil : real
+      else
+        RecordColumns.signed_integer(@payload, offset, @sizes[position])
+      end
     end
 
     # The bytes of the value at stored *position*, which `has?` found,
     # when it is text; nil otherwise.
     def text_bytes(position : Int32) : Bytes?
-      serial_type = @list_of_serial_types.unsafe_fetch(position)
+      serial_type = @serial_types[position]
       return unless serial_type >= 13 && serial_type.odd?
-      @payload[@list_of_offsets.unsafe_fetch(position), @list_of_sizes.unsafe_fetch(position)]
+      @payload[@offsets[position], @sizes[position]]
     end
 
     private def read_entry : Nil
@@ -121,19 +147,20 @@ module Grant::SQLiteEngine::Query
       if @body.to_i64 + size > payload.size
         corrupt("record value of serial type #{serial_type} runs past the payload")
       end
-      store(@list_of_serial_types, @count, serial_type)
-      store(@list_of_offsets, @count, @body)
-      store(@list_of_sizes, @count, size.to_i32)
+      grow if @count == @capacity
+      @serial_types[@count] = serial_type
+      @offsets[@count] = @body
+      @sizes[@count] = size.to_i32
       @body += size.to_i32
       @count += 1
     end
 
-    private def store(list : Array(T), index : Int32, item : T) : Nil forall T
-      if index < list.size
-        list.unsafe_put(index, item)
-      else
-        list << item
-      end
+    private def grow : Nil
+      capacity = @capacity * 2
+      @serial_types = @serial_types.realloc(capacity)
+      @offsets = @offsets.realloc(capacity)
+      @sizes = @sizes.realloc(capacity)
+      @capacity = capacity
     end
 
     private def corrupt(check : String) : NoReturn
@@ -170,6 +197,14 @@ module Grant::SQLiteEngine::Query
           corrupt(page_number, "serial type #{serial_type} is reserved") if size < 0
           if body.to_i64 + size > payload.size
             corrupt(page_number, "record value of serial type #{serial_type} runs past the payload")
+          end
+          if probe_value.is_a?(Int64) && 0 < serial_type <= 9 && serial_type != 7
+            # Two integers compare as integers whatever the collation.
+            stored_integer = serial_type >= 8 ? serial_type - 8 : signed_integer(payload, body, size.to_i32)
+            body += size.to_i32
+            comparison = stored_integer <=> probe_value
+            next if comparison == 0
+            return descending[index]? ? -comparison : comparison
           end
           stored = value(payload, body, serial_type, size.to_i32, encoding)
           body += size.to_i32
@@ -229,7 +264,8 @@ module Grant::SQLiteEngine::Query
       end
     end
 
-    private def self.signed_integer(payload : Bytes, offset : Int32, size : Int32) : Int64
+    # The big-endian two's-complement integer of *size* bytes at *offset*.
+    def self.signed_integer(payload : Bytes, offset : Int32, size : Int32) : Int64
       value = payload.unsafe_fetch(offset).to_i8!.to_i64
       index = 1
       while index < size

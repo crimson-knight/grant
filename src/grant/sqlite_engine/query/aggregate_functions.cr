@@ -43,6 +43,9 @@ module Grant::SQLiteEngine::Query
       abstract def step(arguments : Array(Value)) : Nil
       abstract def finish : Value
 
+      # Starts over for a new group, as a new accumulator would.
+      abstract def reset : Nil
+
       # For min and max: whether the last step changed the result, which
       # decides whether bare columns are reloaded from that row.
       def hit? : Bool
@@ -75,6 +78,10 @@ module Grant::SQLiteEngine::Query
 
       def finish : Value
         @count
+      end
+
+      def reset : Nil
+        @count = 0_i64
       end
     end
 
@@ -136,6 +143,15 @@ module Grant::SQLiteEngine::Query
           return if @count == 0
           combined / @count.to_f64
         end
+      end
+
+      def reset : Nil
+        @count = 0_i64
+        @integer_sum = 0_i64
+        @real_sum = 0.0
+        @error_term = 0.0
+        @approximate = false
+        @overflowed = false
       end
 
       private def combined : Float64
@@ -216,6 +232,12 @@ module Grant::SQLiteEngine::Query
       def finish : Value
         @best
       end
+
+      def reset : Nil
+        @best = nil
+        @has_value = false
+        @hit = false
+      end
     end
 
     class GroupConcatAccumulator < Accumulator
@@ -241,6 +263,10 @@ module Grant::SQLiteEngine::Query
       def finish : Value
         buffer = @buffer
         buffer ? String.new(buffer.to_slice) : nil
+      end
+
+      def reset : Nil
+        @buffer = nil
       end
     end
   end

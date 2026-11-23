@@ -54,10 +54,14 @@ module Grant::SQLiteEngine::Query
     @list_of_terms = [] of {Expr, Set(Int32)?}
     @list_of_term_positions = [] of Array(Int32)
     @rest_positions = [] of Int32
-    # Per term, the stored position of the column a literal-prefix LIKE
-    # tests, so a row whose stored text fails the prefix is rejected before
-    # the text is decoded.
-    @list_of_like_shortcuts = [] of {Int32, LikeExpr}?
+    # Per term, the test that decides it from the stored record when the
+    # stored value allows (`ScanTest`), so a row a term rejects is often
+    # rejected before any of its values is decoded.
+    @list_of_tests = [] of ScanTest?
+    # Terms of the current row a test passed without decoding their
+    # columns; those columns are decoded before a later term or the query
+    # reads them.
+    @list_of_undecoded = [] of Int32
     @masks_ready = false
     @header = RecordHeader.new
 
@@ -82,18 +86,9 @@ module Grant::SQLiteEngine::Query
         positions
       end
       @rest_positions = (0...wanted.size).select { |position| wanted[position] && !decoded[position] }
-      @list_of_like_shortcuts = @list_of_terms.map { |(term, _)| like_shortcut(term) }
+      encoding = @database.text_encoding
+      @list_of_tests = @list_of_terms.map { |(term, _)| ScanTest.for(term, @slot, @table, encoding) }
       @masks_ready = true
-    end
-
-    private def like_shortcut(term : Expr) : {Int32, LikeExpr}?
-      return unless term.is_a?(LikeExpr)
-      operand = term.operand
-      pattern = term.pattern
-      return unless operand.is_a?(ColumnExpr) && operand.slot == @slot && operand.column != @table.rowid_alias
-      return unless pattern.is_a?(ParameterExpr) || pattern.is_a?(ConstantExpr)
-      position = @table.stored_position(operand.column)
-      position ? {position, term} : nil
     end
 
     def advance(frame : Frame) : Bool
@@ -120,6 +115,7 @@ module Grant::SQLiteEngine::Query
     private def advance_filtered(frame : Frame, cursor : TableCursor) : Bool
       prepare_masks unless @masks_ready
       encoding = @database.text_encoding
+      undecoded = @list_of_undecoded
       loop do
         moved = @started ? cursor.advance : cursor.first
         @started = true
@@ -130,26 +126,39 @@ module Grant::SQLiteEngine::Query
         @table.clear_row(@buffer) unless @buffer.size == @table.list_of_column_names.size
         frame.list_of_rowids[@slot] = rowid
         frame.list_of_rows[@slot] = @buffer
-        passed = true
-        @list_of_terms.each_with_index do |(term, _), index|
-          if encoding.utf8? && (shortcut = @list_of_like_shortcuts.unsafe_fetch(index))
-            position, like = shortcut
-            if @header.has?(position) && (text = @header.text_bytes(position)) && like.prefix_verdict(frame, text) == false
-              passed = false
-              break
-            end
-          end
-          @table.fill_columns(@header, rowid, @list_of_term_positions.unsafe_fetch(index), encoding, @buffer)
-          next if term.holds?(frame)
-          passed = false
-          break
-        end
-        if passed
+        undecoded.clear
+        if passes_terms?(frame, rowid, encoding, undecoded)
+          undecoded.each { |index| fill_term_columns(index, rowid, encoding) }
           @table.fill_columns(@header, rowid, @rest_positions, encoding, @buffer)
           return true
         end
         frame.session.tick
       end
+    end
+
+    # Tests the current row against every term in order, as C codes them.
+    private def passes_terms?(frame : Frame, rowid : Int64, encoding : TextEncoding, undecoded : Array(Int32)) : Bool
+      @list_of_terms.each_with_index do |(term, _), index|
+        if test = @list_of_tests.unsafe_fetch(index)
+          verdict = test.verdict(@header, frame)
+          return false if verdict == false
+          if verdict
+            undecoded << index
+            next
+          end
+        end
+        unless undecoded.empty?
+          undecoded.each { |earlier| fill_term_columns(earlier, rowid, encoding) }
+          undecoded.clear
+        end
+        fill_term_columns(index, rowid, encoding)
+        return false unless term.holds?(frame)
+      end
+      true
+    end
+
+    private def fill_term_columns(index : Int32, rowid : Int64, encoding : TextEncoding) : Nil
+      @table.fill_columns(@header, rowid, @list_of_term_positions.unsafe_fetch(index), encoding, @buffer)
     end
   end
 

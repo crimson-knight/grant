@@ -121,6 +121,8 @@ module Grant::SQLiteEngine::Query
     getter column_affinity : ExpressionAffinity
     getter column_collation : Collation
     getter declared_name : String
+    # An integer this column reads is shown as a real.
+    getter? realify : Bool
 
     def initialize(@slot : Int32, @column : Int32, @column_affinity : ExpressionAffinity, @column_collation : Collation,
                    @declared_name : String, @realify : Bool = false)
