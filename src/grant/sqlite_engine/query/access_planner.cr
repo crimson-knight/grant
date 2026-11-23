@@ -322,6 +322,7 @@ module Grant::SQLiteEngine::Query
       entry = step.entry
       best = nil
       best_score = 0
+      best_weight = 0
       table.list_of_indexes.reverse_each do |layout|
         next if layout.has_expressions?
         next if layout.partial? && !PartialIndexUse.usable?(layout, entry, terms)
@@ -351,9 +352,16 @@ module Grant::SQLiteEngine::Query
         # On equal scores the estimate decides (whereLoopAddBtreeIndex
         # costs): a partial index holds half the rows (sqlite3DefaultRowEst).
         candidate = index_choice(entry, table, layout, equal, range_low, range_high)
-        if score > best_score || (best && score == best_score && candidate.rows < best.rows)
+        weight = RowWidth.index_scan_weight(table, layout)
+        better = score > best_score
+        if best && score == best_score
+          # Equal rows: the narrower index costs less (rCostIdx).
+          better = candidate.rows < best.rows || (candidate.rows == best.rows && weight < best_weight)
+        end
+        if better
           best_score = score
           best = candidate
+          best_weight = weight
         end
       end
       best
