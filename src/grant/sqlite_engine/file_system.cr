@@ -99,10 +99,10 @@ module Grant::SQLiteEngine
   # does not exist), locked the way os_unix.c locks it: the PENDING byte at
   # 2^30, the RESERVED byte after it and the 510-byte SHARED range after that.
   class PosixFile < DatabaseFile
-    PENDING_BYTE = Pager::PENDING_BYTE_OFFSET
+    PENDING_BYTE  = Pager::PENDING_BYTE_OFFSET
     RESERVED_BYTE = PENDING_BYTE + 1
-    SHARED_FIRST = PENDING_BYTE + 2
-    SHARED_SIZE = 510_i64
+    SHARED_FIRST  = PENDING_BYTE + 2
+    SHARED_SIZE   = 510_i64
 
     getter lock_level : LockLevel = LockLevel::None
 

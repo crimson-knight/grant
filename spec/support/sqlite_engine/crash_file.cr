@@ -75,16 +75,16 @@ class SQLiteEngineCrashFileSystem < Grant::SQLiteEngine::FileSystem
   end
 
   protected def write(path : String, offset : Int64, bytes : Bytes) : Nil
-      content = @files[path]? || Bytes.empty
-      finish = offset + bytes.size
-      if finish > content.size
-        grown = Bytes.new(finish.to_i32)
-        grown.copy_from(content.to_unsafe, content.size)
-        content = grown
-      end
-      (content + offset).copy_from(bytes.to_unsafe, bytes.size)
-      @files[path] = content
-      record_operation(Operation.new(OperationKind::Write, path, offset, bytes.dup))
+    content = @files[path]? || Bytes.empty
+    finish = offset + bytes.size
+    if finish > content.size
+      grown = Bytes.new(finish.to_i32)
+      grown.copy_from(content.to_unsafe, content.size)
+      content = grown
+    end
+    (content + offset).copy_from(bytes.to_unsafe, bytes.size)
+    @files[path] = content
+    record_operation(Operation.new(OperationKind::Write, path, offset, bytes.dup))
   end
 
   protected def truncate(path : String, size : Int64) : Nil

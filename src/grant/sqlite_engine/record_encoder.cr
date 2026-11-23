@@ -62,17 +62,17 @@ module Grant::SQLiteEngine
       converted
     end
 
-# A REAL as TEXT affinity stores it: 15 significant digits with a
-# decimal point in the mantissa ("%!.15g", sqlite3VdbeMemStringify in
-# SQLite 3.45 to 3.51), "Inf" and "-Inf", and -0.0 as "0.0". SQLite 3.52
-# and later print 17 digits when 15 do not read back the same double.
-def self.real_text(value : Float64) : String
-  return value > 0 ? "Inf" : "-Inf" if value.infinite?
-  return "0.0" if value == 0
-  mantissa, separator, exponent = ("%.15g" % value).partition('e')
-  mantissa = "#{mantissa}.0" unless mantissa.includes?('.')
-  "#{mantissa}#{separator}#{exponent}"
-end
+    # A REAL as TEXT affinity stores it: 15 significant digits with a
+    # decimal point in the mantissa ("%!.15g", sqlite3VdbeMemStringify in
+    # SQLite 3.45 to 3.51), "Inf" and "-Inf", and -0.0 as "0.0". SQLite 3.52
+    # and later print 17 digits when 15 do not read back the same double.
+    def self.real_text(value : Float64) : String
+      return value > 0 ? "Inf" : "-Inf" if value.infinite?
+      return "0.0" if value == 0
+      mantissa, separator, exponent = ("%.15g" % value).partition('e')
+      mantissa = "#{mantissa}.0" unless mantissa.includes?('.')
+      "#{mantissa}#{separator}#{exponent}"
+    end
 
     # NUMERIC and INTEGER affinity: text that reads as a number becomes one,
     # and a REAL that is a whole number inside the Int64 range becomes an

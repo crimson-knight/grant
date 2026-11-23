@@ -42,11 +42,11 @@ lib LibSQLite3Writer
 end
 
 module SQLiteEngineWriteBench
-  OPEN_READ_WRITE_CREATE = 6
-  DONE                   = 101
+  OPEN_READ_WRITE_CREATE =       6
+  DONE                   =     101
   ROWS                   = 200_000
-  SINGLE_INSERTS         = 1_000
-  CHANGES                = 10_000
+  SINGLE_INSERTS         =   1_000
+  CHANGES                =  10_000
   TABLE_SQL              = "CREATE TABLE items(id INTEGER PRIMARY KEY, label TEXT, amount INTEGER, score REAL, payload TEXT)"
   # SQLITE_TRANSIENT: the library copies bound text.
   TRANSIENT = Pointer(Void).new(-1_i64.to_u64!)

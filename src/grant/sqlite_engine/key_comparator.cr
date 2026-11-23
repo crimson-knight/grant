@@ -100,10 +100,10 @@ module Grant::SQLiteEngine
 
     private def storage_class(value : Value) : Int32
       case value
-      when Nil              then 0
-      when Int64, Float64   then 1
-      when String           then 2
-      else                       3
+      when Nil            then 0
+      when Int64, Float64 then 1
+      when String         then 2
+      else                     3
       end
     end
 

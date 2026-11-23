@@ -465,16 +465,16 @@ module Grant::SQLiteEngine
       rowid
     end
 
-# Primary key columns may not be NULL in WITHOUT ROWID and STRICT tables
-# (withoutrowid.html §2, stricttables.html §2.2).
-private def primary_key_column?(layout : TableLayout, position : Int32) : Bool
-  definition = layout.definition
-  return false unless definition.without_rowid? || definition.strict?
-  column_name = definition.list_of_columns[position].column_name.downcase
-  definition.list_of_primary_key_columns.any? { |key| key.downcase == column_name }
-end
+    # Primary key columns may not be NULL in WITHOUT ROWID and STRICT tables
+    # (withoutrowid.html §2, stricttables.html §2.2).
+    private def primary_key_column?(layout : TableLayout, position : Int32) : Bool
+      definition = layout.definition
+      return false unless definition.without_rowid? || definition.strict?
+      column_name = definition.list_of_columns[position].column_name.downcase
+      definition.list_of_primary_key_columns.any? { |key| key.downcase == column_name }
+    end
 
-private def writer_schema_format : UInt32
+    private def writer_schema_format : UInt32
       header.try(&.schema_format) || 4_u32
     end
 
