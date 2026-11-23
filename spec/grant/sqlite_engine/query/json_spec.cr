@@ -103,6 +103,16 @@ describe "Grant::SQLiteEngine::Query JSON functions" do
   database = Grant::SQLiteEngine::Database.open(path)
   session = Grant::SQLiteEngine::Query::Session.new(database)
 
+  # The engine follows C SQLite 3.51.0, and older libraries render and
+  # validate JSON differently (JSON5 escapes, control characters, integer
+  # overflow, negative array indexes after ->), so the comparison needs that
+  # library or a newer one.
+  library_version = SQLiteSQLOracle.version.split(" ").first
+  if library_version.split(".").map(&.to_i) < [3, 51, 0]
+    pending "matches C SQLite 3.51.0 on every document, path and function (the linked libsqlite3 is #{library_version})"
+    next
+  end
+
   it "matches C SQLite on every document, path and function" do
     failures = [] of String
     JsonSpecFixture.queries.each do |(sql, parameters)|
