@@ -338,7 +338,7 @@ module Grant::SQLiteEngine::Query
       end
       @strict_low = false
       seek_key = @seek_key
-      seek_key.replace(probe)
+      ValueBuffer.refill(seek_key, probe)
       if low = @low
         raw = low[0].evaluate(frame)
         value = ValueSemantics.apply_record_affinity(raw, low[1])
@@ -445,7 +445,7 @@ module Grant::SQLiteEngine::Query
     private def stop_past_key : Bool
       @empty = true
       @can_resume = true
-      @resume_after.replace(@probe)
+      ValueBuffer.refill(@resume_after, @probe)
       false
     end
 

@@ -40,6 +40,21 @@ module Grant::SQLiteEngine::Query
     end
   end
 
+  # Value arrays a query refills row after row.
+  module ValueBuffer
+    # Makes *target* hold *source*'s values, overwriting them in place when
+    # the two have the same size (the usual case for a refilled buffer).
+    @[AlwaysInline]
+    def self.refill(target : Array(Value), source : Array(Value)) : Nil
+      size = source.size
+      if target.size == size
+        size.times { |position| target.unsafe_put(position, source.unsafe_fetch(position)) }
+      else
+        target.replace(source)
+      end
+    end
+  end
+
   # A compiled expression: names already resolved to frame slots.
   abstract class Expr
     # `evaluate` behind one out-of-line call. A hot loop that calls

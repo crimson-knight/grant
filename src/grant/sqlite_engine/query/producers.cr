@@ -68,7 +68,7 @@ module Grant::SQLiteEngine::Query
     # Makes this finished group a new one with *key_values*, keeping its
     # arrays, accumulators and DISTINCT sets (emptied).
     def recycle(key_values : Array(Value)) : Nil
-      @list_of_key_values.replace(key_values)
+      ValueBuffer.refill(@list_of_key_values, key_values)
       @list_of_accumulators.each(&.reset)
       @list_of_distinct_sets.each { |set| set.try &.clear }
     end
@@ -343,7 +343,7 @@ module Grant::SQLiteEngine::Query
         aggregation.list_of_slots.each_with_index do |slot, position|
           # Table sources refill one array per row, so the group keeps a copy.
           frame.complete_row(slot)
-          group.list_of_rows.unsafe_fetch(position).replace(frame.list_of_rows[slot])
+          ValueBuffer.refill(group.list_of_rows.unsafe_fetch(position), frame.list_of_rows[slot])
           group.list_of_rowids[position] = frame.list_of_rowids[slot]
         end
       end
