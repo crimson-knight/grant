@@ -36,7 +36,7 @@ module Grant::SQLiteEngine::Query
 
     def initialize(@session : Session, @statement : SQL::Pragma)
       if schema = @statement.schema
-        unless schema.same?("main") || schema.same?("temp")
+        unless @session.schema?(schema.value)
           raise SQLError.new("unknown database #{schema.value}")
         end
       end

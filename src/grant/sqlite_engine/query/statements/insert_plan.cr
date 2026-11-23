@@ -16,7 +16,7 @@ module Grant::SQLiteEngine::Query
     def initialize(@session : Session, @statement : SQL::Insert)
       table_name = @statement.table.name.value
       schema = @statement.table.schema
-      if schema && !schema.same?("main") && !schema.same?("temp")
+      if schema && !@session.schema?(schema.value)
         raise SQLError.new("no such table: #{schema.value}.#{table_name}")
       end
       schema_text = schema.try(&.value)

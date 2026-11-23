@@ -177,11 +177,11 @@ module Grant::SQLiteEngine::Query
           return {entry, MaterializedSource.new(slot, plan.producer, !plan.outer_slots.empty?).as(RowSource)}
         end
       end
-      temp_schema = schema && schema.compare("temp", case_insensitive: true).zero?
-      if schema && !temp_schema && !schema.compare("main", case_insensitive: true).zero?
+      if schema && !@session.schema?(schema)
         raise SQLError.new("no such table: #{schema}.#{name}")
       end
-      if !temp_schema && (view = @session.view(name))
+      main_schema = schema.nil? || schema.compare("main", case_insensitive: true).zero?
+      if main_schema && (view = @session.view(name))
         plan = compile_view(view)
         slot = allocate_slot
         entry = FromEntry.new(alias_name, slot, subquery_columns(plan, view.list_of_column_names, view_name: name), nil)

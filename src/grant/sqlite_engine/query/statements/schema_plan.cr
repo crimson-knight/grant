@@ -39,7 +39,7 @@ module Grant::SQLiteEngine::Query
 
     private def check_schema_name(schema : SQL::Name?) : Nil
       return unless schema
-      return if schema.same?("main") || schema.same?("temp")
+      return if @session.schema?(schema.value)
       raise SQLError.new("unknown database #{schema.value}")
     end
 

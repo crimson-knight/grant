@@ -59,7 +59,7 @@ module Grant::SQLiteEngine::Query
     def self.check(session : Session, reference : SQL::QualifiedTable) : WriteTable
       table_name = reference.name.value
       schema = reference.schema
-      if schema && !schema.same?("main") && !schema.same?("temp")
+      if schema && !session.schema?(schema.value)
         raise SQLError.new("no such table: #{schema.value}.#{table_name}")
       end
       schema_text = schema.try(&.value)

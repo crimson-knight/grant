@@ -226,7 +226,7 @@ module Grant::SQLiteEngine::Query
       column_name = reference.column.value
       table_name = reference.table.try(&.value)
       if schema = reference.schema
-        unless schema.value.compare("main", case_insensitive: true) == 0 || schema.value.compare("temp", case_insensitive: true) == 0
+        unless @session.schema?(schema.value)
           raise SQLError.new("no such column: #{schema.value}.#{table_name}.#{column_name}")
         end
       end

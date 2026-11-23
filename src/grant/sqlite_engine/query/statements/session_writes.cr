@@ -32,7 +32,7 @@ module Grant::SQLiteEngine::Query
       @write_tables.clear
       @child_tables = nil
       @database.forget_layouts
-      @temp_database.try(&.forget_layouts)
+      list_of_secondary_databases.each(&.forget_layouts)
     end
 
     # The rules for writing rows of *name*, or nil when there is no such
@@ -72,64 +72,82 @@ module Grant::SQLiteEngine::Query
 
     # --- Transactions -------------------------------------------------------
     #
-    # The temp database's pager follows the main pager's transaction: it
-    # joins a write transaction when one is open, keeps a savepoint for
-    # each main savepoint opened while it takes part (`@temp_marks`, main
-    # depth to temp depth), and commits or rolls back with it. A rollback
-    # to a savepoint opened before temp joined undoes all of temp's part.
+    # The pagers of temp and of each attached database follow the main
+    # pager's transaction: each joins a write transaction when one is open,
+    # keeps a savepoint for every main savepoint opened while it takes part
+    # (its marks map main depth to its own depth), and commits or rolls
+    # back with main. A rollback to a savepoint opened before a database
+    # joined undoes all of that database's part.
 
-    @temp_marks = {} of Int32 => Int32
+    @secondary_marks = {} of Database => Hash(Int32, Int32)
 
-    private def join_temp_write : Nil
-      temp = @temp_database
-      return unless temp
-      temp.pager.begin_write unless temp.pager.in_write_transaction?
+    private def join_secondary_writes : Nil
+      list_of_secondary_databases.each { |database| join_one_write(database) }
+    end
+
+    private def join_one_write(database : Database) : Nil
+      database.pager.begin_write unless database.pager.in_write_transaction?
+    end
+
+    private def forget_secondary_marks(database : Database) : Nil
+      @secondary_marks.delete(database)
+    end
+
+    private def each_secondary_in_write(& : Database ->) : Nil
+      list_of_secondary_databases.each do |database|
+        yield database if database.pager.in_write_transaction?
+      end
     end
 
     private def open_savepoint_everywhere : Int32
       depth = @database.pager.open_savepoint
-      if (temp = @temp_database) && temp.pager.in_write_transaction?
-        @temp_marks[depth] = temp.pager.open_savepoint
+      each_secondary_in_write do |database|
+        (@secondary_marks[database] ||= {} of Int32 => Int32)[depth] = database.pager.open_savepoint
       end
       depth
     end
 
     private def release_savepoint_everywhere(depth : Int32) : Nil
       @database.pager.release_savepoint(depth)
-      if (temp_depth = @temp_marks[depth]?) && (temp = @temp_database) && temp.pager.in_write_transaction?
-        temp.pager.release_savepoint(temp_depth)
+      each_secondary_in_write do |database|
+        marks = @secondary_marks[database]?
+        next unless marks
+        if own_depth = marks[depth]?
+          database.pager.release_savepoint(own_depth)
+        end
+        marks.reject! { |main_depth, _| main_depth >= depth }
       end
-      @temp_marks.reject! { |main_depth, _| main_depth >= depth }
     end
 
     private def rollback_to_savepoint_everywhere(depth : Int32) : Nil
       @database.pager.rollback_to_savepoint(depth)
-      temp = @temp_database
-      return unless temp && temp.pager.in_write_transaction?
-      if temp_depth = @temp_marks[depth]?
-        temp.pager.rollback_to_savepoint(temp_depth)
-        @temp_marks.reject! { |main_depth, _| main_depth > depth }
-      else
-        temp.pager.rollback
-        @temp_marks.clear
-        temp.pager.begin_write
+      each_secondary_in_write do |database|
+        marks = @secondary_marks[database]?
+        if marks && (own_depth = marks[depth]?)
+          database.pager.rollback_to_savepoint(own_depth)
+          marks.reject! { |main_depth, _| main_depth > depth }
+        else
+          database.pager.rollback
+          @secondary_marks.delete(database)
+          database.pager.begin_write
+        end
       end
+    end
+
+    private def commit_secondaries : Nil
+      each_secondary_in_write(&.pager.commit)
+      @secondary_marks.clear
     end
 
     private def commit_everywhere : Nil
       @database.pager.commit
-      if (temp = @temp_database) && temp.pager.in_write_transaction?
-        temp.pager.commit
-      end
-      @temp_marks.clear
+      commit_secondaries
     end
 
     private def rollback_everywhere : Nil
       @database.pager.rollback
-      if (temp = @temp_database) && temp.pager.in_write_transaction?
-        temp.pager.rollback
-      end
-      @temp_marks.clear
+      each_secondary_in_write(&.pager.rollback)
+      @secondary_marks.clear
     end
 
     # Takes the write lock for the open transaction or for one statement,
@@ -139,11 +157,11 @@ module Grant::SQLiteEngine::Query
     def begin_write_transaction : Nil
       pager = @database.pager
       if pager.in_write_transaction?
-        join_temp_write
+        join_secondary_writes
         return
       end
       wait_while_busy { pager.begin_write }
-      join_temp_write
+      join_secondary_writes
       refresh_after_other_connections
       @list_of_savepoints.each_with_index do |mark, position|
         next unless mark.depth < 0
@@ -366,10 +384,7 @@ module Grant::SQLiteEngine::Query
       @deferred_violations = 0_i64
       begin
         wait_while_busy { @database.pager.commit }
-        if (temp = @temp_database) && temp.pager.in_write_transaction?
-          temp.pager.commit
-        end
-        @temp_marks.clear
+        commit_secondaries
       rescue error
         rollback_everywhere
         reset_schema
