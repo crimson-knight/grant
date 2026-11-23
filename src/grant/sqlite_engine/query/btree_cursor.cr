@@ -109,6 +109,24 @@ module Grant::SQLiteEngine::Query
       Record.decode(PayloadReader.read(pager, page, location), @database.text_encoding, page.number)
     end
 
+    # Decodes the current row of *table* into *into* in declared column
+    # order, with only the columns *use* marks; returns its rowid.
+    def row(table : TableInfo, use : ColumnUse, into : Array(Value)) : Int64
+      page, index = @stack.unsafe_fetch(@stack.size - 1)
+      rowid, location = page.table_leaf_cell(index)
+      table.decode_row(rowid, PayloadReader.read(pager, page, location), @database.text_encoding, page.number, use, into)
+      rowid
+    end
+
+    # Reads the current row's record header into *header*; returns its
+    # rowid.
+    def header(into header : RecordHeader) : Int64
+      page, index = @stack.unsafe_fetch(@stack.size - 1)
+      rowid, location = page.table_leaf_cell(index)
+      header.parse(PayloadReader.read(pager, page, location), page.number)
+      rowid
+    end
+
     # From a leaf position that may be past the leaf's end, moves to the
     # next row there is.
     private def settle : Bool
@@ -185,6 +203,7 @@ module Grant::SQLiteEngine::Query
     end
 
     def first : Bool
+      @built_generation = pager.generation
       @stack.clear
       pager.check_page_number(@root_page)
       descend_leftmost(@root_page)
@@ -194,6 +213,16 @@ module Grant::SQLiteEngine::Query
     # Moves to the first entry whose key columns compare at least (or, with
     # *strict*, greater than) *probe*.
     def seek(probe : Array(Value), strict : Bool = false) : Bool
+      # sqlite3BtreeIndexMoveto: when the cursor sits on a leaf whose keys
+      # span the target, the search stays in that leaf.
+      if @valid && @built_generation == pager.generation && (top = @stack.last?) && top[0].page_type.leaf?
+        leaf = top[0]
+        if leaf_spans?(leaf, probe, strict)
+          @stack[-1] = {leaf, bound(leaf, probe, strict)}
+          return settle_leaf
+        end
+      end
+      @built_generation = pager.generation
       @stack.clear
       number = @root_page
       pager.check_page_number(number)
@@ -223,6 +252,12 @@ module Grant::SQLiteEngine::Query
     def record : Array(Value)
       page, index = @stack[-1]
       Record.decode(PayloadReader.read(pager, page, page.payload(index)), @database.text_encoding, page.number)
+    end
+
+    # The current entry decoded into *into*.
+    def record(into : Array(Value)) : Array(Value)
+      page, index = @stack.unsafe_fetch(@stack.size - 1)
+      RecordColumns.decode_into(PayloadReader.read(pager, page, page.payload(index)), @database.text_encoding, page.number, into)
     end
 
     private def descend_leftmost(number : UInt32) : Nil
@@ -257,14 +292,36 @@ module Grant::SQLiteEngine::Query
       end
     end
 
+    @built_generation = -1
+
+    # Forgets the position, so the next seek starts from the root (a new
+    # execution may follow writes this connection made).
+    def forget_position : Nil
+      @valid = false
+      @built_generation = -1
+    end
+
+    # True when the first entry at least (with *strict*, greater than)
+    # *probe* lies in *leaf*: its first key is below that and its last
+    # key is not.
+    private def leaf_spans?(leaf : BTreePage, probe : Array(Value), strict : Bool) : Bool
+      count = leaf.cell_count
+      return false if count == 0
+      encoding = @database.text_encoding
+      first = RecordColumns.compare_prefix(PayloadReader.read(pager, leaf, leaf.payload(0)), encoding, leaf.number, probe, @order)
+      return false unless strict ? first <= 0 : first < 0
+      last = RecordColumns.compare_prefix(PayloadReader.read(pager, leaf, leaf.payload(count - 1)), encoding, leaf.number, probe, @order)
+      strict ? last > 0 : last >= 0
+    end
+
     private def bound(page : BTreePage, probe : Array(Value), strict : Bool) : Int32
       encoding = @database.text_encoding
       low = 0
       high = page.cell_count
       while low < high
         middle = (low + high) // 2
-        entry = Record.decode(PayloadReader.read(pager, page, page.payload(middle)), encoding, page.number)
-        comparison = @order.compare(entry, probe)
+        comparison = RecordColumns.compare_prefix(PayloadReader.read(pager, page, page.payload(middle)), encoding, page.number,
+          probe, @order)
         if comparison < 0 || (strict && comparison == 0)
           low = middle + 1
         else

@@ -25,6 +25,10 @@ module Grant::SQLiteEngine
     # dropped). SQLite builds such a default from the literal's text
     # (sqlite3ValueFromExpr), so a TEXT column reads it back as written.
     property default_real_literal : String? = nil
+    # `DEFAULT -'text'`: the default is the negated text (parse.y keeps
+    # TK_UMINUS over a string), so it reads as the text's numeric value
+    # negated.
+    property? default_negated_text = false
     # The column's COLLATE clause; BINARY when it has none.
     property collation = "BINARY"
 
@@ -83,10 +87,10 @@ module Grant::SQLiteEngine
       expect_punctuation('(')
       loop do
         if table_constraint_start?
-          table_constraint
-        else
-          column_definition
+          table_constraints
+          break
         end
+        column_definition
         break unless skip_punctuation(',')
       end
       expect_punctuation(')')
@@ -100,8 +104,28 @@ module Grant::SQLiteEngine
     def stored_column_order : Array(Int32)
       stored = (0...@list_of_columns.size).reject { |index| @list_of_columns[index].generated.virtual? }
       return stored unless @without_rowid
-      key_indexes = @list_of_primary_key_columns.compact_map { |key| column_index(key) }
+      key_indexes = primary_key_positions.compact_map { |position| column_index(@list_of_primary_key_columns[position]) }
       key_indexes + stored.reject { |index| key_indexes.includes?(index) }
+    end
+
+    # The positions in `list_of_primary_key_columns` that the key keeps: a
+    # WITHOUT ROWID table drops a column repeated with the same collation
+    # (convertToWithoutRowidTable, "PRIMARY KEY(a,b,a)" is "PRIMARY
+    # KEY(a,b)").
+    def primary_key_positions : Array(Int32)
+      positions = (0...@list_of_primary_key_columns.size).to_a
+      return positions unless @without_rowid
+      kept = [] of Int32
+      positions.each do |position|
+        name = @list_of_primary_key_columns[position]
+        collation = primary_key_collation(position)
+        repeated = kept.any? do |earlier|
+          @list_of_primary_key_columns[earlier].compare(name, case_insensitive: true) == 0 &&
+            primary_key_collation(earlier).compare(collation, case_insensitive: true) == 0
+        end
+        kept << position unless repeated
+      end
+      kept
     end
 
     # Index of the column named *column_name* (case-insensitive), or nil.
@@ -212,8 +236,10 @@ module Grant::SQLiteEngine
       end
       column.default_value = case token.kind
                              when .number? then signed_number(token.text, sign)
-                             when .text?   then token.text
-                             when .blob?   then token.text.hexbytes? || malformed("bad blob literal x'#{token.text}'")
+                             when .text?
+                               column.default_negated_text = sign == -1
+                               token.text
+                             when .blob? then token.text.hexbytes? || malformed("bad blob literal x'#{token.text}'")
                              else
                                default_keyword(column, token)
                              end
@@ -294,9 +320,22 @@ module Grant::SQLiteEngine
       COLUMN_CONSTRAINT_KEYWORDS.any? { |keyword| current.keyword?(keyword) }
     end
 
+    # parse.y conslist: after the columns, table constraints follow with
+    # or without commas between them.
+    private def table_constraints : Nil
+      loop do
+        table_constraint
+        skip_punctuation(',')
+        break unless table_constraint_start?
+      end
+    end
+
     private def table_constraint : Nil
       if skip_keyword("CONSTRAINT")
         name_token
+        # `CONSTRAINT name` alone is a constraint of its own (tcons).
+        return unless table_constraint_start?
+        return if current.keyword?("CONSTRAINT")
       end
       if skip_keyword("PRIMARY")
         expect_keyword("KEY")

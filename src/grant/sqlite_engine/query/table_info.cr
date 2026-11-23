@@ -89,12 +89,119 @@ module Grant::SQLiteEngine::Query
       values
     end
 
+    # The stored record positions holding *columns* (declared indexes; nil
+    # for every column), for `ColumnUse`.
+    def stored_mask_for(columns : Set(Int32)?) : Array(Bool)
+      mask = Array(Bool).new(@stored_order.size, false)
+      @stored_order.each_with_index do |column_index, position|
+        mask[position] = true if columns.nil? || columns.includes?(column_index)
+      end
+      mask
+    end
+
+    # The row in declared column order from a stored record, decoding only
+    # the columns *use* marks (the others read NULL, and nothing reads
+    # them), written into *into* (a source reuses one array per row, so
+    # whatever keeps a row past the next one copies it). Otherwise as
+    # `row_from`.
+    def decode_row(rowid : Int64?, payload : Bytes, encoding : TextEncoding, page_number : UInt32, use : ColumnUse,
+                   into values : Array(Value)) : Array(Value)
+      mask = use.stored_mask(self)
+      count = @list_of_column_names.size
+      if values.size == count
+        values.fill(nil)
+      else
+        values.clear
+        count.times { values << nil }
+      end
+      columns = @definition.list_of_columns
+      stored_order = @stored_order
+      affinities = @list_of_affinities
+      held = RecordColumns.decode(payload, encoding, page_number, mask) do |position, value|
+        column_index = stored_order.unsafe_fetch(position)
+        if value.is_a?(Int64) && affinities.unsafe_fetch(column_index).real?
+          value = value.to_f64
+        end
+        values.unsafe_put(column_index, value)
+      end
+      if held < stored_order.size
+        (held...stored_order.size).each do |position|
+          next unless mask[position]
+          column_index = stored_order[position]
+          values[column_index] = default_for(columns[column_index])
+        end
+      end
+      if (alias_index = rowid_alias) && rowid
+        values[alias_index] = rowid
+      end
+      values
+    end
+
+    # Empties *values* to one NULL per column, ready for `fill_columns`.
+    def clear_row(values : Array(Value)) : Nil
+      count = @list_of_column_names.size
+      if values.size == count
+        values.fill(nil)
+      else
+        values.clear
+        count.times { values << nil }
+      end
+    end
+
+    # Writes the columns at the stored positions *mask* marks from the
+    # record *header* into *values*, as `decode_row` does, and the rowid
+    # alias.
+    def fill_columns(header : RecordHeader, rowid : Int64, mask : Array(Bool), encoding : TextEncoding,
+                     values : Array(Value)) : Nil
+      stored_order = @stored_order
+      held = header.count
+      mask.each_with_index do |wanted, position|
+        next unless wanted
+        column_index = stored_order.unsafe_fetch(position)
+        if position < held
+          value = header.value(position, encoding)
+          value = value.to_f64 if value.is_a?(Int64) && @list_of_affinities.unsafe_fetch(column_index).real?
+        else
+          value = default_for(@definition.list_of_columns[column_index])
+        end
+        values.unsafe_put(column_index, value)
+      end
+      if alias_index = rowid_alias
+        values[alias_index] = rowid
+      end
+    end
+
+    # The row from an index entry whose key columns sit at table column
+    # *positions*: other columns read NULL (the caller reads only these).
+    def row_from_index(rowid : Int64, entry : Array(Value), positions : Array(Int32), into values : Array(Value)) : Array(Value)
+      count = @list_of_column_names.size
+      if values.size == count
+        values.fill(nil)
+      else
+        values.clear
+        count.times { values << nil }
+      end
+      positions.each_with_index do |column_index, key_index|
+        value = entry[key_index]?
+        value = value.to_f64 if value.is_a?(Int64) && @list_of_affinities.unsafe_fetch(column_index).real?
+        values[column_index] = value
+      end
+      if alias_index = rowid_alias
+        values[alias_index] = rowid
+      end
+      values
+    end
+
     private def default_for(column : ColumnDefinition) : Value
       if expression = column.default_expression
         raise UnsupportedSQL.new("DEFAULT #{expression} of #{name}.#{column.column_name} for a row written before the column was added")
       end
       literal = column.default_real_literal
       return literal if literal && column.affinity.text?
+      if column.default_negated_text?
+        negated = ValueSemantics.arithmetic(ValueSemantics::Arithmetic::Subtract, 0_i64, column.default_value)
+        return column.affinity.apply(negated)
+      end
       column.affinity.apply(column.default_value)
     end
   end

@@ -69,21 +69,38 @@ module Grant::SQLiteEngine::Query
     @group_position = 0
     @seen : Set(Array(EqualityKey))? = nil
 
+    # *streaming*: the source delivers rows with equal GROUP BY keys next
+    # to each other in ascending key order, so each group is finished when
+    # the key changes (C's sorter-free GROUP BY over an index or rowid
+    # order) and an outer LIMIT stops the scan.
     def initialize(@source : RowSource, @where : Expr?, @list_of_columns : Array(Expr), @list_of_extras : Array(Expr),
-                   @aggregation : Aggregation?, @distinct : Bool, @list_of_column_collations : Array(Collation))
+                   @aggregation : Aggregation?, @distinct : Bool, @list_of_column_collations : Array(Collation),
+                   @streaming : Bool = false)
     end
+
+    @current : Group? = nil
+    @source_done = false
 
     def open(frame : Frame) : Nil
       @seen = @distinct ? Set(Array(EqualityKey)).new : nil
       if aggregation = @aggregation
-        @groups = collect_groups(frame, aggregation)
-        @group_position = 0
+        if @streaming
+          @source.open(frame)
+          @current = nil
+          @source_done = false
+        else
+          @groups = collect_groups(frame, aggregation)
+          @group_position = 0
+        end
       else
         @source.open(frame)
       end
     end
 
     def next_row(frame : Frame) : Array(Value)?
+      if (aggregation = @aggregation) && @streaming
+        return next_streaming_row(frame, aggregation)
+      end
       if aggregation = @aggregation
         while @group_position < @groups.size
           group = @groups[@group_position]
@@ -121,12 +138,119 @@ module Grant::SQLiteEngine::Query
       row
     end
 
+    private def next_streaming_row(frame : Frame, aggregation : Aggregation) : Array(Value)?
+      slots = aggregation.list_of_slots
+      loop do
+        group = next_streaming_group(frame, aggregation)
+        return unless group
+        # The source reads outer rows from the frame (join keys), so the
+        # frame gets its rows back after the group is shown.
+        saved_rows = slots.map { |slot| frame.list_of_rows[slot] }
+        saved_rowids = slots.map { |slot| frame.list_of_rowids[slot] }
+        restore(frame, group, aggregation)
+        row = nil
+        if (having = aggregation.having).nil? || having.holds?(frame)
+          row = project(frame)
+        end
+        slots.each_with_index do |slot, position|
+          frame.list_of_rows[slot] = saved_rows[position]
+          frame.list_of_rowids[slot] = saved_rowids[position]
+        end
+        return row if row
+      end
+    end
+
+    # Reads rows until the GROUP BY key changes; returns the finished group
+    # (the row with the new key already starts the next one), or nil when
+    # the rows are used up.
+    private def next_streaming_group(frame : Frame, aggregation : Aggregation) : Group?
+      calls = aggregation.list_of_calls
+      until @source_done
+        unless @source.advance(frame)
+          @source_done = true
+          break
+        end
+        if where = @where
+          next unless where.holds?(frame)
+        end
+        # Rows arrive in group order, so a row starts a new group when its
+        # key compares unequal to the current group's (OP_Compare).
+        scratch = @scratch_keys
+        scratch.clear
+        aggregation.list_of_group_keys.each { |key| scratch << key.evaluate(frame) }
+        current = @current
+        if current && same_group_key?(scratch, current.list_of_key_values, aggregation.list_of_key_collations)
+          step_group(frame, current, aggregation, first: false)
+          next
+        end
+        group = new_group(scratch.dup, calls, aggregation.list_of_slots.size)
+        step_group(frame, group, aggregation, first: true)
+        @current = group
+        return current if current
+      end
+      finished = @current
+      @current = nil
+      finished
+    end
+
+    @scratch_keys = [] of Value
+    @list_of_argument_buffers = [] of Array(Value)
+
+    private def same_group_key?(keys : Array(Value), current : Array(Value), collations : Array(Collation)) : Bool
+      keys.each_with_index do |value, index|
+        return false unless ValueSemantics.compare(value, current.unsafe_fetch(index), collations.unsafe_fetch(index)) == 0
+      end
+      true
+    end
+
+    # One argument array per aggregate call, refilled for each row (no
+    # accumulator keeps the array it is given).
+    private def argument_buffer(index : Int32) : Array(Value)
+      buffers = @list_of_argument_buffers
+      while buffers.size <= index
+        buffers << [] of Value
+      end
+      buffers.unsafe_fetch(index)
+    end
+
+    # Feeds the frame's row to *group*'s accumulators. updateAccumulator
+    # loads the bare columns on a group's first row (*first*), and after
+    # that on rows where the last min() or max() call took the row's value
+    # (each OP_CollSeq resets the shared hit flag, so the last call
+    # decides); with no min() or max() only the first row shows.
+    private def step_group(frame : Frame, group : Group, aggregation : Aggregation, first : Bool) : Nil
+      deciding_hit = false
+      aggregation.list_of_calls.each_with_index do |call, index|
+        deciding_hit = false if call.min_or_max?
+        if filter = call.filter
+          next unless filter.holds?(frame)
+        end
+        arguments = argument_buffer(index)
+        arguments.clear
+        call.list_of_arguments.each { |argument| arguments << argument.evaluate(frame) }
+        if distinct_set = group.list_of_distinct_sets[index]
+          next if arguments.any?(Nil) && !call.kind.count_rows?
+          distinct_key = arguments.map { |argument| ValueSemantics.equality_key(argument, call.collation) }
+          next unless distinct_set.add?(distinct_key)
+        end
+        accumulator = group.list_of_accumulators[index]
+        accumulator.step(arguments)
+        deciding_hit = accumulator.hit? if call.min_or_max?
+      end
+      if first || deciding_hit
+        aggregation.list_of_slots.each_with_index do |slot, position|
+          # Table sources refill one array per row, so the group keeps a copy.
+          group.list_of_rows[position] = frame.list_of_rows[slot].dup
+          group.list_of_rowids[position] = frame.list_of_rowids[slot]
+        end
+      end
+    end
+
     private def collect_groups(frame : Frame, aggregation : Aggregation) : Array(Group)
       groups = {} of Array(EqualityKey) => Group
       list = [] of Group
       slots = aggregation.list_of_slots
       calls = aggregation.list_of_calls
-      single_min_max = calls.size == 1 && calls.first.min_or_max?
       @source.open(frame)
       while @source.advance(frame)
         if where = @where
@@ -137,32 +261,13 @@ module Grant::SQLiteEngine::Query
           ValueSemantics.equality_key(value, aggregation.list_of_key_collations[index])
         end
         group = groups[hash_key]?
+        first = group.nil?
         unless group
           group = new_group(key_values, calls, slots.size)
           groups[hash_key] = group
           list << group
         end
-        hit = false
-        calls.each_with_index do |call, index|
-          if filter = call.filter
-            next unless filter.holds?(frame)
-          end
-          arguments = call.list_of_arguments.map(&.evaluate(frame))
-          if distinct_set = group.list_of_distinct_sets[index]
-            next if arguments.any?(Nil) && !call.kind.count_rows?
-            distinct_key = arguments.map { |argument| ValueSemantics.equality_key(argument, call.collation) }
-            next unless distinct_set.add?(distinct_key)
-          end
-          accumulator = group.list_of_accumulators[index]
-          accumulator.step(arguments)
-          hit ||= accumulator.hit?
-        end
-        if !single_min_max || hit
-          slots.each_with_index do |slot, position|
-            group.list_of_rows[position] = frame.list_of_rows[slot]
-            group.list_of_rowids[position] = frame.list_of_rowids[slot]
-          end
-        end
+        step_group(frame, group, aggregation, first)
       end
       if list.empty? && aggregation.list_of_group_keys.empty?
         list << new_group([] of Value, calls, slots.size)
@@ -265,7 +370,22 @@ module Grant::SQLiteEngine::Query
       return if @done
       @done = true
       @table.check_readable
-      [BTreeCount.entries(@database, @table.root_page, frame.session)] of Value
+      [BTreeCount.entries(@database, count_root_page, frame.session)] of Value
+    end
+
+    # OP_Count reads the b-tree with the fewest columns (select.c, the
+    # isSimpleCount branch of sqlite3Select): an index other than a partial
+    # one holds one entry per row in fewer pages than the table.
+    private def count_root_page : UInt32
+      best = nil
+      unless @table.without_rowid?
+        @table.list_of_indexes.each do |layout|
+          next if layout.unsupported_reason
+          size = layout.key_count + layout.list_of_tail_positions.size
+          best = {size, layout.entry.root_page} if best.nil? || size < best[0]
+        end
+      end
+      best ? best[1] : @table.root_page
     end
   end
 
@@ -276,11 +396,17 @@ module Grant::SQLiteEngine::Query
     @position = 0
     @tied = false
 
-    def initialize(@input : Producer, @list_of_keys : Array(SortKey), @width : Int32)
+    @previous : Array(Value)? = nil
+
+    # *presorted*: the input already comes in key order (the planner read
+    # it in an order that gives it), so rows pass through as they arrive.
+    def initialize(@input : Producer, @list_of_keys : Array(SortKey), @width : Int32, @presorted : Bool = false)
     end
 
     def open(frame : Frame) : Nil
       @input.open(frame)
+      @previous = nil
+      return if @presorted
       rows = [] of Array(Value)
       while row = @input.next_row(frame)
         rows << row
@@ -309,6 +435,14 @@ module Grant::SQLiteEngine::Query
     end
 
     def next_row(frame : Frame) : Array(Value)?
+      if @presorted
+        row = @input.next_row(frame)
+        return unless row
+        previous = @previous
+        @tied = !previous.nil? && compare(previous, row) == 0
+        @previous = row
+        return row.size == @width ? row : row[0, @width]
+      end
       return if @position >= @rows.size
       row = @rows[@position]
       @tied = @position > 0 && compare(@rows[@position - 1], row) == 0

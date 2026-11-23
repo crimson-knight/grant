@@ -591,6 +591,41 @@ class TestsDifferential
     clear_scratch
   end
 
+  # PACKET_05 item 9 counts these apart: virtual table modules (FTS and
+  # the like, which this build of C lacks too), rows made by random() and
+  # randomblob(), and out-of-memory and size-limit cases.
+  def self.out_of_scope(sql : String, expected : SQLiteQueryOracle::Outcome, actual : SQLiteQueryOracle::Outcome) : String?
+    errors = [expected.error, actual.error].compact
+    if errors.any?(&.starts_with?("no such module: "))
+      return "out of scope: a virtual table module"
+    end
+    if expected.error.nil? && actual.error.nil? && RANDOM_FUNCTIONS.matches?(sql)
+      return "out of scope: rows made by random() or randomblob()"
+    end
+    if errors.any? { |message| SIZE_LIMITS.matches?(message) }
+      return "out of scope: out of memory or a size limit"
+    end
+    nil
+  end
+
+  # Temp schemas arrive with G4b item 6: an engine "no such table" for a
+  # temp schema table, or for a name the C connection holds in its temp
+  # schema, is counted apart.
+  TEMP_SCHEMA_NAMES = {"sqlite_temp_master", "sqlite_temp_schema", "temp.sqlite_master", "temp.sqlite_schema"}
+
+  def self.temp_schema(connection : SQLiteQueryOracle::Connection, actual : SQLiteQueryOracle::Outcome) : String?
+    message = actual.error
+    return unless message && message.starts_with?("no such table: ")
+    name = message.lchop("no such table: ").downcase
+    reason = "out of scope: a temp schema object (G4b item 6)"
+    return reason if TEMP_SCHEMA_NAMES.includes?(name) || name.starts_with?("temp.")
+    temp = connection.query("SELECT 1 FROM sqlite_temp_schema WHERE lower(name) = ?", [name] of SQLiteQueryOracle::Value)
+    temp.list_of_rows.empty? ? nil : reason
+  end
+
+  RANDOM_FUNCTIONS = /\b(random|randomblob)\s*\(/i
+  SIZE_LIMITS      = /\A(out of memory|string or blob too big|too many columns in result set|too many references to|too many FROM clause terms)/
+
   private def compare(connection : SQLiteQueryOracle::Connection, path : String, file : String, sql : String,
                       statement : SQL::SelectStatement) : Nil
     expected = connection.query(sql, row_limit: 20_000)
@@ -624,6 +659,10 @@ class TestsDifferential
       if difference && statement.limit && !ordered && expected.error.nil? && actual.error.nil? &&
          expected.list_of_rows.size == actual.list_of_rows.size
         @report.skip("LIMIT without ORDER BY (rows SQL leaves open)", "#{file}: #{sql}")
+        return
+      end
+      if difference && (reason = TestsDifferential.out_of_scope(sql, expected, actual) || TestsDifferential.temp_schema(connection, actual))
+        @report.skip(reason, "#{file}: #{sql}")
         return
       end
       if difference

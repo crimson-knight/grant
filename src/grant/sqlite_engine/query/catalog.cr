@@ -2,7 +2,8 @@ module Grant::SQLiteEngine::Query
   # The PRAGMA table-valued functions Grant's catalog queries read
   # (pragma.html, "PRAGMA functions"): pragma_table_info,
   # pragma_table_xinfo, pragma_index_list, pragma_index_info,
-  # pragma_index_xinfo, pragma_foreign_key_list and pragma_database_list,
+  # pragma_index_xinfo, pragma_foreign_key_list, pragma_database_list and
+  # pragma_table_list (one named table),
   # with the rows pragma.c
   # of SQLite 3.51.0 produces.
   module Catalog
@@ -14,6 +15,7 @@ module Grant::SQLiteEngine::Query
       "pragma_index_xinfo"      => %w[seqno cid name desc coll key],
       "pragma_foreign_key_list" => %w[id seq table from to on_update on_delete match],
       "pragma_database_list"    => %w[seq name file],
+      "pragma_table_list"       => %w[schema name type ncol wr strict],
     }
 
     def self.function_columns(name : String) : Array(String)
@@ -38,6 +40,8 @@ module Grant::SQLiteEngine::Query
         foreign_key_list(argument, session)
       when "pragma_database_list"
         [[0_i64, "main", session.database.file_name] of Value]
+      when "pragma_table_list"
+        table_list(argument, session)
       else
         [] of Array(Value)
       end
@@ -80,6 +84,16 @@ module Grant::SQLiteEngine::Query
         rows << row
       end
       rows
+    end
+
+    # pragma.c PragTyp_TABLE_LIST for one table of the main schema: its
+    # schema, name, kind, column count, WITHOUT ROWID and STRICT flags.
+    private def self.table_list(name : String, session : Session) : Array(Array(Value))
+      table = session.table(name)
+      return [] of Array(Value) unless table
+      definition = table.definition
+      [["main", table.name, "table", table.list_of_column_names.size.to_i64,
+        table.without_rowid? ? 1_i64 : 0_i64, definition.strict? ? 1_i64 : 0_i64] of Value]
     end
 
     private def self.type_text(type_name : SQL::TypeName) : String
