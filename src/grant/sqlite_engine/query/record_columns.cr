@@ -226,7 +226,9 @@ module Grant::SQLiteEngine::Query
 
     # Decodes every value of *payload* into *into*, replacing what it held.
     def self.decode_into(payload : Bytes, encoding : TextEncoding, page_number : UInt32, into : Array(Value)) : Array(Value)
-      into.clear
+      # Values overwrite the array in place; a longer old record is cut
+      # back at the end.
+      count = 0
       header_size, length = Varint.decode(payload, 0)
       corrupt(page_number, "record header varint is truncated") if length == 0
       if header_size < length || header_size > payload.size
@@ -239,15 +241,22 @@ module Grant::SQLiteEngine::Query
         serial_type, used = Varint.decode(payload, position, header_end)
         corrupt(page_number, "record serial type varint is truncated") if used == 0
         position += used
-        corrupt(page_number, "record has more than #{Record::MAX_RECORD_COLUMNS} columns") if into.size >= Record::MAX_RECORD_COLUMNS
+        corrupt(page_number, "record has more than #{Record::MAX_RECORD_COLUMNS} columns") if count >= Record::MAX_RECORD_COLUMNS
         size = 0 <= serial_type < 12 ? FIXED_SIZES.unsafe_fetch(serial_type) : Record.content_size(serial_type, page_number)
         corrupt(page_number, "serial type #{serial_type} is reserved") if size < 0
         if body.to_i64 + size > payload.size
           corrupt(page_number, "record value of serial type #{serial_type} runs past the payload")
         end
-        into << value(payload, body, serial_type, size.to_i32, encoding)
+        decoded = value(payload, body, serial_type, size.to_i32, encoding)
+        if count < into.size
+          into.unsafe_put(count, decoded)
+        else
+          into << decoded
+        end
+        count += 1
         body += size.to_i32
       end
+      (into.size - count).times { into.pop }
       into
     end
 

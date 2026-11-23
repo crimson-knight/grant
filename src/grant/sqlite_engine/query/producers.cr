@@ -273,8 +273,16 @@ module Grant::SQLiteEngine::Query
         if filter = call.filter
           next unless filter.holds?(frame)
         end
-        arguments = argument_buffer(index)
         list_of_arguments = call.list_of_arguments
+        # One argument (or count's none) without DISTINCT needs no argument
+        # array.
+        if list_of_arguments.size <= 1 && group.list_of_distinct_sets.unsafe_fetch(index).nil?
+          accumulator = group.list_of_accumulators.unsafe_fetch(index)
+          accumulator.step_one(list_of_arguments.empty? ? nil : list_of_arguments.unsafe_fetch(0).evaluate(frame))
+          deciding_hit = accumulator.hit? if call.min_or_max?
+          next
+        end
+        arguments = argument_buffer(index)
         # The buffer keeps its size from row to row; its values are replaced.
         if arguments.size == list_of_arguments.size
           list_of_arguments.each_with_index { |argument, position| arguments.unsafe_put(position, argument.evaluate(frame)) }

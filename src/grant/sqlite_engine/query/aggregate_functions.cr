@@ -41,6 +41,10 @@ module Grant::SQLiteEngine::Query
     # The running state of one aggregate over one group.
     abstract class Accumulator
       abstract def step(arguments : Array(Value)) : Nil
+
+      # `step` for a call with one argument (or none, for count(*)), given
+      # its value.
+      abstract def step_one(value : Value) : Nil
       abstract def finish : Value
 
       # Starts over for a new group, as a new accumulator would.
@@ -76,6 +80,10 @@ module Grant::SQLiteEngine::Query
         @count += 1 if @count_nulls || !arguments[0].nil?
       end
 
+      def step_one(value : Value) : Nil
+        @count += 1 if @count_nulls || !value.nil?
+      end
+
       def finish : Value
         @count
       end
@@ -104,7 +112,10 @@ module Grant::SQLiteEngine::Query
       end
 
       def step(arguments : Array(Value)) : Nil
-        value = arguments[0]
+        step_one(arguments[0])
+      end
+
+      def step_one(value : Value) : Nil
         value = ValueSemantics.comparison_numeric(value) if value.is_a?(String)
         return if value.nil?
         @count += 1
@@ -207,7 +218,10 @@ module Grant::SQLiteEngine::Query
       end
 
       def step(arguments : Array(Value)) : Nil
-        value = arguments[0]
+        step_one(arguments[0])
+      end
+
+      def step_one(value : Value) : Nil
         # sqlite3SkipAccumulatorLoad: a NULL after a value, or a value that
         # does not replace the best, leaves the bare columns as they were.
         @hit = !@has_value
@@ -256,6 +270,20 @@ module Grant::SQLiteEngine::Query
           buffer = @buffer = IO::Memory.new
         end
         if piece = ValueSemantics.text(arguments[0])
+          buffer << piece
+        end
+      end
+
+      # group_concat(x): the separator is a comma.
+      def step_one(value : Value) : Nil
+        return if value.nil?
+        buffer = @buffer
+        if buffer
+          buffer << ','
+        else
+          buffer = @buffer = IO::Memory.new
+        end
+        if piece = ValueSemantics.text(value)
           buffer << piece
         end
       end
