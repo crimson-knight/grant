@@ -227,11 +227,20 @@ module Grant::SQLiteEngine::Query
       # span the target, the search stays in that leaf.
       if @valid && @built_generation == pager.generation && (top = @stack.last?) && top[0].page_type.leaf?
         leaf = top[0]
-        # A join probes in ascending order, so the target is usually a
-        # few entries past the current one.
-        if forward = forward_bound(leaf, top[1], probe, strict)
-          @stack[-1] = {leaf, forward}
-          return settle_leaf
+        index = top[1]
+        if index < leaf.cell_count
+          if below?(leaf, index, probe, strict)
+            # A join probes in ascending order, so the target is usually a
+            # few entries past the current one.
+            if forward = forward_bound(leaf, index, probe, strict)
+              @stack[-1] = {leaf, forward}
+              return settle_leaf
+            end
+          elsif index > 0 && below?(leaf, index - 1, probe, strict)
+            # The cursor already sits on the target: the previous probe
+            # stopped at the first entry past its key, where this one starts.
+            return settle_leaf
+          end
         end
         if leaf_spans?(leaf, probe, strict)
           @stack[-1] = {leaf, bound(leaf, probe, strict)}
@@ -337,13 +346,11 @@ module Grant::SQLiteEngine::Query
     end
 
     # The first leaf entry at least (with *strict*, greater than) *probe*
-    # when the entry at *index* is below it and a later entry of *leaf* is
-    # not; nil otherwise. Steps ahead 1, 2, 4... entries, then searches the
-    # last step.
+    # when a later entry of *leaf* than *index* (an entry below it) is not
+    # below it; nil otherwise. Steps ahead 1, 2, 4... entries, then
+    # searches the last step.
     private def forward_bound(leaf : BTreePage, index : Int32, probe : Array(Value), strict : Bool) : Int32?
       count = leaf.cell_count
-      return if index >= count
-      return unless below?(leaf, index, probe, strict)
       low = index + 1
       step = 1
       loop do

@@ -47,6 +47,22 @@ module Grant::SQLiteEngine::Query
     end
   end
 
+  class ComparisonExpr
+    # Two numbers compare without conversion (no comparison affinity
+    # changes a number beside a number), so the truth comes straight from
+    # sqlite3MemCompare; anything else takes `evaluate`'s path.
+    def jump?(frame : Frame, if_true : Bool, jump_if_null : Bool) : Bool
+      left = @left.evaluate(frame)
+      right = @right.evaluate(frame)
+      if (left.is_a?(Int64) || left.is_a?(Float64)) && (right.is_a?(Int64) || right.is_a?(Float64))
+        return @operator.holds?(ValueSemantics.compare(left, right)) == if_true
+      end
+      truth = ValueSemantics.truth(ComparisonExpr.compare_values(@operator, left, right, @comparison_affinity, @collation))
+      return jump_if_null if truth.nil?
+      truth == if_true
+    end
+  end
+
   class NotExpr
     def jump?(frame : Frame, if_true : Bool, jump_if_null : Bool) : Bool
       @operand.jump?(frame, !if_true, jump_if_null)
