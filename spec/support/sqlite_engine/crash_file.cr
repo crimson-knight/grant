@@ -5,6 +5,12 @@ require "../../../src/grant/sqlite_engine"
 # left: every prefix of the recorded operations, and for each prefix the
 # variants where writes not yet synced are lost or torn at 512-byte sectors
 # (https://www.sqlite.org/atomiccommit.html §2, "Hardware Assumptions").
+#
+# The wal-index (`-shm`) is written through the same file system, so its
+# writes are recorded too. A power loss leaves no wal-index worth reading
+# (the next opener truncates it and rebuilds it from the WAL), so those
+# variants drop it; a process crash keeps every write, the wal-index
+# included, while another process still holds it open (`survivor`).
 class SQLiteEngineCrashFileSystem < Grant::SQLiteEngine::FileSystem
   SECTOR = 512
 
@@ -31,13 +37,26 @@ class SQLiteEngineCrashFileSystem < Grant::SQLiteEngine::FileSystem
     TornHead
     # The last unsynced write reached the disk only in its second half.
     TornTail
+    # The writing process died and the machine did not: every write
+    # reached the files, and another process kept the wal-index open.
+    ProcessCrash
+  end
+
+  def self.wal_index?(path : String) : Bool
+    path.ends_with?("-shm")
   end
 
   getter files : Hash(String, Bytes)
   getter list_of_operations = [] of Operation
   getter? recording = false
 
-  def initialize(@files : Hash(String, Bytes) = {} of String => Bytes)
+  # *survivor*: another process holds the wal-index open, so opening it
+  # does not truncate it.
+  def initialize(@files : Hash(String, Bytes) = {} of String => Bytes, @survivor : Bool = false)
+  end
+
+  def open_shared_memory(path : String) : Grant::SQLiteEngine::SharedMemory
+    Grant::SQLiteEngine::FileSharedMemory.new(open(path), survivor: @survivor)
   end
 
   def open(path : String) : Grant::SQLiteEngine::DatabaseFile
@@ -103,6 +122,13 @@ class SQLiteEngineCrashFileSystem < Grant::SQLiteEngine::FileSystem
   # starting from *start*, with unsynced writes treated as *variant* says.
   def self.crash_state(start : Hash(String, Bytes), operations : Array(Operation), count : Int32, variant : Variant) : Hash(String, Bytes)?
     prefix = operations[0, count]
+    if variant.process_crash?
+      return unless prefix.any? { |operation| wal_index?(operation.path) }
+      state = SQLiteEngineCrashFileSystem.new(start.transform_values(&.dup))
+      prefix.each { |operation| state.apply(operation) }
+      return state.files
+    end
+    prefix = prefix.reject { |operation| wal_index?(operation.path) }
     unsynced = Set(Int32).new
     prefix.each_with_index do |operation, position|
       if operation.kind.write?
@@ -140,7 +166,16 @@ class SQLiteEngineCrashFileSystem < Grant::SQLiteEngine::FileSystem
         state.files.delete(operation.path)
       end
     end
+    state.files.reject! { |path, _bytes| wal_index?(path) }
     state.files
+  end
+
+  protected def apply(operation : Operation) : Nil
+    case operation.kind
+    when .write?    then write(operation.path, operation.offset, operation.bytes)
+    when .truncate? then truncate(operation.path, operation.offset)
+    when .delete?   then @files.delete(operation.path)
+    end
   end
 
   # One open file. Locks always succeed: the simulator runs one connection.

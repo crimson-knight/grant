@@ -1,7 +1,7 @@
 # Random write sequences for Grant::SQLiteEngine's writer, and the checks
 # C SQLite makes of the files the engine writes.
 #
-#   /usr/bin/ruby operations.rb sequences OUT_DIR --count 100 --seed 1 [--start 0] [--size regular|small]
+#   /usr/bin/ruby operations.rb sequences OUT_DIR --count 100 --seed 1 [--start 0] [--size regular|small] [--wal 1]
 #   /usr/bin/ruby operations.rb verify OUT_DIR SUFFIX
 #   /usr/bin/ruby operations.rb corpus OUT_DIR --corpus ../corpus/grant_sql_corpus.txt --seed 1
 #
@@ -259,12 +259,14 @@ def random_operation(random, tables, counters)
   insert_operation(random, table)
 end
 
-def random_sequence(random, size)
+def random_sequence(random, size, wal = false)
   page_size = [512, 1024, 2048, 4096, 8192, 16384, 32768, 65536].sample(random: random)
   page_size = [512, 1024].sample(random: random) if size == "small"
   encoding = ["UTF-8", "UTF-16le", "UTF-16be"].sample(random: random)
   operations = []
   sql = +"PRAGMA page_size=#{page_size};\nPRAGMA encoding='#{encoding}';\n"
+  # sqlite3 prints the mode; .output keeps it out of the error count.
+  sql << ".output /dev/null\nPRAGMA journal_mode=WAL;\n.output\n" if wal
   tables = {}
   counters = { table: 0, index: 0 }
   units = size == "small" ? random.rand(2..6) : random.rand(5..40)
@@ -289,16 +291,16 @@ def random_sequence(random, size)
   [{ "page_size" => page_size, "encoding" => encoding, "operations" => operations }, sql]
 end
 
-def run_sequences(out_dir, count, seed, start, size)
+def run_sequences(out_dir, count, seed, start, size, wal = false)
   count.times do |offset|
     number = start + offset
     random = Random.new(seed + number)
-    sequence, sql = random_sequence(random, size)
+    sequence, sql = random_sequence(random, size, wal)
     name = format("seq_%05d", number)
     File.write(File.join(out_dir, "#{name}.json"), JSON.generate(sequence.merge("seed" => seed + number)))
     File.write(File.join(out_dir, "#{name}.sql"), sql)
     database = File.join(out_dir, "#{name}.c.db")
-    FileUtils.rm_f([database, "#{database}-journal"])
+    FileUtils.rm_f([database, "#{database}-journal", "#{database}-wal", "#{database}-shm"])
     _output, error, _status = Open3.capture3(SQLITE3, database, stdin_data: sql)
     File.write(File.join(out_dir, "#{name}.c.errors"), error.lines.count { |line| line =~ /error near line/i }.to_s)
   end
@@ -400,7 +402,7 @@ if __FILE__ == $PROGRAM_NAME
   case mode
   when "sequences"
     options = ARGV[2..].each_slice(2).to_h
-    run_sequences(out_dir, Integer(options.fetch("--count", "10")), Integer(options.fetch("--seed")), Integer(options.fetch("--start", "0")), options.fetch("--size", "regular"))
+    run_sequences(out_dir, Integer(options.fetch("--count", "10")), Integer(options.fetch("--seed")), Integer(options.fetch("--start", "0")), options.fetch("--size", "regular"), options.fetch("--wal", "0") == "1")
   when "verify"
     run_verify(out_dir, ARGV.fetch(2))
   when "states"

@@ -20,7 +20,12 @@ module Grant::SQLiteEngine
     def initialize(@database : Database, @include_indexes : Bool = true)
     end
 
+    # Writes the dump from one snapshot of the database.
     def write(io : IO) : Nil
+      @database.pager.with_read_lock { write_snapshot(io) }
+    end
+
+    private def write_snapshot(io : IO) : Nil
       schema = @database.schema
       objects = schema.list_of_tables + (@include_indexes ? schema.list_of_indexes : [] of SchemaEntry)
       objects.sort_by!(&.object_name.to_slice).each do |entry|

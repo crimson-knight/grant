@@ -57,13 +57,16 @@ module Grant::SQLiteEngine
       @pager.text_encoding
     end
 
-    # The schema, read from `sqlite_schema` on first use.
+    # The schema, read from `sqlite_schema` on first use (under the read
+    # lock, so in WAL mode it comes from the current snapshot).
     def schema : Schema
-      current = @schema
-      return current if current && @schema_generation == @pager.generation
-      @schema_generation = @pager.generation
-      @table_layouts.clear
-      @schema = read_schema
+      @pager.with_read_lock do
+        current = @schema
+        next current if current && @schema_generation == @pager.generation
+        @schema_generation = @pager.generation
+        @table_layouts.clear
+        @schema = read_schema
+      end
     end
 
     # Yields every row of *table_name*.
