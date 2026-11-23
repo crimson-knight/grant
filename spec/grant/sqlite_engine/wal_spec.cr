@@ -33,7 +33,7 @@ end
 
 private def header_bytes(path : String) : Bytes
   bytes = Bytes.new(100)
-  File.open(path, "rb") { |file| file.read_fully(bytes) }
+  File.open(path, "rb", &.read_fully(bytes))
   bytes
 end
 

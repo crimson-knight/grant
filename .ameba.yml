@@ -74,6 +74,8 @@ Metrics/CyclomaticComplexity:
     # The write-ahead log ports wal.c (walTryBeginRead, walCheckpoint,
     # walIndexRecover), kept in the shape of the C it shares files with.
     - src/grant/sqlite_engine/write_ahead_log.cr
+    # unixLock from os_unix.c, one branch per lock level.
+    - src/grant/sqlite_engine/file_system.cr
     # The query executor ports resolve.c, expr.c, select.c and where.c
     # dispatch (one case per operator, clause or plan shape) and its
     # differential and generator scripts walk every comparison rule.
@@ -83,6 +85,7 @@ Metrics/CyclomaticComplexity:
     # and the write differential walks every statement shape it generates.
     - src/grant/sqlite_engine/query/statements/*.cr
     - scripts/sqlite_engine_write_differential.cr
+    - scripts/sqlite_engine_wal_soak.cr
     - spec/support/sqlite_engine/write_oracle.cr
     - scripts/sqlite_engine_query_*.cr
     - spec/support/sqlite_engine/query_oracle.cr

@@ -218,7 +218,7 @@ class SoakWorker
 
   # The rows of the check, a message naming a broken invariant, or nil
   # when the read was busy.
-  private def snapshot_problem : Array(Array(SoakValue)) | String | Nil
+  private def snapshot_problem : Array(Array(SoakValue)) | String?
     code, list_of_groups = @connection.query("SELECT writer, count(*), sum(seq) FROM ledger GROUP BY writer ORDER BY writer")
     return unless code == SoakEngine::DONE_CODE
     code, list_of_totals = @connection.query("SELECT writer, row_count, seq_sum FROM totals WHERE row_count > 0 ORDER BY writer")

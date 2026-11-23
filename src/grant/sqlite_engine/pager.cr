@@ -119,10 +119,9 @@ module Grant::SQLiteEngine
       valid_size = page_size >= Limits::MIN_PAGE_SIZE && page_size <= Limits::MAX_PAGE_SIZE && (page_size & (page_size - 1)) == 0
       raise ArgumentError.new("page_size #{page_size} is not a power of two from 512 to 65536") unless valid_size
       file = file_system.open(path)
-      pager = nil
       begin
         raise Busy.new unless file.lock(LockLevel::Shared)
-        begin
+        pager = begin
           roll_back_hot_journal(file_system, path, file)
           # pagerOpenWalIfPresent: a WAL beside an empty database is stale.
           wal_path = WriteAheadLog.path_for(path)
@@ -135,10 +134,13 @@ module Grant::SQLiteEngine
             opened.open_log
             opened.load_log_snapshot
           end
-          pager = opened
-        ensure
-          file.unlock(LockLevel::None) unless pager && pager.wal_mode?
+          opened
+        rescue error
+          file.unlock(LockLevel::None)
+          raise error
         end
+        # WAL mode holds SHARED on the database file until the connection closes.
+        file.unlock(LockLevel::None) unless pager.wal_mode?
         pager
       rescue error
         file.close
@@ -153,7 +155,7 @@ module Grant::SQLiteEngine
     end
 
     def synchronous=(level : Synchronous) : Synchronous
-      @wal_log.try { |log| log.synchronous = level }
+      @wal_log.try(&.synchronous=(level))
       @synchronous = level
     end
 
@@ -430,7 +432,7 @@ module Grant::SQLiteEngine
           end
           commit
           true
-        rescue error : Busy
+        rescue Busy
           rollback
           false
         rescue error

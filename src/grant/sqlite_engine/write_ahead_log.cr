@@ -142,8 +142,9 @@ module Grant::SQLiteEngine
     def begin_read : Bool
       raise Error.new("a WAL read is already open") if reading?
       @changed = false
-      attempt = 0
-      until try_begin_read(use_wal: false, attempt: attempt += 1)
+      attempt = 1
+      until try_begin_read(use_wal: false, attempt: attempt)
+        attempt += 1
       end
       update_frame_map if @read_lock_index > 0
       @changed
@@ -408,8 +409,9 @@ module Grant::SQLiteEngine
       end
       @index.unlock(WalIndexLayout.read_lock(0))
       @read_lock_index = -1
-      attempt = 0
-      until try_begin_read(use_wal: true, attempt: attempt += 1)
+      attempt = 1
+      until try_begin_read(use_wal: true, attempt: attempt)
+        attempt += 1
       end
     end
 
@@ -662,8 +664,8 @@ module Grant::SQLiteEngine
             latest = {} of UInt32 => UInt32
             frame = backfilled + 1
             while frame <= safe_frame
-              page_number = page_of_frame(frame)
-              latest[page_number] = frame if page_number <= max_page
+              frame_page = page_of_frame(frame)
+              latest[frame_page] = frame if frame_page <= max_page
               frame += 1
             end
             buffer = Bytes.new(page_size)
