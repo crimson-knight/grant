@@ -37,6 +37,32 @@ describe Engine::RecordEncoder do
     little.should eq(Bytes[2, 21, 0x68, 0x00, 0xe9, 0x00])
     Engine::Record.decode(little, Engine::TextEncoding::UTF16LE, 2_u32).should eq(values("hé"))
   end
+
+  it "encodes into a reused buffer the bytes it encodes alone, growing it for a larger record" do
+    buffer = Engine::RecordEncoder::EncodeBuffer.new
+    [values(1_i64, "a", nil), values("x" * 600, 2.5, Bytes[7]), values(-3_i64, Float64::NAN), values("hé", 0_i64)].each do |list|
+      {Engine::TextEncoding::UTF8, Engine::TextEncoding::UTF16BE}.each do |encoding|
+        alone = Engine::RecordEncoder.encode(list, encoding)
+        Engine::RecordEncoder.encode(list.size, encoding, 4_u32, buffer) { |index| list[index] }.should eq(alone)
+      end
+    end
+  end
+end
+
+describe Engine::BTreeScratch do
+  it "lends distinct buffers within a change and the same ones to the next change" do
+    scratch = Engine::BTreeScratch.new
+    mark = scratch.mark
+    first = scratch.page(4096)
+    second = scratch.page(100)
+    first.to_unsafe.should_not eq(second.to_unsafe)
+    list = scratch.cell_list
+    list << first[0, 4]
+    scratch.release(mark)
+    scratch.page(4096).to_unsafe.should eq(first.to_unsafe)
+    scratch.page(64).to_unsafe.should eq(second.to_unsafe)
+    scratch.cell_list.should be_empty
+  end
 end
 
 describe Engine::StoredValue do
