@@ -79,7 +79,8 @@ module Grant::SQLiteEngine
     # collation and order of each.
     def self.primary_key_columns(table : TableDefinition) : Array({Int32, KeyColumn})
       terms = primary_key_terms(table)
-      table.list_of_primary_key_columns.map_with_index do |column_name, position|
+      table.primary_key_positions.map do |position|
+        column_name = table.list_of_primary_key_columns[position]
         index = table.column_index(column_name) || raise SchemaError.new("primary key names missing column #{column_name}")
         descending = terms.try { |list| list[position]?.try(&.descending) } || false
         {index, KeyColumn.new(Collation.named(table.primary_key_collation(position)), descending)}

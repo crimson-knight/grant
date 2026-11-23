@@ -67,11 +67,14 @@ module Grant::SQLiteEngine::Query
       end
     end
 
-    # A name error the resolver records and walks on past (lookupName turns
-    # the name into NULL and counts nNcErr): within one expression the first
-    # such error, in walk order, is the one reported; a function's own error
-    # comes after its arguments'.
-    CONTINUING_ERROR = /\A(no such column|ambiguous column name|no such function|wrong number of arguments|misuse of aggregate)/
+    # An error resolveExprStep records and walks on past (it counts nNcErr):
+    # sqlite3ErrorMsg keeps the last message, so of these the last one in
+    # walk order is reported, a function's own error before its arguments'.
+    CONTINUING_ERROR = /\A(no such function|wrong number of arguments|misuse of aggregate)/
+
+    # lookupName's errors end the walk of the expression (WRC_Abort), except
+    # under IS NULL and NOT NULL, whose operand walk's result is ignored.
+    LOOKUP_ERROR = /\A(no such column|ambiguous column name)/
 
     # Compiles one expression the way sqlite3ResolveExprNames walks it: name
     # errors are recorded and the walk goes on; the first one is raised.
@@ -84,10 +87,29 @@ module Grant::SQLiteEngine::Query
       ensure
         @list_of_name_errors = saved
       end
-      if first = errors.first?
-        raise ResolveError.new(first.message || "SQL error", first.result_code)
+      if last = errors.last?
+        raise ResolveError.new(last.message || "SQL error", last.result_code)
       end
       compiled
+    rescue ResolveAbort
+      last = errors.try(&.last?)
+      raise ResolveError.new(last.try(&.message) || "SQL error", last.try(&.result_code) || SQLError::ERROR)
+    end
+
+    # The walk of an expression stopped (WRC_Abort). It ends at the top of
+    # the expression, at a function's argument list, or at the operand of
+    # IS NULL and NOT NULL, whose walk results C ignores.
+    class ResolveAbort < Exception
+    end
+
+    # resolveExprStep returns WRC_Abort for any node once pParse->nErr is
+    # set, except the nodes it handles itself and prunes: column names
+    # (lookupName), functions and IS NULL / NOT NULL.
+    private def aborts_after_error?(expression : SQL::Expression) : Bool
+      return false if expression.is_a?(SQL::ColumnReference) || expression.is_a?(SQL::FunctionCall) || expression.is_a?(SQL::NullTest)
+      return false if null_comparison?(expression)
+      return expression.negated if expression.is_a?(SQL::LikeOperation)
+      true
     end
 
     # Records *error* when an expression is being resolved; false otherwise.
@@ -99,8 +121,14 @@ module Grant::SQLiteEngine::Query
     end
 
     def compile_expression(expression : SQL::Expression, context : QueryContext) : Expr
+      errors = @list_of_name_errors
+      raise ResolveAbort.new if errors && !errors.empty? && aborts_after_error?(expression)
       compile_expression_node(expression, context)
     rescue error : SQLError
+      if errors && !error.is_a?(ResolveError) && LOOKUP_ERROR.matches?(error.message || "")
+        errors << error
+        raise ResolveAbort.new
+      end
       raise error unless record_name_error(error)
       ConstantExpr.new(nil)
     end
@@ -114,7 +142,7 @@ module Grant::SQLiteEngine::Query
       when SQL::BinaryOperation then compile_binary(expression, context)
       when SQL::LikeOperation   then compile_like(expression, context)
       when SQL::NullTest
-        NullTestExpr.new(compile_expression(expression.operand, context), negated: !expression.form.is_null_keyword?)
+        NullTestExpr.new(compile_null_test_operand(expression.operand, context), negated: !expression.form.is_null_keyword?)
       when SQL::Between
         operand = compile_expression(expression.operand, context)
         low = compile_comparison(ComparisonOperator::GreaterOrEqual, operand, compile_expression(expression.low, context))
@@ -158,12 +186,16 @@ module Grant::SQLiteEngine::Query
       when SQL::Collate
         collated = compile_expression(expression.operand, context)
         raise SQLError.new("row value misused") if collated.is_a?(VectorExpr)
-        CollateExpr.new(collated, collation_named(expression.collation.value))
+        name = expression.collation.value
+        CollateExpr.new(collated, collation_named(name), unknown_collation_name(name))
       when SQL::FunctionCall then compile_function(expression, context)
       when SQL::RowValue
         VectorExpr.new(expression.elements.map { |element| compile_expression(element, context) })
       when SQL::Raise
-        raise SQLError.new("RAISE() may only be used within a trigger-program")
+        # sqlite3ExprCodeTarget reports RAISE() outside a trigger when it
+        # generates code, after every name has resolved.
+        record_codegen_error("RAISE() may only be used within a trigger-program")
+        ConstantExpr.new(nil)
       else
         raise UnsupportedSQL.new("expression #{expression.class.name}")
       end
@@ -237,17 +269,21 @@ module Grant::SQLiteEngine::Query
           return found
         end
         if table_name.nil? && current.aliases_visible?
+          # lookupName checks each enclosing query's result aliases too
+          # (NC_UEList), and resolveAlias copies the aliased expression in.
           if alias_entry = current.list_of_aliases.find { |entry| entry[0].compare(column_name, case_insensitive: true) == 0 }
-            if current.same?(context)
-              if current.aggregates.nil? && !current.aggregate_query? && contains_aggregate?(alias_entry[1])
-                raise SQLError.new("misuse of aliased aggregate #{alias_entry[0]}")
-              end
-              saved = current.aliases_visible?
-              current.aliases_visible = false
-              compiled = compile_expression(alias_entry[1], current)
-              current.aliases_visible = saved
-              return compiled
+            if (!current.aggregates_allowed? || current.inside_aggregate_call?) && contains_aggregate?(alias_entry[1])
+              raise SQLError.new("misuse of aliased aggregate #{alias_entry[0]}")
             end
+            saved = current.aliases_visible?
+            current.aliases_visible = false
+            begin
+              compiled = compile_expression(alias_entry[1], current)
+            ensure
+              current.aliases_visible = saved
+            end
+            correlate_to_query(context, current) unless current.same?(context)
+            return compiled
           end
         end
         current = current.parent
@@ -273,6 +309,18 @@ module Grant::SQLiteEngine::Query
       while current && !current.same?(owner)
         current.correlated = true
         current.outer_slots << slot
+        current = current.parent
+      end
+    end
+
+    # The queries from *context* out to *owner* (not included) read a value
+    # *owner* computes per row or group, so they run again for each.
+    private def correlate_to_query(context : QueryContext, owner : QueryContext) : Nil
+      slots = owner.list_of_entries.map(&.slot)
+      current = context
+      while current && !current.same?(owner)
+        current.correlated = true
+        slots.each { |slot| current.outer_slots << slot }
         current = current.parent
       end
     end
@@ -326,15 +374,27 @@ module Grant::SQLiteEngine::Query
       end
     end
 
+    # parse.y binaryToUnaryIfNull: `x IS NULL`, `x IS NOT NULL` and the
+    # DISTINCT FROM forms with a NULL literal are TK_ISNULL / TK_NOTNULL.
+    private def null_comparison?(expression : SQL::Expression) : Bool
+      return false unless expression.is_a?(SQL::BinaryOperation)
+      operator = expression.operator
+      return false unless operator.is? || operator.is_not? || operator.is_distinct_from? || operator.is_not_distinct_from?
+      right = expression.right
+      right.is_a?(SQL::Literal) && right.kind.null?
+    end
+
     private def compile_binary(expression : SQL::BinaryOperation, context : QueryContext) : Expr
       operator = expression.operator
-      left = compile_expression(expression.left, context)
-      right = compile_expression(expression.right, context)
       if operator.extract? || operator.extract_text?
         # The parser makes `a -> b` the function "->" of two arguments.
         definition = ScalarFunctions.lookup(operator.extract? ? "->" : "->>", 2) || raise Error.new("JSON operator missing")
-        return FunctionExpr.new(definition, [left, right] of Expr)
+        return FunctionExpr.new(definition, [compile_expression(expression.left, context), compile_expression(expression.right, context)] of Expr)
       end
+      null_test = null_comparison?(expression)
+      left = null_test ? compile_null_test_operand(expression.left, context) : compile_expression(expression.left, context)
+      right_syntax = expression.right
+      right = null_test && right_syntax.is_a?(SQL::Literal) ? compile_literal(right_syntax, negative: false) : compile_expression(right_syntax, context)
       case operator
       when .or?          then LogicalExpr.new(false, left, right)
       when .and?         then LogicalExpr.new(true, left, right)
@@ -361,6 +421,14 @@ module Grant::SQLiteEngine::Query
                      end
         compile_comparison(comparison, left, right)
       end
+    end
+
+    # The unknown collation sqlite3BinaryCompareCollSeq looks up for a
+    # comparison of *left* with *right*: the left operand's COLLATE, else
+    # the right one's.
+    private def compared_unknown_collation(left : Expr, right : Expr) : String?
+      return left.unknown_collation if left.explicit_collate?
+      right.unknown_collation if right.explicit_collate?
     end
 
     private def compile_comparison(operator : ComparisonOperator, left : Expr, right : Expr) : Expr
@@ -400,20 +468,45 @@ module Grant::SQLiteEngine::Query
         if (flat_left + flat_right).any?(VectorExpr)
           raise UnsupportedSQL.new("row values nested more than one level")
         end
+        flat_left.each_with_index { |element, index| note_collation_use(compared_unknown_collation(element, flat_right[index])) }
         return VectorComparisonExpr.new(operator, flat_left, flat_right)
       end
+      note_collation_use(compared_unknown_collation(left, right))
       ComparisonExpr.new(operator, left, right)
     end
 
     private def compile_like(expression : SQL::LikeOperation, context : QueryContext) : Expr
-      operand = compile_expression(expression.operand, context)
+      compile_like_call(expression, context)
+    rescue ResolveAbort
+      # C ignores the walk result of a function's argument list.
+      ConstantExpr.new(nil)
+    rescue error : SQLError
+      errors = @list_of_name_errors
+      raise error if errors.nil? || error.is_a?(ResolveError) || !CONTINUING_ERROR.matches?(error.message || "")
+      errors << error
+      begin
+        compile_expression(expression.pattern, context)
+        compile_expression(expression.operand, context)
+      rescue ResolveAbort
+      end
+      ConstantExpr.new(nil)
+    end
+
+    private def compile_like_call(expression : SQL::LikeOperation, context : QueryContext) : Expr
+      # parse.y builds like(pattern, operand[, escape]): the function is
+      # checked first, then the pattern is walked before the operand.
+      regexp = nil
+      if expression.operator == "REGEXP"
+        regexp = @session.user_function("regexp", 2) || raise SQLError.new("no such function: REGEXP")
+      end
       pattern = compile_expression(expression.pattern, context)
+      operand = compile_expression(expression.operand, context)
       escape = expression.escape.try { |escape_expression| compile_expression(escape_expression, context) }
       case expression.operator
       when "LIKE" then LikeExpr.new(operand, pattern, escape, glob: false, negated: expression.negated)
       when "GLOB" then LikeExpr.new(operand, pattern, escape, glob: true, negated: expression.negated)
       when "REGEXP"
-        function = @session.user_function("regexp", 2) || raise SQLError.new("no such function: REGEXP")
+        function = regexp || raise SQLError.new("no such function: REGEXP")
         call = UserFunctionExpr.new("regexp", function, [pattern, operand] of Expr)
         expression.negated ? NotExpr.new(call) : call
       else
@@ -425,6 +518,21 @@ module Grant::SQLiteEngine::Query
       # The parser replaces `x IN ()` with FALSE (`NOT IN ()` with TRUE) and
       # drops x unresolved.
       return TrueFalseExpr.new(expression.negated) if expression.values.empty?
+      # parse.y: `x IN ((SELECT ...))`, one list element that is a
+      # subquery, is an IN-subquery like `x IN (SELECT ...)`.
+      if expression.values.size == 1 && (subquery = expression.values[0]).is_a?(SQL::ScalarSubquery)
+        return compile_in_select(expression.operand, subquery.query, expression.negated, context)
+      end
+      # sqlite3ExprListToValues (at parse time): with a row value on the
+      # left, every list element must have as many terms.
+      if (row = expression.operand).is_a?(SQL::RowValue) && row.elements.size > 1
+        expected = row.elements.size
+        expression.values.each do |value|
+          terms = value.is_a?(SQL::RowValue) ? value.elements.size : 1
+          next if terms == expected
+          raise SQLError.new("IN(...) element has #{terms} term#{terms > 1 ? "s" : ""} - expected #{expected}")
+        end
+      end
       operand = compile_expression(expression.operand, context)
       values = expression.values.map { |value| compile_expression(value, context) }
       if vector = operand.as?(VectorExpr)
@@ -439,20 +547,30 @@ module Grant::SQLiteEngine::Query
       if values.any?(VectorExpr)
         raise SQLError.new("row value misused")
       end
+      note_collation_use(operand.unknown_collation) if operand.explicit_collate?
       InListExpr.new(operand, values, expression.negated)
     end
 
     private def compile_in_select(operand_syntax : SQL::Expression, query : SQL::SelectStatement, negated : Bool,
                                   context : QueryContext) : Expr
+      # resolveExprStep resolves the subquery of an IN when it meets the IN,
+      # before walking down to the left operand.
+      plan = compile_subquery(query, context)
       operand = compile_expression(operand_syntax, context)
       operands = operand.as?(VectorExpr).try(&.elements) || [operand]
-      plan = compile_subquery(query, context)
       width = plan.list_of_column_names.size
       unless width == operands.size
         raise SQLError.new("sub-select returns #{width} columns - expected #{operands.size}")
       end
       affinities = operands.map_with_index do |left, index|
         ValueSemantics.comparison_affinity(plan.list_of_affinities[index], left.affinity)
+      end
+      operands.each_with_index do |left, index|
+        if left.explicit_collate?
+          note_collation_use(left.unknown_collation)
+        elsif (column = plan.list_of_first_core_columns[index]?) && column.explicit_collate?
+          note_collation_use(column.unknown_collation)
+        end
       end
       collations = operands.map_with_index do |left, index|
         Query.binary_collation(left, plan.list_of_first_core_columns[index]?)
@@ -503,7 +621,26 @@ module Grant::SQLiteEngine::Query
 
     # Compiles a subquery inside an expression of *context*. Returns the
     # plan and whether it refers to rows outside itself.
+    # resolveExprStep walks an IS NULL or NOT NULL operand on its own and
+    # goes on whatever the walk returned: a name error there is kept as the
+    # message and the walk continues past it.
+    private def compile_null_test_operand(operand : SQL::Expression, context : QueryContext) : Expr
+      compile_expression(operand, context)
+    rescue ResolveAbort
+      ConstantExpr.new(nil)
+    rescue error : SQLError
+      errors = @list_of_name_errors
+      raise error unless errors && (error.is_a?(ResolveError) || LOOKUP_ERROR.matches?(error.message || ""))
+      errors << error
+      ConstantExpr.new(nil)
+    end
+
     private def compile_subquery(query : SQL::SelectStatement, context : QueryContext) : QueryPlan
+      # A subquery met after an error is recorded is not resolved: the
+      # recorded message stands (resolveSelectStep stops on pParse->nErr).
+      if (errors = @list_of_name_errors) && (last = errors.last?)
+        raise ResolveError.new(last.message || "SQL error", last.result_code)
+      end
       saved_aggregates = context.aggregates
       plan = compile_query(query, context, context.ctes)
       context.aggregates = saved_aggregates
@@ -516,10 +653,21 @@ module Grant::SQLiteEngine::Query
     end
 
     private def compile_case(expression : SQL::CaseExpression, context : QueryContext) : Expr
+      # The walk goes operand, then each WHEN and its THEN, then ELSE.
       operand = expression.operand.try { |syntax| compile_expression(syntax, context) }
-      conditions = expression.branches.map { |branch| compile_expression(branch.condition, context) }
-      results = expression.branches.map { |branch| compile_expression(branch.result, context) }
+      conditions = [] of Expr
+      results = [] of Expr
+      expression.branches.each do |branch|
+        conditions << compile_expression(branch.condition, context)
+        results << compile_expression(branch.result, context)
+      end
       else_result = expression.else_result.try { |syntax| compile_expression(syntax, context) }
+      if operand.is_a?(VectorExpr)
+        # sqlite3ExprCodeTarget's TK_CASE tests `operand = WHEN` for each
+        # branch, so a row value operand compares with row value WHENs.
+        conditions = conditions.map { |condition| compile_comparison(ComparisonOperator::Equal, operand, condition).as(Expr) }
+        return CaseExpr.new(nil, conditions, results, else_result)
+      end
       CaseExpr.new(operand, conditions, results, else_result)
     end
 
@@ -529,14 +677,33 @@ module Grant::SQLiteEngine::Query
     # JSON, which need value subtypes) arrive with milestone G6.
     JSON_FUNCTION_NAME = /\Ajsonb?(_[a-z_]+)?\z/
 
+    # resolveExprStep checks a function before walking its arguments: its
+    # own error is recorded first, and the arguments are walked after it.
     private def compile_function(call : SQL::FunctionCall, context : QueryContext) : Expr
+      compile_function_call(call, context)
+    rescue ResolveAbort
+      # An argument's walk stopped; C ignores the argument list's result.
+      ConstantExpr.new(nil)
+    rescue error : SQLError
+      errors = @list_of_name_errors
+      raise error if errors.nil? || error.is_a?(ResolveError) || !CONTINUING_ERROR.matches?(error.message || "")
+      errors << error
+      begin
+        call.arguments.each { |argument| compile_expression(argument, context) }
+        call.filter.try { |filter| compile_expression(filter, context) }
+      rescue ResolveAbort
+      end
+      ConstantExpr.new(nil)
+    end
+
+    private def compile_function_call(call : SQL::FunctionCall, context : QueryContext) : Expr
       name = call.name.value
       lower = name.downcase
       if call.over || call.over_name
         raise UnsupportedSQL.new("window function #{name}()")
       end
       count = call.arguments.size
-      if kind = AggregateFunctions.kind_for(lower, count, call.star)
+      if kind = AggregateFunctions.kind_for(name, count, call.star)
         return compile_aggregate(call, kind, context)
       end
       if call.star
@@ -585,37 +752,64 @@ module Grant::SQLiteEngine::Query
       if !ScalarFunctions.known?(lower) && JSON_FUNCTION_NAME.matches?(lower)
         raise UnsupportedSQL.new("JSON function #{name}() (milestone G6)")
       end
-      # The arguments resolve before the function's own errors are reported.
+      definition = ScalarFunctions.lookup(lower, count) || raise SQLError.new("no such function: #{name}")
       arguments = call.arguments.map { |argument| compile_expression(argument, context) }
-      definition = begin
-        ScalarFunctions.lookup(lower, count) || raise SQLError.new("no such function: #{name}")
-      rescue error : SQLError
-        raise error unless record_name_error(error)
-        return ConstantExpr.new(nil)
-      end
-      FunctionExpr.new(definition, arguments)
+      function = FunctionExpr.new(definition, arguments)
+      note_collation_use(function.needed_unknown_collation)
+      function
     end
 
     private def compile_aggregate(call : SQL::FunctionCall, kind : AggregateFunctions::Kind, context : QueryContext) : Expr
-      collector = context.aggregates
       name = call.name.value
-      if collector.nil? || collector.inside_call?
+      if !context.aggregates_allowed? || context.inside_aggregate_call?
         raise SQLError.new("misuse of aggregate function #{name}()")
       end
       if call.distinct.distinct? && call.arguments.size != 1
         raise SQLError.new("DISTINCT aggregates must have exactly one argument")
       end
       raise UnsupportedSQL.new("ORDER BY inside aggregate #{name}()") unless call.order_by.empty?
-      collector.inside_call = true
+      context.inside_aggregate_call = true
       saved_aliases = context.aliases_visible?
-      arguments = call.arguments.map { |argument| compile_expression(argument, context) }
-      filter = call.filter.try { |expression| compile_expression(expression, context) }
-      context.aliases_visible = saved_aliases
-      collector.inside_call = false
+      begin
+        arguments = call.arguments.map { |argument| compile_expression(argument, context) }
+        filter = call.filter.try { |expression| compile_expression(expression, context) }
+      ensure
+        context.aliases_visible = saved_aliases
+        context.inside_aggregate_call = false
+      end
       collation = arguments.compact_map(&.collation_sequence).first? || Collation::Binary
+      # min() and max() compare with the collation, and a DISTINCT
+      # aggregate keys its set with it.
+      if kind.min? || kind.max? || call.distinct.distinct?
+        note_collation_use(arguments.find(&.explicit_collate?).try(&.unknown_collation))
+      end
       index = allocate_aggregate
-      collector.list_of_calls << AggregateCall.new(kind, arguments, call.distinct.distinct?, filter, collation, index)
+      # resolveExprStep: the aggregate belongs to the innermost query whose
+      # FROM its arguments read (sqlite3ReferencesSrcList); with no column
+      # at all, to the query it is written in.
+      owner = aggregate_owner(arguments, filter, context)
+      collector = owner.aggregates
+      if collector.nil? || owner.inside_aggregate_call?
+        # analyzeAggregate never collects it: SQLite fails while generating
+        # code for it.
+        record_codegen_error("misuse of aggregate: #{name}()")
+      else
+        collector.list_of_calls << AggregateCall.new(kind, arguments, call.distinct.distinct?, filter, collation, index)
+      end
       AggregateResultExpr.new(index)
+    end
+
+    private def aggregate_owner(arguments : Array(Expr), filter : Expr?, context : QueryContext) : QueryContext
+      used = Set(Int32).new
+      arguments.each { |argument| ExpressionWalk.slots(argument, used) }
+      ExpressionWalk.slots(filter, used) if filter
+      return context if used.empty?
+      current = context
+      while current
+        return current if current.list_of_entries.any? { |entry| used.includes?(entry.slot) }
+        current = current.parent
+      end
+      context
     end
   end
 end

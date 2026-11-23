@@ -31,6 +31,10 @@ module SelectSpecFixture
     INSERT INTO tags VALUES ('b', 'Bee'), ('a', 'Ay'), ('c', NULL);
     INSERT INTO big_keys VALUES (10, 'ten'), (20, 'twenty');
     INSERT INTO nodes VALUES (1, NULL, 'root', 1), (2, 1, 'a', 2), (3, 1, 'b', 3), (4, 2, 'a1', 4), (5, 4, 'a1x', 5);
+    CREATE TABLE pairs (a TEXT, b TEXT, PRIMARY KEY (a, b, a)) WITHOUT ROWID;
+    INSERT INTO pairs VALUES ('x', 'y'), ('a', 'b'), ('a', 'c');
+    CREATE TABLE named (a, b, c, PRIMARY KEY(a) UNIQUE (b) CONSTRAINT one CHECK(c < 10) CONSTRAINT two);
+    INSERT INTO named VALUES (1, 2, 3);
     SQL
 
   QUERIES = [
@@ -164,6 +168,64 @@ module SelectSpecFixture
     {"SELECT 1 WHERE 0 INTERSECT SELECT abs(-9223372036854775807 - 1)", [] of Grant::SQLiteEngine::Value},
     {"SELECT DISTINCT level FROM ranked", [] of Grant::SQLiteEngine::Value},
     {"SELECT 0.1 + 0.2, 1e300 * 1e300, -0.0, 1.5e-7, 123456789012345678, CAST(0.1 AS TEXT), 100.0", [] of Grant::SQLiteEngine::Value},
+    # Bare columns take the row of the last min() or max() that took a new value.
+    {"SELECT name, max(age) FROM users", [] of Grant::SQLiteEngine::Value},
+    {"SELECT flag, name, min(age), max(score) FROM users GROUP BY flag ORDER BY flag", [] of Grant::SQLiteEngine::Value},
+    {"SELECT id FROM users WHERE id IN ((SELECT user_id FROM posts)) ORDER BY id", [] of Grant::SQLiteEngine::Value},
+    {"SELECT id, likely(age) = '36' FROM users ORDER BY id", [] of Grant::SQLiteEngine::Value},
+    {"SELECT (SELECT max(users.age) FROM posts LIMIT 1) FROM users", [] of Grant::SQLiteEngine::Value},
+    # C's resolve walk: a function's own error first, the walk stops at the
+    # next node once an error is recorded, IS NULL and function argument
+    # lists absorb a stopped walk, and the last recorded error is reported.
+    {"SELECT * FROM users WHERE nofunc(1) AND no_col = 1", [] of Grant::SQLiteEngine::Value},
+    {"SELECT nofunc(1) + (no_col IS NULL) FROM users", [] of Grant::SQLiteEngine::Value},
+    {"SELECT (no_col IS NULL) + nofunc(1) FROM users", [] of Grant::SQLiteEngine::Value},
+    {"SELECT nofunc('x', no_col) FROM users", [] of Grant::SQLiteEngine::Value},
+    {"SELECT outer_fn(inner_fn(no_col))", [] of Grant::SQLiteEngine::Value},
+    {"SELECT * FROM users WHERE no_col REGEXP 'x'", [] of Grant::SQLiteEngine::Value},
+    {"SELECT id FROM users WHERE no_col LIKE no_pattern", [] of Grant::SQLiteEngine::Value},
+    {"SELECT SUM(*) FROM users", [] of Grant::SQLiteEngine::Value},
+    {"SELECT id FROM users WHERE no_x IN (SELECT no_y FROM posts)", [] of Grant::SQLiteEngine::Value},
+    {"SELECT * FROM nosuch1 UNION ALL SELECT * FROM nosuch2", [] of Grant::SQLiteEngine::Value},
+    {"SELECT no_x FROM users UNION SELECT no_y FROM posts", [] of Grant::SQLiteEngine::Value},
+    {"SELECT 1, 2 UNION SELECT 3 UNION SELECT 4, 5", [] of Grant::SQLiteEngine::Value},
+    {"WITH i(x) AS (SELECT 1, 2 UNION ALL SELECT 1) SELECT * FROM i", [] of Grant::SQLiteEngine::Value},
+    {"WITH RECURSIVE i(x) AS (VALUES(1) UNION SELECT count(*) FROM i) SELECT * FROM i", [] of Grant::SQLiteEngine::Value},
+    {"WITH s(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM s WHERE i < 3 UNION ALL SELECT 4) SELECT * FROM s", [] of Grant::SQLiteEngine::Value},
+    {"SELECT 1 INTERSECT VALUES(count())", [] of Grant::SQLiteEngine::Value},
+    {"SELECT 1 WHERE (1, 2) IN ((1, 2, 3), (1, 2))", [] of Grant::SQLiteEngine::Value},
+    {"SELECT id, CASE (id, age) WHEN (1, 36) THEN 'a' WHEN (5, 36) THEN 'e' ELSE '-' END FROM users ORDER BY id", [] of Grant::SQLiteEngine::Value},
+    # Table-valued function and INDEXED BY errors of the expand phase.
+    {"SELECT * FROM adult_users(1)", [] of Grant::SQLiteEngine::Value},
+    {"SELECT * FROM main.nosuch_fn(1)", [] of Grant::SQLiteEngine::Value},
+    {"SELECT * FROM nosuch_fn(no_col)", [] of Grant::SQLiteEngine::Value},
+    {"SELECT * FROM adult_users INDEXED BY index_users_on_age", [] of Grant::SQLiteEngine::Value},
+    {"SELECT name, ncol, wr, strict FROM pragma_table_list('pairs')", [] of Grant::SQLiteEngine::Value},
+    {"SELECT hex(unhex('41 42', ' ')), unhex('4'), unhex('zz'), unhex(NULL), hex(unhex('6162'))", [] of Grant::SQLiteEngine::Value},
+    {"SELECT load_extension('nothing')", [] of Grant::SQLiteEngine::Value},
+    # Plans: a LIMIT that overflows, a covering index read in order, WHERE
+    # terms tested as the scan decodes their columns.
+    {"SELECT id FROM users ORDER BY id LIMIT 9223372036854775807 OFFSET 2", [] of Grant::SQLiteEngine::Value},
+    {"SELECT age FROM users WHERE age > 20 ORDER BY age", [] of Grant::SQLiteEngine::Value},
+    {"SELECT id FROM users WHERE score > 0 AND name LIKE 'E%'", [] of Grant::SQLiteEngine::Value},
+    {"SELECT id FROM users WHERE score > ? AND name NOT LIKE 'a%'", [1_i64] of Grant::SQLiteEngine::Value},
+    {"SELECT id, title FROM posts WHERE body LIKE '' OR title LIKE 'f%' ORDER BY id", [] of Grant::SQLiteEngine::Value},
+    {"SELECT u.id, count(p.id) FROM users u JOIN posts p ON p.user_id = u.id WHERE u.age > 1 GROUP BY u.id ORDER BY u.id LIMIT 2", [] of Grant::SQLiteEngine::Value},
+    {"SELECT * FROM pairs ORDER BY b", [] of Grant::SQLiteEngine::Value},
+    {"SELECT * FROM named", [] of Grant::SQLiteEngine::Value},
+    # An unknown collation fails only where code generation looks it up:
+    # key infos first (last one wins), then WHERE and the result set.
+    {"SELECT name COLLATE nope FROM users ORDER BY id", [] of Grant::SQLiteEngine::Value},
+    {"SELECT name == 'a' COLLATE c1, name == 'b' COLLATE c2 FROM users", [] of Grant::SQLiteEngine::Value},
+    {"SELECT id FROM users WHERE name = 'a' COLLATE c1 ORDER BY email COLLATE c2", [] of Grant::SQLiteEngine::Value},
+    {"SELECT id, email COLLATE c2 FROM users ORDER BY 1 COLLATE c1, 2", [] of Grant::SQLiteEngine::Value},
+    {"SELECT max(name COLLATE c1), email COLLATE c2 FROM users", [] of Grant::SQLiteEngine::Value},
+    {"SELECT age FROM users GROUP BY age COLLATE c1 ORDER BY name COLLATE c2", [] of Grant::SQLiteEngine::Value},
+    {"SELECT (id COLLATE nose, age) IN (SELECT id, age FROM users) FROM users", [] of Grant::SQLiteEngine::Value},
+    # count(*) over a UNION ALL subquery never codes its SELECTs' columns.
+    {"SELECT id FROM users WHERE (SELECT count(*) FROM (SELECT 1 UNION ALL SELECT sum(users.age))) ORDER BY id", [] of Grant::SQLiteEngine::Value},
+    {"SELECT id FROM users WHERE (SELECT count(*) FROM (SELECT sum(users.age))) ORDER BY id", [] of Grant::SQLiteEngine::Value},
+    {"WITH RECURSIVE c(i) AS (SELECT * UNION ALL SELECT i + 1 FROM c WHERE i < 3) SELECT i FROM c", [] of Grant::SQLiteEngine::Value},
   ]
 end
 

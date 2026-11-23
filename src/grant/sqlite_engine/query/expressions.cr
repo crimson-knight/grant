@@ -54,6 +54,15 @@ module Grant::SQLiteEngine::Query
       chosen.try(&.collation_sequence)
     end
 
+    # The unknown collation name sqlite3ExprCollSeq would look up for this
+    # expression (and fail on), found the way `collation_sequence` finds
+    # the collation; nil when the collation is known or there is none.
+    def unknown_collation : String?
+      return unless @explicit_collate
+      chosen = collation_children.find(&.explicit_collate?)
+      chosen.try(&.unknown_collation)
+    end
+
     # True when the expression's value cannot change during one execution.
     def constant? : Bool
       false
@@ -177,7 +186,12 @@ module Grant::SQLiteEngine::Query
   class CollateExpr < Expr
     getter operand : Expr
 
-    def initialize(@operand : Expr, @collation : Collation)
+    # *unknown_collation*: the name written, when no collation has it
+    # (BINARY stands in; the error comes only where a comparison, sort or
+    # aggregate uses the collation).
+    getter unknown_collation : String?
+
+    def initialize(@operand : Expr, @collation : Collation, @unknown_collation : String? = nil)
       self.explicit_collate = true
     end
 
@@ -813,7 +827,8 @@ module Grant::SQLiteEngine::Query
     end
   end
 
-  # likely(x), unlikely(x), likelihood(x, p): x itself.
+  # likely(x), unlikely(x), likelihood(x, p): x itself, without x's
+  # affinity (a function call has none; whereG.test 3.1-3.4).
   class PassThroughExpr < Expr
     def initialize(@operand : Expr)
       mark_collate_from({@operand})
@@ -821,10 +836,6 @@ module Grant::SQLiteEngine::Query
 
     def evaluate(frame : Frame) : Value
       @operand.evaluate(frame)
-    end
-
-    def affinity : ExpressionAffinity
-      @operand.affinity
     end
 
     def collation_children : Array(Expr)
@@ -844,12 +855,16 @@ module Grant::SQLiteEngine::Query
       @definition.name
     end
 
+    # The unknown collation this function's comparisons would look up.
+    getter needed_unknown_collation : String? = nil
+
     def initialize(@definition : ScalarFunctions::Definition, @arguments : Array(Expr))
       mark_collate_from(@arguments)
       @collation = Collation::Binary
       if @definition.needs_collation
         @collation = @arguments.compact_map(&.collation_sequence).first? || Collation::Binary
       end
+      @needed_unknown_collation = @definition.needs_collation ? @arguments.find(&.explicit_collate?).try(&.unknown_collation) : nil
       @scratch = Array(Value).new(@arguments.size, nil)
       @deterministic = !@definition.name.in?("random", "randomblob", "changes", "last_insert_rowid", "total_changes")
     end
@@ -901,14 +916,74 @@ module Grant::SQLiteEngine::Query
       mark_collate_from(children)
     end
 
+    @cached_pattern : String? = nil
+    @cached_prefix : Bytes? = nil
+
+    getter operand : Expr
+    getter pattern : Expr
+
+    # The result for a text *subject* given as its UTF-8 bytes, when the
+    # pattern is a literal prefix (as `evaluate` decides it); nil when
+    # `evaluate` must decide.
+    def prefix_verdict(frame : Frame, subject : Bytes) : Bool?
+      return if @glob || @escape
+      pattern = @pattern.evaluate(frame)
+      return unless pattern.is_a?(String)
+      prefix = literal_prefix(pattern)
+      return unless prefix
+      prefix_matches?(subject, prefix) != @negated
+    end
+
     def evaluate(frame : Frame) : Value
-      arguments = [@pattern.evaluate(frame), @operand.evaluate(frame)] of Value
+      pattern = @pattern.evaluate(frame)
+      if !@glob && @escape.nil? && pattern.is_a?(String) && (prefix = literal_prefix(pattern))
+        subject = @operand.evaluate(frame)
+        if subject.is_a?(String)
+          return negate(prefix_matches?(subject.to_slice, prefix) ? 1_i64 : 0_i64)
+        end
+        return negate(ScalarFunctions.like([pattern, subject] of Value, @glob))
+      end
+      arguments = [pattern, @operand.evaluate(frame)] of Value
       if escape = @escape
         arguments << escape.evaluate(frame)
       end
-      result = ScalarFunctions.like(arguments, @glob)
+      negate(ScalarFunctions.like(arguments, @glob))
+    end
+
+    private def negate(result : Value) : Value
       return result if result.nil? || !@negated
       result == 1_i64 ? 0_i64 : 1_i64
+    end
+
+    # A LIKE pattern of ASCII literal characters ending in one `%` matches
+    # exactly the texts that start with those characters, ASCII case
+    # folded (patternCompare returns SQLITE_MATCH at a final `%`). The
+    # prefix is kept for the pattern object the last row used.
+    private def literal_prefix(pattern : String) : Bytes?
+      return @cached_prefix if pattern.same?(@cached_pattern)
+      bytes = pattern.to_slice
+      prefix = nil
+      if bytes.size > 0 && bytes.size <= 1000 && bytes[-1] == '%'.ord
+        candidate = bytes[0, bytes.size - 1]
+        simple = candidate.all? { |byte| byte < 0x80 && byte != 0 && byte != '%'.ord && byte != '_'.ord }
+        prefix = candidate if simple
+      end
+      @cached_pattern = pattern
+      @cached_prefix = prefix
+    end
+
+    private def prefix_matches?(subject : Bytes, prefix : Bytes) : Bool
+      return false if subject.size < prefix.size
+      prefix.each_with_index do |byte, index|
+        other = subject.unsafe_fetch(index)
+        next if other == byte
+        return false unless ascii_lower(other) == ascii_lower(byte)
+      end
+      true
+    end
+
+    private def ascii_lower(byte : UInt8) : UInt8
+      byte >= 'A'.ord && byte <= 'Z'.ord ? byte + 32 : byte
     end
 
     def collation_children : Array(Expr)

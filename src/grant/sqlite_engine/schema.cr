@@ -93,7 +93,8 @@ module Grant::SQLiteEngine
         return affinities
       end
       key_collations = key_terms.map { |term| {term.column_name.try(&.downcase), effective_collation(table, term)} }
-      table.list_of_primary_key_columns.each_with_index do |column_name, position|
+      table.primary_key_positions.each do |position|
+        column_name = table.list_of_primary_key_columns[position]
         held = {column_name.downcase, table.primary_key_collation(position).downcase}
         affinities << column_affinity(table, column_name) unless key_collations.includes?(held)
       end
