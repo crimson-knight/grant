@@ -52,8 +52,8 @@ module Grant::SQLiteEngine::Query
     # changes a number beside a number), so the truth comes straight from
     # sqlite3MemCompare; anything else takes `evaluate`'s path.
     def jump?(frame : Frame, if_true : Bool, jump_if_null : Bool) : Bool
-      left = @left.evaluate(frame)
-      right = @right.evaluate(frame)
+      left = Expr.value_of(@left, frame)
+      right = Expr.value_of(@right, frame)
       if (left.is_a?(Int64) || left.is_a?(Float64)) && (right.is_a?(Int64) || right.is_a?(Float64))
         return @operator.holds?(ValueSemantics.compare(left, right)) == if_true
       end

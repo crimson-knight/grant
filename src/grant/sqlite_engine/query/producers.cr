@@ -158,14 +158,14 @@ module Grant::SQLiteEngine::Query
       else
         row = Array(Value).new(@list_of_columns.size + @list_of_extras.size)
       end
-      @list_of_columns.each { |column| row << column.evaluate(frame) }
+      @list_of_columns.each { |column| row << Expr.value_of(column, frame) }
       if seen = @seen
         key = Array(EqualityKey).new(@list_of_columns.size) do |index|
           ValueSemantics.equality_key(row[index], @list_of_column_collations[index]? || Collation::Binary)
         end
         return unless seen.add?(key)
       end
-      @list_of_extras.each { |extra| row << extra.evaluate(frame) }
+      @list_of_extras.each { |extra| row << Expr.value_of(extra, frame) }
       row
     end
 
@@ -221,7 +221,7 @@ module Grant::SQLiteEngine::Query
         # key compares unequal to the current group's (OP_Compare).
         scratch = @scratch_keys
         scratch.clear
-        aggregation.list_of_group_keys.each { |key| scratch << key.evaluate(frame) }
+        aggregation.list_of_group_keys.each { |key| scratch << Expr.value_of(key, frame) }
         current = @current
         if current && same_group_key?(scratch, current.list_of_key_values, aggregation.list_of_key_collations)
           step_group(frame, current, aggregation, first: false)
@@ -288,17 +288,17 @@ module Grant::SQLiteEngine::Query
         # array.
         if list_of_arguments.size <= 1 && group.list_of_distinct_sets.unsafe_fetch(index).nil?
           accumulator = group.list_of_accumulators.unsafe_fetch(index)
-          accumulator.step_one(list_of_arguments.empty? ? nil : list_of_arguments.unsafe_fetch(0).evaluate(frame))
+          accumulator.step_one(list_of_arguments.empty? ? nil : Expr.value_of(list_of_arguments.unsafe_fetch(0), frame))
           deciding_hit = accumulator.hit? if call.min_or_max?
           next
         end
         arguments = argument_buffer(index)
         # The buffer keeps its size from row to row; its values are replaced.
         if arguments.size == list_of_arguments.size
-          list_of_arguments.each_with_index { |argument, position| arguments.unsafe_put(position, argument.evaluate(frame)) }
+          list_of_arguments.each_with_index { |argument, position| arguments.unsafe_put(position, Expr.value_of(argument, frame)) }
         else
           arguments.clear
-          list_of_arguments.each { |argument| arguments << argument.evaluate(frame) }
+          list_of_arguments.each { |argument| arguments << Expr.value_of(argument, frame) }
         end
         if distinct_set = group.list_of_distinct_sets[index]
           next if arguments.any?(Nil) && !call.kind.count_rows?
@@ -348,7 +348,7 @@ module Grant::SQLiteEngine::Query
         # The key arrays are reused for each row and copied only for a
         # new group.
         key_values.clear
-        keys.each { |key| key_values << key.evaluate(frame) }
+        keys.each { |key| key_values << Expr.value_of(key, frame) }
         hash_key.clear
         key_values.each_with_index { |value, index| hash_key << ValueSemantics.equality_key(value, collations[index]) }
         group = groups[hash_key]?

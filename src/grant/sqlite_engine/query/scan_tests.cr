@@ -81,7 +81,7 @@ module Grant::SQLiteEngine::Query
         # IS NOT decide NULL themselves.
         return header.serial_type(@position) == 0 && !@operator.null_safe? ? false : nil
       end
-      other = @value.evaluate(frame)
+      other = Expr.value_of(@value, frame)
       return unless other.is_a?(Int64) || other.is_a?(Float64)
       stored = stored.to_f64 if @real && stored.is_a?(Int64)
       @operator.holds?(ValueSemantics.compare(stored, other))

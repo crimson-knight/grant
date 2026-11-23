@@ -325,7 +325,7 @@ module Grant::SQLiteEngine::Query
       probe.clear
       @key_was_integer = false
       @equal.each_with_index do |(expression, affinity), position|
-        raw = expression.evaluate(frame)
+        raw = Expr.value_of(expression, frame)
         converted = ValueSemantics.apply_record_affinity(raw, affinity)
         @empty = true if converted.nil?
         @key_was_integer = raw.is_a?(Int64) && converted == raw if position == 0

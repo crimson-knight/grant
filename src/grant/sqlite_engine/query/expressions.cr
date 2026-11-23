@@ -42,6 +42,15 @@ module Grant::SQLiteEngine::Query
 
   # A compiled expression: names already resolved to frame slots.
   abstract class Expr
+    # `evaluate` behind one out-of-line call. A hot loop that calls
+    # `evaluate` on an expression of unknown class otherwise inlines the
+    # dispatch over every expression class, and the differing union
+    # results of those branches spill to the stack on every call.
+    @[NoInline]
+    def self.value_of(expression : Expr, frame : Frame) : Value
+      expression.evaluate(frame)
+    end
+
     # sqlite3ExprAffinity.
     def affinity : ExpressionAffinity
       ExpressionAffinity::None
