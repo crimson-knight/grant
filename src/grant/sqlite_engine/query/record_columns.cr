@@ -227,6 +227,7 @@ module Grant::SQLiteEngine::Query
     # The first value of the record in *payload* compared with *key* when
     # that value is an integer and the record is sound that far; nil
     # otherwise, for `compare_prefix` to decide (and report corruption).
+    @[AlwaysInline]
     def self.compare_integer_key(payload : Bytes, key : Int64) : Int32?
       return if payload.size < 2
       header_size = payload.unsafe_fetch(0)
@@ -241,6 +242,7 @@ module Grant::SQLiteEngine::Query
     # The two values of a record of exactly two integers (an index entry of
     # one integer key and the rowid), read as `decode_into` reads them; nil
     # for any other record.
+    @[AlwaysInline]
     def self.integer_pair(payload : Bytes) : {Int64, Int64}?
       return if payload.size < 3 || payload.unsafe_fetch(0) != 3
       first_type = payload.unsafe_fetch(1)

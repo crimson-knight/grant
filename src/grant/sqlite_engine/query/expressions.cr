@@ -24,6 +24,7 @@ module Grant::SQLiteEngine::Query
     end
 
     # Decodes what the row in *slot* still lacks, before anything reads it.
+    @[AlwaysInline]
     def complete_row(slot : Int32) : Nil
       if pending = @list_of_pending.unsafe_fetch(slot)
         pending.complete_row(self)

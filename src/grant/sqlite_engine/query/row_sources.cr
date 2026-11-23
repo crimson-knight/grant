@@ -314,9 +314,12 @@ module Grant::SQLiteEngine::Query
       # (an inner join opens this source once per outer row).
       probe = @probe
       probe.clear
-      @equal.each do |expression, affinity|
-        converted = ValueSemantics.apply_record_affinity(expression.evaluate(frame), affinity)
+      @key_was_integer = false
+      @equal.each_with_index do |(expression, affinity), position|
+        raw = expression.evaluate(frame)
+        converted = ValueSemantics.apply_record_affinity(raw, affinity)
         @empty = true if converted.nil?
+        @key_was_integer = raw.is_a?(Int64) && converted == raw if position == 0
         probe << converted
       end
       @strict_low = false
@@ -367,6 +370,11 @@ module Grant::SQLiteEngine::Query
     end
 
     @integer_probe : Int64? = nil
+    # The first key value was an integer before affinity conversion.
+    @key_was_integer = false
+    # The current row's integer key equals the probe's unconverted integer
+    # value, so `column = value` on the seek's own terms holds for it.
+    getter? equality_verified = false
     @integer_covering : Int32? = nil
     @integer_covering_known = false
 
@@ -387,6 +395,25 @@ module Grant::SQLiteEngine::Query
         return pair[0] < probe_key
       end
       @order.compare(cursor.record(@entry), @probe) < 0
+    end
+
+    # True when *term* is `column = value` (or IS) on the index's one key
+    # column with the very value expression the seek uses: for a row read
+    # with `equality_verified?`, both sides are the same integer.
+    def seek_equality?(term : Expr) : Bool
+      return false unless @equal.size == 1 && term.is_a?(ComparisonExpr)
+      return false unless term.operator.equal? || term.operator.is?
+      covering = @covering
+      return false unless covering && covering.size >= 1
+      value = @equal[0][0]
+      key_column = covering[0]
+      left = term.left
+      right = term.right
+      key_side?(left, key_column) && right.same?(value) || key_side?(right, key_column) && left.same?(value)
+    end
+
+    private def key_side?(expression : Expr, key_column : Int32) : Bool
+      expression.is_a?(ColumnExpr) && expression.slot == @slot && expression.column == key_column
     end
 
     # Ends the lookup on an entry past the key; the cursor rests there.
@@ -452,6 +479,7 @@ module Grant::SQLiteEngine::Query
         if (probe_key = @integer_probe) && (pair = index_cursor.integer_pair)
           key, rowid = pair
           return stop_past_key unless key == probe_key
+          @equality_verified = @key_was_integer
           if column = integer_covering_column
             buffer = @buffer
             @table.clear_row(buffer) unless buffer.size == @table.list_of_column_names.size
@@ -469,6 +497,7 @@ module Grant::SQLiteEngine::Query
           frame.list_of_rowids[@slot] = rowid
           return true
         end
+        @equality_verified = false
         entry = index_cursor.record(@entry)
         return stop_past_key unless @probe.empty? || @order.compare(entry, @probe) == 0
         if @has_high
@@ -567,7 +596,16 @@ module Grant::SQLiteEngine::Query
 
   # Rows of a source that satisfy a condition.
   class FilterSource < RowSource
+    # The index lookup whose seek equality is this whole condition, so a
+    # row it verified passes without evaluating it (C codes no test for a
+    # term the index seek consumed).
+    @verifying_lookup : IndexLookupSource? = nil
+
     def initialize(@source : RowSource, @condition : Expr)
+      source = @source
+      if source.is_a?(IndexLookupSource) && source.seek_equality?(@condition)
+        @verifying_lookup = source
+      end
     end
 
     def open(frame : Frame) : Nil
@@ -575,7 +613,9 @@ module Grant::SQLiteEngine::Query
     end
 
     def advance(frame : Frame) : Bool
+      lookup = @verifying_lookup
       while @source.advance(frame)
+        return true if lookup && lookup.equality_verified?
         return true if @condition.holds?(frame)
       end
       false

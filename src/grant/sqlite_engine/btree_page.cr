@@ -73,6 +73,7 @@ module Grant::SQLiteEngine
 
     # Offset of cell *index* on the page, checked to lie after the pointer
     # array and inside the usable size.
+    @[AlwaysInline]
     def cell_offset(index : Int32) : Int32
       # The pointer array was checked to lie inside the page.
       pointer = if 0 <= index < @cell_count
@@ -121,6 +122,7 @@ module Grant::SQLiteEngine
     # `PayloadReader.read` would give them; nil otherwise, and for a cell
     # those checks would reject, so the caller takes that path and its
     # error.
+    @[AlwaysInline]
     def local_table_leaf_cell(index : Int32) : {Int64, Bytes}?
       offset = cell_offset(index)
       size, size_length = varint(offset, index)
@@ -133,6 +135,7 @@ module Grant::SQLiteEngine
     # The payload of index cell *index* (leaf or interior) when it lies
     # wholly on the page, as `payload` and `PayloadReader.read` would give
     # it; nil otherwise, and for a cell those checks would reject.
+    @[AlwaysInline]
     def local_index_payload(index : Int32) : Bytes?
       offset = cell_offset(index)
       if @page_type.interior_index?
