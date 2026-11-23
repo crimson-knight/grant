@@ -14,6 +14,7 @@ module Grant::SQLiteEngine
     getter affinity : Affinity
     property? primary_key = false
     property? primary_key_descending = false
+    property? not_null = false
     property generated = Generated::None
     # The DEFAULT clause: a literal value, or the clause's text when it is an
     # expression the reader does not evaluate (needed only for rows written
@@ -49,6 +50,11 @@ module Grant::SQLiteEngine
     # Column lists of the PRIMARY KEY and UNIQUE constraints in the order
     # SQLite creates their automatic indexes.
     getter list_of_unique_constraints = [] of Array(String)
+    # The key terms of each entry of `list_of_unique_constraints`, with the
+    # COLLATE and DESC written for each column.
+    getter list_of_unique_constraint_terms = [] of Array(IndexDefinition::KeyTerm)
+    # True when the INTEGER PRIMARY KEY is declared AUTOINCREMENT.
+    getter? autoincrement = false
     getter? without_rowid = false
     getter? strict = false
     # Index into `list_of_columns` of the INTEGER PRIMARY KEY column that
@@ -158,18 +164,19 @@ module Grant::SQLiteEngine
         column.primary_key_descending = true if skip_keyword("DESC")
         skip_keyword("ASC")
         conflict_clause
-        skip_keyword("AUTOINCREMENT")
+        @autoincrement = true if skip_keyword("AUTOINCREMENT")
         @list_of_primary_key_columns = [column.column_name]
         @list_of_primary_key_collations = [nil] of String?
-        add_unique_constraint([column.column_name])
+        add_unique_constraint([column.column_name], [IndexDefinition::KeyTerm.new(column.column_name, nil, column.primary_key_descending?)])
       elsif skip_keyword("NOT")
         expect_keyword("NULL")
+        column.not_null = true
         conflict_clause
       elsif skip_keyword("NULL")
         conflict_clause
       elsif skip_keyword("UNIQUE")
         conflict_clause
-        add_unique_constraint([column.column_name])
+        add_unique_constraint([column.column_name], [IndexDefinition::KeyTerm.new(column.column_name, nil)])
       else
         return false
       end
@@ -292,7 +299,7 @@ module Grant::SQLiteEngine
       end
       if skip_keyword("PRIMARY")
         expect_keyword("KEY")
-        columns, collations = indexed_columns
+        columns, collations, terms = indexed_columns
         conflict_clause
         @list_of_primary_key_columns = columns
         @list_of_primary_key_collations = collations
@@ -301,11 +308,11 @@ module Grant::SQLiteEngine
             @list_of_columns[index].primary_key = true
           end
         end
-        add_unique_constraint(columns)
+        add_unique_constraint(columns, terms)
       elsif skip_keyword("UNIQUE")
-        columns, _collations = indexed_columns
+        columns, _collations, terms = indexed_columns
         conflict_clause
-        add_unique_constraint(columns)
+        add_unique_constraint(columns, terms)
       elsif skip_keyword("CHECK")
         skip_parenthesized
       elsif skip_keyword("FOREIGN")
@@ -320,18 +327,22 @@ module Grant::SQLiteEngine
 
     # Reads `( name [COLLATE x] [ASC|DESC], ... )` and returns the names
     # and the COLLATE written for each (nil when none is).
-    private def indexed_columns : {Array(String), Array(String?)}
+    private def indexed_columns : {Array(String), Array(String?), Array(IndexDefinition::KeyTerm)}
       expect_punctuation('(')
       names = [] of String
       collations = [] of String?
+      terms = [] of IndexDefinition::KeyTerm
       loop do
-        names << name_token
-        collations << (skip_keyword("COLLATE") ? name_token : nil)
-        skip_keyword("ASC") || skip_keyword("DESC")
+        name = name_token
+        collation = skip_keyword("COLLATE") ? name_token : nil
+        descending = !skip_keyword("ASC") && skip_keyword("DESC")
+        names << name
+        collations << collation
+        terms << IndexDefinition::KeyTerm.new(name, collation, descending)
         break unless skip_punctuation(',')
       end
       expect_punctuation(')')
-      {names, collations}
+      {names, collations, terms}
     end
 
     # The collation the primary key applies to its *position*th column.
@@ -344,10 +355,11 @@ module Grant::SQLiteEngine
 
     # SQLite skips an automatic index whose columns repeat an earlier one
     # (sqlite3CreateIndex).
-    private def add_unique_constraint(columns : Array(String)) : Nil
+    private def add_unique_constraint(columns : Array(String), terms : Array(IndexDefinition::KeyTerm)) : Nil
       lowered = columns.map(&.downcase)
       return if @list_of_unique_constraints.any? { |existing| existing.map(&.downcase) == lowered }
       @list_of_unique_constraints << columns
+      @list_of_unique_constraint_terms << terms
     end
 
     private def conflict_clause : Nil
@@ -385,7 +397,11 @@ module Grant::SQLiteEngine
       return unless column.declared_type.compare("INTEGER", case_insensitive: true) == 0
       return if column.primary_key_descending?
       @rowid_alias_index = index
-      @list_of_unique_constraints.reject! { |columns| columns.size == 1 && columns.first.compare(column.column_name, case_insensitive: true) == 0 }
+      alias_constraint = @list_of_unique_constraints.index { |columns| columns.size == 1 && columns.first.compare(column.column_name, case_insensitive: true) == 0 }
+      if alias_constraint
+        @list_of_unique_constraints.delete_at(alias_constraint)
+        @list_of_unique_constraint_terms.delete_at(alias_constraint)
+      end
     end
 
     private def qualified_name : String

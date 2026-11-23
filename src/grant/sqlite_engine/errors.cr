@@ -39,3 +39,57 @@ module Grant::SQLiteEngine
     end
   end
 end
+
+module Grant::SQLiteEngine
+  # Raised when another connection holds a lock this one needs
+  # (SQLITE_BUSY, https://www.sqlite.org/lockingv3.html).
+  class Busy < Error
+    def initialize(message : String = "database is locked")
+      super(message)
+    end
+  end
+
+  # Raised for a write to a database opened read-only.
+  class ReadOnlyDatabase < Error
+    def initialize(message : String = "attempt to write a readonly database")
+      super(message)
+    end
+  end
+
+  # Raised when a write would break a constraint: UNIQUE, PRIMARY KEY,
+  # NOT NULL, or a STRICT column's datatype. Nothing the write started is
+  # kept.
+  class ConstraintViolation < Error
+    enum Kind
+      Unique
+      PrimaryKey
+      NotNull
+      Datatype
+    end
+
+    getter kind : Kind
+
+    def initialize(@kind : Kind, detail : String)
+      super("#{@kind.to_s.underscore.upcase.tr("_", " ")} constraint failed: #{detail}")
+    end
+  end
+
+  # Raised when a write would pass one of the limits in `Limits`, naming it.
+  class LimitExceeded < Error
+    getter limit : String
+
+    def initialize(@limit : String, detail : String)
+      super("#{@limit} exceeded: #{detail}")
+    end
+  end
+
+  # Raised by `create_table` and `create_index` when the name is taken, and
+  # by schema writes that name reserved or missing objects.
+  class SchemaError < Error
+  end
+
+  # Raised inside `Database#transaction` to end it with a rollback instead
+  # of a commit; the transaction swallows it.
+  class Rollback < Exception
+  end
+end

@@ -14,6 +14,7 @@ module Grant::SQLiteEngine
     getter pager : Pager
 
     @schema : Schema? = nil
+    @schema_generation = 0
 
     # Opens the file at *path* read-only, with its `-wal` file when one
     # exists. Neither file, nor any `-shm` file, is written.
@@ -49,17 +50,21 @@ module Grant::SQLiteEngine
     end
 
     def text_encoding : TextEncoding
-      header.try(&.text_encoding) || TextEncoding::UTF8
+      @pager.text_encoding
     end
 
     # The schema, read from `sqlite_schema` on first use.
     def schema : Schema
-      @schema ||= read_schema
+      current = @schema
+      return current if current && @schema_generation == @pager.generation
+      @schema_generation = @pager.generation
+      @table_layouts.clear
+      @schema = read_schema
     end
 
     # Yields every row of *table_name*.
     def each_row(table_name : String, & : Row ->) : Nil
-      each_row(schema.entry(table_name)) { |row| yield row }
+      @pager.with_read_lock { each_row(schema.entry(table_name)) { |row| yield row } }
     end
 
     # Yields every row of the table *entry* names.
@@ -85,7 +90,7 @@ module Grant::SQLiteEngine
     # values followed by the rowid, or by the primary key columns for an
     # index on a WITHOUT ROWID table.
     def each_index_entry(index_name : String, & : Array(Value) ->) : Nil
-      each_index_entry(schema.entry(index_name)) { |record| yield record }
+      @pager.with_read_lock { each_index_entry(schema.entry(index_name)) { |record| yield record } }
     end
 
     # Yields every entry of the index *entry* names.
@@ -104,6 +109,10 @@ module Grant::SQLiteEngine
     # Looks up the row of *table_name* with *rowid* by descending the table
     # b-tree. Returns nil when there is none.
     def find_row(table_name : String, rowid : Int64) : Row?
+      @pager.with_read_lock { find_row_unlocked(table_name, rowid) }
+    end
+
+    private def find_row_unlocked(table_name : String, rowid : Int64) : Row?
       entry = schema.entry(table_name)
       raise UnknownSchemaObject.new(table_name) unless entry.table? && entry.has_a_btree?
       definition = schema.table_definition(entry)
