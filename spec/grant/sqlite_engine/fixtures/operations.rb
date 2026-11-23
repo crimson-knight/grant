@@ -316,6 +316,40 @@ def verify(database)
   File.write("#{base}.expected", dump.empty? ? "" : sqlite3(database, dump, "-list", "-bail"))
 end
 
+# The crash checks verify many small files whose schema is one of a few:
+# each file costs one sqlite3 run for integrity_check and the schema, and
+# one for the dump, whose SQL is built once per distinct schema. Files are
+# checked on THREADS threads.
+def run_verify_states(out_dir, suffix, threads)
+  queue = Queue.new
+  Dir.glob(File.join(out_dir, "*.#{suffix}.db")).sort.each { |database| queue << database }
+  cache = {}
+  lock = Mutex.new
+  workers = Array.new(threads) do
+    Thread.new do
+      loop do
+        database = begin
+          queue.pop(true)
+        rescue ThreadError
+          break
+        end
+        base = database.sub(/\.db\z/, "")
+        output, error, _status = Open3.capture3(SQLITE3, database, stdin_data: "PRAGMA integrity_check;\nSELECT '--schema';\n#{SCHEMA_SQL}\n")
+        integrity, schema = output.split("--schema\n", 2)
+        File.write("#{base}.integrity", error.empty? ? integrity.to_s : "#{integrity}#{error}")
+        next unless error.empty? && integrity == "ok\n"
+        dump = lock.synchronize { cache[schema] }
+        unless dump
+          dump = expected_dump_sql(database)
+          lock.synchronize { cache[schema] = dump }
+        end
+        File.write("#{base}.expected", dump.empty? ? "" : sqlite3(database, dump, "-list", "-bail"))
+      end
+    end
+  end
+  workers.each(&:join)
+end
+
 def run_verify(out_dir, suffix)
   Dir.glob(File.join(out_dir, "*.#{suffix}.db")).sort.each { |database| verify(database) }
 end
@@ -353,7 +387,7 @@ end
 
 if __FILE__ == $PROGRAM_NAME
   mode, out_dir = ARGV[0], ARGV[1]
-  abort "usage: operations.rb sequences|verify|corpus OUT_DIR ..." unless %w[sequences verify corpus].include?(mode) && out_dir
+  abort "usage: operations.rb sequences|verify|states|corpus OUT_DIR ..." unless %w[sequences verify states corpus].include?(mode) && out_dir
   FileUtils.mkdir_p(out_dir)
   case mode
   when "sequences"
@@ -361,6 +395,8 @@ if __FILE__ == $PROGRAM_NAME
     run_sequences(out_dir, Integer(options.fetch("--count", "10")), Integer(options.fetch("--seed")), Integer(options.fetch("--start", "0")), options.fetch("--size", "regular"))
   when "verify"
     run_verify(out_dir, ARGV.fetch(2))
+  when "states"
+    run_verify_states(out_dir, ARGV.fetch(2), Integer(ARGV.fetch(3, "4")))
   else
     options = ARGV[2..].each_slice(2).to_h
     run_corpus_rows(out_dir, options.fetch("--corpus"), Integer(options.fetch("--seed", "20261122")))

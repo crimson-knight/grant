@@ -23,6 +23,9 @@ class SQLiteEngineCrashFileSystem < Grant::SQLiteEngine::FileSystem
     Kept
     # No write since its file's last sync reached the disk.
     Lost
+    # Only the file written last kept its unsynced writes; the others lost
+    # theirs (the disk reordered writes between files).
+    LostExceptLastFile
     # The last unsynced write reached the disk only in its first half of
     # sectors.
     TornHead
@@ -110,12 +113,14 @@ class SQLiteEngineCrashFileSystem < Grant::SQLiteEngine::FileSystem
     end
     torn = variant.torn_head? || variant.torn_tail? ? unsynced.max? : nil
     return if (variant.torn_head? || variant.torn_tail?) && (torn.nil? || prefix[torn].bytes.size <= SECTOR)
-    return if variant.lost? && unsynced.empty?
+    return if (variant.lost? || variant.lost_except_last_file?) && unsynced.empty?
+    last_written = prefix.reverse.find(&.kind.write?).try(&.path)
     state = SQLiteEngineCrashFileSystem.new(start.transform_values(&.dup))
     prefix.each_with_index do |operation, position|
       case operation.kind
       when .write?
         next if variant.lost? && unsynced.includes?(position)
+        next if variant.lost_except_last_file? && unsynced.includes?(position) && operation.path != last_written
         bytes = operation.bytes
         offset = operation.offset
         if position == torn
