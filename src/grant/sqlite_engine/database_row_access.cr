@@ -188,6 +188,15 @@ module Grant::SQLiteEngine
       @pager.set_header_field(offset, value)
     end
 
+    # Every collation an index names must exist ("no such collation sequence").
+    private def check_collations(definition : IndexDefinition) : Nil
+      definition.list_of_key_terms.each do |term|
+        if collation = term.collation
+          Collation.named(collation)
+        end
+      end
+    end
+
     # CREATE INDEX inside a write statement: the index is filled from the
     # table's rows (only those a partial index's WHERE accepts) and a
     # UNIQUE index with two equal keys fails with C's message.
@@ -198,12 +207,7 @@ module Grant::SQLiteEngine
       table_entry = find_entry(table_name)
       raise SchemaError.new("no such table: main.#{table_name}") unless table_entry && table_entry.table? && table_entry.has_a_btree?
       table = schema.table_definition(table_entry)
-      definition = IndexDefinition.parse(sql)
-      definition.list_of_key_terms.each do |term|
-        if collation = term.collation
-          Collation.named(collation)
-        end
-      end
+      check_collations(IndexDefinition.parse(sql))
       writer = btree_writer
       root = writer.create_tree(table: false)
       insert_schema_row(writer, "index", name, table_entry.object_name, root, statement.stored_sql)

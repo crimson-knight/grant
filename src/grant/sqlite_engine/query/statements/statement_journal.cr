@@ -206,7 +206,7 @@ module Grant::SQLiteEngine::Query
     def self.delete_in_rowid_order?(session : Session, table : WriteTable, statement : SQL::Delete) : Bool
       return true unless statement.returning.nil?
       return true if foreign_keys_required?(session, table)
-      statement.where.try { |where| where.to_sql.matches?(/\bSELECT\b/i) } || false
+      statement.where.try(&.to_sql.matches?(/\bSELECT\b/i)) || false
     end
 
     # An immediate foreign key naming *table* as parent whose action is

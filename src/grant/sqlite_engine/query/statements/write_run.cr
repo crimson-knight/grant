@@ -259,7 +259,7 @@ module Grant::SQLiteEngine::Query
       ordered = table.list_of_indexes.map(&.as(IndexRule?))
       ordered.insert(table.primary_key_position, nil) if table.without_rowid?
       if upsert
-        targeted = upsert.list_of_clauses.compact_map(&.index_rule).uniq.map(&.as(IndexRule?))
+        targeted = upsert.list_of_clauses.compact_map(&.index_rule).uniq!.map(&.as(IndexRule?))
         targeted.unshift(nil) if table.without_rowid? && upsert.list_of_clauses.first?.try(&.targets_rowid?)
         ordered = targeted + ordered.reject { |rule| targeted.includes?(rule) }
       end
