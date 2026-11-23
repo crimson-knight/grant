@@ -98,7 +98,11 @@ module Grant::SQLiteEngine
 
     # A database with no pages (a zero-length file and no WAL) is an empty
     # database, as in SQLite.
-    def initialize(@main : ByteSource, wal_source : ByteSource? = nil, @cache_pages : Int32 = DEFAULT_CACHE_PAGES)
+    #
+    # *log_pending* is true when the read-write open will read a WAL next:
+    # the size check on page 1 waits for the WAL's snapshot.
+    def initialize(@main : ByteSource, wal_source : ByteSource? = nil, @cache_pages : Int32 = DEFAULT_CACHE_PAGES,
+                   @log_pending : Bool = false)
       wal = wal_source ? WalReader.read?(wal_source) : nil
       wal_source.close if wal_source && wal.nil?
       @wal = wal
@@ -132,7 +136,7 @@ module Grant::SQLiteEngine
           # pagerOpenWalIfPresent: a WAL beside an empty database is stale.
           wal_path = WriteAheadLog.path_for(path)
           file_system.delete(wal_path) if file.size == 0 && file_system.exists?(wal_path)
-          opened = new(file, nil)
+          opened = new(file, nil, log_pending: file_system.exists?(wal_path))
           opened.attach_writer(file_system, path, file, page_size, text_encoding, cache_pages)
           opened.synchronous = synchronous
           opened.wal_autocheckpoint = wal_autocheckpoint
@@ -185,6 +189,7 @@ module Grant::SQLiteEngine
 
     # Starts using the WAL.
     protected def open_log : Nil
+      @log_pending = false
       @wal_log = WriteAheadLog.new(writer_file_system, @path, @synchronous)
     end
 
@@ -911,10 +916,14 @@ module Grant::SQLiteEngine
         return log.database_page_count
       end
       file_pages = (@main.size // header.page_size)
-      # A WAL database read before its WAL: the file may be shorter than the
-      # header says (a checkpoint stopped midway); the first read takes the
-      # size from the WAL.
-      if header.read_format_version == 2 && header.header_page_count_valid?
+      # A WAL database before its snapshot is read (at open, or while
+      # another connection recovers the WAL): the file may be shorter than
+      # the header says until a checkpoint finishes, and the first read
+      # takes the size from the WAL. Once a snapshot is read the check is
+      # C's (sqlite3WalDbsize, then lockBtree).
+      log = @wal_log
+      snapshot_pending = log ? !log.reading? : @log_pending
+      if snapshot_pending && header.read_format_version == 2 && header.header_page_count_valid?
         return Math.max(header.header_page_count, file_pages.to_u32)
       end
       if header.header_page_count_valid?
