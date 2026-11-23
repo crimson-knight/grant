@@ -176,11 +176,16 @@ module Grant::SQLiteEngine::Query
     end
 
     # ROLLBACK of the whole transaction.
+    # The schema caches go only when the rollback put back a schema change
+    # (the pager's generation moves then), as C resets the schema only
+    # after DBFLAG_SchemaChange.
     def rollback_transaction : Nil
       raise SQLError.new("cannot rollback - no transaction is active") unless @in_transaction
-      @database.pager.rollback
+      pager = @database.pager
+      generation = pager.generation
+      pager.rollback
       end_transaction
-      reset_schema
+      reset_schema unless pager.generation == generation
     end
 
     private def end_transaction : Nil

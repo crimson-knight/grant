@@ -602,7 +602,9 @@ module Grant::SQLiteEngine
     def rollback : Nil
       file = writer_file
       return unless @in_write_transaction
-      @generation += 1
+      written_first_page = @dirty[1_u32]?
+      written_cookie = written_first_page ? get_u32(written_first_page, SCHEMA_COOKIE_OFFSET) : nil
+      @rightmost_path_hint = nil
       @dirty.each_key { |page_number| @cache.delete(page_number) }
       @page_count = @original_page_count
       if @page_count == 0
@@ -610,8 +612,14 @@ module Grant::SQLiteEngine
         @usable_size = 0
         @header = nil
         @cache.clear
+        @generation += 1
       else
-        @header = DatabaseHeader.parse(read_page_after_rollback(1_u32))
+        restored_first_page = read_page_after_rollback(1_u32)
+        @header = DatabaseHeader.parse(restored_first_page)
+        # The schema caches go only when the transaction changed the schema
+        # (C resets the schema on rollback only after DBFLAG_SchemaChange);
+        # rolled-back pages leave the cache above either way.
+        @generation += 1 if written_cookie && written_cookie != get_u32(restored_first_page, SCHEMA_COOKIE_OFFSET)
       end
       finish_transaction(file)
     end
