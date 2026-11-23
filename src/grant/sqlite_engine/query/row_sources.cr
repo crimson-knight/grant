@@ -144,6 +144,15 @@ module Grant::SQLiteEngine::Query
       end
     end
 
+    # True when *column* is one a test passed without decoding on the
+    # current row (a term that reads the whole row lacks every column).
+    def lacks?(column : Int32) : Bool
+      @list_of_undecoded.any? do |index|
+        columns = @list_of_terms.unsafe_fetch(index)[1]
+        columns.nil? || columns.includes?(column)
+      end
+    end
+
     # Decodes the columns of the current row that tests passed without
     # decoding (see `Frame#complete_row`).
     def complete_row(frame : Frame) : Nil

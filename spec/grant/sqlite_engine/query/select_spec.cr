@@ -244,6 +244,9 @@ module SelectSpecFixture
     {"SELECT flag, name, max(age) FROM users WHERE name LIKE '%' AND score > -10 GROUP BY flag", [] of Grant::SQLiteEngine::Value},
     {"SELECT u.name, p.title, p.rank FROM users u LEFT JOIN posts p ON p.user_id = u.id AND p.rank > 1 WHERE u.score > 0 ORDER BY u.id, p.id", [] of Grant::SQLiteEngine::Value},
     {"SELECT id, score FROM users WHERE score > ? AND score + 0 < 9", [0_i64] of Grant::SQLiteEngine::Value},
+    # A column read before the decided one leaves it pending; the decided
+    # column read afterwards is decoded then.
+    {"SELECT name, id, age, score FROM users WHERE age > ? AND score > ? ORDER BY id DESC", [20_i64, 1_i64] of Grant::SQLiteEngine::Value},
   ]
 end
 

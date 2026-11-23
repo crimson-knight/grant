@@ -30,6 +30,14 @@ module Grant::SQLiteEngine::Query
         pending.complete_row(self)
       end
     end
+
+    # Decodes the row in *slot* when *column* is one it still lacks.
+    @[AlwaysInline]
+    def complete_column(slot : Int32, column : Int32) : Nil
+      if pending = @list_of_pending.unsafe_fetch(slot)
+        pending.complete_row(self) if pending.lacks?(column)
+      end
+    end
   end
 
   # A compiled expression: names already resolved to frame slots.
@@ -142,7 +150,7 @@ module Grant::SQLiteEngine::Query
     end
 
     def evaluate(frame : Frame) : Value
-      frame.complete_row(@slot)
+      frame.complete_column(@slot, @column)
       value = frame.list_of_rows.unsafe_fetch(@slot)[@column]? || nil
       return value.to_f64 if @realify && value.is_a?(Int64)
       value
