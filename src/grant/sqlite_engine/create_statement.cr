@@ -19,15 +19,17 @@ module Grant::SQLiteEngine
     getter stored_sql : String
     getter? if_not_exists : Bool
 
-    def self.table(sql : String) : CreateStatement
-      new(sql, index: false)
+    # *attached_as*: a schema name besides main and temp that the
+    # statement may name (the name a session attached this database as).
+    def self.table(sql : String, attached_as : String? = nil) : CreateStatement
+      new(sql, index: false, attached_as: attached_as)
     end
 
-    def self.index(sql : String) : CreateStatement
-      new(sql, index: true)
+    def self.index(sql : String, attached_as : String? = nil) : CreateStatement
+      new(sql, index: true, attached_as: attached_as)
     end
 
-    private def initialize(sql : String, index : Bool)
+    private def initialize(sql : String, index : Bool, attached_as : String?)
       if sql.bytesize > Limits::MAX_SQL_BYTES
         raise LimitExceeded.new("SQL statement length", "#{sql.bytesize} bytes is more than #{Limits::MAX_SQL_BYTES}")
       end
@@ -66,8 +68,11 @@ module Grant::SQLiteEngine
       end
       name = tokens[position]? || raise UnsupportedSQL.new("CREATE statement without a name")
       if tokens[position + 1]?.try(&.text.==("."))
-        # The schema name was checked by the statement that chose this
-        # database (main, temp or an attached one); the stored SQL omits it.
+        database_name = CreateStatement.unquote(name.text)
+        known = database_name.compare("main", case_insensitive: true) == 0 ||
+                database_name.compare("temp", case_insensitive: true) == 0 ||
+                attached_as.try { |attached| database_name.compare(attached, case_insensitive: true) == 0 }
+        raise SchemaError.new("unknown database #{database_name}") unless known
         name = tokens[position + 2]? || raise UnsupportedSQL.new("CREATE statement without a name")
       end
       @object_name = CreateStatement.unquote(name.text)

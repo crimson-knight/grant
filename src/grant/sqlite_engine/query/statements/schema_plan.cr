@@ -143,7 +143,7 @@ module Grant::SQLiteEngine::Query
         create_table_as(name, query, run)
         return
       end
-      database.create_table(@text)
+      database.create_table(@text, schema_name)
     end
 
     # CREATE TABLE ... AS SELECT: columns named and typed from the query

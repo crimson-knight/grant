@@ -203,7 +203,7 @@ module Grant::SQLiteEngine
     # table's rows (only those a partial index's WHERE accepts) and a
     # UNIQUE index with two equal keys fails with C's message.
     def create_index_from(sql : String, run : Query::WriteRun) : Nil
-      statement = CreateStatement.index(sql)
+      statement = CreateStatement.index(sql, run.session.schema_name_of(self))
       name = statement.object_name
       table_name = statement.table_name || raise SchemaError.new("CREATE INDEX names no table")
       table_entry = find_entry(table_name)

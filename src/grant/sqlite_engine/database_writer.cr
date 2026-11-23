@@ -86,9 +86,9 @@ module Grant::SQLiteEngine
     # UNIQUE and PRIMARY KEY constraints and, for AUTOINCREMENT, the
     # sqlite_sequence table. Returns false when IF NOT EXISTS names an
     # existing table.
-    def create_table(sql : String) : Bool
+    def create_table(sql : String, attached_as : String? = nil) : Bool
       write_statement do
-        statement = CreateStatement.table(sql)
+        statement = CreateStatement.table(sql, attached_as)
         definition = parse_table(sql)
         name = statement.object_name
         if existing = find_entry(name)
@@ -117,9 +117,9 @@ module Grant::SQLiteEngine
 
     # Creates the index *sql* declares and fills it from the table's rows.
     # Returns false when IF NOT EXISTS names an existing index.
-    def create_index(sql : String) : Bool
+    def create_index(sql : String, attached_as : String? = nil) : Bool
       write_statement do
-        statement = CreateStatement.index(sql)
+        statement = CreateStatement.index(sql, attached_as)
         definition = begin
           IndexDefinition.parse(sql)
         rescue error : SchemaTokenizer::Malformed
