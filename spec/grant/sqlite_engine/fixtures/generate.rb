@@ -509,7 +509,12 @@ def random_database_sql(random)
       sql << "UPDATE OR IGNORE #{table} SET #{columns.last.first} = #{random_value(random)} WHERE random() % 3 = 0;\n" if random.rand(3).zero? && shape != 3 && !(shape == 1 && columns.size == 1)
       if batch.zero? && random.rand(4).zero?
         added = "a#{random.rand(1000)}"
-        sql << "ALTER TABLE #{table} ADD COLUMN #{added} #{TYPES.sample(random: random)} DEFAULT #{random_value(random).sub(/\A\(.*\)\z/, '0')};\n"
+        added_type = TYPES.sample(random: random)
+        default = random_value(random).sub(/\A\(.*\)\z/, "0")
+        # Older sqlite3 builds return a whole-number REAL default of an added
+        # column as INTEGER (see LEGACY_REAL_DEFAULTS); give those a fraction.
+        default = "0.5" if LEGACY_REAL_DEFAULTS && real_affinity?(added_type)
+        sql << "ALTER TABLE #{table} ADD COLUMN #{added} #{added_type} DEFAULT #{default};\n"
         columns << [added, ""]
       end
     end
@@ -521,6 +526,22 @@ def random_database_sql(random)
   sql << "PRAGMA incremental_vacuum(#{random.rand(1..10)});\n" if random.rand(3).zero?
   sql << ".dbconfig no_ckpt_on_close on\n" if wal
   sql
+end
+
+def real_affinity?(declared_type)
+  upper = declared_type.upcase
+  return false if upper.include?("INT")
+  return false if %w[CHAR CLOB TEXT BLOB].any? { |word| upper.include?(word) } || upper.empty?
+  %w[REAL FLOA DOUB].any? { |word| upper.include?(word) }
+end
+
+# True when this sqlite3 reads the whole-number REAL default of a column
+# added by ALTER TABLE back as INTEGER for rows written before the ALTER
+# (Ubuntu 24.04's 3.45.1 does; 3.51 and later return REAL, which is what the
+# engine returns). Probed once per run.
+LEGACY_REAL_DEFAULTS = begin
+  probe = "CREATE TABLE probe(a); INSERT INTO probe VALUES (1); ALTER TABLE probe ADD COLUMN b REAL DEFAULT 69.0; SELECT typeof(b) FROM probe;"
+  sqlite3(":memory:", probe).strip == "integer"
 end
 
 def run_random(out_dir, count, seed)
@@ -547,5 +568,5 @@ entries = case mode
           else run_corpus(out_dir, options.fetch("--corpus"), seed)
           end
 version = sqlite3(":memory:", "SELECT sqlite_version() || ' ' || sqlite_source_id();").strip
-File.write(File.join(out_dir, "manifest.json"), JSON.pretty_generate("mode" => mode, "seed" => seed, "sqlite3_version" => version, "fixtures" => entries))
+File.write(File.join(out_dir, "manifest.json"), JSON.pretty_generate("mode" => mode, "seed" => seed, "sqlite3_version" => version, "legacy_real_defaults" => LEGACY_REAL_DEFAULTS, "fixtures" => entries))
 puts "#{mode}: #{entries.size} fixtures, seed #{seed}, sqlite3 #{version}"
