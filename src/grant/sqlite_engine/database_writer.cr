@@ -428,11 +428,11 @@ module Grant::SQLiteEngine
         if existing && comparator.compare(existing, record, key_count) == 0
           raise ConstraintViolation.new(ConstraintViolation::Kind::PrimaryKey, key_columns_text(layout, layout.list_of_primary_key_positions))
         end
-        entries = layout.list_of_indexes.map { |index| index.entry_for(row, nil) }
+        entries = layout.list_of_indexes.map(&.entry_for(row, nil))
         layout.list_of_indexes.each_with_index { |index, position| check_unique(writer, index, layout.table_name, entries[position]) }
         writer.index_insert(layout.entry.root_page, record, comparator)
         layout.list_of_indexes.each_with_index { |index, position| writer.index_insert(index.entry.root_page, entries[position], index.comparator) }
-        return nil
+        return
       end
       if alias_index
         alias_value = row[alias_index]
@@ -448,7 +448,7 @@ module Grant::SQLiteEngine
       row[alias_index] = rowid if alias_index
       record = RecordEncoder.encode(layout.list_of_stored_positions.map { |position| position == alias_index ? nil : row[position] }, text_encoding, writer_schema_format)
       key_name = alias_index ? columns[alias_index].column_name : "rowid"
-      entries = layout.list_of_indexes.map { |index| index.entry_for(row, rowid) }
+      entries = layout.list_of_indexes.map(&.entry_for(row, rowid))
       # Every constraint is checked before the first page changes, the
       # rowid first as SQLite does, so a refused row leaves no trace.
       unless entries.empty?

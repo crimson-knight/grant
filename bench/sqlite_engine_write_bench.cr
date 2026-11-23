@@ -246,19 +246,13 @@ module SQLiteEngineWriteBench
       engine_times = [] of Float64
       c_times = [] of Float64
       rounds.times do |round|
-        engine_seconds = 0.0
-        c_seconds = 0.0
-        if round.even?
-          engine_path = prepare(directory, "engine.db", source)
-          engine_seconds = time { workload.engine.call(engine_path) }
-          c_path = prepare(directory, "c.db", source)
-          c_seconds = time { workload.c_library.call(c_path) }
-        else
-          c_path = prepare(directory, "c.db", source)
-          c_seconds = time { workload.c_library.call(c_path) }
-          engine_path = prepare(directory, "engine.db", source)
-          engine_seconds = time { workload.engine.call(engine_path) }
-        end
+        engine_seconds, c_seconds = if round.even?
+                                      engine_run = time { workload.engine.call(prepare(directory, "engine.db", source)) }
+                                      {engine_run, time { workload.c_library.call(prepare(directory, "c.db", source)) }}
+                                    else
+                                      c_run = time { workload.c_library.call(prepare(directory, "c.db", source)) }
+                                      {time { workload.engine.call(prepare(directory, "engine.db", source)) }, c_run}
+                                    end
         engine_times << engine_seconds
         c_times << c_seconds
         ratios << c_seconds / engine_seconds

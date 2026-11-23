@@ -66,12 +66,10 @@ describe "Grant::SQLiteEngine writes Grant's own schema" do
     skipped = Set(String).new
     inserted = 0
     corpus.list_of_rows.each do |row|
-      begin
-        database.insert(row.table, row.rowid.try(&.to_i64), SQLiteEngineWriteDriver.values(row.list_of_values))
-        inserted += 1
-      rescue error : Grant::SQLiteEngine::UnsupportedSQL
-        skipped << row.table
-      end
+      database.insert(row.table, row.rowid.try(&.to_i64), SQLiteEngineWriteDriver.values(row.list_of_values))
+      inserted += 1
+    rescue Grant::SQLiteEngine::UnsupportedSQL
+      skipped << row.table
     end
     tables = database.schema.list_of_tables.size
     # sqlite3 built its file with INSERT OR IGNORE, and an ignored row still
