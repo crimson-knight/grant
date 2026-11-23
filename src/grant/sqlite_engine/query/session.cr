@@ -18,8 +18,10 @@ module Grant::SQLiteEngine::Query
     # The SQLite release whose behavior the engine reproduces.
     SQLITE_VERSION = "3.51.0"
 
-    MASTER_SQL   = "CREATE TABLE sqlite_master(type text,name text,tbl_name text,rootpage int,sql text)"
-    MASTER_NAMES = %w[sqlite_master sqlite_schema]
+    MASTER_SQL        = "CREATE TABLE sqlite_master(type text,name text,tbl_name text,rootpage int,sql text)"
+    MASTER_NAMES      = %w[sqlite_master sqlite_schema]
+    TEMP_MASTER_SQL   = "CREATE TABLE sqlite_temp_master(type text,name text,tbl_name text,rootpage int,sql text)"
+    TEMP_MASTER_NAMES = %w[sqlite_temp_master sqlite_temp_schema]
 
     alias UserFunction = Array(Value) -> Value
 
@@ -31,7 +33,122 @@ module Grant::SQLiteEngine::Query
     @user_functions = {} of String => Hash(Int32, UserFunction)
     @tables = {} of String => TableInfo?
     @views = {} of String => ViewInfo?
-    @schema_cookie : UInt32? = nil
+    @schema_stamp = [] of UInt32?
+
+    # The connection's TEMP database (schema "temp"), held in memory and
+    # created when a statement first needs it, as C opens it lazily; it
+    # goes when the session does.
+    getter temp_database : Database? = nil
+
+    # The databases ATTACH added, in attach order, with their schema names.
+    getter list_of_attached = [] of {String, Database}
+
+    # C's limit on attached databases (SQLITE_MAX_ATTACHED).
+    MAX_ATTACHED = 10
+
+    # The temp database, created on first use. Inside an open write
+    # transaction it joins that transaction, so ROLLBACK undoes its
+    # changes with the main file's.
+    def temp_database! : Database
+      database = @temp_database ||= Database.new(Pager.open_read_write(MemoryFileSystem.new, ":memory:"))
+      join_secondary_writes if @database.pager.in_write_transaction?
+      database
+    end
+
+    # The database a schema name means: "main", "temp", an attached name,
+    # or nil when the name is no database of this connection.
+    def database_named(schema : String) : Database?
+      return @database if schema.compare("main", case_insensitive: true) == 0
+      return temp_database! if schema.compare("temp", case_insensitive: true) == 0
+      attached_named(schema)
+    end
+
+    private def attached_named(schema : String) : Database?
+      found = @list_of_attached.find { |(name, _)| name.compare(schema, case_insensitive: true) == 0 }
+      found ? found[1] : nil
+    end
+
+    # Whether *schema* names a database of this connection.
+    def schema?(schema : String) : Bool
+      schema.compare("main", case_insensitive: true) == 0 || schema.compare("temp", case_insensitive: true) == 0 ||
+        !attached_named(schema).nil?
+    end
+
+    # ATTACH: opens *file* (":memory:" or an empty name for a new database
+    # held in memory) as the schema *name* (attachFunc).
+    def attach(file : String, name : String) : Nil
+      if @list_of_attached.size >= MAX_ATTACHED
+        raise SQLError.new("too many attached databases - max #{MAX_ATTACHED}")
+      end
+      raise SQLError.new("database #{name} is already in use") if schema?(name)
+      database = if file.empty? || file == ":memory:"
+                   Database.new(Pager.open_read_write(MemoryFileSystem.new, ":memory:"))
+                 else
+                   begin
+                     Database.new(Pager.open_read_write(PosixFileSystem.new, file), File.realpath(file))
+                   rescue Error | File::Error
+                     raise SQLError.new("unable to open database: #{file}")
+                   end
+                 end
+      join_one_write(database) if @database.pager.in_write_transaction?
+      @list_of_attached << {name, database}
+      reset_schema
+    end
+
+    # DETACH: closes the database attached as *name* (detachFunc).
+    def detach(name : String) : Nil
+      position = @list_of_attached.index { |(attached, _)| attached.compare(name, case_insensitive: true) == 0 }
+      unless position
+        if name.compare("main", case_insensitive: true) == 0 || name.compare("temp", case_insensitive: true) == 0
+          raise SQLError.new("cannot detach database #{name}")
+        end
+        raise SQLError.new("no such database: #{name}")
+      end
+      database = @list_of_attached[position][1]
+      raise SQLError.new("database #{name} is locked") if database.pager.in_write_transaction?
+      @list_of_attached.delete_at(position)
+      forget_secondary_marks(database)
+      database.close
+      reset_schema
+    end
+
+    # PRAGMA database_list: main, temp once it exists, then each attached
+    # database at its index (C numbers attached databases from 2).
+    def database_list_rows : Array(Array(Value))
+      rows = [[0_i64, "main", @database.file_name] of Value]
+      rows << [1_i64, "temp", ""] of Value if @temp_database
+      @list_of_attached.each_with_index do |(name, database), index|
+        rows << [(index + 2).to_i64, name, database.file_name] of Value
+      end
+      rows
+    end
+
+    # The schema name of *database*: "main", "temp" or its attached name.
+    def schema_name_of(database : Database) : String
+      return "temp" if database.same?(@temp_database)
+      @list_of_attached.each { |(name, attached)| return name if attached.same?(database) }
+      "main"
+    end
+
+    # The databases besides main that follow its transactions: temp, once
+    # it exists, and the attached ones.
+    def list_of_secondary_databases : Array(Database)
+      list = [] of Database
+      if temp = @temp_database
+        list << temp
+      end
+      @list_of_attached.each { |(_, database)| list << database }
+      list
+    end
+
+    # The schema cookie of every database, main first: a statement compiled
+    # under other cookies compiles again.
+    def schema_stamp : Array(UInt32?)
+      stamp = [@database.header.try(&.schema_cookie)] of UInt32?
+      stamp << @temp_database.try(&.header).try(&.schema_cookie)
+      @list_of_attached.each { |(_, database)| stamp << database.header.try(&.schema_cookie) }
+      stamp
+    end
 
     def initialize(@database : Database)
     end
@@ -80,12 +197,23 @@ module Grant::SQLiteEngine::Query
       PreparedQuery.new(self, sql)
     end
 
-    # The table named *name*, or nil.
-    def table(name : String) : TableInfo?
+    # The table named *name*, or nil: without a *schema*, a TEMP table
+    # hides a main table of the same name (sqlite3LocateTable searches
+    # temp first).
+    def table(name : String, schema : String? = nil) : TableInfo?
       check_schema
-      key = name.downcase
+      key = "#{schema.try(&.downcase)}\0#{name.downcase}"
       return @tables[key] if @tables.has_key?(key)
-      @tables[key] = load_table(name)
+      @tables[key] = if schema
+                       database = database_named(schema)
+                       database ? load_table(name, database, qualified: true) : nil
+                     else
+                       found = nil
+                       list_of_databases.each do |database|
+                         break if found = load_table(name, database, qualified: false)
+                       end
+                       found
+                     end
     end
 
     def view(name : String) : ViewInfo?
@@ -95,11 +223,27 @@ module Grant::SQLiteEngine::Query
       @views[key] = load_view(name)
     end
 
+    # The databases a name without a schema is looked for in: temp,
+    # main, then the attached ones in attach order.
+    def list_of_databases : Array(Database)
+      list = [] of Database
+      if temp = @temp_database
+        list << temp
+      end
+      list << @database
+      @list_of_attached.each { |(_, database)| list << database }
+      list
+    end
+
     # The layout of the index named *name*, or nil.
     def index_layout(name : String) : IndexLayout?
-      entry = @database.schema.list_of_indexes.find { |candidate| candidate.object_name.compare(name, case_insensitive: true) == 0 }
-      return unless entry
-      table(entry.table_name).try(&.list_of_indexes.find { |layout| layout.entry.object_name == entry.object_name })
+      list_of_databases.each do |database|
+        next if database.page_count == 0
+        entry = database.schema.list_of_indexes.find { |candidate| candidate.object_name.compare(name, case_insensitive: true) == 0 }
+        next unless entry
+        return table(entry.table_name, schema_name_of(database)).try(&.list_of_indexes.find { |layout| layout.entry.object_name == entry.object_name })
+      end
+      nil
     end
 
     # Forgets what was learned about the schema, so the next statement
@@ -110,31 +254,48 @@ module Grant::SQLiteEngine::Query
     end
 
     private def check_schema : Nil
-      cookie = @database.header.try(&.schema_cookie)
-      return if cookie == @schema_cookie
-      @schema_cookie = cookie
+      stamp = schema_stamp
+      return if stamp == @schema_stamp
+      @schema_stamp = stamp
       reset_schema
     end
 
-    private def load_table(name : String) : TableInfo?
-      if MASTER_NAMES.includes?(name.downcase)
-        entry = SchemaEntry.new("table", "sqlite_master", "sqlite_master", 1_u32, MASTER_SQL)
-        return TableInfo.new(entry, TableDefinition.parse(MASTER_SQL), [] of IndexLayout)
+    # *qualified*: the statement named the schema.
+    private def load_table(name : String, database : Database, qualified : Bool) : TableInfo?
+      lower = name.downcase
+      temp = database.same?(@temp_database)
+      if MASTER_NAMES.includes?(lower) || TEMP_MASTER_NAMES.includes?(lower)
+        # Each database's schema table is sqlite_master to a name
+        # qualified with it; unqualified, sqlite_master is main's and
+        # sqlite_temp_master temp's (whose database then comes into being).
+        if TEMP_MASTER_NAMES.includes?(lower)
+          return if !temp && qualified
+          unless temp
+            database = temp_database!
+            temp = true
+          end
+        else
+          return if temp && !qualified
+        end
+        sql = temp ? TEMP_MASTER_SQL : MASTER_SQL
+        object_name = temp ? "sqlite_temp_master" : "sqlite_master"
+        entry = SchemaEntry.new("table", object_name, object_name, 1_u32, sql)
+        return TableInfo.new(entry, TableDefinition.parse(sql), [] of IndexLayout, database)
       end
-      return if @database.page_count == 0
-      entry = @database.schema.list_of_entries.find do |candidate|
+      return if database.page_count == 0
+      entry = database.schema.list_of_entries.find do |candidate|
         candidate.table? && candidate.object_name.compare(name, case_insensitive: true) == 0
       end
       return unless entry
       unless entry.has_a_btree?
         raise UnsupportedSQL.new("virtual table #{entry.object_name}")
       end
-      definition = @database.schema.table_definition(entry)
-      indexes = @database.schema.list_of_indexes.select do |index_entry|
+      definition = database.schema.table_definition(entry)
+      indexes = database.schema.list_of_indexes.select do |index_entry|
         index_entry.table_name.compare(entry.object_name, case_insensitive: true) == 0
       end
-      layouts = indexes.map { |index_entry| IndexLayout.build(index_entry, definition, @database.text_encoding) }
-      TableInfo.new(entry, definition, layouts)
+      layouts = indexes.map { |index_entry| IndexLayout.build(index_entry, definition, database.text_encoding) }
+      TableInfo.new(entry, definition, layouts, database)
     end
 
     private def load_view(name : String) : ViewInfo?

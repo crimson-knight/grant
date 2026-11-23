@@ -59,18 +59,18 @@ module Grant::SQLiteEngine::Query
   module WritableTarget
     def self.check(session : Session, reference : SQL::QualifiedTable) : WriteTable
       table_name = reference.name.value
-      if schema = reference.schema
-        unless schema.same?("main")
-          raise SQLError.new(schema.same?("temp") ? "no such table: #{schema.value}.#{table_name}" : "unknown database #{schema.value}")
-        end
+      schema = reference.schema
+      if schema && !session.schema?(schema.value)
+        raise SQLError.new("no such table: #{schema.value}.#{table_name}")
       end
+      schema_text = schema.try(&.value)
       if session.view(table_name)
         raise SQLError.new("cannot modify #{table_name} because it is a view")
       end
-      if Session::MASTER_NAMES.includes?(table_name.downcase)
+      if Session::MASTER_NAMES.includes?(table_name.downcase) || Session::TEMP_MASTER_NAMES.includes?(table_name.downcase)
         raise SQLError.new("table #{table_name} may not be modified")
       end
-      session.write_table(table_name) || raise SQLError.new("no such table: #{table_name}")
+      session.write_table(table_name, schema_text) || raise SQLError.new("no such table: #{schema_text ? "#{schema_text}." : ""}#{table_name}")
     end
   end
 
@@ -110,9 +110,15 @@ module Grant::SQLiteEngine::Query
         targets = @targets.collect(list_of_parameters)
         if !@table.without_rowid? && StatementJournal.update_in_rowid_order?(@session, @table, @statement, @override, positions, @targets.scan_index_root)
           targets = targets.sort_by { |target| target[0] || 0_i64 }
+        elsif @table.without_rowid? && !WithoutRowidScan.primary_key_changed?(@table, positions)
+          read = @statement.assignments.map(&.value)
+          layout = WithoutRowidScan.scan_layout(@table, @statement.where, read)
+          if layout && !StatementJournal.update_in_rowid_order?(@session, @table, @statement, @override, positions, layout.entry.root_page)
+            targets = WithoutRowidScan.sort(@table, targets, layout)
+          end
         end
         targets.each do |rowid, snapshot, values|
-          old = rowid ? run.database.row_at(@table.layout, rowid) : run.database.row_with_key_of(@table.layout, snapshot)
+          old = rowid ? @table.database.row_at(@table.layout, rowid) : @table.database.row_with_key_of(@table.layout, snapshot)
           next unless old
           new_row = old.dup
           explicit_rowid = nil.as(Value)
@@ -171,9 +177,13 @@ module Grant::SQLiteEngine::Query
         targets = @targets.collect(list_of_parameters)
         if !@table.without_rowid? && StatementJournal.delete_in_rowid_order?(@session, @table, @statement)
           targets = targets.sort_by { |target| target[0] || 0_i64 }
+        elsif @table.without_rowid? && !StatementJournal.delete_in_rowid_order?(@session, @table, @statement)
+          if layout = WithoutRowidScan.scan_layout(@table, @statement.where, [] of SQL::Expression)
+            targets = WithoutRowidScan.sort(@table, targets, layout)
+          end
         end
         targets.each do |rowid, snapshot, _values|
-          old = rowid ? run.database.row_at(@table.layout, rowid) : run.database.row_with_key_of(@table.layout, snapshot)
+          old = rowid ? @table.database.row_at(@table.layout, rowid) : @table.database.row_with_key_of(@table.layout, snapshot)
           next unless old
           if program = @returning
             pseudo = @returning_pseudo || raise Error.new("RETURNING without its row")

@@ -22,11 +22,23 @@ module Grant::SQLiteEngine::Query
       end
     end
 
+    # The database holding the table: the one the statement names, else
+    # temp when it has the table, else main.
+    @database : Database
+    @schema_name : String
+
     def initialize(@session : Session, @run : WriteRun, @statement : SQL::AlterTable, @text : String)
+      schema = @statement.schema.try(&.value)
+      @database = if schema
+                    @session.database_named(schema) || raise SQLError.new("unknown database #{schema}")
+                  else
+                    @session.table(@statement.table.value).try(&.database) || @session.database
+                  end
+      @schema_name = @session.schema_name_of(@database)
     end
 
     private def database : Database
-      @session.database
+      @database
     end
 
     def perform : Nil
@@ -42,9 +54,9 @@ module Grant::SQLiteEngine::Query
       action = @statement.action
       case action
       when SQL::RenameTable  then rename_table(entry, action.new_name)
-      when SQL::RenameColumn then rename_column(entry, action.old_name.value, action.new_name)
+      when SQL::RenameColumn then rename_column(entry, action.old_name, action.new_name)
       when SQL::AddColumn    then add_column(entry, action.column)
-      when SQL::DropColumn   then drop_column(entry, action.column_name.value)
+      when SQL::DropColumn   then drop_column(entry, action.column_name)
       end
       @session.reset_schema
     end
@@ -168,10 +180,13 @@ module Grant::SQLiteEngine::Query
 
     # --- RENAME COLUMN ------------------------------------------------------
 
-    private def rename_column(entry : SchemaEntry, old_column : String, new_name : SQL::Name) : Nil
-      info = @session.table(entry.object_name) || raise SQLError.new("no such table: #{entry.object_name}")
+    # C reports a missing column by its token as written, quotes and all
+    # (%T), inside its own double quotes.
+    private def rename_column(entry : SchemaEntry, old_name : SQL::Name, new_name : SQL::Name) : Nil
+      old_column = old_name.value
+      info = @session.table(entry.object_name, @schema_name) || raise SQLError.new("no such table: #{entry.object_name}")
       position = info.column_index(old_column)
-      raise SQLError.new(%(no such column: "#{old_column}")) unless position
+      raise SQLError.new(%(no such column: "#{old_name.text}")) unless position
       target = new_name.value
       if info.list_of_column_names.each_with_index.any? { |column, index| index != position && column.compare(target, case_insensitive: true) == 0 }
         raise SQLError.new("error in table #{entry.object_name} after rename: duplicate column name: #{target}")
@@ -303,7 +318,7 @@ module Grant::SQLiteEngine::Query
     # --- ADD COLUMN ---------------------------------------------------------
 
     private def add_column(entry : SchemaEntry, column : SQL::ColumnDefinition) : Nil
-      info = @session.table(entry.object_name) || raise SQLError.new("no such table: #{entry.object_name}")
+      info = @session.table(entry.object_name, @schema_name) || raise SQLError.new("no such table: #{entry.object_name}")
       name = column.name.value
       if info.column_index(name)
         raise SQLError.new("duplicate column name: #{name}")
@@ -318,7 +333,7 @@ module Grant::SQLiteEngine::Query
       default = constraints.find(&.is_a?(SQL::DefaultConstraint)).as?(SQL::DefaultConstraint)
       generated = constraints.find(&.is_a?(SQL::GeneratedConstraint)).as?(SQL::GeneratedConstraint)
       has_rows = false
-      @run.cursor_rows(@run.table(entry.object_name)) { |_rowid, _row| has_rows = true; break }
+      @run.cursor_rows(@run.table(entry.object_name, @schema_name)) { |_rowid, _row| has_rows = true; break }
       if has_rows
         if generated && generated.storage.try(&.same?("STORED"))
           raise SQLError.new("cannot add a STORED column")
@@ -391,11 +406,12 @@ module Grant::SQLiteEngine::Query
 
     # --- DROP COLUMN --------------------------------------------------------
 
-    private def drop_column(entry : SchemaEntry, column_name : String) : Nil
-      table = @run.table(entry.object_name)
+    private def drop_column(entry : SchemaEntry, column_syntax : SQL::Name) : Nil
+      column_name = column_syntax.value
+      table = @run.table(entry.object_name, @schema_name)
       info = table.table_info
       position = info.column_index(column_name)
-      raise SQLError.new(%(no such column: "#{column_name}")) unless position
+      raise SQLError.new(%(no such column: "#{column_syntax.text}")) unless position
       actual = info.list_of_column_names[position]
       definition = info.definition
       if definition.list_of_primary_key_columns.any? { |key| key.compare(actual, case_insensitive: true) == 0 }
@@ -422,14 +438,14 @@ module Grant::SQLiteEngine::Query
       raise UnsupportedSQL.new("DROP COLUMN of a WITHOUT ROWID table") if layout.definition.without_rowid?
       rows.each do |rowid, row|
         row.delete_at(position)
-        database.write_row(layout, rowid, database.stored_values(layout.definition, row), [] of IndexLayout)
+        database.write_row(layout, rowid, database.stored_values(layout.definition, row), [] of {IndexLayout, Array(Value)})
       end
     end
 
     # C re-parses the schema after the edit; an index, CHECK, foreign key
     # or view that names the dropped column fails the statement.
     private def check_after_drop(table_name : String, column_name : String) : Nil
-      info = @session.table(table_name) || return
+      info = @session.table(table_name, @schema_name) || return
       # renameTestSchema re-reads every index in schema order, with
       # double-quoted strings off: an index of this table that names the
       # column, or of any table that names no column at all, fails.
@@ -476,7 +492,7 @@ module Grant::SQLiteEngine::Query
     private def missing_index_column(entry : SchemaEntry, sql : String) : String?
       statement = SQL::Parser.parse_schema(sql)
       return unless statement.is_a?(SQL::CreateIndex)
-      table = @session.table(entry.table_name) || return
+      table = @session.table(entry.table_name, @schema_name) || return
       statement.columns.each do |term|
         expression = term.expression
         while expression.is_a?(SQL::Collate)

@@ -621,7 +621,7 @@ module Grant::SQLiteEngine::Query
       producer = CoreProducer.new(source, where, expanded, extras, aggregation, core.distinct.distinct?, column_collations,
         streaming: !aggregation.nil? && ordered).as(Producer)
       if table = simple_count_table(core, steps, order_by)
-        producer = TableCountProducer.new(@session.database, table)
+        producer = TableCountProducer.new(table.database, table)
       end
       CorePlan.new(producer, expanded, names, aliases, syntax, sort_keys, presorted)
     end
