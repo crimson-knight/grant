@@ -3,10 +3,9 @@ require "../../../../sqlite_engine"
 
 module Grant::SQLite3
   # Grant's pure-Crystal engine behind the engine interface. It opens the
-  # database file with `Grant::SQLiteEngine` and runs SELECT statements with
-  # `Grant::SQLiteEngine::Query`; other statements arrive with milestone G4b,
-  # and until then preparing or executing one raises
-  # `Grant::SQLiteEngine::UnsupportedSQL`.
+  # database file read-write with `Grant::SQLiteEngine` and runs every
+  # statement with `Grant::SQLiteEngine::Query`. SQL the engine does not
+  # implement yet fails with an SQL error naming the construct.
   class Engine::GrantEngine < Engine
     MEMORY_FILENAME = ":memory:"
 
@@ -15,12 +14,15 @@ module Grant::SQLite3
     # in-memory database.
     def open(filename : String) : {Int32, Engine::Database}
       if filename.empty? || filename == MEMORY_FILENAME
-        engine_database = SQLiteEngine::Database.from_bytes(Bytes.empty)
+        pager = SQLiteEngine::Pager.open_read_write(SQLiteEngine::MemoryFileSystem.new, MEMORY_FILENAME)
+        engine_database = SQLiteEngine::Database.new(pager)
       else
-        File.touch(filename) unless File.exists?(filename)
-        engine_database = SQLiteEngine::Database.open(filename)
+        pager = SQLiteEngine::Pager.open_read_write(SQLiteEngine::PosixFileSystem.new, filename)
+        engine_database = SQLiteEngine::Database.new(pager, File.realpath(filename))
       end
       {Engine::OK_CODE, Database.new(engine_database)}
+    rescue error : SQLiteEngine::Error | File::Error
+      {14, FailedDatabase.new(error.message || "unable to open database file")}
     end
 
     class Database < Engine::Database
@@ -36,9 +38,8 @@ module Grant::SQLite3
       # Runs each statement of *sql*, reading and discarding the rows of a
       # SELECT.
       def exec(sql : String) : Int32
-        SQLiteEngine::SQL::Parser.parse_all(sql).each do |statement|
-          text = statement.to_sql
-          code, prepared = prepare(text)
+        SQLiteEngine::SQL::Parser.parse_each_prepared(sql).each do |statement|
+          code, prepared = prepare(statement.text)
           return code unless code == Engine::OK_CODE
           loop do
             step_code = prepared.step
@@ -60,6 +61,8 @@ module Grant::SQLite3
         {Engine::OK_CODE, PreparedStatement.new(self, query).as(Engine::PreparedStatement)}
       rescue error : SQLiteEngine::SQLError
         {fail(error.result_code, error.message || "SQL error"), FailedStatement.new.as(Engine::PreparedStatement)}
+      rescue error : SQLiteEngine::Error
+        {fail(Engine::ERROR_CODE, error.message || "SQL error"), FailedStatement.new.as(Engine::PreparedStatement)}
       end
 
       def changes : Int64
@@ -75,8 +78,34 @@ module Grant::SQLite3
         Engine::OK_CODE
       end
 
+      # Copies every table, index and view of this database over *target*'s
+      # main schema, as one transaction on *target* (sqlite3_backup's
+      # result: the same schema and rows).
       def backup_to(target : Engine::Database) : Int32
-        raise SQLiteEngine::UnsupportedSQL.new("database backup in Grant's SQLite engine arrives with milestone G4b")
+        return Engine::ERROR_CODE unless target.is_a?(Database)
+        target.restore_from(self)
+      end
+
+      # :nodoc:
+      protected def restore_from(source : Database) : Int32
+        statements = SQLiteEngine::Query::Backup.statements(source.session, session)
+        code = exec("BEGIN")
+        return code unless code == Engine::OK_CODE
+        statements.each do |statement|
+          code, prepared = prepare(statement[0])
+          unless code == Engine::OK_CODE
+            exec("ROLLBACK")
+            return code
+          end
+          statement[1].each_with_index { |value, index| prepared.as(PreparedStatement).bind_value(index + 1, value) }
+          step_code = prepared.step
+          prepared.finalize_statement
+          unless step_code == Engine::DONE_CODE || step_code == Engine::ROW_CODE
+            exec("ROLLBACK")
+            return step_code
+          end
+        end
+        exec("COMMIT")
       end
 
       def close : Int32
@@ -138,6 +167,8 @@ module Grant::SQLite3
         @last_code
       rescue error : SQLiteEngine::SQLError
         @last_code = @database.fail(error.result_code, error.message || "SQL error")
+      rescue error : SQLiteEngine::Error
+        @last_code = @database.fail(Engine::ERROR_CODE, error.message || "SQL error")
       end
 
       def column_count : Int32
@@ -189,11 +220,54 @@ module Grant::SQLite3
         @query.row[index]?
       end
 
+      # :nodoc:
+      def bind_value(index : Int32, value : SQLiteEngine::Value) : Int32
+        bind(index, value)
+      end
+
       private def bind(index : Int32, value : SQLiteEngine::Value) : Int32
         @query.bind(index, value)
         Engine::OK_CODE
       rescue error : SQLiteEngine::SQLError
         @database.fail(error.result_code, error.message || "bind failed")
+      end
+    end
+
+    # What `open` hands back when the file could not be opened: every call
+    # fails with the open's message.
+    class FailedDatabase < Engine::Database
+      getter error_code : Int32 = 14
+      getter error_message : String
+
+      def initialize(@error_message : String)
+      end
+
+      def exec(sql : String) : Int32
+        @error_code
+      end
+
+      def prepare(sql : String) : {Int32, Engine::PreparedStatement}
+        {@error_code, FailedStatement.new.as(Engine::PreparedStatement)}
+      end
+
+      def changes : Int64
+        0_i64
+      end
+
+      def last_insert_rowid : Int64
+        0_i64
+      end
+
+      def create_function(name : String, argument_count : Int32, &block : Engine::UserFunction) : Int32
+        @error_code
+      end
+
+      def backup_to(target : Engine::Database) : Int32
+        @error_code
+      end
+
+      def close : Int32
+        Engine::OK_CODE
       end
     end
 
