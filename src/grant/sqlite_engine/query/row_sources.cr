@@ -478,7 +478,7 @@ module Grant::SQLiteEngine::Query
           @resume = false
           @started = true
           if entry_below_probe?(index_cursor)
-            return false unless index_cursor.seek(@seek_key, @strict_low)
+            return false unless index_cursor.seek(@seek_key, @strict_low, current_below: true)
           end
         else
           moved = @started ? index_cursor.advance : (@seek_key.empty? ? index_cursor.first : index_cursor.seek(@seek_key, @strict_low))

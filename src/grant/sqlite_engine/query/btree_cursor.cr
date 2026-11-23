@@ -280,15 +280,16 @@ module Grant::SQLiteEngine::Query
     end
 
     # Moves to the first entry whose key columns compare at least (or, with
-    # *strict*, greater than) *probe*.
-    def seek(probe : Array(Value), strict : Bool = false) : Bool
+    # *strict*, greater than) *probe*. *current_below* says the caller
+    # already found the current entry below *probe*.
+    def seek(probe : Array(Value), strict : Bool = false, current_below : Bool = false) : Bool
       # sqlite3BtreeIndexMoveto: when the cursor sits on a leaf whose keys
       # span the target, the search stays in that leaf.
       if @valid && @built_generation == pager.generation && (top = @stack.top?) && top.page.page_type.leaf?
         leaf = top.page
         index = top.index
         if index < leaf.cell_count
-          if below?(leaf, index, probe, strict)
+          if current_below || below?(leaf, index, probe, strict)
             # A join probes in ascending order, so the target is usually a
             # few entries past the current one.
             if forward = forward_bound(leaf, index, probe, strict)

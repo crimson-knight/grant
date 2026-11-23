@@ -132,7 +132,17 @@ module Grant::SQLiteEngine::Query
       cursor = @position
       body = @body
       count = @count
-      while count <= position && cursor < header_end
+      wanted = position + 1
+      while wanted > @capacity
+        grow
+      end
+      serial_types = @serial_types
+      offsets = @offsets
+      sizes = @sizes
+      # Body offsets only grow, so one check after the loop finds a value
+      # running past the payload; `value_past_payload` then names the first.
+      start = count
+      while count < wanted && cursor < header_end
         byte = payload.unsafe_fetch(cursor)
         if byte < 0x80_u8
           serial_type = byte.to_i64
@@ -151,14 +161,14 @@ module Grant::SQLiteEngine::Query
                  Record.content_size(serial_type, @page_number)
                end
         reserved_serial_type(serial_type) if size < 0
-        value_past_payload(serial_type) if body.to_i64 + size > payload_size
-        grow if count == @capacity
-        @serial_types[count] = serial_type
-        @offsets[count] = body
-        @sizes[count] = size.to_i32
-        body += size.to_i32
+        size = Math.min(size, Int32::MAX.to_i64)
+        serial_types[count] = serial_type
+        offsets[count] = body
+        sizes[count] = size.to_i32
+        body = (body.to_i64 + size).clamp(0_i64, Int32::MAX.to_i64).to_i32
         count += 1
       end
+      value_past_payload(start, count) if body > payload_size
       @position = cursor
       @body = body
       @count = count
@@ -174,9 +184,16 @@ module Grant::SQLiteEngine::Query
       corrupt("serial type #{serial_type} is reserved")
     end
 
+    # Names the first of the columns *start*...*finish* whose value runs
+    # past the payload.
     @[NoInline]
-    private def value_past_payload(serial_type : Int64) : NoReturn
-      corrupt("record value of serial type #{serial_type} runs past the payload")
+    private def value_past_payload(start : Int32, finish : Int32) : NoReturn
+      (start...finish).each do |index|
+        if @offsets[index].to_i64 + @sizes[index] > @payload.size
+          corrupt("record value of serial type #{@serial_types[index]} runs past the payload")
+        end
+      end
+      corrupt("record value runs past the payload")
     end
 
     @[NoInline]
