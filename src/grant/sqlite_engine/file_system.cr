@@ -106,10 +106,17 @@ module Grant::SQLiteEngine
 
     getter lock_level : LockLevel = LockLevel::None
 
+    # Connections of this process that opened the same file share one set
+    # of POSIX locks (fcntl locks belong to the process, so two descriptors
+    # never block each other); the table orders them as C's unixInodeInfo
+    # does.
+    @shared_locks : ProcessLockTable::FileLocks
+
     def initialize(path : String)
       @file = File.open(path, File.exists?(path) ? "r+b" : "w+b")
       @file.read_buffering = false
       @file.sync = true
+      @shared_locks = ProcessLockTable.for(File.realpath(path))
     end
 
     def size : Int64
@@ -141,46 +148,86 @@ module Grant::SQLiteEngine
     end
 
     def close : Nil
+      unlock(LockLevel::None)
+      @shared_locks.release(self)
       @file.close
     end
 
     def lock(level : LockLevel) : Bool
       return true if level <= @lock_level
-      case level
-      when .shared?
-        return false unless set_lock(LibFileLock::F_RDLCK, PENDING_BYTE, 1)
-        acquired = set_lock(LibFileLock::F_RDLCK, SHARED_FIRST, SHARED_SIZE)
-        set_lock(LibFileLock::F_UNLCK, PENDING_BYTE, 1)
-        return false unless acquired
-      when .reserved?
-        return false unless set_lock(LibFileLock::F_WRLCK, RESERVED_BYTE, 1)
-      else
-        # PENDING keeps new readers out while the existing ones finish; it
-        # stays held when EXCLUSIVE is not granted yet.
-        if @lock_level < LockLevel::Pending
-          return false unless set_lock(LibFileLock::F_WRLCK, PENDING_BYTE, 1)
-          @lock_level = LockLevel::Pending
+      @shared_locks.synchronize do
+        others = @shared_locks.highest_other(self)
+        case level
+        when .shared?
+          return false if others >= LockLevel::Pending
+        when .reserved?
+          return false if others >= LockLevel::Reserved
+        when .pending?
+          return false if others >= LockLevel::Pending
+        else
+          return false if others >= LockLevel::Shared || @shared_locks.any_other_shared?(self)
         end
-        return level.pending? if level.pending?
-        return false unless set_lock(LibFileLock::F_WRLCK, SHARED_FIRST, SHARED_SIZE)
+        held = @shared_locks.process_level
+        if level > held
+          return false unless process_lock(level, held)
+        end
+        @lock_level = level
+        @shared_locks.set(self, level)
+        true
       end
-      @lock_level = level
-      true
     end
 
     def unlock(level : LockLevel) : Nil
       return if level >= @lock_level
-      if level.shared?
-        set_lock(LibFileLock::F_RDLCK, SHARED_FIRST, SHARED_SIZE) if @lock_level.exclusive?
-        set_lock(LibFileLock::F_UNLCK, PENDING_BYTE, 2)
+      @shared_locks.synchronize do
+        before = @shared_locks.process_level
+        @lock_level = level
+        @shared_locks.set(self, level)
+        after = @shared_locks.process_level
+        process_unlock(after) if after < before
+      end
+    end
+
+    # Moves the process's POSIX locks from *held* up to *level*.
+    private def process_lock(level : LockLevel, held : LockLevel) : Bool
+      if held < LockLevel::Shared
+        return false unless set_lock(LibFileLock::F_RDLCK, PENDING_BYTE, 1)
+        acquired = set_lock(LibFileLock::F_RDLCK, SHARED_FIRST, SHARED_SIZE)
+        set_lock(LibFileLock::F_UNLCK, PENDING_BYTE, 1)
+        return false unless acquired
+        return true if level.shared?
+      end
+      if level >= LockLevel::Reserved && held < LockLevel::Reserved
+        unless set_lock(LibFileLock::F_WRLCK, RESERVED_BYTE, 1)
+          process_unlock(held)
+          return false
+        end
+        return true if level.reserved?
+      end
+      if held < LockLevel::Pending
+        unless set_lock(LibFileLock::F_WRLCK, PENDING_BYTE, 1)
+          return false
+        end
+      end
+      return true if level.pending?
+      set_lock(LibFileLock::F_WRLCK, SHARED_FIRST, SHARED_SIZE)
+    end
+
+    # Moves the process's POSIX locks down to *level* (None, Shared or
+    # Reserved).
+    private def process_unlock(level : LockLevel) : Nil
+      if level >= LockLevel::Shared
+        set_lock(LibFileLock::F_RDLCK, SHARED_FIRST, SHARED_SIZE)
+        set_lock(LibFileLock::F_UNLCK, PENDING_BYTE, 1)
+        set_lock(LibFileLock::F_UNLCK, RESERVED_BYTE, 1) if level < LockLevel::Reserved
       else
         set_lock(LibFileLock::F_UNLCK, 0_i64, 0_i64)
       end
-      @lock_level = level
     end
 
     def reserved_elsewhere? : Bool
       return false if @lock_level >= LockLevel::Reserved
+      return true if @shared_locks.synchronize { @shared_locks.highest_other(self) >= LockLevel::Reserved }
       request = LibFileLock::Flock.new
       request.l_type = LibFileLock::F_WRLCK.to_i16
       request.l_whence = IO::Seek::Set.value.to_i16
@@ -197,6 +244,49 @@ module Grant::SQLiteEngine
       request.l_start = start
       request.l_len = length
       LibFileLock.fcntl(@file.fd, LibFileLock::F_SETLK, pointerof(request)) == 0
+    end
+  end
+
+  # The lock each connection of this process holds on each database file
+  # (by real path), so that connections of one process exclude each other
+  # as connections of different processes do.
+  module ProcessLockTable
+    class FileLocks
+      @levels = {} of UInt64 => LockLevel
+      @mutex = Mutex.new(:reentrant)
+
+      def synchronize(& : -> T) : T forall T
+        @mutex.synchronize { yield }
+      end
+
+      def set(file : DatabaseFile, level : LockLevel) : Nil
+        @levels[file.object_id] = level
+      end
+
+      def release(file : DatabaseFile) : Nil
+        synchronize { @levels.delete(file.object_id) }
+      end
+
+      def highest_other(file : DatabaseFile) : LockLevel
+        highest = LockLevel::None
+        @levels.each { |owner, level| highest = level if owner != file.object_id && level > highest }
+        highest
+      end
+
+      def any_other_shared?(file : DatabaseFile) : Bool
+        @levels.any? { |owner, level| owner != file.object_id && level >= LockLevel::Shared }
+      end
+
+      def process_level : LockLevel
+        @levels.values.max? || LockLevel::None
+      end
+    end
+
+    @@table = {} of String => FileLocks
+    @@mutex = Mutex.new
+
+    def self.for(path : String) : FileLocks
+      @@mutex.synchronize { @@table[path] ||= FileLocks.new }
     end
   end
 end

@@ -20,7 +20,11 @@ describe "Grant::SQLite3 engine seam" do
     Grant::Settings.new.sqlite_engine.should eq :libsqlite3
 
     with_seam_connection do |connection|
-      connection.engine_database.should be_a(Grant::SQLite3::Engine::LibSQLite3Engine::Database)
+      if GRANT_SQLITE_ENGINE == :grant
+        connection.engine_database.should be_a(Grant::SQLite3::Engine::GrantEngine::Database)
+      else
+        connection.engine_database.should be_a(Grant::SQLite3::Engine::LibSQLite3Engine::Database)
+      end
       connection.scalar("SELECT 1 + 1").should eq 2
     end
   end
@@ -29,11 +33,12 @@ describe "Grant::SQLite3 engine seam" do
     expect_raises(ArgumentError, "sqlite_engine must be :libsqlite3 or :grant (got :postgres)") do
       Grant.settings.sqlite_engine = :postgres
     end
-    Grant.settings.sqlite_engine.should eq :libsqlite3
+    Grant.settings.sqlite_engine.should eq GRANT_SQLITE_ENGINE
   end
 
-  it "reads a database C SQLite wrote with Grant's engine" do
+  it "reads and writes a database C SQLite wrote with Grant's engine" do
     path = File.tempname("grant_engine_seam_grant", ".sqlite3")
+    Grant.settings.sqlite_engine = :libsqlite3
     DB.open("sqlite3:#{path}") do |db|
       db.exec "CREATE TABLE fruits (id INTEGER PRIMARY KEY, name TEXT)"
       db.exec "INSERT INTO fruits (name) VALUES ('apple')"
@@ -59,12 +64,102 @@ describe "Grant::SQLite3 engine seam" do
       expect_raises(Grant::SQLite3::Exception, "no such column: weight") do
         connection.query_all("SELECT weight FROM fruits", as: Int64)
       end
-      expect_raises(Grant::SQLiteEngine::UnsupportedSQL, /milestone G4b/) do
-        connection.exec("INSERT INTO fruits (name) VALUES ('fig')")
-      end
+      connection.exec("INSERT INTO fruits (name) VALUES ('fig')").last_insert_id.should eq 3
     ensure
       connection.close
-      Grant.settings.sqlite_engine = :libsqlite3
+    end
+
+    Grant.settings.sqlite_engine = :libsqlite3
+    begin
+      DB.open("sqlite3:#{path}") do |db|
+        db.query_all("SELECT name FROM fruits ORDER BY id", as: String).should eq ["apple", "pear", "fig"]
+        db.scalar("PRAGMA integrity_check").should eq "ok"
+      end
+    ensure
+      Grant.settings.sqlite_engine = GRANT_SQLITE_ENGINE
+      File.delete(path) if File.exists?(path)
+    end
+  end
+
+  it "sees what another connection to the same file committed, and lets deferred transactions read side by side" do
+    path = File.tempname("grant_engine_seam_two", ".sqlite3")
+    Grant.settings.sqlite_engine = :grant
+    first = DB.connect("sqlite3:#{path}?journal_mode=delete").as(Grant::SQLite3::Connection)
+    second = DB.connect("sqlite3:#{path}?journal_mode=delete").as(Grant::SQLite3::Connection)
+    begin
+      first.exec "CREATE TABLE counters (id INTEGER PRIMARY KEY, label TEXT)"
+      first.exec "INSERT INTO counters (label) VALUES ('before')"
+      second.scalar("SELECT label FROM counters WHERE id = 1").should eq "before"
+      first.exec "UPDATE counters SET label = 'after' WHERE id = 1"
+      second.scalar("SELECT label FROM counters WHERE id = 1").should eq "after"
+      first.exec "ALTER TABLE counters ADD COLUMN amount INTEGER DEFAULT 7"
+      second.scalar("SELECT amount FROM counters WHERE id = 1").should eq 7
+
+      first.exec "BEGIN"
+      second.exec "BEGIN"
+      first.scalar("SELECT count(*) FROM counters").should eq 1
+      second.scalar("SELECT count(*) FROM counters").should eq 1
+      second.exec "COMMIT"
+      first.exec "INSERT INTO counters (label) VALUES ('inside')"
+      first.exec "COMMIT"
+      second.scalar("SELECT count(*) FROM counters").should eq 2
+    ensure
+      first.close
+      second.close
+      Grant.settings.sqlite_engine = GRANT_SQLITE_ENGINE
+      File.delete(path) if File.exists?(path)
+    end
+  end
+
+  it "keeps a row a savepoint inside a transaction updated, read from another connection" do
+    path = File.tempname("grant_engine_seam_savepoint", ".sqlite3")
+    Grant.settings.sqlite_engine = :grant
+    first = DB.connect("sqlite3:#{path}?journal_mode=delete").as(Grant::SQLite3::Connection)
+    second = DB.connect("sqlite3:#{path}?journal_mode=delete").as(Grant::SQLite3::Connection)
+    begin
+      first.exec "CREATE TABLE posts (id INTEGER NOT NULL PRIMARY KEY, title VARCHAR(255) NOT NULL, author_id INTEGER)"
+      2.times do |index|
+        first.exec "BEGIN"
+        first.exec "INSERT INTO posts (title, author_id) VALUES (?, ?)", "post #{index + 1}", 1
+        first.exec "COMMIT"
+      end
+      second.query_all("SELECT id FROM posts WHERE author_id = ? AND id IN (?, ?)", 1, 1, 2, as: Int64).should eq [1_i64, 2_i64]
+      first.exec "BEGIN"
+      first.exec "DELETE FROM posts WHERE id = ?", 1
+      first.exec "SAVEPOINT sp_1"
+      first.exec "UPDATE posts SET title = ? WHERE id = ?", "post 2 updated", 2
+      first.exec "RELEASE SAVEPOINT sp_1"
+      first.exec "COMMIT"
+      first.query_all("SELECT title FROM posts ORDER BY id", as: String).should eq ["post 2 updated"]
+      second.query_all("SELECT title FROM posts WHERE id = ? ORDER BY id ASC LIMIT 1", 2, as: String).should eq ["post 2 updated"]
+      second.query_all("SELECT title FROM posts ORDER BY id", as: String).should eq ["post 2 updated"]
+    ensure
+      first.close
+      second.close
+      Grant.settings.sqlite_engine = GRANT_SQLITE_ENGINE
+      File.delete(path) if File.exists?(path)
+    end
+  end
+
+  it "compiles a cached statement again after its table was dropped and created on new pages" do
+    path = File.tempname("grant_engine_seam_recompile", ".sqlite3")
+    Grant.settings.sqlite_engine = :grant
+    connection = DB.connect("sqlite3:#{path}?journal_mode=delete").as(Grant::SQLite3::Connection)
+    begin
+      connection.exec "CREATE TABLE first_table (id INTEGER PRIMARY KEY, label TEXT)"
+      connection.exec "CREATE TABLE second_table (id INTEGER PRIMARY KEY, label TEXT)"
+      connection.exec "INSERT INTO second_table (label) VALUES (?)", "before"
+      connection.exec "DROP TABLE first_table"
+      connection.exec "DROP TABLE second_table"
+      connection.exec "CREATE TABLE second_table (id INTEGER PRIMARY KEY, note TEXT, label TEXT)"
+      connection.exec "CREATE TABLE first_table (id INTEGER PRIMARY KEY, label TEXT)"
+      connection.exec "INSERT INTO second_table (label) VALUES (?)", "after"
+      connection.query_all("SELECT label FROM second_table", as: String).should eq ["after"]
+      connection.scalar("SELECT count(*) FROM first_table").should eq 0
+      connection.scalar("PRAGMA integrity_check").should eq "ok"
+    ensure
+      connection.close
+      Grant.settings.sqlite_engine = GRANT_SQLITE_ENGINE
       File.delete(path) if File.exists?(path)
     end
   end

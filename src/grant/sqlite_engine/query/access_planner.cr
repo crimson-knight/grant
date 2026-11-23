@@ -234,13 +234,15 @@ module Grant::SQLiteEngine::Query
       step.base_source
     end
 
-    # The index whose leading key columns the most equality terms fix.
+    # The index whose leading key columns the most equality terms fix. On a
+    # tie the newest index wins, as C walks pTab->pIndex (newest first) and
+    # keeps the first of equal cost.
     private def choose_index(step : JoinStep, table : TableInfo, terms : Array(Expr), available : Set(Int32),
                              context : QueryContext) : RowSource?
       entry = step.entry
       best = nil
       best_score = 0
-      table.list_of_indexes.each do |layout|
+      table.list_of_indexes.reverse_each do |layout|
         next if layout.unsupported_reason
         if hint = entry.indexed_by
           next unless layout.entry.object_name.compare(hint, case_insensitive: true) == 0

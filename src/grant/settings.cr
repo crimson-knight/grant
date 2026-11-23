@@ -100,12 +100,21 @@ module Grant
     # first query.
     #
     # - `:libsqlite3` (default) — the system's C SQLite library.
-    # - `:grant` — Grant's pure-Crystal engine (`Grant::SQLiteEngine`). It
-    #   opens database files; running SQL arrives with milestone G4, and until
-    #   then every statement raises `Grant::SQLiteEngine::UnsupportedSQL`.
-    getter sqlite_engine : Symbol = :libsqlite3
+    # - `:grant` — Grant's pure-Crystal engine (`Grant::SQLiteEngine`), which
+    #   runs Grant's SQL with no C library. It writes with a rollback journal
+    #   (WAL arrives with milestone G5); TEMP tables, ATTACH, triggers and
+    #   virtual tables raise `Grant::SQLiteEngine::UnsupportedSQL`.
+    #
+    # A program built with `-Dgrant_without_libsqlite3` links no C SQLite
+    # library: the setting starts at `:grant` and `:libsqlite3` is refused.
+    getter sqlite_engine : Symbol = {% if flag?(:grant_without_libsqlite3) %} :grant {% else %} :libsqlite3 {% end %}
 
     def sqlite_engine=(engine : Symbol)
+      {% if flag?(:grant_without_libsqlite3) %}
+        if engine == :libsqlite3
+          raise ArgumentError.new("sqlite_engine :libsqlite3 is not in a program built with -Dgrant_without_libsqlite3")
+        end
+      {% end %}
       unless SQLITE_ENGINES.includes?(engine)
         raise ArgumentError.new("sqlite_engine must be :libsqlite3 or :grant (got #{engine.inspect})")
       end

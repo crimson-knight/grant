@@ -28,8 +28,13 @@ module Grant::SQLite3
     # The engine named *name*: `:libsqlite3` or `:grant`.
     def self.named(name : Symbol) : Engine
       case name
-      when :libsqlite3 then LibSQLite3Engine.new
-      when :grant      then GrantEngine.new
+      when :libsqlite3
+        {% if flag?(:grant_without_libsqlite3) %}
+          raise ArgumentError.new("sqlite_engine :libsqlite3 is not in a program built with -Dgrant_without_libsqlite3")
+        {% else %}
+          LibSQLite3Engine.new
+        {% end %}
+      when :grant then GrantEngine.new
       else
         raise ArgumentError.new("sqlite_engine must be :libsqlite3 or :grant (got #{name.inspect})")
       end
@@ -41,7 +46,11 @@ module Grant::SQLite3
       {% if Grant.has_constant?(:Settings) %}
         named(Grant.settings.sqlite_engine)
       {% else %}
-        LibSQLite3Engine.new
+        {% if flag?(:grant_without_libsqlite3) %}
+          GrantEngine.new
+        {% else %}
+          LibSQLite3Engine.new
+        {% end %}
       {% end %}
     end
 

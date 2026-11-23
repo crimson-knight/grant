@@ -1,4 +1,13 @@
 module Grant::SQLiteEngine
+  # One savepoint level of a write transaction (see `Pager#open_savepoint`).
+  class SavepointLevel
+    getter images = {} of UInt32 => Bytes?
+    getter page_count : UInt32
+
+    def initialize(@page_count : UInt32)
+    end
+  end
+
   # Reads pages by number from the database file, overlaid with the committed
   # frames of the WAL when one exists, and caches recently read pages.
   #
@@ -56,8 +65,11 @@ module Grant::SQLiteEngine
     @original_page_count = 0_u32
     @in_write_transaction = false
     @read_depth = 0
-    @statement_images : Hash(UInt32, Bytes?)? = nil
-    @statement_page_count = 0_u32
+    # The open savepoint levels, innermost last: each keeps the image of
+    # every page it saw changed first (nil for a page that was not dirty, or
+    # did not exist, when the level opened) and the page count it started
+    # with. The statement journal is the innermost level.
+    @list_of_savepoint_levels = [] of SavepointLevel
 
     # A database with no pages (a zero-length file and no WAL) is an empty
     # database, as in SQLite.
@@ -190,6 +202,24 @@ module Grant::SQLiteEngine
       end
     end
 
+    # Takes (or shares) the SHARED lock for reads that span several calls,
+    # such as one statement stepped a row at a time; each call is matched
+    # by one `release_read_lock`. Raises `Busy` when a writer holds the
+    # file exclusively.
+    def acquire_read_lock : Nil
+      file = @file
+      return unless file
+      begin_read(file) if @read_depth == 0 && !@in_write_transaction
+      @read_depth += 1
+    end
+
+    def release_read_lock : Nil
+      file = @file
+      return unless file && @read_depth > 0
+      @read_depth -= 1
+      file.unlock(LockLevel::None) if @read_depth == 0 && !@in_write_transaction
+    end
+
     private def begin_read(file : DatabaseFile) : Nil
       raise Busy.new unless file.lock(LockLevel::Shared)
       begin
@@ -290,13 +320,15 @@ module Grant::SQLiteEngine
         finish_transaction(file)
         return
       end
+      # The EXCLUSIVE lock first, so a commit refused while another
+      # connection reads can be tried again unchanged.
+      raise Busy.new unless file.lock(LockLevel::Exclusive)
       page_one = page_for_write(1_u32)
       counter = get_u32(page_one, CHANGE_COUNTER_OFFSET) &+ 1
       put_u32(page_one, CHANGE_COUNTER_OFFSET, counter)
       put_u32(page_one, PAGE_COUNT_OFFSET, @page_count)
       put_u32(page_one, VERSION_VALID_FOR_OFFSET, counter)
       put_u32(page_one, VERSION_NUMBER_OFFSET, WRITER_VERSION_NUMBER)
-      raise Busy.new unless file.lock(LockLevel::Exclusive)
       file_system = writer_file_system
       journal_path = RollbackJournal.path_for(@path)
       journal = file_system.open(journal_path)
@@ -337,7 +369,7 @@ module Grant::SQLiteEngine
     private def finish_transaction(file : DatabaseFile) : Nil
       @dirty.clear
       @journal_images.clear
-      @statement_images = nil
+      @list_of_savepoint_levels.clear
       @in_write_transaction = false
       file.unlock(@read_depth > 0 ? LockLevel::Shared : LockLevel::None)
     end
@@ -350,29 +382,72 @@ module Grant::SQLiteEngine
     # Starts a statement inside the write transaction: a failed statement
     # puts back exactly the pages it changed (the statement journal).
     def begin_statement : Nil
-      @statement_images = {} of UInt32 => Bytes?
-      @statement_page_count = @page_count
+      open_savepoint
     end
 
     def end_statement : Nil
-      @statement_images = nil
+      release_savepoint(@list_of_savepoint_levels.size) unless @list_of_savepoint_levels.empty?
     end
 
     def rollback_statement : Nil
-      images = @statement_images
-      return unless images
-      @generation += 1
-      images.each do |page_number, image|
-        if image
-          @dirty[page_number].copy_from(image.to_unsafe, image.size)
-        else
-          @dirty.delete(page_number)
-          @cache.delete(page_number)
-          @journal_images.delete(page_number)
+      depth = @list_of_savepoint_levels.size
+      return if depth == 0
+      rollback_to_savepoint(depth)
+      @list_of_savepoint_levels.pop
+    end
+
+    # Opens a savepoint level inside the write transaction and returns its
+    # depth (1 for the outermost).
+    def open_savepoint : Int32
+      raise Error.new("no write transaction is open") unless @in_write_transaction
+      @list_of_savepoint_levels << SavepointLevel.new(@page_count)
+      @list_of_savepoint_levels.size
+    end
+
+    # The number of open savepoint levels.
+    def savepoint_depth : Int32
+      @list_of_savepoint_levels.size
+    end
+
+    # Closes the levels from *depth* inward, keeping their changes: each
+    # page image a closed level kept passes to the level around it, unless
+    # that level already holds an older one.
+    def release_savepoint(depth : Int32) : Nil
+      while @list_of_savepoint_levels.size >= depth && !@list_of_savepoint_levels.empty?
+        level = @list_of_savepoint_levels.pop
+        if parent = @list_of_savepoint_levels.last?
+          level.images.each do |page_number, image|
+            parent.images[page_number] = image unless parent.images.has_key?(page_number)
+          end
         end
       end
-      @page_count = @statement_page_count
-      @statement_images = nil
+    end
+
+    # Puts every page back as it was when level *depth* opened, innermost
+    # level first; level *depth* stays open, empty, and the levels inside it
+    # close.
+    def rollback_to_savepoint(depth : Int32) : Nil
+      return if depth < 1 || depth > @list_of_savepoint_levels.size
+      @generation += 1
+      @rightmost_path_hint = nil
+      while @list_of_savepoint_levels.size >= depth
+        level = @list_of_savepoint_levels.pop
+        level.images.each do |page_number, image|
+          if image
+            if buffer = @dirty[page_number]?
+              buffer.copy_from(image.to_unsafe, image.size)
+            else
+              @dirty[page_number] = image.dup
+            end
+          else
+            @dirty.delete(page_number)
+            @cache.delete(page_number)
+            @journal_images.delete(page_number)
+          end
+        end
+        @page_count = level.page_count
+      end
+      @list_of_savepoint_levels << SavepointLevel.new(@page_count)
       if @page_count > 0
         @header = DatabaseHeader.parse(read_page(1_u32))
       end
@@ -385,8 +460,8 @@ module Grant::SQLiteEngine
       raise Error.new("no write transaction is open") unless @in_write_transaction
       @change_count &+= 1
       if buffer = @dirty[page_number]?
-        if images = @statement_images
-          images[page_number] = buffer.dup unless images.has_key?(page_number)
+        if level = @list_of_savepoint_levels.last?
+          level.images[page_number] = buffer.dup unless level.images.has_key?(page_number)
         end
         return buffer
       end
@@ -394,8 +469,8 @@ module Grant::SQLiteEngine
       if page_number <= @original_page_count && !@journal_images.has_key?(page_number)
         @journal_images[page_number] = buffer.dup
       end
-      if images = @statement_images
-        images[page_number] = nil unless images.has_key?(page_number)
+      if level = @list_of_savepoint_levels.last?
+        level.images[page_number] = nil unless level.images.has_key?(page_number)
       end
       @dirty[page_number] = buffer
       buffer
@@ -434,8 +509,8 @@ module Grant::SQLiteEngine
       end
       @page_count = page_number
       @dirty[page_number] = Bytes.new(@page_size)
-      if images = @statement_images
-        images[page_number] = nil
+      if level = @list_of_savepoint_levels.last?
+        level.images[page_number] = nil
       end
       page_number
     end
@@ -503,8 +578,8 @@ module Grant::SQLiteEngine
       @page_count = 1_u32
       page = Bytes.new(@page_size)
       @dirty[1_u32] = page
-      if images = @statement_images
-        images[1_u32] = nil
+      if level = @list_of_savepoint_levels.last?
+        level.images[1_u32] = nil
       end
       page.copy_from(DatabaseHeader::MAGIC.to_unsafe, DatabaseHeader::MAGIC.size)
       page[16] = (@page_size == Limits::MAX_PAGE_SIZE ? 0 : @page_size >> 8).to_u8
