@@ -100,8 +100,12 @@ module Grant::SQLiteEngine::Query
       if aggregation = @aggregation
         if @streaming
           @source.open(frame)
+          # A group left unfinished by the last execution (a LIMIT stopped
+          # it) is kept for reuse with the shown ones.
+          if unfinished = @current
+            @list_of_spare_groups << unfinished
+          end
           @current = nil
-          @spare_group = nil
           @source_done = false
         else
           @groups = collect_groups(frame, aggregation)
@@ -191,7 +195,7 @@ module Grant::SQLiteEngine::Query
         end
         # Nothing holds the shown group's arrays now; the group after the
         # current one reuses them.
-        @spare_group = group
+        @list_of_spare_groups << group
         return row if row
       end
     end
@@ -232,12 +236,13 @@ module Grant::SQLiteEngine::Query
     @scratch_keys = [] of Value
     @saved_rows = [] of Array(Value)
     @saved_rowids = [] of Int64?
-    @spare_group : Group? = nil
+    # Finished groups whose arrays and accumulators the next groups reuse,
+    # kept from one execution to the next.
+    @list_of_spare_groups = [] of Group
 
     private def recycled_group(keys : Array(Value)) : Group?
-      spare = @spare_group
+      spare = @list_of_spare_groups.pop?
       return unless spare
-      @spare_group = nil
       spare.recycle(keys)
       spare
     end
