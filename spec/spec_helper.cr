@@ -18,6 +18,11 @@ GRANT_SQL_CAPTURE_IO = if capture_path = ENV["GRANT_SQL_CAPTURE"]?
                        end
 Grant.settings.sqlite_statement_capture = GRANT_SQL_CAPTURE_IO
 
+# GRANT_SQLITE_ENGINE=grant runs the SQLite specs on Grant's own engine
+# instead of libsqlite3 (scripts/spec-groups.sh passes the environment on).
+GRANT_SQLITE_ENGINE = ENV["GRANT_SQLITE_ENGINE"]? == "grant" ? :grant : :libsqlite3
+Grant.settings.sqlite_engine = GRANT_SQLITE_ENGINE
+
 CURRENT_ADAPTER = ENV["CURRENT_ADAPTER"]? || "sqlite"
 ADAPTER_URL     = ENV["#{CURRENT_ADAPTER.upcase}_DATABASE_URL"]? || if CURRENT_ADAPTER == "sqlite"
   "sqlite3:./grant_green.db"
@@ -117,7 +122,7 @@ private def restore_default_spec_runtime_state
   Grant.settings.default_timezone = Grant::TIME_ZONE
   Grant.settings.index_hint_mode = :warn
   Grant.settings.in_clause_limit = 1000
-  Grant.settings.sqlite_engine = :libsqlite3
+  Grant.settings.sqlite_engine = GRANT_SQLITE_ENGINE
   Grant.settings.sqlite_statement_capture = GRANT_SQL_CAPTURE_IO
   Grant::Tenant.clear
   Grant::HealthMonitor.test_mode = true

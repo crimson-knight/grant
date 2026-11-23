@@ -40,6 +40,9 @@ private def build_on_default_path(body : String, before_grant : String = "", che
     require "../../src/grant"
     require "../../src/adapter/#{adapter_file}"
 
+    # The suite run on Grant's SQLite engine runs these programs on it too, so
+    # C SQLite never turns the shared database file to WAL.
+    Grant.settings.sqlite_engine = :grant if ENV["GRANT_SQLITE_ENGINE"]? == "grant"
     Grant::Connections << Grant::Adapter::#{adapter_class}.new(name: "primary", url: ENV["GRANT_DEFAULT_PATH_URL"])
 
     #{body}

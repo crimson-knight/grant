@@ -75,6 +75,12 @@ Metrics/CyclomaticComplexity:
     # dispatch (one case per operator, clause or plan shape) and its
     # differential and generator scripts walk every comparison rule.
     - src/grant/sqlite_engine/query/*.cr
+    # The write statements port insert.c, update.c, delete.c and the
+    # constraint checks (one branch per conflict action and constraint kind),
+    # and the write differential walks every statement shape it generates.
+    - src/grant/sqlite_engine/query/statements/*.cr
+    - scripts/sqlite_engine_write_differential.cr
+    - spec/support/sqlite_engine/write_oracle.cr
     - scripts/sqlite_engine_query_*.cr
     - spec/support/sqlite_engine/query_oracle.cr
     - spec/support/sqlite_engine/crash_file.cr

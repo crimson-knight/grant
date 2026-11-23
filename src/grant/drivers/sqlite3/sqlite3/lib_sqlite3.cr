@@ -1,3 +1,6 @@
+# Left out of a program built with -Dgrant_without_libsqlite3, which runs
+# every statement on Grant's own engine and links no C SQLite library.
+{% unless flag?(:grant_without_libsqlite3) %}
 require "./type"
 
 module Grant
@@ -144,3 +147,4 @@ module Grant
     end
   {% end %}
 end
+{% end %}

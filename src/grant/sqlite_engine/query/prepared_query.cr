@@ -16,15 +16,28 @@ module Grant::SQLiteEngine::Query
     @done = false
 
     def initialize(@session : Session, sql : String)
-      statement = begin
-        SQL::Parser.parse(sql)
+      prepared = begin
+        SQL::Parser.parse_prepared(sql)
       rescue error : SQL::ParseError
         raise SQLError.new(error.message || "syntax error")
       end
-      raise SQLError.new("not an error: empty statement") unless statement
+      raise SQLError.new("not an error: empty statement") unless prepared
+      statement = prepared.statement
       select_statement = statement.as?(SQL::SelectStatement)
       unless select_statement
-        raise UnsupportedSQL.new("#{PreparedQuery.statement_kind(statement)} statements arrive with milestone G4b")
+        # Every other statement runs through its plan (G4b), when the
+        # query is first stepped.
+        @parameter_count = prepared.parameter_count
+        @parameter_numbers = prepared.parameter_numbers
+        if @parameter_count > SQL::Limits::MAX_VARIABLE_NUMBER
+          raise SQLError.new("too many SQL variables")
+        end
+        plan = StatementCompiler.compile(@session, statement, prepared.text)
+        producer = PlanProducer.new(@session, plan, statement, prepared.text)
+        @compiled = CompiledSelect.new(producer, plan.list_of_column_names, 0, 0, false)
+        @list_of_column_names = @compiled.list_of_column_names
+        @parameters = Array(Value).new(@parameter_count, nil)
+        return
       end
       @parameter_count, @parameter_numbers = ParameterScan.scan(select_statement)
       if @parameter_count > SQL::Limits::MAX_VARIABLE_NUMBER

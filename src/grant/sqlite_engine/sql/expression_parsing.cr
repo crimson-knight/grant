@@ -344,17 +344,22 @@ module Grant::SQLiteEngine::SQL
     # parentheses. Nil when no type is written.
     private def parse_type_name : TypeName?
       return unless ids?
+      start = peek.start
       words = [] of Name
+      last = peek
       while ids?
-        words << name_of(advance)
+        last = advance
+        words << name_of(last)
       end
       arguments = [] of String
       if accept(TokenKind::LeftParen)
         arguments << parse_signed_number
         arguments << parse_signed_number if accept(TokenKind::Comma)
-        expect(TokenKind::RightParen)
+        last = expect(TokenKind::RightParen)
       end
-      TypeName.new(words, arguments)
+      type_name = TypeName.new(words, arguments)
+      type_name.source_text = @tokenizer.span(start, last.start + last.size)
+      type_name
     end
 
     # parse.y's `signed`: `[+|-] INTEGER|FLOAT`.
