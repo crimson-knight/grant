@@ -500,8 +500,8 @@ module Grant::SQLiteEngine
         images[1_u32] = nil
       end
       page.copy_from(DatabaseHeader::MAGIC.to_unsafe, DatabaseHeader::MAGIC.size)
-      page[16] = (@page_size == Limits::MAX_PAGE_SIZE ? 1 : @page_size >> 8).to_u8
-      page[17] = (@page_size == Limits::MAX_PAGE_SIZE ? 0 : @page_size & 0xff).to_u8
+      page[16] = (@page_size == Limits::MAX_PAGE_SIZE ? 0 : @page_size >> 8).to_u8
+      page[17] = (@page_size == Limits::MAX_PAGE_SIZE ? 1 : @page_size & 0xff).to_u8
       page[18] = 1_u8
       page[19] = 1_u8
       page[21] = 64_u8
