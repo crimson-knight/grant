@@ -80,6 +80,15 @@ or joined column is an `Int64` when it is a whole number in range and a
 `Float64` otherwise. `scripts/check_gmp_linkage.rb` builds probe apps and
 checks that their binaries link no GMP.
 
+## No libz with `-Dwithout_zlib`
+
+Grant compresses encrypted attributes (`compress: true`) and computes CRC-32
+with a pinned copy of [Mica](https://github.com/amberframework/mica), written
+in Crystal, so it calls no libz. An app built with
+`crystal build -Dwithout_zlib` links no libz;
+`scripts/check_zlib_linkage.rb` builds probe apps that way and checks their
+binaries.
+
 ## Comprehensive Feature Examples
 
 Here are 3 example models that demonstrate every feature available in Grant:

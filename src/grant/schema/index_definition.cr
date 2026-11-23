@@ -1,4 +1,4 @@
-require "digest/crc32"
+require "../vendor/mica/deflate"
 require "./table_definition"
 
 module Grant::Schema
@@ -50,9 +50,10 @@ module Grant::Schema
       "index_#{table.to_s.rpartition('.').last}_on_#{columns.join("_and_")}"
     end
 
-    # A short stable digest of *text*, for names that must not grow with it.
+    # A short stable digest of *text*, for names that must not grow with it:
+    # its CRC-32 in eight hexadecimal digits.
     def self.digest(text : ::String) : ::String
-      Digest::CRC32.checksum(text).to_s(16).rjust(8, '0')
+      Grant::Mica::Deflate::CRC32.update(0_u32, text.to_slice).to_s(16).rjust(8, '0')
     end
 
     # A constraint name `<prefix>_<table>_<detail>`, shortened with a digest

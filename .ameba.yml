@@ -13,6 +13,8 @@ Excluded:
   # The pinned copy of Beryl is checked in its own repository and must match its recorded hashes.
   - src/grant/vendor/**/*.cr
   - spec/grant/drivers/*/upstream/**/*.cr
+  # The pinned copy of Mica holds Mica's bytes (MICA_VENDORED.json); it is linted in its own repository.
+  - src/grant/vendor/**/*.cr
 
 # Grant writes macro interpolations as `{{x}}`; `crystal tool format` owns layout.
 Lint/WhitespaceAroundMacroExpression:

@@ -47,6 +47,30 @@ Changed:
   `sslmode=prefer` and `allow` connect without TLS.
   `scripts/check_openssl_linkage.rb` builds the probes and checks.
 
+### Grant links no libz in an app built with `-Dwithout_zlib`
+
+Grant's DEFLATE and CRC-32 now run on a pinned copy of
+[Mica](https://github.com/amberframework/mica), in Crystal
+(`src/grant/vendor`, under `Grant::Mica`, pinned by commit and per-file
+sha256 in `MICA_VENDORED.json`), in place of Crystal's `Compress::Zlib` and
+`Digest::CRC32`, which call libz:
+
+- `encrypts body, compress: true` writes and reads its zlib stream
+  (RFC 1950) with Mica. Rows compressed through libz by an earlier Grant read
+  back unchanged, and an earlier Grant reads rows written now. The bytes of
+  a newly compressed value can differ from libz's; they sit inside the
+  ciphertext, which already differs on every write.
+- A stored value whose compressed bytes are cut short or damaged raises
+  `Grant::Encryption::Cipher::DecryptionError` (before: an error of the
+  standard library's `Compress` classes).
+- Constraint names (`Grant::Schema::Naming.digest`) and fixture ids
+  (`Grant::TestFixtures.identify`) use Mica's CRC-32. The values are the
+  same.
+
+`scripts/check_zlib_linkage.rb` builds probe apps with `-Dwithout_zlib` and
+fails if their binaries link libz; CI runs it. Without the flag, Crystal's
+own HTTP code still reaches libz in any program that requires `http`.
+
 ## 0.25.1 - 2026-11-22
 
 Minimum Crystal: 1.19.0
