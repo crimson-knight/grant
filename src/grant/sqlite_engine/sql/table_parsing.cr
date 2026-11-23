@@ -173,7 +173,7 @@ module Grant::SQLiteEngine::SQL
         conflict = parse_on_conflict
         autoincrement = accept(TokenKind::Autoincrement)
         add_primary_key(table, [column], order.desc?, autoincrement)
-        unless table.integer_columns.includes?(column) && !order.desc?
+        if !table.integer_columns.includes?(column) || order.desc?
           add_key_index(table, [column], ["binary"], conflict)
         end
         PrimaryKeyColumnConstraint.new(order, conflict, autoincrement)

@@ -215,7 +215,7 @@ module SQLiteSQLOracle
     status = LibOracle.prepare_v2(database, explain, explain.bytesize, out statement, nil)
     if status != 0 || statement.null?
       LibOracle.finalize(statement) unless statement.null?
-      return nil
+      return
     end
     rows = [] of String
     columns = LibOracle.column_count(statement)

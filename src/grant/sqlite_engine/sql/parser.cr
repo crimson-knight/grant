@@ -51,7 +51,7 @@ module Grant::SQLiteEngine::SQL
 
     protected def parse_first : Statement?
       skip_semicolons
-      return nil if kind.end_of_input?
+      return if kind.end_of_input?
       statement = parse_statement
       expect_statement_end
       statement
@@ -256,7 +256,7 @@ module Grant::SQLiteEngine::SQL
 
     # `[ON CONFLICT resolution]` (parse.y onconf).
     private def parse_on_conflict : ConflictResolution?
-      return nil unless kind.on?
+      return unless kind.on?
       advance
       expect(TokenKind::Conflict)
       parse_conflict_resolution
@@ -264,7 +264,7 @@ module Grant::SQLiteEngine::SQL
 
     # `[OR resolution]` (parse.y orconf).
     private def parse_or_conflict : ConflictResolution?
-      return nil unless accept(TokenKind::Or)
+      return unless accept(TokenKind::Or)
       parse_conflict_resolution
     end
   end

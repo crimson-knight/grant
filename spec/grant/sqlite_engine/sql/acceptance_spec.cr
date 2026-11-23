@@ -29,8 +29,10 @@ describe "Grant::SQLiteEngine::SQL acceptance against C SQLite" do
     disagreements.should be_empty
   end
 
-  # Complete statements only: the oracle ends the text with a semicolon, so
-  # C reports incomplete input as an error near that semicolon.
+  # Limits a build may change (SQLITE_MAX_VARIABLE_NUMBER and the like) are
+  # left to parser_spec.cr. Complete statements only: the oracle ends the
+  # text with a semicolon, so C reports incomplete input as an error near
+  # that semicolon.
   it "rejects with C's message where both parsers reject" do
     [
       "SELECT * FROM t WHERE ORDER",
@@ -40,7 +42,6 @@ describe "Grant::SQLiteEngine::SQL acceptance against C SQLite" do
       "CREATE TABLE t(a TEXT PRIMARY KEY AUTOINCREMENT)",
       "CREATE TABLE sqlite_t(a)",
       "SELECT 1 ORDER BY 1 UNION SELECT 2",
-      "SELECT ?0",
       "WITH a AS (SELECT 1), a AS (SELECT 2) SELECT 1",
       "CREATE TABLE t(a, UNIQUE(a) ON CONFLICT FAIL, UNIQUE(a) ON CONFLICT IGNORE)",
     ].each do |sql|

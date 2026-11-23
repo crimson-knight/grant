@@ -189,7 +189,7 @@ module Grant::SQLiteEngine::SQL
 
     # `LIMIT count [OFFSET offset]` or `LIMIT offset, count`.
     private def parse_limit : Limit?
-      return nil unless accept(TokenKind::Limit)
+      return unless accept(TokenKind::Limit)
       first = parse_expression
       if accept(TokenKind::Offset)
         Limit.new(first, parse_expression, false)
@@ -239,7 +239,7 @@ module Grant::SQLiteEngine::SQL
       loop do
         name = parse_nm
         @has_with = true
-        if tables.any? { |table| table.name.same?(name.value) }
+        if tables.any?(&.name.same?(name.value))
           action_error("duplicate WITH table name: #{name.value}")
         end
         columns = kind.left_paren? ? parse_eidlist : nil
@@ -338,7 +338,7 @@ module Grant::SQLiteEngine::SQL
       if accept(TokenKind::Join)
         return JoinOperator.new(false, [] of String)
       end
-      return nil unless kind.join_keyword?
+      return unless kind.join_keyword?
       words = [text(advance)]
       2.times do
         break if kind.join?

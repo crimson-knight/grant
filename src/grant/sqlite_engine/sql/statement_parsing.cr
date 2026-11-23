@@ -379,7 +379,7 @@ module Grant::SQLiteEngine::SQL
     end
 
     private def parse_returning : Array(ResultColumn)?
-      return nil unless accept(TokenKind::Returning)
+      return unless accept(TokenKind::Returning)
       columns, _ = parse_result_columns
       columns
     end

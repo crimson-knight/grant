@@ -57,7 +57,7 @@ class SQLOracleComparison
     unless c_outcome.verdict.undetermined? || c_outcome.verdict == engine_outcome.verdict
       @list_of_disagreements << "#{source}\n  c: #{c_outcome.verdict} #{c_outcome.message}\n  engine: #{engine_outcome.verdict} #{engine_outcome.message}\n  sql: #{sql}"
     end
-    return nil unless engine_outcome.verdict.accepted?
+    return unless engine_outcome.verdict.accepted?
     SQL::Parser.parse(sql)
   rescue error
     @list_of_disagreements << "#{source}\n  engine raised #{error.class}: #{error.message}\n  sql: #{sql}"
@@ -71,7 +71,7 @@ class SQLOracleComparison
     @printed_checked += 1
     if SQL::Parser.parse(printed) != statement
       @list_of_round_trip_failures << "#{source}: tree differs\n  sql: #{sql}\n  printed: #{printed}"
-      return nil
+      return
     end
     original = SQLiteSQLOracle.verdict(sql)
     again = SQLiteSQLOracle.verdict(printed)

@@ -290,7 +290,7 @@ module Grant::SQLiteEngine::SQL
         valid = hex ? (before.hex? && after.hex?) : (before.ascii_number? && after.ascii_number?)
         raise ParseError.new(%(unrecognized token: "#{raw}"), token.start) unless valid
       end
-      float = !hex && raw.each_char.any? { |char| char.in?('.', 'e', 'E') }
+      float = !hex && raw.each_char.any?(&.in?('.', 'e', 'E'))
       Literal.new(float ? LiteralKind::Float : LiteralKind::Integer, raw)
     end
 
@@ -343,7 +343,7 @@ module Grant::SQLiteEngine::SQL
     # parse.y's typetoken: words, then up to two signed numbers in
     # parentheses. Nil when no type is written.
     private def parse_type_name : TypeName?
-      return nil unless ids?
+      return unless ids?
       words = [] of Name
       while ids?
         words << name_of(advance)
