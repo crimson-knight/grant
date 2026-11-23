@@ -430,6 +430,18 @@ module Grant::SQLiteEngine::Query
     # searches the last step.
     private def forward_bound(leaf : BTreePage, index : Int32, probe : Array(Value), strict : Bool) : Int32?
       count = leaf.cell_count
+      if (target = @integer_target) && (last = integer_key_at(leaf, count - 1))
+        return if last < target || (strict && last == target)
+        first = integer_key_at(leaf, index)
+        if first && count - index > 8 && last > first
+          # Integer keys: start where the target would sit if the keys
+          # between the current entry and the last were evenly spread.
+          fraction = (target.to_f64 - first.to_f64) / (last.to_f64 - first.to_f64)
+          span = count - 1 - index
+          guess = index + (fraction * span).to_i32.clamp(1, span)
+          return bound_from(leaf, index, guess, probe, strict)
+        end
+      end
       low = index + 1
       step = 1
       loop do
@@ -441,6 +453,41 @@ module Grant::SQLiteEngine::Query
         low = candidate + 1
         step *= 2
       end
+    end
+
+    # The first entry of *leaf* at least (with *strict*, greater than)
+    # *probe*, searched from *guess*: entry *index* is below the probe and
+    # the leaf's last entry is not. Steps 1, 2, 4... entries up or down from
+    # the guess, then searches the last step.
+    private def bound_from(leaf : BTreePage, index : Int32, guess : Int32, probe : Array(Value), strict : Bool) : Int32
+      last = leaf.cell_count - 1
+      step = 1
+      if below?(leaf, guess, probe, strict)
+        low = guess + 1
+        loop do
+          candidate = guess + step
+          return bound(leaf, probe, strict, low, last) if candidate >= last
+          return bound(leaf, probe, strict, low, candidate) unless below?(leaf, candidate, probe, strict)
+          low = candidate + 1
+          step *= 2
+        end
+      else
+        high = guess
+        loop do
+          candidate = guess - step
+          return bound(leaf, probe, strict, index + 1, high) if candidate <= index
+          return bound(leaf, probe, strict, candidate + 1, high) if below?(leaf, candidate, probe, strict)
+          high = candidate
+          step *= 2
+        end
+      end
+    end
+
+    # The integer key of entry *index* of *leaf* (see
+    # `RecordColumns.leading_integer`); nil when it is not one.
+    private def integer_key_at(leaf : BTreePage, index : Int32) : Int64?
+      payload = leaf.local_index_payload(index)
+      payload ? RecordColumns.leading_integer(payload) : nil
     end
 
     # True when the entry at *index* sorts before the first entry *seek*

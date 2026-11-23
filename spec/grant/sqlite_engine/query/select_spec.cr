@@ -35,6 +35,12 @@ module SelectSpecFixture
     INSERT INTO pairs VALUES ('x', 'y'), ('a', 'b'), ('a', 'c');
     CREATE TABLE named (a, b, c, PRIMARY KEY(a) UNIQUE (b) CONSTRAINT one CHECK(c < 10) CONSTRAINT two);
     INSERT INTO named VALUES (1, 2, 3);
+    CREATE TABLE seek_keys (k, v INTEGER);
+    CREATE INDEX index_seek_keys_on_k ON seek_keys (k);
+    INSERT INTO seek_keys SELECT (x * x) % 997, x FROM (WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c WHERE x < 1500) SELECT x FROM c);
+    INSERT INTO seek_keys VALUES (NULL, 0), (2.5, -1), ('t', -2), (500.0, -3), (996, -4), (996, -5);
+    CREATE TABLE probes (x INTEGER PRIMARY KEY);
+    INSERT INTO probes SELECT x FROM (WITH RECURSIVE c(x) AS (SELECT 0 UNION ALL SELECT x + 1 FROM c WHERE x < 1000) SELECT x FROM c) WHERE x % 7 = 0 OR x % 31 = 1 OR x > 990;
     SQL
 
   QUERIES = [
@@ -244,6 +250,11 @@ module SelectSpecFixture
     {"SELECT flag, name, max(age) FROM users WHERE name LIKE '%' AND score > -10 GROUP BY flag", [] of Grant::SQLiteEngine::Value},
     {"SELECT u.name, p.title, p.rank FROM users u LEFT JOIN posts p ON p.user_id = u.id AND p.rank > 1 WHERE u.score > 0 ORDER BY u.id, p.id", [] of Grant::SQLiteEngine::Value},
     {"SELECT id, score FROM users WHERE score > ? AND score + 0 < 9", [0_i64] of Grant::SQLiteEngine::Value},
+    # Index seeks that move forward within a leaf of integer keys:
+    # equality, a strict lower bound, and keys past the last entry.
+    {"SELECT p.x, s.v FROM probes p JOIN seek_keys s ON s.k = p.x ORDER BY p.x, s.v", [] of Grant::SQLiteEngine::Value},
+    {"SELECT p.x, count(s.v) FROM probes p JOIN seek_keys s ON s.k = p.x WHERE p.x > ? GROUP BY p.x ORDER BY p.x LIMIT 40", [100_i64] of Grant::SQLiteEngine::Value},
+    {"SELECT p.x, s.k, s.v FROM probes p JOIN seek_keys s ON s.k > p.x AND s.k <= p.x + 2 ORDER BY p.x, s.k, s.v", [] of Grant::SQLiteEngine::Value},
     # A column read before the decided one leaves it pending; the decided
     # column read afterwards is decoded then.
     {"SELECT name, id, age, score FROM users WHERE age > ? AND score > ? ORDER BY id DESC", [20_i64, 1_i64] of Grant::SQLiteEngine::Value},
