@@ -101,8 +101,15 @@ module SQLiteWriteOracle
       StepResult.new(outcome, LibWriteOracle.changes64(handle), LibWriteOracle.last_insert_rowid(handle), delta)
     end
 
+    # Runs *sql* under the statement read lock, as Grant's driver does (in
+    # WAL mode the read lock is the snapshot the statement reads).
     def engine_step(sql : String, parameters : Array(Value) = [] of Value) : StepResult
-      outcome = SQLiteQueryOracle.engine_query(@session, sql, parameters)
+      @session.begin_statement_read
+      outcome = begin
+        SQLiteQueryOracle.engine_query(@session, sql, parameters)
+      ensure
+        @session.end_statement_read
+      end
       delta = @session.total_changes - @engine_total
       @engine_total = @session.total_changes
       StepResult.new(outcome, @session.changes, @session.last_insert_rowid, delta)
