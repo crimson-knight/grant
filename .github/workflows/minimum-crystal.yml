@@ -5,21 +5,21 @@ name: minimum-crystal
 # shard.yml's crystal: floor (see docs/RELEASING.md).
 on:
   workflow_call:
-    inputs:
-      latest-crystal:
-        # The Crystal version the caller already runs the SQLite suite on. When
-        # the floor is that same version, the suite is not run a second time
-        # here; Grant is still installed and type-checked on the floor.
-        description: Crystal version the caller's own SQLite suite uses
-        type: string
-        default: ""
 
 permissions:
   contents: read
 
+# The suite runs in six slices side by side (spec-groups.sh --shard), as the
+# database jobs in spec.yml do, so no slice comes near its timeout.
 jobs:
   minimum-crystal:
+    name: minimum-crystal (${{ matrix.shard }}/6)
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6]
     steps:
       - name: Download source
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -50,26 +50,13 @@ jobs:
       - name: Install shards
         run: shards install --frozen --skip-postinstall --skip-executables
       - name: Type-check Grant
+        if: matrix.shard == 1
         run: crystal build --no-codegen src/grant.cr
-      - name: Decide whether the floor needs its own SQLite suite run
-        id: suite
-        env:
-          FLOOR: ${{ steps.floor.outputs.version }}
-          LATEST: ${{ inputs.latest-crystal }}
-        run: |
-          echo "Floor: $FLOOR; the caller's SQLite suite runs on: ${LATEST:-(none)}"
-          if [ "$FLOOR" = "$LATEST" ]; then
-            echo "::notice::The floor $FLOOR is the version sqlite-spec runs the SQLite suite on; not running it twice."
-            echo "run=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "run=true" >> "$GITHUB_OUTPUT"
-          fi
       - name: Run tests
         # The whole suite compiled as one program needs about 20 GB of RAM; a
         # runner has 16 GB. spec-groups.sh compiles one group at a time.
-        if: steps.suite.outputs.run == 'true'
-        timeout-minutes: 90
-        run: scripts/spec-groups.sh sqlite
+        timeout-minutes: 25
+        run: scripts/spec-groups.sh --shard ${{ matrix.shard }}/6 sqlite
         env:
           CRYSTAL: crystal
           SPEC_GROUP_INCREMENTAL: "0"

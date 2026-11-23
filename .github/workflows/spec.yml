@@ -69,10 +69,6 @@ jobs:
   # Crystal fails here. See docs/RELEASING.md.
   minimum-crystal:
     uses: ./.github/workflows/minimum-crystal.yml
-    with:
-      # sqlite-spec already runs the SQLite suite on this version; while the
-      # floor equals it, minimum-crystal only installs and type-checks.
-      latest-crystal: "1.21.0"
 
   # Informational: the latest patch of the minor version below the floor
   # should NOT compile. If it does, the floor may be higher than necessary.
