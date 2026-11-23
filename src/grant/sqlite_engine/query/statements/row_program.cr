@@ -69,13 +69,16 @@ module Grant::SQLiteEngine::Query
     # the table b-tree, in rowid order).
     getter captured_index_root : UInt32? = nil
 
-    private def choose_access(step : JoinStep, terms : Array(Expr), available : Set(Int32), context : QueryContext) : RowSource
-      return step.base_source if step.base_source.is_a?(PseudoRowSource)
-      source = previous_def
+    private def choose_access(step : JoinStep, terms : Array(Expr), available : Set(Int32), context : QueryContext) : AccessChoice
+      if step.base_source.is_a?(PseudoRowSource)
+        return AccessChoice.new(step.base_source, 1.0, 1.0, [] of OrderElement, [] of Int32)
+      end
+      choice = previous_def
+      source = choice.source
       if source.is_a?(IndexLookupSource) && source.slot == @captured_slot
         @captured_index_root = source.root_page
       end
-      source
+      choice
     end
 
     private def simple_count_table(core : SQL::SelectClause, steps : Array(JoinStep), order_by : Array(SQL::OrderingTerm)) : TableInfo?
