@@ -255,6 +255,12 @@ module Grant::SQLiteEngine::SQL
   # An expression with an optional alias.
   define_node ExpressionColumn, ResultColumn, expression : Expression, alias_name : Name?
 
+  class ExpressionColumn
+    # The expression's source text, which names the column when it has no
+    # alias. Not part of the node's value.
+    property span : String? = nil
+  end
+
   abstract class TableSource < Node
   end
 

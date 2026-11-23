@@ -27,6 +27,15 @@ module Grant::SQLiteEngine::SQL
       new(sql).parse_first
     end
 
+    # Parses a CREATE statement read from sqlite_schema, where SQLite's own
+    # names (sqlite_sequence, sqlite_stat1) are allowed (sqlite3CheckObjectName
+    # skips the check while the schema loads).
+    def self.parse_schema(sql : String) : Statement?
+      parser = new(sql)
+      parser.reading_schema = true
+      parser.parse_first
+    end
+
     # Parses every statement of *sql*.
     def self.parse_all(sql : String) : Array(Statement)
       new(sql).parse_every
@@ -41,6 +50,7 @@ module Grant::SQLiteEngine::SQL
     @has_with = false
     # Inside a trigger body, which SQLite parses but does not resolve.
     @in_trigger = false
+    protected property? reading_schema = false
 
     protected def initialize(sql : String)
       if sql.bytesize > Limits::MAX_SQL_LENGTH
