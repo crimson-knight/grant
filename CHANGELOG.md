@@ -1,6 +1,16 @@
 # Changelog
 
-## Unreleased
+## 0.26.0 - 2026-11-22
+
+An app on Grant 0.26.0 can be built with `-Dwithout_openssl -Dwithout_zlib`
+and, on the SQLite and PostgreSQL adapters, link neither OpenSSL nor libz:
+Grant's cryptography runs on Beryl and its DEFLATE and CRC-32 on Mica, both
+in Crystal, and on Apple Silicon, Linux AArch64 and x86-64 Beryl's hashes and
+ciphers use the processor's own instructions, at least as fast as OpenSSL.
+**Encrypted attributes are now written in format version 2
+(XChaCha20-Poly1305).** Values written by earlier Grant releases are still
+read and are rewritten on the next save, but Grant 0.25.1 and earlier cannot
+read version 2, so roll back only before new values are written.
 
 ### Grant's cryptography runs on Beryl, and `-Dwithout_openssl` links no OpenSSL
 
@@ -70,6 +80,25 @@ sha256 in `MICA_VENDORED.json`), in place of Crystal's `Compress::Zlib` and
 `scripts/check_zlib_linkage.rb` builds probe apps with `-Dwithout_zlib` and
 fails if their binaries link libz; CI runs it. Without the flag, Crystal's
 own HTTP code still reaches libz in any program that requires `http`.
+
+### Also
+
+- The vendored copy of Mica under `src/grant/vendor` (`Grant::Mica`) moves to
+  amberframework/mica `37e8b019` (amberframework/mica#29, faster Inflate),
+  pinned by commit and per-file sha256 in `MICA_VENDORED.json`. Only
+  the decoder (`mica/deflate/inflater.cr`) changed: it inflates the same
+  bytes faster.
+- The vendored copy of Beryl under `src/grant/vendor` (`Grant::Beryl`) moves from
+  `6eef806d` (B2, portable code) to amberframework/beryl `7d678c08`
+  (F1, amberframework/beryl#3, and F2, amberframework/beryl#4), pinned by
+  commit and per-file sha256 in `BERYL_VENDORED.json`. SHA-2, HMAC, AES-GCM,
+  ChaCha20-Poly1305 and XChaCha20-Poly1305 run on the processor's SHA, AES,
+  carry-less multiply and vector instructions on Apple Silicon, Linux AArch64
+  and x86-64, and on portable code elsewhere; Beryl measures every hash, HMAC
+  and AEAD at least as fast as OpenSSL 4.1.0 on an Apple M1 Max. The bytes
+  each one produces are unchanged.
+
+Minimum Crystal: 1.19.0.
 
 ## 0.25.1 - 2026-11-22
 
