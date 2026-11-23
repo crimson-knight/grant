@@ -238,6 +238,22 @@ module Grant::SQLiteEngine::Query
       stored <=> key
     end
 
+    # The two values of a record of exactly two integers (an index entry of
+    # one integer key and the rowid), read as `decode_into` reads them; nil
+    # for any other record.
+    def self.integer_pair(payload : Bytes) : {Int64, Int64}?
+      return if payload.size < 3 || payload.unsafe_fetch(0) != 3
+      first_type = payload.unsafe_fetch(1)
+      second_type = payload.unsafe_fetch(2)
+      return unless 0 < first_type <= 9 && first_type != 7 && 0 < second_type <= 9 && second_type != 7
+      first_size = FIXED_SIZES.unsafe_fetch(first_type).to_i32
+      second_size = FIXED_SIZES.unsafe_fetch(second_type).to_i32
+      return if 3 + first_size + second_size > payload.size
+      first = first_type >= 8 ? first_type.to_i64 - 8 : signed_integer(payload, 3, first_size)
+      second = second_type >= 8 ? second_type.to_i64 - 8 : signed_integer(payload, 3 + first_size, second_size)
+      {first, second}
+    end
+
     # Decodes every value of *payload* into *into*, replacing what it held.
     def self.decode_into(payload : Bytes, encoding : TextEncoding, page_number : UInt32, into : Array(Value)) : Array(Value)
       # Values overwrite the array in place; a longer old record is cut

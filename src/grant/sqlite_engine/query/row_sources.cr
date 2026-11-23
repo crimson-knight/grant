@@ -359,6 +359,42 @@ module Grant::SQLiteEngine::Query
       @resume = @can_resume && !@empty && !probe.empty? && @low.nil? && @high_bound.nil? &&
                 index_cursor.positioned? && @order.compare(probe, @resume_after) > 0
       @can_resume = false
+      # One integer key on an ascending column, no range: entries holding an
+      # integer key and the rowid are read without building values.
+      first_key = probe.first?
+      @integer_probe = probe.size == 1 && first_key.is_a?(Int64) && @low.nil? && @high_bound.nil? &&
+                       !@order.descending[0]? ? first_key : nil
+    end
+
+    @integer_probe : Int64? = nil
+    @integer_covering : Int32? = nil
+    @integer_covering_known = false
+
+    # The one key column a covering index gives when its entries are an
+    # integer key and the rowid; nil otherwise.
+    private def integer_covering_column : Int32?
+      return @integer_covering if @integer_covering_known
+      @integer_covering_known = true
+      covering = @covering
+      return unless covering && covering.size == 1 && covering_holds?(covering)
+      column = covering[0]
+      @integer_covering = @table.list_of_affinities[column].real? ? nil : column
+    end
+
+    # True when the cursor's entry sorts before the probe.
+    private def entry_below_probe?(cursor : IndexCursor) : Bool
+      if (probe_key = @integer_probe) && (pair = cursor.integer_pair)
+        return pair[0] < probe_key
+      end
+      @order.compare(cursor.record(@entry), @probe) < 0
+    end
+
+    # Ends the lookup on an entry past the key; the cursor rests there.
+    private def stop_past_key : Bool
+      @empty = true
+      @can_resume = true
+      @resume_after.replace(@probe)
+      false
     end
 
     @opened_for : Frame? = nil
@@ -405,24 +441,36 @@ module Grant::SQLiteEngine::Query
           # below it means the key lies further on.
           @resume = false
           @started = true
-          entry = index_cursor.record(@entry)
-          if @order.compare(entry, @probe) < 0
+          if entry_below_probe?(index_cursor)
             return false unless index_cursor.seek(@seek_key, @strict_low)
-            entry = index_cursor.record(@entry)
           end
         else
           moved = @started ? index_cursor.advance : (@seek_key.empty? ? index_cursor.first : index_cursor.seek(@seek_key, @strict_low))
           @started = true
           return false unless moved
-          entry = index_cursor.record(@entry)
         end
-        unless @probe.empty? || @order.compare(entry, @probe) == 0
-          @empty = true
-          # The cursor rests on the first entry past the key.
-          @can_resume = true
-          @resume_after.replace(@probe)
-          return false
+        if (probe_key = @integer_probe) && (pair = index_cursor.integer_pair)
+          key, rowid = pair
+          return stop_past_key unless key == probe_key
+          if column = integer_covering_column
+            buffer = @buffer
+            @table.clear_row(buffer) unless buffer.size == @table.list_of_column_names.size
+            buffer.unsafe_put(column, key)
+            if alias_index = @table.rowid_alias
+              buffer.unsafe_put(alias_index, rowid)
+            end
+            frame.list_of_rows[@slot] = buffer
+            frame.list_of_rowids[@slot] = rowid
+            return true
+          end
+          next unless table_cursor.seek(rowid) && table_cursor.rowid == rowid
+          table_cursor.row(@table, @use, @buffer)
+          frame.list_of_rows[@slot] = @buffer
+          frame.list_of_rowids[@slot] = rowid
+          return true
         end
+        entry = index_cursor.record(@entry)
+        return stop_past_key unless @probe.empty? || @order.compare(entry, @probe) == 0
         if @has_high
           position = @probe.size
           collation = @order.collations[position]? || Collation::Binary

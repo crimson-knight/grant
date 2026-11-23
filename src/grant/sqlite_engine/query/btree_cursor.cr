@@ -343,6 +343,14 @@ module Grant::SQLiteEngine::Query
       RecordColumns.decode_into(entry_payload(page, top.index), @database.text_encoding, page.number, into)
     end
 
+    # The current entry's two values when it is an integer key and an
+    # integer rowid held on the page; nil otherwise.
+    def integer_pair : {Int64, Int64}?
+      top = @stack.top
+      payload = top.page.local_index_payload(top.index)
+      payload ? RecordColumns.integer_pair(payload) : nil
+    end
+
     # The payload of entry *index* of *page*: a slice of the page when it
     # does not spill, read through the overflow chain otherwise.
     private def entry_payload(page : BTreePage, index : Int32) : Bytes
