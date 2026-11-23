@@ -173,8 +173,9 @@ describe "reconnection and retries" do
       adapter = pooled_adapter(pool_size: 3, initial_pool_size: 1, retry_delay: 1.millisecond)
       kill_backend = -> do
         pid = adapter.open("SELECT 1") { |connection| connection.scalar("SELECT pg_backend_pid()").as(Int32) }
-        DB.open(ADAPTER_URL) { |killer| killer.scalar("SELECT pg_terminate_backend(#{pid})") }
-        sleep 100.milliseconds
+        # The timeout form returns once the backend has exited, so the pool's
+        # connection is dead before the next statement is sent.
+        DB.open(ADAPTER_URL) { |killer| killer.scalar("SELECT pg_terminate_backend(#{pid}, 10000)").should be_true }
       end
 
       kill_backend.call

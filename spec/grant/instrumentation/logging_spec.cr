@@ -1,8 +1,14 @@
 require "../../spec_helper"
 
-# Set up a test backend that we can use across tests
+# Set up a test backend that we can use across tests. It writes each entry as
+# it is logged (direct dispatch), so an example reads the messages right after
+# the call that logged them.
 class TestLogBackend < Log::Backend
   getter messages = [] of String
+
+  def initialize
+    super(:direct)
+  end
 
   def write(entry : Log::Entry) : Nil
     messages << "#{entry.severity} - #{entry.source}: #{entry.message}"
@@ -49,9 +55,6 @@ describe "Grant::Logging" do
       # Now perform a SELECT query which will go through the executor
       Teacher.all.to_a
 
-      # Add a small delay to ensure log messages are processed
-      sleep(100.milliseconds)
-
       # Check that SQL was logged
       messages = backend.messages.join("\n")
 
@@ -72,7 +75,6 @@ describe "Grant::Logging" do
         "Teacher"
       )
 
-      sleep(100.milliseconds)
       messages = backend.messages.join("\n")
 
       messages.should contain("Slow query detected")
@@ -85,7 +87,6 @@ describe "Grant::Logging" do
         Teacher.find!(999999)
       end
 
-      sleep(100.milliseconds)
       messages = backend.messages.join("\n")
 
       # The query executes successfully, just returns 0 rows
@@ -99,7 +100,6 @@ describe "Grant::Logging" do
     it "logs record creation" do
       Teacher.create(name: "New Teacher")
 
-      sleep(100.milliseconds)
       messages = backend.messages.join("\n")
 
       messages.should contain("Creating record")
@@ -113,7 +113,6 @@ describe "Grant::Logging" do
       teacher.name = "Updated Teacher"
       teacher.save
 
-      sleep(100.milliseconds)
       messages = backend.messages.join("\n")
 
       messages.should contain("Updating record")
@@ -126,7 +125,6 @@ describe "Grant::Logging" do
 
       teacher.destroy
 
-      sleep(100.milliseconds)
       messages = backend.messages.join("\n")
 
       messages.should contain("Destroying record")
@@ -139,7 +137,6 @@ describe "Grant::Logging" do
       student = Student.new(name: "") # Assuming name is required
       student.save
 
-      sleep(100.milliseconds)
       messages = backend.messages.join("\n")
 
       if messages.includes?("Failed to save record")
@@ -159,7 +156,6 @@ describe "Grant::Logging" do
       # Access the belongs_to association
       enrollment.student
 
-      sleep(100.milliseconds)
       messages = backend.messages.join("\n")
 
       messages.should contain("Loaded belongs_to association")
@@ -173,7 +169,6 @@ describe "Grant::Logging" do
       # Access the has_many association
       teacher.klasses
 
-      sleep(100.milliseconds)
       messages = backend.messages.join("\n")
 
       messages.should contain("Created has_many association collection")
@@ -189,7 +184,6 @@ describe "Grant::Logging" do
       # Query through association
       teacher.klasses.all
 
-      sleep(100.milliseconds)
       messages = backend.messages.join("\n")
 
       messages.should contain("Loaded has_many association")

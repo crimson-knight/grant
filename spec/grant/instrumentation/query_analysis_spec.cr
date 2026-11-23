@@ -1,8 +1,14 @@
 require "../../spec_helper"
 
-# Set up a test backend that we can use across tests
+# Set up a test backend that we can use across tests. It writes each entry as
+# it is logged (direct dispatch), so an example reads the messages right after
+# the call that logged them.
 class TestLogBackend < Log::Backend
   getter messages = [] of String
+
+  def initialize
+    super(:direct)
+  end
 
   def write(entry : Log::Entry) : Nil
     messages << "#{entry.severity} - #{entry.source}: #{entry.message}"
@@ -160,7 +166,6 @@ describe "Grant::QueryAnalysis" do
       # Since we can't access @stats directly, let's test through report output
 
       stats.report
-      sleep(100.milliseconds)
       messages = backend.messages.join("\n")
 
       # Verify the stats were recorded correctly
@@ -184,7 +189,6 @@ describe "Grant::QueryAnalysis" do
 
       stats.report
 
-      sleep(100.milliseconds)
       messages = backend.messages.join("\n")
 
       messages.should contain("Query Statistics Summary")

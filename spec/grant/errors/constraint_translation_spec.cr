@@ -460,15 +460,21 @@ describe "Grant constraint and lock error translation" do
       adapter = G01Account.adapter
 
       error = expect_raises(Grant::QueryCanceled) do
-        adapter.open_pool_connection("SELECT pg_sleep(5)") do |conn|
+        adapter.open_pool_connection("SELECT pg_sleep(60)") do |conn|
           backend_pid = conn.scalar("SELECT pg_backend_pid()").as(Int32)
           spawn do
-            sleep 200.milliseconds
+            # Cancel only once the server shows the sleep running; a cancel
+            # that arrives before the statement starts cancels nothing.
             adapter.database.using_connection do |other|
+              deadline = Time.instant + 30.seconds
+              until other.scalar("SELECT COUNT(*) FROM pg_stat_activity WHERE pid = $1 AND state = 'active' AND query LIKE 'SELECT pg_sleep%'", backend_pid).as(Int).to_i64 == 1
+                break if Time.instant > deadline
+                sleep 10.milliseconds
+              end
               other.exec "SELECT pg_cancel_backend($1)", backend_pid
             end
           end
-          conn.exec "SELECT pg_sleep(5)"
+          conn.exec "SELECT pg_sleep(60)"
         end
       end
       error.should_not be_a(Grant::StatementTimeout)

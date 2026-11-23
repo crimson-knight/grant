@@ -54,6 +54,17 @@ module Grant
       @healthy.get
     end
 
+    # True while the timer fiber that `start` spawned is still running. After
+    # `stop` it turns false once that fiber has woken and returned, and from
+    # then on the monitor sends no more probes.
+    def monitoring? : Bool
+      if fiber = @check_fiber
+        !fiber.dead?
+      else
+        false
+      end
+    end
+
     def last_check_time : Time
       Time.unix(@last_check_timestamp.get)
     end

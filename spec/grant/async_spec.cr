@@ -27,14 +27,18 @@ describe "Async features" do
     end
 
     it "supports timeout" do
+      # The work cannot finish until the gate opens, after the timeout fired.
+      gate = Channel(Nil).new
       result = Grant::Async::Result.new do
-        sleep(0.1.seconds)
+        gate.receive
         42
       end
 
       expect_raises(Grant::Async::AsyncTimeoutError) do
         result.wait_with_timeout(0.05.seconds)
       end
+      gate.send(nil)
+      result.wait.should eq(42)
     end
   end
 

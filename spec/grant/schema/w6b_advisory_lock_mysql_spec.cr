@@ -15,20 +15,34 @@ describe "advisory locks, live (#{CURRENT_ADAPTER})" do
   it "serializes two fibers on a key longer than the MySQL limit" do
     key = "w6b-long-" + "x" * 80
     events = [] of String
+    inside = Channel(Nil).new
+    release = Channel(Nil).new
     done = Channel(Nil).new
-    2.times do |index|
-      spawn do
-        Grant.with_advisory_lock(key, M03Fixture.adapter, 5.seconds) do
-          events << "enter#{index}"
-          sleep 40.milliseconds
-          events << "leave#{index}"
-        end
-        done.send(nil)
+    spawn do
+      Grant.with_advisory_lock(key, M03Fixture.adapter, 30.seconds) do
+        events << "enter0"
+        inside.send(nil)
+        release.receive
+        events << "leave0"
       end
+      done.send(nil)
     end
+    inside.receive
+
+    # While the first fiber holds the key, a second taker cannot get in at all.
+    expect_raises(Grant::AdvisoryLockTimeout) do
+      Grant.with_advisory_lock(key, M03Fixture.adapter, Time::Span.zero) { events << "overlap" }
+    end
+    spawn do
+      Grant.with_advisory_lock(key, M03Fixture.adapter, 30.seconds) do
+        events << "enter1"
+        events << "leave1"
+      end
+      done.send(nil)
+    end
+    release.send(nil)
     2.times { done.receive }
-    events[0][5].should eq events[1][5]
-    events[2][5].should eq events[3][5]
+    events.should eq ["enter0", "leave0", "enter1", "leave1"]
   end
 
   if CURRENT_ADAPTER == "mysql"
@@ -62,7 +76,7 @@ describe "advisory locks, live (#{CURRENT_ADAPTER})" do
         foreign.close
       end
       reached = false
-      Grant.with_advisory_lock(key, M03Fixture.adapter, 2.seconds) { reached = true }
+      Grant.with_advisory_lock(key, M03Fixture.adapter, 30.seconds) { reached = true }
       reached.should be_true
     end
 
@@ -85,7 +99,7 @@ describe "advisory locks, live (#{CURRENT_ADAPTER})" do
         foreign.close rescue nil
       end
       reached = false
-      Grant.with_advisory_lock(key, M03Fixture.adapter, 3.seconds) { reached = true }
+      Grant.with_advisory_lock(key, M03Fixture.adapter, 30.seconds) { reached = true }
       reached.should be_true
     end
 

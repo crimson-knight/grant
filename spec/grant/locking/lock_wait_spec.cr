@@ -49,6 +49,30 @@ private def lock_wait_spec_holding(id : Int64, mode : Grant::Locking::LockMode =
   end
 end
 
+# Other sessions of this database running a FOR UPDATE on the spec's table
+# right now. While the holder keeps its row lock, such a statement can only be
+# blocked on it. (MySQL's innodb_trx does not always list a waiter that is
+# still in the optimizer's "statistics" step, so the process list is read.)
+private def lock_wait_spec_blocked_sessions : Int64
+  sql = if LockWaitSpecJob.adapter.postgres?
+          "SELECT COUNT(*) FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid() " \
+          "AND state = 'active' AND wait_event_type = 'Lock' AND query LIKE '%lock_wait_spec_jobs%FOR UPDATE%'"
+        else
+          "SELECT COUNT(*) FROM information_schema.processlist WHERE db = DATABASE() AND id <> CONNECTION_ID() " \
+          "AND command IN ('Query', 'Execute') AND info LIKE '%lock_wait_spec_jobs%FOR UPDATE%'"
+        end
+  LockWaitSpecJob.adapter.open { |db| db.scalar(sql).as(Int).to_i64 }
+end
+
+# Polls until the block returns true, failing the example after *timeout*.
+private def lock_wait_spec_wait_until(description : String, timeout : Time::Span = 30.seconds, & : -> Bool) : Nil
+  deadline = Time.instant + timeout
+  until yield
+    raise "timed out after #{timeout} waiting until #{description}" if Time.instant > deadline
+    sleep 10.milliseconds
+  end
+end
+
 private def lock_wait_spec_real_locks? : Bool
   LockWaitSpecJob.adapter.supports_lock_mode?(Grant::Locking::LockMode::Update)
 end
@@ -154,7 +178,8 @@ describe "Row lock waits" do
             waiter_done.send(nil)
           end
 
-          sleep 150.milliseconds
+          # The waiter's FOR UPDATE is seen blocked on the server before the holder lets go.
+          lock_wait_spec_wait_until("the waiter blocks on the held row") { lock_wait_spec_blocked_sessions >= 1 }
           events << "holder still holds"
           events.should eq(["holder still holds"])
         end
