@@ -61,10 +61,7 @@ describe "SQLite adapter PRAGMA defaults" do
       adapter = Grant::Adapter::Sqlite.new(name: "g01_defaults", url: "sqlite3:#{path}")
       begin
         pragma(adapter, "foreign_keys").should eq("1")
-        # Grant's own engine writes with a rollback journal until WAL
-        # arrives (milestone G5), so it keeps and reports DELETE, as C
-        # reports the mode it kept when a change is refused.
-        pragma(adapter, "journal_mode").should eq(GRANT_SQLITE_ENGINE == :grant ? "delete" : "wal")
+        pragma(adapter, "journal_mode").should eq("wal")
         pragma(adapter, "busy_timeout").should eq("5000")
         pragma(adapter, "synchronous").should eq("1")
       ensure
