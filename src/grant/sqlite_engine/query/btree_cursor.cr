@@ -383,6 +383,12 @@ module Grant::SQLiteEngine::Query
 
     @built_generation = -1
 
+    # True when the cursor is on an entry of the tree as it is now (no
+    # write since it moved there).
+    def positioned? : Bool
+      @valid && @built_generation == pager.generation
+    end
+
     # Forgets the position, so the next seek starts from the root (a new
     # execution may follow writes this connection made).
     def forget_position : Nil

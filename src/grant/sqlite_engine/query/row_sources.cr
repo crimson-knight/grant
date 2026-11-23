@@ -335,9 +335,19 @@ module Grant::SQLiteEngine::Query
         @opened_for = frame
       end
       @table_cursor ||= TableCursor.new(@database, @table.root_page)
+      # A join probes in ascending key order: the last lookup stopped on
+      # the first entry past its key, so when this key is larger, every
+      # entry before the cursor is below it and the cursor is where the
+      # seek would start (OP_SeekGE on a cursor already in place).
+      @resume = @can_resume && !@empty && !probe.empty? && @low.nil? && @high_bound.nil? &&
+                index_cursor.positioned? && @order.compare(probe, @resume_after) > 0
+      @can_resume = false
     end
 
     @opened_for : Frame? = nil
+    @resume = false
+    @can_resume = false
+    @resume_after = [] of Value
 
     # True when converting a bound kept its value exactly: an entry equal
     # to a rounded bound may still pass the WHERE term, so only an exact
@@ -373,12 +383,27 @@ module Grant::SQLiteEngine::Query
       table_cursor = @table_cursor
       return false unless index_cursor && table_cursor
       loop do
-        moved = @started ? index_cursor.advance : (@seek_key.empty? ? index_cursor.first : index_cursor.seek(@seek_key, @strict_low))
-        @started = true
-        return false unless moved
-        entry = index_cursor.record(@entry)
+        if @resume
+          # The current entry is the first that may hold the key; one
+          # below it means the key lies further on.
+          @resume = false
+          @started = true
+          entry = index_cursor.record(@entry)
+          if @order.compare(entry, @probe) < 0
+            return false unless index_cursor.seek(@seek_key, @strict_low)
+            entry = index_cursor.record(@entry)
+          end
+        else
+          moved = @started ? index_cursor.advance : (@seek_key.empty? ? index_cursor.first : index_cursor.seek(@seek_key, @strict_low))
+          @started = true
+          return false unless moved
+          entry = index_cursor.record(@entry)
+        end
         unless @probe.empty? || @order.compare(entry, @probe) == 0
           @empty = true
+          # The cursor rests on the first entry past the key.
+          @can_resume = true
+          @resume_after.replace(@probe)
           return false
         end
         if @has_high
