@@ -237,6 +237,13 @@ module SelectSpecFixture
     {"SELECT id, name FROM users WHERE name LIKE ? AND age > 1", ["a%"] of Grant::SQLiteEngine::Value},
     {"SELECT id FROM posts WHERE rank > ? AND title LIKE 'F%'", [5_i64] of Grant::SQLiteEngine::Value},
     {"SELECT id, flag FROM users WHERE flag = ? AND name NOT LIKE ?", [1_i64, "c%"] of Grant::SQLiteEngine::Value},
+    # Columns a test decided are decoded when something else reads them: a
+    # correlated subquery, a bare column of a group, a LEFT JOIN's right
+    # side, and a later term evaluated the general way.
+    {"SELECT u.id, (SELECT count(*) FROM posts p WHERE p.title LIKE 'F%' AND p.user_id = u.id AND u.score > 1) FROM users u WHERE u.score > ?", [0_i64] of Grant::SQLiteEngine::Value},
+    {"SELECT flag, name, max(age) FROM users WHERE name LIKE '%' AND score > -10 GROUP BY flag", [] of Grant::SQLiteEngine::Value},
+    {"SELECT u.name, p.title, p.rank FROM users u LEFT JOIN posts p ON p.user_id = u.id AND p.rank > 1 WHERE u.score > 0 ORDER BY u.id, p.id", [] of Grant::SQLiteEngine::Value},
+    {"SELECT id, score FROM users WHERE score > ? AND score + 0 < 9", [0_i64] of Grant::SQLiteEngine::Value},
   ]
 end
 

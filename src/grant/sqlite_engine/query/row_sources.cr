@@ -62,6 +62,7 @@ module Grant::SQLiteEngine::Query
     # columns; those columns are decoded before a later term or the query
     # reads them.
     @list_of_undecoded = [] of Int32
+    @pending_rowid = 0_i64
     @masks_ready = false
     @header = RecordHeader.new
 
@@ -116,6 +117,7 @@ module Grant::SQLiteEngine::Query
       prepare_masks unless @masks_ready
       encoding = @database.text_encoding
       undecoded = @list_of_undecoded
+      frame.list_of_pending[@slot] = nil if frame.list_of_pending.unsafe_fetch(@slot)
       loop do
         moved = @started ? cursor.advance : cursor.first
         @started = true
@@ -128,12 +130,27 @@ module Grant::SQLiteEngine::Query
         frame.list_of_rows[@slot] = @buffer
         undecoded.clear unless undecoded.empty?
         if passes_terms?(frame, rowid, encoding, undecoded)
-          undecoded.each { |index| fill_term_columns(index, rowid, encoding) }
+          # The columns of terms a test decided are decoded only when
+          # something reads the row (`complete_row`); a column only such a
+          # term reads is never decoded, as with C's OP_Column.
+          unless undecoded.empty?
+            frame.list_of_pending[@slot] = self
+            @pending_rowid = rowid
+          end
           @table.fill_columns(@header, rowid, @rest_positions, encoding, @buffer)
           return true
         end
         frame.session.tick
       end
+    end
+
+    # Decodes the columns of the current row that tests passed without
+    # decoding (see `Frame#complete_row`).
+    def complete_row(frame : Frame) : Nil
+      frame.list_of_pending[@slot] = nil
+      encoding = @database.text_encoding
+      @list_of_undecoded.each { |index| fill_term_columns(index, @pending_rowid, encoding) }
+      @list_of_undecoded.clear
     end
 
     # Tests the current row against every term in order, as C codes them.
@@ -572,6 +589,7 @@ module Grant::SQLiteEngine::Query
           @right_slots.each do |slot|
             frame.list_of_rows[slot] = NULL_ROW
             frame.list_of_rowids[slot] = nil
+            frame.list_of_pending[slot] = nil
           end
           return true
         end

@@ -180,9 +180,12 @@ module Grant::SQLiteEngine::Query
         saved_rowids = @saved_rowids
         saved_rows.clear
         saved_rowids.clear
+        saved_pending = @saved_pending
+        saved_pending.clear
         slots.each do |slot|
           saved_rows << frame.list_of_rows[slot]
           saved_rowids << frame.list_of_rowids[slot]
+          saved_pending << frame.list_of_pending[slot]
         end
         restore(frame, group, aggregation)
         row = nil
@@ -192,6 +195,7 @@ module Grant::SQLiteEngine::Query
         slots.each_with_index do |slot, position|
           frame.list_of_rows[slot] = saved_rows[position]
           frame.list_of_rowids[slot] = saved_rowids[position]
+          frame.list_of_pending[slot] = saved_pending[position]
         end
         # Nothing holds the shown group's arrays now; the group after the
         # current one reuses them.
@@ -236,6 +240,7 @@ module Grant::SQLiteEngine::Query
     @scratch_keys = [] of Value
     @saved_rows = [] of Array(Value)
     @saved_rowids = [] of Int64?
+    @saved_pending = [] of TableScanSource?
     # Finished groups whose arrays and accumulators the next groups reuse,
     # kept from one execution to the next.
     @list_of_spare_groups = [] of Group
@@ -307,6 +312,7 @@ module Grant::SQLiteEngine::Query
       if first || deciding_hit
         aggregation.list_of_slots.each_with_index do |slot, position|
           # Table sources refill one array per row, so the group keeps a copy.
+          frame.complete_row(slot)
           group.list_of_rows.unsafe_fetch(position).replace(frame.list_of_rows[slot])
           group.list_of_rowids[position] = frame.list_of_rowids[slot]
         end
@@ -376,6 +382,7 @@ module Grant::SQLiteEngine::Query
       aggregation.list_of_slots.each_with_index do |slot, position|
         frame.list_of_rows[slot] = group.list_of_rows[position]
         frame.list_of_rowids[slot] = group.list_of_rowids[position]
+        frame.list_of_pending[slot] = nil
       end
       aggregation.list_of_calls.each_with_index do |call, index|
         frame.list_of_aggregate_values[call.result_index] = group.list_of_accumulators[index].finish

@@ -11,11 +11,23 @@ module Grant::SQLiteEngine::Query
     getter list_of_aggregate_values : Array(Value)
     getter list_of_parameters : Array(Value)
     getter session : Session
+    # Per slot, the table scan whose current row still has values to
+    # decode (columns only its WHERE tests read, decided from the stored
+    # record); nil when the row in the slot is complete.
+    getter list_of_pending : Array(TableScanSource?)
 
     def initialize(slot_count : Int32, aggregate_count : Int32, @list_of_parameters : Array(Value), @session : Session)
       @list_of_rows = Array(Array(Value)).new(slot_count) { [] of Value }
       @list_of_rowids = Array(Int64?).new(slot_count, nil)
       @list_of_aggregate_values = Array(Value).new(aggregate_count, nil)
+      @list_of_pending = Array(TableScanSource?).new(slot_count, nil)
+    end
+
+    # Decodes what the row in *slot* still lacks, before anything reads it.
+    def complete_row(slot : Int32) : Nil
+      if pending = @list_of_pending.unsafe_fetch(slot)
+        pending.complete_row(self)
+      end
     end
   end
 
@@ -129,6 +141,7 @@ module Grant::SQLiteEngine::Query
     end
 
     def evaluate(frame : Frame) : Value
+      frame.complete_row(@slot)
       value = frame.list_of_rows.unsafe_fetch(@slot)[@column]? || nil
       return value.to_f64 if @realify && value.is_a?(Int64)
       value
