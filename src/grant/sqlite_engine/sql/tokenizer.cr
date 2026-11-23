@@ -224,15 +224,7 @@ module Grant::SQLiteEngine::SQL
     end
 
     private def keyword_kind(start : Int32, length : Int32) : TokenKind
-      return TokenKind::Identifier if length < 2 || length > Keywords::MAX_KEYWORD_SIZE
-      word = String.build(length) do |io|
-        length.times do |index|
-          byte = @bytes[start + index]
-          return TokenKind::Identifier if byte >= 0x80
-          io.write_byte(byte >= 'a'.ord && byte <= 'z'.ord ? byte - 32 : byte)
-        end
-      end
-      Keywords::TABLE[word]? || TokenKind::Identifier
+      Keywords.lookup(@bytes, start, length) || TokenKind::Identifier
     end
 
     private def scan_quoted(start : Int32, quote : UInt8) : {TokenKind, Int32, Bool}

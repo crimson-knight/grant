@@ -101,15 +101,21 @@ module Grant::SQLiteEngine
       end
     end
 
-    # Removes the row (declared order, as stored) and its index entries
-    # (*list_of_entries*: each index that holds it with its entry).
-    def remove_row(layout : TableLayout, rowid : Int64?, row : Array(Value), list_of_entries : Array({IndexLayout, Array(Value)})) : Nil
+    # Removes index entries of a row of *layout*'s table, leaving the row.
+    def remove_index_entries(layout : TableLayout, list_of_entries : Array({IndexLayout, Array(Value)})) : Nil
       writer = btree_writer
       list_of_entries.each do |index, entry|
         unless writer.index_delete(index.entry.root_page, entry, index.comparator)
           raise CorruptDatabase.new("index #{index.entry.object_name} has no entry for a row of #{layout.table_name}", index.entry.root_page)
         end
       end
+    end
+
+    # Removes the row (declared order, as stored) and its index entries
+    # (*list_of_entries*: each index that holds it with its entry).
+    def remove_row(layout : TableLayout, rowid : Int64?, row : Array(Value), list_of_entries : Array({IndexLayout, Array(Value)})) : Nil
+      writer = btree_writer
+      remove_index_entries(layout, list_of_entries)
       if rowid
         writer.table_delete(layout.entry.root_page, rowid)
       else

@@ -80,8 +80,11 @@ module Grant::SQLiteEngine::Query
         # A single-row INSERT (no SELECT, one VALUES row, no RETURNING
         # trigger, no REPLACE that deletes rows) raises an immediate foreign
         # key at once (fkLookupParent's !isMultiWrite case).
-        multi, journal = StatementJournal.for_insert(@session, @table, @statement, @override, @list_of_source_positions,
-          !(@source.nil? || single_values_row?))
+        multi, journal, _ = journal_choices(@session.foreign_keys?) do
+          several = StatementJournal.for_insert(@session, @table, @statement, @override, @list_of_source_positions,
+            !(@source.nil? || single_values_row?))
+          {several[0], several[1], false}
+        end
         run.single_row = !multi
         run.statement_journal = journal
         run.open_autoincrement(@table)

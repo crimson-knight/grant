@@ -55,13 +55,21 @@ module Grant::SQLite3
         fail(Engine::ERROR_CODE, error.message || "syntax error")
       end
 
+      # Statements that compile without reading the schema: BEGIN, COMMIT,
+      # END, ROLLBACK, SAVEPOINT and RELEASE.
+      TRANSACTION_CONTROL = /\A\s*(BEGIN|COMMIT|END|ROLLBACK|SAVEPOINT|RELEASE)\b/i
+
       def prepare(sql : String) : {Int32, Engine::PreparedStatement}
-        @session.begin_statement_read
-        query = begin
-          @session.prepare(sql)
-        ensure
-          @session.end_statement_read
-        end
+        query = if TRANSACTION_CONTROL.matches?(sql)
+                  @session.prepare(sql)
+                else
+                  @session.begin_statement_read
+                  begin
+                    @session.prepare(sql)
+                  ensure
+                    @session.end_statement_read
+                  end
+                end
         succeed
         @open_statement_count += 1
         {Engine::OK_CODE, PreparedStatement.new(self, query).as(Engine::PreparedStatement)}
@@ -184,7 +192,7 @@ module Grant::SQLite3
       @reading = false
 
       def step : Int32
-        unless @reading
+        if !@reading && @query.reads_database?
           @database.session.begin_statement_read
           @reading = true
         end

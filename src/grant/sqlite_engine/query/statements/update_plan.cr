@@ -106,9 +106,13 @@ module Grant::SQLiteEngine::Query
       returned = [] of Array(Value)
       @session.run_write(list_of_parameters, returning: !@returning.nil?) do |run|
         positions = @assignments.list_of_positions
-        run.statement_journal = StatementJournal.for_update(@session, @table, @statement, @override, positions)
+        journal, _, in_rowid_order = journal_choices(@session.foreign_keys?) do
+          {StatementJournal.for_update(@session, @table, @statement, @override, positions), false,
+           StatementJournal.update_in_rowid_order?(@session, @table, @statement, @override, positions, @targets.scan_index_root)}
+        end
+        run.statement_journal = journal
         targets = @targets.collect(list_of_parameters)
-        if !@table.without_rowid? && StatementJournal.update_in_rowid_order?(@session, @table, @statement, @override, positions, @targets.scan_index_root)
+        if !@table.without_rowid? && in_rowid_order
           targets = targets.sort_by { |target| target[0] || 0_i64 }
         elsif @table.without_rowid? && !WithoutRowidScan.primary_key_changed?(@table, positions)
           read = @statement.assignments.map(&.value)
@@ -173,11 +177,15 @@ module Grant::SQLiteEngine::Query
     def run(list_of_parameters : Array(Value)) : Array(Array(Value))
       returned = [] of Array(Value)
       @session.run_write(list_of_parameters, returning: !@returning.nil?) do |run|
-        run.statement_journal = StatementJournal.for_delete(@session, @table, @statement)
+        journal, _, in_rowid_order = journal_choices(@session.foreign_keys?) do
+          {StatementJournal.for_delete(@session, @table, @statement), false,
+           StatementJournal.delete_in_rowid_order?(@session, @table, @statement)}
+        end
+        run.statement_journal = journal
         targets = @targets.collect(list_of_parameters)
-        if !@table.without_rowid? && StatementJournal.delete_in_rowid_order?(@session, @table, @statement)
+        if !@table.without_rowid? && in_rowid_order
           targets = targets.sort_by { |target| target[0] || 0_i64 }
-        elsif @table.without_rowid? && !StatementJournal.delete_in_rowid_order?(@session, @table, @statement)
+        elsif @table.without_rowid? && !in_rowid_order
           if layout = WithoutRowidScan.scan_layout(@table, @statement.where, [] of SQL::Expression)
             targets = WithoutRowidScan.sort(@table, targets, layout)
           end

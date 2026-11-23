@@ -109,9 +109,36 @@ module Grant::SQLiteEngine
       @data[offset, size]
     end
 
-    # Copies of every cell, in order.
+    # Copies of every cell, in order: slices of one copy of the page, so a
+    # page of many small cells costs one allocation (as balance_nonroot
+    # copies cells into one scratch buffer).
     def list_of_cells : Array(Bytes)
-      Array(Bytes).new(cell_count) { |index| cell(index).dup }
+      type = page_type
+      count = cell_count
+      pointers = @header_offset + PageEditor.header_size(type)
+      pointers_end = pointers + count * 2
+      raise CorruptDatabase.new("cell pointer array runs past the usable size", @number) if pointers_end > Math.min(@usable_size, @data.size)
+      copy = @data.dup
+      data = @data
+      # A leaf index cell whose payload size fits one varint byte and stays
+      # on the page is that byte and the payload (the common case).
+      index_leaf = type.leaf_index?
+      max_local = ((@usable_size - 12) * 64 // 255) - 23
+      Array(Bytes).new(count) do |index|
+        at = pointers + index * 2
+        offset = (data.unsafe_fetch(at).to_i32 << 8) | data.unsafe_fetch(at + 1)
+        if offset < pointers_end || offset >= @usable_size
+          raise CorruptDatabase.new("cell #{index} pointer #{offset} is outside the page", @number)
+        end
+        first = data.unsafe_fetch(offset)
+        size = if index_leaf && first < 0x80 && first <= max_local
+                 1 + first.to_i32
+               else
+                 PageEditor.cell_content_size(data, offset, type, @usable_size, @number)
+               end
+        raise CorruptDatabase.new("cell #{index} runs past the usable size", @number) if offset + size > @usable_size
+        copy[offset, size]
+      end
     end
 
     # Free bytes: the gap between the pointer array and the content area,
@@ -173,13 +200,20 @@ module Grant::SQLiteEngine
       self.right_child = right_child if page_type.interior?
       top = @usable_size
       pointers = pointer_array_offset
+      floor = pointers + list_of_cells.size * 2
+      raise Error.new("cells do not fit page #{@number}") if @usable_size > @data.size || floor > @usable_size
+      page = @data.to_unsafe
       list_of_cells.each_with_index do |content, index|
-        space = Math.max(MIN_CELL_SPACE, content.size)
+        size = content.size
+        space = size < MIN_CELL_SPACE ? MIN_CELL_SPACE : size
         top -= space
-        raise Error.new("cells do not fit page #{@number}") if top < pointers + list_of_cells.size * 2
-        (@data + top).copy_from(content.to_unsafe, content.size)
-        (@data + top + content.size).to_unsafe.clear(space - content.size) if space > content.size
-        put_u16(pointers + index * 2, top)
+        # Checked before each write, so the unchecked copies below stay
+        # between the pointer array and the end of the usable area.
+        raise Error.new("cells do not fit page #{@number}") if top < floor
+        (page + top).copy_from(content.to_unsafe, size)
+        (page + top + size).clear(space - size) if space > size
+        page[pointers + index * 2] = (top >> 8).to_u8!
+        page[pointers + index * 2 + 1] = top.to_u8!
       end
       put_u16(@header_offset + 3, list_of_cells.size)
       set_content_start(top)

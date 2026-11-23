@@ -14,6 +14,12 @@ module Grant::SQLiteEngine::Query
 
     @compiled : CompiledSelect
     @parameters : Array(Value)
+
+    # False for a statement that only moves the transaction state (BEGIN
+    # DEFERRED, COMMIT, ROLLBACK of the whole transaction, SAVEPOINT,
+    # RELEASE): like C's OP_AutoCommit and OP_Savepoint, it reads no page,
+    # so running it takes no read lock of its own.
+    getter? reads_database = true
     @frame : Frame? = nil
     @done = false
 
@@ -34,6 +40,7 @@ module Grant::SQLiteEngine::Query
         if @parameter_count > SQL::Limits::MAX_VARIABLE_NUMBER
           raise SQLError.new("too many SQL variables")
         end
+        @reads_database = !PreparedQuery.transaction_control?(statement)
         plan = StatementCompiler.compile(@session, statement, prepared.text)
         producer = PlanProducer.new(@session, plan, statement, prepared.text)
         @compiled = CompiledSelect.new(producer, plan.list_of_column_names, 0, 0, false)
@@ -51,6 +58,12 @@ module Grant::SQLiteEngine::Query
       @compiled.producer.lend_rows
       @list_of_column_names = @compiled.list_of_column_names
       @parameters = Array(Value).new(@parameter_count, nil)
+    end
+
+    def self.transaction_control?(statement : SQL::Statement) : Bool
+      return !(statement.mode.immediate? || statement.mode.exclusive?) if statement.is_a?(SQL::Begin)
+      return statement.savepoint.nil? if statement.is_a?(SQL::Rollback)
+      statement.is_a?(SQL::Commit) || statement.is_a?(SQL::Savepoint) || statement.is_a?(SQL::Release)
     end
 
     def self.statement_kind(statement : SQL::Statement) : String

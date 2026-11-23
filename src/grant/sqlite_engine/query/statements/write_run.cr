@@ -29,7 +29,16 @@ module Grant::SQLiteEngine::Query
     property? single_row = false
     # C would give the statement a statement journal (`StatementJournal`);
     # without one a runtime error keeps the rows already written.
-    property? statement_journal = true
+    getter? statement_journal = true
+
+    # Without a statement journal, C checks every constraint of the one
+    # row before writing it, so the statement's savepoint level images no
+    # pages (copying each page the transaction already changed).
+    def statement_journal=(value : Bool) : Bool
+      @session.database.pager.skip_savepoint_images unless value
+      @statement_journal = value
+    end
+
     # Rows CREATE TABLE ... AS SELECT copies count nowhere.
     property? silent = false
     # FOREIGN KEY violations of immediate constraints still open in this
@@ -448,6 +457,25 @@ module Grant::SQLiteEngine::Query
     end
 
     # Each index of *table* that holds the row, with the row's entry.
+    # The entries of *list* that *other* does not hold with the same key
+    # (each value the same storage class and value).
+    def self.entries_not_in(list : Array({IndexLayout, Array(Value)}), other : Array({IndexLayout, Array(Value)})) : Array({IndexLayout, Array(Value)})
+      list.reject do |(index, key)|
+        other.any? { |(other_index, other_key)| other_index.same?(index) && WriteRun.same_key?(key, other_key) }
+      end
+    end
+
+    def self.same_key?(left : Array(Value), right : Array(Value)) : Bool
+      return false unless left.size == right.size
+      left.each_with_index do |value, position|
+        other = right[position]
+        return false unless value.class == other.class && value == other
+        # -0.0 equals 0.0 but is stored with its own bits.
+        return false if value.is_a?(Float64) && other.is_a?(Float64) && value.unsafe_as(UInt64) != other.unsafe_as(UInt64)
+      end
+      true
+    end
+
     def index_entries(table : WriteTable, row : Array(Value), rowid : Int64?) : Array({IndexLayout, Array(Value)})
       table.list_of_index_layouts.compact_map do |index|
         next unless index_includes?(table, index, row, rowid)
@@ -560,11 +588,21 @@ module Grant::SQLiteEngine::Query
         child_removed(table, old_row, new_row, list_of_changed)
         parent_removed(table, old_rowid, old_row, new_row, list_of_changed)
       end
-      table.database.remove_row(table.layout, old_rowid, old_row, index_entries(table, old_row, old_rowid))
-      if replaced = result[3]
-        delete_row(table, replaced[0], replaced[1], replace: true)
+      old_entries = index_entries(table, old_row, old_rowid)
+      new_entries = index_entries(table, new_row, rowid)
+      if rowid && rowid == old_rowid && result[3].nil?
+        # The row keeps its rowid: its cell is overwritten in place, and only
+        # the index entries whose keys changed move (C leaves an index whose
+        # columns the UPDATE does not change alone).
+        table.database.remove_index_entries(table.layout, WriteRun.entries_not_in(old_entries, new_entries))
+        table.database.write_row(table.layout, rowid, new_row, WriteRun.entries_not_in(new_entries, old_entries))
+      else
+        table.database.remove_row(table.layout, old_rowid, old_row, old_entries)
+        if replaced = result[3]
+          delete_row(table, replaced[0], replaced[1], replace: true)
+        end
+        table.database.write_row(table.layout, rowid, new_row, new_entries)
       end
-      table.database.write_row(table.layout, rowid, new_row, index_entries(table, new_row, rowid))
       if foreign_keys?
         child_added(table, new_row, old_row, list_of_changed)
         parent_added(table, rowid, new_row, old_row, list_of_changed)

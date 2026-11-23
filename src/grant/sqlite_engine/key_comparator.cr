@@ -43,6 +43,89 @@ module Grant::SQLiteEngine
       0
     end
 
+    # Compares a stored index record with *key* straight from its bytes,
+    # as sqlite3VdbeRecordCompare does with an unpacked key: numbers, NULLs,
+    # blobs and UTF-8 text under BINARY or NOCASE compare without decoding
+    # the record. Nil when a column needs the decoded value (RTRIM, UTF-16
+    # text) or the record is malformed, so the caller decodes it (and
+    # reports the corruption).
+    def compare_record(payload : Bytes, key : Array(Value)) : Int32?
+      header_size, length = Varint.decode(payload, 0)
+      return if length == 0 || header_size < length || header_size > payload.size
+      header_end = header_size.to_i32
+      position = length
+      body = header_end
+      index = 0
+      while position < header_end && index < key.size
+        serial_type, used = Varint.decode(payload, position, header_end)
+        return if used == 0
+        position += used
+        size = KeyComparator.stored_size(serial_type)
+        return if size < 0 || body + size > payload.size
+        column = @list_of_key_columns[index]? || ASCENDING_BINARY
+        result = compare_stored(payload, body, serial_type, size, key.unsafe_fetch(index), column.collation)
+        return unless result
+        return column.descending ? -result : result if result != 0
+        body += size
+        index += 1
+      end
+      0
+    end
+
+    # Content bytes of a serial type; -1 for a reserved or negative one.
+    protected def self.stored_size(serial_type : Int64) : Int32
+      case serial_type
+      when 0, 8, 9 then 0
+      when 1, 2, 3, 4
+        serial_type.to_i32
+      when 5    then 6
+      when 6, 7 then 8
+      when 10, 11
+        -1
+      else
+        serial_type < 0 || serial_type > Int32::MAX ? -1 : ((serial_type - 12) // 2).to_i32
+      end
+    end
+
+    private def compare_stored(payload : Bytes, offset : Int32, serial_type : Int64, size : Int32, right : Value,
+                               collation : Collation) : Int32?
+      case serial_type
+      when 0
+        return compare_values(nil, right, collation)
+      when 1, 2, 3, 4, 5, 6
+        value = payload.unsafe_fetch(offset).to_i8!.to_i64
+        (1...size).each { |step| value = (value << 8) | payload.unsafe_fetch(offset + step) }
+        return compare_values(value, right, collation)
+      when 7
+        bits = 0_u64
+        8.times { |step| bits = (bits << 8) | payload.unsafe_fetch(offset + step) }
+        real = bits.unsafe_as(Float64)
+        return compare_values(real.nan? ? nil : real, right, collation)
+      when 8 then return compare_values(0_i64, right, collation)
+      when 9 then return compare_values(1_i64, right, collation)
+      end
+      text = serial_type.odd?
+      left_class = text ? 2 : 3
+      right_class = storage_class(right)
+      return left_class <=> right_class if left_class != right_class
+      stored = payload[offset, size]
+      if right.is_a?(Bytes)
+        return sign(stored <=> right)
+      end
+      return unless right.is_a?(String) && @encoding.utf8?
+      case collation
+      when .binary? then sign(stored <=> right.to_slice)
+      when .no_case?
+        right_bytes = right.to_slice
+        shorter = Math.min(stored.size, right_bytes.size)
+        shorter.times do |step|
+          difference = ascii_lower(stored.unsafe_fetch(step)).to_i32 - ascii_lower(right_bytes.unsafe_fetch(step)).to_i32
+          return sign(difference) if difference != 0
+        end
+        sign(stored.size - right_bytes.size)
+      end
+    end
+
     def compare_values(left : Value, right : Value, collation : Collation) : Int32
       left_class = storage_class(left)
       right_class = storage_class(right)
