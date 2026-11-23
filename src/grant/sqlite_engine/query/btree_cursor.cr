@@ -402,10 +402,9 @@ module Grant::SQLiteEngine::Query
     private def leaf_spans?(leaf : BTreePage, probe : Array(Value), strict : Bool) : Bool
       count = leaf.cell_count
       return false if count == 0
-      encoding = @database.text_encoding
-      first = RecordColumns.compare_prefix(entry_payload(leaf, 0), encoding, leaf.number, probe, @order)
+      first = compare_entry(leaf, 0, probe)
       return false unless strict ? first <= 0 : first < 0
-      last = RecordColumns.compare_prefix(entry_payload(leaf, count - 1), encoding, leaf.number, probe, @order)
+      last = compare_entry(leaf, count - 1, probe)
       strict ? last > 0 : last >= 0
     end
 
@@ -431,17 +430,27 @@ module Grant::SQLiteEngine::Query
     # True when the entry at *index* sorts before the first entry *seek*
     # wants.
     private def below?(page : BTreePage, index : Int32, probe : Array(Value), strict : Bool) : Bool
-      comparison = RecordColumns.compare_prefix(entry_payload(page, index), @database.text_encoding,
-        page.number, probe, @order)
+      comparison = compare_entry(page, index, probe)
       comparison < 0 || (strict && comparison == 0)
     end
 
+    # Compares entry *index* of *page* with *probe* in index order. A probe
+    # of one integer against a stored integer compares the two directly
+    # (vdbeRecordCompareInt); anything else goes through `compare_prefix`.
+    private def compare_entry(page : BTreePage, index : Int32, probe : Array(Value)) : Int32
+      payload = entry_payload(page, index)
+      if probe.size == 1 && (key = probe.unsafe_fetch(0)).is_a?(Int64)
+        if comparison = RecordColumns.compare_integer_key(payload, key)
+          return @order.descending[0]? ? -comparison : comparison
+        end
+      end
+      RecordColumns.compare_prefix(payload, @database.text_encoding, page.number, probe, @order)
+    end
+
     private def bound(page : BTreePage, probe : Array(Value), strict : Bool, low : Int32 = 0, high : Int32 = page.cell_count) : Int32
-      encoding = @database.text_encoding
       while low < high
         middle = (low + high) // 2
-        comparison = RecordColumns.compare_prefix(entry_payload(page, middle), encoding, page.number,
-          probe, @order)
+        comparison = compare_entry(page, middle, probe)
         if comparison < 0 || (strict && comparison == 0)
           low = middle + 1
         else

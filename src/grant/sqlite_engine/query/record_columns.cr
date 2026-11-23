@@ -224,6 +224,20 @@ module Grant::SQLiteEngine::Query
       0
     end
 
+    # The first value of the record in *payload* compared with *key* when
+    # that value is an integer and the record is sound that far; nil
+    # otherwise, for `compare_prefix` to decide (and report corruption).
+    def self.compare_integer_key(payload : Bytes, key : Int64) : Int32?
+      return if payload.size < 2
+      header_size = payload.unsafe_fetch(0)
+      serial_type = payload.unsafe_fetch(1)
+      return unless 2 <= header_size < 0x80_u8 && 0 < serial_type <= 9 && serial_type != 7
+      size = FIXED_SIZES.unsafe_fetch(serial_type)
+      return if header_size.to_i64 + size > payload.size
+      stored = serial_type >= 8 ? serial_type.to_i64 - 8 : signed_integer(payload, header_size.to_i32, size.to_i32)
+      stored <=> key
+    end
+
     # Decodes every value of *payload* into *into*, replacing what it held.
     def self.decode_into(payload : Bytes, encoding : TextEncoding, page_number : UInt32, into : Array(Value)) : Array(Value)
       # Values overwrite the array in place; a longer old record is cut
