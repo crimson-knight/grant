@@ -79,7 +79,11 @@ module Grant::SQLiteEngine
           held = positions.each_with_index.any? { |held_position, term_index| held_position == position && columns[term_index].collation == key_column.collation }
           next if held
           tail << position
-          columns << key_column
+          # The automatic index of a UNIQUE constraint gets the key columns
+          # in ascending order whatever the key declares (build.c,
+          # convertToWithoutRowidTable, "bAscKeyBug", ticket bba7b69f9849b5bf);
+          # CREATE INDEX copies the declared order.
+          columns << (entry.sql.nil? ? KeyColumn.new(key_column.collation, false) : key_column)
         end
       end
       primary = entry.sql.nil? && same_columns?(terms, table.list_of_primary_key_columns)

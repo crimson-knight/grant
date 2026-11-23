@@ -144,8 +144,12 @@ module Grant::SQLiteEngine
     end
 
     private def seek_rowid(root : UInt32, rowid : Int64) : {Array(PathEntry), UInt32, Int32, Bool}
+      if appended = seek_past_rightmost(root, rowid)
+        return appended
+      end
       path = [] of PathEntry
       page_number = root
+      rightmost = true
       Limits::MAX_BTREE_DEPTH.times do
         page = BTreePage.read(@pager, page_number)
         page.corrupt("#{page.page_type} page in a table b-tree") unless page.page_type.table?
@@ -160,12 +164,41 @@ module Grant::SQLiteEngine
           end
         end
         if page.page_type.leaf_table?
+          @pager.rightmost_path_hint = {root, path.dup, page_number} if rightmost && low == page.cell_count
           return {path, page_number, low, low < page.cell_count && page.rowid(low) == rowid}
         end
+        rightmost = false if low < page.cell_count
         path << {page_number, low}
         page_number = low < page.cell_count ? page.left_child(low) : page.right_child
       end
       raise CorruptDatabase.new("b-tree is deeper than #{Limits::MAX_BTREE_DEPTH} pages", root)
+    end
+
+    # Appends (a rowid past every rowid in the table) skip the binary
+    # searches when the last rightmost path still holds: each interior page
+    # on it is still interior with that right child, and the leaf is still
+    # a leaf whose largest rowid is below *rowid* (btree.c's BTREE_APPEND
+    # shortcut, checked rather than trusted).
+    private def seek_past_rightmost(root : UInt32, rowid : Int64) : {Array(PathEntry), UInt32, Int32, Bool}?
+      hint = @pager.rightmost_path_hint
+      return unless hint
+      hint_root, hint_path, leaf = hint
+      return unless hint_root == root
+      expected = root
+      path = Array(PathEntry).new(hint_path.size)
+      hint_path.each do |page_number, _child_index|
+        return unless page_number == expected
+        page = BTreePage.read(@pager, page_number)
+        return unless page.page_type.interior_table?
+        path << {page_number, page.cell_count}
+        expected = page.right_child
+      end
+      return unless leaf == expected
+      page = BTreePage.read(@pager, leaf)
+      return unless page.page_type.leaf_table?
+      count = page.cell_count
+      return unless count > 0 ? page.rowid(count - 1) < rowid : path.empty?
+      {path, leaf, count, false}
     end
 
     # --- Index b-trees ----------------------------------------------------

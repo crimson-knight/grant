@@ -38,6 +38,10 @@ module Grant::SQLiteEngine
     getter generation = 0
     # Pages changed since the pager opened (any page_for_write call).
     getter change_count = 0_u64
+    # The rightmost path (root, interior pages with the child taken, leaf)
+    # of the table b-tree written last; BTreeWriter checks it page by page
+    # before trusting it, so it is only ever a shortcut.
+    property rightmost_path_hint : {UInt32, Array({UInt32, Int32}), UInt32}? = nil
 
     @cache = {} of UInt32 => Bytes
 
