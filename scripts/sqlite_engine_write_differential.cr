@@ -390,7 +390,7 @@ class RandomWrites
     when 7
       other = tables.sample(@random)
       width = Math.min(columns.size, other.list_of_columns.size)
-      "INSERT #{CONFLICTS.sample(@random)}INTO #{table.name} (#{columns.first(width).map(&.name).join(", ")}) SELECT #{other.list_of_columns.first(width).map(&.name).join(", ")} FROM #{other.name} LIMIT 3"
+      "INSERT #{CONFLICTS.sample(@random)}INTO #{table.name} (#{columns.first(width).map(&.name).join(", ")}) SELECT #{other.list_of_columns.first(width).map(&.name).join(", ")} FROM #{other.name} ORDER BY #{(1..width).join(", ")} LIMIT 3"
     when 8..10
       column = columns.sample(@random).name
       "UPDATE #{CONFLICTS.sample(@random)}#{table.name} SET #{column} = #{expression(table, column)} WHERE #{predicate(table)}#{returning}"

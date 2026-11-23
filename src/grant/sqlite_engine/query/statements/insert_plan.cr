@@ -77,9 +77,13 @@ module Grant::SQLiteEngine::Query
     def run(list_of_parameters : Array(Value)) : Array(Array(Value))
       returned = [] of Array(Value)
       @session.run_write(list_of_parameters, returning: !@returning.nil?) do |run|
-        # sqlite3BeginWriteOperation(pSelect || pTrigger): a RETURNING clause
-        # is a trigger, so its INSERT is never a single-row write.
-        run.single_row = (@source.nil? || single_values_row?) && !(@override.replace? && !@table.list_of_indexes.empty?) && @returning.nil?
+        # A single-row INSERT (no SELECT, one VALUES row, no RETURNING
+        # trigger, no REPLACE that deletes rows) raises an immediate foreign
+        # key at once (fkLookupParent's !isMultiWrite case).
+        multi, journal = StatementJournal.for_insert(@session, @table, @statement, @override, @list_of_source_positions,
+          !(@source.nil? || single_values_row?))
+        run.single_row = !multi
+        run.statement_journal = journal
         run.open_autoincrement(@table)
         each_source_row(list_of_parameters) do |values|
           row = Array(Value).new(@table.list_of_columns.size, nil)

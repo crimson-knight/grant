@@ -230,11 +230,17 @@ module Grant::SQLiteEngine::Query
       begin
         result = yield run
         run.finish_autoincrement
-        hold = autocommit && returning && result.is_a?(Array) && !result.empty?
+        # RETURNING hands out one row per changed row.
+        hold = autocommit && returning && run.changes > 0
         if run.immediate_violations > 0 || (autocommit && !hold && @deferred_violations > 0)
           raise ConstraintError.new("FOREIGN KEY constraint failed")
         end
       rescue error : ConstraintError
+        # sqlite3VdbeCheckFk at OP_Halt: a FAIL that leaves immediate
+        # foreign key violations becomes an ABORT of them.
+        if error.action.fail? && run.immediate_violations > 0
+          error = ConstraintError.new("FOREIGN KEY constraint failed")
+        end
         if error.action.fail?
           pager.release_savepoint(depth)
           commit_statement_transaction if autocommit
@@ -250,7 +256,11 @@ module Grant::SQLiteEngine::Query
         end
         raise error
       rescue error
-        undo_statement(depth, autocommit, saved_deferred)
+        if !autocommit && !run.statement_journal? && error.is_a?(SQLError) && pager.in_write_transaction?
+          pager.release_savepoint(depth)
+        else
+          undo_statement(depth, autocommit, saved_deferred)
+        end
         record_changes(0_i64) if counts_changes
         raise error
       end

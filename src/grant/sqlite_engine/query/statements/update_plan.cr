@@ -78,8 +78,10 @@ module Grant::SQLiteEngine::Query
     @override : ConflictAction
     @returning : RowProgram?
     @returning_pseudo : PseudoTable?
+    @statement : SQL::Update
 
     def initialize(@session : Session, statement : SQL::Update)
+      @statement = statement
       @table = WritableTarget.check(@session, statement.table)
       info = @table.table_info
       generated = @table.list_of_columns.select(&.generated?).map(&.position).to_set
@@ -99,8 +101,9 @@ module Grant::SQLiteEngine::Query
     def run(list_of_parameters : Array(Value)) : Array(Array(Value))
       returned = [] of Array(Value)
       @session.run_write(list_of_parameters, returning: !@returning.nil?) do |run|
-        targets = @targets.collect(list_of_parameters)
         positions = @assignments.list_of_positions
+        run.statement_journal = StatementJournal.for_update(@session, @table, @statement, @override, positions)
+        targets = @targets.collect(list_of_parameters)
         targets.each do |rowid, snapshot, values|
           old = rowid ? run.database.row_at(@table.layout, rowid) : run.database.row_with_key_of(@table.layout, snapshot)
           next unless old
@@ -137,8 +140,10 @@ module Grant::SQLiteEngine::Query
     @targets : TargetRows
     @returning : RowProgram?
     @returning_pseudo : PseudoTable?
+    @statement : SQL::Delete
 
     def initialize(@session : Session, statement : SQL::Delete)
+      @statement = statement
       @table = WritableTarget.check(@session, statement.table)
       info = @table.table_info
       @targets = TargetRows.new(@session, info, statement.table, statement.indexed_by, statement.not_indexed,
@@ -155,6 +160,7 @@ module Grant::SQLiteEngine::Query
     def run(list_of_parameters : Array(Value)) : Array(Array(Value))
       returned = [] of Array(Value)
       @session.run_write(list_of_parameters, returning: !@returning.nil?) do |run|
+        run.statement_journal = StatementJournal.for_delete(@session, @table, @statement)
         targets = @targets.collect(list_of_parameters)
         targets.each do |rowid, snapshot, _values|
           old = rowid ? run.database.row_at(@table.layout, rowid) : run.database.row_with_key_of(@table.layout, snapshot)

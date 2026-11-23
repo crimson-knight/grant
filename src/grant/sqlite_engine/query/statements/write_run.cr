@@ -27,6 +27,9 @@ module Grant::SQLiteEngine::Query
     # A single-row INSERT (not isMultiWrite): a missing parent of an
     # immediate foreign key fails the row before it is written.
     property? single_row = false
+    # C would give the statement a statement journal (`StatementJournal`);
+    # without one a runtime error keeps the rows already written.
+    property? statement_journal = true
     # Rows CREATE TABLE ... AS SELECT copies count nowhere.
     property? silent = false
     # FOREIGN KEY violations of immediate constraints still open in this
@@ -168,7 +171,10 @@ module Grant::SQLiteEngine::Query
     def check_constraints(table : WriteTable, rowid : Int64?, row : Array(Value), old : {Int64?, Array(Value)}?,
                           override : ConflictAction, upsert : UpsertPlan?) : {InsertResult, Int64?, Array(Value), {Int64?, Array(Value)}?}
       definition = table.definition
-      # NOT NULL, in column order; REPLACE puts the DEFAULT in.
+      # NOT NULL, in column order. REPLACE puts the DEFAULT in and the
+      # column is checked again only after every other column (C's second
+      # pass), so a later column's failure is the one reported.
+      list_of_replaced = [] of ColumnRule
       table.list_of_columns.each do |column|
         action = column.not_null
         next unless action
@@ -179,12 +185,17 @@ module Grant::SQLiteEngine::Query
         if action.replace?
           if column.default_expression
             row[column.position] = default_value(table, column)
-            next unless row[column.position].nil?
+            list_of_replaced << column
+            next
           end
           action = ConflictAction::Abort
         end
         return {InsertResult::Ignored, rowid, row, nil} if action.ignore?
         raise ConstraintError.new("NOT NULL constraint failed: #{table.name}.#{column.column_name}", action)
+      end
+      list_of_replaced.each do |column|
+        next unless row[column.position].nil?
+        raise ConstraintError.new("NOT NULL constraint failed: #{table.name}.#{column.column_name}", ConflictAction::Abort)
       end
       stored = database.stored_values(definition, row)
       stored.each_with_index { |value, index| row[index] = value }
