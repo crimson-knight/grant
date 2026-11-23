@@ -3,10 +3,13 @@ require "../../support/sqlite_engine/differential"
 # A seeded sweep over random schemas and contents (page sizes, encodings,
 # auto-vacuum modes, WAL, WITHOUT ROWID, ALTER TABLE ADD COLUMN, overflow,
 # deletes). The regular run builds a few dozen databases; the nightly run sets
-# SQLITE_ENGINE_RANDOM_DATABASES=1000 (and SQLITE_ENGINE_RANDOM_SEED to replay).
+# SQLITE_ENGINE_RANDOM_DATABASES=1000 with a fresh SQLITE_ENGINE_RANDOM_SEED.
+# The regular run keeps one seed so CI results repeat.
+DEFAULT_RANDOM_SEED = "20261122"
+
 describe "Grant::SQLiteEngine random differential" do
   count = ENV.fetch("SQLITE_ENGINE_RANDOM_DATABASES", "40")
-  seed = ENV["SQLITE_ENGINE_RANDOM_SEED"]? || Random.rand(1_000_000).to_s
+  seed = ENV["SQLITE_ENGINE_RANDOM_SEED"]? || DEFAULT_RANDOM_SEED
   directory, manifest = SQLiteEngineDifferential.generate("random", ["--count", count, "--seed", seed])
 
   it "reads #{count} random databases as C SQLite does (seed #{seed})" do

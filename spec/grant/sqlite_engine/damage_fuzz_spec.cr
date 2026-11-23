@@ -3,11 +3,14 @@ require "../../support/sqlite_engine/damage_fuzzer"
 
 # Seeded damage fuzzing over the smaller standard fixtures. The regular run
 # mutates a few thousand copies; the nightly run sets
-# SQLITE_ENGINE_FUZZ_CASES=100000 (and SQLITE_ENGINE_FUZZ_SEED to replay).
+# SQLITE_ENGINE_FUZZ_CASES=100000 with a fresh SQLITE_ENGINE_FUZZ_SEED.
+# The regular run keeps one seed so CI results repeat.
+DEFAULT_FUZZ_SEED = "20261122"
+
 describe "Grant::SQLiteEngine damaged files" do
   directory, manifest = SQLiteEngineDifferential.generate("standard")
   case_count = ENV.fetch("SQLITE_ENGINE_FUZZ_CASES", "3000").to_i
-  seed = (ENV["SQLITE_ENGINE_FUZZ_SEED"]? || Random.rand(1_000_000).to_s).to_i64
+  seed = (ENV["SQLITE_ENGINE_FUZZ_SEED"]? || DEFAULT_FUZZ_SEED).to_i64
 
   it "opens every mutated file cleanly or raises a named error (#{case_count} cases, seed #{seed})" do
     seeds = manifest.fixtures.compact_map do |fixture|
