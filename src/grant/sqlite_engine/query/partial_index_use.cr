@@ -84,7 +84,7 @@ module Grant::SQLiteEngine::Query
       return true if same?(term, operand, entry, table)
       case term
       when InListExpr
-        return implies_not_null?(term.operand, operand, entry, table, true)
+        implies_not_null?(term.operand, operand, entry, table, true)
       when LogicalExpr
         return false unless term.between?
         return false if seen_not

@@ -1036,7 +1036,7 @@ module Grant::SQLiteEngine::Query
       header, size = document.payload_size(0)
       return unless header > 0 && size + header == bytes.size
       return unless (first & 0x0f) > FALSE || size == 0
-      unless size > 7 || (first != 0x7b && first != 0x5b && !digit?(first)) || document.validity_check(0, bytes.size, 1) == 0
+      if size <= 7 && (first == 0x7b || first == 0x5b || digit?(first)) && document.validity_check(0, bytes.size, 1) != 0
         return
       end
       document
@@ -1411,7 +1411,6 @@ module Grant::SQLiteEngine::Query
         z = @z
         t = 0
         c = z[i]
-        j = i + 1
         case c
         when '+'.ord
           @non_standard = true

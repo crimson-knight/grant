@@ -57,15 +57,7 @@ module Grant::SQLiteEngine
     # A term is a column when, after dropping ASC/DESC and a COLLATE clause,
     # one name is left.
     private def self.key_column(term : Array(SchemaTokenizer::Token)) : KeyTerm
-      words = term.dup
-      last = words.last?
-      descending = !last.nil? && last.keyword?("DESC")
-      words.pop if last && (last.keyword?("ASC") || last.keyword?("DESC"))
-      collation = nil
-      if words.size >= 2 && words[-2].keyword?("COLLATE")
-        collation = words[-1].text
-        words.pop(2)
-      end
+      words, collation, descending = strip_order_and_collation(term)
       # A parenthesized column is still a column (the parser drops the
       # parentheses before sqlite3CreateIndex looks for TK_COLUMN).
       while words.size >= 3 && words.first.punctuation?('(') && words.last.punctuation?(')') && wrapped_once?(words)
@@ -76,6 +68,21 @@ module Grant::SQLiteEngine
       return KeyTerm.new(only.text, collation, descending) if named && only
       mentioned = words.select { |word| word.kind.word? || word.kind.identifier? }.map(&.text)
       KeyTerm.new(nil, collation, descending, mentioned)
+    end
+
+    # The term's words without a trailing ASC/DESC and COLLATE clause, with the
+    # collation name and whether the term sorts descending.
+    private def self.strip_order_and_collation(term : Array(SchemaTokenizer::Token)) : {Array(SchemaTokenizer::Token), String?, Bool}
+      words = term.dup
+      last = words.last?
+      descending = !last.nil? && last.keyword?("DESC")
+      words.pop if last && (last.keyword?("ASC") || last.keyword?("DESC"))
+      collation = nil
+      if words.size >= 2 && words[-2].keyword?("COLLATE")
+        collation = words[-1].text
+        words.pop(2)
+      end
+      {words, collation, descending}
     end
 
     # Whether the first token's parenthesis closes at the last token.

@@ -288,7 +288,7 @@ module Grant::SQLiteEngine::Query
     private def partial_index_scan(entry : FromEntry, table : TableInfo, terms : Array(Expr)) : AccessChoice?
       best = nil
       table.list_of_indexes.reverse_each do |layout|
-        next unless layout.partial? && !layout.has_expressions?
+        next if !layout.partial? || layout.has_expressions?
         if hint = entry.indexed_by
           next unless layout.entry.object_name.compare(hint, case_insensitive: true) == 0
         end
