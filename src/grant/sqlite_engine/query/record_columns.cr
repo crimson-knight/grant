@@ -100,7 +100,7 @@ module Grant::SQLiteEngine::Query
     # The value at stored *position*, which `has?` found, when it is an
     # integer or a real other than NaN; nil otherwise (NULL, text, a blob,
     # or a NaN, which reads as NULL).
-    def number(position : Int32) : Int64 | Float64 | Nil
+    def number(position : Int32) : (Int64 | Float64)?
       serial_type = @serial_types[position]
       return if serial_type == 0 || serial_type > 9
       offset = @offsets[position]
