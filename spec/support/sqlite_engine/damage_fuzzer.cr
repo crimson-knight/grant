@@ -1,4 +1,4 @@
-require "../../../../src/grant/sqlite_engine"
+require "../../../src/grant/sqlite_engine"
 
 # Mutates database images (byte flips, truncation, page swaps and copies,
 # zeroed pages, edge values in header fields, damaged WAL frames) and reads
@@ -71,7 +71,7 @@ class SQLiteEngineDamageFuzzer
     database.pointer_map_entries
     @clean_reads += 1
     nil
-  rescue error : Grant::SQLiteEngine::CorruptDatabase
+  rescue Grant::SQLiteEngine::CorruptDatabase
     @corrupt_database_raised += 1
     nil
   rescue error : Grant::SQLiteEngine::Error
@@ -84,7 +84,12 @@ class SQLiteEngineDamageFuzzer
   private def mutate(database : Bytes, wal : Bytes?) : String
     page_size = page_size_of(database)
     pages = Math.max(database.size // page_size, 1)
-    case @random.rand(9)
+    kind = @random.rand(9)
+    kind < 5 ? mutate_bytes(kind, database, page_size, pages) : mutate_pages(kind, database, wal, page_size, pages)
+  end
+
+  private def mutate_bytes(kind : Int32, database : Bytes, page_size : Int32, pages : Int32) : String
+    case kind
     when 0
       @random.rand(1..8).times { flip(database, @random.rand(database.size)) }
       "flip bytes"
@@ -98,11 +103,16 @@ class SQLiteEngineDamageFuzzer
     when 3
       swap_pages(database, page_size, pages)
       "swap pages"
-    when 4
+    else
       from = @random.rand(pages)
       to = @random.rand(pages)
       (database + to * page_size).copy_from((database + from * page_size).to_unsafe, Math.min(page_size, database.size - Math.max(from, to) * page_size))
       "copy page"
+    end
+  end
+
+  private def mutate_pages(kind : Int32, database : Bytes, wal : Bytes?, page_size : Int32, pages : Int32) : String
+    case kind
     when 5
       page = @random.rand(pages)
       (database + page * page_size)[0, Math.min(page_size, database.size - page * page_size)].fill(0_u8)

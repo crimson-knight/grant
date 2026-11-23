@@ -47,35 +47,52 @@ module Grant::SQLiteEngine
 
     private def scan : Nil
       while @reader.has_next?
-        char = @reader.current_char
-        if char.whitespace?
-          @reader.next_char
-        elsif char == '-' && @reader.peek_next_char == '-'
-          while @reader.has_next? && @reader.current_char != '\n'
-            @reader.next_char
-          end
-        elsif char == '/' && @reader.peek_next_char == '*'
-          skip_block_comment
-        elsif char.in?('x', 'X') && @reader.peek_next_char == '\''
-          @reader.next_char
-          @tokens << Token.new(Kind::Blob, quoted('\''))
-        elsif char.letter? || char == '_' || char.ord >= 0x80
-          @tokens << Token.new(Kind::Word, word)
-        elsif char.ascii_number? || (char == '.' && @reader.peek_next_char.ascii_number?)
-          @tokens << Token.new(Kind::Number, number)
-        elsif char == '\''
-          @tokens << Token.new(Kind::Text, quoted('\''))
-        elsif char == '"'
-          @tokens << Token.new(Kind::Identifier, quoted('"'))
-        elsif char == '`'
-          @tokens << Token.new(Kind::Identifier, quoted('`'))
-        elsif char == '['
-          @tokens << Token.new(Kind::Identifier, bracketed)
-        else
-          @tokens << Token.new(Kind::Punctuation, char.to_s)
+        next if skip_trivia
+        @tokens << next_token(@reader.current_char)
+      end
+    end
+
+    # Skips whitespace and comments. Returns false at the start of a token.
+    private def skip_trivia : Bool
+      char = @reader.current_char
+      if char.whitespace?
+        @reader.next_char
+      elsif char == '-' && @reader.peek_next_char == '-'
+        while @reader.has_next? && @reader.current_char != '\n'
           @reader.next_char
         end
+      elsif char == '/' && @reader.peek_next_char == '*'
+        skip_block_comment
+      else
+        return false
       end
+      true
+    end
+
+    private def next_token(char : Char) : Token
+      if char.in?('x', 'X') && @reader.peek_next_char == '\''
+        @reader.next_char
+        Token.new(Kind::Blob, quoted('\''))
+      elsif char.letter? || char == '_' || char.ord >= 0x80
+        Token.new(Kind::Word, word)
+      elsif char.ascii_number? || (char == '.' && @reader.peek_next_char.ascii_number?)
+        Token.new(Kind::Number, number)
+      else
+        quoted_token(char) || punctuation(char)
+      end
+    end
+
+    private def quoted_token(char : Char) : Token?
+      case char
+      when '\''     then Token.new(Kind::Text, quoted('\''))
+      when '"', '`' then Token.new(Kind::Identifier, quoted(char))
+      when '['      then Token.new(Kind::Identifier, bracketed)
+      end
+    end
+
+    private def punctuation(char : Char) : Token
+      @reader.next_char
+      Token.new(Kind::Punctuation, char.to_s)
     end
 
     private def skip_block_comment : Nil

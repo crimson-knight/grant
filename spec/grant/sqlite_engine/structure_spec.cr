@@ -1,4 +1,4 @@
-require "./support/differential"
+require "../../support/sqlite_engine/differential"
 
 private def sqlite3_scalar(path : Path, sql : String) : String
   output = IO::Memory.new
@@ -54,7 +54,7 @@ describe "Grant::SQLiteEngine structures" do
 
   describe "#pointer_map_entries" do
     it "records a root-page entry for every b-tree root after page 1" do
-      %w(auto_vacuum_full auto_vacuum_incremental).each do |fixture|
+      %w[auto_vacuum_full auto_vacuum_incremental].each do |fixture|
         path = directory / "#{fixture}.db"
         database = Grant::SQLiteEngine::Database.open(path)
         entries = database.pointer_map_entries
@@ -72,7 +72,7 @@ describe "Grant::SQLiteEngine structures" do
 
   describe "the WAL" do
     it "drops frames after the last commit and frames of an older generation" do
-      %w(wal_torn_tail wal_restarted).each do |fixture|
+      %w[wal_torn_tail wal_restarted].each do |fixture|
         SQLiteEngineDifferential.compare(directory, fixture).first_difference.should be_nil
       end
       database = Grant::SQLiteEngine::Database.open(directory / "wal_restarted.db")

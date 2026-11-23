@@ -87,7 +87,7 @@ module Grant::SQLiteEngine
         buffer = Bytes.new(wal.page_size)
         return buffer if wal.read_page(1_u32, buffer)
       end
-      return nil if @main.size == 0
+      return if @main.size == 0
       prefix = Bytes.new(DatabaseHeader::SIZE)
       if @main.read_at(0, prefix) < DatabaseHeader::SIZE
         raise CorruptDatabase.new("file is shorter than the 100-byte header", 1_u32)

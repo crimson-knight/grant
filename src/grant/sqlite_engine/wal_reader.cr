@@ -27,20 +27,20 @@ module Grant::SQLiteEngine
     # a wrong magic number, a wrong header checksum, or no committed frame.
     # SQLite ignores such a WAL in recovery, and so does the reader.
     def self.read?(source : ByteSource) : WalReader?
-      return nil if source.size < HEADER_SIZE
+      return if source.size < HEADER_SIZE
       header = Bytes.new(HEADER_SIZE)
-      return nil if source.read_at(0, header) < HEADER_SIZE
+      return if source.read_at(0, header) < HEADER_SIZE
       magic = big_endian_u32(header, 0)
-      return nil unless magic.in?(MAGIC_LITTLE, MAGIC_BIG)
+      return unless magic.in?(MAGIC_LITTLE, MAGIC_BIG)
       big_endian_checksums = magic == MAGIC_BIG
       if big_endian_u32(header, 4) != FORMAT_VERSION
         raise CorruptDatabase.new("WAL format version #{big_endian_u32(header, 4)} is not #{FORMAT_VERSION}")
       end
       page_size = big_endian_u32(header, 8)
       valid_page_size = page_size >= Limits::MIN_PAGE_SIZE && page_size <= Limits::MAX_PAGE_SIZE && (page_size & (page_size - 1)) == 0
-      return nil unless valid_page_size
+      return unless valid_page_size
       checksum = checksum(header[0, 24], {0_u32, 0_u32}, big_endian_checksums)
-      return nil unless checksum == {big_endian_u32(header, 24), big_endian_u32(header, 28)}
+      return unless checksum == {big_endian_u32(header, 24), big_endian_u32(header, 28)}
       reader = new(source, header, page_size.to_i32, checksum, big_endian_checksums)
       reader.committed_frame_count > 0 ? reader : nil
     end

@@ -19,8 +19,8 @@ require "../src/grant/sqlite_engine"
 
 @[Link("sqlite3")]
 lib LibSQLite3Reference
-  type Handle = Void*
-  type Statement = Void*
+  alias Handle = Void*
+  alias Statement = Void*
 
   fun open_v2 = sqlite3_open_v2(filename : UInt8*, db : Handle*, flags : Int32, vfs : UInt8*) : Int32
   fun close_v2 = sqlite3_close_v2(db : Handle) : Int32
@@ -71,13 +71,11 @@ module SQLiteEngineReadBench
     when 4
       size = LibSQLite3Reference.column_bytes(statement, column)
       Bytes.new(LibSQLite3Reference.column_blob(statement, column).as(UInt8*), size).dup
-    else
-      nil
     end
   end
 
   def self.with_c_database(path : String, & : LibSQLite3Reference::Handle ->) : Nil
-    handle = LibSQLite3Reference::Handle.null
+    handle = Pointer(Void).null
     code = LibSQLite3Reference.open_v2(path, pointerof(handle), OPEN_READONLY, nil)
     raise "sqlite3_open_v2 failed with #{code}" unless code == 0
     yield handle
@@ -85,7 +83,7 @@ module SQLiteEngineReadBench
   end
 
   def self.c_query(handle : LibSQLite3Reference::Handle, sql : String) : Int64
-    statement = LibSQLite3Reference::Statement.null
+    statement = Pointer(Void).null
     code = LibSQLite3Reference.prepare_v2(handle, sql, sql.bytesize, pointerof(statement), nil)
     raise "prepare failed with #{code}: #{sql}" unless code == 0
     count = drain(statement)
@@ -137,7 +135,7 @@ module SQLiteEngineReadBench
         -> {
           count = 0_i64
           with_c_database(path) do |handle|
-            statement = LibSQLite3Reference::Statement.null
+            statement = Pointer(Void).null
             sql = "SELECT * FROM items WHERE rowid = ?"
             LibSQLite3Reference.prepare_v2(handle, sql, sql.bytesize, pointerof(statement), nil)
             lookups.each do |rowid|

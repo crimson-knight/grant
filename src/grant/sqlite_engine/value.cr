@@ -1,7 +1,7 @@
 module Grant::SQLiteEngine
   # A stored SQLite value, by storage class: NULL, INTEGER, REAL, TEXT
   # (decoded to UTF-8) and BLOB.
-  alias Value = Nil | Int64 | Float64 | String | Bytes
+  alias Value = Int64 | Float64 | String | Bytes?
 
   # Column affinity, from datatype3.html §3.
   enum Affinity
@@ -72,8 +72,8 @@ module Grant::SQLiteEngine
     end
 
     private def self.parse_real(text : String) : Float64?
-      return nil if text.empty?
-      return nil unless text.each_char.all? { |char| char.ascii_number? || char.in?('.', 'e', 'E', '+', '-') }
+      return if text.empty?
+      return unless text.each_char.all? { |char| char.ascii_number? || char.in?('.', 'e', 'E', '+', '-') }
       Affinity.parse_real_literal(text)
     end
 
@@ -84,7 +84,7 @@ module Grant::SQLiteEngine
         return real
       end
       match = text.match(/\A([+-]?)(\d+\.?\d*|\.\d+)[eE]([+-]?)\d+\z/)
-      return nil unless match
+      return unless match
       magnitude = match[3] == "-" ? 0.0 : Float64::INFINITY
       match[1] == "-" ? -magnitude : magnitude
     end

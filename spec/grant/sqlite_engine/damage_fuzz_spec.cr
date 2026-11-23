@@ -1,5 +1,5 @@
-require "./support/differential"
-require "./support/damage_fuzzer"
+require "../../support/sqlite_engine/differential"
+require "../../support/sqlite_engine/damage_fuzzer"
 
 # Seeded damage fuzzing over the smaller standard fixtures. The regular run
 # mutates a few thousand copies; the nightly run sets

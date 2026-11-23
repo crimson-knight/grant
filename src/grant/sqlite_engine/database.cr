@@ -109,7 +109,7 @@ module Grant::SQLiteEngine
       definition = schema.table_definition(entry)
       raise UnsupportedSQL.new("rowid lookup in WITHOUT ROWID table #{entry.object_name}") if definition.without_rowid?
       record = find_table_record(entry.root_page, rowid)
-      return nil unless record
+      return unless record
       Row.new(rowid, RowMapping.new(entry.object_name, definition).map(rowid, record))
     end
 
@@ -216,7 +216,7 @@ module Grant::SQLiteEngine
         page.corrupt("#{page.page_type} page in a table b-tree") unless page.page_type.table?
         if page.page_type.leaf_table?
           cell = lower_bound(page, rowid)
-          return nil if cell >= page.cell_count || page.rowid(cell) != rowid
+          return if cell >= page.cell_count || page.rowid(cell) != rowid
           payload = PayloadReader.read(@pager, page, page.payload(cell))
           return Record.decode(payload, text_encoding, page.number)
         end

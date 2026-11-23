@@ -55,8 +55,8 @@ module Grant::SQLiteEngine
     # aliases the rowid, or nil.
     getter rowid_alias_index : Int32? = nil
 
-    COLUMN_CONSTRAINT_KEYWORDS = %w(CONSTRAINT PRIMARY NOT NULL UNIQUE CHECK DEFAULT COLLATE REFERENCES GENERATED AS)
-    TABLE_CONSTRAINT_KEYWORDS  = %w(CONSTRAINT PRIMARY UNIQUE CHECK FOREIGN)
+    COLUMN_CONSTRAINT_KEYWORDS = %w[CONSTRAINT PRIMARY NOT NULL UNIQUE CHECK DEFAULT COLLATE REFERENCES GENERATED AS]
+    TABLE_CONSTRAINT_KEYWORDS  = %w[CONSTRAINT PRIMARY UNIQUE CHECK FOREIGN]
 
     def self.parse(sql : String) : TableDefinition
       new(SchemaTokenizer.tokenize(sql))
@@ -128,9 +128,31 @@ module Grant::SQLiteEngine
     end
 
     private def column_constraint(column : ColumnDefinition) : Nil
+      return if key_or_null_constraint(column)
       if skip_keyword("CONSTRAINT")
         name_token
-      elsif skip_keyword("PRIMARY")
+      elsif skip_keyword("CHECK")
+        skip_parenthesized
+      elsif skip_keyword("DEFAULT")
+        default_clause(column)
+      elsif skip_keyword("COLLATE")
+        column.collation = name_token
+      elsif skip_keyword("REFERENCES")
+        foreign_key_clause
+      elsif skip_keyword("GENERATED")
+        expect_keyword("ALWAYS")
+        generated_clause(column)
+      elsif current.keyword?("AS")
+        generated_clause(column)
+      else
+        malformed("unexpected #{current.text} in column #{column.column_name}")
+      end
+    end
+
+    # PRIMARY KEY, NOT NULL, NULL and UNIQUE. Returns false when the next
+    # constraint is another kind.
+    private def key_or_null_constraint(column : ColumnDefinition) : Bool
+      if skip_keyword("PRIMARY")
         expect_keyword("KEY")
         column.primary_key = true
         column.primary_key_descending = true if skip_keyword("DESC")
@@ -148,22 +170,10 @@ module Grant::SQLiteEngine
       elsif skip_keyword("UNIQUE")
         conflict_clause
         add_unique_constraint([column.column_name])
-      elsif skip_keyword("CHECK")
-        skip_parenthesized
-      elsif skip_keyword("DEFAULT")
-        default_clause(column)
-      elsif skip_keyword("COLLATE")
-        column.collation = name_token
-      elsif skip_keyword("REFERENCES")
-        foreign_key_clause
-      elsif skip_keyword("GENERATED")
-        expect_keyword("ALWAYS")
-        generated_clause(column)
-      elsif current.keyword?("AS")
-        generated_clause(column)
       else
-        malformed("unexpected #{current.text} in column #{column.column_name}")
+        return false
       end
+      true
     end
 
     private def generated_clause(column : ColumnDefinition) : Nil
@@ -202,7 +212,7 @@ module Grant::SQLiteEngine
     end
 
     private def default_keyword(column : ColumnDefinition, token : SchemaTokenizer::Token) : Value
-      return nil if token.keyword?("NULL")
+      return if token.keyword?("NULL")
       return 1_i64 if token.keyword?("TRUE")
       return 0_i64 if token.keyword?("FALSE")
       # CURRENT_TIME, CURRENT_DATE, CURRENT_TIMESTAMP and a bare identifier

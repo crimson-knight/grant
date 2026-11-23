@@ -7,7 +7,7 @@ module Grant::SQLiteEngine
     LeafTable     = 13
 
     def interior? : Bool
-      self.interior_index? || self.interior_table?
+      interior_index? || interior_table?
     end
 
     def leaf? : Bool
@@ -15,7 +15,7 @@ module Grant::SQLiteEngine
     end
 
     def table? : Bool
-      self.interior_table? || self.leaf_table?
+      interior_table? || leaf_table?
     end
   end
 
@@ -94,11 +94,11 @@ module Grant::SQLiteEngine
     def rowid(index : Int32) : Int64
       offset = cell_offset(index)
       if @page_type.interior_table?
-        key, length = varint(offset + 4, index)
+        key, _key_length = varint(offset + 4, index)
         return key
       end
       _size, size_length = varint(offset, index)
-      key, length = varint(offset + size_length, index)
+      key, _key_length = varint(offset + size_length, index)
       key
     end
 
@@ -135,14 +135,7 @@ module Grant::SQLiteEngine
       corrupt("cell #{index} payload size #{size} is negative") if size < 0
       max_payload = (@page_count.to_i64 * (usable - 4)) + usable
       corrupt("cell #{index} payload size #{size} exceeds what the file can hold") if size > max_payload || size > Int32::MAX
-      max_local = table_leaf ? usable - 35 : ((usable - 12) * 64 // 255) - 23
-      min_local = ((usable - 12) * 32 // 255) - 23
-      local = if size <= max_local
-                size
-              else
-                spill_local = min_local + ((size - min_local) % (usable - 4))
-                spill_local <= max_local ? spill_local : min_local
-              end
+      local = local_payload_size(size, table_leaf)
       spills = local < size
       local_end = start.to_i64 + local + (spills ? 4 : 0)
       corrupt("cell #{index} payload runs past the usable size") if local_end > usable
@@ -151,6 +144,15 @@ module Grant::SQLiteEngine
         corrupt("cell #{index} first overflow page #{overflow} is outside 1..#{@page_count}")
       end
       PayloadLocation.new(@number, start, local.to_i32, size.to_i32, overflow)
+    end
+
+    private def local_payload_size(size : Int64, table_leaf : Bool) : Int64
+      usable = @usable_size.to_i64
+      max_local = table_leaf ? usable - 35 : ((usable - 12) * 64 // 255) - 23
+      return size if size <= max_local
+      min_local = ((usable - 12) * 32 // 255) - 23
+      spill_local = min_local + ((size - min_local) % (usable - 4))
+      spill_local <= max_local ? spill_local : min_local
     end
 
     private def check_child(child : UInt32) : Nil

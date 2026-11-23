@@ -1,13 +1,14 @@
 require "spec"
 require "json"
-require "../../../../src/grant/sqlite_engine"
+require "../../../src/grant/sqlite_engine"
 
 # Builds fixtures with the sqlite3 tool (fixtures/generate.rb) and compares
 # what Grant's engine reads from each file with what C SQLite returns.
 module SQLiteEngineDifferential
-  GENERATOR = Path[__DIR__].parent / "fixtures" / "generate.rb"
-  CORPUS    = Path[__DIR__].parent / "corpus" / "grant_sql_corpus.txt"
-  RUBY      = File.exists?("/usr/bin/ruby") ? "/usr/bin/ruby" : "ruby"
+  ENGINE_SPECS = Path[__DIR__].parent.parent / "grant" / "sqlite_engine"
+  GENERATOR    = ENGINE_SPECS / "fixtures" / "generate.rb"
+  CORPUS       = ENGINE_SPECS / "corpus" / "grant_sql_corpus.txt"
+  RUBY         = File.exists?("/usr/bin/ruby") ? "/usr/bin/ruby" : "ruby"
 
   # One fixture from a generator manifest.
   struct ManifestEntry

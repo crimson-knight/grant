@@ -1,4 +1,4 @@
-require "./support/differential"
+require "../../support/sqlite_engine/differential"
 
 describe "Grant::SQLiteEngine differential against the sqlite3 tool" do
   directory, manifest = SQLiteEngineDifferential.generate("standard")

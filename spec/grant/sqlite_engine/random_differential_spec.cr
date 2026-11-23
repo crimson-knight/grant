@@ -1,4 +1,4 @@
-require "./support/differential"
+require "../../support/sqlite_engine/differential"
 
 # A seeded sweep over random schemas and contents (page sizes, encodings,
 # auto-vacuum modes, WAL, WITHOUT ROWID, ALTER TABLE ADD COLUMN, overflow,
