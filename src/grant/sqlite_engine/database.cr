@@ -134,20 +134,22 @@ module Grant::SQLiteEngine
     # Yields the rowid and decoded record of every cell of the table b-tree
     # rooted at *root_page*, in rowid order.
     def each_table_btree_record(root_page : UInt32, & : Int64, Array(Value) ->) : Nil
+      encoding = text_encoding
       walk(root_page, table: true) do |page, cell|
-        location = page.payload(cell)
+        rowid, location = page.table_leaf_cell(cell)
         payload = PayloadReader.read(@pager, page, location)
-        yield page.rowid(cell), Record.decode(payload, text_encoding, page.number)
+        yield rowid, Record.decode(payload, encoding, page.number)
       end
     end
 
     # Yields the decoded record of every entry of the index b-tree rooted at
     # *root_page*, in key order (interior cells between their subtrees).
     def each_index_btree_record(root_page : UInt32, & : Array(Value) ->) : Nil
+      encoding = text_encoding
       walk(root_page, table: false) do |page, cell|
         location = page.payload(cell)
         payload = PayloadReader.read(@pager, page, location)
-        yield Record.decode(payload, text_encoding, page.number)
+        yield Record.decode(payload, encoding, page.number)
       end
     end
 
@@ -273,16 +275,21 @@ module Grant::SQLiteEngine
     private struct RowMapping
       @stored_order : Array(Int32)
       @column_count : Int32
+      @in_place : Bool
+      @real_columns : Array(Int32)
 
       def initialize(@table_name : String, @definition : TableDefinition)
         @stored_order = definition.stored_column_order
         @column_count = definition.list_of_columns.size
+        @in_place = !definition.without_rowid? && @stored_order == (0...@column_count).to_a
+        @real_columns = (0...@column_count).select { |index| definition.list_of_columns[index].affinity.real? }
         if virtual = definition.list_of_columns.find(&.generated.virtual?)
           raise UnsupportedSQL.new("VIRTUAL generated column #{table_name}.#{virtual.column_name}")
         end
       end
 
       def map(rowid : Int64?, record : Array(Value)) : Array(Value)
+        return map_in_place(rowid, record) if @in_place && record.size == @column_count
         values = Array(Value).new(@column_count, nil)
         columns = @definition.list_of_columns
         @stored_order.each_with_index do |column_index, position|
@@ -296,6 +303,18 @@ module Grant::SQLiteEngine
         alias_index = @definition.rowid_alias_index
         values[alias_index] = rowid if alias_index && rowid
         values
+      end
+
+      # A rowid table whose record holds every column in declared order is
+      # mapped in the record's own array.
+      private def map_in_place(rowid : Int64?, record : Array(Value)) : Array(Value)
+        @real_columns.each do |column_index|
+          value = record.unsafe_fetch(column_index)
+          record[column_index] = value.to_f64 if value.is_a?(Int64)
+        end
+        alias_index = @definition.rowid_alias_index
+        record[alias_index] = rowid if alias_index && rowid
+        record
       end
 
       # datatype3.html §3.2: SQLite may store a REAL-affinity value that is a

@@ -17,7 +17,9 @@ module Grant::SQLiteEngine
       header_end = header_size.to_i32
       position = length
       body = header_end
-      values = Array(Value).new
+      # Most serial types take one header byte, so the header size is a
+      # close estimate of the column count.
+      values = Array(Value).new(header_end - length)
       while position < header_end
         serial_type, used = Varint.decode(payload, position, header_end)
         corrupt(page_number, "record serial type varint is truncated") if used == 0

@@ -102,6 +102,14 @@ module Grant::SQLiteEngine
       key
     end
 
+    # Rowid and payload location of a leaf table cell, read in one pass.
+    def table_leaf_cell(index : Int32) : {Int64, PayloadLocation}
+      offset = cell_offset(index)
+      size, size_length = varint(offset, index)
+      key, key_length = varint(offset + size_length, index)
+      {key, payload_location(index, offset + size_length + key_length, size, true)}
+    end
+
     # Payload location of a leaf table cell, a leaf index cell or an interior
     # index cell. Interior table cells have no payload.
     def payload(index : Int32) : PayloadLocation
