@@ -46,8 +46,18 @@ module Grant::SQLiteEngine::Query
     # `evaluate` on an expression of unknown class otherwise inlines the
     # dispatch over every expression class, and the differing union
     # results of those branches spill to the stack on every call.
+    # The commonest classes (a column, a bound parameter, a constant) are
+    # tested first, so their calls skip the full dispatch.
     @[NoInline]
     def self.value_of(expression : Expr, frame : Frame) : Value
+      return expression.evaluate(frame) if expression.is_a?(ColumnExpr)
+      return expression.evaluate(frame) if expression.is_a?(ParameterExpr)
+      return expression.evaluate(frame) if expression.is_a?(ConstantExpr)
+      value_of_any(expression, frame)
+    end
+
+    @[NoInline]
+    private def self.value_of_any(expression : Expr, frame : Frame) : Value
       expression.evaluate(frame)
     end
 
