@@ -89,6 +89,11 @@ module Grant::SQLiteEngine::Query
       values
     end
 
+    # The stored record position of declared column *column_index*.
+    def stored_position(column_index : Int32) : Int32?
+      @stored_order.index(column_index)
+    end
+
     # The stored record positions holding *columns* (declared indexes; nil
     # for every column), for `ColumnUse`.
     def stored_mask_for(columns : Set(Int32)?) : Array(Bool)
@@ -104,36 +109,13 @@ module Grant::SQLiteEngine::Query
     # them), written into *into* (a source reuses one array per row, so
     # whatever keeps a row past the next one copies it). Otherwise as
     # `row_from`.
-    def decode_row(rowid : Int64?, payload : Bytes, encoding : TextEncoding, page_number : UInt32, use : ColumnUse,
+    def decode_row(rowid : Int64, header : RecordHeader, encoding : TextEncoding, use : ColumnUse,
                    into values : Array(Value)) : Array(Value)
-      mask = use.stored_mask(self)
-      count = @list_of_column_names.size
-      if values.size == count
-        values.fill(nil)
-      else
-        values.clear
-        count.times { values << nil }
-      end
-      columns = @definition.list_of_columns
-      stored_order = @stored_order
-      affinities = @list_of_affinities
-      held = RecordColumns.decode(payload, encoding, page_number, mask) do |position, value|
-        column_index = stored_order.unsafe_fetch(position)
-        if value.is_a?(Int64) && affinities.unsafe_fetch(column_index).real?
-          value = value.to_f64
-        end
-        values.unsafe_put(column_index, value)
-      end
-      if held < stored_order.size
-        (held...stored_order.size).each do |position|
-          next unless mask[position]
-          column_index = stored_order[position]
-          values[column_index] = default_for(columns[column_index])
-        end
-      end
-      if (alias_index = rowid_alias) && rowid
-        values[alias_index] = rowid
-      end
+      # The columns *use* marks are written for every row and no other
+      # column is written, so the array needs clearing only when its size
+      # is wrong.
+      clear_row(values) unless values.size == @list_of_column_names.size
+      fill_columns(header, rowid, use.stored_positions(self), encoding, values)
       values
     end
 
@@ -148,17 +130,15 @@ module Grant::SQLiteEngine::Query
       end
     end
 
-    # Writes the columns at the stored positions *mask* marks from the
-    # record *header* into *values*, as `decode_row` does, and the rowid
-    # alias.
-    def fill_columns(header : RecordHeader, rowid : Int64, mask : Array(Bool), encoding : TextEncoding,
+    # Writes the columns at stored *positions* from the record *header*
+    # into *values* (one slot per column), as `decode_row` does, and the
+    # rowid alias.
+    def fill_columns(header : RecordHeader, rowid : Int64, positions : Array(Int32), encoding : TextEncoding,
                      values : Array(Value)) : Nil
       stored_order = @stored_order
-      held = header.count
-      mask.each_with_index do |wanted, position|
-        next unless wanted
+      positions.each do |position|
         column_index = stored_order.unsafe_fetch(position)
-        if position < held
+        if header.has?(position)
           value = header.value(position, encoding)
           value = value.to_f64 if value.is_a?(Int64) && @list_of_affinities.unsafe_fetch(column_index).real?
         else
@@ -167,20 +147,16 @@ module Grant::SQLiteEngine::Query
         values.unsafe_put(column_index, value)
       end
       if alias_index = rowid_alias
-        values[alias_index] = rowid
+        values.unsafe_put(alias_index, rowid)
       end
     end
 
     # The row from an index entry whose key columns sit at table column
-    # *positions*: other columns read NULL (the caller reads only these).
+    # *positions*; the caller reads no other column.
     def row_from_index(rowid : Int64, entry : Array(Value), positions : Array(Int32), into values : Array(Value)) : Array(Value)
-      count = @list_of_column_names.size
-      if values.size == count
-        values.fill(nil)
-      else
-        values.clear
-        count.times { values << nil }
-      end
+      # The caller reads only the key columns, which are written for every
+      # entry, so the array needs clearing only when its size is wrong.
+      clear_row(values) unless values.size == @list_of_column_names.size
       positions.each_with_index do |column_index, key_index|
         value = entry[key_index]?
         value = value.to_f64 if value.is_a?(Int64) && @list_of_affinities.unsafe_fetch(column_index).real?

@@ -52,8 +52,12 @@ module Grant::SQLiteEngine::Query
     # column when it is needed). Each term comes with the columns it
     # reads, nil when it reads the whole row.
     @list_of_terms = [] of {Expr, Set(Int32)?}
-    @list_of_term_masks = [] of Array(Bool)
-    @rest_mask = [] of Bool
+    @list_of_term_positions = [] of Array(Int32)
+    @rest_positions = [] of Int32
+    # Per term, the stored position of the column a literal-prefix LIKE
+    # tests, so a row whose stored text fails the prefix is rejected before
+    # the text is decoded.
+    @list_of_like_shortcuts = [] of {Int32, LikeExpr}?
     @masks_ready = false
     @header = RecordHeader.new
 
@@ -67,18 +71,29 @@ module Grant::SQLiteEngine::Query
     end
 
     # Splits the stored columns the query reads among the terms, each
-    # term's mask holding the columns no earlier term decoded.
+    # term taking the columns no earlier term decoded.
     private def prepare_masks : Nil
       wanted = @use.stored_mask(@table)
       decoded = Array(Bool).new(wanted.size, false)
-      @list_of_term_masks = @list_of_terms.map do |(_, columns)|
+      @list_of_term_positions = @list_of_terms.map do |(_, columns)|
         needed = @table.stored_mask_for(columns)
-        mask = Array(Bool).new(wanted.size) { |position| needed[position] && !decoded[position] }
-        mask.each_with_index { |taken, position| decoded[position] = true if taken }
-        mask
+        positions = (0...wanted.size).select { |position| needed[position] && !decoded[position] }
+        positions.each { |position| decoded[position] = true }
+        positions
       end
-      @rest_mask = Array(Bool).new(wanted.size) { |position| wanted[position] && !decoded[position] }
+      @rest_positions = (0...wanted.size).select { |position| wanted[position] && !decoded[position] }
+      @list_of_like_shortcuts = @list_of_terms.map { |(term, _)| like_shortcut(term) }
       @masks_ready = true
+    end
+
+    private def like_shortcut(term : Expr) : {Int32, LikeExpr}?
+      return unless term.is_a?(LikeExpr)
+      operand = term.operand
+      pattern = term.pattern
+      return unless operand.is_a?(ColumnExpr) && operand.slot == @slot && operand.column != @table.rowid_alias
+      return unless pattern.is_a?(ParameterExpr) || pattern.is_a?(ConstantExpr)
+      position = @table.stored_position(operand.column)
+      position ? {position, term} : nil
     end
 
     def advance(frame : Frame) : Bool
@@ -110,18 +125,27 @@ module Grant::SQLiteEngine::Query
         @started = true
         return false unless moved
         rowid = cursor.header(@header)
-        @table.clear_row(@buffer)
+        # Every column a term or the query reads is written before it is
+        # read, so the buffer needs clearing only when its size is wrong.
+        @table.clear_row(@buffer) unless @buffer.size == @table.list_of_column_names.size
         frame.list_of_rowids[@slot] = rowid
         frame.list_of_rows[@slot] = @buffer
         passed = true
         @list_of_terms.each_with_index do |(term, _), index|
-          @table.fill_columns(@header, rowid, @list_of_term_masks.unsafe_fetch(index), encoding, @buffer)
+          if encoding.utf8? && (shortcut = @list_of_like_shortcuts.unsafe_fetch(index))
+            position, like = shortcut
+            if @header.has?(position) && (text = @header.text_bytes(position)) && like.prefix_verdict(frame, text) == false
+              passed = false
+              break
+            end
+          end
+          @table.fill_columns(@header, rowid, @list_of_term_positions.unsafe_fetch(index), encoding, @buffer)
           next if term.holds?(frame)
           passed = false
           break
         end
         if passed
-          @table.fill_columns(@header, rowid, @rest_mask, encoding, @buffer)
+          @table.fill_columns(@header, rowid, @rest_positions, encoding, @buffer)
           return true
         end
         frame.session.tick
@@ -241,14 +265,18 @@ module Grant::SQLiteEngine::Query
     @probe = [] of Value
     @high : Value = nil
     @has_high = false
+    # A `>` or `<` bound: entries equal to it are skipped, as the WHERE
+    # term (still checked) would reject them.
+    @strict_low = false
+    @strict_high = false
     @started = false
     @empty = false
 
     # *equal* holds the value and the affinity to convert it with, per key
     # column; *low* and *high* bound the key column after them.
     def initialize(@database : Database, @table : TableInfo, @slot : Int32, @order : IndexOrder, @root_page : UInt32,
-                   @equal : Array({Expr, ExpressionAffinity}), @low : {Expr, ExpressionAffinity}?,
-                   @high_bound : {Expr, ExpressionAffinity}?, @use : ColumnUse = ColumnUse.new.tap(&.mark_all),
+                   @equal : Array({Expr, ExpressionAffinity}), @low : {Expr, ExpressionAffinity, Bool}?,
+                   @high_bound : {Expr, ExpressionAffinity, Bool}?, @use : ColumnUse = ColumnUse.new.tap(&.mark_all),
                    @covering : Array(Int32)? = nil)
     end
 
@@ -265,25 +293,31 @@ module Grant::SQLiteEngine::Query
         @empty = true if converted.nil?
         probe << converted
       end
+      @strict_low = false
       seek_key = @seek_key
       seek_key.clear
       seek_key.concat(probe)
       if low = @low
-        value = ValueSemantics.apply_record_affinity(low[0].evaluate(frame), low[1])
+        raw = low[0].evaluate(frame)
+        value = ValueSemantics.apply_record_affinity(raw, low[1])
         if value.nil?
           @empty = true
         else
           seek_key << value
+          @strict_low = low[2] && unchanged?(raw, value)
         end
       end
       @has_high = false
+      @strict_high = false
       if high = @high_bound
-        value = ValueSemantics.apply_record_affinity(high[0].evaluate(frame), high[1])
+        raw = high[0].evaluate(frame)
+        value = ValueSemantics.apply_record_affinity(raw, high[1])
         if value.nil?
           @empty = true
         else
           @high = value
           @has_high = true
+          @strict_high = high[2] && unchanged?(raw, value)
         end
       end
       index_cursor = @index_cursor ||= IndexCursor.new(@database, @root_page, @order)
@@ -295,6 +329,18 @@ module Grant::SQLiteEngine::Query
     end
 
     @opened_for : Frame? = nil
+
+    # True when converting a bound kept its value exactly: an entry equal
+    # to a rounded bound may still pass the WHERE term, so only an exact
+    # bound skips the entries equal to it.
+    private def unchanged?(raw : Value, converted : Value) : Bool
+      case raw
+      when Int64   then converted.is_a?(Int64) && converted == raw
+      when Float64 then converted.is_a?(Float64) && converted == raw
+      when String  then converted.is_a?(String) && converted == raw
+      else              false
+      end
+    end
 
     @seek_key = [] of Value
     @entry = [] of Value
@@ -318,7 +364,7 @@ module Grant::SQLiteEngine::Query
       table_cursor = @table_cursor
       return false unless index_cursor && table_cursor
       loop do
-        moved = @started ? index_cursor.advance : (@seek_key.empty? ? index_cursor.first : index_cursor.seek(@seek_key))
+        moved = @started ? index_cursor.advance : (@seek_key.empty? ? index_cursor.first : index_cursor.seek(@seek_key, @strict_low))
         @started = true
         return false unless moved
         entry = index_cursor.record(@entry)
@@ -329,7 +375,8 @@ module Grant::SQLiteEngine::Query
         if @has_high
           position = @probe.size
           collation = @order.collations[position]? || Collation::Binary
-          if ValueSemantics.compare(entry[position]?, @high, collation) > 0
+          beyond = ValueSemantics.compare(entry[position]?, @high, collation)
+          if beyond > 0 || (@strict_high && beyond == 0)
             @empty = true
             return false
           end

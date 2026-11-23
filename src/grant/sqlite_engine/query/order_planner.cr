@@ -92,8 +92,8 @@ module Grant::SQLiteEngine::Query
     # The choice for reading *table* through *layout* with *equal* values
     # on its first key columns and optional bounds on the next.
     private def index_choice(entry : FromEntry, table : TableInfo, layout : IndexLayout,
-                             equal : Array({Expr, ExpressionAffinity}), low : {Expr, ExpressionAffinity}?,
-                             high : {Expr, ExpressionAffinity}?) : AccessChoice
+                             equal : Array({Expr, ExpressionAffinity}), low : {Expr, ExpressionAffinity, Bool}?,
+                             high : {Expr, ExpressionAffinity, Bool}?) : AccessChoice
       key_columns = layout.comparator.list_of_key_columns
       order = IndexOrder.new(key_columns.map(&.collation), key_columns.map(&.descending))
       covering = covering?(entry, table, layout)

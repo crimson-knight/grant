@@ -65,6 +65,8 @@ module Grant::SQLiteEngine::Query
 
   # A cursor over a table b-tree, in rowid order.
   class TableCursor < BTreeCursor
+    @row_header = RecordHeader.new
+
     # Moves to the first row. Returns false for an empty table.
     def first : Bool
       seek(Int64::MIN)
@@ -93,8 +95,11 @@ module Grant::SQLiteEngine::Query
     # Moves to the next row.
     def advance : Bool
       return false unless @valid
-      page, index = @stack[-1]
-      @stack[-1] = {page, index + 1}
+      last = @stack.size - 1
+      page, index = @stack.unsafe_fetch(last)
+      @stack.unsafe_put(last, {page, index + 1})
+      # The next cell of the same leaf needs no climb.
+      return true if index + 1 < page.cell_count
       settle
     end
 
@@ -114,7 +119,9 @@ module Grant::SQLiteEngine::Query
     def row(table : TableInfo, use : ColumnUse, into : Array(Value)) : Int64
       page, index = @stack.unsafe_fetch(@stack.size - 1)
       rowid, location = page.table_leaf_cell(index)
-      table.decode_row(rowid, PayloadReader.read(pager, page, location), @database.text_encoding, page.number, use, into)
+      header = @row_header
+      header.parse(PayloadReader.read(pager, page, location), page.number)
+      table.decode_row(rowid, header, @database.text_encoding, use, into)
       rowid
     end
 
@@ -217,6 +224,12 @@ module Grant::SQLiteEngine::Query
       # span the target, the search stays in that leaf.
       if @valid && @built_generation == pager.generation && (top = @stack.last?) && top[0].page_type.leaf?
         leaf = top[0]
+        # A join probes in ascending order, so the target is usually a
+        # few entries past the current one.
+        if forward = forward_bound(leaf, top[1], probe, strict)
+          @stack[-1] = {leaf, forward}
+          return settle_leaf
+        end
         if leaf_spans?(leaf, probe, strict)
           @stack[-1] = {leaf, bound(leaf, probe, strict)}
           return settle_leaf
@@ -314,10 +327,37 @@ module Grant::SQLiteEngine::Query
       strict ? last > 0 : last >= 0
     end
 
-    private def bound(page : BTreePage, probe : Array(Value), strict : Bool) : Int32
+    # The first leaf entry at least (with *strict*, greater than) *probe*
+    # when the entry at *index* is below it and a later entry of *leaf* is
+    # not; nil otherwise. Steps ahead 1, 2, 4... entries, then searches the
+    # last step.
+    private def forward_bound(leaf : BTreePage, index : Int32, probe : Array(Value), strict : Bool) : Int32?
+      count = leaf.cell_count
+      return if index >= count
+      return unless below?(leaf, index, probe, strict)
+      low = index + 1
+      step = 1
+      loop do
+        candidate = index + step
+        return if candidate >= count && below?(leaf, count - 1, probe, strict)
+        if candidate >= count || !below?(leaf, candidate, probe, strict)
+          return bound(leaf, probe, strict, low, Math.min(candidate, count - 1))
+        end
+        low = candidate + 1
+        step *= 2
+      end
+    end
+
+    # True when the entry at *index* sorts before the first entry *seek*
+    # wants.
+    private def below?(page : BTreePage, index : Int32, probe : Array(Value), strict : Bool) : Bool
+      comparison = RecordColumns.compare_prefix(PayloadReader.read(pager, page, page.payload(index)), @database.text_encoding,
+        page.number, probe, @order)
+      comparison < 0 || (strict && comparison == 0)
+    end
+
+    private def bound(page : BTreePage, probe : Array(Value), strict : Bool, low : Int32 = 0, high : Int32 = page.cell_count) : Int32
       encoding = @database.text_encoding
-      low = 0
-      high = page.cell_count
       while low < high
         middle = (low + high) // 2
         comparison = RecordColumns.compare_prefix(PayloadReader.read(pager, page, page.payload(middle)), encoding, page.number,

@@ -311,7 +311,7 @@ module Grant::SQLiteEngine::Query
           key = key_columns[key_index]
           found = find_index_term(terms, entry, position, key, table, available, context, equality: true)
           if found
-            equal << found
+            equal << {found[0], found[1]}
             next
           end
           unless key.descending
@@ -336,7 +336,7 @@ module Grant::SQLiteEngine::Query
     # and the affinity to convert it with before seeking.
     private def find_index_term(terms : Array(Expr), entry : FromEntry, position : Int32, key : KeyColumn, table : TableInfo,
                                 available : Set(Int32), context : QueryContext, equality : Bool,
-                                lower : Bool = true) : {Expr, ExpressionAffinity}?
+                                lower : Bool = true) : {Expr, ExpressionAffinity, Bool}?
       column_affinity = table.list_of_affinities[position]
       terms.each do |term|
         oriented = oriented(term, entry, available, context)
@@ -361,7 +361,7 @@ module Grant::SQLiteEngine::Query
                  end
         next unless usable
         conversion = affinity < ExpressionAffinity::Text ? ExpressionAffinity::None : column_affinity
-        return {other, conversion}
+        return {other, conversion, operator.greater? || operator.less?}
       end
       nil
     end

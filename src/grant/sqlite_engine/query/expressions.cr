@@ -919,6 +919,21 @@ module Grant::SQLiteEngine::Query
     @cached_pattern : String? = nil
     @cached_prefix : Bytes? = nil
 
+    getter operand : Expr
+    getter pattern : Expr
+
+    # The result for a text *subject* given as its UTF-8 bytes, when the
+    # pattern is a literal prefix (as `evaluate` decides it); nil when
+    # `evaluate` must decide.
+    def prefix_verdict(frame : Frame, subject : Bytes) : Bool?
+      return if @glob || @escape
+      pattern = @pattern.evaluate(frame)
+      return unless pattern.is_a?(String)
+      prefix = literal_prefix(pattern)
+      return unless prefix
+      prefix_matches?(subject, prefix) != @negated
+    end
+
     def evaluate(frame : Frame) : Value
       pattern = @pattern.evaluate(frame)
       if !@glob && @escape.nil? && pattern.is_a?(String) && (prefix = literal_prefix(pattern))
