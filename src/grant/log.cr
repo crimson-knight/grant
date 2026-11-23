@@ -27,6 +27,20 @@ module Grant::Logs
 
   GRANT_SOURCE_ROOT = File.expand_path("..", __DIR__)
 
+  # The directory of the Crystal standard library this program was compiled
+  # against, read from the file that defines `Object`, so standard-library
+  # frames are recognized wherever the compiler keeps its sources (a source
+  # checkout, a release tarball, any install prefix). `nil` when the
+  # compiler does not report where `Object` is defined.
+  STDLIB_SOURCE_ROOT = {% begin %}
+    {% object_file = ::Object.methods.map(&.filename).find { |file| file && file.ends_with?("/object.cr") } %}
+    {% if object_file %}
+      {{ object_file[0...-"/object.cr".size] }}
+    {% else %}
+      nil
+    {% end %}
+  {% end %}
+
   # Writes the verbose lines for one executed statement. Called by
   # `Adapter::Base#log` after the statement's own entry.
   # *name* (usually the model) replaces the table in the label when known.
@@ -85,12 +99,22 @@ module Grant::Logs
       path = frame.split(':', 2).first
       absolute = File.expand_path(path)
       next if absolute.starts_with?(GRANT_SOURCE_ROOT)
-      next if Grant::TextMatching.stdlib_path?(absolute) || absolute.includes?("/lib/")
+      next if stdlib_file?(absolute) || absolute.includes?("/lib/")
       next if path == "??" || File.extname(path) != ".cr"
 
       return frame
     end
     nil
+  end
+
+  # Whether *absolute* is a file of the Crystal standard library: under the
+  # directory this program was compiled against, or at a path shaped like a
+  # standard install (`.../crystal/src/`, `.../share/<name>crystal<name>/src/`).
+  private def self.stdlib_file?(absolute : String) : Bool
+    if root = STDLIB_SOURCE_ROOT
+      return true if absolute.starts_with?("#{root}/")
+    end
+    Grant::TextMatching.stdlib_path?(absolute)
   end
 
   # A short name for a statement, from its kind and the model *name* (or the
