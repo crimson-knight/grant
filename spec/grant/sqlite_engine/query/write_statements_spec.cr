@@ -306,11 +306,12 @@ module WriteStatementsSpecFixture
 end
 
 describe "Grant::SQLiteEngine::Query write statements" do
-  # Scenarios whose C answers changed in releases before 3.51.0 (DROP
-  # COLUMN's index checks): compared only against the reference library.
+  # Scenarios whose C answers differ between SQLite releases (DROP
+  # COLUMN's index checks): compared only against the reference library,
+  # SQLite 3.51.0.
   reference_only = {"schema changes"}
   linked = SQLiteSQLOracle.version.split(' ').first
-  library_is_reference = linked.split('.').map(&.to_i) >= [3, 51, 0]
+  library_is_reference = linked == "3.51.0"
   WriteStatementsSpecFixture::SCENARIOS.each do |name, statements|
     if reference_only.includes?(name) && !library_is_reference
       pending "matches C SQLite 3.51.0: #{name} (the linked libsqlite3 is #{linked})"
