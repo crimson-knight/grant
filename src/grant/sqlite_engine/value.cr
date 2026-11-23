@@ -55,11 +55,9 @@ module Grant::SQLiteEngine
     end
 
     protected def self.numeric_from(value : Value) : Value
-      if value.is_a?(Float64)
-        whole = value.trunc
-        return whole.to_i64 if whole == value && whole.abs < 9.007199254740992e15
-        return value
-      end
+      # sqlite3VdbeIntegerAffinity: a REAL that equals an INTEGER strictly
+      # inside the Int64 range becomes that INTEGER.
+      return StoredValue.whole_number(value) if value.is_a?(Float64)
       return value unless value.is_a?(String)
       trimmed = value.strip
       if integer = trimmed.to_i64?(whitespace: false, underscore: false, prefix: false, strict: true)
