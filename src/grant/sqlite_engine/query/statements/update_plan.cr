@@ -113,7 +113,7 @@ module Grant::SQLiteEngine::Query
           read = @statement.assignments.map(&.value)
           layout = WithoutRowidScan.scan_layout(@table, @statement.where, read)
           if layout && !StatementJournal.update_in_rowid_order?(@session, @table, @statement, @override, positions, layout.entry.root_page)
-            targets = WithoutRowidScan.sort(targets, layout)
+            targets = WithoutRowidScan.sort(@table, targets, layout)
           end
         end
         targets.each do |rowid, snapshot, values|
@@ -178,7 +178,7 @@ module Grant::SQLiteEngine::Query
           targets = targets.sort_by { |target| target[0] || 0_i64 }
         elsif @table.without_rowid? && !StatementJournal.delete_in_rowid_order?(@session, @table, @statement)
           if layout = WithoutRowidScan.scan_layout(@table, @statement.where, [] of SQL::Expression)
-            targets = WithoutRowidScan.sort(targets, layout)
+            targets = WithoutRowidScan.sort(@table, targets, layout)
           end
         end
         targets.each do |rowid, snapshot, _values|

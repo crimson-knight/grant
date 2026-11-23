@@ -39,12 +39,18 @@ module Grant::SQLiteEngine::Query
       end
     end
 
-    # Sorts *targets* into the order of *layout*'s entries.
-    def self.sort(targets : Array({Int64?, Array(Value), Array(Value)}), layout : IndexLayout) : Array({Int64?, Array(Value), Array(Value)})
+    # Sorts *targets* into the order of *layout*'s entries, built from
+    # each row as stored (a snapshot holds only the columns the statement
+    # reads).
+    def self.sort(table : WriteTable, targets : Array({Int64?, Array(Value), Array(Value)}),
+                  layout : IndexLayout) : Array({Int64?, Array(Value), Array(Value)})
       comparator = layout.comparator
-      targets.sort do |left, right|
-        comparator.compare(layout.entry_for(left[1], nil), layout.entry_for(right[1], nil))
+      keyed = targets.map do |target|
+        row = table.database.row_with_key_of(table.layout, target[1]) || target[1]
+        {layout.entry_for(row, nil), target}
       end
+      keyed.sort! { |left, right| comparator.compare(left[0], right[0]) }
+      keyed.map(&.[1])
     end
 
     # The primary key index holds every column of the table.

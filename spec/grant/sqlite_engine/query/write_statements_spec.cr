@@ -370,6 +370,13 @@ module WriteStatementsSpecFixture
       "ALTER TABLE side.things ADD COLUMN z",
       "SELECT seq, name FROM pragma_database_list",
     ],
+    "negated text defaults" => [
+      "CREATE TABLE d (id INTEGER PRIMARY KEY, x DEFAULT -'5', y TEXT DEFAULT -'abc', z REAL DEFAULT -'2.5')",
+      "INSERT INTO d DEFAULT VALUES",
+      "INSERT INTO d (id) VALUES (7)",
+      "ALTER TABLE d ADD COLUMN w INTEGER DEFAULT -'12'",
+      "SELECT id, x, typeof(x), y, typeof(y), z, typeof(z), w, typeof(w) FROM d ORDER BY id",
+    ],
     "pragmas" => [
       "PRAGMA user_version",
       "PRAGMA user_version = 7",
