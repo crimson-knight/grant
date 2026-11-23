@@ -126,7 +126,7 @@ module Grant::SQLiteEngine::Query
         @table.clear_row(@buffer) unless @buffer.size == @table.list_of_column_names.size
         frame.list_of_rowids[@slot] = rowid
         frame.list_of_rows[@slot] = @buffer
-        undecoded.clear
+        undecoded.clear unless undecoded.empty?
         if passes_terms?(frame, rowid, encoding, undecoded)
           undecoded.each { |index| fill_term_columns(index, rowid, encoding) }
           @table.fill_columns(@header, rowid, @rest_positions, encoding, @buffer)
