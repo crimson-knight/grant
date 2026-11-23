@@ -511,9 +511,10 @@ def random_database_sql(random)
         added = "a#{random.rand(1000)}"
         added_type = TYPES.sample(random: random)
         default = random_value(random).sub(/\A\(.*\)\z/, "0")
-        # Older sqlite3 builds return a whole-number REAL default of an added
-        # column as INTEGER (see LEGACY_REAL_DEFAULTS); give those a fraction.
-        default = "0.5" if LEGACY_REAL_DEFAULTS && real_affinity?(added_type)
+        # Older sqlite3 builds return a whole-number default of an added REAL
+        # or BLOB-affinity column as INTEGER (see LEGACY_REAL_DEFAULTS); give
+        # those a fraction.
+        default = "0.5" if LEGACY_REAL_DEFAULTS && real_or_blob_affinity?(added_type)
         sql << "ALTER TABLE #{table} ADD COLUMN #{added} #{added_type} DEFAULT #{default};\n"
         columns << [added, ""]
       end
@@ -528,21 +529,24 @@ def random_database_sql(random)
   sql
 end
 
-def real_affinity?(declared_type)
+# REAL or BLOB affinity, by the rules of datatype3.html section 3.1.
+def real_or_blob_affinity?(declared_type)
   upper = declared_type.upcase
   return false if upper.include?("INT")
-  return false if %w[CHAR CLOB TEXT BLOB].any? { |word| upper.include?(word) } || upper.empty?
+  return false if %w[CHAR CLOB TEXT].any? { |word| upper.include?(word) }
+  return true if upper.include?("BLOB") || upper.empty?
   %w[REAL FLOA DOUB].any? { |word| upper.include?(word) }
 end
 
-# True when this sqlite3 reads a whole-number REAL default (69, 69.0 or
-# -0.0) of a column added by ALTER TABLE back as INTEGER for rows written
+# True when this sqlite3 reads a whole-number default (69, 69.0 or -0.0) of
+# a REAL or BLOB-affinity column added by ALTER TABLE back as INTEGER for rows written
 # before the ALTER (Ubuntu 24.04's 3.45.1 does; 3.51 and later return REAL,
 # which is what the engine returns). Probed once per run.
 LEGACY_REAL_DEFAULTS = begin
   probe = "CREATE TABLE probe(a); INSERT INTO probe VALUES (1); " \
           "ALTER TABLE probe ADD COLUMN b REAL DEFAULT 69; ALTER TABLE probe ADD COLUMN c REAL DEFAULT 69.0; " \
-          "ALTER TABLE probe ADD COLUMN d REAL DEFAULT -0.0; SELECT typeof(b), typeof(c), typeof(d) FROM probe;"
+          "ALTER TABLE probe ADD COLUMN d REAL DEFAULT -0.0; ALTER TABLE probe ADD COLUMN e BLOB DEFAULT 69.0; " \
+          "SELECT typeof(b), typeof(c), typeof(d), typeof(e) FROM probe;"
   sqlite3(":memory:", probe).include?("integer")
 end
 
