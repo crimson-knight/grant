@@ -19,6 +19,8 @@ module Grant::SQLiteEngine::Query
     # Index hint: the INDEXED BY name, or NOT INDEXED.
     property indexed_by : String? = nil
     property? not_indexed = false
+    # The columns the compiled query reads from this entry's rows.
+    getter column_use = ColumnUse.new
 
     def initialize(@match_name : String, @slot : Int32, @list_of_columns : Array(SourceColumn), @table : TableInfo?)
     end
@@ -84,6 +86,12 @@ module Grant::SQLiteEngine::Query
     property aggregates : AggregateCollector? = nil
     # True for a query with GROUP BY or an aggregate in its result set.
     property? aggregate_query = false
+    # NC_AllowAgg: an aggregate call here resolves (whether it can be
+    # computed is decided by where it belongs, `aggregates`).
+    property? aggregates_allowed = false
+    # NC_InAggFunc: while an aggregate's arguments are resolved, another
+    # aggregate of this query is misuse.
+    property? inside_aggregate_call = false
     # Set when an expression of this query (or a query inside it) refers to
     # a row of an enclosing query.
     property? correlated = false
@@ -101,8 +109,5 @@ module Grant::SQLiteEngine::Query
   # The aggregate calls of one SELECT core.
   class AggregateCollector
     getter list_of_calls = [] of AggregateCall
-    # True while compiling an aggregate's arguments, where another
-    # aggregate is misuse.
-    property? inside_call = false
   end
 end

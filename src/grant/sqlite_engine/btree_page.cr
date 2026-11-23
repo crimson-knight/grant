@@ -74,7 +74,13 @@ module Grant::SQLiteEngine
     # Offset of cell *index* on the page, checked to lie after the pointer
     # array and inside the usable size.
     def cell_offset(index : Int32) : Int32
-      pointer = u16(@pointer_array_offset + index * 2)
+      # The pointer array was checked to lie inside the page.
+      pointer = if 0 <= index < @cell_count
+                  at = @pointer_array_offset + index * 2
+                  (@data.unsafe_fetch(at).to_i32 << 8) | @data.unsafe_fetch(at + 1)
+                else
+                  u16(@pointer_array_offset + index * 2)
+                end
       unless pointer >= @pointer_array_end && pointer < @usable_size
         corrupt("cell #{index} pointer #{pointer} is outside #{@pointer_array_end}...#{@usable_size}")
       end

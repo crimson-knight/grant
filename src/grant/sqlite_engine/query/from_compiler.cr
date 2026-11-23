@@ -83,19 +83,22 @@ module Grant::SQLiteEngine::Query
     end
 
     # Compiles each step's ON clause as the tail of WHERE: every FROM entry
-    # is visible; a LEFT JOIN ON naming a table to its right is an error.
-    private def compile_join_conditions(steps : Array(JoinStep), context : QueryContext) : Nil
+    # is visible. True when a LEFT JOIN ON names a table to its right, an
+    # error C reports after the whole SELECT resolves.
+    private def compile_join_conditions(steps : Array(JoinStep), context : QueryContext) : Bool
+      reaches_right = false
       steps.each_with_index do |step, index|
         syntax = step.on_syntax
         next unless syntax
         compiled = resolve_expression(syntax, context)
         later = steps[(index + 1)..].map(&.entry.slot).to_set
         if step.left_join? && !(ExpressionWalk.slots(compiled) & later).empty?
-          raise SQLError.new("ON clause references tables to its right")
+          reaches_right = true
         end
         existing = step.on
         step.on = existing ? LogicalExpr.new(true, existing, compiled) : compiled
       end
+      reaches_right
     end
 
     private def compile_from_subquery(query : SQL::SelectStatement, context : QueryContext) : QueryPlan
@@ -184,6 +187,10 @@ module Grant::SQLiteEngine::Query
         raise SQLError.new("no such table: #{schema}.#{name}")
       end
       if view = @session.view(name)
+        # sqlite3IndexedByLookup finds no index on a view.
+        if indexed_by = reference.indexed_by
+          raise SQLError.new("no such index: #{indexed_by.value}")
+        end
         plan = compile_view(view)
         slot = allocate_slot
         entry = FromEntry.new(alias_name, slot, subquery_columns(plan, view.list_of_column_names, view_name: name), nil)
@@ -212,16 +219,50 @@ module Grant::SQLiteEngine::Query
         entry.indexed_by = indexed_by.value
       end
       entry.not_indexed = reference.not_indexed
-      {entry, TableScanSource.new(@session.database, table, slot).as(RowSource)}
+      {entry, TableScanSource.new(@session.database, table, slot, entry.column_use).as(RowSource)}
     end
 
     # A CTE's body, compiled once per reference. A recursive CTE whose body
     # names itself runs through RecursiveProducer.
+    # Expand-phase errors stop withExpand before it compares the CTE's
+    # column list with the width of its leftmost SELECT.
+    EXPAND_ERROR = /\A(no such table|no such index|'.*' is not a function|circular reference|multiple (recursive )?references|too many)/
+
+    # withExpand checks the column list against the leftmost SELECT once
+    # its body is expanded, before names resolve: a width mismatch is
+    # reported over any resolve-phase error of the body.
     private def compile_cte(definition : CteDefinition, context : QueryContext) : QueryPlan
+      names = definition.list_of_column_names
+      width = leftmost_width(definition.query)
+      return compile_cte_body(definition, context) unless names && width && width != names.size
+      begin
+        compile_cte_body(definition, context)
+      rescue error : SQLError
+        raise error if EXPAND_ERROR.matches?(error.message || "")
+        raise SQLError.new("table #{definition.name} has #{width} values for #{names.size} columns")
+      end
+    end
+
+    # The width of the leftmost SELECT of *query* after `*` expands, when
+    # it can be told without the FROM (`*` with no FROM expands to nothing).
+    private def leftmost_width(query : SQL::SelectStatement) : Int32?
+      core = query.cores.first?
+      return core.rows.first?.try(&.size) if core.is_a?(SQL::ValuesClause)
+      return unless core.is_a?(SQL::SelectClause)
+      stars = core.columns.count(&.is_a?(SQL::AllColumns))
+      return core.columns.size if stars == 0
+      return if core.from
+      # With nothing left after `*` expands, withExpand has no column list
+      # to compare.
+      width = core.columns.size - stars
+      width > 0 ? width : nil
+    end
+
+    private def compile_cte_body(definition : CteDefinition, context : QueryContext) : QueryPlan
       query = definition.query
       # SQLite treats a CTE whose FROM names itself as recursive whether or
       # not the WITH says RECURSIVE (withExpand).
-      if query.cores.any? { |core| core_refers_to?(core, definition.name) }
+      if recursive_split(query, definition.name)
         return compile_recursive(definition, context)
       end
       # Any other reference to itself from its own body is circular.
@@ -259,16 +300,41 @@ module Grant::SQLiteEngine::Query
       end
     end
 
+    # withExpand: a CTE is recursive when its rightmost SELECT names it in
+    # its FROM after a UNION or UNION ALL. The recursive SELECTs are the
+    # rightmost run that name it, each after the same operator; the index
+    # of the first, or nil when the CTE is not recursive.
+    private def recursive_split(query : SQL::SelectStatement, name : String) : Int32?
+      last = query.cores.size - 1
+      return if last < 1
+      operator = query.operators[last - 1]
+      return unless operator.union? || operator.union_all?
+      split = last
+      while split >= 1 && query.operators[split - 1] == operator && core_refers_to?(query.cores[split], name)
+        split -= 1
+      end
+      split == last ? nil : split + 1
+    end
+
+    # SF_Aggregate: the SELECT groups or calls an aggregate function.
+    private def aggregate_core?(core : SQL::SelectCore) : Bool
+      return false unless core.is_a?(SQL::SelectClause)
+      return true unless core.group_by.empty?
+      core.columns.any? { |column| column.is_a?(SQL::ExpressionColumn) && contains_aggregate?(column.expression) } ||
+        core.having.try { |having| contains_aggregate?(having) } || false
+    end
+
     private def compile_recursive(definition : CteDefinition, context : QueryContext) : QueryPlan
       query = definition.query
       name = definition.name
-      split = query.cores.index { |core| core_refers_to?(core, name) } || query.cores.size
-      if split == 0
-        raise SQLError.new("circular reference: #{name}")
-      end
+      split = recursive_split(query, name) || raise SQLError.new("circular reference: #{name}")
       operator = query.operators[split - 1]
-      unless operator.union? || operator.union_all?
-        raise SQLError.new("recursive aggregate queries not supported")
+      # withExpand marks each FROM item of a recursive SELECT that names the
+      # CTE (with no schema); a second one in the same SELECT is an error.
+      query.cores[split..].each do |core|
+        next unless core.is_a?(SQL::SelectClause)
+        references = core.from.try(&.items.count { |item| (source = item.source).is_a?(SQL::TableReference) && source_refers_to?(source, name) }) || 0
+        raise SQLError.new("multiple references to recursive table: #{name}") if references > 1
       end
       initial = SQL::SelectStatement.new(nil, query.cores[0, split], query.operators[0, split - 1], [] of SQL::OrderingTerm, nil)
       initial_plan = with_cte_error(definition, "circular reference") do
@@ -295,13 +361,24 @@ module Grant::SQLiteEngine::Query
         @recursive_source = saved_source
         @recursive_depth = saved_depth
       end
-      if recursive_plan.list_of_column_names.size != columns.size
-        raise SQLError.new("SELECTs to the left and right of UNION do not have the same number of result columns")
+      # generateWithRecursiveQuery: no recursive SELECT may aggregate.
+      if recursive_cores.any? { |core| aggregate_core?(core) }
+        raise SQLError.new("recursive aggregate queries not supported")
       end
-      order_keys = query.order_by.map do |term|
+      if recursive_plan.list_of_column_names.size != columns.size
+        raise SQLError.new("SELECTs to the left and right of #{operator_word(operator)} do not have the same number of result columns")
+      end
+      order_keys = query.order_by.map_with_index do |term, term_index|
         position = integer_term(term.expression, columns.size, "ORDER")
         if position.nil? && (reference = term.expression).is_a?(SQL::ColumnReference)
-          position = columns.index { |column| column.name.compare(reference.column.value, case_insensitive: true) == 0 }
+          # resolveCompoundOrderBy matches a name against each SELECT's
+          # result columns, leftmost first, not the CTE's column list.
+          wanted = reference.column.value
+          position = initial_plan.list_of_column_names.index { |column_name| column_name.compare(wanted, case_insensitive: true) == 0 } ||
+                     recursive_plan.list_of_column_names.index { |column_name| column_name.compare(wanted, case_insensitive: true) == 0 }
+          unless position
+            raise SQLError.new("#{Compiler.ordinal(term_index + 1)} ORDER BY term does not match any column in the result set")
+          end
         end
         raise UnsupportedSQL.new("ORDER BY expression in a recursive CTE") unless position
         sort_key(term, position, columns[position].collation)
@@ -337,9 +414,25 @@ module Grant::SQLiteEngine::Query
       end
     end
 
+    # selectExpander finds the table of `name(arguments)` before any name
+    # in the arguments resolves: a table or view takes no arguments, and
+    # an unknown name is reported as written, with its schema.
     private def compile_table_function(source : SQL::TableFunction, context : QueryContext) : {FromEntry, RowSource}
+      name = source.name.value
+      schema = source.schema.try(&.value)
+      in_main = schema.nil? || schema.compare("main", case_insensitive: true).zero?
+      cte = schema.nil? && context.ctes.try(&.find(name))
+      if cte || (in_main && (@session.view(name) || @session.table(name)))
+        raise SQLError.new("'#{name}' is not a function")
+      end
+      lower = name.downcase
+      known = Catalog::COLUMNS.has_key?(lower) || lower.in?("json_each", "json_tree", "jsonb_each", "jsonb_tree")
+      unless in_main && known
+        full = schema ? "#{schema}.#{name}" : (@view_depth > 0 ? "main.#{name}" : name)
+        raise SQLError.new("no such table: #{full}")
+      end
       arguments = source.arguments.map { |argument| compile_expression(argument, context) }
-      catalog_source(source.name.value, source.alias_name.try(&.value) || source.name.value, arguments)
+      catalog_source(name, source.alias_name.try(&.value) || name, arguments)
     end
 
     private def catalog_source(display_name : String, alias_name : String, arguments : Array(Expr)) : {FromEntry, RowSource}

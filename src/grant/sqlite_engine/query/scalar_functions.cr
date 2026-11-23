@@ -294,6 +294,30 @@ module Grant::SQLiteEngine::Query
       end
     end
 
+    # unhexFunc: the bytes the hex digit pairs of the first argument spell;
+    # characters of the second argument may stand between pairs. NULL when
+    # anything else appears or a pair is cut short.
+    def self.unhex(arguments : Array(Value)) : Value
+      digits = c_text(arguments[0])
+      passed = arguments.size == 2 ? c_text(arguments[1]) : ""
+      return if digits.nil? || passed.nil?
+      list_of_bytes = [] of UInt8
+      reader = Char::Reader.new(digits)
+      while reader.has_next?
+        high = reader.current_char
+        reader.next_char
+        unless high.hex?
+          return unless passed.includes?(high)
+          next
+        end
+        low = reader.has_next? ? reader.current_char : '\0'
+        return unless low.hex?
+        reader.next_char
+        list_of_bytes << ((high.to_i(16) << 4) | low.to_i(16)).to_u8
+      end
+      Bytes.new(list_of_bytes.size) { |index| list_of_bytes[index] }
+    end
+
     def self.quote(argument : Value) : Value
       case argument
       when Float64
@@ -469,6 +493,10 @@ module Grant::SQLiteEngine::Query
         end,
         define("glob", 2, 2) { |arguments, _| like(arguments, glob: true) },
         define("hex", 1, 1) { |arguments, _| hex(arguments[0]) },
+        define("unhex", 1, 2) { |arguments, _| unhex(arguments) },
+        # The extension loader is off for SQL (SQLITE_LoadExtFunc is unset),
+        # so loadExt reports sqlite3_load_extension's refusal.
+        define("load_extension", 1, 2) { |_, _| raise SQLError.new("not authorized") },
         define("instr", 2, 2) { |arguments, _| instr(arguments[0], arguments[1]) },
         define("last_insert_rowid", 0, 0) { |_, context| context.session.last_insert_rowid },
         define("length", 1, 1) { |arguments, _| length(arguments[0]) },
