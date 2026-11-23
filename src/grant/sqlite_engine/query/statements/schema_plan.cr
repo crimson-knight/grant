@@ -24,12 +24,20 @@ module Grant::SQLiteEngine::Query
         raise UnsupportedSQL.new("TEMP views (the temp schema)") if statement.temporary
         check_schema_name(statement.schema)
       when SQL::Drop
-        check_schema_name(statement.schema)
+        if (schema = statement.schema) && !@session.schema?(schema.value)
+          # sqlite3LocateTable finds nothing in a schema the connection
+          # lacks; IF EXISTS makes that no error.
+          @drops_nothing = true
+          return if statement.if_exists
+          raise SQLError.new("no such #{statement.kind.to_s.downcase}: #{schema.value}.#{statement.name.value}")
+        end
         if statement.kind.trigger?
           raise SQLError.new("no such trigger: #{statement.name.value}") unless statement.if_exists
         end
       when SQL::AlterTable
-        check_schema_name(statement.schema)
+        if (schema = statement.schema) && !@session.schema?(schema.value)
+          raise SQLError.new("no such table: #{schema.value}.#{statement.table.value}")
+        end
       when SQL::CreateTrigger
         raise UnsupportedSQL.new("triggers (CREATE TRIGGER)")
       when SQL::CreateVirtualTable
@@ -73,7 +81,11 @@ module Grant::SQLiteEngine::Query
       @session.schema_name_of(database)
     end
 
+    # DROP ... IF EXISTS naming a schema the connection lacks.
+    @drops_nothing = false
+
     def run(list_of_parameters : Array(Value)) : Array(Array(Value))
+      return [] of Array(Value) if @drops_nothing
       statement = @statement
       # sqlite3FkDropTable runs a DELETE first, which sets changes().
       counts = statement.is_a?(SQL::Drop) && statement.kind.table? && @session.foreign_keys? &&
