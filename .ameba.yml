@@ -71,6 +71,12 @@ Metrics/CyclomaticComplexity:
     - src/grant/sqlite_engine/record_encoder.cr
     - src/grant/sqlite_engine/rollback_journal.cr
     - spec/support/sqlite_engine/crash_driver.cr
+    # The query executor ports resolve.c, expr.c, select.c and where.c
+    # dispatch (one case per operator, clause or plan shape) and its
+    # differential and generator scripts walk every comparison rule.
+    - src/grant/sqlite_engine/query/*.cr
+    - scripts/sqlite_engine_query_*.cr
+    - spec/support/sqlite_engine/query_oracle.cr
     - spec/support/sqlite_engine/crash_file.cr
     - spec/support/sqlite_engine/write_driver.cr
     - spec/support/simple_virtual_sharding.cr

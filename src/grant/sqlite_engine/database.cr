@@ -13,6 +13,10 @@ module Grant::SQLiteEngine
   class Database
     getter pager : Pager
 
+    # The full path of the main file, as `PRAGMA database_list` reports
+    # it; empty for a database held in memory.
+    getter file_name : String
+
     @schema : Schema? = nil
     @schema_generation = 0
 
@@ -23,7 +27,7 @@ module Grant::SQLiteEngine
       wal_path = "#{path}-wal"
       wal = File.exists?(wal_path) ? FileByteSource.new(wal_path) : nil
       begin
-        new(Pager.new(main, wal))
+        new(Pager.new(main, wal), File.realpath(path))
       rescue error : Error
         main.close
         wal.try &.close
@@ -37,7 +41,7 @@ module Grant::SQLiteEngine
       new(Pager.new(MemoryByteSource.new(bytes), wal))
     end
 
-    def initialize(@pager : Pager)
+    def initialize(@pager : Pager, @file_name : String = "")
     end
 
     # The database header; nil for an empty (zero-page) database.

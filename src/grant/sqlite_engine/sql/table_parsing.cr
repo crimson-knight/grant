@@ -72,6 +72,7 @@ module Grant::SQLiteEngine::SQL
     # build.c, sqlite3CheckObjectName: names starting with sqlite_ are
     # reserved.
     private def check_object_name(name : Name) : Nil
+      return if reading_schema?
       if name.value.size >= 7 && name.value[0, 7].compare("sqlite_", case_insensitive: true) == 0
         action_error("object name reserved for internal use: #{name.value}")
       end

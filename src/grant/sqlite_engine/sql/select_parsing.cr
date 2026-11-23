@@ -213,13 +213,24 @@ module Grant::SQLiteEngine::SQL
           advance
           columns << AllColumns.new(table)
         else
+          span_start = peek.start
           expression = parse_expression
           height = Math.max(height, expression.height)
-          columns << ExpressionColumn.new(expression, parse_alias)
+          span = span_text(span_start, peek.start)
+          column = ExpressionColumn.new(expression, parse_alias)
+          column.span = span
+          columns << column
         end
         break unless accept(TokenKind::Comma)
       end
       {columns, height}
+    end
+
+    # The text SQLite names an unaliased result column by: from the start of
+    # the expression to the start of the token after it, trimmed of
+    # whitespace (parse.y `scanpt`, sqlite3DbSpanDup).
+    private def span_text(start : Int32, finish : Int32) : String
+      @tokenizer.span(start, finish)
     end
 
     # parse.y's `as`: `AS nm`, a bare ID or STRING, or nothing.

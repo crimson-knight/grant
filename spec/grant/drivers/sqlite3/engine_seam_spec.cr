@@ -32,11 +32,12 @@ describe "Grant::SQLite3 engine seam" do
     Grant.settings.sqlite_engine.should eq :libsqlite3
   end
 
-  it "opens a database with Grant's engine and reports statements as unsupported until milestone G4" do
+  it "reads a database C SQLite wrote with Grant's engine" do
     path = File.tempname("grant_engine_seam_grant", ".sqlite3")
     DB.open("sqlite3:#{path}") do |db|
       db.exec "CREATE TABLE fruits (id INTEGER PRIMARY KEY, name TEXT)"
       db.exec "INSERT INTO fruits (name) VALUES ('apple')"
+      db.exec "INSERT INTO fruits (name) VALUES ('pear')"
     end
 
     Grant.settings.sqlite_engine = :grant
@@ -49,8 +50,17 @@ describe "Grant::SQLite3 engine seam" do
         fruits.list_of_columns.map(&.column_name).should eq ["id", "name"]
       end
 
-      expect_raises(Grant::SQLiteEngine::UnsupportedSQL, /milestone G4: SELECT name FROM fruits/) do
-        connection.query_all("SELECT name FROM fruits", as: String)
+      connection.query_all("SELECT name FROM fruits ORDER BY id", as: String).should eq ["apple", "pear"]
+      connection.query_all("SELECT id, upper(name) FROM fruits WHERE name LIKE ?", "p%", as: {Int64, String}).should eq [{2_i64, "PEAR"}]
+      connection.scalar("SELECT count(*) FROM fruits").should eq 2
+      connection.scalar("SELECT avg(id) FROM fruits").should eq 1.5
+      connection.scalar("SELECT max(name) FROM fruits").should eq "pear"
+      connection.scalar("SELECT NULL").should be_nil
+      expect_raises(Grant::SQLite3::Exception, "no such column: weight") do
+        connection.query_all("SELECT weight FROM fruits", as: Int64)
+      end
+      expect_raises(Grant::SQLiteEngine::UnsupportedSQL, /milestone G4b/) do
+        connection.exec("INSERT INTO fruits (name) VALUES ('fig')")
       end
     ensure
       connection.close
