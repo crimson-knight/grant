@@ -263,12 +263,19 @@ jobs:
         crystal: [1.21.0]
         shard: [1, 2, 3, 4, 5, 6]
     services:
+      # The primary trusts its local logins: a SCRAM-SHA-256 handshake runs
+      # 4,096 PBKDF2 rounds in Grant's driver for every new connection, and
+      # the pool specs open thousands (a 14-file connection-heavy binary ran
+      # 7.2 s with SCRAM and 3.4 s with trust on PostgreSQL 17). The replica
+      # keeps the image's scram-sha-256, so every slice still logs in with
+      # SCRAM through the replica URL, as sharding.yml and failover.yml do.
       postgres-primary:
         image: postgres:16@sha256:a3b7f434b2dc57ce85a67e171163eb8ab1a1ebcb39d27484661f26b1dfbe30d6
         env:
           POSTGRES_USER: grant
           POSTGRES_PASSWORD: password
           POSTGRES_DB: grant_db
+          POSTGRES_HOST_AUTH_METHOD: trust
         options: >-
           --health-cmd pg_isready
           --health-interval 10s
