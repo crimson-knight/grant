@@ -373,7 +373,7 @@ module Grant::SQLiteEngine::Query
       # entry before the cursor is below it and the cursor is where the
       # seek would start (OP_SeekGE on a cursor already in place).
       @resume = @can_resume && !@empty && !probe.empty? && @low.nil? && @high_bound.nil? &&
-                index_cursor.positioned? && @order.compare(probe, @resume_after) > 0
+                index_cursor.positioned? && probe_after_last?(probe)
       @can_resume = false
       # One integer key on an ascending column, no range: entries holding an
       # integer key and the rowid are read without building values.
@@ -400,6 +400,18 @@ module Grant::SQLiteEngine::Query
       return unless covering && covering.size == 1 && covering_holds?(covering)
       column = covering[0]
       @integer_covering = @table.list_of_affinities[column].real? ? nil : column
+    end
+
+    # True when *probe* sorts after the key the last lookup stopped past;
+    # one integer against one integer on an ascending column compares
+    # directly.
+    private def probe_after_last?(probe : Array(Value)) : Bool
+      key = probe.first?
+      last = @resume_after.first?
+      if probe.size == 1 && @resume_after.size == 1 && key.is_a?(Int64) && last.is_a?(Int64) && !@order.descending[0]?
+        return key > last
+      end
+      @order.compare(probe, @resume_after) > 0
     end
 
     # True when the cursor's entry sorts before the probe.
