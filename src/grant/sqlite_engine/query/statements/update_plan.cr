@@ -42,11 +42,14 @@ module Grant::SQLiteEngine::Query
       producer = @compiled.producer
       producer.open(frame)
       rows = [] of {Int64?, Array(Value), Array(Value)}
-      seen = Set(Int64).new
+      # The rowids taken so far, built once a second row arrives (most
+      # writes change one row).
+      seen = nil.as(Set(Int64)?)
       while values = producer.next_row(frame)
         rowid = frame.list_of_rowids[@slot]
-        if rowid
-          next unless seen.add?(rowid)
+        if rowid && !rows.empty?
+          taken = seen ||= rows.compact_map(&.[0]).to_set
+          next unless taken.add?(rowid)
         end
         frame.complete_row(@slot)
         rows << {rowid, frame.list_of_rows[@slot].dup, values}
