@@ -91,7 +91,7 @@ module Grant::SQLiteEngine::Query
     private def self.indexes_of(table : TableInfo, session : Session) : Array(SchemaEntry)
       session.database.schema.list_of_indexes.select do |entry|
         entry.table_name.compare(table.name, case_insensitive: true) == 0
-      end.reverse
+      end.reverse!
     end
 
     private def self.index_list(name : String, session : Session) : Array(Array(Value))
@@ -205,7 +205,7 @@ module Grant::SQLiteEngine::Query
     end
 
     def next_row(frame : Frame) : Array(Value)?
-      return nil if @position >= @rows.size
+      return if @position >= @rows.size
       row = @rows[@position]
       @position += 1
       row

@@ -95,7 +95,7 @@ module Grant::SQLiteEngine::Query
           row = project(frame)
           return row if row
         end
-        return nil
+        return
       end
       while @source.advance(frame)
         if where = @where
@@ -115,7 +115,7 @@ module Grant::SQLiteEngine::Query
         key = Array(EqualityKey).new(@list_of_columns.size) do |index|
           ValueSemantics.equality_key(row[index], @list_of_column_collations[index]? || Collation::Binary)
         end
-        return nil unless seen.add?(key)
+        return unless seen.add?(key)
       end
       @list_of_extras.each { |extra| row << extra.evaluate(frame) }
       row
@@ -149,7 +149,7 @@ module Grant::SQLiteEngine::Query
           end
           arguments = call.list_of_arguments.map(&.evaluate(frame))
           if distinct_set = group.list_of_distinct_sets[index]
-            next if arguments.any?(&.nil?) && !call.kind.count_rows?
+            next if arguments.any?(Nil) && !call.kind.count_rows?
             distinct_key = arguments.map { |argument| ValueSemantics.equality_key(argument, call.collation) }
             next unless distinct_set.add?(distinct_key)
           end
@@ -249,6 +249,26 @@ module Grant::SQLiteEngine::Query
   # One ORDER BY key: where it sits in the row, and how it sorts.
   record SortKey, position : Int32, collation : Collation, descending : Bool, nulls_first : Bool
 
+  # `SELECT count(*) FROM table` (isSimpleCount, OP_Count): one row, the
+  # number of entries in the table's b-tree.
+  class TableCountProducer < Producer
+    @done = false
+
+    def initialize(@database : Database, @table : TableInfo)
+    end
+
+    def open(frame : Frame) : Nil
+      @done = false
+    end
+
+    def next_row(frame : Frame) : Array(Value)?
+      return if @done
+      @done = true
+      @table.check_readable
+      [BTreeCount.entries(@database, @table.root_page, frame.session)] of Value
+    end
+  end
+
   # ORDER BY: reads every row of its input, sorts them stably by the keys,
   # and returns the first *width* values of each.
   class SortProducer < Producer
@@ -289,7 +309,7 @@ module Grant::SQLiteEngine::Query
     end
 
     def next_row(frame : Frame) : Array(Value)?
-      return nil if @position >= @rows.size
+      return if @position >= @rows.size
       row = @rows[@position]
       @tied = @position > 0 && compare(@rows[@position - 1], row) == 0
       @position += 1
@@ -333,7 +353,7 @@ module Grant::SQLiteEngine::Query
     end
 
     def next_row(frame : Frame) : Array(Value)?
-      return nil if @remaining == 0
+      return if @remaining == 0
       row = @input.next_row(frame)
       @remaining -= 1 if row && @remaining > 0
       row
@@ -356,7 +376,7 @@ module Grant::SQLiteEngine::Query
     end
 
     def next_row(frame : Frame) : Array(Value)?
-      return nil if @position >= @list_of_rows.size
+      return if @position >= @list_of_rows.size
       row = @list_of_rows[@position].map(&.evaluate(frame))
       @position += 1
       row
@@ -430,7 +450,7 @@ module Grant::SQLiteEngine::Query
         # multiSelectOrderBy: a merge for an operator other than UNION ALL
         # orders by the ORDER BY terms and then every other column.
         if @ordered && indexed && !@list_of_merge_keys.empty?
-          result = Sorting.stable_sort(result) { |left, right| SortProducer.compare(@list_of_merge_keys, left, right) }
+          result = Sorting.stable_sort(result) { |first, second| SortProducer.compare(@list_of_merge_keys, first, second) }
         end
       end
       result = Sorting.stable_sort(result) { |left, right| compare_rows(left, right) } if indexed && !@ordered
@@ -470,7 +490,7 @@ module Grant::SQLiteEngine::Query
     end
 
     def next_row(frame : Frame) : Array(Value)?
-      return nil if @position >= @rows.size
+      return if @position >= @rows.size
       row = @rows[@position]
       @position += 1
       row
@@ -564,7 +584,7 @@ module Grant::SQLiteEngine::Query
     end
 
     def next_row(frame : Frame) : Array(Value)?
-      return nil if @position >= @output.size
+      return if @position >= @output.size
       row = @output[@position]
       @position += 1
       row

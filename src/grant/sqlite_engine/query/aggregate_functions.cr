@@ -126,14 +126,14 @@ module Grant::SQLiteEngine::Query
       def finish : Value
         case @result
         in .sum?
-          return nil if @count == 0
+          return if @count == 0
           return @integer_sum unless @approximate
           raise SQLError.new("integer overflow") if @overflowed
           @error_term.finite? ? @real_sum + @error_term : @real_sum
         in .total?
           combined
         in .average?
-          return nil if @count == 0
+          return if @count == 0
           combined / @count.to_f64
         end
       end

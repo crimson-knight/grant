@@ -79,7 +79,7 @@ module Grant::SQLiteEngine::Query
     # top-level ORDER BY (for comparing results whose tie order SQL leaves
     # open); nil without an ORDER BY.
     def tied_with_previous? : Bool?
-      return nil unless @compiled.ordered?
+      return unless @compiled.ordered?
       @compiled.producer.tied_with_previous?
     end
 

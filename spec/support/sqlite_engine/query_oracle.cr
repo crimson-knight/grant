@@ -65,7 +65,7 @@ module SQLiteQueryOracle
       status = C.prepare_v2(@handle, sql, sql.bytesize, out statement, nil)
       if status != 0
         C.finalize(statement) unless statement.null?
-        return nil
+        return
       end
       count = LibQueryOracle.bind_parameter_count(statement)
       C.finalize(statement)
@@ -120,8 +120,6 @@ module SQLiteQueryOracle
         size = LibQueryOracle.column_bytes(statement, column)
         pointer = LibQueryOracle.column_blob(statement, column).as(UInt8*)
         size == 0 ? Bytes.empty : Bytes.new(pointer, size).dup
-      else
-        nil
       end
     end
   end
@@ -180,7 +178,7 @@ module SQLiteQueryOracle
   # it the rows compare as multisets.
   def self.difference(expected : Outcome, actual : Outcome, ordered : Bool, folded : Bool = false) : String?
     if expected.error || actual.error
-      return nil if expected.error == actual.error
+      return if expected.error == actual.error
       return "error: C #{expected.error.inspect}, engine #{actual.error.inspect}"
     end
     if expected.list_of_column_names != actual.list_of_column_names
@@ -192,7 +190,7 @@ module SQLiteQueryOracle
     expected_tokens = expected.list_of_rows.map { |row| folded ? row.map { |value| folded_token(value) }.join('|') : row_token(row) }
     actual_tokens = actual.list_of_rows.map { |row| folded ? row.map { |value| folded_token(value) }.join('|') : row_token(row) }
     unless ordered
-      return nil if expected_tokens.sort == actual_tokens.sort
+      return if expected_tokens.sort == actual_tokens.sort
       return "rows differ (unordered): C #{(expected_tokens - actual_tokens).first?}, engine #{(actual_tokens - expected_tokens).first?}"
     end
     start = 0

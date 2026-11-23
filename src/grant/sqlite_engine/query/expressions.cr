@@ -470,7 +470,7 @@ module Grant::SQLiteEngine::Query
     def self.compare_values(operator : ComparisonOperator, left : Value, right : Value,
                             affinity : ExpressionAffinity, collation : Collation) : Value
       if left.nil? || right.nil?
-        return nil unless operator.null_safe?
+        return unless operator.null_safe?
         both = left.nil? && right.nil?
         return (operator.is? ? both : !both) ? 1_i64 : 0_i64
       end
@@ -546,14 +546,14 @@ module Grant::SQLiteEngine::Query
             return operator.equal? || operator.is? ? 0_i64 : 1_i64
           end
         end
-        return nil if saw_null
+        return if saw_null
         return operator.equal? || operator.is? ? 1_i64 : 0_i64
       end
       last = left_values.size - 1
       left_values.each_with_index do |left, index|
         right = right_values[index]
         affinity, collation = pairs[index]
-        return nil if left.nil? || right.nil?
+        return if left.nil? || right.nil?
         if index < last
           equal = ComparisonExpr.compare_values(ComparisonOperator::Equal, left, right, affinity, collation)
           next if equal == 1_i64
@@ -612,13 +612,13 @@ module Grant::SQLiteEngine::Query
     def initialize(@operand : Expr, @list : Array(Expr), @negated : Bool)
       mark_collate_from([@operand] + @list)
       @affinity_used = @operand.affinity
-      @set_affinity = InListExpr.set_affinity(@operand.affinity)
+      @set_affinity = InListExpr.comparison_affinity_of_set(@operand.affinity)
       @collation = @operand.collation_sequence || Collation::Binary
       @as_set = @list.size > 2 && @list.all?(&.constant?)
     end
 
     # The affinity SQLite gives an IN set built from a list.
-    def self.set_affinity(left : ExpressionAffinity) : ExpressionAffinity
+    def self.comparison_affinity_of_set(left : ExpressionAffinity) : ExpressionAffinity
       return ExpressionAffinity::Blob if left.none?
       return ExpressionAffinity::Numeric if left.real?
       left
@@ -627,9 +627,9 @@ module Grant::SQLiteEngine::Query
     def evaluate(frame : Frame) : Value
       return (@negated ? 1_i64 : 0_i64) if @list.empty?
       value = @operand.evaluate(frame)
-      return nil if value.nil?
+      return if value.nil?
       found = @as_set ? set_lookup(value, frame) : scan(value, frame)
-      return nil if found.nil?
+      return if found.nil?
       found == @negated ? 0_i64 : 1_i64
     end
 

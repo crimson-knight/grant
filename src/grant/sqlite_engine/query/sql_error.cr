@@ -16,4 +16,9 @@ module Grant::SQLiteEngine
       super(message)
     end
   end
+
+  # The last name error of one resolved expression: it ends the walk of
+  # the enclosing expression too (a subquery's resolve aborts its parent's).
+  class ResolveError < SQLError
+  end
 end

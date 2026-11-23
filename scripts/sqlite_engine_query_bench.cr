@@ -77,7 +77,7 @@ connection.exec <<-SQL
   CREATE TABLE posts (id INTEGER PRIMARY KEY, user_id INTEGER, title VARCHAR(100), body TEXT, published BOOLEAN,
     created_at DATETIME);
   CREATE INDEX index_posts_on_user_id ON posts (user_id);
-SQL
+  SQL
 connection.exec("BEGIN")
 random = Random.new(20261123)
 rows.times do |index|
@@ -103,7 +103,7 @@ workloads = [
     ->(run : Int32) { [(run % rows + 1).to_i64] of Value }),
   Workload.new("indexed range, ordered page", "SELECT users.id, users.name FROM users WHERE users.age BETWEEN ? AND ? ORDER BY users.id LIMIT 25", 2_000, false,
     ->(run : Int32) { [(18 + run % 60).to_i64, (20 + run % 60).to_i64] of Value }),
-  Workload.new("count(*) full table", "SELECT COUNT(*) FROM posts", 200, false, ->(run : Int32) { [] of Value }),
+  Workload.new("count(*) full table", "SELECT COUNT(*) FROM posts", 200, false, ->(_run : Int32) { [] of Value }),
   Workload.new("filtered scan", "SELECT users.id FROM users WHERE users.score > ? AND users.name LIKE ?", 200, false,
     ->(run : Int32) { [(run % 90).to_f64, "User 1%"] of Value }),
   Workload.new("join with aggregate", "SELECT users.id, COUNT(posts.id) FROM users INNER JOIN posts ON posts.user_id = users.id WHERE users.age > ? GROUP BY users.id ORDER BY users.id LIMIT 50", 200, false,

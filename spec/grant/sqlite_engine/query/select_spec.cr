@@ -31,7 +31,7 @@ module SelectSpecFixture
     INSERT INTO tags VALUES ('b', 'Bee'), ('a', 'Ay'), ('c', NULL);
     INSERT INTO big_keys VALUES (10, 'ten'), (20, 'twenty');
     INSERT INTO nodes VALUES (1, NULL, 'root', 1), (2, 1, 'a', 2), (3, 1, 'b', 3), (4, 2, 'a1', 4), (5, 4, 'a1x', 5);
-  SQL
+    SQL
 
   QUERIES = [
     {"SELECT * FROM users", [] of Grant::SQLiteEngine::Value},
@@ -113,6 +113,28 @@ module SelectSpecFixture
     {"SELECT NULL, 32 UNION SELECT NULL, -4.25 UNION SELECT 1, 0 ORDER BY 1 LIMIT 1", [] of Grant::SQLiteEngine::Value},
     {"SELECT x'af', NULL UNION SELECT x'af', x'' UNION ALL SELECT x'af', 1 ORDER BY 1 DESC LIMIT 5 OFFSET 1", [] of Grant::SQLiteEngine::Value},
     {"SELECT seq, name, file FROM pragma_database_list", [] of Grant::SQLiteEngine::Value},
+    {"WITH t(id) AS (VALUES(2) UNION ALL SELECT id + 1 FROM t WHERE id < 5) SELECT id FROM t", [] of Grant::SQLiteEngine::Value},
+    {"WITH t(id) AS (VALUES(2) UNION ALL SELECT id FROM nodes WHERE parent_id IN (SELECT id FROM t)) SELECT id FROM t", [] of Grant::SQLiteEngine::Value},
+    {"WITH t(id) AS (VALUES(2) UNION ALL SELECT nodes.id FROM nodes, t WHERE parent_id = t.id AND parent_id IN (SELECT id FROM t)) SELECT id FROM t", [] of Grant::SQLiteEngine::Value},
+    {"WITH t(id) AS (SELECT id FROM nodes WHERE 2 IN (SELECT id FROM t) UNION ALL SELECT nodes.id FROM nodes, t WHERE parent_id = t.id) SELECT id FROM t", [] of Grant::SQLiteEngine::Value},
+    {"SELECT * FROM users NATURAL JOIN posts USING (id)", [] of Grant::SQLiteEngine::Value},
+    {"SELECT id FROM users WHERE likelihood(age > 3, 1.5)", [] of Grant::SQLiteEngine::Value},
+    {"SELECT id FROM users WHERE likelihood(age > 3, 0.25) ORDER BY id", [] of Grant::SQLiteEngine::Value},
+    {"SELECT 'abc' UNION ALL SELECT 'DEF' ORDER BY 1 COLLATE nocase COLLATE binary", [] of Grant::SQLiteEngine::Value},
+    {"SELECT id FROM users WHERE (id, age) = (SELECT 1, 36) ORDER BY id", [] of Grant::SQLiteEngine::Value},
+    {"SELECT id FROM users WHERE (name, id) = (SELECT 'ADA', 1)", [] of Grant::SQLiteEngine::Value},
+    {"SELECT (SELECT 3, 4 UNION SELECT 5, 6 ORDER BY 1) IN (SELECT 3, 4), (SELECT 1, 2) < (1, 3), (1, 2) BETWEEN (0, 9) AND (1, 2)", [] of Grant::SQLiteEngine::Value},
+    {"SELECT 1 WHERE (2, (2, 0)) IS (2, (2, 0))", [] of Grant::SQLiteEngine::Value},
+    {"SELECT (SELECT 1, 2) + 1", [] of Grant::SQLiteEngine::Value},
+    {"SELECT k FROM users WHERE nothing_here", [] of Grant::SQLiteEngine::Value},
+    {"SELECT id FROM users WHERE (no_a IS NULL AND no_b IS NULL) OR no_c IS NULL", [] of Grant::SQLiteEngine::Value},
+    {"SELECT outer_fn(inner_fn(1))", [] of Grant::SQLiteEngine::Value},
+    {"WITH t(a) AS (VALUES(1, 2)) SELECT * FROM t", [] of Grant::SQLiteEngine::Value},
+    {"SELECT id FROM users ORDER BY 1, 7", [] of Grant::SQLiteEngine::Value},
+    {"SELECT count(*) FROM users GROUP BY max(age)", [] of Grant::SQLiteEngine::Value},
+    {"SELECT count(*) FROM posts", [] of Grant::SQLiteEngine::Value},
+    {"SELECT count(*) FROM tags", [] of Grant::SQLiteEngine::Value},
+    {"SELECT x_count(*) FROM users", [] of Grant::SQLiteEngine::Value},
     {"SELECT id FROM users WHERE random() > 0 OR 1 ORDER BY id", [] of Grant::SQLiteEngine::Value},
     {"SELECT level, count(*) FROM ranked GROUP BY level", [] of Grant::SQLiteEngine::Value},
     {"SELECT u.id, p.id FROM users u LEFT JOIN posts p ON p.user_id = u.id WHERE p.rank > 2 ORDER BY 1, 2", [] of Grant::SQLiteEngine::Value},
@@ -135,13 +157,28 @@ describe "Grant::SQLiteEngine::Query SELECT" do
   database = Grant::SQLiteEngine::Database.open(path)
   session = Grant::SQLiteEngine::Query::Session.new(database)
 
+  # The engine follows C SQLite 3.51.0; these cases show behavior older
+  # libraries lack (OP_IfEmpty before INTERSECT and EXCEPT).
+  reference_only = {"SELECT 1 WHERE 0 INTERSECT SELECT abs(-9223372036854775807 - 1)"}
+  library_is_reference = SQLiteSQLOracle.version.split(' ').first.split('.').map(&.to_i) >= [3, 51, 0]
+
   SelectSpecFixture::QUERIES.each do |(sql, parameters)|
+    if reference_only.includes?(sql) && !library_is_reference
+      pending "returns C SQLite 3.51.0's result for #{sql} (the linked libsqlite3 is #{SQLiteSQLOracle.version.split(' ').first})"
+      next
+    end
     it "returns C SQLite's result for #{sql}" do
       expected = oracle.query(sql, parameters)
       actual = SQLiteQueryOracle.engine_query(session, sql, parameters)
       ordered = sql.includes?("ORDER BY") && !sql.includes?("(SELECT 1 FROM users ORDER BY")
       difference = SQLiteQueryOracle.difference(expected, actual, ordered)
       difference.should be_nil
+    end
+  end
+
+  it "raises UnsupportedSQL naming milestone G6 for JSON functions" do
+    expect_raises(Grant::SQLiteEngine::UnsupportedSQL, /G6/) do
+      session.prepare("SELECT json_valid('{}')")
     end
   end
 

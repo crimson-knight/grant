@@ -255,7 +255,6 @@ module Grant::SQLiteEngine::Query
       when Int64   then value.to_s
       when Float64 then NumericText.real_text(value)
       when Bytes   then String.new(value)
-      else              nil
       end
     end
 
@@ -280,7 +279,7 @@ module Grant::SQLiteEngine::Query
     # OP_Add, OP_Subtract, OP_Multiply, OP_Divide, OP_Remainder:
     # `left op right`.
     def self.arithmetic(operator : Arithmetic, left : Value, right : Value) : Value
-      return nil if left.nil? || right.nil?
+      return if left.nil? || right.nil?
       if left.is_a?(Int64) && right.is_a?(Int64)
         return integer_arithmetic(operator, left, right)
       end
@@ -307,11 +306,11 @@ module Grant::SQLiteEngine::Query
         return real_arithmetic(operator, left, right) if product > Int64::MAX || product < Int64::MIN
         product.to_i64
       in .divide?
-        return nil if right == 0
+        return if right == 0
         return real_arithmetic(operator, left, right) if right == -1 && left == Int64::MIN
         left.tdiv(right)
       in .remainder?
-        return nil if right == 0
+        return if right == 0
         divisor = right == -1 ? 1_i64 : right
         left.remainder(divisor)
       end
@@ -325,11 +324,11 @@ module Grant::SQLiteEngine::Query
                in .subtract? then left_real - right_real
                in .multiply? then left_real * right_real
                in .divide?
-                 return nil if right_real == 0.0
+                 return if right_real == 0.0
                  left_real / right_real
                in .remainder?
                  divisor = integer_value(right)
-                 return nil if divisor == 0
+                 return if divisor == 0
                  divisor = 1_i64 if divisor == -1
                  integer_value(left).remainder(divisor).to_f64
                end
@@ -345,7 +344,7 @@ module Grant::SQLiteEngine::Query
 
     # OP_BitAnd, OP_BitOr, OP_ShiftLeft, OP_ShiftRight.
     def self.bitwise(operator : Bitwise, left : Value, right : Value) : Value
-      return nil if left.nil? || right.nil?
+      return if left.nil? || right.nil?
       value = integer_value(left)
       amount = integer_value(right)
       case operator
@@ -394,7 +393,7 @@ module Grant::SQLiteEngine::Query
 
     # sqlite3VdbeMemCast.
     def self.cast(value : Value, target : CastTarget) : Value
-      return nil if value.nil?
+      return if value.nil?
       case target
       in .blob?
         value.is_a?(Bytes) ? value : (blob(value) || Bytes.empty).dup

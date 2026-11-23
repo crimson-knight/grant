@@ -67,7 +67,44 @@ module Grant::SQLiteEngine::Query
       end
     end
 
+    # A name error the resolver records and walks on past (sqlite3ErrorMsg
+    # replaces the message, nNcErr counts it): within one expression the
+    # last such error is the one reported.
+    CONTINUING_ERROR = /\A(no such column|ambiguous column name|no such function|wrong number of arguments|misuse of aggregate)/
+
+    # Compiles one expression the way sqlite3ResolveExprNames walks it: name
+    # errors are recorded and the walk goes on; the last one is raised.
+    def resolve_expression(expression : SQL::Expression, context : QueryContext) : Expr
+      saved = @list_of_name_errors
+      errors = [] of SQLError
+      @list_of_name_errors = errors
+      begin
+        compiled = compile_expression(expression, context)
+      ensure
+        @list_of_name_errors = saved
+      end
+      if last = errors.last?
+        raise ResolveError.new(last.message || "SQL error", last.result_code)
+      end
+      compiled
+    end
+
+    # Records *error* when an expression is being resolved; false otherwise.
+    private def record_name_error(error : SQLError) : Bool
+      errors = @list_of_name_errors
+      return false unless errors && !error.is_a?(ResolveError) && CONTINUING_ERROR.matches?(error.message || "")
+      errors << error
+      true
+    end
+
     def compile_expression(expression : SQL::Expression, context : QueryContext) : Expr
+      compile_expression_node(expression, context)
+    rescue error : SQLError
+      raise error unless record_name_error(error)
+      ConstantExpr.new(nil)
+    end
+
+    private def compile_expression_node(expression : SQL::Expression, context : QueryContext) : Expr
       case expression
       when SQL::Literal         then compile_literal(expression, negative: false)
       when SQL::Parameter       then ParameterExpr.new(expression.number)
@@ -79,8 +116,8 @@ module Grant::SQLiteEngine::Query
         NullTestExpr.new(compile_expression(expression.operand, context), negated: !expression.form.is_null_keyword?)
       when SQL::Between
         operand = compile_expression(expression.operand, context)
-        low = ComparisonExpr.new(ComparisonOperator::GreaterOrEqual, operand, compile_expression(expression.low, context))
-        high = ComparisonExpr.new(ComparisonOperator::LessOrEqual, operand, compile_expression(expression.high, context))
+        low = compile_comparison(ComparisonOperator::GreaterOrEqual, operand, compile_expression(expression.low, context))
+        high = compile_comparison(ComparisonOperator::LessOrEqual, operand, compile_expression(expression.high, context))
         both = LogicalExpr.new(true, low, high)
         both.between = true
         expression.negated ? NotExpr.new(both) : both
@@ -99,10 +136,18 @@ module Grant::SQLiteEngine::Query
         ExistsExpr.new(plan.producer, plan.outer_slots)
       when SQL::ScalarSubquery
         plan = compile_subquery(expression.query, context)
-        if plan.list_of_column_names.size != 1
-          raise SQLError.new("sub-select returns #{plan.list_of_column_names.size} columns - expected 1")
+        width = plan.list_of_column_names.size
+        if width > 1
+          # A row value: each column read from the first row.
+          row = RowSubqueryExpr.new(plan.producer, plan.outer_slots, width)
+          columns = (0...width).map do |index|
+            SubqueryColumnExpr.new(row, index, plan.list_of_affinities[index],
+              plan.list_of_first_core_columns[index]?.try(&.collation_sequence)).as(Expr)
+          end
+          SubqueryVectorExpr.new(columns)
+        else
+          ScalarSubqueryExpr.new(plan.producer, plan.outer_slots, plan.list_of_affinities[0])
         end
-        ScalarSubqueryExpr.new(plan.producer, plan.outer_slots, plan.list_of_affinities[0])
       when SQL::CaseExpression then compile_case(expression, context)
       when SQL::Cast
         type_text = expression.type_name.try { |type_name| type_name_text(type_name) } || ""
@@ -110,7 +155,9 @@ module Grant::SQLiteEngine::Query
         CastExpr.new(compile_expression(expression.operand, context), target,
           ExpressionAffinity.from(Affinity.from_declared_type(type_text)))
       when SQL::Collate
-        CollateExpr.new(compile_expression(expression.operand, context), collation_named(expression.collation.value))
+        collated = compile_expression(expression.operand, context)
+        raise SQLError.new("row value misused") if collated.is_a?(VectorExpr)
+        CollateExpr.new(collated, collation_named(expression.collation.value))
       when SQL::FunctionCall then compile_function(expression, context)
       when SQL::RowValue
         VectorExpr.new(expression.elements.map { |element| compile_expression(element, context) })
@@ -319,7 +366,27 @@ module Grant::SQLiteEngine::Query
         unless left_elements.size == right_elements.size
           raise SQLError.new("row value misused")
         end
-        return VectorComparisonExpr.new(operator, left_elements, right_elements)
+        # Nested row values compare element by element, so a matching
+        # nesting flattens: (2, (2, 0)) IS (2, (2, 0)).
+        flat_left = [] of Expr
+        flat_right = [] of Expr
+        left_elements.each_with_index do |element, index|
+          other = right_elements[index]
+          if element.is_a?(VectorExpr) || other.is_a?(VectorExpr)
+            inner_left = element.as?(VectorExpr).try(&.elements) || [element]
+            inner_right = other.as?(VectorExpr).try(&.elements) || [other]
+            raise SQLError.new("row value misused") unless inner_left.size == inner_right.size && inner_left.size > 1
+            flat_left.concat(inner_left)
+            flat_right.concat(inner_right)
+          else
+            flat_left << element
+            flat_right << other
+          end
+        end
+        if (flat_left + flat_right).any?(VectorExpr)
+          raise UnsupportedSQL.new("row values nested more than one level")
+        end
+        return VectorComparisonExpr.new(operator, flat_left, flat_right)
       end
       ComparisonExpr.new(operator, left, right)
     end
@@ -441,6 +508,9 @@ module Grant::SQLiteEngine::Query
 
     # ---------------------------------------------------------- functions
 
+    # The JSON functions of json.c, which arrive with milestone G6.
+    JSON_FUNCTION_NAME = /\Ajsonb?(_[a-z_]+)?\z/
+
     private def compile_function(call : SQL::FunctionCall, context : QueryContext) : Expr
       name = call.name.value
       lower = name.downcase
@@ -452,10 +522,15 @@ module Grant::SQLiteEngine::Query
         return compile_aggregate(call, kind, context)
       end
       if call.star
+        known = ScalarFunctions.known?(lower) || @session.user_function(lower, -1) || @session.user_function(lower, 0)
+        raise SQLError.new("no such function: #{name}") unless known
         raise SQLError.new("wrong number of arguments to function #{name}()")
       end
       if call.distinct.distinct?
         raise SQLError.new("DISTINCT aggregates must have exactly one argument") if ScalarFunctions.known?(lower)
+      end
+      if JSON_FUNCTION_NAME.matches?(lower) && !ScalarFunctions.known?(lower)
+        raise UnsupportedSQL.new("JSON function #{name}() (milestone G6)")
       end
       unless call.order_by.empty?
         raise SQLError.new("ORDER BY may not be used with non-aggregate #{name}()")
@@ -479,12 +554,27 @@ module Grant::SQLiteEngine::Query
         return PassThroughExpr.new(compile_expression(call.arguments[0], context))
       when "likelihood"
         raise SQLError.new("wrong number of arguments to function #{name}()") unless count == 2
+        # exprProbability: the probability is a floating-point literal no
+        # greater than 1.0.
+        probability = call.arguments[1]
+        unless probability.is_a?(SQL::Literal) && probability.kind.float? && NumericText.ato_f(probability.text.to_slice).value <= 1.0
+          raise SQLError.new("second argument to likelihood() must be a constant between 0.0 and 1.0")
+        end
         return PassThroughExpr.new(compile_expression(call.arguments[0], context))
       when "printf", "format", "json", "json_extract", "date", "time", "datetime", "julianday", "strftime", "unixepoch"
         raise UnsupportedSQL.new("function #{name}()")
       end
       definition = ScalarFunctions.lookup(lower, count)
-      raise SQLError.new("no such function: #{name}") unless definition
+      if definition.nil? && JSON_FUNCTION_NAME.matches?(lower)
+        raise UnsupportedSQL.new("JSON function #{name}() (milestone G6)")
+      end
+      unless definition
+        error = SQLError.new("no such function: #{name}")
+        raise error unless record_name_error(error)
+        # resolveExprStep reports the function, then walks its arguments.
+        call.arguments.each { |argument| compile_expression(argument, context) }
+        return ConstantExpr.new(nil)
+      end
       arguments = call.arguments.map { |argument| compile_expression(argument, context) }
       FunctionExpr.new(definition, arguments)
     end

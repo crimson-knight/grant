@@ -47,6 +47,64 @@ module Grant::SQLiteEngine::Query
     end
   end
 
+  # `(SELECT a, b ...)` as a row value: the first row, or NULLs when there
+  # is none. Its columns are read through SubqueryColumnExpr.
+  class RowSubqueryExpr < SubqueryExpr
+    @row = [] of Value
+
+    def initialize(producer : Producer, outer_slots : Set(Int32), @width : Int32)
+      super(producer, outer_slots)
+    end
+
+    def row(frame : Frame) : Array(Value)
+      return @row if cached?(frame)
+      @producer.open(frame)
+      first = @producer.next_row(frame)
+      @row = first ? first[0, @width] : Array(Value).new(@width, nil)
+      remember(frame)
+      @row
+    end
+
+    def evaluate(frame : Frame) : Value
+      raise SQLError.new("sub-select returns #{@width} columns - expected 1")
+    end
+  end
+
+  # One column of a RowSubqueryExpr's row.
+  class SubqueryColumnExpr < Expr
+    def initialize(@row_subquery : RowSubqueryExpr, @index : Int32, @column_affinity : ExpressionAffinity,
+                   @column_collation : Collation?)
+    end
+
+    def evaluate(frame : Frame) : Value
+      @row_subquery.row(frame)[@index]?
+    end
+
+    def affinity : ExpressionAffinity
+      @column_affinity
+    end
+
+    def collation_sequence : Collation?
+      @column_collation
+    end
+
+    def constant? : Bool
+      @row_subquery.constant?
+    end
+
+    def children : Array(Expr)
+      [@row_subquery] of Expr
+    end
+  end
+
+  # The row value a multi-column scalar subquery gives: used where one
+  # value is expected, it is C's "sub-select returns N columns" error.
+  class SubqueryVectorExpr < VectorExpr
+    def evaluate(frame : Frame) : Value
+      raise SQLError.new("sub-select returns #{elements.size} columns - expected 1")
+    end
+  end
+
   # `EXISTS (SELECT ...)`.
   class ExistsExpr < SubqueryExpr
     @value : Value = 0_i64
@@ -85,12 +143,12 @@ module Grant::SQLiteEngine::Query
         ValueSemantics.apply_record_affinity(operand.evaluate(frame), @list_of_affinities[index])
       end
       found = values.size == 1 ? single(values[0]) : vector(values)
-      return nil if found.nil?
+      return if found.nil?
       found == @negated ? 0_i64 : 1_i64
     end
 
     private def single(value : Value) : Bool?
-      return nil if value.nil?
+      return if value.nil?
       return true if @keys.includes?([ValueSemantics.equality_key(value, @list_of_collations[0])])
       @has_null_row ? nil : false
     end

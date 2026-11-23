@@ -16,7 +16,7 @@ module Grant::SQLiteEngine::Query
     private def compile_from(from : SQL::From?, context : QueryContext) : Array(JoinStep)
       steps = [] of JoinStep
       return steps unless from
-      from.items.each_with_index do |item, position|
+      from.items.each do |item|
         left_join = false
         natural = false
         if join = item.join
@@ -25,6 +25,9 @@ module Grant::SQLiteEngine::Query
           raise UnsupportedSQL.new("FULL JOIN") if keywords.includes?("FULL")
           left_join = keywords.includes?("LEFT")
           natural = keywords.includes?("NATURAL")
+        end
+        if natural && (item.on || item.using)
+          raise SQLError.new("a NATURAL join may not have an ON or USING clause")
         end
         entry, source = compile_source(item.source, context)
         entry.right_of_left_join = left_join
@@ -35,7 +38,7 @@ module Grant::SQLiteEngine::Query
                     using.map(&.value)
                   else
                     entry.list_of_columns.map(&.name).select do |name|
-                      context.list_of_entries.any? { |left| left.column_index(name) }
+                      context.list_of_entries.any?(&.column_index(name))
                     end
                   end
           conditions = names.map do |name|
@@ -91,9 +94,13 @@ module Grant::SQLiteEngine::Query
 
     # sqlite3ColumnsFromExprList: the columns a subquery, view or CTE
     # offers, named by *names* when given.
-    private def subquery_columns(plan : QueryPlan, names : Array(String)?) : Array(SourceColumn)
+    private def subquery_columns(plan : QueryPlan, names : Array(String)?, cte_name : String? = nil,
+                                 view_name : String? = nil) : Array(SourceColumn)
       width = plan.list_of_column_names.size
       if names && names.size != width
+        # withExpand and sqlite3ViewGetColumnNames word it differently.
+        raise SQLError.new("table #{cte_name} has #{width} values for #{names.size} columns") if cte_name
+        raise SQLError.new("expected #{names.size} columns for '#{view_name}' but got #{width}") if view_name
         raise SQLError.new("expected #{names.size} columns but got #{width}")
       end
       chosen = names || unique_names(plan)
@@ -135,6 +142,9 @@ module Grant::SQLiteEngine::Query
       if schema.nil?
         if (recursive = @recursive_source) && @recursive_name.try(&.compare(name, case_insensitive: true)) == 0
           queue_source, _slot, columns = recursive
+          # withExpand: the recursive step may name the CTE only in its own
+          # FROM, not from a subquery inside it.
+          raise SQLError.new("multiple recursive references: #{name}") unless @query_depth == @recursive_depth
           slot = allocate_slot
           queue_row = QueueRowSource.new(slot)
           # The recursive step reads the shared queue row through its own slot.
@@ -142,9 +152,12 @@ module Grant::SQLiteEngine::Query
           return {FromEntry.new(alias_name, slot, columns, nil), linked.as(RowSource)}
         end
         if definition = context.ctes.try(&.find(name))
+          if error = @list_of_cte_errors.find { |(expanding, _)| expanding.same?(definition) }
+            raise SQLError.new("#{error[1]}: #{definition.name}")
+          end
           plan = compile_cte(definition, context)
           slot = allocate_slot
-          entry = FromEntry.new(alias_name, slot, subquery_columns(plan, definition.list_of_column_names), nil)
+          entry = FromEntry.new(alias_name, slot, subquery_columns(plan, definition.list_of_column_names, cte_name: definition.name), nil)
           return {entry, MaterializedSource.new(slot, plan.producer, !plan.outer_slots.empty?).as(RowSource)}
         end
       end
@@ -157,17 +170,18 @@ module Grant::SQLiteEngine::Query
       if view = @session.view(name)
         plan = compile_view(view)
         slot = allocate_slot
-        entry = FromEntry.new(alias_name, slot, subquery_columns(plan, view.list_of_column_names), nil)
+        entry = FromEntry.new(alias_name, slot, subquery_columns(plan, view.list_of_column_names, view_name: name), nil)
         return {entry, MaterializedSource.new(slot, plan.producer, false).as(RowSource)}
       end
       table = @session.table(name)
       # An eponymous table-valued function (pragma_database_list) named
       # without arguments reads as a table.
-      if table.nil? && Catalog::COLUMNS.has_key?(name.downcase)
+      if table.nil? && (Catalog::COLUMNS.has_key?(name.downcase) || name.downcase.in?("json_each", "json_tree"))
         return catalog_source(name, alias_name, [] of Expr)
       end
       unless table
-        full = schema ? "#{schema}.#{name}" : name
+        # A view's body names its tables in the view's own schema.
+        full = schema ? "#{schema}.#{name}" : (@view_depth > 0 ? "main.#{name}" : name)
         raise SQLError.new("no such table: #{full}")
       end
       slot = allocate_slot
@@ -189,20 +203,15 @@ module Grant::SQLiteEngine::Query
     # names itself runs through RecursiveProducer.
     private def compile_cte(definition : CteDefinition, context : QueryContext) : QueryPlan
       query = definition.query
-      if definition.recursive? && refers_to?(query, definition.name)
+      # SQLite treats a CTE whose FROM names itself as recursive whether or
+      # not the WITH says RECURSIVE (withExpand).
+      if query.cores.any? { |core| core_refers_to?(core, definition.name) }
         return compile_recursive(definition, context)
       end
-      scope = definition.enclosing
-      # Inside its own body a non-recursive CTE does not see itself.
-      if scope
-        inner = CteScope.new(scope.parent)
-        scope.list_of_definitions.each do |other|
-          break if other.same?(definition)
-          inner.list_of_definitions << other
-        end
-        scope = inner
+      # Any other reference to itself from its own body is circular.
+      plan = with_cte_error(definition, "circular reference") do
+        compile_query(query, context.parent, definition.enclosing)
       end
-      plan = compile_query(query, context.parent, scope)
       plan.outer_slots.each do |slot|
         next if context.owns_slot?(slot)
         context.correlated = true
@@ -211,21 +220,24 @@ module Grant::SQLiteEngine::Query
       plan
     end
 
-    # True when *query* names *name* as a table anywhere in its FROM
-    # clauses (including subqueries).
-    private def refers_to?(query : SQL::SelectStatement, name : String) : Bool
-      query.cores.any? do |core|
-        next false unless core.is_a?(SQL::SelectClause)
-        from = core.from
-        next false unless from
-        from.items.any? { |item| source_refers_to?(item.source, name) }
+    @list_of_cte_errors = [] of {CteDefinition, String}
+    @recursive_depth = 0
+
+    # Compiles with references to *definition* raising *message* (the
+    # zCteErr withExpand sets while it expands a CTE's own body).
+    private def with_cte_error(definition : CteDefinition, message : String, &)
+      @list_of_cte_errors << {definition, message}
+      begin
+        yield
+      ensure
+        @list_of_cte_errors.pop
       end
     end
 
+    # True when a FROM item of the core (not a subquery) names *name*.
     private def source_refers_to?(source : SQL::TableSource, name : String) : Bool
       case source
       when SQL::TableReference then source.schema.nil? && source.name.value.compare(name, case_insensitive: true) == 0
-      when SQL::SubquerySource then refers_to?(source.query, name)
       when SQL::NestedJoin     then source.from.items.any? { |item| source_refers_to?(item.source, name) }
       else                          false
       end
@@ -238,16 +250,15 @@ module Grant::SQLiteEngine::Query
       if split == 0
         raise SQLError.new("circular reference: #{name}")
       end
-      if split == query.cores.size
-        return compile_query(query, context.parent, definition.enclosing)
-      end
       operator = query.operators[split - 1]
       unless operator.union? || operator.union_all?
         raise SQLError.new("recursive aggregate queries not supported")
       end
       initial = SQL::SelectStatement.new(nil, query.cores[0, split], query.operators[0, split - 1], [] of SQL::OrderingTerm, nil)
-      initial_plan = compile_query(initial, context.parent, definition.enclosing)
-      columns = subquery_columns(initial_plan, definition.list_of_column_names)
+      initial_plan = with_cte_error(definition, "circular reference") do
+        compile_query(initial, context.parent, definition.enclosing)
+      end
+      columns = subquery_columns(initial_plan, definition.list_of_column_names, cte_name: definition.name)
       queue_row = QueueRowSource.new(-1)
       recursive_cores = query.cores[split..]
       recursive_operators = query.operators[split..]
@@ -255,11 +266,19 @@ module Grant::SQLiteEngine::Query
       recursive_context = QueryContext.new(context.parent, @slot_count, definition.enclosing)
       saved_name = @recursive_name
       saved_source = @recursive_source
+      saved_depth = @recursive_depth
       @recursive_name = name
       @recursive_source = {queue_row, -1, columns}
-      recursive_plan = compile_query(recursive_query, context.parent, definition.enclosing)
-      @recursive_name = saved_name
-      @recursive_source = saved_source
+      @recursive_depth = @query_depth + 1
+      begin
+        recursive_plan = with_cte_error(definition, "multiple recursive references") do
+          compile_query(recursive_query, context.parent, definition.enclosing)
+        end
+      ensure
+        @recursive_name = saved_name
+        @recursive_source = saved_source
+        @recursive_depth = saved_depth
+      end
       if recursive_plan.list_of_column_names.size != columns.size
         raise SQLError.new("SELECTs to the left and right of UNION do not have the same number of result columns")
       end
@@ -295,8 +314,15 @@ module Grant::SQLiteEngine::Query
     @recursive_name : String? = nil
     @recursive_source : {QueueRowSource, Int32, Array(SourceColumn)}? = nil
 
+    @view_depth = 0
+
     private def compile_view(view : ViewInfo) : QueryPlan
-      compile_query(view.query, nil, nil)
+      @view_depth += 1
+      begin
+        compile_query(view.query, nil, nil)
+      ensure
+        @view_depth -= 1
+      end
     end
 
     private def compile_table_function(source : SQL::TableFunction, context : QueryContext) : {FromEntry, RowSource}
@@ -306,6 +332,7 @@ module Grant::SQLiteEngine::Query
 
     private def catalog_source(display_name : String, alias_name : String, arguments : Array(Expr)) : {FromEntry, RowSource}
       name = display_name.downcase
+      raise UnsupportedSQL.new("JSON table function #{display_name} (milestone G6)") if name.in?("json_each", "json_tree", "jsonb_each", "jsonb_tree")
       producer = Catalog.function_producer(name, arguments, @session) || raise SQLError.new("no such table: #{display_name}")
       slot = allocate_slot
       columns = Catalog.function_columns(name).map { |column_name| SourceColumn.new(column_name, ExpressionAffinity::Blob, Collation::Binary) }

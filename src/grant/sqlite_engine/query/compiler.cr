@@ -76,22 +76,37 @@ module Grant::SQLiteEngine::Query
           scope.list_of_definitions << CteDefinition.new(name, columns, table.query, with_clause.recursive, scope)
         end
       end
-      if statement.cores.size == 1
-        compile_single(statement, statement.cores[0], parent, scope)
-      else
-        compile_compound(statement, parent, scope)
+      @query_depth += 1
+      begin
+        if statement.cores.size == 1
+          compile_single(statement, statement.cores[0], parent, scope)
+        else
+          compile_compound(statement, parent, scope)
+        end
+      ensure
+        @query_depth -= 1
       end
     end
+
+    # The name errors recorded while resolving the current expression
+    # (ExpressionCompiler#resolve_expression); nil when none is.
+    @list_of_name_errors : Array(SQLError)? = nil
+
+    # How many compile_query calls are active: tells a recursive CTE's
+    # own FROM reference from one inside a subquery.
+    @query_depth = 0
 
     private def compile_single(statement : SQL::SelectStatement, core : SQL::SelectCore, parent : QueryContext?,
                                ctes : CteScope?) : QueryPlan
       context = QueryContext.new(parent, @slot_count, ctes)
+      # resolveSelectStep resolves LIMIT and OFFSET before anything else.
+      limit = compile_limit(statement.limit, context)
       core_plan = compile_core(core, context, statement.order_by)
       producer = core_plan.producer
       unless statement.order_by.empty?
         producer = SortProducer.new(producer, core_plan.list_of_sort_keys, core_plan.list_of_columns.size)
       end
-      producer = apply_limit(producer, statement.limit, context)
+      producer = LimitProducer.new(producer, limit[0], limit[1]) if limit
       propagate_correlation(context, parent)
       QueryPlan.new(producer, core_plan.list_of_names, core_plan.list_of_columns,
         core_plan.list_of_columns.map { |column| column.collation_sequence || Collation::Binary },
@@ -100,7 +115,13 @@ module Grant::SQLiteEngine::Query
     end
 
     private def apply_limit(producer : Producer, limit : SQL::Limit?, context : QueryContext) : Producer
-      return producer unless limit
+      compiled = compile_limit(limit, context)
+      compiled ? LimitProducer.new(producer, compiled[0], compiled[1]) : producer
+    end
+
+    # The LIMIT count and OFFSET of *limit*, compiled.
+    private def compile_limit(limit : SQL::Limit?, context : QueryContext) : {Expr, Expr?}?
+      return unless limit
       saved = context.aliases_visible?
       context.aliases_visible = false
       count = compile_expression(limit.count, context)
@@ -110,7 +131,7 @@ module Grant::SQLiteEngine::Query
       if limit.comma_form && offset
         count, offset = offset, count
       end
-      LimitProducer.new(producer, count, offset)
+      {count, offset}
     end
 
     # A correlated reference inside a nested query also makes the enclosing
@@ -147,7 +168,7 @@ module Grant::SQLiteEngine::Query
                 statement.order_by.any? { |term| contains_collate?(term.expression) }
       column_affinities = compound_column_affinities(plans)
       ordered = !statement.order_by.empty? && !wrapped
-      keys = statement.order_by.map { |term| compound_sort_key(term, plans, contexts, wrapped ? leftmost_collations(plans) : collations) }
+      keys = statement.order_by.map_with_index { |term, index| compound_sort_key(term, index, plans, contexts, wrapped ? leftmost_collations(plans) : collations) }
       merge_keys = keys + (0...width).reject { |index| keys.any? { |key| key.position == index } }.map do |index|
         SortKey.new(index, collations[index], false, true)
       end
@@ -233,32 +254,33 @@ module Grant::SQLiteEngine::Query
 
     # A compound's ORDER BY term must name a result column: by number, by
     # alias, or by matching a result expression (resolveCompoundOrderBy).
-    private def compound_sort_key(term : SQL::OrderingTerm, plans : Array(CorePlan), contexts : Array(QueryContext),
+    private def compound_sort_key(term : SQL::OrderingTerm, index : Int32, plans : Array(CorePlan), contexts : Array(QueryContext),
                                   collations : Array(Collation)) : SortKey
       width = plans[0].list_of_columns.size
       expression = term.expression
       explicit = nil
-      if expression.is_a?(SQL::Collate)
-        explicit = collation_named(expression.collation.value)
+      # The outermost COLLATE names the collation: `1 COLLATE a COLLATE b` is b.
+      while expression.is_a?(SQL::Collate)
+        explicit ||= collation_named(expression.collation.value)
         expression = expression.operand
       end
-      position = integer_term(expression, width, "ORDER")
+      position = integer_term(expression, width, "ORDER", index)
       unless position
-        plans.each_with_index do |plan, plan_index|
+        plans.each do |plan|
           break if position
           if expression.is_a?(SQL::ColumnReference) && expression.table.nil?
             position = plan.list_of_aliases.index { |alias_name| alias_name && alias_name.compare(expression.column.value, case_insensitive: true) == 0 }
             break if position
           end
-          plan.list_of_syntax.each_with_index do |syntax, index|
+          plan.list_of_syntax.each_with_index do |syntax, column|
             if syntax && syntax == expression
-              position = index
+              position = column
               break
             end
           end
         end
       end
-      raise SQLError.new("1st ORDER BY term does not match any column in the result set") unless position
+      raise SQLError.new("#{Compiler.ordinal(index + 1)} ORDER BY term does not match any column in the result set") unless position
       sort_key(term, position, explicit || collations[position])
     end
 
@@ -274,14 +296,28 @@ module Grant::SQLiteEngine::Query
 
     # The 0-based column a constant integer term names, or nil when the term
     # is not an integer constant (sqlite3ExprIsInteger).
-    private def integer_term(expression : SQL::Expression, width : Int32, clause : String) : Int32?
+    private def integer_term(expression : SQL::Expression, width : Int32, clause : String, index : Int32 = 0) : Int32?
       value = constant_integer(expression)
       return unless value
       if value < 1 || value > width
-        ordinal = clause == "ORDER" ? "1st" : "1st"
-        raise SQLError.new("#{ordinal} #{clause} BY term out of range - should be between 1 and #{width}")
+        raise SQLError.new("#{Compiler.ordinal(index + 1)} #{clause} BY term out of range - should be between 1 and #{width}")
       end
       (value - 1).to_i32
+    end
+
+    # printf's %r: 1st, 2nd, 3rd, 4th, ... 11th, 12th, 13th, 21st.
+    def self.ordinal(number : Int32) : String
+      suffix = if (11..13).includes?(number % 100)
+                 "th"
+               else
+                 case number % 10
+                 when 1 then "st"
+                 when 2 then "nd"
+                 when 3 then "rd"
+                 else        "th"
+                 end
+               end
+      "#{number}#{suffix}"
     end
 
     private def constant_integer(expression : SQL::Expression) : Int64?
@@ -363,55 +399,59 @@ module Grant::SQLiteEngine::Query
       aggregate = !core.group_by.empty? || core.columns.any? { |column| column.is_a?(SQL::ExpressionColumn) && contains_aggregate?(column.expression) } ||
                   (having = core.having) && contains_aggregate?(having) ||
                   order_by.any? { |term| contains_aggregate?(term.expression) }
-      if core.having && !aggregate
-        raise SQLError.new("HAVING clause on a non-aggregate query")
-      end
-      # WHERE, with result aliases visible.
-      context.aliases_visible = true
-      where = core.where.try { |expression| compile_expression(expression, context) }
       collector = aggregate ? AggregateCollector.new : nil
-      # GROUP BY terms resolve before the aggregates are collected.
-      group_keys = [] of Expr
-      core.group_by.each do |term|
-        if position = integer_term(term, syntax.size, "GROUP")
-          group_syntax = syntax[position]
-          group_keys << (group_syntax ? compile_expression(group_syntax, context) : expanded[position])
-        else
-          group_keys << compile_expression(term, context)
-        end
-      end
+      # resolveSelectStep's order: the result set, HAVING, WHERE, ORDER BY,
+      # then GROUP BY; it decides which unknown name an error reports.
       context.aggregates = collector
       context.aliases_visible = false
       syntax.each_with_index do |expression, index|
-        expanded[index] = compile_expression(expression, context) if expression
+        expanded[index] = resolve_expression(expression, context) if expression
+      end
+      if core.having && !aggregate
+        raise SQLError.new("HAVING clause on a non-aggregate query")
       end
       context.aliases_visible = true
-      having_expression = core.having.try { |expression| compile_expression(expression, context) }
+      having_expression = core.having.try { |expression| resolve_expression(expression, context) }
+      context.aggregates = nil
+      where = core.where.try { |expression| resolve_expression(expression, context) }
+      context.aggregates = collector
       names = (0...expanded.size).map { |index| result_name(aliases[index], expanded[index], spans[index], index) }
       sort_keys = [] of SortKey
       extras = [] of Expr
-      order_by.each do |term|
+      order_by.each_with_index do |term, term_index|
         expression = term.expression
         explicit = nil
-        if expression.is_a?(SQL::Collate)
-          explicit = collation_named(expression.collation.value)
+        while expression.is_a?(SQL::Collate)
+          explicit ||= collation_named(expression.collation.value)
           expression = expression.operand
         end
-        position = integer_term(expression, expanded.size, "ORDER")
+        position = integer_term(expression, expanded.size, "ORDER", term_index)
         if position.nil? && expression.is_a?(SQL::ColumnReference) && expression.table.nil?
           position = aliases.index { |alias_name| alias_name && alias_name.compare(expression.column.value, case_insensitive: true) == 0 }
         end
         if position
           key_expression = expanded[position]
         else
-          key_expression = compile_expression(expression, context)
+          key_expression = resolve_expression(expression, context)
         end
         collation = explicit || key_expression.collation_sequence || Collation::Binary
         extras << key_expression
         sort_keys << sort_key(term, expanded.size + extras.size - 1, collation)
       end
-      context.aliases_visible = false
       context.aggregates = nil
+      group_keys = [] of Expr
+      core.group_by.each_with_index do |term, index|
+        if contains_aggregate?(term)
+          raise SQLError.new("aggregate functions are not allowed in the GROUP BY clause")
+        end
+        if position = integer_term(term, syntax.size, "GROUP", index)
+          group_syntax = syntax[position]
+          group_keys << (group_syntax ? resolve_expression(group_syntax, context) : expanded[position])
+        else
+          group_keys << resolve_expression(term, context)
+        end
+      end
+      context.aliases_visible = false
       aggregation = nil
       if collector
         key_collations = group_keys.map { |key| key.collation_sequence || Collation::Binary }
@@ -420,8 +460,26 @@ module Grant::SQLiteEngine::Query
       end
       source, where = plan_access(steps, where, context)
       column_collations = expanded.map { |column| column.collation_sequence || Collation::Binary }
-      producer = CoreProducer.new(source, where, expanded, extras, aggregation, core.distinct.distinct?, column_collations)
+      producer = CoreProducer.new(source, where, expanded, extras, aggregation, core.distinct.distinct?, column_collations).as(Producer)
+      if (table = simple_count_table(core, steps, order_by))
+        producer = TableCountProducer.new(@session.database, table)
+      end
       CorePlan.new(producer, expanded, names, aliases, syntax, sort_keys)
+    end
+
+    # isSimpleCount: one table, no WHERE, GROUP BY or HAVING, and a result
+    # that is exactly count(*).
+    private def simple_count_table(core : SQL::SelectClause, steps : Array(JoinStep), order_by : Array(SQL::OrderingTerm)) : TableInfo?
+      return unless steps.size == 1 && core.where.nil? && core.group_by.empty? && core.having.nil? && order_by.empty?
+      return unless core.columns.size == 1 && !core.distinct.distinct?
+      column = core.columns[0]
+      return unless column.is_a?(SQL::ExpressionColumn)
+      call = column.expression
+      return unless call.is_a?(SQL::FunctionCall) && call.star && call.name.value.compare("count", case_insensitive: true) == 0
+      return unless call.filter.nil? && call.over.nil? && call.over_name.nil? && call.order_by.empty?
+      step = steps[0]
+      return if step.left_join?
+      step.entry.table
     end
 
     private def compile_values(core : SQL::ValuesClause, context : QueryContext, order_by : Array(SQL::OrderingTerm)) : CorePlan
@@ -432,8 +490,8 @@ module Grant::SQLiteEngine::Query
       end
       first = rows.first
       names = (1..width).map { |index| "column#{index}" }
-      sort_keys = order_by.map do |term|
-        position = integer_term(term.expression, width, "ORDER")
+      sort_keys = order_by.map_with_index do |term, index|
+        position = integer_term(term.expression, width, "ORDER", index)
         raise UnsupportedSQL.new("ORDER BY expression on VALUES") unless position
         sort_key(term, position, Collation::Binary)
       end

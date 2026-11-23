@@ -37,6 +37,32 @@ module Grant::SQLiteEngine::Query
     end
   end
 
+  # sqlite3BtreeCount: the entries of a b-tree, counted from its pages'
+  # cell counts without decoding a record. A table b-tree keeps its rows
+  # in leaf cells; an index b-tree keeps entries in interior cells too.
+  module BTreeCount
+    def self.entries(database : Database, root_page : UInt32, session : Session) : Int64
+      pager = database.pager
+      pager.check_page_number(root_page)
+      total = 0_i64
+      pending = [root_page]
+      visited = Set(UInt32).new
+      while number = pending.pop?
+        raise CorruptDatabase.new("b-tree reaches the page twice", number) unless visited.add?(number)
+        session.tick
+        page = BTreePage.read(pager, number)
+        if page.page_type.leaf?
+          total += page.cell_count
+        else
+          total += page.cell_count unless page.page_type.table?
+          page.cell_count.times { |index| pending << page.left_child(index) }
+          pending << page.right_child
+        end
+      end
+      total
+    end
+  end
+
   # A cursor over a table b-tree, in rowid order.
   class TableCursor < BTreeCursor
     # Moves to the first row. Returns false for an empty table.

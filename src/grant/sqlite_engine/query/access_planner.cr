@@ -88,7 +88,7 @@ module Grant::SQLiteEngine::Query
     end
 
     def self.conjunction(terms : Array(Expr)) : Expr?
-      return nil if terms.empty?
+      return if terms.empty?
       terms.reduce { |all, term| LogicalExpr.new(true, all, term).as(Expr) }
     end
   end
@@ -181,7 +181,7 @@ module Grant::SQLiteEngine::Query
     # A comparison term as `entry column OP other side`, or nil.
     private def oriented(term : Expr, entry : FromEntry, available : Set(Int32),
                          context : QueryContext) : {ComparisonOperator, Expr, Expr, ComparisonExpr}?
-      return nil unless term.is_a?(ComparisonExpr)
+      return unless term.is_a?(ComparisonExpr)
       left = term.left
       right = term.right
       if (rowid_of?(left, entry) || column_of(left, entry)) && available?(right, entry.slot, available, context)
@@ -196,7 +196,7 @@ module Grant::SQLiteEngine::Query
     private def choose_access(step : JoinStep, terms : Array(Expr), available : Set(Int32), context : QueryContext) : RowSource
       entry = step.entry
       table = entry.table
-      return step.base_source unless table && !table.without_rowid?
+      return step.base_source if table.nil? || table.without_rowid?
       database = @session.database
       low = nil.as(Expr?)
       high = nil.as(Expr?)

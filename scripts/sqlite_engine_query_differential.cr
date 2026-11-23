@@ -86,11 +86,11 @@ class DifferentialReport
     File.open(File.join(directory, "summary.txt"), "w") do |io|
       io.puts header
       io.puts "C SQLite #{SQLiteSQLOracle.version}"
-      @counts.keys.sort.each { |key| io.puts "#{key}: #{@counts[key]}" }
+      @counts.keys.sort!.each { |key| io.puts "#{key}: #{@counts[key]}" }
       io.puts "differences: #{@counts["differences"]}" unless @counts.has_key?("differences")
       unless @skipped.empty?
         io.puts "skipped, by reason:"
-        @skipped.keys.sort.each do |reason|
+        @skipped.keys.sort!.each do |reason|
           io.puts "  #{reason}: #{@skipped[reason]}"
           @list_of_examples[reason].each { |example| io.puts "      e.g. #{example[0, 200].gsub('\n', ' ')}" }
         end
@@ -311,7 +311,7 @@ class CorpusDifferential
     nil
   end
 
-  private def each_combination(choices : Array(Array(String)), &block : Array(String) ->) : Nil
+  private def each_combination(choices : Array(Array(String)), & : Array(String) ->) : Nil
     indexes = Array(Int32).new(choices.size, 0)
     loop do
       yield indexes.map_with_index { |index, position| choices[position][index] }
@@ -349,10 +349,10 @@ class CorpusDifferential
     end
     database = Grant::SQLiteEngine::Database.open(path)
     session = Grant::SQLiteEngine::Query::Session.new(database)
-    entries.each_with_index do |(sql, statement), entry_index|
+    entries.each_with_index do |(sql, statement), _|
       count = connection.parameter_count(sql) || 0
       bindings = count == 0 ? 1 : @bindings
-      bindings.times do |binding|
+      bindings.times do
         parameters = Array(Value).new(count) { pick(random, pool) }
         @report.count("executions")
         begin
@@ -407,7 +407,7 @@ class CorpusDifferential
 
   private def random_value(column : SQL::ColumnDefinition, random : Random, row_index : Int32) : Value
     type_name = column.type_name.try(&.words.map(&.value).join(' ').upcase) || ""
-    return nil if random.rand(10) == 0
+    return if random.rand(10) == 0
     roll = random.rand(20)
     if type_name.includes?("INT")
       return WORDS.sample(random) if roll == 0
@@ -470,6 +470,10 @@ class TestsDifferential
   SCRATCH_LIMIT_BYTES = 2_i64 * 1024 * 1024 * 1024
 
   getter peak_scratch_bytes = 0_i64
+
+  # Functions that read the connection's write counters, which count C's
+  # writes here, not the engine's.
+  CONNECTION_COUNTERS = /\b(last_insert_rowid|changes|total_changes)\s*\(/i
 
   def initialize(@records_path : String, @report : DifferentialReport, @work : String)
   end
@@ -571,6 +575,10 @@ class TestsDifferential
   private def compare(connection : SQLiteQueryOracle::Connection, path : String, file : String, sql : String,
                       statement : SQL::SelectStatement) : Nil
     expected = connection.query(sql, row_limit: 20_000)
+    if CONNECTION_COUNTERS.matches?(sql)
+      @report.skip("reads the counters of writes C made (changes, last_insert_rowid; G4b)", "#{file}: #{sql}")
+      return
+    end
     if expected.error == "interrupted"
       @report.skip("C ran past #{StatementDeadline::LIMIT.total_seconds.to_i} s (an unbounded query)", "#{file}: #{sql}")
       return
