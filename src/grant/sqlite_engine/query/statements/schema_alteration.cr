@@ -54,9 +54,9 @@ module Grant::SQLiteEngine::Query
       action = @statement.action
       case action
       when SQL::RenameTable  then rename_table(entry, action.new_name)
-      when SQL::RenameColumn then rename_column(entry, action.old_name.value, action.new_name)
+      when SQL::RenameColumn then rename_column(entry, action.old_name, action.new_name)
       when SQL::AddColumn    then add_column(entry, action.column)
-      when SQL::DropColumn   then drop_column(entry, action.column_name.value)
+      when SQL::DropColumn   then drop_column(entry, action.column_name)
       end
       @session.reset_schema
     end
@@ -180,10 +180,13 @@ module Grant::SQLiteEngine::Query
 
     # --- RENAME COLUMN ------------------------------------------------------
 
-    private def rename_column(entry : SchemaEntry, old_column : String, new_name : SQL::Name) : Nil
+    # C reports a missing column by its token as written, quotes and all
+    # (%T), inside its own double quotes.
+    private def rename_column(entry : SchemaEntry, old_name : SQL::Name, new_name : SQL::Name) : Nil
+      old_column = old_name.value
       info = @session.table(entry.object_name, @schema_name) || raise SQLError.new("no such table: #{entry.object_name}")
       position = info.column_index(old_column)
-      raise SQLError.new(%(no such column: "#{old_column}")) unless position
+      raise SQLError.new(%(no such column: "#{old_name.text}")) unless position
       target = new_name.value
       if info.list_of_column_names.each_with_index.any? { |column, index| index != position && column.compare(target, case_insensitive: true) == 0 }
         raise SQLError.new("error in table #{entry.object_name} after rename: duplicate column name: #{target}")
@@ -403,11 +406,12 @@ module Grant::SQLiteEngine::Query
 
     # --- DROP COLUMN --------------------------------------------------------
 
-    private def drop_column(entry : SchemaEntry, column_name : String) : Nil
+    private def drop_column(entry : SchemaEntry, column_syntax : SQL::Name) : Nil
+      column_name = column_syntax.value
       table = @run.table(entry.object_name, @schema_name)
       info = table.table_info
       position = info.column_index(column_name)
-      raise SQLError.new(%(no such column: "#{column_name}")) unless position
+      raise SQLError.new(%(no such column: "#{column_syntax.text}")) unless position
       actual = info.list_of_column_names[position]
       definition = info.definition
       if definition.list_of_primary_key_columns.any? { |key| key.compare(actual, case_insensitive: true) == 0 }

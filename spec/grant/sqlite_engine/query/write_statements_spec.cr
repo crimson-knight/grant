@@ -309,7 +309,7 @@ module WriteStatementsSpecFixture
       "SELECT name FROM sqlite_master ORDER BY name",
       "SELECT * FROM temp.sqlite_sequence",
       "PRAGMA table_info(items)",
-      "PRAGMA database_list",
+      "SELECT seq, name FROM pragma_database_list",
       "BEGIN",
       "INSERT INTO scratch (n) VALUES (3)",
       "SAVEPOINT s1",

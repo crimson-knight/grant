@@ -721,7 +721,10 @@ module Grant::SQLiteEngine::Query
     end
 
     # The foreign keys of every table that name *table* as parent, with the
-    # parent key positions each refers to.
+    # parent key positions each refers to, newest first: C links each new
+    # foreign key at the head of its parent's list (sqlite3CreateForeignKey,
+    # fkeyHash), so sqlite3FkActions runs a later table's CASCADE before an
+    # earlier table's RESTRICT stops the statement.
     private def referencing(table : WriteTable) : Array({WriteTable, ForeignKeyRule, Array(Int32)})
       list = [] of {WriteTable, ForeignKeyRule, Array(Int32)}
       @session.list_of_child_tables(table.name).each do |child_name|
@@ -733,7 +736,7 @@ module Grant::SQLiteEngine::Query
           list << {child, rule, lookup.list_of_parent_positions}
         end
       end
-      list
+      list.reverse!
     end
 
     # The child rows whose key equals *key*, compared as fkScanChildren

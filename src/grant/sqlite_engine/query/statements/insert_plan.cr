@@ -17,7 +17,7 @@ module Grant::SQLiteEngine::Query
       table_name = @statement.table.name.value
       schema = @statement.table.schema
       if schema && !schema.same?("main") && !schema.same?("temp")
-        raise SQLError.new("unknown database #{schema.value}")
+        raise SQLError.new("no such table: #{schema.value}.#{table_name}")
       end
       schema_text = schema.try(&.value)
       if @session.view(table_name)
