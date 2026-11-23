@@ -20,13 +20,13 @@ class Grant::SQLite3::Statement
     # without copying them. The driver releases the previous call's values
     # before binding, so a parameter this call leaves unbound would point at
     # released memory. Clearing the bindings first makes it NULL instead.
-    LibSQLite3.clear_bindings(to_unsafe)
+    engine_statement.clear_bindings
     previous_def
   ensure
     # Always reset the statement so SQLite decrements nVdbeActive even when
     # the step returned an error code.  This prevents "SQL statements in
     # progress" on a subsequent COMMIT/ROLLBACK on the same connection.
-    LibSQLite3.reset(to_unsafe)
+    engine_statement.reset
   end
 end
 
