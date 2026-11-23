@@ -258,7 +258,7 @@ module Grant::SQLiteEngine::Query
       column_name = reference.column.value
       table_name = reference.table.try(&.value)
       if schema = reference.schema
-        unless schema.value.compare("main", case_insensitive: true) == 0
+        unless @session.schema?(schema.value)
           raise SQLError.new("no such column: #{schema.value}.#{table_name}.#{column_name}")
         end
       end
@@ -387,7 +387,9 @@ module Grant::SQLiteEngine::Query
     private def compile_binary(expression : SQL::BinaryOperation, context : QueryContext) : Expr
       operator = expression.operator
       if operator.extract? || operator.extract_text?
-        raise UnsupportedSQL.new("the -> and ->> operators (JSON)")
+        # The parser makes `a -> b` the function "->" of two arguments.
+        definition = ScalarFunctions.lookup(operator.extract? ? "->" : "->>", 2) || raise Error.new("JSON operator missing")
+        return FunctionExpr.new(definition, [compile_expression(expression.left, context), compile_expression(expression.right, context)] of Expr)
       end
       null_test = null_comparison?(expression)
       left = null_test ? compile_null_test_operand(expression.left, context) : compile_expression(expression.left, context)
@@ -608,7 +610,7 @@ module Grant::SQLiteEngine::Query
       return false if comparison >= ExpressionAffinity::Numeric && !index_affinity.numeric?
       required = Query.binary_collation(left, column)
       table.list_of_indexes.reverse_each do |layout|
-        next if layout.unsupported_reason
+        next if layout.needs_evaluation?
         next unless layout.list_of_key_positions.first? == position
         key = layout.comparator.list_of_key_columns.first?
         next unless key && key.collation == required
@@ -671,7 +673,8 @@ module Grant::SQLiteEngine::Query
 
     # ---------------------------------------------------------- functions
 
-    # The JSON functions of json.c, which arrive with milestone G6.
+    # The JSON functions of json.c not yet ported (those that build or edit
+    # JSON, which need value subtypes) arrive with milestone G6.
     JSON_FUNCTION_NAME = /\Ajsonb?(_[a-z_]+)?\z/
 
     # resolveExprStep checks a function before walking its arguments: its
@@ -743,7 +746,7 @@ module Grant::SQLiteEngine::Query
           raise SQLError.new("second argument to likelihood() must be a constant between 0.0 and 1.0")
         end
         return PassThroughExpr.new(compile_expression(call.arguments[0], context))
-      when "printf", "format", "json", "json_extract", "date", "time", "datetime", "julianday", "strftime", "unixepoch"
+      when "printf", "format", "date", "time", "datetime", "julianday", "strftime", "unixepoch"
         raise UnsupportedSQL.new("function #{name}()")
       end
       if !ScalarFunctions.known?(lower) && JSON_FUNCTION_NAME.matches?(lower)

@@ -23,12 +23,11 @@ module Grant::SQLiteEngine::Query
              when SQL::CreateTable, SQL::CreateIndex, SQL::CreateView, SQL::Drop, SQL::AlterTable,
                   SQL::CreateTrigger, SQL::CreateVirtualTable
                SchemaPlan.new(session, statement, text)
-             when SQL::Explain then ExplainPlan.new(session, statement)
-             when SQL::Analyze then NoRowsPlan.new
-             when SQL::Reindex then NoRowsPlan.new
-             when SQL::Vacuum  then NoRowsPlan.new
-             when SQL::Attach  then raise UnsupportedSQL.new("ATTACH (the engine opens one database per connection)")
-             when SQL::Detach  then raise UnsupportedSQL.new("DETACH")
+             when SQL::Explain             then ExplainPlan.new(session, statement)
+             when SQL::Analyze             then NoRowsPlan.new
+             when SQL::Reindex             then NoRowsPlan.new
+             when SQL::Vacuum              then NoRowsPlan.new
+             when SQL::Attach, SQL::Detach then AttachPlan.new(session, statement)
              else
                raise UnsupportedSQL.new("#{PreparedQuery.statement_kind(statement)} statements")
              end

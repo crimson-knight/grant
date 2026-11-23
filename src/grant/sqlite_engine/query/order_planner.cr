@@ -40,7 +40,7 @@ module Grant::SQLiteEngine::Query
       # path expects to read, or a quarter per term, whichever is less.
       selectivity = Math.min(0.25 ** terms.size, filtering.rows / DEFAULT_TABLE_ROWS)
       best_cost = ordered_cost(filtering, best_ordered, selectivity, limit_rows)
-      list_of_ordered_choices(step, context).each do |choice|
+      list_of_ordered_choices(step, context, terms).each do |choice|
         next unless order_satisfied?(ordering, choice, step.entry)
         cost = ordered_cost(choice, true, selectivity, limit_rows)
         if cost < best_cost
@@ -69,7 +69,7 @@ module Grant::SQLiteEngine::Query
 
     # Full reads of the entry in an order: rowid order, and each index's
     # key order.
-    private def list_of_ordered_choices(step : JoinStep, context : QueryContext) : Array(AccessChoice)
+    private def list_of_ordered_choices(step : JoinStep, context : QueryContext, terms : Array(Expr)) : Array(AccessChoice)
       entry = step.entry
       table = entry.table
       choices = [] of AccessChoice
@@ -80,7 +80,8 @@ module Grant::SQLiteEngine::Query
       end
       return choices if entry.not_indexed?
       table.list_of_indexes.each do |layout|
-        next if layout.unsupported_reason
+        next if layout.has_expressions?
+        next if layout.partial? && !PartialIndexUse.usable?(layout, entry, terms)
         if hint = entry.indexed_by
           next unless layout.entry.object_name.compare(hint, case_insensitive: true) == 0
         end
@@ -97,7 +98,7 @@ module Grant::SQLiteEngine::Query
       key_columns = layout.comparator.list_of_key_columns
       order = IndexOrder.new(key_columns.map(&.collation), key_columns.map(&.descending))
       covering = covering?(entry, table, layout)
-      source = IndexLookupSource.new(@session.database, table, entry.slot, order, layout.entry.root_page, equal,
+      source = IndexLookupSource.new(table.database, table, entry.slot, order, layout.entry.root_page, equal,
         low, high, entry.column_use, covering ? layout.list_of_key_positions : nil)
       rows = if equal.empty?
                DEFAULT_TABLE_ROWS
@@ -111,6 +112,8 @@ module Grant::SQLiteEngine::Query
       rows /= 4.0 if low
       rows /= 4.0 if high
       rows /= 4.0 if low && high
+      # sqlite3DefaultRowEst: a partial index holds half the table's rows.
+      rows /= 2.0 if layout.partial?
       rows = Math.max(rows, 1.0)
       per_row = covering ? 1.5 : 4.0
       positions = layout.list_of_key_positions
@@ -128,7 +131,7 @@ module Grant::SQLiteEngine::Query
     # of *layout* or the rowid, so its rows can be built from index entries.
     private def covering?(entry : FromEntry, table : TableInfo, layout : IndexLayout) : Bool
       use = entry.column_use
-      return false if use.all?
+      return false if use.all? || layout.has_expressions?
       positions = layout.list_of_key_positions
       alias_index = table.rowid_alias
       (0...table.list_of_column_names.size).all? do |column|

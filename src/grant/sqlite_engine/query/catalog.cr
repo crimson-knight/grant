@@ -39,7 +39,7 @@ module Grant::SQLiteEngine::Query
       when "pragma_foreign_key_list"
         foreign_key_list(argument, session)
       when "pragma_database_list"
-        [[0_i64, "main", session.database.file_name] of Value]
+        session.database_list_rows
       when "pragma_table_list"
         table_list(argument, session)
       else
@@ -106,7 +106,7 @@ module Grant::SQLiteEngine::Query
     end
 
     private def self.indexes_of(table : TableInfo, session : Session) : Array(SchemaEntry)
-      session.database.schema.list_of_indexes.select do |entry|
+      table.database.schema.list_of_indexes.select do |entry|
         entry.table_name.compare(table.name, case_insensitive: true) == 0
       end.reverse!
     end
@@ -136,11 +136,9 @@ module Grant::SQLiteEngine::Query
       return [] of Array(Value) unless table
       rows = [] of Array(Value)
       key_columns = layout.comparator.list_of_key_columns
-      sql = layout.entry.sql
-      terms = sql ? IndexDefinition.parse(sql).list_of_key_terms : nil
       layout.list_of_key_positions.each_with_index do |position, key_index|
-        expression = terms && terms[key_index]?.try(&.column_name).nil?
-        column_number = expression ? -2_i64 : position.to_i64
+        expression = position == IndexLayout::EXPRESSION
+        column_number = position.to_i64
         column_name = expression ? nil : table.list_of_column_names[position]
         row = [key_index.to_i64, column_number, column_name] of Value
         if extended

@@ -236,7 +236,7 @@ module Grant::SQLiteEngine::Query
       if table.nil? || table.without_rowid?
         return AccessChoice.new(step.base_source, DEFAULT_TABLE_ROWS, DEFAULT_TABLE_ROWS, [] of OrderElement, [] of Int32)
       end
-      database = @session.database
+      database = table.database
       seek_cost = Math.log2(DEFAULT_TABLE_ROWS)
       low = nil.as(Expr?)
       high = nil.as(Expr?)
@@ -274,7 +274,29 @@ module Grant::SQLiteEngine::Query
         return AccessChoice.new(RowidRangeSource.new(database, table, entry.slot, low, high, entry.column_use),
           3.0 * rows + seek_cost, rows, rows_order, [] of Int32)
       end
+      unless entry.not_indexed?
+        if partial = partial_index_scan(entry, table, terms)
+          return partial
+        end
+      end
       AccessChoice.new(step.base_source, 3.0 * DEFAULT_TABLE_ROWS, DEFAULT_TABLE_ROWS, rows_order, [] of Int32)
+    end
+
+    # A full scan of a partial index the WHERE implies, which costs less
+    # than a table scan since the index holds half the rows by C's default
+    # estimate; the newest such index on a tie.
+    private def partial_index_scan(entry : FromEntry, table : TableInfo, terms : Array(Expr)) : AccessChoice?
+      best = nil
+      table.list_of_indexes.reverse_each do |layout|
+        next if !layout.partial? || layout.has_expressions?
+        if hint = entry.indexed_by
+          next unless layout.entry.object_name.compare(hint, case_insensitive: true) == 0
+        end
+        next unless PartialIndexUse.usable?(layout, entry, terms)
+        candidate = index_choice(entry, table, layout, [] of {Expr, ExpressionAffinity}, nil, nil)
+        best = candidate if best.nil? || candidate.cost < best.cost
+      end
+      best
     end
 
     # INDEXED BY a partial index needs a WHERE that implies the index's
@@ -287,7 +309,7 @@ module Grant::SQLiteEngine::Query
         table = step.entry.table
         next unless hint && table
         layout = table.list_of_indexes.find { |candidate| candidate.entry.object_name.compare(hint, case_insensitive: true) == 0 }
-        next unless layout && layout.unsupported_reason.try(&.starts_with?("partial index"))
+        next unless layout && layout.partial?
         raise SQLError.new("no query solution")
       end
     end
@@ -300,8 +322,10 @@ module Grant::SQLiteEngine::Query
       entry = step.entry
       best = nil
       best_score = 0
+      best_weight = 0
       table.list_of_indexes.reverse_each do |layout|
-        next if layout.unsupported_reason
+        next if layout.has_expressions?
+        next if layout.partial? && !PartialIndexUse.usable?(layout, entry, terms)
         if hint = entry.indexed_by
           next unless layout.entry.object_name.compare(hint, case_insensitive: true) == 0
         end
@@ -324,9 +348,20 @@ module Grant::SQLiteEngine::Query
         end
         score = equal.size * 4 + (range_low ? 1 : 0) + (range_high ? 1 : 0)
         score += 2 if layout.unique? && equal.size == layout.key_count
-        if score > best_score
+        next if score == 0
+        # On equal scores the estimate decides (whereLoopAddBtreeIndex
+        # costs): a partial index holds half the rows (sqlite3DefaultRowEst).
+        candidate = index_choice(entry, table, layout, equal, range_low, range_high)
+        weight = RowWidth.index_scan_weight(table, layout)
+        better = score > best_score
+        if best && score == best_score
+          # Equal rows: the narrower index costs less (rCostIdx).
+          better = candidate.rows < best.rows || (candidate.rows == best.rows && weight < best_weight)
+        end
+        if better
           best_score = score
-          best = index_choice(entry, table, layout, equal, range_low, range_high)
+          best = candidate
+          best_weight = weight
         end
       end
       best
@@ -341,12 +376,17 @@ module Grant::SQLiteEngine::Query
                                 lower : Bool = true) : {Expr, ExpressionAffinity, Bool}?
       column_affinity = table.list_of_affinities[position]
       terms.each do |term|
+        # `x IS NULL` seeks the NULL entries (WO_ISNULL); the third element
+        # is false, as for every equality.
+        if equality && term.is_a?(NullTestExpr) && !term.negated? && column_of(term.operand, entry) == position
+          return {IsKeyExpr.new(ConstantExpr.new(nil)).as(Expr), ExpressionAffinity::None, false}
+        end
         oriented = oriented(term, entry, available, context)
         next unless oriented
         operator, column, other, comparison = oriented
         next unless column_of(column, entry) == position
         if equality
-          next unless operator.equal?
+          next unless operator.equal? || operator.is?
         elsif lower
           next unless operator.greater? || operator.greater_or_equal?
         else
@@ -363,6 +403,7 @@ module Grant::SQLiteEngine::Query
                  end
         next unless usable
         conversion = affinity < ExpressionAffinity::Text ? ExpressionAffinity::None : column_affinity
+        return {IsKeyExpr.new(other).as(Expr), conversion, false} if operator.is?
         return {other, conversion, operator.greater? || operator.less?}
       end
       nil

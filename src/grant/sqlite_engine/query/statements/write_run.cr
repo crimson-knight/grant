@@ -42,11 +42,12 @@ module Grant::SQLiteEngine::Query
     # AUTOINCREMENT: the largest rowid per table (memMax), written to
     # sqlite_sequence when the statement ends.
     @autoincrement_maximum = {} of String => Int64
-    @list_of_autoincrement_tables = [] of String
+    @list_of_autoincrement_tables = [] of WriteTable
 
     def initialize(@session : Session, @list_of_parameters : Array(Value))
     end
 
+    # The main database; a table's own is `WriteTable#database`.
     def database : Database
       @session.database
     end
@@ -56,8 +57,8 @@ module Grant::SQLiteEngine::Query
     end
 
     # The rules of *name*, raising "no such table" for a missing table.
-    def table(name : String) : WriteTable
-      @session.write_table(name) || raise SQLError.new("no such table: #{name}")
+    def table(name : String, schema : String? = nil) : WriteTable
+      @session.write_table(name, schema) || raise SQLError.new("no such table: #{name}")
     end
 
     # --- INSERT -------------------------------------------------------------
@@ -92,7 +93,7 @@ module Grant::SQLiteEngine::Query
         child_added(table, row)
         parent_added(table, rowid, row)
       end
-      database.write_row(table.layout, rowid, row, table.list_of_index_layouts.select { |index| index_includes?(table, index, row, rowid) })
+      table.database.write_row(table.layout, rowid, row, index_entries(table, row, rowid))
       if rowid && @nested == 0 && !@silent
         @session.last_insert_rowid = rowid
       end
@@ -123,26 +124,30 @@ module Grant::SQLiteEngine::Query
     private def new_rowid(table : WriteTable) : Int64
       if table.definition.autoincrement?
         floor = autoincrement_maximum(table)
-        rowid = database.next_rowid(table.layout, floor)
+        rowid = table.database.next_rowid(table.layout, floor)
         return rowid
       end
-      database.next_rowid(table.layout)
+      table.database.next_rowid(table.layout)
     end
 
     private def autoincrement_maximum(table : WriteTable) : Int64
-      key = table.name.downcase
+      key = autoincrement_key(table)
       if value = @autoincrement_maximum[key]?
         return value
       end
-      @list_of_autoincrement_tables << table.name
-      @autoincrement_maximum[key] = database.sequence_of(table.name) || 0_i64
+      @list_of_autoincrement_tables << table
+      @autoincrement_maximum[key] = table.database.sequence_of(table.name) || 0_i64
     end
 
     private def note_autoincrement(table : WriteTable, rowid : Int64) : Nil
       return unless table.definition.autoincrement?
-      key = table.name.downcase
+      key = autoincrement_key(table)
       current = autoincrement_maximum(table)
       @autoincrement_maximum[key] = rowid if rowid > current
+    end
+
+    private def autoincrement_key(table : WriteTable) : String
+      "#{@session.schema_name_of(table.database)}.#{table.name.downcase}"
     end
 
     # sqlite3AutoincrementBegin's tables, opened by any INSERT into them
@@ -154,11 +159,11 @@ module Grant::SQLiteEngine::Query
     # sqlite3AutoincrementEnd: each AUTOINCREMENT table's largest rowid goes
     # to sqlite_sequence when it passed the value stored there.
     def finish_autoincrement : Nil
-      @list_of_autoincrement_tables.each do |name|
-        value = @autoincrement_maximum[name.downcase]
-        stored = database.sequence_of(name)
+      @list_of_autoincrement_tables.each do |table|
+        value = @autoincrement_maximum[autoincrement_key(table)]
+        stored = table.database.sequence_of(table.name)
         next if stored && stored >= value
-        database.write_sequence(name, value)
+        table.database.write_sequence(table.name, value)
       end
     end
 
@@ -272,8 +277,8 @@ module Grant::SQLiteEngine::Query
         next unless rule.unique?
         index = rule.layout
         next unless index_includes?(table, index, row, rowid)
-        entry = index.entry_for(row, rowid)
-        existing = database.index_entry_matching(index, entry)
+        entry = index_entry(table, index, row, rowid)
+        existing = table.database.index_entry_matching(index, entry)
         next unless existing
         existing_key = existing_key_of(table, index, existing)
         next if old && same_row?(table, existing_key, old)
@@ -296,7 +301,7 @@ module Grant::SQLiteEngine::Query
             delete_row(table, victim[0], victim[1], replace: true)
           end
         else
-          raise ConstraintError.new(unique_message(table, rule), action)
+          raise ConstraintError.new(unique_message(rule), action)
         end
       end
       unless rowid_checked
@@ -304,7 +309,7 @@ module Grant::SQLiteEngine::Query
         return outcome if outcome
       end
       if rowid && !table.without_rowid? && rowid_action.replace? && !(old && old[0] == rowid)
-        if victim = database.row_at(table.layout, rowid)
+        if victim = table.database.row_at(table.layout, rowid)
           replace_row = {rowid.as(Int64?), victim}
         end
       end
@@ -317,12 +322,12 @@ module Grant::SQLiteEngine::Query
                             upsert : UpsertPlan?) : {InsertResult, Int64?, Array(Value), {Int64?, Array(Value)}?}?
       return if rowid.nil? || table.without_rowid?
       return if old && old[0] == rowid
-      return unless database.row_exists?(table.layout, rowid)
+      return unless table.database.row_exists?(table.layout, rowid)
       case action
       when .ignore?
         {InsertResult::Ignored, rowid, row, nil}
       when .update?
-        target = database.row_at(table.layout, rowid) || return
+        target = table.database.row_at(table.layout, rowid) || return
         upsert_update(table, {rowid.as(Int64?), target}, row, clause || raise Error.new("upsert without a clause"))
       when .replace?
         nil
@@ -337,7 +342,7 @@ module Grant::SQLiteEngine::Query
     private def check_primary_key(table : WriteTable, row : Array(Value), old : {Int64?, Array(Value)}?,
                                   unique_override : ConflictAction, upsert : UpsertPlan?,
                                   clause_for_all : UpsertClause?) : {InsertResult, Int64?, Array(Value), {Int64?, Array(Value)}?}?
-      existing = database.row_with_key_of(table.layout, row) || return
+      existing = table.database.row_with_key_of(table.layout, row) || return
       positions = table.layout.list_of_primary_key_positions
       key = positions.map { |position| existing[position] }
       return if old && same_row?(table, key, old)
@@ -362,8 +367,10 @@ module Grant::SQLiteEngine::Query
       end
     end
 
-    private def unique_message(table : WriteTable, rule : IndexRule) : String
-      if rule.layout.unsupported_reason.try(&.starts_with?("expression"))
+    # C names the columns, or for an index with an expression term the
+    # index (sqlite3UniqueConstraint).
+    def unique_message(rule : IndexRule) : String
+      if rule.layout.has_expressions?
         return "UNIQUE constraint failed: index '#{rule.layout.entry.object_name}'"
       end
       "UNIQUE constraint failed: #{rule.columns_text}"
@@ -395,13 +402,56 @@ module Grant::SQLiteEngine::Query
 
     private def existing_row(table : WriteTable, key : Int64 | Array(Value)) : {Int64?, Array(Value)}?
       if key.is_a?(Int64)
-        found = database.row_at(table.layout, key)
+        found = table.database.row_at(table.layout, key)
         found ? {key.as(Int64?), found} : nil
       else
         probe = Array(Value).new(table.list_of_columns.size, nil)
         table.layout.list_of_primary_key_positions.each_with_index { |position, offset| probe[position] = key[offset] }
-        found = database.row_with_key_of(table.layout, probe)
+        found = table.database.row_with_key_of(table.layout, probe)
         found ? {nil.as(Int64?), found} : nil
+      end
+    end
+
+    # The entry of *index* for the row: the key terms (expression terms
+    # evaluated over the row, sqlite3ExprCodeLoadIndexColumn) and the rowid
+    # or primary key.
+    def index_entry(table : WriteTable, index : IndexLayout, row : Array(Value), rowid : Int64?) : Array(Value)
+      return index.entry_for(row, rowid) unless index.has_expressions?
+      rule = table.list_of_indexes.find(&.layout.same?(index)) ||
+             table.list_of_indexes.find { |candidate| candidate.layout.entry.object_name == index.entry.object_name } ||
+             raise Error.new("index #{index.entry.object_name} is not an index of #{table.name}")
+      program = key_expression_program(table, rule)
+      pseudo = program.list_of_pseudo_tables[0]
+      pseudo.row = row
+      pseudo.rowid = rowid
+      values = program.evaluate(@list_of_parameters) || raise Error.new("index #{index.entry.object_name} expressions gave no row")
+      index.entry_for(row, rowid, values)
+    end
+
+    # Compiles the expression terms of *rule*, raising what C's
+    # sqlite3ResolveSelfReference reports for them.
+    def check_index_expressions(table : WriteTable, rule : IndexRule) : Nil
+      return if rule.list_of_key_expressions.empty?
+      rule.list_of_key_expressions.each do |expression|
+        if expression.to_sql.matches?(/\bSELECT\b/i)
+          raise SQLError.new("subqueries prohibited in index expressions")
+        end
+      end
+      key_expression_program(table, rule)
+    end
+
+    private def key_expression_program(table : WriteTable, rule : IndexRule) : RowProgram
+      table.key_expression_programs[rule.layout.entry.object_name] ||= begin
+        pseudo = PseudoTable.new(table.name, table.table_info)
+        RowProgram.new(@session, RowProgram.columns(rule.list_of_key_expressions), [pseudo])
+      end
+    end
+
+    # Each index of *table* that holds the row, with the row's entry.
+    def index_entries(table : WriteTable, row : Array(Value), rowid : Int64?) : Array({IndexLayout, Array(Value)})
+      table.list_of_index_layouts.compact_map do |index|
+        next unless index_includes?(table, index, row, rowid)
+        {index, index_entry(table, index, row, rowid)}
       end
     end
 
@@ -510,13 +560,11 @@ module Grant::SQLiteEngine::Query
         child_removed(table, old_row, new_row, list_of_changed)
         parent_removed(table, old_rowid, old_row, new_row, list_of_changed)
       end
-      layouts = table.list_of_index_layouts
-      database.remove_row(table.layout, old_rowid, old_row,
-        layouts.select { |index| index_includes?(table, index, old_row, old_rowid) })
+      table.database.remove_row(table.layout, old_rowid, old_row, index_entries(table, old_row, old_rowid))
       if replaced = result[3]
         delete_row(table, replaced[0], replaced[1], replace: true)
       end
-      database.write_row(table.layout, rowid, new_row, layouts.select { |index| index_includes?(table, index, new_row, rowid) })
+      table.database.write_row(table.layout, rowid, new_row, index_entries(table, new_row, rowid))
       if foreign_keys?
         child_added(table, new_row, old_row, list_of_changed)
         parent_added(table, rowid, new_row, old_row, list_of_changed)
@@ -535,8 +583,7 @@ module Grant::SQLiteEngine::Query
         child_removed(table, row)
         parent_removed(table, rowid, row)
       end
-      layouts = table.list_of_index_layouts.select { |index| index_includes?(table, index, row, rowid) }
-      database.remove_row(table.layout, rowid, row, layouts)
+      table.database.remove_row(table.layout, rowid, row, index_entries(table, row, rowid))
       parent_actions(table, row, nil) if foreign_keys?
       count_change unless replace
     end
@@ -665,8 +712,8 @@ module Grant::SQLiteEngine::Query
     end
 
     private def refreshed(table : WriteTable, rowid : Int64?, row : Array(Value)) : Array(Value)?
-      return database.row_at(table.layout, rowid) if rowid
-      database.row_with_key_of(table.layout, row)
+      return table.database.row_at(table.layout, rowid) if rowid
+      table.database.row_with_key_of(table.layout, row)
     end
 
     private def same_table?(left : String, right : String) : Bool
@@ -674,7 +721,10 @@ module Grant::SQLiteEngine::Query
     end
 
     # The foreign keys of every table that name *table* as parent, with the
-    # parent key positions each refers to.
+    # parent key positions each refers to, newest first: C links each new
+    # foreign key at the head of its parent's list (sqlite3CreateForeignKey,
+    # fkeyHash), so sqlite3FkActions runs a later table's CASCADE before an
+    # earlier table's RESTRICT stops the statement.
     private def referencing(table : WriteTable) : Array({WriteTable, ForeignKeyRule, Array(Int32)})
       list = [] of {WriteTable, ForeignKeyRule, Array(Int32)}
       @session.list_of_child_tables(table.name).each do |child_name|
@@ -686,7 +736,7 @@ module Grant::SQLiteEngine::Query
           list << {child, rule, lookup.list_of_parent_positions}
         end
       end
-      list
+      list.reverse!
     end
 
     # The child rows whose key equals *key*, compared as fkScanChildren
@@ -718,14 +768,14 @@ module Grant::SQLiteEngine::Query
     def cursor_rows(table : WriteTable, & : Int64?, Array(Value) ->) : Nil
       info = table.table_info
       if info.without_rowid?
-        cursor = IndexCursor.new(database, info.root_page, IndexOrder.new([] of Collation, [] of Bool))
+        cursor = IndexCursor.new(info.database, info.root_page, IndexOrder.new([] of Collation, [] of Bool))
         moved = cursor.first
         while moved
           yield nil, info.row_from(nil, cursor.record)
           moved = cursor.advance
         end
       else
-        cursor = TableCursor.new(database, info.root_page)
+        cursor = TableCursor.new(info.database, info.root_page)
         moved = cursor.first
         while moved
           rowid = cursor.rowid
@@ -806,7 +856,7 @@ module Grant::SQLiteEngine::Query
     end
 
     def parent_exists?(values : Array(Value)) : Bool
-      database = @run.database
+      database = @parent.database
       if index = @index
         key = key_values(values)
         probe = Array(Value).new(@parent.list_of_columns.size, nil)

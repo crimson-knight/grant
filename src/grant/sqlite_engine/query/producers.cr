@@ -436,7 +436,7 @@ module Grant::SQLiteEngine::Query
       best = nil
       unless @table.without_rowid?
         @table.list_of_indexes.each do |layout|
-          next if layout.unsupported_reason
+          next if layout.partial?
           size = layout.key_count + layout.list_of_tail_positions.size
           best = {size, layout.entry.root_page} if best.nil? || size < best[0]
         end

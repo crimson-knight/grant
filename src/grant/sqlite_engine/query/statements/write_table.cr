@@ -44,16 +44,19 @@ module Grant::SQLiteEngine::Query
   # name, or the text between its parentheses) and its expression.
   record CheckRule, constraint_name : String, expression : SQL::Expression
 
-  # One index as constraint checks see it: C's conflict action and, for a
-  # partial index, its WHERE.
+  # One index as constraint checks see it: C's conflict action, for a
+  # partial index its WHERE, and the expressions of its expression terms
+  # in key order.
   class IndexRule
     getter layout : IndexLayout
     getter conflict : ConflictAction
     getter where : SQL::Expression?
     # "t.a, t.b": the columns C's UNIQUE message lists.
     getter columns_text : String
+    getter list_of_key_expressions : Array(SQL::Expression)
 
-    def initialize(@layout : IndexLayout, @conflict : ConflictAction, @where : SQL::Expression?, @columns_text : String)
+    def initialize(@layout : IndexLayout, @conflict : ConflictAction, @where : SQL::Expression?, @columns_text : String,
+                   @list_of_key_expressions : Array(SQL::Expression) = [] of SQL::Expression)
     end
 
     def unique? : Bool
@@ -98,6 +101,7 @@ module Grant::SQLiteEngine::Query
     # Compiled expressions, kept while the schema stays the same.
     property check_programs : Array(RowProgram)? = nil
     getter partial_programs = {} of String => RowProgram
+    getter key_expression_programs = {} of String => RowProgram
     getter default_programs = {} of Int32 => RowProgram
     getter generated_programs = {} of Int32 => RowProgram
 
@@ -116,7 +120,8 @@ module Grant::SQLiteEngine::Query
       end
       read_primary_key(constraint_conflicts) if without_rowid?
       rules = @table_info.list_of_indexes.map do |index|
-        IndexRule.new(index, index_conflict(index, constraint_conflicts), partial_where(index), columns_text(index))
+        where, expressions = index_syntax(index)
+        IndexRule.new(index, index_conflict(index, constraint_conflicts), where, columns_text(index), expressions)
       end
       # sqlite3CreateIndex links each new index at the head of the table's
       # list, then moves REPLACE indexes to the end.
@@ -148,6 +153,11 @@ module Grant::SQLiteEngine::Query
 
     def name : String
       @table_info.name
+    end
+
+    # The database holding the table (main or temp).
+    def database : Database
+      @table_info.database
     end
 
     def definition : TableDefinition
@@ -272,15 +282,27 @@ module Grant::SQLiteEngine::Query
       found ? found[1] : ConflictAction::Default
     end
 
-    private def partial_where(index : IndexLayout) : SQL::Expression?
+    # A CREATE INDEX's WHERE and the expressions of its expression terms
+    # (the positions `IndexLayout::EXPRESSION` marks), in key order.
+    private def index_syntax(index : IndexLayout) : {SQL::Expression?, Array(SQL::Expression)}
+      expressions = [] of SQL::Expression
       sql = index.entry.sql
-      return unless sql
+      return {nil, expressions} unless sql && index.needs_evaluation?
       statement = SQL::Parser.parse_schema(sql)
-      statement.is_a?(SQL::CreateIndex) ? statement.where : nil
+      return {nil, expressions} unless statement.is_a?(SQL::CreateIndex)
+      statement.columns.each_with_index do |term, position|
+        next unless index.list_of_key_positions[position]? == IndexLayout::EXPRESSION
+        expression = term.expression
+        expression = expression.operand if expression.is_a?(SQL::Collate)
+        expressions << expression
+      end
+      {statement.where, expressions}
     end
 
     private def columns_text(index : IndexLayout) : String
-      index.list_of_key_positions.map { |position| "#{name}.#{@list_of_columns[position].column_name}" }.join(", ")
+      index.list_of_key_positions.map do |position|
+        position >= 0 ? "#{name}.#{@list_of_columns[position].column_name}" : "#{name}.<expr>"
+      end.join(", ")
     end
 
     # The name each CHECK constraint of *sql* carries in C's message, in

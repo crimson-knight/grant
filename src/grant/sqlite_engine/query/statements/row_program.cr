@@ -61,6 +61,13 @@ module Grant::SQLiteEngine::Query
       if (name = @capture_name) && @captured_slot.nil? && context.parent.nil? &&
          reference.name.value.compare(name, case_insensitive: true) == 0
         @captured_slot = result[0].slot
+        # The write finds a WITHOUT ROWID row again by its primary key,
+        # so the snapshot must hold those columns.
+        if (table = result[0].table) && table.without_rowid?
+          table.definition.list_of_primary_key_columns.each do |key_name|
+            table.column_index(key_name).try { |position| result[0].column_use.mark(position) }
+          end
+        end
       end
       result
     end
