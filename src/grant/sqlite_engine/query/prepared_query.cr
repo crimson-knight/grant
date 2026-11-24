@@ -124,6 +124,18 @@ module Grant::SQLiteEngine::Query
     # query is finished.
     def step : Bool
       return false if @done
+      outer_clock = @session.statement_clock
+      @session.statement_clock = @statement_clock
+      begin
+        advance
+      ensure
+        @session.statement_clock = outer_clock
+      end
+    end
+
+    @statement_clock = StatementClock.new
+
+    private def advance : Bool
       frame = @frame ||= begin
         new_frame = frame_for_run
         @compiled.producer.open(new_frame)
@@ -148,6 +160,7 @@ module Grant::SQLiteEngine::Query
     end
 
     def reset : Nil
+      @statement_clock.reset
       @frame = nil
       @done = false
       @row = NO_ROW

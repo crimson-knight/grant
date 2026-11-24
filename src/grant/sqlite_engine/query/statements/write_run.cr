@@ -460,7 +460,7 @@ module Grant::SQLiteEngine::Query
     private def key_expression_program(table : WriteTable, rule : IndexRule) : RowProgram
       table.key_expression_programs[rule.layout.entry.object_name] ||= begin
         pseudo = PseudoTable.new(table.name, table.table_info)
-        RowProgram.new(@session, RowProgram.columns(rule.list_of_key_expressions), [pseudo])
+        RowProgram.new(@session, RowProgram.columns(rule.list_of_key_expressions), [pseudo], deterministic_context: "an index")
       end
     end
 
@@ -522,7 +522,7 @@ module Grant::SQLiteEngine::Query
       return true unless where
       program = table.partial_programs[index.entry.object_name] ||= begin
         pseudo = PseudoTable.new(table.name, table.table_info)
-        RowProgram.new(@session, RowProgram.columns([where] of SQL::Expression), [pseudo])
+        RowProgram.new(@session, RowProgram.columns([where] of SQL::Expression), [pseudo], deterministic_context: "an index")
       end
       pseudo = program.list_of_pseudo_tables[0]
       pseudo.row = row
@@ -533,7 +533,8 @@ module Grant::SQLiteEngine::Query
     private def check_programs(table : WriteTable) : Array(RowProgram)
       table.check_programs ||= table.list_of_checks.map do |check|
         pseudo = PseudoTable.new(table.name, table.table_info)
-        RowProgram.new(@session, RowProgram.columns([check.expression] of SQL::Expression), [pseudo])
+        RowProgram.new(@session, RowProgram.columns([check.expression] of SQL::Expression), [pseudo],
+          deterministic_context: "a CHECK constraint")
       end
     end
 
@@ -554,7 +555,7 @@ module Grant::SQLiteEngine::Query
         next unless expression
         raise UnsupportedSQL.new("VIRTUAL generated column #{table.name}.#{column.column_name}") unless column.generated_stored?
         program = table.generated_programs[column.position] ||= RowProgram.new(@session, RowProgram.columns([expression] of SQL::Expression),
-          [PseudoTable.new(table.name, table.table_info)])
+          [PseudoTable.new(table.name, table.table_info)], deterministic_context: "a generated column")
         pseudo = program.list_of_pseudo_tables[0]
         pseudo.row = row
         pseudo.rowid = rowid
