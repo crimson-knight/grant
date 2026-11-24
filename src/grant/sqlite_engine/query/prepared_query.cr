@@ -10,7 +10,7 @@ module Grant::SQLiteEngine::Query
     getter parameter_numbers : Hash(String, Int32)
     # The current row. It holds until the next `step` or `reset` (as C's
     # column values do); copy it to keep it.
-    getter row = [] of Value
+    getter row : Array(Value) = NO_ROW
 
     @compiled : CompiledSelect
     @parameters : Array(Value)
@@ -25,24 +25,34 @@ module Grant::SQLiteEngine::Query
     # Whether the statement runs through a plan (anything but a SELECT).
     @runs_a_plan = false
     @plan_frame : Frame? = nil
-    # The row of a query that has none: one empty array for every run.
-    @no_row = [] of Value
+    # The row of a query that has none (or none yet), shared by every
+    # statement: nothing adds to it.
+    NO_ROW = [] of Value
 
     # A statement with no parameters has no parameter names; every such
     # statement shares this table, which nothing changes.
     NO_PARAMETER_NAMES = {} of String => Int32
+    # Their bindings: none, so binding fails the range check and nothing
+    # changes the list.
+    NO_PARAMETERS = [] of Value
+
+    # The name of a SAVEPOINT or RELEASE read without the parser; its plan
+    # is shared, so the name travels in the frame.
+    @savepoint_name : String? = nil
 
     def initialize(@session : Session, sql : String)
       # SAVEPOINT and RELEASE of a bare name skip the parser: an ORM sends a
       # new name around every row it writes in a transaction.
+      # Statements of one shape share a compiled plan that takes the name
+      # when it runs.
       if statement = SQL::SavepointText.parse(sql)
-        plan = StatementCompiler.compile(@session, statement, sql)
+        @savepoint_name = SQL::SavepointText.name_of(statement)
         @parameter_count = 0
         @parameter_numbers = NO_PARAMETER_NAMES
         @reads_database = false
-        @compiled = CompiledSelect.new(PlanProducer.new(@session, plan, statement, sql), plan.list_of_column_names, 0, 0, false)
+        @compiled = @session.savepoint_shape(statement)
         @list_of_column_names = @compiled.list_of_column_names
-        @parameters = [] of Value
+        @parameters = NO_PARAMETERS
         @runs_a_plan = true
         return
       end
@@ -122,7 +132,7 @@ module Grant::SQLiteEngine::Query
       next_row = @compiled.producer.next_row(frame)
       unless next_row
         @done = true
-        @row = @no_row
+        @row = NO_ROW
         return false
       end
       @row = next_row
@@ -140,7 +150,7 @@ module Grant::SQLiteEngine::Query
     def reset : Nil
       @frame = nil
       @done = false
-      @row = @no_row
+      @row = NO_ROW
     end
 
     # A statement run through its plan reads only the parameters from its
@@ -151,6 +161,9 @@ module Grant::SQLiteEngine::Query
       if @runs_a_plan
         # Without parameters the frame holds nothing: one serves every such
         # statement of the session.
+        if name = @savepoint_name
+          return @session.savepoint_frame(name)
+        end
         return @session.frame_without_parameters if @parameter_count == 0
         frame = @plan_frame ||= Frame.new(0, 0, Array(Value).new(@parameter_count, nil), @session)
         ValueBuffer.refill(frame.list_of_parameters, @parameters)

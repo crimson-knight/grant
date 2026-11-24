@@ -222,6 +222,30 @@ module Grant::SQLiteEngine::Query
     # plans read only a frame's parameters, so one empty frame serves all.
     getter frame_without_parameters : Frame { Frame.new(0, 0, Array(Value).new, self) }
 
+    # The frame a SAVEPOINT or RELEASE read without the parser runs in: its
+    # one parameter is the name (the statement itself takes none).
+    def savepoint_frame(name : String) : Frame
+      frame = @savepoint_frame ||= Frame.new(0, 0, Array(Value).new(1, nil), self)
+      frame.list_of_parameters[0] = name
+      frame
+    end
+
+    @savepoint_frame : Frame?
+    @savepoint_shapes = {} of {Bool, Bool} => CompiledSelect
+
+    # The compiled plan every SAVEPOINT (or RELEASE, with or without the
+    # SAVEPOINT keyword) of a bare name shares; *statement* is the first
+    # one seen, its name replaced by the frame's at each run.
+    def savepoint_shape(statement : SQL::Statement) : CompiledSelect
+      release = statement.is_a?(SQL::Release)
+      keyword = statement.is_a?(SQL::Release) && statement.savepoint_keyword
+      @savepoint_shapes[{release, keyword}] ||= begin
+        plan = NamedSavepointPlan.new(self, statement, release)
+        plan.schema_generation = schema_epoch
+        CompiledSelect.new(PlanProducer.new(self, plan, statement, statement.to_sql), plan.list_of_column_names, 0, 0, false)
+      end
+    end
+
     # Compiles the first statement of *sql*.
     def prepare(sql : String) : PreparedQuery
       PreparedQuery.new(self, sql)

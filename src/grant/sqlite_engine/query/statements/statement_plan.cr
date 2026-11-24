@@ -3,7 +3,15 @@ module Grant::SQLiteEngine::Query
   # bound parameters and returns the rows it reports (RETURNING, or a
   # PRAGMA's result); `PreparedQuery` hands them out a row at a time.
   abstract class StatementPlan
-    getter list_of_column_names = [] of String
+    # A plan that reports no rows has no column names; plans share this
+    # empty list, which nothing adds to.
+    NO_COLUMN_NAMES = [] of String
+
+    getter list_of_column_names : Array(String) = NO_COLUMN_NAMES
+
+    # What a run that reports no rows returns, shared by every plan:
+    # PlanProducer only reads it.
+    NO_ROWS = [] of Array(Value)
 
     abstract def run(list_of_parameters : Array(Value)) : Array(Array(Value))
 

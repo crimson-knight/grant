@@ -26,6 +26,13 @@ module Grant::SQLiteEngine::SQL
       Release.new(savepoint_keyword, name)
     end
 
+    # The savepoint a statement `parse` returned names.
+    def self.name_of(statement : Statement) : String
+      return statement.name.value if statement.is_a?(Savepoint)
+      return statement.name.value if statement.is_a?(Release)
+      raise ArgumentError.new("not a SAVEPOINT or RELEASE statement")
+    end
+
     # The name starting at *start* when it is a bare identifier that is no
     # keyword, and the position after it.
     private def self.bare_name(bytes : Bytes, start : Int32) : {Name?, Int32}
