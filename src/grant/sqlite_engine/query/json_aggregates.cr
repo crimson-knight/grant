@@ -60,7 +60,8 @@ module Grant::SQLiteEngine::Query
         output = @output
         return "#{opening}#{closing}" unless output
         raise Json.malformed if output.malformed?
-        text = "#{output.to_s}#{closing}" # ameba:disable Lint/RedundantStringCoercion (TextOutput#to_s builds the text; it has no to_s(io))
+        # TextOutput#to_s builds the text; TextOutput has no to_s(io).
+        text = output.to_s + closing
         @binary ? Json.text_to_blob(text) : text
       end
 
