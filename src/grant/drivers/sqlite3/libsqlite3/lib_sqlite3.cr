@@ -1,7 +1,7 @@
 # Left out of a program built with -Dgrant_without_libsqlite3, which runs
 # every statement on Grant's own engine and links no C SQLite library.
 {% unless flag?(:grant_without_libsqlite3) %}
-require "./type"
+require "../sqlite3/type"
 
 module Grant
   # `symbol_prefix` starts with byte 1, LLVM's marker for a symbol that is written
@@ -96,6 +96,9 @@ module Grant
       fun errcode = {{ symbol_prefix + "sqlite3_errcode" }}(SQLite3) : Int32
       fun errmsg = {{ symbol_prefix + "sqlite3_errmsg" }}(SQLite3) : UInt8*
   
+      fun libversion = {{ symbol_prefix + "sqlite3_libversion" }} : UInt8*
+      fun libversion_number = {{ symbol_prefix + "sqlite3_libversion_number" }} : Int32
+
       fun backup_init = {{ symbol_prefix + "sqlite3_backup_init" }}(SQLite3, UInt8*, SQLite3, UInt8*) : SQLite3Backup
       fun backup_step = {{ symbol_prefix + "sqlite3_backup_step" }}(SQLite3Backup, Int32) : Code
       fun backup_finish = {{ symbol_prefix + "sqlite3_backup_finish" }}(SQLite3Backup) : Code

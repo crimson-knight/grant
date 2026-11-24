@@ -25,14 +25,30 @@ module Grant::SQLite3
     ROW_CODE   = 100
     DONE_CODE  = 101
 
+    # Why `:libsqlite3` is refused in a program that left the C engine out.
+    LIBSQLITE3_LEFT_OUT = "sqlite_engine :libsqlite3 needs the C SQLite engine: require \"grant/adapter/sqlite\" " \
+                          "(or \"grant/adapter/sqlite/libsqlite3\"), in a program built without -Dgrant_without_libsqlite3"
+
+    # Whether this program has the C SQLite engine: it required
+    # `grant/adapter/sqlite` (or the driver's `libsqlite3` file) and was not
+    # built with -Dgrant_without_libsqlite3. Without it the program links no
+    # C SQLite library.
+    def self.libsqlite3_compiled_in? : Bool
+      {% if Grant::SQLite3::Engine.has_constant?("LibSQLite3Engine") %}
+        true
+      {% else %}
+        false
+      {% end %}
+    end
+
     # The engine named *name*: `:libsqlite3` or `:grant`.
     def self.named(name : Symbol) : Engine
       case name
       when :libsqlite3
-        {% if flag?(:grant_without_libsqlite3) %}
-          raise ArgumentError.new("sqlite_engine :libsqlite3 is not in a program built with -Dgrant_without_libsqlite3")
-        {% else %}
+        {% if Grant::SQLite3::Engine.has_constant?("LibSQLite3Engine") %}
           LibSQLite3Engine.new
+        {% else %}
+          raise ArgumentError.new(LIBSQLITE3_LEFT_OUT)
         {% end %}
       when :grant then GrantEngine.new
       else
@@ -40,16 +56,17 @@ module Grant::SQLite3
       end
     end
 
-    # The engine `Grant.settings.sqlite_engine` names, or the C library when
-    # the driver is used without the rest of Grant.
+    # The engine `Grant.settings.sqlite_engine` names. When the driver is
+    # used without the rest of Grant: the C library if the program has it,
+    # otherwise Grant's engine.
     def self.selected : Engine
       {% if Grant.has_constant?(:Settings) %}
         named(Grant.settings.sqlite_engine)
       {% else %}
-        {% if flag?(:grant_without_libsqlite3) %}
-          GrantEngine.new
-        {% else %}
+        {% if Grant::SQLite3::Engine.has_constant?("LibSQLite3Engine") %}
           LibSQLite3Engine.new
+        {% else %}
+          GrantEngine.new
         {% end %}
       {% end %}
     end
