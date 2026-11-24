@@ -111,7 +111,7 @@ module Grant::SQLiteEngine::Query
     end
 
     def run(list_of_parameters : Array(Value)) : Array(Array(Value))
-      returned = [] of Array(Value)
+      returned = @returning ? [] of Array(Value) : NO_ROWS
       @session.run_write(list_of_parameters, returning: !@returning.nil?) do |run|
         positions = @assignments.list_of_positions
         journal, _, in_rowid_order = journal_choices(@session.foreign_keys?) do
@@ -183,7 +183,7 @@ module Grant::SQLiteEngine::Query
     end
 
     def run(list_of_parameters : Array(Value)) : Array(Array(Value))
-      returned = [] of Array(Value)
+      returned = @returning ? [] of Array(Value) : NO_ROWS
       @session.run_write(list_of_parameters, returning: !@returning.nil?) do |run|
         journal, _, in_rowid_order = journal_choices(@session.foreign_keys?) do
           {StatementJournal.for_delete(@session, @table, @statement), false,

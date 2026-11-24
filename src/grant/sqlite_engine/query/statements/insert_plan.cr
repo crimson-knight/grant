@@ -3,6 +3,8 @@ module Grant::SQLiteEngine::Query
   # DEFAULT VALUES, mapped to the table's columns, written with C's
   # constraint order, conflict resolution, upsert and RETURNING.
   class InsertPlan < StatementPlan
+    # Which columns the statement gives a value, for the row being built.
+    @assigned = [] of Bool
     @table : WriteTable
     @target_name : String
     # For each source column, the table position it fills (-1: the rowid).
@@ -75,7 +77,7 @@ module Grant::SQLiteEngine::Query
     end
 
     def run(list_of_parameters : Array(Value)) : Array(Array(Value))
-      returned = [] of Array(Value)
+      returned = @returning ? [] of Array(Value) : NO_ROWS
       @session.run_write(list_of_parameters, returning: !@returning.nil?) do |run|
         # A single-row INSERT (no SELECT, one VALUES row, no RETURNING
         # trigger, no REPLACE that deletes rows) raises an immediate foreign
@@ -90,7 +92,10 @@ module Grant::SQLiteEngine::Query
         run.open_autoincrement(@table)
         each_source_row(list_of_parameters) do |values|
           row = Array(Value).new(@table.list_of_columns.size, nil)
-          assigned = Array(Bool).new(row.size, false)
+          # Refilled for each row: it is read only before the row is written.
+          assigned = @assigned
+          assigned.clear
+          row.size.times { assigned << false }
           explicit_rowid = nil.as(Value)
           @list_of_source_positions.each_with_index do |position, index|
             if position < 0
@@ -140,7 +145,15 @@ module Grant::SQLiteEngine::Query
       frame = Frame.new(compiled.slot_count, compiled.aggregate_count, list_of_parameters, @session)
       producer = compiled.producer
       producer.open(frame)
-      rows = [] of Array(Value)
+      first = producer.next_row(frame)
+      return unless first
+      second = producer.next_row(frame)
+      unless second
+        # One row (a VALUES row): read in full already, no list needed.
+        yield first
+        return
+      end
+      rows = [first, second]
       while row = producer.next_row(frame)
         rows << row
       end

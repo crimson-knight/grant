@@ -151,6 +151,33 @@ module Grant::SQLiteEngine
       PayloadReader.read(@pager, page, page.payload(index)).dup
     end
 
+    # The values of the row stored under *rowid*, or nil: decoded where the
+    # record lies, without copying it or keeping the path to it (*page*
+    # names the table in a corruption report).
+    def table_values(root : UInt32, rowid : Int64, page : UInt32) : Array(Value)?
+      page_number = root
+      Limits::MAX_BTREE_DEPTH.times do
+        node = BTreePage.read(@pager, page_number)
+        node.corrupt("#{node.page_type} page in a table b-tree") unless node.page_type.table?
+        low = 0
+        high = node.cell_count
+        while low < high
+          middle = (low + high) // 2
+          if node.rowid(middle) < rowid
+            low = middle + 1
+          else
+            high = middle
+          end
+        end
+        if node.page_type.leaf_table?
+          return unless low < node.cell_count && node.rowid(low) == rowid
+          return Record.decode(PayloadReader.read(@pager, node, node.payload(low)), @encoding, page)
+        end
+        page_number = low < node.cell_count ? node.left_child(low) : node.right_child
+      end
+      raise CorruptDatabase.new("b-tree is deeper than #{Limits::MAX_BTREE_DEPTH} pages", root)
+    end
+
     # Whether the table holds a row with *rowid*.
     def table_contains?(root : UInt32, rowid : Int64) : Bool
       seek_rowid(root, rowid)[3]

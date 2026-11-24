@@ -636,9 +636,8 @@ module Grant::SQLiteEngine
     # The stored values of the row with *rowid*, in declared order with the
     # rowid alias holding the rowid, or nil.
     private def read_row(layout : TableLayout, rowid : Int64) : Array(Value)?
-      record = btree_writer.table_record(layout.entry.root_page, rowid)
-      return unless record
-      values = Record.decode(record, text_encoding, layout.entry.root_page)
+      values = btree_writer.table_values(layout.entry.root_page, rowid, layout.entry.root_page)
+      return unless values
       stored_row!(layout.definition, layout.row_mapping.map(rowid, values))
     end
 
