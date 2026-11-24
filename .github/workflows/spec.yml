@@ -149,9 +149,10 @@ jobs:
         env:
           CRYSTAL: crystal
       - name: Check that a Grant app on Grant's SQLite engine links no libsqlite3
-        # Builds scripts/linkage/default_app_probe.cr with
-        # -Dgrant_without_libsqlite3 and runs it; the control build without
-        # the flag must link libsqlite3, so the check is known to be able to fail.
+        # Builds the default app workload on grant/adapter/sqlite/grant_engine
+        # (no flags) and with -Dgrant_without_libsqlite3, and runs both; the
+        # control build on grant/adapter/sqlite must link libsqlite3, so the
+        # check is known to be able to fail.
         if: matrix.shard == 3
         run: ruby scripts/check_sqlite3_linkage.rb
         env:
