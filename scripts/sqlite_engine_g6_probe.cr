@@ -61,6 +61,9 @@ CASES = [
   {"pragma auto_vacuum", "", "PRAGMA auto_vacuum"},
   {"pragma encoding", "", "PRAGMA encoding"},
   {"pragma optimize", "", "PRAGMA optimize"},
+  {"pragma fullfsync default", "", "SELECT * FROM pragma_fullfsync, pragma_checkpoint_fullfsync"},
+  {"pragma fullfsync", "PRAGMA synchronous=FULL; PRAGMA fullfsync=ON;", "PRAGMA fullfsync"},
+  {"pragma checkpoint_fullfsync", "PRAGMA checkpoint_fullfsync=ON;", "PRAGMA checkpoint_fullfsync"},
   # EXPLAIN QUERY PLAN: the columns must match; detail text may differ
   {"eqp columns", "", "SELECT count(*) FROM (SELECT 1)"},
   # ALTER TABLE
@@ -103,6 +106,12 @@ CASES = [
   {"date compare", "", "SELECT id FROM posts WHERE created_at >= '2026-01-31 12:00:00.000001' AND datetime(created_at) < datetime('2026-12-01') ORDER BY id"},
   {"date invalid", "", "SELECT date('not a date'), datetime('2026-13-01'), julianday(NULL), date('2026-02-30')"},
   {"timediff", "", "SELECT timediff('2026-11-24 10:00:00', '2026-01-01 00:00:00')"},
+  {"strftime all", "", "SELECT strftime('%d|%e|%f|%F|%G|%g|%H|%I|%j|%J|%k|%l|%m|%M|%p|%P|%R|%s|%S|%T|%u|%U|%V|%w|%W|%Y|%%', born_at) FROM authors ORDER BY id"},
+  {"modifiers 3", "", "SELECT datetime(born_at, '+0001-01-01 01:01:01.001', 'subsec'), date(born_at, '+1 year', 'floor'), date(born_at, '-1.5 months', 'ceiling'), datetime(born_at, '-12:30'), julianday(born_at, 'start of day') FROM authors ORDER BY id"},
+  {"time values", "", "SELECT datetime('2026-11-24T10:11:12.5+02:30'), datetime('10:11'), datetime(1700000000, 'auto'), date(0, 'julianday'), datetime('9999-12-31 23:59:59.999999', 'subsec'), date('0000-01-01', '-1 day')"},
+  {"now once per statement", "", "SELECT count(DISTINCT julianday('now')), min(datetime('now') = current_timestamp), min(date() = current_date) FROM authors, posts"},
+  {"date default", "CREATE TABLE stamped(id INTEGER PRIMARY KEY, created_at DEFAULT (datetime('now')), day DEFAULT CURRENT_DATE); INSERT INTO stamped(id) VALUES (1);", "SELECT length(created_at), day = date('now'), abs(julianday('now') - julianday(created_at)) < 0.01 FROM stamped"},
+  {"date in check", "CREATE TABLE checked(x, CHECK (x < date('now')));", "INSERT INTO checked VALUES ('2020-01-01')"},
   # ANALYZE and sqlite_stat1
   {"analyze", "ANALYZE;", "SELECT tbl, idx, stat FROM sqlite_stat1 ORDER BY tbl, idx"},
   {"analyze table", "ANALYZE posts;", "SELECT tbl, idx, stat FROM sqlite_stat1 ORDER BY tbl, idx"},

@@ -143,8 +143,11 @@ module Grant::SQLiteEngine::Query
       @secondary_marks.clear
     end
 
+    # COMMIT waits up to busy_timeout for the readers of a rollback-journal
+    # database to finish (pager_wait_on_lock); still refused, the
+    # transaction stays open and COMMIT can be tried again.
     private def commit_everywhere : Nil
-      @database.pager.commit
+      wait_while_busy { @database.pager.commit }
       commit_secondaries
     end
 
@@ -159,29 +162,40 @@ module Grant::SQLiteEngine::Query
     # SAVEPOINTs of a deferred transaction declared before its first write
     # open in the pager here.
     #
-    # In WAL mode a transaction that already read keeps its snapshot, so a
-    # busy WRITE lock or a newer commit fails at once ("database is
-    # locked"), as C skips the busy handler once a read transaction is
-    # open. A statement that starts a write moves to the newest snapshot;
-    # when that changed the schema, the statement fails with
-    # SQLITE_SCHEMA rather than run a plan compiled for the old one.
-    def begin_write_transaction : Nil
+    # A transaction that already read keeps its snapshot (in WAL mode) or
+    # its SHARED lock (with a rollback journal), and so does a connection
+    # with another statement still reading: a busy write lock or a newer
+    # commit fails at once ("database is locked"), as C skips the busy
+    # handler once a read transaction is open (sqlite3BtreeBeginTrans). A
+    # statement that starts a write otherwise waits, holding no lock
+    # between tries, and moves to the newest snapshot; when that changed
+    # the schema, the statement fails with SQLITE_SCHEMA rather than run a
+    # plan compiled for the old one.
+    #
+    # *exclusive* is BEGIN EXCLUSIVE: with a rollback journal the
+    # transaction also takes the EXCLUSIVE lock.
+    def begin_write_transaction(exclusive : Bool = false) : Nil
       pager = @database.pager
       if pager.in_write_transaction?
         join_secondary_writes
         return
       end
-      if pager.wal_mode? && @transaction_snapshot_pinned
+      if @transaction_snapshot_pinned || @open_statement_reads > 1
         begin
-          pager.begin_write(refresh_snapshot: false)
+          pager.begin_write(refresh_snapshot: false, exclusive: exclusive)
         rescue Busy
           raise SQLError.new("database is locked", 5)
         end
       else
         generation = pager.generation
         cookie = @database.header.try(&.schema_cookie)
-        wait_while_busy { pager.begin_write }
-        if pager.wal_mode? && pager.generation != generation && @database.header.try(&.schema_cookie) != cookie
+        begin
+          wait_while_busy(yielding_reads: true) { pager.begin_write(exclusive: exclusive) }
+        rescue error : SQLError
+          forget_unpinned_transaction_read
+          raise error
+        end
+        if pager.generation != generation && @database.header.try(&.schema_cookie) != cookie
           pager.rollback
           reset_schema
           raise SQLError.new("database schema has changed", 17)
@@ -195,18 +209,36 @@ module Grant::SQLiteEngine::Query
       end
     end
 
-    # Runs *block* until it stops raising Busy, for up to busy_timeout
-    # milliseconds (sqlite3_busy_timeout), then raises "database is locked".
-    private def wait_while_busy(& : ->) : Nil
-      deadline = Time.instant + @busy_timeout.milliseconds
+    # Runs *block* until it stops raising Busy, sleeping between tries as
+    # C's busy handler does for up to busy_timeout milliseconds
+    # (sqlite3_busy_timeout), then raises "database is locked". With
+    # *yielding_reads* the connection's reads give up their lock before
+    # each sleep (`Pager#yield_read_lock`).
+    private def wait_while_busy(yielding_reads : Bool = false, & : ->) : Nil
+      handler = nil
       loop do
         yield
         return
       rescue Busy
-        raise SQLError.new("database is locked", 5) if Time.instant >= deadline
-        sleep 1.millisecond
+        @database.pager.yield_read_lock if yielding_reads
+        handler ||= BusyWait::Handler.new(@busy_timeout.milliseconds)
+        raise SQLError.new("database is locked", 5) unless handler.waited_for_another_try?
       end
     end
+
+    # A transaction whose first statement could not take the write lock
+    # has read nothing: it keeps no read of its own, so its next write
+    # waits again, as C's transaction is back to no lock after SQLITE_BUSY.
+    private def forget_unpinned_transaction_read : Nil
+      return unless @holds_transaction_read_lock
+      return if @transaction_snapshot_pinned
+      @holds_transaction_read_lock = false
+      @database.pager.release_read_lock
+    end
+
+    # The statements reading now (stepped and not yet finished), this
+    # connection's own read transactions in C's terms.
+    @open_statement_reads = 0
 
     @seen_generation = 0
     @holds_transaction_read_lock = false
@@ -215,10 +247,17 @@ module Grant::SQLiteEngine::Query
     # transaction one more held until it ends, as C keeps SHARED from the
     # first read to COMMIT. Pages and schema another connection changed are
     # dropped first.
-    def begin_statement_read : Nil
+    #
+    # With *for_transaction* false (preparing a statement, which reads only
+    # the schema) the open transaction keeps no read of its own, as C's
+    # schema load opens and closes its own read transaction
+    # (sqlite3InitOne): a deferred transaction's first write can then still
+    # wait for the write lock and move to the newest snapshot.
+    def begin_statement_read(for_transaction : Bool = true) : Nil
       pager = @database.pager
       wait_while_busy { pager.acquire_read_lock }
-      if @in_transaction && !@holds_transaction_read_lock
+      @open_statement_reads += 1
+      if for_transaction && @in_transaction && !@holds_transaction_read_lock
         pager.acquire_read_lock
         @holds_transaction_read_lock = true
       end
@@ -226,6 +265,7 @@ module Grant::SQLiteEngine::Query
     end
 
     def end_statement_read : Nil
+      @open_statement_reads -= 1
       @database.pager.release_read_lock
       @transaction_snapshot_pinned = true if @holds_transaction_read_lock
     end
@@ -246,9 +286,9 @@ module Grant::SQLiteEngine::Query
     # BEGIN: opens a transaction. IMMEDIATE and EXCLUSIVE take the write
     # lock at once; DEFERRED takes it at the first write, so connections
     # that only read never wait for one another.
-    def begin_transaction(immediate : Bool = false) : Nil
+    def begin_transaction(immediate : Bool = false, exclusive : Bool = false) : Nil
       raise SQLError.new("cannot start a transaction within a transaction") if @in_transaction
-      begin_write_transaction if immediate
+      begin_write_transaction(exclusive) if immediate
       @in_transaction = true
       @opened_by_savepoint = false
       @deferred_violations = 0_i64

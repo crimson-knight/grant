@@ -11,7 +11,9 @@ module Grant::SQLiteEngine
 
     getter column_name : String
     getter declared_type : String
-    getter affinity : Affinity
+    # A STRICT table's ANY column has BLOB affinity: it keeps every value
+    # as given (sqlite3EndTable sets SQLITE_AFF_BLOB for COLTYPE_ANY).
+    property affinity : Affinity
     property? primary_key = false
     property? primary_key_descending = false
     property? not_null = false
@@ -422,6 +424,9 @@ module Grant::SQLiteEngine
           @without_rowid = true
         elsif skip_keyword("STRICT")
           @strict = true
+          @list_of_columns.each do |column|
+            column.affinity = Affinity::Blob if column.declared_type.compare("ANY", case_insensitive: true) == 0
+          end
         else
           break
         end

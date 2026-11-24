@@ -82,12 +82,12 @@ describe "Grant::SQLiteEngine structures" do
   end
 
   describe "a VIRTUAL generated column" do
-    it "raises UnsupportedSQL naming the column" do
+    it "reads NULL at the storage level, where no expression is evaluated (the query layer computes it)" do
       path = Path[Dir.tempdir] / "grant-sqlite-engine-virtual-#{Process.pid}.db"
       File.delete?(path)
       Process.run("sqlite3", [path.to_s, "CREATE TABLE t(a INTEGER, b INTEGER AS (a * 2) VIRTUAL); INSERT INTO t(a) VALUES (1);"])
       database = Grant::SQLiteEngine::Database.open(path)
-      expect_raises(Grant::SQLiteEngine::UnsupportedSQL, /VIRTUAL generated column t\.b/) { database.rows("t") }
+      database.rows("t").map(&.values).should eq([[1_i64, nil]])
       database.close
       File.delete?(path)
     end

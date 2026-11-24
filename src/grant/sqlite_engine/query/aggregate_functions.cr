@@ -13,6 +13,15 @@ module Grant::SQLiteEngine::Query
       Min
       Max
       GroupConcat
+      JsonGroupArray
+      JsonbGroupArray
+      JsonGroupObject
+      JsonbGroupObject
+
+      # The json.c aggregates, which read their arguments' subtypes.
+      def json? : Bool
+        json_group_array? || jsonb_group_array? || json_group_object? || jsonb_group_object?
+      end
     end
 
     # The aggregate *name* with *count* arguments, or nil when *name* is not
@@ -32,6 +41,12 @@ module Grant::SQLiteEngine::Query
       when "group_concat"
         raise SQLError.new("wrong number of arguments to function #{name}()") unless count == 1 || count == 2
         Kind::GroupConcat
+      when "json_group_array", "jsonb_group_array"
+        raise SQLError.new("wrong number of arguments to function #{name}()") unless count == 1
+        name.downcase == "json_group_array" ? Kind::JsonGroupArray : Kind::JsonbGroupArray
+      when "json_group_object", "jsonb_group_object"
+        raise SQLError.new("wrong number of arguments to function #{name}()") unless count == 2
+        name.downcase == "json_group_object" ? Kind::JsonGroupObject : Kind::JsonbGroupObject
       when "string_agg"
         raise SQLError.new("wrong number of arguments to function #{name}()") unless count == 2
         Kind::GroupConcat
@@ -58,14 +73,18 @@ module Grant::SQLiteEngine::Query
 
       def self.for(kind : Kind, collation : Collation) : Accumulator
         case kind
-        in .count_rows?   then CountAccumulator.new(count_nulls: true)
-        in .count?        then CountAccumulator.new(count_nulls: false)
-        in .sum?          then SumAccumulator.new(SumAccumulator::Result::Sum)
-        in .total?        then SumAccumulator.new(SumAccumulator::Result::Total)
-        in .average?      then SumAccumulator.new(SumAccumulator::Result::Average)
-        in .min?          then MinMaxAccumulator.new(collation, maximum: false)
-        in .max?          then MinMaxAccumulator.new(collation, maximum: true)
-        in .group_concat? then GroupConcatAccumulator.new
+        in .count_rows?         then CountAccumulator.new(count_nulls: true)
+        in .count?              then CountAccumulator.new(count_nulls: false)
+        in .sum?                then SumAccumulator.new(SumAccumulator::Result::Sum)
+        in .total?              then SumAccumulator.new(SumAccumulator::Result::Total)
+        in .average?            then SumAccumulator.new(SumAccumulator::Result::Average)
+        in .min?                then MinMaxAccumulator.new(collation, maximum: false)
+        in .max?                then MinMaxAccumulator.new(collation, maximum: true)
+        in .group_concat?       then GroupConcatAccumulator.new
+        in .json_group_array?   then JsonAggregates::GroupArrayAccumulator.new(binary: false)
+        in .jsonb_group_array?  then JsonAggregates::GroupArrayAccumulator.new(binary: true)
+        in .json_group_object?  then JsonAggregates::GroupObjectAccumulator.new(binary: false)
+        in .jsonb_group_object? then JsonAggregates::GroupObjectAccumulator.new(binary: true)
         end
       end
     end

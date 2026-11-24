@@ -143,6 +143,7 @@ module Grant::SQLiteEngine::Query
         create_table_as(name, query, run)
         return
       end
+      CheckGeneratedColumnsOfTable.for_new_table(@session, @text, database).perform
       database.create_table(@text, schema_name)
     end
 
@@ -265,7 +266,8 @@ module Grant::SQLiteEngine::Query
           return if statement.if_exists
           raise SQLError.new("no such table: #{name}")
         end
-        if name.downcase.starts_with?("sqlite_")
+        # sqlite3DropTable lets the sqlite_stat tables go (tableMayNotBeDropped).
+        if name.downcase.starts_with?("sqlite_") && !name.downcase.starts_with?("sqlite_stat")
           raise SQLError.new("table #{entry.object_name} may not be dropped")
         end
         drop_table_rows(entry.object_name, run) if @session.foreign_keys?

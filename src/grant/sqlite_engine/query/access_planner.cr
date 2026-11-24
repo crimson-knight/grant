@@ -27,6 +27,8 @@ module Grant::SQLiteEngine::Query
       case expression
       when ColumnExpr
         into << expression.column if expression.slot == slot
+        # A VIRTUAL generated column reads the columns of its expression.
+        expression.children.each { |child| return unless columns_of(child, slot, into) }
       when SubqueryExpr
         return if expression.list_of_outer_slots.includes?(slot)
         expression.children.each { |child| return unless columns_of(child, slot, into) }
@@ -346,6 +348,7 @@ module Grant::SQLiteEngine::Query
           end
           break
         end
+        @session.note_statistics_use(table, layout, equal.size, !(range_low || range_high).nil?)
         score = equal.size * 4 + (range_low ? 1 : 0) + (range_high ? 1 : 0)
         score += 2 if layout.unique? && equal.size == layout.key_count
         next if score == 0

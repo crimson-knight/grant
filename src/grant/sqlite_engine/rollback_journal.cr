@@ -21,13 +21,17 @@ module Grant::SQLiteEngine
     end
 
     # Writes and syncs a journal holding *list_of_images* (page number and
-    # original bytes), the way C SQLite commits with synchronous=FULL: the
-    # header (with a record count of 0) and the records, a sync, then the
-    # record count, then a second sync.
-    def self.write(journal : DatabaseFile, page_size : Int32, initial_page_count : UInt32, list_of_images : Array({UInt32, Bytes}), nonce : UInt32) : Nil
+    # original bytes), the way syncJournal does: the header (with a record
+    # count of 0) and the records, a sync when *synchronous* is FULL or
+    # EXTRA, then the record count, then a sync. Each sync is made in
+    # *sync_mode*. With *synchronous* OFF nothing is synced, and the header
+    # says from the start that the file's size tells the record count, as
+    # C's header does when it will not be synced (writeJournalHdr).
+    def self.write(journal : DatabaseFile, page_size : Int32, initial_page_count : UInt32, list_of_images : Array({UInt32, Bytes}), nonce : UInt32,
+                   synchronous : Synchronous = Synchronous::Full, sync_mode : SyncMode = SyncMode::Normal) : Nil
       header = Bytes.new(SECTOR_SIZE)
       header.copy_from(MAGIC.to_unsafe, MAGIC.size)
-      put_u32(header, 8, 0_u32)
+      put_u32(header, 8, synchronous.off? ? RECORD_COUNT_FROM_SIZE : 0_u32)
       put_u32(header, 12, nonce)
       put_u32(header, 16, initial_page_count)
       put_u32(header, 20, SECTOR_SIZE.to_u32)
@@ -43,12 +47,13 @@ module Grant::SQLiteEngine
         journal.write_at(offset, record)
         offset += record.size
       end
-      journal.sync
+      return if synchronous.off?
+      journal.sync(sync_mode) if synchronous >= Synchronous::Full
       count = Bytes.new(12)
       count.copy_from(MAGIC.to_unsafe, MAGIC.size)
       put_u32(count, 8, list_of_images.size.to_u32)
       journal.write_at(0, count)
-      journal.sync
+      journal.sync(sync_mode)
     end
 
     # pager_cksum: the nonce plus every 200th byte of the page, counting
@@ -82,8 +87,9 @@ module Grant::SQLiteEngine
     # Copies the original pages back into *database*, as pager_playback
     # does: the file is cut to its size before the transaction, and records
     # are applied until the count runs out, a record is short, names page 0
-    # or the lock-byte page, or fails its checksum. Syncs the database.
-    def self.play_back(journal : DatabaseFile, database : DatabaseFile) : Nil
+    # or the lock-byte page, or fails its checksum. Syncs the database in
+    # *sync_mode* (nil: no sync, as synchronous=OFF asks).
+    def self.play_back(journal : DatabaseFile, database : DatabaseFile, sync_mode : SyncMode? = SyncMode::Normal) : Nil
       journal_size = journal.size
       return if journal_size < SECTOR_SIZE
       header = Bytes.new(28)
@@ -115,7 +121,7 @@ module Grant::SQLiteEngine
         next if page_number > initial_page_count
         database.write_at((page_number.to_i64 - 1) * page_size, image)
       end
-      database.sync
+      database.sync(sync_mode) if sync_mode
     end
 
     # pager_truncate: cut the file, or grow it to the size with a write at

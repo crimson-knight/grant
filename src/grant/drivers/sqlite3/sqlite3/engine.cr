@@ -1,3 +1,5 @@
+require "file_utils"
+
 module Grant::SQLite3
   # The seam between Grant's SQLite driver and the engine that runs its SQL.
   #
@@ -104,6 +106,31 @@ module Grant::SQLite3
       # Copies this database's main schema over *target*'s. A code other than
       # OK means the copy failed and *target* holds the message.
       abstract def backup_to(target : Database) : Int32
+
+      # Writes a copy of this database's main schema to the database file
+      # at *path*, replacing what the file holds.
+      abstract def backup_to_file(path : String) : Int32
+
+      # Copies the database file at *path* over this database's main
+      # schema. A code other than OK means the copy failed and this database
+      # holds the message.
+      abstract def restore_from_file(path : String) : Int32
+
+      # Copies this database over *target* by way of a database file in a
+      # new temporary directory: how a database of one engine is copied over
+      # a database of the other.
+      protected def backup_through_file_to(target : Database) : Int32
+        directory = File.tempname("grant-sqlite-backup")
+        Dir.mkdir(directory, 0o700)
+        begin
+          path = File.join(directory, "copy.db")
+          code = backup_to_file(path)
+          return code unless code == OK_CODE
+          target.restore_from_file(path)
+        ensure
+          FileUtils.rm_rf(directory)
+        end
+      end
 
       abstract def close : Int32
     end
