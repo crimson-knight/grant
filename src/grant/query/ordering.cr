@@ -179,7 +179,6 @@ class Grant::Query::Builder(Model)
     chain_copy.in_order_of!(column, values, filter)
   end
 
-  @[TypeOnce]
   def order(sql : String | Grant::Query::SqlExpression::Trusted) : self
     chain_copy.order!(sql)
   end
