@@ -99,26 +99,45 @@ module Grant
     # when it opens, so set it in `config/initializers/grant.cr` before the
     # first query.
     #
-    # - `:libsqlite3` (default) — the system's C SQLite library.
+    # - `:libsqlite3` — the system's C SQLite library. The default in a
+    #   program that requires `grant/adapter/sqlite`.
     # - `:grant` — Grant's pure-Crystal engine (`Grant::SQLiteEngine`), which
-    #   runs Grant's SQL with no C library. It writes with a rollback journal
-    #   (WAL arrives with milestone G5); TEMP tables, ATTACH, triggers and
-    #   virtual tables raise `Grant::SQLiteEngine::UnsupportedSQL`.
+    #   runs SQL with no C library, reads and writes real SQLite files
+    #   (rollback journal and WAL), and raises
+    #   `Grant::SQLiteEngine::UnsupportedSQL` naming any construct it leaves
+    #   out (triggers, virtual tables, `load_extension`). The default in a
+    #   program that requires `grant/adapter/sqlite/grant_engine` instead,
+    #   which links no C SQLite library.
     #
-    # A program built with `-Dgrant_without_libsqlite3` links no C SQLite
-    # library: the setting starts at `:grant` and `:libsqlite3` is refused.
-    getter sqlite_engine : Symbol = {% if flag?(:grant_without_libsqlite3) %} :grant {% else %} :libsqlite3 {% end %}
+    # `:libsqlite3` is refused in a program without the C engine (one that
+    # required only `grant/adapter/sqlite/grant_engine`, or was built with
+    # `-Dgrant_without_libsqlite3`).
+    def sqlite_engine : Symbol
+      @sqlite_engine || (libsqlite3_compiled_in? ? :libsqlite3 : :grant)
+    end
 
     def sqlite_engine=(engine : Symbol)
-      {% if flag?(:grant_without_libsqlite3) %}
-        if engine == :libsqlite3
-          raise ArgumentError.new("sqlite_engine :libsqlite3 is not in a program built with -Dgrant_without_libsqlite3")
-        end
-      {% end %}
       unless SQLITE_ENGINES.includes?(engine)
         raise ArgumentError.new("sqlite_engine must be :libsqlite3 or :grant (got #{engine.inspect})")
       end
+      if engine == :libsqlite3 && !libsqlite3_compiled_in?
+        raise ArgumentError.new("sqlite_engine :libsqlite3 needs the C SQLite engine: require \"grant/adapter/sqlite\" " \
+                                "(or \"grant/adapter/sqlite/libsqlite3\"), in a program built without -Dgrant_without_libsqlite3")
+      end
       @sqlite_engine = engine
+    end
+
+    @sqlite_engine : Symbol? = nil
+
+    # Whether the program has the C SQLite engine compiled in. Decided at
+    # compile time from what the program required, so a program without it
+    # never references (or links) libsqlite3.
+    private def libsqlite3_compiled_in? : Bool
+      {% if Grant.has_constant?("SQLite3") %}
+        Grant::SQLite3::Engine.libsqlite3_compiled_in?
+      {% else %}
+        false
+      {% end %}
     end
 
     # When set, every statement a Grant SQLite connection prepares is written

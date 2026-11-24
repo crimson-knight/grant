@@ -94,7 +94,7 @@ Metrics/CyclomaticComplexity:
     - spec/support/simple_virtual_sharding.cr
     - src/adapter/mysql.cr
     - src/adapter/placeholder_scanner.cr
-    - src/adapter/sqlite.cr
+    - src/adapter/sqlite/adapter.cr
     - src/grant/adapter/schema.cr
     - src/grant/association_collection.cr
     - src/grant/associations/has_one_writer.cr
