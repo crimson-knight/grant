@@ -437,11 +437,24 @@ module Grant::SQLiteEngine
         raise Error.new("cannot change into wal mode from within a transaction")
       end
       set_file_format_version(2_u8)
+      # Another connection turned the database to WAL while this one
+      # waited: the read that found it out already uses the WAL.
+      return if wal_mode?
       # WAL mode holds SHARED on the database file until the connection closes.
-      raise Busy.new unless writer_file.lock(LockLevel::Shared)
+      raise Busy.new unless BusyWait.attempt(@busy_timeout) { writer_file.lock(LockLevel::Shared) }
+      @read_lock_yielded = false
       open_log
       log = @wal_log
-      reload if log && @read_depth > 0 && log.begin_read
+      return unless log && @read_depth > 0
+      # Several connections starting the WAL at once take turns building
+      # its index (SQLITE_BUSY_RECOVERY goes through the busy handler).
+      began = BusyWait.attempt(@busy_timeout) do
+        reload if log.begin_read
+        true
+      rescue Busy
+        false
+      end
+      raise Busy.new unless began
     end
 
     # PRAGMA journal_mode=DELETE from WAL mode (sqlite3PagerCloseWal): needs
@@ -475,7 +488,7 @@ module Grant::SQLiteEngine
 
     # Writes *version* into header bytes 18 and 19 when they differ, in a
     # transaction of its own, waiting up to busy_timeout for other
-    # connections.
+    # connections and holding no lock between tries.
     private def set_file_format_version(version : UInt8) : Nil
       done = BusyWait.attempt(@busy_timeout) do
         begin_write
@@ -490,12 +503,14 @@ module Grant::SQLiteEngine
           true
         rescue Busy
           rollback
+          yield_read_lock
           false
         rescue error
           rollback
           raise error
         end
       rescue Busy
+        yield_read_lock
         false
       end
       raise Busy.new unless done

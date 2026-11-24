@@ -31,6 +31,10 @@ module LockWaitProcesses
     code = database.exec("PRAGMA busy_timeout=5000; PRAGMA synchronous=FULL;")
     leave("pragmas #{code} #{database.error_message}") unless code == Engine::OK_CODE
     case role
+    when "wal_switcher"
+      code = database.exec("PRAGMA journal_mode=WAL; INSERT INTO entries (label) VALUES ('#{Process.pid}')")
+      leave("switch: #{code} #{database.error_message}") unless code == Engine::OK_CODE
+      leave("rows 1", 0)
     when "writer_to_kill"
       number = 0
       loop do
@@ -119,6 +123,29 @@ describe "Grant::SQLiteEngine lock waits between processes" do
           LockWaitProcesses.answers_of(list_of_readers).each do |answer|
             {engine, round, answer.starts_with?("rows ") ? "rows" : answer}.should eq({engine, round, "rows"})
           end
+        end
+      end
+    end
+  end
+
+  # C itself refuses one of these now and then (SQLITE_BUSY from a lock it
+  # takes without the busy handler while the journal mode changes), so the
+  # expectation is what both engines keep: a refused process says "database
+  # is locked" and adds nothing, and the others' rows are all there.
+  it "turns a rollback-journal database to WAL from four processes at once" do
+    LockWaitProcesses::LIST_OF_ENGINES.each do |engine|
+      3.times do |round|
+        LockWaitProcesses.with_database("DELETE") do |path|
+          list_of_switchers = Array.new(4) { LockWaitProcesses.start_helper("wal_switcher", engine, path) }
+          list_of_answers = LockWaitProcesses.answers_of(list_of_switchers)
+          list_of_answers.each do |answer|
+            {engine, round, answer == "switch: 5 database is locked" ? "rows 1" : answer}.should eq({engine, round, "rows 1"})
+          end
+          succeeded = list_of_answers.count("rows 1")
+          succeeded.should be >= 1
+          LockWaitProcesses.row_count(path).should eq succeeded
+          # Header bytes 18 and 19 say WAL (fileformat2.html §1.3.5).
+          File.open(path, &.read_at(18, 2, &.getb_to_end)).should eq Bytes[2, 2]
         end
       end
     end
