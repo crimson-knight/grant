@@ -9,6 +9,7 @@ module Grant::SQLiteEngine::Query
     # The table-valued PRAGMAs that take no argument, with the column each
     # returns (pragma.c aPragmaName, the entries flagged PragFlg_Result0).
     TABLE_VALUED = {
+      "pragma_analysis_limit"            => %w[analysis_limit],
       "pragma_application_id"            => %w[application_id],
       "pragma_auto_vacuum"               => %w[auto_vacuum],
       "pragma_automatic_index"           => %w[automatic_index],
@@ -47,15 +48,18 @@ module Grant::SQLiteEngine::Query
       case name
       when "auto_vacuum"        then value ? [] of String : [name]
       when "optimize"           then [name]
+      when "analysis_limit"     then [name]
       when "incremental_vacuum" then [] of String
       end
     end
 
-    def self.rows(session : Session, name : String, value : String?) : Array(Array(Value))
+    def self.rows(session : Session, name : String, value : String?, schema : String? = nil) : Array(Array(Value))
       case name
-      when "auto_vacuum" then auto_vacuum(session, value)
+      when "auto_vacuum"    then auto_vacuum(session, value)
+      when "optimize"       then PragmaOptimize.new(session, schema, value).rows
+      when "analysis_limit" then analysis_limit(session, value)
       else
-        # optimize finds nothing to analyze, and incremental_vacuum has no
+        # incremental_vacuum has no
         # free pages to release in a database without auto_vacuum.
         [] of Array(Value)
       end
@@ -71,6 +75,17 @@ module Grant::SQLiteEngine::Query
       statement = SQL::Parser.parse_schema("PRAGMA #{pragma_name}").as?(SQL::Pragma)
       return [] of Array(Value) unless statement
       PragmaPlan.new(session, statement).run([] of Value)
+    end
+
+    # analysis_limit: a value of 0 or more becomes the limit; the limit is
+    # returned either way.
+    private def self.analysis_limit(session : Session, value : String?) : Array(Array(Value))
+      if value
+        text = value.strip
+        number = text.to_i64? || text.lchop?("0x").try(&.to_i64?(16)) || text.lchop?("0X").try(&.to_i64?(16))
+        session.pragma_values["analysis_limit"] = number & 0x7fffffff_i64 if number && number >= 0
+      end
+      [[session.analysis_limit] of Value]
     end
 
     # auto_vacuum: 0 (none), 1 (full) or 2 (incremental), from the header.
@@ -160,9 +175,10 @@ module Grant::SQLiteEngine::Query
   # newest name first and becomes buckets of `strHash(name) % size` once it
   # holds five names (three buckets per name, 64 at most). The hash holds sqlite_master and every table and view.
   #
-  # Measured against C 3.51.0: the order matches while the hash is a list
-  # (up to four names). With five names or more the bucket order below
-  # follows hash.c as read but does not yet reproduce C's order.
+  # rehash sizes the table by what the allocator handed back
+  # (sqlite3MallocSize), so the bucket count, and with it the order, follows
+  # the allocator of the machine: `allocated_buckets` models the size classes
+  # of the macOS allocator the pinned reference library runs on.
   class SchemaHashOrder
     private class Bucket
       property count = 0
@@ -175,6 +191,15 @@ module Grant::SQLiteEngine::Query
     def initialize(@schema : Schema)
     end
 
+    # The buckets that fit the allocation made for *wanted* buckets of 16
+    # bytes: sizes round up to a multiple of 16 bytes up to 128, of 32 up
+    # to 256, of 64 up to 512 and of 128 up to 1024.
+    def self.allocated_buckets(wanted : Int32) : Int32
+      bytes = wanted * 16
+      step = bytes <= 128 ? 16 : bytes <= 256 ? 32 : bytes <= 512 ? 64 : 128
+      ((bytes + step - 1) // step * step) // 16
+    end
+
     def list_of_table_names : Array(String)
       list_of_names = ["sqlite_master"]
       @schema.list_of_entries.each do |entry|
@@ -184,7 +209,7 @@ module Grant::SQLiteEngine::Query
       buckets = [] of Bucket
       list_of_names.each_with_index do |name, index|
         count = index + 1
-        new_size = Math.min(count * 3, MAXIMUM_BUCKETS)
+        new_size = SchemaHashOrder.allocated_buckets(Math.min(count * 3, MAXIMUM_BUCKETS))
         if count >= 5 && count > 2 * buckets.size && new_size != buckets.size
           buckets = Array(Bucket).new(new_size) { Bucket.new }
           previous = order
