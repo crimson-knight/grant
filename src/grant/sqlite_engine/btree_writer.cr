@@ -607,10 +607,9 @@ module Grant::SQLiteEngine
     # and updates the dividers in *parent* (which is changed in memory and
     # not written).
     private def balance_nonroot(parent : TreeNode, child_index : Int32, node : TreeNode) : Nil
-      list_of_children = parent.list_of_cells.map { |cell| get_u32(cell, 0) }
-      list_of_children << parent.right_child
-      list_of_dividers = parent.list_of_cells.map { |cell| cell[4..] }
-      child_count = list_of_children.size
+      # The parent's cells hold each child but the last (its right child)
+      # and the divider after it; both are read from the cells as needed.
+      child_count = parent.list_of_cells.size + 1
       first = if child_count <= 3 || child_index == 0
                 0
               elsif child_index == child_count - 1
@@ -620,7 +619,7 @@ module Grant::SQLiteEngine
               end
       last = Math.min(first + 2, child_count - 1)
       siblings = (first..last).map do |position|
-        position == child_index ? node : load_node(list_of_children[position])
+        position == child_index ? node : load_node(child_of(parent, position))
       end
       type = node.page_type
       siblings.each do |sibling|
@@ -632,7 +631,7 @@ module Grant::SQLiteEngine
       siblings.each_with_index do |sibling, position|
         cells.concat(sibling.list_of_cells)
         next if position == siblings.size - 1
-        divider = list_of_dividers[first + position]
+        divider = parent.list_of_cells[first + position][4..]
         case type
         when .interior_table?, .interior_index?
           cells << with_child(sibling.right_child, divider)
@@ -678,13 +677,19 @@ module Grant::SQLiteEngine
         divider = if position < new_dividers.size
                     new_dividers[position]
                   elsif last < old_cells.size
-                    list_of_dividers[last]
+                    old_cells[last][4..]
                   end
         list_of_cells << with_child(page_number, divider) if divider
       end
       (last + 1).upto(old_cells.size - 1) { |position| list_of_cells << old_cells[position] }
       parent.list_of_cells = list_of_cells
       parent.right_child = last < old_cells.size ? parent.right_child : new_pages.last
+    end
+
+    # The child at *position* of an interior *parent*: the left child of
+    # that cell, or the right child past the last cell.
+    private def child_of(parent : TreeNode, position : Int32) : UInt32
+      position < parent.list_of_cells.size ? get_u32(parent.list_of_cells[position], 0) : parent.right_child
     end
 
     # Splits *cells* into the fewest pages of *capacity*, then evens them
