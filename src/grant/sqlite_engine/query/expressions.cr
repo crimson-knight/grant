@@ -5,6 +5,12 @@ module Grant::SQLiteEngine::Query
   # The state one execution of a statement evaluates against: the current
   # row of every FROM source (by slot), their rowids, the aggregate results
   # of the current group, and the bound parameters.
+  # The frame a compiled statement keeps for its runs (see `Frame.reuse`).
+  class FrameKeeper
+    property frame : Frame? = nil
+    property? in_use = false
+  end
+
   class Frame
     getter list_of_rows : Array(Array(Value))
     getter list_of_rowids : Array(Int64?)
@@ -21,6 +27,50 @@ module Grant::SQLiteEngine::Query
       @list_of_rowids = Array(Int64?).new(slot_count, nil)
       @list_of_aggregate_values = Array(Value).new(aggregate_count, nil)
       @list_of_pending = Array(TableScanSource?).new(slot_count, nil)
+    end
+
+    # Counts the runs this frame has served. What is cached for a frame
+    # (an uncorrelated subquery's result, an IN list's set) holds for one
+    # run: a cache compares the frame and this number.
+    getter run_number = 0
+
+    # Readies the frame for another run with *list_of_parameters*, as a new
+    # frame starts: every slot empty (a new array, since a source may have
+    # put one of its own in the slot), no rowids, aggregates or pending
+    # decodes.
+    def start_run(@list_of_parameters : Array(Value)) : Nil
+      @run_number &+= 1
+      @list_of_rows.map! { [] of Value }
+      @list_of_rowids.fill(nil)
+      @list_of_aggregate_values.fill(nil)
+      @list_of_pending.fill(nil)
+    end
+
+    # Runs the block with this owner's frame, started for a new run, or
+    # with a new frame while the owner's is still in use (a statement run
+    # again from inside its own run).
+    def self.reuse(keeper : FrameKeeper, slot_count : Int32, aggregate_count : Int32, list_of_parameters : Array(Value),
+                   session : Session, & : Frame -> T) : T forall T
+      frame = keeper.frame
+      if frame.nil? || keeper.in_use?
+        fresh = Frame.new(slot_count, aggregate_count, list_of_parameters, session)
+        return yield fresh if keeper.in_use?
+        keeper.frame = fresh
+        frame = fresh
+      else
+        frame.start_run(list_of_parameters)
+      end
+      keeper.in_use = true
+      begin
+        yield frame
+      ensure
+        keeper.in_use = false
+      end
+    end
+
+    # Whether *other* is this frame in its current run (*run_number*).
+    def same_run?(other : Frame?, run_number : Int32) : Bool
+      same?(other) && @run_number == run_number
     end
 
     # Decodes what the row in *slot* still lacks, before anything reads it.
@@ -723,6 +773,7 @@ module Grant::SQLiteEngine::Query
     @cached_set : Hash(EqualityKey, Bool)? = nil
     @cached_set_has_null = false
     @cached_for : Frame? = nil
+    @cached_run = 0
 
     def initialize(@operand : Expr, @list : Array(Expr), @negated : Bool)
       mark_collate_from([@operand] + @list)
@@ -765,10 +816,11 @@ module Grant::SQLiteEngine::Query
     end
 
     private def set_lookup(value : Value, frame : Frame) : Bool?
-      unless @cached_for.same?(frame)
+      unless frame.same_run?(@cached_for, @cached_run)
         @cached_set = nil
         @cached_set_has_null = false
         @cached_for = frame
+        @cached_run = frame.run_number
       end
       set = @cached_set ||= begin
         entries = {} of EqualityKey => Bool

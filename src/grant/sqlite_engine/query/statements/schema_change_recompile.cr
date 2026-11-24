@@ -23,6 +23,8 @@ module Grant::SQLiteEngine::Query
       return if cookie == @compiled_schema_cookie
       fresh = @session.prepare(@sql)
       @compiled = fresh.@compiled
+      # The kept frame has the old plan's slots.
+      @select_frame = nil
       @list_of_column_names = fresh.list_of_column_names
       @compiled_schema_cookie = fresh.@compiled_schema_cookie
     end

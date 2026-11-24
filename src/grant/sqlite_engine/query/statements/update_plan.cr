@@ -41,7 +41,15 @@ module Grant::SQLiteEngine::Query
     # Every target row once (the first match of an UPDATE ... FROM): its
     # rowid (nil for WITHOUT ROWID), its values and the computed columns.
     def collect(list_of_parameters : Array(Value)) : Array({Int64?, Array(Value), Array(Value)})
-      frame = Frame.new(@compiled.slot_count, @compiled.aggregate_count, list_of_parameters, @session)
+      Frame.reuse(@frame_keeper, @compiled.slot_count, @compiled.aggregate_count, list_of_parameters, @session) do |frame|
+        collect_in(frame)
+      end
+    end
+
+    # The frame collect runs in, kept for the next run.
+    @frame_keeper = FrameKeeper.new
+
+    private def collect_in(frame : Frame) : Array({Int64?, Array(Value), Array(Value)})
       producer = @compiled.producer
       producer.open(frame)
       rows = [] of {Int64?, Array(Value), Array(Value)}

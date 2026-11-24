@@ -142,22 +142,34 @@ module Grant::SQLiteEngine::Query
         yield [] of Value
         return
       end
-      frame = Frame.new(compiled.slot_count, compiled.aggregate_count, list_of_parameters, @session)
-      producer = compiled.producer
-      producer.open(frame)
-      first = producer.next_row(frame)
+      first, second, rows = Frame.reuse(@frame_keeper, compiled.slot_count, compiled.aggregate_count, list_of_parameters, @session) do |frame|
+        read_source_rows(compiled.producer, frame)
+      end
       return unless first
-      second = producer.next_row(frame)
-      unless second
+      unless second && rows
         # One row (a VALUES row): read in full already, no list needed.
         yield first
         return
       end
+      rows.each { |each_row| yield each_row }
+    end
+
+    # The frame the source rows are read in, kept for the next run.
+    @frame_keeper = FrameKeeper.new
+
+    # Every source row: the first, the second and, when there is a second,
+    # the list of them all.
+    private def read_source_rows(producer : Producer, frame : Frame) : {Array(Value)?, Array(Value)?, Array(Array(Value))?}
+      producer.open(frame)
+      first = producer.next_row(frame)
+      return {nil, nil, nil} unless first
+      second = producer.next_row(frame)
+      return {first, nil, nil} unless second
       rows = [first, second]
       while row = producer.next_row(frame)
         rows << row
       end
-      rows.each { |each_row| yield each_row }
+      {first, second, rows}
     end
   end
 end

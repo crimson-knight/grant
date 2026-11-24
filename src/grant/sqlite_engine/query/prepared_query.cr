@@ -155,8 +155,8 @@ module Grant::SQLiteEngine::Query
 
     # A statement run through its plan reads only the parameters from its
     # frame, so it keeps one frame and copies the bindings into it. A
-    # SELECT gets a new frame each run: uncorrelated subqueries remember the
-    # frame they were computed for.
+    # SELECT keeps one too, started for each run: what uncorrelated
+    # subqueries remember holds for one run of the frame.
     private def frame_for_run : Frame
       if @runs_a_plan
         # Without parameters the frame holds nothing: one serves every such
@@ -169,8 +169,18 @@ module Grant::SQLiteEngine::Query
         ValueBuffer.refill(frame.list_of_parameters, @parameters)
         return frame
       end
-      Frame.new(@compiled.slot_count, @compiled.aggregate_count, @parameters.dup, @session)
+      # One frame serves every run, started afresh each time (its run
+      # number tells the caches apart), with its own copy of the bindings.
+      if frame = @select_frame
+        list_of_parameters = frame.list_of_parameters
+        ValueBuffer.refill(list_of_parameters, @parameters)
+        frame.start_run(list_of_parameters)
+        return frame
+      end
+      @select_frame = Frame.new(@compiled.slot_count, @compiled.aggregate_count, @parameters.dup, @session)
     end
+
+    @select_frame : Frame? = nil
 
     # Every row the query returns.
     def all_rows : Array(Array(Value))

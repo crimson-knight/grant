@@ -10,14 +10,16 @@ module Grant::SQLiteEngine::Query
     end
 
     @computed_for : Frame? = nil
+    @computed_run = 0
 
     # True when the cached result can be reused for this evaluation.
     protected def cached?(frame : Frame) : Bool
-      !@correlated && @computed_for.same?(frame)
+      !@correlated && frame.same_run?(@computed_for, @computed_run)
     end
 
     protected def remember(frame : Frame) : Nil
       @computed_for = frame
+      @computed_run = frame.run_number
     end
 
     def constant? : Bool
