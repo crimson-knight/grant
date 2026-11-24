@@ -1,5 +1,3 @@
-require "../strict_annotations"
-
 module Grant::Query
   # Provides chainable where methods for more expressive queries.
   #
@@ -10,7 +8,6 @@ module Grant::Query
   # ```
   #
   # All methods return the query builder for chaining.
-  @[TypeBound(Model, Grant::Base)]
   class WhereChain(Model)
     @query : Builder(Model)
 

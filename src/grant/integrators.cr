@@ -1,4 +1,3 @@
-require "./strict_annotations"
 require "./transactions"
 require "./querying"
 
@@ -180,7 +179,6 @@ module Grant::Integrators
 
   # The equality attributes a new record starts with, see
   # `Grant::Query::Finders#scope_attributes`.
-  @[TypeOnce]
   def scope_attributes : Hash(String, Grant::Columns::Type)
     current_scope.scope_attributes
   end

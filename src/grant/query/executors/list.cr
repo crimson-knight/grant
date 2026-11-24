@@ -1,7 +1,4 @@
-require "../../strict_annotations"
-
 module Grant::Query::Executor
-  @[TypeBound(Model, Grant::Base)]
   class List(Model)
     include Shared
 

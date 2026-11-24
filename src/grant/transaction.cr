@@ -992,7 +992,6 @@ module Grant::Transaction
     # the active shard's connection.
     #
     # :nodoc:
-    @[TypeOnce]
     def transaction_adapter : Grant::Adapter::Base
       resolve_adapter_for_role(Grant.settings.writing_role)
     end

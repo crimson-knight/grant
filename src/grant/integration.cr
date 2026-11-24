@@ -19,7 +19,6 @@ module Grant
     module ClassMethods
       # A key for the relation of all rows, `"users/query-<digest>-<count>-<newest updated_at>"`.
       # One aggregate query (COUNT and MAX(updated_at)), no records loaded.
-      @[TypeOnce]
       def collection_cache_key : String
         current_scope.collection_cache_key
       end

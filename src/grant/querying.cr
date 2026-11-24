@@ -78,7 +78,6 @@ module Grant::Querying
     # same list executor a relation does.
     #
     # :nodoc:
-    @[TypeOnce]
     def __find_with_kept_statement(id : Int32 | Int64 | String) : self?
       adapter = self.adapter
       family = adapter.postgres? ? 0 : (adapter.mysql? ? 1 : 2)
@@ -111,7 +110,6 @@ module Grant::Querying
     #   end
     # end
     # ```
-    @[TypeOnce]
     def from_rs(result : DB::ResultSet) : self
       from_rs(result, __column_plan(result, adapter))
     end
@@ -122,7 +120,6 @@ module Grant::Querying
     # models resolve the row's class first and take the unplanned path.
     #
     # :nodoc:
-    @[TypeOnce]
     def from_rs(result : DB::ResultSet, plan : Grant::ColumnPlan) : self
       return from_rs(result) if __sti_model?
 
@@ -139,7 +136,6 @@ module Grant::Querying
     # Executes arbitrary bound SQL and hydrates each row as this model.
     # Raw SQL cannot infer or apply a default scope. Scoped models must call
     # this inside `unscoped { ... }` when bypassing that scope is intentional.
-    @[TypeOnce]
     def find_by_sql(sql : String, binds : Array(Grant::Columns::Type) = [] of Grant::Columns::Type) : Array(self)
       ensure_raw_sql_unscoped!
 
@@ -156,7 +152,6 @@ module Grant::Querying
     # Executes a bound count query and returns its value as `Int64`.
     # The SQL is raw and cannot have a default scope applied; scoped models must
     # call this inside `unscoped { ... }` when appropriate.
-    @[TypeOnce]
     def count_by_sql(sql : String, binds : Array(Grant::Columns::Type) = [] of Grant::Columns::Type) : Int64
       ensure_raw_sql_unscoped!
 
@@ -167,7 +162,6 @@ module Grant::Querying
     # Sanitizes an ActiveRecord-style `[sql, *values]` array for this model's
     # current adapter. Prefer bound query methods for statements sent to a
     # database.
-    @[TypeOnce]
     def sanitize_sql_array(conditions : Array) : String
       Grant::Sanitization.sanitize_sql_array(conditions, adapter)
     end
@@ -180,7 +174,6 @@ module Grant::Querying
     end
 
     # :ditto:
-    @[TypeOnce]
     def sanitize_sql(conditions : Array) : String
       sanitize_sql_array(conditions)
     end
@@ -392,7 +385,6 @@ module Grant::Querying
     # ```
     # User.find_by({"email" => "a@example.com", "active" => true})
     # ```
-    @[TypeOnce]
     def find_by(criteria : Grant::ModelArgs) : self?
       if has_attribute_aliases?
         criteria = criteria.transform_keys { |field| resolve_attribute_alias(field.to_s).as(Symbol | String) }
@@ -466,7 +458,6 @@ module Grant::Querying
     end
 
     # :ditto:
-    @[TypeOnce]
     def find_sole_by(criteria : Grant::ModelArgs) : self
       if criteria.empty?
         sole
@@ -482,7 +473,6 @@ module Grant::Querying
     end
 
     # :ditto:
-    @[TypeOnce]
     def destroy_by(criteria : Grant::ModelArgs) : Int32
       guard_writes!
       query = current_scope
@@ -504,7 +494,6 @@ module Grant::Querying
     end
 
     # :ditto:
-    @[TypeOnce]
     def delete_by(criteria : Grant::ModelArgs) : Int64
       guard_writes!
       mark_write_operation
@@ -579,7 +568,6 @@ module Grant::Querying
 
     # The relation a class-level batching call runs on: the current scope with
     # the legacy raw `WHERE` *clause* and *offset* folded in.
-    @[TypeOnce]
     private def batch_scope(clause : String, params : Array(Grant::Columns::Type), offset : Int) : Grant::Query::Builder(self)
       scope = current_scope
       filter = clause.strip
@@ -603,7 +591,6 @@ module Grant::Querying
     # User.exists?(999) # => false
     # User.exists?(nil) # => false
     # ```
-    @[TypeOnce]
     def exists?(id : IdValue?) : Bool
       query = current_scope
       return false if id.nil?
@@ -626,7 +613,6 @@ module Grant::Querying
     # :ditto:
     #
     # Hash form — accepts a pre-built criteria hash (`Grant::ModelArgs`).
-    @[TypeOnce]
     def exists?(criteria : Grant::ModelArgs) : Bool
       current_scope.where(criteria).exists?
     end
@@ -640,7 +626,6 @@ module Grant::Querying
     # ```
     # User.count # => 42 (within the default scope, when present)
     # ```
-    @[TypeOnce]
     def count : Int64
       result = current_scope.count
       if result.is_a?(Int64)
@@ -658,13 +643,11 @@ module Grant::Querying
     # User.count(:deleted_at)            # => 3
     # User.count(:email, distinct: true) # => 40
     # ```
-    @[TypeOnce]
     def count(column : Symbol | String, distinct : Bool = false) : Int64
       result = current_scope.count(column, distinct)
       result.is_a?(Int64) ? result : result.values.sum
     end
 
-    @[TypeOnce]
     def exec(clause : String = "", binds : Array(Grant::Columns::Type) = [] of Grant::Columns::Type) : DB::ExecResult
       ensure_raw_sql_unscoped!
       connection.execute(clause, binds)
@@ -712,7 +695,6 @@ module Grant::Querying
       end
     end
 
-    @[TypeOnce]
     private def exec_exists(clause : String, params : Array(Grant::Columns::Type)) : Bool
       adapter.exists? quoted_table_name, clause, params
     end

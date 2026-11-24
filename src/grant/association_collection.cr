@@ -6,8 +6,6 @@ require "./associations/collection_relation"
 require "./associations/collection_finders"
 
 # Lazy, owner-scoped collection returned by a has_many association.
-@[TypeBound(Owner, Grant::Base)]
-@[TypeBound(Target, Grant::Base)]
 class Grant::AssociationCollection(Owner, Target)
   include Enumerable(Target)
 

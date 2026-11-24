@@ -1,4 +1,3 @@
-require "../strict_annotations"
 require "../locking"
 require "../transaction"
 require "./clause"
@@ -114,32 +113,27 @@ module Grant::Locking::Pessimistic
   # Raises `Grant::UnsavedChangesLockError` when the record has unsaved changes,
   # unless *force* is true, and `Grant::Locking::TransactionRequiredError` when
   # no transaction is open on an adapter that takes row locks.
-  @[TypeOnce]
   def reload_with_lock(mode : LockMode = LockMode::Update, force : Bool = false) : self
     guard_row_lock!(mode, force)
     replace_with_locked_row(self.class.where({self.class.primary_name => primary_key_value}).lock(mode))
   end
 
   # :ditto:
-  @[TypeOnce]
   def reload_with_lock(clause : Clause, force : Bool = false) : self
     guard_row_lock!(LockMode::Update, force)
     replace_with_locked_row(self.class.where({self.class.primary_name => primary_key_value}).lock(clause))
   end
 
   # Same as `reload_with_lock`; the ActiveRecord name.
-  @[TypeOnce]
   def lock!(mode : LockMode = LockMode::Update, force : Bool = false) : self
     reload_with_lock(mode, force: force)
   end
 
   # :ditto:
-  @[TypeOnce]
   def lock!(clause : Clause, force : Bool = false) : self
     reload_with_lock(clause, force: force)
   end
 
-  @[TypeOnce]
   private def guard_row_lock!(mode : LockMode, force : Bool) : Nil
     raise Grant::UnsavedChangesLockError.new if !force && changed?
     if self.class.adapter.supports_lock_mode?(mode) && !Grant::Transaction.in_explicit_transaction?

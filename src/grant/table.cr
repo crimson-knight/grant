@@ -1,5 +1,3 @@
-require "./strict_annotations"
-
 # Adds a :nodoc: to grant methods/constants if `DISABLE_GRANTE_DOCS` ENV var is true
 macro disable_grant_docs?(stmt)
   {% unless flag?(:grant_docs) %}
@@ -30,12 +28,10 @@ module Grant::Tables
     {% end %}
     end
 
-    @[TypeOnce]
     def quoted_table_name : String
       adapter.quote(table_name)
     end
 
-    @[TypeOnce]
     def quote(column_name : String) : String
       adapter.quote(column_name)
     end

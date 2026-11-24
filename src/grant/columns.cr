@@ -148,7 +148,6 @@ module Grant::Columns
   end
 
   # Consumes the result set to set self's property values.
-  @[TypeOnce]
   def from_rs(result : DB::ResultSet) : Nil
     from_rs(result, self.class.__column_plan(result, self.class.adapter))
   end

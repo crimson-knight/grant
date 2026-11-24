@@ -1,4 +1,3 @@
-# crystal: strict
 # Aggregate several columns into a single immutable value object, in the style of
 # Rails' `composed_of`.
 #

@@ -573,7 +573,6 @@ module Grant::ConnectionManagement
     #   User.guard_writes! # raises Grant::Transaction::ReadOnlyError
     # end
     # ```
-    @[TypeOnce]
     def guard_writes! : Nil
       if preventing_writes?
         raise Grant::Transaction::ReadOnlyError.new(
@@ -732,7 +731,6 @@ module Grant::ConnectionManagement
     # User.connected_to?(role: :reading) # => true
     # User.reset_connecting_to
     # ```
-    @[TypeOnce]
     def connecting_to(
       database : String? = nil,
       role : Symbol? = nil,
@@ -759,7 +757,6 @@ module Grant::ConnectionManagement
     # User.connected_to?(role: :reading)                                       # => false
     # User.connected_to(role: :reading) { User.connected_to?(role: :reading) } # => true
     # ```
-    @[TypeOnce]
     def connected_to?(role : Symbol? = nil, shard : Symbol? = nil) : Bool
       raise ArgumentError.new("connected_to? needs a role or a shard") if role.nil? && shard.nil?
 
@@ -826,7 +823,6 @@ module Grant::ConnectionManagement
 
     # Every connection name this class's `connects_to` reaches, with the role
     # and shard each one serves.
-    @[TypeOnce]
     def connection_names : Array({String, Symbol, Symbol?})
       names = [] of {String, Symbol, Symbol?}
       if connection_config.empty? && shard_config.empty?
@@ -842,12 +838,10 @@ module Grant::ConnectionManagement
     # Raises `Grant::UnestablishedConnectionError` when a connection this class
     # declares is not established; call it at boot to fail early rather than at
     # the first query. See `Grant::ConnectionHandling.verify!`.
-    @[TypeOnce]
     def verify_connections! : Nil
       Grant::ConnectionHandling.verify!(name, connection_names)
     end
 
-    @[TypeOnce]
     private def build_connection_context(
       database : String?,
       role : Symbol?,
@@ -897,7 +891,6 @@ module Grant::ConnectionManagement
     # User.current_role                                       # => :primary
     # User.connected_to(role: :reading) { User.current_role } # => :reading
     # ```
-    @[TypeOnce]
     def current_role : Symbol
       return Grant.settings.reading_role if should_use_reader?
       connection_context.try(&.role) || :primary
@@ -960,7 +953,6 @@ module Grant::ConnectionManagement
     # User.adapter                                       # => the primary adapter
     # User.connected_to(role: :reading) { User.adapter } # => the replica adapter
     # ```
-    @[TypeOnce]
     def adapter : Grant::Adapter::Base
       resolve_adapter_for_role(current_role)
     end
@@ -970,7 +962,6 @@ module Grant::ConnectionManagement
     # the model's own database registered under that shard. `Sharding::Model`
     # resolves its shard from the data and calls this. It never falls back to
     # another registered connection.
-    @[TypeOnce]
     def adapter_for_shard(shard : Symbol, role : Symbol = current_role) : Grant::Adapter::Base
       resolve_adapter_for_role(role, shard, fallback: false)
     end
@@ -979,12 +970,10 @@ module Grant::ConnectionManagement
     # An active `connected_to` role takes precedence, matching the surrounding
     # connection context; otherwise *role* selects the model's configured
     # writer or reader.
-    @[TypeOnce]
     def connection_adapter(role : Symbol) : Grant::Adapter::Base
       resolve_adapter_for_role(connection_context.try(&.role) || role)
     end
 
-    @[TypeOnce]
     private def resolve_adapter_for_role(role : Symbol, shard : Symbol? = current_shard, fallback : Bool = true) : Grant::Adapter::Base
       registry_role = Grant::ConnectionManagement.registry_role(role)
       configured_role = Grant::ConnectionManagement.canonical_role(role)
@@ -1052,7 +1041,6 @@ module Grant::ConnectionManagement
     # Returns a raw connection facade for this model. Connection calls do not
     # apply `default_scope`; model-level raw methods enforce the explicit
     # `unscoped` rule before using this facade.
-    @[TypeOnce]
     def connection : Grant::Connection
       Grant::Connection.new(
         ->(role : Symbol) do
@@ -1110,7 +1098,6 @@ module Grant::ConnectionManagement
     end
 
     # Check if should use reader with enhanced logic
-    @[TypeOnce]
     private def should_use_reader? : Bool
       # Only use reader if:
       # 1. We have a reading role configured

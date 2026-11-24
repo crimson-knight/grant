@@ -195,7 +195,6 @@ module Grant::Validators
   # record.errors.full_messages # => ["Name can't be blank"]
   # record.errors.add(:base, "Something went wrong")
   # ```
-  @[TypeOnce]
   def errors : Errors
     @errors ||= Errors.new(self)
   end
@@ -1052,7 +1051,6 @@ module Grant::Validators
   # record.valid?(context: :update) # keyword form
   # record.valid?(context: [:create, :publish])
   # ```
-  @[TypeOnce]
   def valid?(skip_normalization : Bool = false, context : (Symbol | Array(Symbol))? = nil) : Bool
     # A value that could not be converted to its column's type was recorded
     # as a `ConversionError`. It fails validation, unless a numericality
@@ -1123,7 +1121,6 @@ module Grant::Validators
   end
 
   # Positional form: `record.valid?(:publish)`.
-  @[TypeOnce]
   def valid?(context : Symbol | Array(Symbol)) : Bool
     valid?(context: context)
   end
@@ -1147,7 +1144,6 @@ module Grant::Validators
   end
 
   # ActiveModel's `validate(context)`: an alias for `#valid?`.
-  @[TypeOnce]
   def validate(context : (Symbol | Array(Symbol))? = nil) : Bool
     valid?(context: context)
   end
@@ -1160,7 +1156,6 @@ module Grant::Validators
   # post.validate! # => post, or raises Grant::RecordInvalid
   # post.validate!(:publish)
   # ```
-  @[TypeOnce]
   def validate!(context : (Symbol | Array(Symbol))? = nil) : self
     valid?(context: context) || raise Grant::RecordInvalid.new(self)
     self
@@ -1219,7 +1214,6 @@ module Grant::Validators
   # context, and the raw input is still known.
   #
   # :nodoc:
-  @[TypeOnce]
   def __numericality_claims_conversion_errors?(context : (Symbol | Array(Symbol))?) : Bool
     contexts = __active_validation_contexts(context)
     run_all = contexts.includes?(:save)
