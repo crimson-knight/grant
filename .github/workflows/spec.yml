@@ -169,6 +169,7 @@ jobs:
           CURRENT_ADAPTER: sqlite
           SQLITE_DATABASE_URL: sqlite3:./grant.db
           SQLITE_REPLICA_URL: sqlite3:./grant_replica.db
+          GRANT_SQLITE_ENGINE: grant
 
   # MySQL 8.0 and 9.x both default to caching_sha2_password, and the grant
   # user is pinned to it below, so every connection these jobs open goes
