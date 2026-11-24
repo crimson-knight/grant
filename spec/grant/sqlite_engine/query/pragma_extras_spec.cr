@@ -113,7 +113,10 @@ describe "Grant::SQLiteEngine PRAGMAs of milestone G6" do
   end
 
   it "reads the single-value PRAGMAs as tables" do
-    list_of_queries = PragmaExtrasNames.list_of_table_valued.map { |name| "SELECT * FROM #{name}" }
+    # secure_delete's default is a build option (SQLITE_SECURE_DELETE): the
+    # pinned 3.51.0 reference reads 0, Debian and Ubuntu builds read 1.
+    list_of_names = PragmaExtrasNames.list_of_table_valued.reject { |name| name == "pragma_secure_delete" }
+    list_of_queries = list_of_names.map { |name| "SELECT * FROM #{name}" }
     list_of_queries << "SELECT user_version, page_size FROM pragma_user_version, pragma_page_size()"
     list_of_queries << "SELECT * FROM pragma_foreign_key_check('posts')"
     list_of_queries << "SELECT count(*) FROM pragma_page_count WHERE page_count > 1"
