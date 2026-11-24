@@ -1,3 +1,4 @@
+# crystal: strict
 module Grant::Associations
   # Defines `build_<name>`, `create_<name>` and `create_<name>!` for a
   # `belongs_to`, as ActiveRecord does. The parent is built or created from

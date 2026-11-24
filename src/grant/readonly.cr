@@ -1,3 +1,4 @@
+require "./strict_annotations"
 require "./exceptions"
 
 module Grant
@@ -30,6 +31,7 @@ end
 module Grant::Readonly
   module ClassMethods
     # True when *attribute_name* was declared with `attr_readonly`.
+    @[TypeOnce]
     def readonly_attribute?(attribute_name : String) : Bool
       false
     end
@@ -38,6 +40,7 @@ module Grant::Readonly
     # Models opt out with `attr_readonly :slug, raise_on_assign: false`, which
     # restores the older behavior of accepting the assignment in memory and
     # leaving it out of the `UPDATE`.
+    @[TypeOnce]
     def raise_on_readonly_assign? : Bool
       true
     end
@@ -112,6 +115,7 @@ module Grant::Readonly
   # a persisted record raises for a readonly column.
   #
   # :nodoc:
+  @[TypeOnce]
   def __guard_readonly_attribute!(attribute_name : String) : Nil
     return if new_record? || @_loading_readonly_attributes
     return unless self.class.readonly_attribute?(attribute_name)

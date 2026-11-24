@@ -1,3 +1,4 @@
+# crystal: strict
 require "./composite_association"
 require "./composite_collection"
 

@@ -1,3 +1,4 @@
+require "../strict_annotations"
 require "./builder"
 
 module Grant
@@ -22,6 +23,7 @@ module Grant::Query::CommonTableExpressions
 
   # Raises `Grant::UnsupportedCommonTableExpressionError` unless *adapter*'s
   # server understands `WITH`.
+  @[TypeOnce]
   def self.ensure_supported!(adapter : Grant::Adapter::Base) : Nil
     return if adapter.supports_common_table_expressions?
 
@@ -35,6 +37,7 @@ module Grant::Query::CommonTableExpressions
   #
   # *step* must be `SELECT <list> FROM <sources> [WHERE <condition>]`, the only
   # shape a recursive term may take; anything else raises `ArgumentError`.
+  @[TypeOnce]
   def self.guard_step(step : String, max_depth : Int32) : String
     raise ArgumentError.new("with_recursive: max_depth must be positive") unless max_depth > 0
 
@@ -85,11 +88,13 @@ module Grant::Query::CommonTableExpressions
     end
   end
 
+  @[TypeOnce]
   private def self.word_start?(chars : Array(Char), index : Int32) : Bool
     return false unless chars[index].ascii_letter?
     index == 0 || !(chars[index - 1].alphanumeric? || chars[index - 1] == '_')
   end
 
+  @[TypeOnce]
   private def self.word_at(chars : Array(Char), index : Int32) : String
     finish = index
     while finish < chars.size && (chars[finish].alphanumeric? || chars[finish] == '_')
@@ -120,16 +125,19 @@ class Grant::Query::Builder(Model)
   @common_tables : Array(CommonTable(Model)) = [] of CommonTable(Model)
 
   # The alias of the `from` source, or nil.
+  @[TypeOnce]
   def from_alias : String?
     @from_alias
   end
 
   # Whether `from` replaced the model's table as the FROM source.
+  @[TypeOnce]
   def from_source? : Bool
     !@from_render.nil?
   end
 
   # :nodoc:
+  @[TypeOnce]
   def from_kind : Symbol
     @from_kind
   end
@@ -155,6 +163,7 @@ class Grant::Query::Builder(Model)
   # User.from(adults, as: "users").where(active: true)
   # # => SELECT ... FROM (SELECT ... WHERE age >= $1) AS "users" WHERE active = $2
   # ```
+  @[TypeOnce]
   def from!(source : Grant::Query::Builder, as name : String? = nil) : self
     alias_name = name || Model.table_name
     validate_identifier!(alias_name, "from")
@@ -172,6 +181,7 @@ class Grant::Query::Builder(Model)
   # ```
   # User.from("(SELECT * FROM users WHERE age >= ?) recent", binds: [18_i64] of Grant::Columns::Type)
   # ```
+  @[TypeOnce]
   def from!(sql : String, as name : String? = nil, binds : Array(Grant::Columns::Type) = [] of Grant::Columns::Type) : self
     validate_identifier!(name, "from") if name
     reset_load_state
@@ -186,6 +196,7 @@ class Grant::Query::Builder(Model)
   # ```
   # User.with(:recent, User.where("age >= ?", 18)).from(:recent)
   # ```
+  @[TypeOnce]
   def from!(table : Symbol, as name : String? = nil) : self
     validate_identifier!(table.to_s, "from")
     validate_identifier!(name, "from") if name
@@ -198,21 +209,25 @@ class Grant::Query::Builder(Model)
   end
 
   # Returns a copy that selects from another source. See `from!`.
+  @[TypeOnce]
   def from(source : Grant::Query::Builder, as name : String? = nil) : self
     chain_copy.from!(source, as: name)
   end
 
   # :ditto:
+  @[TypeOnce]
   def from(sql : String, as name : String? = nil, binds : Array(Grant::Columns::Type) = [] of Grant::Columns::Type) : self
     chain_copy.from!(sql, as: name, binds: binds)
   end
 
   # :ditto:
+  @[TypeOnce]
   def from(table : Symbol, as name : String? = nil) : self
     chain_copy.from!(table, as: name)
   end
 
   # Drops the `from` source; the query reads the model's own table again.
+  @[TypeOnce]
   protected def clear_from_source! : Nil
     reset_load_state
     @from_kind = :none
@@ -238,21 +253,25 @@ class Grant::Query::Builder(Model)
   # User.with(:adults, User.where("age >= ?", 18)).from(:adults).where(active: true)
   # # => WITH "adults" AS (SELECT ... WHERE age >= $1) SELECT ... FROM "adults" WHERE active = $2
   # ```
+  @[TypeOnce]
   def with!(name : Symbol | String, query : Grant::Query::Builder) : self
     add_common_table!(name, false, subquery_renderer(query))
   end
 
   # A CTE written as raw SQL; `?` placeholders take their values from *binds*.
+  @[TypeOnce]
   def with!(name : Symbol | String, sql : String, binds : Array(Grant::Columns::Type) = [] of Grant::Columns::Type) : self
     add_common_table!(name, false, ->(outer : Grant::Query::Assembler::Base(Model)) { outer.bind_fragment(sql, binds) })
   end
 
   # Returns a copy with the CTE added. See `with!`.
+  @[TypeOnce]
   def with(name : Symbol | String, query : Grant::Query::Builder) : self
     chain_copy.with!(name, query)
   end
 
   # :ditto:
+  @[TypeOnce]
   def with(name : Symbol | String, sql : String, binds : Array(Grant::Columns::Type) = [] of Grant::Columns::Type) : self
     chain_copy.with!(name, sql, binds)
   end
@@ -272,6 +291,7 @@ class Grant::Query::Builder(Model)
   #   max_depth: 20)
   # tree.from(:tree)
   # ```
+  @[TypeOnce]
   def with_recursive!(name : Symbol | String, anchor : Grant::Query::Builder | String, step : String, *,
                       max_depth : Int32 = Grant::Query::CommonTableExpressions::DEFAULT_MAX_DEPTH,
                       union_all : Bool = true,
@@ -292,6 +312,7 @@ class Grant::Query::Builder(Model)
   # A recursive CTE written as one raw statement (`anchor UNION ALL step`),
   # with no depth guard. *unguarded* must be `true`: it states that the SQL
   # bounds its own recursion.
+  @[TypeOnce]
   def with_recursive!(name : Symbol | String, body : Grant::Query::Builder | String, *, unguarded : Bool,
                       binds : Array(Grant::Columns::Type) = [] of Grant::Columns::Type) : self
     raise ArgumentError.new("with_recursive: pass unguarded: true to use a recursive CTE without the depth guard") unless unguarded
@@ -300,6 +321,7 @@ class Grant::Query::Builder(Model)
   end
 
   # Returns a copy with the recursive CTE added. See `with_recursive!`.
+  @[TypeOnce]
   def with_recursive(name : Symbol | String, anchor : Grant::Query::Builder | String, step : String, *,
                      max_depth : Int32 = Grant::Query::CommonTableExpressions::DEFAULT_MAX_DEPTH,
                      union_all : Bool = true,
@@ -310,6 +332,7 @@ class Grant::Query::Builder(Model)
   end
 
   # :ditto:
+  @[TypeOnce]
   def with_recursive(name : Symbol | String, body : Grant::Query::Builder | String, *, unguarded : Bool,
                      binds : Array(Grant::Columns::Type) = [] of Grant::Columns::Type) : self
     chain_copy.with_recursive!(name, body, unguarded: unguarded, binds: binds)
@@ -339,6 +362,7 @@ class Grant::Query::Builder(Model)
 
   # A renderer that embeds *source* as a subquery of the statement being built.
   # *source* is copied first, so later changes to it do not leak in.
+  @[TypeOnce]
   private def subquery_renderer(source : Grant::Query::Builder) : Proc(Grant::Query::Assembler::Base(Model), String)
     snapshot = source.dup
     ->(outer : Grant::Query::Assembler::Base(Model)) do
@@ -348,15 +372,18 @@ class Grant::Query::Builder(Model)
     end
   end
 
+  @[TypeOnce]
   private def string_renderer(sql : String, binds : Array(Grant::Columns::Type)) : Proc(Grant::Query::Assembler::Base(Model), String)
     ->(outer : Grant::Query::Assembler::Base(Model)) { outer.bind_fragment(sql, binds) }
   end
 
+  @[TypeOnce]
   private def validate_identifier!(name : String, context : String) : Nil
     return if Grant::TextMatching.simple_identifier?(name)
     raise ArgumentError.new("#{context}: #{name.inspect} is not a valid identifier")
   end
 
+  @[TypeOnce]
   private def validate_identifier!(name : Nil, context : String) : Nil
   end
 end

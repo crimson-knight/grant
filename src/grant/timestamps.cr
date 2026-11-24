@@ -1,3 +1,4 @@
+require "./strict_annotations"
 require "./settings"
 
 # Automatic timestamps, the per-model `record_timestamps` switch, and the
@@ -32,11 +33,13 @@ module Grant::Timestamps
   # Linux clocks report nanoseconds, while PostgreSQL and MySQL `TIMESTAMP(6)`
   # store microseconds. Truncating here keeps the stamp a record holds in
   # memory equal to the one the database reads back.
+  @[TypeOnce]
   def self.current_time : Time
     to_microseconds(Time.local(Grant.settings.default_timezone))
   end
 
   # Drops the sub-microsecond part of *time*.
+  @[TypeOnce]
   def self.to_microseconds(time : Time) : Time
     excess = time.nanosecond % 1_000
     excess.zero? ? time : time - excess.nanoseconds
@@ -48,11 +51,13 @@ module Grant::Timestamps
   # is replaced, never mutated, so readers take no lock.
   #
   # :nodoc:
+  @[TypeOnce]
   def self.overrides : Hash(String, Bool)
     @@overrides
   end
 
   # :nodoc:
+  @[TypeOnce]
   def self.override(model_name : String, value : Bool) : Nil
     updated = @@overrides.dup
     updated[model_name] = value
@@ -62,6 +67,7 @@ module Grant::Timestamps
   # The value to store in the timestamp column *column_name* for the instant
   # *time*: the date at midnight UTC for `*_on` columns, otherwise *time*
   # truncated to *precision* fractional digits (all digits when nil).
+  @[TypeOnce]
   def self.stamp(column_name : String, time : Time, precision : Int32? = nil) : Time
     if column_name.ends_with?("_on")
       local = time.in(Grant.settings.default_timezone)
@@ -74,6 +80,7 @@ module Grant::Timestamps
   end
 
   # *time* without the fractional digits beyond *precision* (0 to 9).
+  @[TypeOnce]
   def self.truncate(time : Time, precision : Int32) : Time
     return time if precision >= 9
     unit = 10 ** (9 - precision.clamp(0, 9))
@@ -94,6 +101,7 @@ module Grant::Timestamps
   # The current fiber's block counts, created on first use.
   #
   # :nodoc:
+  @[TypeOnce]
   def self.block_scopes : BlockScopes
     fiber = Fiber.current
     fiber.grant_block_scopes || (fiber.grant_block_scopes = BlockScopes.new)
@@ -121,6 +129,7 @@ module Grant::Timestamps
     # Whether saves stamp the timestamp columns: the run-time
     # `record_timestamps =` setting, else the `record_timestamps` declaration,
     # else true.
+    @[TypeOnce]
     def record_timestamps? : Bool
       overrides = Grant::Timestamps.overrides
       unless overrides.empty?
@@ -137,17 +146,20 @@ module Grant::Timestamps
 
     # Turns stamping on or off for this model and its subclasses at run time
     # (ActiveRecord's `record_timestamps=`). Takes effect for every fiber.
+    @[TypeOnce]
     def record_timestamps=(value : Bool) : Bool
       Grant::Timestamps.override(name, value)
       value
     end
 
     # :nodoc:
+    @[TypeOnce]
     def __record_timestamps_default : Bool
       true
     end
 
     # Fractional digits kept in stamped values; nil keeps them all.
+    @[TypeOnce]
     def timestamp_precision : Int32?
       nil
     end
@@ -163,6 +175,7 @@ module Grant::Timestamps
 
     # The columns a touch or a counter update refreshes: `updated_at` /
     # `updated_on` when the model declares them.
+    @[TypeOnce]
     def update_timestamp_columns : Array(String)
       timestamped_attributes.select { |column_name| Grant::Timestamps::UPDATED_COLUMNS.includes?(column_name) }
     end
@@ -180,6 +193,7 @@ module Grant::Timestamps
 
     # True while a `no_touching` block for this model (or a superclass) is open
     # on the current fiber.
+    @[TypeOnce]
     def no_touching? : Bool
       # Every save and touch asks, so the common case (no block open on this
       # fiber) returns before building the class lineage.
@@ -202,6 +216,7 @@ module Grant::Timestamps
 
     # True while a `suppress` block for this model (or a superclass) is open on
     # the current fiber.
+    @[TypeOnce]
     def suppressed? : Bool
       scopes = Fiber.current.grant_block_scopes
       return false unless scopes
@@ -266,6 +281,7 @@ module Grant::Timestamps
   end
 
   # True while `touch` is disabled for this record's class on the current fiber.
+  @[TypeOnce]
   def no_touching? : Bool
     self.class.no_touching?
   end

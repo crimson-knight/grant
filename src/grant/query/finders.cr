@@ -1,3 +1,5 @@
+require "../strict_annotations"
+
 # Finder and build/create conveniences shared by every relation
 # (`Grant::Query::Builder` and the named-scope relations derived from it).
 #
@@ -17,6 +19,7 @@ module Grant::Query
   # Converts keyword arguments to a `Grant::ModelArgs` hash with String keys.
   #
   # :nodoc:
+  @[TypeOnce]
   def self.model_args(attrs : NamedTuple) : Grant::ModelArgs
     args = Grant::ModelArgs.new
     attrs.each { |key, value| args[key.to_s] = value }
@@ -42,11 +45,13 @@ module Grant::Query::Finders(Model)
   end
 
   # :ditto:
+  @[TypeOnce]
   def create_with(attrs : Grant::ModelArgs) : self
     chain_copy.create_with!(attrs)
   end
 
   # In-place `create_with`, for a relation the caller owns.
+  @[TypeOnce]
   def create_with!(attrs : Grant::ModelArgs) : self
     if attrs.empty?
       @create_with_defaults = nil
@@ -62,6 +67,7 @@ module Grant::Query::Finders(Model)
   end
 
   # The defaults registered with `create_with`, as a copy.
+  @[TypeOnce]
   def create_with_attributes : Hash(String, Grant::Columns::Type)
     if defaults = @create_with_defaults
       defaults.dup
@@ -117,6 +123,7 @@ module Grant::Query::Finders(Model)
   # relation rebuilt from another keeps its defaults.
   #
   # :nodoc:
+  @[TypeOnce]
   def adopt_create_with_defaults(defaults : Hash(String, Grant::Columns::Type)) : Nil
     return if defaults.empty?
 
@@ -170,6 +177,7 @@ module Grant::Query::Finders(Model)
   end
 
   # :ditto:
+  @[TypeOnce]
   def new(attrs : Grant::ModelArgs) : Model
     build(attrs)
   end
@@ -179,6 +187,7 @@ module Grant::Query::Finders(Model)
     build(attrs, &block)
   end
 
+  @[TypeOnce]
   private def run_build(attrs : Grant::ModelArgs, block : Proc(Model, Nil)?) : Model
     merged = Grant::ModelArgs.new
     attributes_for_new_record.each { |key, value| merged[key] = value }
@@ -193,38 +202,46 @@ module Grant::Query::Finders(Model)
     end
   end
 
+  @[TypeOnce]
   private def run_create(attrs : Grant::ModelArgs, block : Proc(Model, Nil)?) : Model
     record = run_build(attrs, block)
     record.save
     record
   end
 
+  @[TypeOnce]
   private def run_create_bang(attrs : Grant::ModelArgs, block : Proc(Model, Nil)?) : Model
     record = run_build(attrs, block)
     record.save!
     record
   end
 
+  @[TypeOnce]
   private def run_find_or_create_by(attrs : Grant::ModelArgs, block : Proc(Model, Nil)?) : Model
     find_by(attrs) || run_create(attrs, block)
   end
 
+  @[TypeOnce]
   private def run_find_or_create_by_bang(attrs : Grant::ModelArgs, block : Proc(Model, Nil)?) : Model
     find_by(attrs) || run_create_bang(attrs, block)
   end
 
+  @[TypeOnce]
   private def run_find_or_initialize_by(attrs : Grant::ModelArgs, block : Proc(Model, Nil)?) : Model
     find_by(attrs) || run_build(attrs, block)
   end
 
+  @[TypeOnce]
   private def run_first_or_create(attrs : Grant::ModelArgs, block : Proc(Model, Nil)?) : Model
     first || run_create(attrs, block)
   end
 
+  @[TypeOnce]
   private def run_first_or_create_bang(attrs : Grant::ModelArgs, block : Proc(Model, Nil)?) : Model
     first || run_create_bang(attrs, block)
   end
 
+  @[TypeOnce]
   private def run_first_or_initialize(attrs : Grant::ModelArgs, block : Proc(Model, Nil)?) : Model
     first || run_build(attrs, block)
   end
@@ -233,6 +250,7 @@ module Grant::Query::Finders(Model)
   # constraint wins the race, so it needs no prior SELECT. The failed INSERT
   # rolls back to the savepoint, which keeps an enclosing PostgreSQL
   # transaction usable. Validation and other failures behave like `create`.
+  @[TypeOnce]
   private def run_create_or_find_by(attrs : Grant::ModelArgs, block : Proc(Model, Nil)?) : Model
     record = run_build(attrs, block)
     saved = Model.transaction(requires_new: true) { record.save }
@@ -242,6 +260,7 @@ module Grant::Query::Finders(Model)
     find_by(attrs) || record
   end
 
+  @[TypeOnce]
   private def run_create_or_find_by_bang(attrs : Grant::ModelArgs, block : Proc(Model, Nil)?) : Model
     record = run_build(attrs, block)
     saved = Model.transaction(requires_new: true) { record.save }
@@ -266,6 +285,7 @@ module Grant::Query::Finders(Model)
   end
 
   # :ditto:
+  @[TypeOnce]
   def find_by(criteria : Grant::ModelArgs) : Model?
     chain_copy.where!(criteria).first
   end
@@ -276,6 +296,7 @@ module Grant::Query::Finders(Model)
   end
 
   # :ditto:
+  @[TypeOnce]
   def find_by!(criteria : Grant::ModelArgs) : Model
     find_by(criteria) || raise Grant::Querying::NotFound.new("No #{Model.name} found where #{describe_criteria(criteria)}")
   end
@@ -287,21 +308,25 @@ module Grant::Query::Finders(Model)
   end
 
   # :ditto:
+  @[TypeOnce]
   def find_sole_by(criteria : Grant::ModelArgs) : Model
     chain_copy.where!(criteria).sole
   end
 
+  @[TypeOnce]
   private def describe_criteria(criteria : Grant::ModelArgs) : String
     criteria.map { |key, value| value.nil? ? "#{key} is NULL" : "#{key} = #{value}" }.join(" and ")
   end
 
   # Returns the record with primary key *id* within this relation, or `nil`.
+  @[TypeOnce]
   def find(id : Grant::Querying::IdValue) : Model?
     chain_copy.where!(Model.primary_name, :eq, id).first
   end
 
   # Returns the records with the given primary keys in *ids* order using one
   # `IN` query. Keys with no record are skipped; see `find!` to raise instead.
+  @[TypeOnce]
   def find(ids : Array) : Array(Model)
     found_records_by_key(ids).first
   end
@@ -312,12 +337,14 @@ module Grant::Query::Finders(Model)
   end
 
   # Like `find(id)`, raising `Grant::Querying::NotFound` when there is no record.
+  @[TypeOnce]
   def find!(id : Grant::Querying::IdValue) : Model
     find(id) || raise Grant::Querying::NotFound.new("Couldn't find #{Model.name} with '#{Model.primary_name}'=#{id}")
   end
 
   # Like `find(ids)`, but raises `Grant::Querying::NotFound` naming every key
   # that has no record.
+  @[TypeOnce]
   def find!(ids : Array) : Array(Model)
     records, missing = found_records_by_key(ids)
     unless missing.empty?
@@ -331,6 +358,7 @@ module Grant::Query::Finders(Model)
     find!([first, second, *rest])
   end
 
+  @[TypeOnce]
   private def found_records_by_key(ids : Array) : {Array(Model), Array(String)}
     return {[] of Model, [] of String} if ids.empty?
 

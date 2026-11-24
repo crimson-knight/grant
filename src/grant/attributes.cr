@@ -1,3 +1,4 @@
+require "./strict_annotations"
 require "./columns"
 
 module Grant
@@ -40,10 +41,12 @@ module Grant
     def initialize(@name : String, @crystal_type : String, @nilable : Bool, @primary : Bool, @converter : String? = nil)
     end
 
+    @[TypeOnce]
     def nilable? : Bool
       @nilable
     end
 
+    @[TypeOnce]
     def primary? : Bool
       @primary
     end
@@ -70,6 +73,7 @@ module Grant
     # as a case-insensitive substring (like ActiveRecord's `filter_attributes`,
     # so `"password"` also filters `password_digest`); pattern entries (a
     # `Regex` with `require "grant/regex"`) use their own rule.
+    @[TypeOnce]
     def self.filtered?(name : String, filters : Array(Grant::AttributeFilter)) : Bool
       filters.any? do |filter|
         if filter.is_a?(String)
@@ -118,6 +122,7 @@ module Grant
       end
 
       # Column descriptions keyed by column name (built once, like `columns`).
+      @[TypeOnce]
       def columns_hash : Hash(String, Grant::ColumnInfo)
         all_columns = columns
         Grant::Attributes.columns_hash_for(name) do
@@ -128,11 +133,13 @@ module Grant
       end
 
       # The names of all columns (same as `fields`).
+      @[TypeOnce]
       def attribute_names : Array(String)
         fields
       end
 
       # :ditto:
+      @[TypeOnce]
       def column_names : Array(String)
         fields
       end
@@ -153,12 +160,14 @@ module Grant
 
       # The Crystal type name of column *name* (`"Int64"`, `"String"`...), or
       # nil for an unknown attribute. Aliases resolve to their column.
+      @[TypeOnce]
       def type_for_attribute(name : String | Symbol) : String?
         info = columns_hash[resolve_attribute_alias(name.to_s)]?
         info ? info.crystal_type : nil
       end
 
       # The Crystal type name of every column, keyed by column name.
+      @[TypeOnce]
       def attribute_types : Hash(String, String)
         types = {} of String => String
         columns.each { |column| types[column.name] = column.crystal_type }
@@ -167,12 +176,14 @@ module Grant
 
       # The primary key column name (`nil` when the model declares none).
       # Composite keys: see `primary_key_columns`.
+      @[TypeOnce]
       def primary_key : String?
         primary_name
       end
 
       # Columns that hold application data: excludes the primary key, foreign
       # keys (`*_id`), counters (`*_count`) and the STI type column.
+      @[TypeOnce]
       def content_columns : Array(Grant::ColumnInfo)
         columns.reject do |column|
           column.primary? || column.name.ends_with?("_id") || column.name.ends_with?("_count") || column.name == "type"
@@ -181,26 +192,31 @@ module Grant
 
       # Whether *name* was declared with `has_secure_token`; such columns are
       # printed as `[FILTERED]` by `inspect`.
+      @[TypeOnce]
       def secure_token_column?(name : String) : Bool
         false
       end
 
       # Present for ActiveRecord source compatibility. Grant declares columns at
       # compile time, so there is no cached column information to discard.
+      @[TypeOnce]
       def reset_column_information : Nil
       end
 
       # The column an `alias_attribute` name stands for, or *name* itself.
+      @[TypeOnce]
       def resolve_attribute_alias(name : String) : String
         name
       end
 
       # Declared `alias_attribute` names mapped to their columns.
+      @[TypeOnce]
       def attribute_aliases : Hash(String, String)
         {} of String => String
       end
 
       # True once the model declares an `alias_attribute`.
+      @[TypeOnce]
       def has_attribute_aliases? : Bool
         false
       end
@@ -208,6 +224,7 @@ module Grant
       # The names (String) and patterns redacted by `inspect`: the global
       # `Grant.settings.filter_attributes` plus any the model adds with
       # `filter_attributes`.
+      @[TypeOnce]
       def filter_attributes : Array(Grant::AttributeFilter)
         Grant.settings.filter_attributes
       end
@@ -416,6 +433,7 @@ module Grant
     # encrypted attribute, value object) raises `Grant::UnknownAttributeError`
     # before anything is assigned. `new`, `create` and `update` keep ignoring
     # unknown keys.
+    @[TypeOnce]
     def assign_attributes(hash : Hash) : self
       hash.each_key do |key|
         attribute_name = key.to_s
@@ -453,6 +471,7 @@ module Grant
     # since the record was loaded, saved or had its changes cleared, like
     # ActiveModel's `<attr>_came_from_user?`. Assigning the value it already
     # holds counts.
+    @[TypeOnce]
     def attribute_came_from_user?(name : String | Symbol) : Bool
       assigned = @assigned_attributes
       return false unless assigned
@@ -460,17 +479,20 @@ module Grant
     end
 
     # The column names of this record's model.
+    @[TypeOnce]
     def attribute_names : Array(String)
       self.class.attribute_names
     end
 
     # Whether *name* is a column (or alias) of this record's model.
+    @[TypeOnce]
     def has_attribute?(name : String | Symbol) : Bool
       self.class.has_column?(name)
     end
 
     # Whether the attribute holds a value: not nil and not an empty String,
     # Array or Slice. An unknown attribute raises `Grant::UnknownAttributeError`.
+    @[TypeOnce]
     def attribute_present?(name : String | Symbol) : Bool
       value = self[name]
       if value.nil?
@@ -484,6 +506,7 @@ module Grant
 
     # Reads the attribute *name* (aliases resolved) as `read_attribute` does.
     # Raises `Grant::UnknownAttributeError` for an unknown name.
+    @[TypeOnce]
     def [](name : String | Symbol) : Grant::Columns::Type
       read_column_value(resolved_attribute_name(name))
     end
@@ -522,6 +545,7 @@ module Grant
     # user.age                               # => 36
     # user.attribute_before_type_cast("age") # => "36"
     # ```
+    @[TypeOnce]
     def attribute_before_type_cast(name : String | Symbol) : Grant::Columns::Type
       attribute = resolved_attribute_name(name)
       store = @attributes_before_type_cast
@@ -533,6 +557,7 @@ module Grant
     end
 
     # Keeps *raw* as the before-type-cast value of *attribute*.
+    @[TypeOnce]
     protected def capture_before_type_cast(attribute : String, raw : Grant::Columns::Type) : Nil
       store = @attributes_before_type_cast
       unless store
@@ -543,6 +568,7 @@ module Grant
     end
 
     # Forgets the raw input of *attribute*; a typed write supersedes it.
+    @[TypeOnce]
     protected def discard_before_type_cast(attribute : String) : Nil
       store = @attributes_before_type_cast
       store.delete(attribute) if store
@@ -550,6 +576,7 @@ module Grant
     end
 
     # Forgets every retained raw input, for example after `reload`.
+    @[TypeOnce]
     protected def clear_before_type_cast : Nil
       @attributes_before_type_cast = nil
       @assigned_attributes = nil
@@ -557,10 +584,12 @@ module Grant
 
     # Forgets which attributes were assigned (a save or cleared changes make
     # the current values the database's).
+    @[TypeOnce]
     protected def clear_assigned_attributes : Nil
       @assigned_attributes = nil
     end
 
+    @[TypeOnce]
     private def resolved_attribute_name(name : String | Symbol) : String
       attribute = self.class.resolve_attribute_alias(name.to_s)
       raise Grant::UnknownAttributeError.new(self.class.name, attribute) unless self.class.has_column?(attribute)
@@ -617,6 +646,7 @@ module Grant
       end
     end
 
+    @[TypeOnce]
     private def encrypted_column?(name : String) : Bool
       attributes = self.class.encrypted_attributes
       return true if attributes[name]?.try(&.transparent?)

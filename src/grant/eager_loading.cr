@@ -1,3 +1,5 @@
+require "./strict_annotations"
+
 class Grant::StrictLoadingViolationError < Grant::ErrorBase
 end
 
@@ -31,6 +33,7 @@ module Grant::EagerLoading
   @@strict_loading_defaults_mutex = Mutex.new
 
   # :nodoc:
+  @[TypeOnce]
   def self.strict_loading_default_for(model_name : String) : Bool
     defaults = @@strict_loading_defaults
     return false if defaults.empty?
@@ -38,6 +41,7 @@ module Grant::EagerLoading
   end
 
   # :nodoc:
+  @[TypeOnce]
   def self.store_strict_loading_default(model_name : String, value : Bool) : Nil
     @@strict_loading_defaults_mutex.synchronize do
       updated = @@strict_loading_defaults.dup
@@ -383,6 +387,7 @@ module Grant::EagerLoading
   module ClassMethods
     include Grant::Reflection::ClassMethods
 
+    @[TypeOnce]
     def strict_loading(value : Bool = true) : Grant::Query::Builder(self)
       query = get_query_builder
       query.strict_loading!(value)
@@ -400,6 +405,7 @@ module Grant::EagerLoading
       Grant::EagerLoading.store_strict_loading_default(name, value)
     end
 
+    @[TypeOnce]
     def strict_loading_by_default : Bool
       Grant::EagerLoading.strict_loading_default_for(name)
     end
@@ -408,6 +414,7 @@ module Grant::EagerLoading
     # points at this model. Defaults to the class name; STI models store the
     # root class name, matching ActiveRecord's `polymorphic_name`. Override it to
     # store another string.
+    @[TypeOnce]
     def polymorphic_name : String
       name
     end

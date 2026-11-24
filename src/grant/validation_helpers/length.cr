@@ -1,3 +1,4 @@
+# crystal: strict
 module Grant::ValidationHelpers
   # Validates that *field*'s `size` is at least *length*.
   #

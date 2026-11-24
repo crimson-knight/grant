@@ -1,3 +1,5 @@
+require "../strict_annotations"
+
 # `includes` that filters on an included association's table, and `eager_load`,
 # load the association through a JOIN in ActiveRecord: the rows that match the
 # WHERE are the rows the association holds. Grant loads associations in a second
@@ -38,6 +40,7 @@ class Grant::Query::Builder(Model)
     restrictions
   end
 
+  @[TypeOnce]
   private def referenced_where_tables : Set(String)
     tables = Set(String).new
     @where_fields.each do |field|
@@ -48,6 +51,7 @@ class Grant::Query::Builder(Model)
 
   # The WHERE conditions that refer only to *table*, safe to replay on a query
   # over that table alone.
+  @[TypeOnce]
   private def where_fields_for_table(table : String) : Array(WhereField)
     @where_fields.select do |field|
       qualifiers = qualifiers_of(field)
@@ -55,6 +59,7 @@ class Grant::Query::Builder(Model)
     end
   end
 
+  @[TypeOnce]
   private def qualifiers_of(field : WhereField) : Array(String)
     qualifiers = [] of String
     if field.is_a?(NamedTuple(join: Symbol, field: String, operator: Symbol, value: Grant::Columns::Type))
@@ -68,6 +73,7 @@ class Grant::Query::Builder(Model)
     qualifiers
   end
 
+  @[TypeOnce]
   private def scan_qualifiers(statement : String, into qualifiers : Array(String)) : Nil
     qualifiers.concat(Grant::TextMatching.qualifiers_in(statement))
   end

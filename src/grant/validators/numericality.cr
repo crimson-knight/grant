@@ -1,3 +1,5 @@
+require "../strict_annotations"
+
 module Grant::Validators
   # The number *value* stands for: a Number as is, a String that parses as
   # one, otherwise nil (NaN and infinity are not numbers here).
@@ -8,21 +10,25 @@ module Grant::Validators
   end
 
   # :nodoc:
+  @[TypeOnce]
   def self.numeric_value(value : Int) : Int64 | Float64?
     value > Int64::MAX ? value.to_f64 : value.to_i64
   end
 
   # :nodoc:
+  @[TypeOnce]
   def self.numeric_value(value : Float) : Int64 | Float64?
     value.finite? ? value.to_f64 : nil
   end
 
   # :nodoc:
+  @[TypeOnce]
   def self.numeric_value(value : Number) : Int64 | Float64?
     value.to_f64
   end
 
   # :nodoc:
+  @[TypeOnce]
   def self.numeric_value(value : String) : Int64 | Float64?
     value.strip.to_i64? || value.strip.to_f64?.try { |float| float.finite? ? float : nil }
   end
@@ -50,6 +56,7 @@ module Grant::Validators
   # other number is `:out_of_range`.
   #
   # :nodoc:
+  @[TypeOnce]
   def self.unstorable_type(number : Int64 | Float64) : Symbol
     number.is_a?(Float64) ? :not_an_integer : :out_of_range
   end

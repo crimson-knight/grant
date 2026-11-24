@@ -1,3 +1,4 @@
+# crystal: strict
 class Grant::AssociationLoader
   # Preloads a `:through` association that cannot use the plain two-hop form:
   # a through of a through, a through whose source is itself a through, or a

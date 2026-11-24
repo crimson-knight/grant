@@ -1,6 +1,8 @@
+require "../../strict_annotations"
 require "../../aggregations"
 
 module Grant::Query::Assembler
+  @[TypeBound(Model, Grant::Base)]
   abstract class Base(Model)
     include Grant::Aggregations::QueryMethods(Model)
     @placeholder : String = ""
@@ -38,6 +40,7 @@ module Grant::Query::Assembler
       fields.map { |field| select_field_sql(field) }.join(", ")
     end
 
+    @[TypeOnce]
     protected def select_field_sql(field : String) : String
       if @query.join_clauses.empty?
         quote_reserved_field(field)
@@ -48,10 +51,12 @@ module Grant::Query::Assembler
 
     # Qualifies a simple plucked model field when joins can introduce another
     # column with the same name.
+    @[TypeOnce]
     def pluck_field_sql(field : String) : String
       qualify_join_field(field, Model.quote(Model.table_name))
     end
 
+    @[TypeOnce]
     private def qualify_join_field(field : String, quoted_table_name : String) : String
       if !@query.join_clauses.empty? && Grant::TextMatching.simple_identifier?(field)
         "#{quoted_table_name}.#{Model.quote(field)}"
@@ -76,6 +81,7 @@ module Grant::Query::Assembler
       "update", "user", "using", "values", "when", "where", "window", "with",
     }
 
+    @[TypeOnce]
     private def quote_reserved_field(field : String) : String
       RESERVED_FIELD_NAMES.includes?(field.downcase) ? Model.quote(field) : field
     end
@@ -85,12 +91,14 @@ module Grant::Query::Assembler
     # ```
     # select_keyword # => "SELECT" or "SELECT DISTINCT"
     # ```
+    @[TypeOnce]
     def select_keyword : String
       @query.distinct? ? "#{select_prefix} DISTINCT" : select_prefix
     end
 
     # `SELECT`, followed by the relation's optimizer hints as one
     # `/*+ ... */` comment when it has any.
+    @[TypeOnce]
     def select_prefix : String
       hints = @query.optimizer_hint_list
       hints.empty? ? "SELECT" : "SELECT /*+ #{hints.join(" ")} */"
@@ -103,6 +111,7 @@ module Grant::Query::Assembler
     # ```
     # joins # => "INNER JOIN posts ON posts.user_id = users.id"
     # ```
+    @[TypeOnce]
     def joins : String?
       return @joins if @joins
 
@@ -205,12 +214,14 @@ module Grant::Query::Assembler
       predicate_renderer.render_where_fields(fields)
     end
 
+    @[TypeOnce]
     private def structured_field_sql(field : String) : String
       predicate_renderer.structured_field_sql(field)
     end
 
     # Rewrites raw-clause placeholders to this assembler's local bind numbering
     # and rejects mismatched argument counts before the driver sees the SQL.
+    @[TypeOnce]
     private def bind_raw_statement(statement : String, values : Array(Grant::Columns::Type)) : String
       predicate_renderer.bind_raw_statement(statement, values)
     end
@@ -263,6 +274,7 @@ module Grant::Query::Assembler
 
     # `table.column` is checked against the model's table and the joined tables,
     # then quoted; anything else follows the ordinary join qualification.
+    @[TypeOnce]
     private def order_field_sql(field : String) : String
       parts = field.split('.')
       return qualify_join_field(field, Model.quote(Model.table_name)) unless parts.size == 2 && Grant::Query::SqlExpression.identifier?(field)
@@ -275,6 +287,7 @@ module Grant::Query::Assembler
 
     # PostgreSQL and SQLite order NULLs natively; the MySQL assembler overrides
     # this because MySQL has no NULLS FIRST/LAST.
+    @[TypeOnce]
     protected def nulls_ordering_sql(field : String, keyword : String, first : Bool) : String
       "#{field} #{keyword} NULLS #{first ? "FIRST" : "LAST"}"
     end
@@ -314,6 +327,8 @@ module Grant::Query::Assembler
       [{field: field, direction: Builder::Sort::Descending}]
     end
 
+    @[Override]
+    @[TypeOnce]
     def count : (Executor::MultiValue(Model, Int64) | Executor::Value(Model, Int64))
       # Rendered first so its binds lead; the wrapped forms put it outermost.
       with_sql = with_clause
@@ -366,6 +381,7 @@ module Grant::Query::Assembler
     end
 
     # Builds a grouped count that keeps every group key in the result.
+    @[TypeOnce]
     def grouped_count : Executor::Grouped(Model)
       group_expressions = @query.group_fields.map do |expression|
         qualify_join_field(expression[:field], Model.quote(Model.table_name))
@@ -387,6 +403,8 @@ module Grant::Query::Assembler
       Executor::Grouped(Model).new(sql, group_expressions.size, numbered_parameters)
     end
 
+    @[Override]
+    @[TypeOnce]
     def first(n : Int32 = 1) : Executor::List(Model)
       sql = build_sql do |s|
         s << with_clause
@@ -405,6 +423,7 @@ module Grant::Query::Assembler
       Executor::List(Model).new sql, numbered_parameters
     end
 
+    @[Override]
     def delete
       sql = if limited_or_joined_write?
               key_sql = write_target_subquery
@@ -446,6 +465,7 @@ module Grant::Query::Assembler
       end
     end
 
+    @[Override]
     def select
       if custom_statement = Model.custom_select_statement
         return custom_select(custom_statement)
@@ -499,12 +519,14 @@ module Grant::Query::Assembler
 
     # The adapter-specific keyword(s) that prefix a SELECT to obtain its query
     # plan. Overridden per adapter (SQLite uses `EXPLAIN QUERY PLAN`).
+    @[TypeOnce]
     def explain_keyword(analyze : Bool = false) : String
       "EXPLAIN"
     end
 
     # Builds the SELECT SQL for this query (without executing it), used as the
     # statement that `explain` wraps.
+    @[TypeOnce]
     def explain_select_sql : String
       build_sql do |s|
         s << with_clause
@@ -527,6 +549,7 @@ module Grant::Query::Assembler
     # of every row is read generically (as `DB::Any`), stringified, and joined.
     # Degrades gracefully: if the adapter raises (e.g. ANALYZE unsupported), the
     # error message is returned as the plan text rather than propagating.
+    @[TypeOnce]
     def explain(analyze : Bool = false) : String
       sql = "#{explain_keyword(analyze)} #{explain_select_sql}"
       params = numbered_parameters
@@ -552,6 +575,7 @@ module Grant::Query::Assembler
       end
     end
 
+    @[Override]
     def exists? : Executor::Value(Model, Bool)
       sql = build_sql do |s|
         s << with_clause
@@ -565,6 +589,8 @@ module Grant::Query::Assembler
       Executor::Value(Model, Bool).new sql, numbered_parameters, default: false
     end
 
+    @[Override]
+    @[TypeOnce]
     def touch_all(fields : Tuple, time : Time) : Int64
       # The update timestamp columns the model declares (`updated_at`,
       # `updated_on`), `updated_at` when it declares none; values follow the
@@ -654,6 +680,7 @@ module Grant::Query::Assembler
 
     # Builds an UPDATE for a developer-controlled SET fragment while preserving
     # any relation joins, order, limit, and offset.
+    @[TypeOnce]
     def update_all_fragment_sql(assignments : String) : String
       where_clause = if limited_or_joined_write?
                        "WHERE #{Model.quote(Model.primary_name)} IN (#{write_target_subquery})"
@@ -692,6 +719,7 @@ module Grant::Query::Assembler
       end
     end
 
+    @[TypeOnce]
     def sql_operator(operator : Symbol) : String
       Grant::Query::Assembler::PredicateRenderer::OPERATORS[operator.to_s]? || operator.to_s
     end

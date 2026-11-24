@@ -1,3 +1,4 @@
+require "../strict_annotations"
 require "./builder"
 
 # Resolves association names into JOIN clauses at build time from
@@ -7,6 +8,7 @@ module Grant::Query::JoinSupport
 
   # The name a joined table is referred to by in the rest of the query: its
   # alias for `"users AS managers"`, the table name otherwise.
+  @[TypeOnce]
   def self.qualifier(table : String) : String
     Grant::TextMatching.join_qualifier(table)
   end
@@ -14,6 +16,7 @@ module Grant::Query::JoinSupport
   # Every name *clause* makes available to qualify columns with. A raw
   # fragment contributes each table (or its alias) it joins, so
   # `joins("INNER JOIN posts ON ...").where("posts.title": "x")` works.
+  @[TypeOnce]
   def self.qualifiers(clause : Clause) : Array(String)
     return [qualifier(clause[:table])] unless clause[:type] == :raw
 
@@ -21,6 +24,7 @@ module Grant::Query::JoinSupport
   end
 
   # `true` when one of *clauses* makes *name* available as a qualifier.
+  @[TypeOnce]
   def self.joins?(clauses : Array(Clause), name : String) : Bool
     clauses.any? { |clause| qualifiers(clause).includes?(name) }
   end
@@ -41,6 +45,7 @@ module Grant::Query::JoinSupport
     # Joins *association* of *owner*, reached from the table or alias
     # *owner_ref*, and returns the name the target table is known by. Naming
     # *alias_name* joins the target under that alias.
+    @[TypeOnce]
     def step(owner : Grant::Base.class, association : Symbol, type : Symbol, owner_ref : String, alias_name : String? = nil) : String
       reflection = Grant::AssociationRegistry.reflection(owner.name, association.to_s)
       if reflection && reflection.polymorphic?
@@ -90,14 +95,17 @@ module Grant::Query::JoinSupport
 
     # Joins the associations *spec* names (`:posts`, `[:a, :b]`, `{posts: :comments}`)
     # depth first, each level from the table the previous level reached.
+    @[TypeOnce]
     def nested(owner : Grant::Base.class, spec : Symbol, type : Symbol, owner_ref : String) : Nil
       step(owner, spec, type, owner_ref)
     end
 
+    @[TypeOnce]
     def nested(owner : Grant::Base.class, spec : Array, type : Symbol, owner_ref : String) : Nil
       spec.each { |item| nested(owner, item, type, owner_ref) }
     end
 
+    @[TypeOnce]
     def nested(owner : Grant::Base.class, spec : Hash | NamedTuple, type : Symbol, owner_ref : String) : Nil
       spec.each do |name, children|
         target_ref = step(owner, name, type, owner_ref)
@@ -140,14 +148,17 @@ module Grant::Query::JoinSupport
       end
     end
 
+    @[TypeOnce]
     private def add(clause : Clause) : Nil
       @added << clause unless holds?(clause)
     end
 
+    @[TypeOnce]
     private def holds?(clause : Clause) : Bool
       @existing.includes?(clause) || @added.includes?(clause)
     end
 
+    @[TypeOnce]
     private def used?(name : String) : Bool
       name == @root_table || JoinSupport.joins?(@existing, name) || JoinSupport.joins?(@added, name)
     end
@@ -155,6 +166,7 @@ module Grant::Query::JoinSupport
     # *on* with the scope of *reflection* appended, columns qualified by *ref*.
     # Values are written into the SQL as quoted literals, because a JOIN clause
     # carries no bind values.
+    @[TypeOnce]
     private def with_scope(on : String, reflection : Grant::Reflection?, ref : String, owner : Grant::Base.class) : String
       return on unless reflection && reflection.scope?
       unless Grant::AssociationRegistry.scope_renderer?(reflection.owner_name, reflection.name)
@@ -167,6 +179,7 @@ module Grant::Query::JoinSupport
       "#{on} AND (#{inline(fragment[0], fragment[1], owner)})"
     end
 
+    @[TypeOnce]
     private def inline(sql : String, values : Array(Grant::Columns::Type), owner : Grant::Base.class) : String
       return sql if values.empty?
 
@@ -190,6 +203,7 @@ module Grant::Query::JoinSupport
   # - `has_many :through`: two clauses, owner to through table to target.
   #
   # Raises `ArgumentError` if the association is unknown or polymorphic.
+  @[TypeOnce]
   def self.resolve(owner : Grant::Base.class, association : Symbol, type : Symbol, alias_name : String? = nil, existing : Array(Clause) = [] of Clause, root_table : String = owner.table_name) : Array(Clause)
     collector = Collector.new(root_table, existing)
     collector.step(owner, association, type, owner.table_name, alias_name)
@@ -205,6 +219,7 @@ module Grant::Query::JoinSupport
     collector.added
   end
 
+  @[TypeOnce]
   def self.validated_alias(name : String) : String
     unless Grant::TextMatching.simple_identifier?(name)
       raise ArgumentError.new("Join alias must be an identifier (got #{name.inspect})")
@@ -217,11 +232,13 @@ class Grant::Query::Builder(Model)
   # Adds *clause* unless the relation already joins it, so the same association
   # requested through two paths (`joins(:posts).joins(posts: :comments)`) is
   # joined once.
+  @[TypeOnce]
   protected def add_join_clause(clause : Grant::Query::JoinSupport::Clause) : Nil
     return if @join_clauses.includes?(clause)
     own_join_clauses << clause
   end
 
+  @[TypeOnce]
   protected def add_join_clauses(clauses : Array(Grant::Query::JoinSupport::Clause)) : Nil
     clauses.each { |clause| add_join_clause(clause) }
   end
@@ -233,6 +250,7 @@ class Grant::Query::Builder(Model)
   # ```
   # User.joins("INNER JOIN posts ON posts.user_id = users.id AND posts.published")
   # ```
+  @[TypeOnce]
   def joins!(sql : String) : self
     add_join_clause({type: :raw, table: "", on: Grant::Query::SqlExpression.validate!(sql, "JOIN fragment")})
     self
@@ -246,6 +264,7 @@ class Grant::Query::Builder(Model)
   # ```
   # User.joins("INNER JOIN posts ON posts.user_id = users.id AND posts.score > ?", 10)
   # ```
+  @[TypeOnce]
   def joins!(sql : String, binds : Array) : self
     validated = Grant::Query::SqlExpression.validate!(sql, "JOIN fragment")
     arguments = [] of Grant::Columns::Type
@@ -278,15 +297,18 @@ class Grant::Query::Builder(Model)
   # # User belongs_to :manager (a User)
   # User.joins(:manager, as: "managers").where("managers.name": "Ada")
   # ```
+  @[TypeOnce]
   def joins!(association : Symbol, *, as as_name : String) : self
     add_join_clauses(Grant::Query::JoinSupport.resolve(Model, association, :inner, as_name, @join_clauses))
     self
   end
 
+  @[TypeOnce]
   def joins(sql : String) : self
     chain_copy.joins!(sql)
   end
 
+  @[TypeOnce]
   def joins(sql : String, binds : Array) : self
     chain_copy.joins!(sql, binds)
   end
@@ -299,16 +321,19 @@ class Grant::Query::Builder(Model)
     chain_copy.joins!(**nested)
   end
 
+  @[TypeOnce]
   def joins(association : Symbol, *, as as_name : String) : self
     chain_copy.joins!(association, as: as_name)
   end
 
   # LEFT JOIN counterparts of `joins`. A raw fragment is emitted as written, so
   # it carries its own `LEFT OUTER JOIN` keywords.
+  @[TypeOnce]
   def left_joins!(sql : String) : self
     joins!(sql)
   end
 
+  @[TypeOnce]
   def left_joins!(sql : String, binds : Array) : self
     joins!(sql, binds)
   end
@@ -322,15 +347,18 @@ class Grant::Query::Builder(Model)
     self
   end
 
+  @[TypeOnce]
   def left_joins!(association : Symbol, *, as as_name : String) : self
     add_join_clauses(Grant::Query::JoinSupport.resolve(Model, association, :left, as_name, @join_clauses))
     self
   end
 
+  @[TypeOnce]
   def left_joins(sql : String) : self
     chain_copy.left_joins!(sql)
   end
 
+  @[TypeOnce]
   def left_joins(sql : String, binds : Array) : self
     chain_copy.left_joins!(sql, binds)
   end
@@ -343,16 +371,19 @@ class Grant::Query::Builder(Model)
     chain_copy.left_joins!(**nested)
   end
 
+  @[TypeOnce]
   def left_joins(association : Symbol, *, as as_name : String) : self
     chain_copy.left_joins!(association, as: as_name)
   end
 
   # `left_outer_joins` is ActiveRecord's name for `left_joins`; every form is
   # shared.
+  @[TypeOnce]
   def left_outer_joins!(table : String, *, on : String) : self
     left_joins!(table, on: on)
   end
 
+  @[TypeOnce]
   def left_outer_joins!(association : Symbol) : self
     left_joins!(association)
   end
@@ -361,6 +392,7 @@ class Grant::Query::Builder(Model)
     left_joins!(*associations, **nested)
   end
 
+  @[TypeOnce]
   def left_outer_joins!(sql : String) : self
     left_joins!(sql)
   end
@@ -369,14 +401,17 @@ class Grant::Query::Builder(Model)
     left_joins!(**nested)
   end
 
+  @[TypeOnce]
   def left_outer_joins!(association : Symbol, *, as as_name : String) : self
     left_joins!(association, as: as_name)
   end
 
+  @[TypeOnce]
   def left_outer_joins(table : String, *, on : String) : self
     chain_copy.left_joins!(table, on: on)
   end
 
+  @[TypeOnce]
   def left_outer_joins(association : Symbol) : self
     chain_copy.left_joins!(association)
   end
@@ -385,6 +420,7 @@ class Grant::Query::Builder(Model)
     chain_copy.left_joins!(*associations, **nested)
   end
 
+  @[TypeOnce]
   def left_outer_joins(sql : String) : self
     chain_copy.left_joins!(sql)
   end
@@ -393,6 +429,7 @@ class Grant::Query::Builder(Model)
     chain_copy.left_joins!(**nested)
   end
 
+  @[TypeOnce]
   def left_outer_joins(association : Symbol, *, as as_name : String) : self
     chain_copy.left_joins!(association, as: as_name)
   end

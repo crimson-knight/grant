@@ -1,7 +1,10 @@
+require "../strict_annotations"
+
 # Helpers used when named scopes create their model-specific relation subtype.
 class Grant::Query::Builder(Model)
   # The boolean connector is carried into a model-specific relation when a
   # named scope starts from the model's current query.
+  @[TypeOnce]
   def boolean_operator : Symbol
     @boolean_operator
   end
@@ -34,6 +37,7 @@ class Grant::Query::Builder(Model)
   # Merge a plain Builder returned by a scope without requiring the caller's
   # receiver to have the same concrete Builder subtype. Mutates the receiver;
   # callers pass a relation they own (a copy or a fresh one).
+  @[TypeOnce]
   def merge_builder(other : Grant::Query::Builder(Model)) : self
     # Same rules as `merge`: an equality on a column the other relation also
     # constrains replaces ours, and its ORDER BY is appended.

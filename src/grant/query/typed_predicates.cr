@@ -1,3 +1,4 @@
+require "../strict_annotations"
 require "json"
 require "./builder"
 require "../schema/gin_index"
@@ -19,22 +20,26 @@ class Grant::Query::Builder(Model)
   # ```
   # Post.where.array_contains(:tags, ["crystal", "orm"])
   # ```
+  @[TypeOnce]
   def array_contains!(field : Symbol | String, values : Grant::Columns::SupportedArrayTypes) : self
     add_array_predicate(field, "@>", values)
   end
 
   # Keeps rows whose array column shares at least one element with *values*
   # (`tags && ARRAY[...]`).
+  @[TypeOnce]
   def array_overlaps!(field : Symbol | String, values : Grant::Columns::SupportedArrayTypes) : self
     add_array_predicate(field, "&&", values)
   end
 
   # Keeps rows whose array column is contained in *values* (`tags <@ ARRAY[...]`).
+  @[TypeOnce]
   def array_contained_by!(field : Symbol | String, values : Grant::Columns::SupportedArrayTypes) : self
     add_array_predicate(field, "<@", values)
   end
 
   # Keeps rows whose array column holds *value* (`$1 = ANY(tags)`).
+  @[TypeOnce]
   def array_any!(field : Symbol | String, value : Grant::Columns::Type) : self
     require_array_support("array_any")
     predicate = "? = ANY(#{structured_field_sql(field.to_s)})"
@@ -50,6 +55,7 @@ class Grant::Query::Builder(Model)
   # Post.where.array_length(:tags, 3)
   # Post.where.array_length(:tags, 0, :gt)
   # ```
+  @[TypeOnce]
   def array_length!(field : Symbol | String, length : Int, operator : Symbol = :eq) : self
     require_array_support("array_length")
     sql_operator = ARRAY_LENGTH_OPERATORS[operator]? || raise ArgumentError.new("Unknown array_length operator #{operator.inspect}; use #{ARRAY_LENGTH_OPERATORS.keys.join(", ")}")
@@ -64,37 +70,44 @@ class Grant::Query::Builder(Model)
   # ```
   # Post.where(id: 1).array_append_all(:tags, "crystal")
   # ```
+  @[TypeOnce]
   def array_append_all(field : Symbol | String, value : Grant::Columns::Type) : Int64
     array_rewrite_all(field, "array_append", value)
   end
 
   # Removes every occurrence of *value* from the array column of every matching
   # row (`array_remove(tags, $1)`). Returns the rows changed.
+  @[TypeOnce]
   def array_remove_all(field : Symbol | String, value : Grant::Columns::Type) : Int64
     array_rewrite_all(field, "array_remove", value)
   end
 
   # :ditto:
+  @[TypeOnce]
   def array_length(field : Symbol | String, length : Int, operator : Symbol = :eq) : self
     dup.array_length!(field, length, operator)
   end
 
   # :ditto:
+  @[TypeOnce]
   def array_contains(field : Symbol | String, values : Grant::Columns::SupportedArrayTypes) : self
     dup.array_contains!(field, values)
   end
 
   # :ditto:
+  @[TypeOnce]
   def array_overlaps(field : Symbol | String, values : Grant::Columns::SupportedArrayTypes) : self
     dup.array_overlaps!(field, values)
   end
 
   # :ditto:
+  @[TypeOnce]
   def array_contained_by(field : Symbol | String, values : Grant::Columns::SupportedArrayTypes) : self
     dup.array_contained_by!(field, values)
   end
 
   # :ditto:
+  @[TypeOnce]
   def array_any(field : Symbol | String, value : Grant::Columns::Type) : self
     dup.array_any!(field, value)
   end
@@ -128,23 +141,27 @@ class Grant::Query::Builder(Model)
   # and a value that is not JSON raises `ArgumentError` when it is used.
   #
   # :nodoc:
+  @[TypeOnce]
   def add_json_condition(join : Symbol, field : String, conditions : Hash | NamedTuple) : Nil
     json = ::JSON.build { |builder| write_json_condition(builder, conditions) }
     add_json_containment_text(join, field, json)
   end
 
+  @[TypeOnce]
   private def write_json_condition(json : ::JSON::Builder, value : Hash | NamedTuple) : Nil
     json.object do
       value.each { |key, item| json.field(key.to_s) { write_json_condition(json, item) } }
     end
   end
 
+  @[TypeOnce]
   private def write_json_condition(json : ::JSON::Builder, value : Array | Tuple) : Nil
     json.array do
       value.each { |item| write_json_condition(json, item) }
     end
   end
 
+  @[TypeOnce]
   private def write_json_condition(json : ::JSON::Builder, value : Bool | String | Symbol | Number | Enum | Time | UUID | ::JSON::Any | ::JSON::Serializable?) : Nil
     value.to_json(json)
   end
@@ -153,6 +170,7 @@ class Grant::Query::Builder(Model)
     raise ArgumentError.new("A #{value.class} cannot be part of a JSON document condition")
   end
 
+  @[TypeOnce]
   private def add_json_containment_text(join : Symbol, field : String, json : String) : Nil
     column = structured_field_sql(field)
     case @db_type
@@ -171,6 +189,7 @@ class Grant::Query::Builder(Model)
   # True when *field* is a `JSON::Any` column of the model.
   #
   # :nodoc:
+  @[TypeOnce]
   def json_document_column?(field : String) : Bool
     {% begin %}
       case field
@@ -192,6 +211,7 @@ class Grant::Query::Builder(Model)
   # User.where.json_path(:settings, "theme", "dark")
   # User.where.json_path(:settings, %w(notifications email), true)
   # ```
+  @[TypeOnce]
   def json_path!(field : Symbol | String, path : String | Array(String), value : String | Int | Float | Bool?) : self
     column = structured_field_sql(field.to_s)
     segments = path.is_a?(String) ? path.split('.') : path
@@ -212,6 +232,7 @@ class Grant::Query::Builder(Model)
   # Keeps rows whose JSON object column has the top-level *key*
   # (`settings ? 'theme'` on PostgreSQL, `JSON_CONTAINS_PATH` on MySQL,
   # `json_type(settings, '$."theme"')` on SQLite).
+  @[TypeOnce]
   def json_has_key!(field : Symbol | String, key : String) : self
     column = structured_field_sql(field.to_s)
     case @db_type
@@ -231,17 +252,20 @@ class Grant::Query::Builder(Model)
   end
 
   # :ditto:
+  @[TypeOnce]
   def json_path(field : Symbol | String, path : String | Array(String), value : String | Int | Float | Bool?) : self
     dup.json_path!(field, path, value)
   end
 
   # :ditto:
+  @[TypeOnce]
   def json_has_key(field : Symbol | String, key : String) : self
     dup.json_has_key!(field, key)
   end
 
   ARRAY_LENGTH_OPERATORS = {eq: "=", ne: "<>", lt: "<", lte: "<=", gt: ">", gte: ">="}
 
+  @[TypeOnce]
   private def array_rewrite_all(field : Symbol | String, function : String, value : Grant::Columns::Type) : Int64
     require_array_support(function)
     return 0_i64 if is_none?
@@ -262,6 +286,7 @@ class Grant::Query::Builder(Model)
     end
   end
 
+  @[TypeOnce]
   private def add_array_predicate(field : Symbol | String, operator : String, values : Grant::Columns::SupportedArrayTypes) : self
     require_array_support("array operators")
     predicate = "#{structured_field_sql(field.to_s)} #{operator} ?"
@@ -269,6 +294,7 @@ class Grant::Query::Builder(Model)
     self
   end
 
+  @[TypeOnce]
   private def require_array_support(what : String) : Nil
     return if @db_type.pg?
     raise Grant::Schema::UnsupportedOperation.new("#{what} need PostgreSQL array columns; #{@db_type.to_s.upcase} has no array type")
@@ -309,6 +335,7 @@ class Grant::Query::Builder(Model)
 
   # `$.a[0]."b c"` for the segments `a`, `0`, `b c`: the path syntax SQLite
   # and MySQL share.
+  @[TypeOnce]
   private def json_path_expression(segments : Array(String)) : String
     String.build do |io|
       io << '$'
@@ -316,6 +343,7 @@ class Grant::Query::Builder(Model)
     end
   end
 
+  @[TypeOnce]
   private def sqlite_json_segment(segment : String) : String
     return "[#{segment}]" if segment.each_char.all?(&.ascii_number?) && !segment.empty?
     raise ArgumentError.new("Invalid JSON path segment #{segment.inspect}") if segment.includes?('"')
@@ -327,6 +355,7 @@ class Grant::Query::Builder(Model)
   # array that contains it: a scalar item compares by type and value, an object
   # or array item recurses over the element's JSON text, under its own
   # `json_each` alias (*depth* keeps the aliases of nested arrays apart).
+  @[TypeOnce]
   private def sqlite_containment(column : String, document : ::JSON::Any, path : String, clauses : Array(String), binds : Array(Grant::Columns::Type), depth : Int32) : Nil
     case raw = document.raw
     when Hash

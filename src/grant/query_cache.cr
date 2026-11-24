@@ -1,3 +1,5 @@
+require "./strict_annotations"
+
 # Query cache: memoizes the result of identical read statements inside a
 # `Grant.cache { ... }` block (or one HTTP request, with
 # `Grant::Middleware::QueryCache`), like ActiveRecord's query cache.
@@ -61,20 +63,24 @@ module Grant::QueryCache
     end
 
     # Drops every entry.
+    @[TypeOnce]
     def clear : Nil
       @entries.clear
     end
 
+    @[TypeOnce]
     def size : Int32
       @entries.size
     end
 
     # :nodoc:
+    @[TypeOnce]
     def record_hit : Nil
       @hits += 1
     end
 
     # :nodoc:
+    @[TypeOnce]
     def record_miss : Nil
       @misses += 1
     end
@@ -83,22 +89,26 @@ module Grant::QueryCache
   # Marks that data may have changed; every fiber's cache empties on its next
   # read. Called by the adapter around each statement that is not a plain read
   # and whenever a transaction begins, commits or rolls back.
+  @[TypeOnce]
   def self.invalidate! : Nil
     @@generation.add(1_u64)
   end
 
   # The number of times `invalidate!` ran; a cache entry is only trusted while
   # this is unchanged.
+  @[TypeOnce]
   def self.generation : UInt64
     @@generation.get
   end
 
   # The current fiber's cache, or `nil` outside a `cache` block.
+  @[TypeOnce]
   def self.current? : State?
     Fiber.current.grant_query_cache
   end
 
   # True inside a `cache` block that is not shadowed by `uncached`.
+  @[TypeOnce]
   def self.enabled? : Bool
     current?.try(&.enabled?) || false
   end
@@ -186,6 +196,7 @@ module Grant::QueryCache
     result
   end
 
+  @[TypeOnce]
   private def self.connection_id(adapter : Grant::Adapter::Base) : UInt64
     connection = Grant::SchemaTenant.current_connection?(adapter) ||
                  Grant::Transaction.current_connection?(adapter) ||
@@ -204,6 +215,7 @@ module Grant::QueryCache
     end
 
     # True while a query cache answers this fiber's reads.
+    @[TypeOnce]
     def query_cache_enabled? : Bool
       Grant::QueryCache.enabled?
     end

@@ -1,3 +1,4 @@
+require "./strict_annotations"
 require "./connection_registry"
 require "./connection_context"
 require "./connection_handling"
@@ -21,6 +22,7 @@ module Grant::ConnectionManagement
   # explicit writing role) still lifts that owner's prevention.
   #
   # :nodoc:
+  @[TypeOnce]
   def self.preventing_writes? : Bool
     return false unless state = ConnectionState.current?
 
@@ -36,6 +38,7 @@ module Grant::ConnectionManagement
   end
 
   # :nodoc:
+  @[TypeOnce]
   def self.guard_writes! : Nil
     return unless preventing_writes?
 
@@ -47,16 +50,19 @@ module Grant::ConnectionManagement
   # role.
   #
   # :nodoc:
+  @[TypeOnce]
   def self.canonical_role(role : Symbol) : Symbol
     role == :primary ? Grant.settings.writing_role : role
   end
 
   # :nodoc:
+  @[TypeOnce]
   def self.reading_role?(role : Symbol) : Bool
     canonical_role(role) == Grant.settings.reading_role
   end
 
   # :nodoc:
+  @[TypeOnce]
   def self.writing_role?(role : Symbol) : Bool
     canonical_role(role) == Grant.settings.writing_role
   end
@@ -67,6 +73,7 @@ module Grant::ConnectionManagement
   # connection established without a role.
   #
   # :nodoc:
+  @[TypeOnce]
   def self.registry_role(role : Symbol) : Symbol
     settings = Grant.settings
     role = canonical_role(role)
@@ -104,7 +111,8 @@ module Grant::ConnectionManagement
     # ```
     # tracker.mark_write
     # ```
-    def mark_write
+    @[TypeOnce]
+    def mark_write : Bool
       @last_write_time = Time.instant
       @written = true
     end
@@ -125,6 +133,7 @@ module Grant::ConnectionManagement
     # ```
     # tracker.can_use_replica?(2.seconds) # => true once 2s have passed write-free
     # ```
+    @[TypeOnce]
     def can_use_replica?(wait_period : Time::Span) : Bool
       now = Time.instant
 
@@ -173,11 +182,13 @@ module Grant::ConnectionManagement
   # The lag threshold a model uses until it sets its own.
   #
   # :nodoc:
+  @[TypeOnce]
   def self.default_replica_lag_threshold : Time::Span
     2.seconds
   end
 
   # :nodoc:
+  @[TypeOnce]
   def self.replica_lag_threshold(model_name : String) : Time::Span
     @@replica_lag_mutex.synchronize do
       @@replica_lag_thresholds[model_name]? || default_replica_lag_threshold
@@ -185,6 +196,7 @@ module Grant::ConnectionManagement
   end
 
   # :nodoc:
+  @[TypeOnce]
   def self.store_replica_lag_threshold(model_name : String, threshold : Time::Span) : Time::Span
     @@replica_lag_mutex.synchronize do
       @@replica_lag_thresholds[model_name] = threshold
@@ -561,6 +573,7 @@ module Grant::ConnectionManagement
     #   User.guard_writes! # raises Grant::Transaction::ReadOnlyError
     # end
     # ```
+    @[TypeOnce]
     def guard_writes! : Nil
       if preventing_writes?
         raise Grant::Transaction::ReadOnlyError.new(
@@ -576,7 +589,8 @@ module Grant::ConnectionManagement
     # ```
     # User.connection_switch_wait_period # => 2000
     # ```
-    def connection_switch_wait_period
+    @[TypeOnce]
+    def connection_switch_wait_period : Int32
       Grant::Connections.connection_switch_wait_period
     end
 
@@ -718,6 +732,7 @@ module Grant::ConnectionManagement
     # User.connected_to?(role: :reading) # => true
     # User.reset_connecting_to
     # ```
+    @[TypeOnce]
     def connecting_to(
       database : String? = nil,
       role : Symbol? = nil,
@@ -731,6 +746,7 @@ module Grant::ConnectionManagement
 
     # Removes every context `#connecting_to` or `#connected_to` created for this
     # class in the current fiber.
+    @[TypeOnce]
     def reset_connecting_to : Nil
       self.connection_context = nil
     end
@@ -743,6 +759,7 @@ module Grant::ConnectionManagement
     # User.connected_to?(role: :reading)                                       # => false
     # User.connected_to(role: :reading) { User.connected_to?(role: :reading) } # => true
     # ```
+    @[TypeOnce]
     def connected_to?(role : Symbol? = nil, shard : Symbol? = nil) : Bool
       raise ArgumentError.new("connected_to? needs a role or a shard") if role.nil? && shard.nil?
 
@@ -779,6 +796,7 @@ module Grant::ConnectionManagement
     end
 
     # Returns `true` while `#prohibit_shard_swapping` is active in this fiber.
+    @[TypeOnce]
     def shard_swapping_prohibited? : Bool
       return false unless state = ConnectionState.current?
 
@@ -786,12 +804,14 @@ module Grant::ConnectionManagement
     end
 
     # Shard names declared with `connects_to(shards: ...)`, in declaration order.
+    @[TypeOnce]
     def shard_keys : Array(Symbol)
       shard_config.keys
     end
 
     # The shard an unsharded connection counts as: `:default` when declared,
     # otherwise the first declared shard, otherwise `:default`.
+    @[TypeOnce]
     def default_shard : Symbol
       return :default if shard_config.has_key?(:default)
 
@@ -799,12 +819,14 @@ module Grant::ConnectionManagement
     end
 
     # Returns `true` when `connects_to(shards: ...)` declared any shard.
+    @[TypeOnce]
     def sharded? : Bool
       !shard_config.empty?
     end
 
     # Every connection name this class's `connects_to` reaches, with the role
     # and shard each one serves.
+    @[TypeOnce]
     def connection_names : Array({String, Symbol, Symbol?})
       names = [] of {String, Symbol, Symbol?}
       if connection_config.empty? && shard_config.empty?
@@ -820,10 +842,12 @@ module Grant::ConnectionManagement
     # Raises `Grant::UnestablishedConnectionError` when a connection this class
     # declares is not established; call it at boot to fail early rather than at
     # the first query. See `Grant::ConnectionHandling.verify!`.
+    @[TypeOnce]
     def verify_connections! : Nil
       Grant::ConnectionHandling.verify!(name, connection_names)
     end
 
+    @[TypeOnce]
     private def build_connection_context(
       database : String?,
       role : Symbol?,
@@ -860,6 +884,7 @@ module Grant::ConnectionManagement
     # User.current_database                                              # => "primary"
     # User.connected_to(database: "analytics") { User.current_database } # => "analytics"
     # ```
+    @[TypeOnce]
     def current_database : String
       connection_context_database || default_database_name
     end
@@ -872,6 +897,7 @@ module Grant::ConnectionManagement
     # User.current_role                                       # => :primary
     # User.connected_to(role: :reading) { User.current_role } # => :reading
     # ```
+    @[TypeOnce]
     def current_role : Symbol
       return Grant.settings.reading_role if should_use_reader?
       connection_context.try(&.role) || :primary
@@ -885,6 +911,7 @@ module Grant::ConnectionManagement
     # User.current_shard                                          # => nil
     # User.connected_to(shard: :shard_two) { User.current_shard } # => :shard_two
     # ```
+    @[TypeOnce]
     def current_shard : Symbol?
       connection_context.try(&.shard)
     end
@@ -897,6 +924,7 @@ module Grant::ConnectionManagement
     # User.preventing_writes?                                  # => false
     # User.while_preventing_writes { User.preventing_writes? } # => true
     # ```
+    @[TypeOnce]
     def preventing_writes? : Bool
       connection_context.try(&.prevent_writes) || false
     end
@@ -932,6 +960,7 @@ module Grant::ConnectionManagement
     # User.adapter                                       # => the primary adapter
     # User.connected_to(role: :reading) { User.adapter } # => the replica adapter
     # ```
+    @[TypeOnce]
     def adapter : Grant::Adapter::Base
       resolve_adapter_for_role(current_role)
     end
@@ -941,6 +970,7 @@ module Grant::ConnectionManagement
     # the model's own database registered under that shard. `Sharding::Model`
     # resolves its shard from the data and calls this. It never falls back to
     # another registered connection.
+    @[TypeOnce]
     def adapter_for_shard(shard : Symbol, role : Symbol = current_role) : Grant::Adapter::Base
       resolve_adapter_for_role(role, shard, fallback: false)
     end
@@ -949,10 +979,12 @@ module Grant::ConnectionManagement
     # An active `connected_to` role takes precedence, matching the surrounding
     # connection context; otherwise *role* selects the model's configured
     # writer or reader.
+    @[TypeOnce]
     def connection_adapter(role : Symbol) : Grant::Adapter::Base
       resolve_adapter_for_role(connection_context.try(&.role) || role)
     end
 
+    @[TypeOnce]
     private def resolve_adapter_for_role(role : Symbol, shard : Symbol? = current_shard, fallback : Bool = true) : Grant::Adapter::Base
       registry_role = Grant::ConnectionManagement.registry_role(role)
       configured_role = Grant::ConnectionManagement.canonical_role(role)
@@ -1009,6 +1041,7 @@ module Grant::ConnectionManagement
       end
     end
 
+    @[TypeOnce]
     private def registered_for_shard?(database : String, registry_role : Symbol, shard : Symbol) : Bool
       registry = Grant::ConnectionRegistry
       registry.connection_exists?(database, registry_role, shard) ||
@@ -1019,6 +1052,7 @@ module Grant::ConnectionManagement
     # Returns a raw connection facade for this model. Connection calls do not
     # apply `default_scope`; model-level raw methods enforce the explicit
     # `unscoped` rule before using this facade.
+    @[TypeOnce]
     def connection : Grant::Connection
       Grant::Connection.new(
         ->(role : Symbol) do
@@ -1040,6 +1074,7 @@ module Grant::ConnectionManagement
     # User.create(name: "Ada")
     # User.last_write_time # => a monotonic Time::Instant just recorded
     # ```
+    @[TypeOnce]
     def last_write_time : Time::Instant
       key = replica_tracker_key
       with_replica_lag_tracker(key, &.last_write_time)
@@ -1054,6 +1089,7 @@ module Grant::ConnectionManagement
     # User.adapter.open { |db| db.exec("UPDATE users SET ...") }
     # User.mark_write_operation # tell the splitter a write happened
     # ```
+    @[TypeOnce]
     def mark_write_operation : Nil
       key = replica_tracker_key
       with_replica_lag_tracker(key, &.mark_write)
@@ -1067,12 +1103,14 @@ module Grant::ConnectionManagement
     # User.stick_to_primary(10.seconds)
     # User.where(active: true).select # served by the primary for the next 10s
     # ```
+    @[TypeOnce]
     def stick_to_primary(duration : Time::Span = 5.seconds) : Nil
       key = replica_tracker_key
       with_replica_lag_tracker(key) { |tracker| tracker.stick_to_primary(duration) }
     end
 
     # Check if should use reader with enhanced logic
+    @[TypeOnce]
     private def should_use_reader? : Bool
       # Only use reader if:
       # 1. We have a reading role configured
@@ -1099,6 +1137,7 @@ module Grant::ConnectionManagement
     end
 
     # Get key for replica tracker
+    @[TypeOnce]
     private def replica_tracker_key : String
       if shard = current_shard
         "#{current_database}:#{shard}"

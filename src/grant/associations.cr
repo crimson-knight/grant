@@ -1,3 +1,4 @@
+# crystal: strict
 require "./association_registry"
 require "./association_writers"
 require "./reflection"

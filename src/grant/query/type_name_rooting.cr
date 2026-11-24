@@ -1,3 +1,4 @@
+# crystal: strict
 # The three substitutions that put `::` in front of every type name in the
 # text of a type, so `Array(Tuple(Connection, Int64))` written inside `Grant`
 # names `::Connection` and not `Grant::Connection`. A named-tuple key

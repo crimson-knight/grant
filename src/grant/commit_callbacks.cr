@@ -1,3 +1,7 @@
+# crystal: strict
+
+require "./strict_annotations"
+
 # Transaction-aware commit/rollback callbacks (ActiveRecord-compatible).
 #
 # The `after_commit`, `after_rollback`, and the per-operation
@@ -149,7 +153,7 @@ module Grant::CommitCallbacks
 
   # Queue a callback symbol for this instance (used internally after save/destroy).
   # A queued create or update commit also queues `after_save_commit`.
-  private def queue_commit_callback(callback_name : Symbol)
+  private def queue_commit_callback(callback_name : Symbol) : Array(Symbol)?
     _pending_commit_callbacks << callback_name
     if callback_name == :after_create_commit || callback_name == :after_update_commit
       _pending_commit_callbacks << :after_save_commit
@@ -183,7 +187,8 @@ module Grant::CommitCallbacks
   # If there is NO explicit transaction open (implicit single-operation
   # transaction) the callbacks are fired immediately, preserving the
   # pre-existing behaviour.
-  private def run_commit_callbacks
+  @[TypeOnce]
+  private def run_commit_callbacks : Nil
     return if _pending_commit_callbacks.empty?
 
     commit_bits = 0_u8
@@ -311,7 +316,7 @@ module Grant::CommitCallbacks
 
   # Clears pending instance-level queued callbacks (used when an operation
   # fails before run_commit_callbacks is reached).
-  private def clear_commit_callbacks
+  private def clear_commit_callbacks : Array(Symbol)
     _pending_commit_callbacks.clear
   end
 
@@ -319,7 +324,7 @@ module Grant::CommitCallbacks
   # implicit per-save rollback is signalled via after_rollback.  When inside
   # an explicit transaction this is a no-op: the transaction's own rollback
   # path will fire after_rollback for all pending instances at once.
-  private def run_rollback_callbacks
+  private def run_rollback_callbacks : Nil
     clear_commit_callbacks
     unless Grant::Transaction.in_explicit_transaction?
       dispatch_rollback_callbacks(ACTION_DESTROY)

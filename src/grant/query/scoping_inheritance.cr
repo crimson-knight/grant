@@ -1,3 +1,4 @@
+require "../strict_annotations"
 require "./builder"
 
 # What `Model.scoping { }` applies beyond the relation's own model: subclasses
@@ -53,6 +54,8 @@ abstract class Grant::Scoping::ScopeEntry
 end
 
 class Grant::Scoping::RelationEntry(Model) < Grant::Scoping::ScopeEntry
+  @[Override]
+  @[TypeOnce]
   def foreign_relation : Grant::Query::ForeignRelation?
     other = @relation
     Grant::Query::ForeignRelation.new(
@@ -68,6 +71,8 @@ end
 class Grant::Scoping::UnscopedEntry < Grant::Scoping::ScopeEntry
   # An `unscoped { }` block hides the scope of the model it names, and with it
   # whatever a parent class scoped.
+  @[Override]
+  @[TypeOnce]
   def foreign_relation : Grant::Query::ForeignRelation?
     nil
   end
@@ -111,6 +116,7 @@ module Grant::Scoping
   end
 
   # True when a `scoping { }` block of this fiber covers a model in *lineage*.
+  @[TypeOnce]
   def self.covers?(lineage : Array(String)) : Bool
     stacks = Fiber.current.grant_scoping_stacks
     return false unless stacks

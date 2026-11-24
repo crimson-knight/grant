@@ -1,3 +1,5 @@
+require "./strict_annotations"
+
 module Grant
   # Keys for routes and caches: `to_key`, `to_param`, `cache_key`,
   # `cache_version` and `cache_key_with_version`, plus the `to_param :column`
@@ -17,6 +19,7 @@ module Grant
     module ClassMethods
       # A key for the relation of all rows, `"users/query-<digest>-<count>-<newest updated_at>"`.
       # One aggregate query (COUNT and MAX(updated_at)), no records loaded.
+      @[TypeOnce]
       def collection_cache_key : String
         current_scope.collection_cache_key
       end
@@ -39,6 +42,7 @@ module Grant
     end
 
     # The primary key values as an array, or nil while any is unset.
+    @[TypeOnce]
     def to_key : Array(Grant::Columns::Type)?
       values = primary_key_values.values
       return if values.empty? || values.any?(Nil)
@@ -47,6 +51,7 @@ module Grant
 
     # The key for URLs: the primary key values joined with `-`, or nil for a
     # record that is not persisted.
+    @[TypeOnce]
     def to_param : String?
       return unless persisted?
       key = to_key
@@ -54,6 +59,7 @@ module Grant
     end
 
     # `"users/1"`, or `"users/new"` before the record is saved.
+    @[TypeOnce]
     def cache_key : String
       key = to_key
       if new_record? || key.nil?
@@ -77,6 +83,7 @@ module Grant
     end
 
     # `cache_key` followed by `-` and the `cache_version`, when there is one.
+    @[TypeOnce]
     def cache_key_with_version : String
       version = cache_version
       version ? "#{cache_key}-#{version}" : cache_key
@@ -92,6 +99,7 @@ class Grant::Query::Builder(Model)
   # ```
   # User.where(active: true).collection_cache_key
   # ```
+  @[TypeOnce]
   def collection_cache_key : String
     "#{cache_key}-#{cache_version}"
   end

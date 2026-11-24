@@ -1,9 +1,12 @@
+require "./strict_annotations"
+
 module Grant::Aggregations
   module ClassMethods
     # Sum the values of a specific column. Integer columns sum to `Int64`, float
     # columns to `Float64`, anything else (an expression, a joined column) to
     # `Int64` or `BigDecimal`. Raises `ArgumentError` on a grouped scope; use
     # `group(...).sum(...)` on a relation for the per-group `Hash`.
+    @[TypeOnce]
     def sum(column : Symbol | String) : Grant::Query::Builder::SumValue
       result = current_scope.sum(column)
       raise ArgumentError.new("sum on a grouped scope returns a Hash per group; call it on the relation") if result.is_a?(Hash)
@@ -11,6 +14,7 @@ module Grant::Aggregations
     end
 
     # Calculate average of a specific column
+    @[TypeOnce]
     def avg(column : Symbol | String) : Float64?
       result = current_scope.avg(column)
       raise ArgumentError.new("avg on a grouped scope returns a Hash per group; call it on the relation") if result.is_a?(Hash)
@@ -24,38 +28,45 @@ module Grant::Aggregations
     end
 
     # ActiveRecord-compatible name for `avg`.
+    @[TypeOnce]
     def average(column : Symbol | String) : Float64?
       avg(column)
     end
 
     # Find minimum value of a specific column
+    @[TypeOnce]
     def min(column : Symbol | String) : Grant::Columns::Type
       result = current_scope.min(column)
       raise ArgumentError.new("min on a grouped scope returns a Hash per group; call it on the relation") if result.is_a?(Hash)
       result
     end
 
+    @[TypeOnce]
     def minimum(column : Symbol | String) : Grant::Columns::Type
       min(column)
     end
 
     # Find maximum value of a specific column
+    @[TypeOnce]
     def max(column : Symbol | String) : Grant::Columns::Type
       result = current_scope.max(column)
       raise ArgumentError.new("max on a grouped scope returns a Hash per group; call it on the relation") if result.is_a?(Hash)
       result
     end
 
+    @[TypeOnce]
     def maximum(column : Symbol | String) : Grant::Columns::Type
       max(column)
     end
 
     # Pluck values from a specific column
+    @[TypeOnce]
     def pluck(column : Symbol | String) : Array(Grant::Columns::Type)
       current_scope.pluck(column).map(&.first)
     end
 
     # Pick the first value from a specific column
+    @[TypeOnce]
     def pick(column : Symbol | String) : Grant::Columns::Type?
       query = current_scope
       if query.order_fields.empty?
@@ -65,6 +76,7 @@ module Grant::Aggregations
     end
 
     # Get the last record
+    @[TypeOnce]
     def last : self?
       current_scope.last
     end
@@ -77,6 +89,7 @@ module Grant::Aggregations
 
   # Module for query builder aggregation methods
   module QueryMethods(Model)
+    @[TypeOnce]
     private def aggregate_field(column : Symbol | String) : String
       field = column.to_s
       if @query.join_clauses.any?
@@ -100,6 +113,7 @@ module Grant::Aggregations
     #   returns a double precision number; `:none` leaves the driver type.
     # - *distinct* aggregates over distinct values (`SUM(DISTINCT x)`,
     #   `COUNT(DISTINCT x)`), never over a subquery of full rows.
+    @[TypeOnce]
     def aggregate_sql(function : String, column : String, cast : Symbol = :none, distinct : Bool = false) : String
       keyword = distinct ? "DISTINCT " : ""
 
@@ -150,6 +164,7 @@ module Grant::Aggregations
       end
     end
 
+    @[TypeOnce]
     private def aggregate_expression(function : String, argument : String, cast : Symbol) : String
       expression = "#{function}(#{argument})"
       case cast
@@ -160,17 +175,20 @@ module Grant::Aggregations
     end
 
     # The type name `CAST(... AS type)` uses to return text. Adapters override.
+    @[TypeOnce]
     protected def text_cast_type : String
       "TEXT"
     end
 
     # *expression* as a double precision number. Adapters override.
+    @[TypeOnce]
     protected def double_cast_sql(expression : String) : String
       "CAST(#{expression} AS DOUBLE PRECISION)"
     end
 
     # A column name, `table.column` of the model or a joined table, or a trusted
     # SQL expression such as `price * quantity`. `*` stays as written.
+    @[TypeOnce]
     private def aggregate_column_sql(column : String) : String
       return "*" if column == "*"
 
@@ -190,6 +208,7 @@ module Grant::Aggregations
     end
 
     # Pluck with query conditions
+    @[TypeOnce]
     def pluck(column : Symbol | String) : Array(Grant::Columns::Type)
       results = [] of Grant::Columns::Type
       sql = build_sql do |s|
@@ -216,6 +235,7 @@ module Grant::Aggregations
     end
 
     # Pick with query conditions
+    @[TypeOnce]
     def pick(column : Symbol | String) : Grant::Columns::Type?
       sql = build_sql do |s|
         s << "SELECT #{aggregate_field(column)}"
@@ -240,6 +260,7 @@ module Grant::Aggregations
     end
 
     # Last with query conditions
+    @[TypeOnce]
     def last : Model?
       # Reverse the order for last
       reverse_order = @order_fields.map { |field| Grant::Query::OrderSupport.reverse(field) }
@@ -260,6 +281,7 @@ module Grant::Aggregations
     end
 
     # Last! with query conditions
+    @[TypeOnce]
     def last! : Model
       last || raise Grant::Querying::NotFound.new("No record found")
     end

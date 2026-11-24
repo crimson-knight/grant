@@ -1,3 +1,5 @@
+require "../strict_annotations"
+
 module Grant
   # Raised when an index hint cannot be honored and
   # `Grant.settings.index_hint_mode` is `:strict`.
@@ -75,6 +77,7 @@ class Grant::Query::Builder(Model)
   # User.where(tenant_id: t).index_hints?                    # => false
   # User.where(tenant_id: t).use_index("idx_t").index_hints? # => true
   # ```
+  @[TypeOnce]
   def index_hints? : Bool
     !@index_hints.empty?
   end
@@ -214,6 +217,7 @@ module Grant::Query::Assembler
     # Renders the adapter-specific index-hint SQL, or nil if there is no hint /
     # it degrades. In `:strict` mode, an unsupported hint raises
     # `Grant::UnsupportedIndexHintError`.
+    @[TypeOnce]
     def index_hint_sql : String?
       hints = @query.index_hints
       return if hints.empty?

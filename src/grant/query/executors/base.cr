@@ -1,5 +1,8 @@
+require "../../strict_annotations"
+
 module Grant::Query::Executor
   module Shared
+    @[TypeOnce]
     def raw_sql : String
       @sql
     end
@@ -17,7 +20,8 @@ module Grant::Query::Executor
       Grant::Logs::SQL.debug { "Query prepared - #{sql} [#{model_name}] [args: #{args.size}]" }
     end
 
-    def log_query_with_timing(sql : String, args : Array(Grant::Columns::Type), duration : Time::Span, row_count : Int32? = nil, model_name : String? = nil)
+    @[TypeOnce]
+    def log_query_with_timing(sql : String, args : Array(Grant::Columns::Type), duration : Time::Span, row_count : Int32? = nil, model_name : String? = nil) : Nil
       duration_ms = duration.total_milliseconds
 
       # Log as warning if query is slow (> 100ms)

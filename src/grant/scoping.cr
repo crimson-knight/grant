@@ -1,3 +1,5 @@
+require "./strict_annotations"
+
 # Named scopes and default scopes for Grant models.
 #
 # A **named scope** (`scope`) defines a reusable class method that returns a
@@ -52,12 +54,14 @@ module Grant::Scoping
 
   # Tracks unscoped blocks per model and fiber so one request cannot disable
   # another request's default scope.
+  @[TypeOnce]
   def self.unscoped?(model_name : String) : Bool
     @@unscoped_mutex.synchronize do
       @@unscoped_fibers[{Fiber.current, model_name}]? == 1
     end
   end
 
+  @[TypeOnce]
   def self.set_unscoped(model_name : String, value : Bool) : Nil
     @@unscoped_mutex.synchronize do
       key = {Fiber.current, model_name}
@@ -255,6 +259,7 @@ module Grant::Scoping
   end
 
   # :nodoc:
+  @[TypeOnce]
   def __ensure_current_tenant! : Nil
   end
 
@@ -273,6 +278,7 @@ module Grant::Scoping
   end
 
   module ClassMethods
+    @[TypeOnce]
     def _has_default_scope? : Bool
       false
     end
@@ -282,28 +288,34 @@ module Grant::Scoping
     end
 
     # :nodoc:
+    @[TypeOnce]
     def __sti_model? : Bool
       false
     end
 
+    @[TypeOnce]
     def sti_root_class? : Bool
       true
     end
 
+    @[TypeOnce]
     def sti_names_for_query : Array(String)
       [] of String
     end
 
+    @[TypeOnce]
     def inheritance_column : String
       "type"
     end
 
     # :nodoc:
+    @[TypeOnce]
     def __multitenant? : Bool
       false
     end
 
     # :nodoc:
+    @[TypeOnce]
     def __tenant_write_scope : Grant::Query::Builder(self)
       unscoped
     end
@@ -317,6 +329,7 @@ module Grant::Scoping
     # a conflicting row that belongs to another tenant is left alone. Nil for
     # models without tenancy.
     # :nodoc:
+    @[TypeOnce]
     def __bulk_tenant_guard_column : String?
       nil
     end
@@ -324,6 +337,7 @@ module Grant::Scoping
     # Fallback for Grant::Base itself. Concrete model classes generate their
     # own version in Grant::Base's inherited hook so default scopes and STI
     # filters use a builder specialized for that model.
+    @[TypeOnce]
     def current_scope : Grant::Query::Builder(self)
       db_type = if adapter.postgres?
                   Grant::Query::Builder::DbType::Pg
@@ -572,6 +586,7 @@ module Grant::Scoping
 
     # Deletes the rows with the given primary keys with one `DELETE ... IN`,
     # skipping callbacks. Returns the number of rows deleted.
+    @[TypeOnce]
     def delete(ids : Array) : Int64
       guard_writes!
       return 0_i64 if ids.empty?
@@ -590,6 +605,7 @@ module Grant::Scoping
     # Post.all.where(published: true) # still lazy
     # Post.all.to_a                   # => Array(Post), default scope applied
     # ```
+    @[TypeOnce]
     def all : Grant::Query::Builder(self)
       current_scope
     end
@@ -610,20 +626,24 @@ module Grant::Scoping
 
     # Returns one matching record, or up to *count* records, from the current
     # scope, with no `ORDER BY`.
+    @[TypeOnce]
     def take : self?
       current_scope.take
     end
 
+    @[TypeOnce]
     def take(count : Int32) : Array(self)
       current_scope.take(count)
     end
 
     # Like `take`, but raises `Grant::Querying::NotFound` when there is no row.
+    @[TypeOnce]
     def take! : self
       current_scope.take!
     end
 
     # Returns the last *count* records of the current scope in ascending order.
+    @[TypeOnce]
     def last(count : Int32) : Array(self)
       current_scope.last(count)
     end
@@ -643,6 +663,7 @@ module Grant::Scoping
     # Column names that order an unordered relation for `first`, `last`, the
     # ordinal finders and `find_each`, ahead of the primary key. Empty unless
     # the model declares `implicit_order_column`.
+    @[TypeOnce]
     def implicit_order_columns : Array(String)
       [] of String
     end

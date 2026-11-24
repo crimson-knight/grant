@@ -1,3 +1,4 @@
+require "../strict_annotations"
 require "./builder"
 require "../locking/clause"
 
@@ -13,6 +14,7 @@ class Grant::Query::Builder(Model)
   # Build the *clause* with `Grant::Locking.clause`, which accepts only
   # literals and constants. SQLite has no row locks, so the clause is dropped
   # there.
+  @[TypeOnce]
   def lock!(clause : Grant::Locking::Clause) : self
     reset_load_state
     @lock_mode = nil
@@ -22,11 +24,13 @@ class Grant::Query::Builder(Model)
 
   # `lock(true)` is `lock`; `lock(false)` clears any lock, including one
   # inherited from a scope.
+  @[TypeOnce]
   def lock!(enabled : Bool) : self
     enabled ? lock! : unlock!
   end
 
   # Drops any row lock the relation carries. Returns `self`.
+  @[TypeOnce]
   def unlock! : self
     reset_load_state
     @lock_mode = nil
@@ -34,19 +38,23 @@ class Grant::Query::Builder(Model)
     self
   end
 
+  @[TypeOnce]
   def lock(clause : Grant::Locking::Clause) : self
     chain_copy.lock!(clause)
   end
 
+  @[TypeOnce]
   def lock(enabled : Bool) : self
     chain_copy.lock!(enabled)
   end
 
+  @[TypeOnce]
   def unlock : self
     chain_copy.unlock!
   end
 
   # True when the relation carries a row lock of either kind.
+  @[TypeOnce]
   def locked? : Bool
     !@lock_mode.nil? || !@lock_clause.nil?
   end
@@ -55,6 +63,7 @@ class Grant::Query::Builder(Model)
   # without row locks (SQLite) render nothing for either.
   #
   # :nodoc:
+  @[TypeOnce]
   def lock_sql(adapter : Grant::Adapter::Base) : String?
     if mode = @lock_mode
       mode.to_sql(adapter)

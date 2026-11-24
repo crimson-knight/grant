@@ -1,3 +1,5 @@
+require "../../strict_annotations"
+
 # FROM-source and WITH rendering. Both draw their bind values from this
 # assembler's numbering, so a subquery's or CTE's `$n` come before the main
 # query's and a nested SELECT never restarts at `$1`.
@@ -12,6 +14,7 @@ module Grant::Query::Assembler
     # of the statement it is nested in.
     #
     # :nodoc:
+    @[TypeOnce]
     def share_parameters(params : Array(Grant::Columns::Type)) : Nil
       @numbered_parameters = params
     end
@@ -20,6 +23,7 @@ module Grant::Query::Assembler
     # assembler's numbering and records *binds*.
     #
     # :nodoc:
+    @[TypeOnce]
     def bind_fragment(sql : String, binds : Array(Grant::Columns::Type)) : String
       bind_raw_statement(sql, binds)
     end

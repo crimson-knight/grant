@@ -1,3 +1,4 @@
+# crystal: strict
 module Grant::ValidationHelpers
   # Validates that *field*'s value is NOT one of *excluded_values* (the inverse
   # of `validate_is_valid_choice`).

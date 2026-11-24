@@ -1,3 +1,4 @@
+require "./strict_annotations"
 require "./error"
 require "./adapter/schema"
 
@@ -93,6 +94,7 @@ module Grant::Migrator
       create
     end
 
+    @[TypeOnce]
     private def check_protected_environment!(force : Bool, environment : String?, protected_environments : Array(String)) : Nil
       return if force
       metadata = Grant::Schema::InternalMetadata.new(Model.adapter)
@@ -227,6 +229,7 @@ module Grant::Migrator
 
     # Every statement that creates the table: `#create_sql`, then on PostgreSQL
     # the `COMMENT ON` statements for the table and its commented columns.
+    @[TypeOnce]
     def create_statements(if_not_exists : Bool = false, temporary : Bool = false, comment : String? = nil) : Array(String)
       statements = [create_sql(if_not_exists, temporary, comment)]
       if dialect.pg?
@@ -251,15 +254,18 @@ module Grant::Migrator
       Model.adapter.reset_schema_caches!(Model.table_name.rpartition('.').last)
     end
 
+    @[TypeOnce]
     private def dialect : Grant::Schema::Dialect
       Grant::Schema::Dialect.for(Model.adapter)
     end
 
+    @[TypeOnce]
     private def native_type(key : String) : String
       Grant::Schema::TypeCatalog.lookup(Model.adapter, key) ||
         raise Grant::Schema::UnsupportedOperation.new("Migrator(#{Model.adapter.class.name}) doesn't support '#{key}' yet.")
     end
 
+    @[TypeOnce]
     private def column_comments : Array({String, String})
       list = [] of {String, String}
       {% for ivar in Model.instance_vars.select { |iv| (a = iv.annotation(Grant::Column)) && a[:comment] } %}
@@ -270,12 +276,14 @@ module Grant::Migrator
 
     # The created_at/updated_at type with the `precision:` of the `timestamps`
     # macro: fractional digits on PostgreSQL and MySQL (SQLite stores text).
+    @[TypeOnce]
     private def stamped_type(type : String, precision : Int32?) : String
       return type if precision.nil? || dialect.sqlite?
       dialect.mysql? ? type.gsub("(6)", "(#{precision})") : Grant::TextMatching.replace_leading_timestamp(type, "TIMESTAMP(#{precision})")
     end
 
     # One column definition line, without its trailing newline.
+    @[TypeOnce]
     private def column_line(name : String, key : String, verbatim : String?, timestamp : Bool, nilable : Bool,
                             null : Bool?, primary : Bool, limit : Int32?, precision : Int32?, scale : Int32?,
                             comment : String?, collation : String?, default_sql : String?, literal_default : String) : String

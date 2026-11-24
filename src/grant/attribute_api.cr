@@ -1,3 +1,5 @@
+require "./strict_annotations"
+
 # Metadata `attribute` records for each declared attribute. Declared outside
 # `Grant::AttributeApi` so the name does not enter every model's namespace.
 alias Grant::AttributeDefinition = NamedTuple(
@@ -180,16 +182,19 @@ module Grant::AttributeApi
   # Instance methods for attribute API
 
   # Get all custom attribute names
+  @[TypeOnce]
   def custom_attribute_names : Array(String)
     self.class.attribute_definitions.keys
   end
 
   # Get all virtual attribute names
+  @[TypeOnce]
   def virtual_attribute_names : Array(String)
     self.class.attribute_definitions.select { |_, definition| definition[:virtual] }.keys
   end
 
   # Check if an attribute is virtual
+  @[TypeOnce]
   def virtual_attribute?(name : String) : Bool
     if attr_def = self.class.attribute_definitions[name]?
       attr_def[:virtual]

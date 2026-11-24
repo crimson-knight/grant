@@ -1,3 +1,4 @@
+# crystal: strict
 module Grant::ValidationHelpers
   # Validates that *field* is not `nil`.
   #

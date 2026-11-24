@@ -1,3 +1,4 @@
+require "../strict_annotations"
 require "./batches"
 
 # The remaining argument shapes of ActiveRecord's `Relation#update` and
@@ -11,6 +12,7 @@ module Grant::Query::Batches(Model)
   # ```
   # User.where(active: false).update({"active" => true})
   # ```
+  @[TypeOnce]
   def update(attributes : Hash | NamedTuple) : Array(Model)
     update_each(attributes, false)
   end
@@ -18,12 +20,14 @@ module Grant::Query::Batches(Model)
   # Like `update(attributes)`, but raises for the first record that cannot be
   # saved; that record's batch is rolled back. Wrap the call in
   # `Model.transaction` to roll back every record.
+  @[TypeOnce]
   def update!(attributes : Hash | NamedTuple) : Array(Model)
     update_each(attributes, true)
   end
 
   # Updates the record with primary key *id* inside this relation with the
   # given attribute hash and returns it.
+  @[TypeOnce]
   def update(id : Grant::Columns::Type, attributes : Hash | NamedTuple) : Model
     record = find_in_relation(id)
     record.update(attributes)
@@ -31,6 +35,7 @@ module Grant::Query::Batches(Model)
   end
 
   # Like `update(id, attributes)`, but raises when the save fails.
+  @[TypeOnce]
   def update!(id : Grant::Columns::Type, attributes : Hash | NamedTuple) : Model
     record = find_in_relation(id)
     record.update!(attributes)
@@ -45,12 +50,14 @@ module Grant::Query::Batches(Model)
   # ```
   # User.where(active: true).update([1, 2], [{name: "Ada"}, {name: "Grace"}])
   # ```
+  @[TypeOnce]
   def update(ids : Array, attributes_list : Array) : Array(Model)
     update_many(ids, attributes_list, false)
   end
 
   # Like `update(ids, attributes_list)`, but raises for the first record that
   # cannot be saved.
+  @[TypeOnce]
   def update!(ids : Array, attributes_list : Array) : Array(Model)
     update_many(ids, attributes_list, true)
   end
@@ -70,6 +77,7 @@ module Grant::Query::Batches(Model)
     update_each(attributes, true)
   end
 
+  @[TypeOnce]
   private def update_many(ids : Array, attributes_list : Array, bang : Bool) : Array(Model)
     Model.guard_writes!
     unless ids.size == attributes_list.size

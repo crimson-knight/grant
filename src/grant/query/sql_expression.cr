@@ -1,3 +1,4 @@
+# crystal: strict
 # Checks for raw SQL fragments that developers pass to relation methods such as
 # `order("lower(name) DESC")`, `group("date(created_at)")` or
 # `select("COUNT(*) AS n")`.

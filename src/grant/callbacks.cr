@@ -1,3 +1,4 @@
+require "./strict_annotations"
 require "./validation"
 
 # Lifecycle callbacks for Grant models (ActiveRecord-compatible).
@@ -543,6 +544,7 @@ module Grant::Callbacks
   # event = :save
   # order.run_callbacks(event) # => true
   # ```
+  @[TypeOnce]
   def run_callbacks(event : Symbol) : Bool
     {% begin %}
       case event
@@ -566,6 +568,7 @@ module Grant::Callbacks
   # record.save
   # record.around_halted? # => true if an around_save callback never yielded
   # ```
+  @[TypeOnce]
   def around_halted? : Bool
     @_around_halted
   end

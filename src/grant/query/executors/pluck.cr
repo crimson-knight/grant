@@ -1,10 +1,14 @@
+require "../../strict_annotations"
+
 module Grant::Query::Executor
+  @[TypeBound(Model, Grant::Base)]
   class Pluck(Model)
     include Shared
 
     def initialize(@sql : String, @args = [] of Grant::Columns::Type, @fields : Array(String) = [] of String)
     end
 
+    @[TypeOnce]
     def run : Array(Array(Grant::Columns::Type))
       log @sql, @args
 

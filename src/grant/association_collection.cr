@@ -1,3 +1,4 @@
+require "./strict_annotations"
 require "./associations/through"
 require "./associations/through_chain"
 require "./association_callbacks"
@@ -5,6 +6,8 @@ require "./associations/collection_relation"
 require "./associations/collection_finders"
 
 # Lazy, owner-scoped collection returned by a has_many association.
+@[TypeBound(Owner, Grant::Base)]
+@[TypeBound(Target, Grant::Base)]
 class Grant::AssociationCollection(Owner, Target)
   include Enumerable(Target)
 
@@ -1005,6 +1008,7 @@ class Grant::AssociationCollection(Owner, Target)
 
   # The explicit `inverse_of:` name, or the inverse detected from the models'
   # keys (see `Grant::Reflection#inverse_of`).
+  @[TypeOnce]
   private def inverse_name : String?
     if explicit = @inverse_of
       explicit.to_s
@@ -1021,6 +1025,7 @@ class Grant::AssociationCollection(Owner, Target)
     end
   end
 
+  @[TypeOnce]
   private def ensure_lazy_loading_allowed : Nil
     owner.assert_association_can_lazy_load!(@association_name || Target.name, @strict_loading_option)
   end
@@ -1064,6 +1069,7 @@ class Grant::AssociationCollection(Owner, Target)
 
   # The resolved chain of a nested or polymorphic-source `:through`
   # association; `nil` for every other association, which keeps its own keys.
+  @[TypeOnce]
   private def through_chain : Grant::Associations::ThroughChain?
     return unless @through
     name = @association_name || return
@@ -1079,6 +1085,7 @@ class Grant::AssociationCollection(Owner, Target)
     end
   end
 
+  @[TypeOnce]
   private def through_associations : Tuple(Grant::AssociationRegistry::AssociationMeta, Grant::AssociationRegistry::AssociationMeta)
     through_name = @through || raise ArgumentError.new("Missing through association metadata")
     source_name = @through_source || raise ArgumentError.new("Missing source association metadata")
@@ -1133,6 +1140,7 @@ class Grant::AssociationCollection(Owner, Target)
     {where_clause, params, modifiers.join(" ")}
   end
 
+  @[TypeOnce]
   private def query : String
     if chain = through_chain
       chain.where_clause(Target)
