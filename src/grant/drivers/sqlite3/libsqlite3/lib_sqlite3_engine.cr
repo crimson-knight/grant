@@ -1,8 +1,8 @@
 # Left out of a program built with -Dgrant_without_libsqlite3, which runs
 # every statement on Grant's own engine and links no C SQLite library.
 {% unless flag?(:grant_without_libsqlite3) %}
-  require "../engine"
-  require "../lib_sqlite3"
+  require "../sqlite3/engine"
+  require "./lib_sqlite3"
 
   module Grant::SQLite3
     # The C library behind the engine interface. Every `LibSQLite3` call the
