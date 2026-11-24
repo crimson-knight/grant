@@ -44,7 +44,16 @@ module Grant::SQLiteEngine::Query
       # OP_IfNullRow: the NULL row of a LEFT JOIN reads NULL whatever the
       # expression makes of NULL operands.
       return if frame.list_of_rows.unsafe_fetch(@slot).empty?
-      VirtualColumnExpr.converted(@generated.evaluate(frame), @definition, @table_name, @strict)
+      # 'now', localtime and utc are refused here as in a STORED column.
+      session = frame.session
+      outer_context = session.deterministic_context
+      session.deterministic_context = "a generated column"
+      value = begin
+        @generated.evaluate(frame)
+      ensure
+        session.deterministic_context = outer_context
+      end
+      VirtualColumnExpr.converted(value, @definition, @table_name, @strict)
     end
 
     def children : Array(Expr)

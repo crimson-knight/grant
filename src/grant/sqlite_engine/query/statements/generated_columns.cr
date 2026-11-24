@@ -91,7 +91,7 @@ module Grant::SQLiteEngine::Query
     private def generated_value(table : WriteTable, column : ColumnRule, row : Array(Value), rowid : Int64?) : Value
       expression = column.generated_expression || return row[column.position]
       program = table.generated_programs[column.position] ||= RowProgram.new(@session, RowProgram.columns([expression] of SQL::Expression),
-        [PseudoTable.new(table.name, table.table_info)])
+        [PseudoTable.new(table.name, table.table_info)], deterministic_context: "a generated column")
       pseudo = program.list_of_pseudo_tables[0]
       pseudo.row = row
       pseudo.rowid = rowid

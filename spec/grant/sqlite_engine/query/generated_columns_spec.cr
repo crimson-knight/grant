@@ -1,5 +1,6 @@
 require "spec"
 require "../../../support/sqlite_engine/generated_column_differential"
+require "../../../support/sqlite_engine/reference_library"
 
 private def assert_same(list_of_statements : Array(String), list_of_queries : Array(String)) : Nil
   list_of_differences = GeneratedColumnDifferential.differences(list_of_statements, list_of_queries)
@@ -78,6 +79,7 @@ describe "Grant::SQLiteEngine generated columns" do
     end
 
     it "checks NOT NULL, CHECK, UNIQUE and STRICT types on virtual columns" do
+      pending!("C SQLite 3.45 and 3.46, as Ubuntu ships them, skip the STRICT type check of VIRTUAL columns") unless SQLiteEngineReferenceLibrary.linked?
       assert_same([
         "CREATE TABLE t(a, b, v INTEGER NOT NULL AS (a + b), w AS (a * 2) UNIQUE, CHECK (v < 100), CHECK (w IS NOT 8))",
         "INSERT INTO t(a, b) VALUES (1, 2)",
@@ -190,6 +192,7 @@ describe "Grant::SQLiteEngine generated columns" do
 
   describe "seeded random differential" do
     it "matches C over random tables mixing STORED and VIRTUAL columns" do
+      pending!("C SQLite 3.45 and 3.46, as Ubuntu ships them, skip the STRICT type check of VIRTUAL columns") unless SQLiteEngineReferenceLibrary.linked?
       seed = (ENV["GRANT_GENERATED_COLUMNS_SEED"]? || "20261124").to_u64
       rounds = (ENV["GRANT_GENERATED_COLUMNS_ROUNDS"]? || "150").to_i
       random = Random.new(seed)
