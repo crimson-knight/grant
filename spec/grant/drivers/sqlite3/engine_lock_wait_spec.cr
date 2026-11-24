@@ -95,6 +95,10 @@ describe "Grant::SQLite3 engine lock waits" do
           # A header value is read when the statement runs, and waits.
           waited = EngineLockWaitSpec.attempt(newcomer, "PRAGMA user_version")
           {engine, waited.code, waited.waited}.should eq({engine, 5, true})
+          # The connection opened while the file was held reads it once it is free.
+          EngineLockWaitSpec.run(holder, "ROLLBACK")
+          outcome = EngineLockWaitSpec.attempt(newcomer, "SELECT count(*) FROM entries")
+          {engine, outcome}.should eq({engine, EngineLockWaitSpec::Outcome.new(0, false, [[1_i64]])})
         ensure
           newcomer.close
         end
