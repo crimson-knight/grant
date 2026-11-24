@@ -115,7 +115,7 @@ module Grant::SQLiteEngine
       file_system = writer_file_system
       begin_write
       journal_path = RollbackJournal.path_for(@path)
-      journal_written = false
+      journal_written = false # ameba:disable Lint/UselessAssign (read in the ensure below)
       begin
         raise Busy.new unless file.lock(LockLevel::Exclusive)
         skipped_page = lock_byte_page
@@ -149,7 +149,7 @@ module Grant::SQLiteEngine
         file.truncate(last_page.to_i64 * new_page_size)
         file.sync
         file_system.delete(journal_path)
-        journal_written = false # ameba:disable Lint/UselessAssign (read in the ensure below)
+        journal_written = false
       ensure
         if journal_written
           journal = file_system.open(journal_path)
