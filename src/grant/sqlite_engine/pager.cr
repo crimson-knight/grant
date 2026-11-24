@@ -80,6 +80,11 @@ module Grant::SQLiteEngine
     # PRAGMA synchronous: FULL (sync at every commit) by default, as C's
     # default build.
     getter synchronous : Synchronous = Synchronous::Full
+    # PRAGMA fullfsync: every sync is a `SyncMode::Full` one.
+    getter? fullfsync = false
+    # PRAGMA checkpoint_fullfsync: the syncs of a checkpoint are
+    # `SyncMode::Full` ones. fullfsync turns them on as well.
+    getter? checkpoint_fullfsync = false
     # PRAGMA wal_autocheckpoint; 0 or less turns it off.
     property wal_autocheckpoint : Int32 = DEFAULT_WAL_AUTOCHECKPOINT
     # How long a checkpoint or `Database#transaction` waits for another
@@ -145,7 +150,10 @@ module Grant::SQLiteEngine
       begin
         raise Busy.new unless BusyWait.attempt(OPEN_LOCK_WAIT) { file.lock(LockLevel::Shared) }
         pager = begin
-          roll_back_hot_journal(file_system, path, file)
+          # No PRAGMA has been read yet, so a journal found here is rolled
+          # back with the strongest sync: a C connection that sets
+          # fullfsync before its first read rolls back the same way.
+          roll_back_hot_journal(file_system, path, file, SyncMode::Full)
           # pagerOpenWalIfPresent: a WAL beside an empty database is stale.
           wal_path = WriteAheadLog.path_for(path)
           file_system.delete(wal_path) if file.size == 0 && file_system.exists?(wal_path)
@@ -182,6 +190,37 @@ module Grant::SQLiteEngine
       @synchronous = level
     end
 
+    def fullfsync=(on : Bool) : Bool
+      @fullfsync = on
+      share_sync_modes
+      on
+    end
+
+    def checkpoint_fullfsync=(on : Bool) : Bool
+      @checkpoint_fullfsync = on
+      share_sync_modes
+      on
+    end
+
+    # pPager->syncFlags (sqlite3PagerSetFlags): how the database file, the
+    # rollback journal and a WAL commit are synced.
+    def sync_mode : SyncMode
+      @fullfsync ? SyncMode::Full : SyncMode::Normal
+    end
+
+    # The checkpoint half of pPager->walSyncFlags: how a checkpoint syncs
+    # the WAL and the database file, and how a new WAL header is synced.
+    def checkpoint_sync_mode : SyncMode
+      @fullfsync || @checkpoint_fullfsync ? SyncMode::Full : SyncMode::Normal
+    end
+
+    private def share_sync_modes : Nil
+      log = @wal_log
+      return unless log
+      log.sync_mode = sync_mode
+      log.checkpoint_sync_mode = checkpoint_sync_mode
+    end
+
     # True in WAL mode (journal_mode=WAL).
     def wal_mode? : Bool
       !@wal_log.nil?
@@ -204,6 +243,7 @@ module Grant::SQLiteEngine
     protected def open_log : Nil
       @log_pending = false
       @wal_log = WriteAheadLog.new(writer_file_system, @path, @synchronous)
+      share_sync_modes
     end
 
     # Loads the WAL snapshot once at open, so the header and page count
@@ -340,7 +380,7 @@ module Grant::SQLiteEngine
       raise Busy.new unless file.lock(LockLevel::Shared)
       begin
         reloaded = false
-        if Pager.roll_back_hot_journal(writer_file_system, @path, file) || changed_on_disk?(file)
+        if Pager.roll_back_hot_journal(writer_file_system, @path, file, @synchronous.off? ? nil : sync_mode) || changed_on_disk?(file)
           reload
           reloaded = true
         end
@@ -493,8 +533,10 @@ module Grant::SQLiteEngine
     end
 
     # Rolls back the journal of *path* when it is hot, under an EXCLUSIVE
-    # lock, and deletes it. Returns true when it rolled one back.
-    protected def self.roll_back_hot_journal(file_system : FileSystem, path : String, file : DatabaseFile) : Bool
+    # lock, syncing the database in *sync_mode* (nil: no sync), and deletes
+    # it. Returns true when it rolled one back.
+    protected def self.roll_back_hot_journal(file_system : FileSystem, path : String, file : DatabaseFile,
+                                             sync_mode : SyncMode?) : Bool
       journal_path = RollbackJournal.path_for(path)
       return false unless RollbackJournal.hot?(file_system, journal_path, file)
       held = file.lock_level
@@ -502,7 +544,7 @@ module Grant::SQLiteEngine
       begin
         journal = file_system.open(journal_path)
         begin
-          RollbackJournal.play_back(journal, file)
+          RollbackJournal.play_back(journal, file, sync_mode)
         ensure
           journal.close
         end
@@ -570,8 +612,10 @@ module Grant::SQLiteEngine
 
     # Commits the open write transaction: takes the EXCLUSIVE lock, writes
     # and syncs the journal, writes and syncs the changed pages, then
-    # deletes the journal, which is the moment the transaction commits. In
-    # WAL mode it appends the changed pages to the WAL instead.
+    # deletes the journal, which is the moment the transaction commits.
+    # synchronous=OFF leaves the syncs out, and fullfsync makes each one a
+    # `SyncMode::Full` sync. In WAL mode it appends the changed pages to
+    # the WAL instead.
     def commit : Nil
       file = writer_file
       raise Error.new("no write transaction is open") unless @in_write_transaction
@@ -597,14 +641,14 @@ module Grant::SQLiteEngine
       journal = file_system.open(journal_path)
       begin
         images = @journal_images.keys.sort!.map { |page_number| {page_number, @journal_images[page_number]} }
-        RollbackJournal.write(journal, @page_size, @original_page_count, images, Random.rand(UInt32))
+        RollbackJournal.write(journal, @page_size, @original_page_count, images, Random.rand(UInt32), @synchronous, sync_mode)
       ensure
         journal.close
       end
       @dirty.keys.sort!.each do |page_number|
         file.write_at((page_number.to_i64 - 1) * @page_size, @dirty[page_number])
       end
-      file.sync
+      file.sync(sync_mode) unless @synchronous.off?
       file_system.delete(journal_path)
       @dirty.each { |page_number, buffer| @cache[page_number] = buffer }
       @header = DatabaseHeader.parse(page_one)

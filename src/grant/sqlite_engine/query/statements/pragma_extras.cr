@@ -15,11 +15,13 @@ module Grant::SQLiteEngine::Query
       "pragma_busy_timeout"              => %w[timeout],
       "pragma_cache_size"                => %w[cache_size],
       "pragma_cell_size_check"           => %w[cell_size_check],
+      "pragma_checkpoint_fullfsync"      => %w[checkpoint_fullfsync],
       "pragma_defer_foreign_keys"        => %w[defer_foreign_keys],
       "pragma_encoding"                  => %w[encoding],
       "pragma_foreign_key_check"         => %w[table rowid parent fkid],
       "pragma_foreign_keys"              => %w[foreign_keys],
       "pragma_freelist_count"            => %w[freelist_count],
+      "pragma_fullfsync"                 => %w[fullfsync],
       "pragma_integrity_check"           => %w[integrity_check],
       "pragma_journal_mode"              => %w[journal_mode],
       "pragma_legacy_alter_table"        => %w[legacy_alter_table],
@@ -48,12 +50,15 @@ module Grant::SQLiteEngine::Query
       when "auto_vacuum"        then value ? [] of String : [name]
       when "optimize"           then [name]
       when "incremental_vacuum" then [] of String
+      else                           DurabilityPragmas.columns(name, value)
       end
     end
 
     def self.rows(session : Session, name : String, value : String?) : Array(Array(Value))
       case name
       when "auto_vacuum" then auto_vacuum(session, value)
+      when DurabilityPragmas::FULLFSYNC, DurabilityPragmas::CHECKPOINT_FULLFSYNC
+        DurabilityPragmas.rows(session, name, value)
       else
         # optimize finds nothing to analyze, and incremental_vacuum has no
         # free pages to release in a database without auto_vacuum.

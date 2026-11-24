@@ -81,6 +81,12 @@ module Grant::SQLiteEngine
     getter read_lock_index = -1
     getter? writing = false
     property synchronous : Synchronous
+    # How a commit syncs the WAL (WAL_SYNC_FLAGS), from PRAGMA fullfsync.
+    property sync_mode : SyncMode = SyncMode::Normal
+    # How a checkpoint syncs the WAL and the database file, and how a new
+    # WAL header is synced (CKPT_SYNC_FLAGS), from PRAGMA
+    # checkpoint_fullfsync and fullfsync.
+    property checkpoint_sync_mode : SyncMode = SyncMode::Normal
 
     @log : DatabaseFile
     @index : SharedMemory
@@ -392,7 +398,7 @@ module Grant::SQLiteEngine
       end
       first_frame = @header.max_frame + 1
       @log.write_at(frame_offset(first_frame, page_size), buffer)
-      @log.sync if @synchronous >= Synchronous::Full
+      @log.sync(@sync_mode) if @synchronous >= Synchronous::Full
       list_of_pages.each_with_index do |(page_number, _image), position|
         append_to_index(first_frame + position, page_number)
       end
@@ -474,7 +480,7 @@ module Grant::SQLiteEngine
       @header.bytes[13] = 0_u8
       @header.frame_checksum = checksum
       @log.write_at(0, header)
-      @log.sync unless @synchronous.off?
+      @log.sync(@checkpoint_sync_mode) unless @synchronous.off?
     end
 
     # walIndexAppend: the frame's page number into the region's array and
@@ -679,7 +685,7 @@ module Grant::SQLiteEngine
         if backfilled < safe_frame && lock_waiting(WalIndexLayout.read_lock(0), 1, busy_timeout)
           begin
             @index.write_u32(BACKFILL_ATTEMPTED, safe_frame)
-            @log.sync unless @synchronous.off?
+            @log.sync(@checkpoint_sync_mode) unless @synchronous.off?
             needed = max_page.to_i64 * page_size
             current = database.size
             if current < needed && current + 65_536 + @header.max_frame.to_i64 * page_size < needed
@@ -700,7 +706,7 @@ module Grant::SQLiteEngine
             end
             if safe_frame == live_header.max_frame
               database.truncate(max_page.to_i64 * page_size)
-              database.sync unless @synchronous.off?
+              database.sync(@checkpoint_sync_mode) unless @synchronous.off?
             end
             @index.write_u32(BACKFILL_OFFSET, safe_frame)
           ensure
