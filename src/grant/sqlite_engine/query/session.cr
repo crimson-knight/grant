@@ -111,6 +111,7 @@ module Grant::SQLiteEngine::Query
                      raise SQLError.new("unable to open database: #{file}")
                    end
                  end
+      DurabilityPragmas.share_with(self, database.pager)
       join_one_write(database) if @database.pager.in_write_transaction?
       @list_of_attached << {name, database}
       reset_schema

@@ -333,7 +333,8 @@ module Grant::SQLiteEngine::SQL
     private def parse_pragma_value : String
       case kind
       when .plus?, .minus?, .integer?, .float?
-        parse_signed_number
+        # plus_num of parse.y: the value of `+1` is `1`.
+        parse_signed_number.lchop('+')
       when .on?, .delete?, .default?
         text(advance)
       else

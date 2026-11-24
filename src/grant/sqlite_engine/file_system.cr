@@ -8,6 +8,15 @@ module Grant::SQLiteEngine
     Exclusive
   end
 
+  # How hard a sync pushes a file to the disk (SQLITE_SYNC_NORMAL and
+  # SQLITE_SYNC_FULL of os_unix.c): `Normal` is fsync; `Full` is macOS's
+  # `fcntl(F_FULLFSYNC)`, which also empties the drive's write cache, and is
+  # fsync on the other systems.
+  enum SyncMode
+    Normal
+    Full
+  end
+
   # A database or journal file the writer reads, writes and syncs. The
   # crash simulator implements it in memory to record every write and sync.
   abstract class DatabaseFile < ByteSource
@@ -16,6 +25,12 @@ module Grant::SQLiteEngine
 
     # Makes every earlier write durable (fsync).
     abstract def sync : Nil
+
+    # Makes every earlier write durable the way *mode* asks. A file that
+    # has only one kind of sync uses it for both modes.
+    def sync(mode : SyncMode) : Nil
+      sync
+    end
 
     abstract def truncate(size : Int64) : Nil
 
@@ -102,6 +117,10 @@ module Grant::SQLiteEngine
       F_UNLCK = 2
     {% end %}
 
+    {% if flag?(:darwin) %}
+      F_FULLFSYNC = 51
+    {% end %}
+
     fun fcntl(fd : Int32, command : Int32, ...) : Int32
   end
 
@@ -150,7 +169,25 @@ module Grant::SQLiteEngine
     end
 
     def sync : Nil
+      sync(SyncMode::Normal)
+    end
+
+    # unixSync and full_fsync: a `Full` sync on macOS asks the drive itself
+    # to write its cache (F_FULLFSYNC), and falls back to fsync on a file
+    # system that refuses the request; every other sync is fsync.
+    def sync(mode : SyncMode) : Nil
+      return if mode.full? && PosixFile.full_fsync?(@file.fd)
       @file.fsync
+    end
+
+    # Runs `fcntl(F_FULLFSYNC)` on *descriptor* and tells whether it
+    # succeeded; false on a system without it.
+    def self.full_fsync?(descriptor : Int32) : Bool
+      {% if flag?(:darwin) %}
+        LibFileLock.fcntl(descriptor, LibFileLock::F_FULLFSYNC, 0) == 0
+      {% else %}
+        false
+      {% end %}
     end
 
     def truncate(size : Int64) : Nil

@@ -61,6 +61,9 @@ CASES = [
   {"pragma auto_vacuum", "", "PRAGMA auto_vacuum"},
   {"pragma encoding", "", "PRAGMA encoding"},
   {"pragma optimize", "", "PRAGMA optimize"},
+  {"pragma fullfsync default", "", "SELECT * FROM pragma_fullfsync, pragma_checkpoint_fullfsync"},
+  {"pragma fullfsync", "PRAGMA synchronous=FULL; PRAGMA fullfsync=ON;", "PRAGMA fullfsync"},
+  {"pragma checkpoint_fullfsync", "PRAGMA checkpoint_fullfsync=ON;", "PRAGMA checkpoint_fullfsync"},
   # EXPLAIN QUERY PLAN: the columns must match; detail text may differ
   {"eqp columns", "", "SELECT count(*) FROM (SELECT 1)"},
   # ALTER TABLE
