@@ -239,7 +239,7 @@ module Grant::SQLiteEngine
         entry = schema.entry(name)
         writer = btree_writer
         if entry.table?
-          raise SchemaError.new("table #{entry.object_name} may not be dropped") if entry.object_name.downcase.starts_with?("sqlite_")
+          raise SchemaError.new("table #{entry.object_name} may not be dropped") if entry.object_name.downcase.starts_with?("sqlite_") && !entry.object_name.downcase.starts_with?("sqlite_stat")
           dependents = schema.list_of_entries.select do |other|
             (other.index? || other.object_type == "trigger") && other.table_name.compare(entry.object_name, case_insensitive: true) == 0
           end
