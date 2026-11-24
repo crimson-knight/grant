@@ -116,6 +116,9 @@ module Grant::SQLiteEngine::Query
         @returning = program
         @list_of_column_names = program.list_of_column_names
       end
+      # A loop among the generated columns fails the statement when it is
+      # prepared, whatever rows it would write.
+      @table.list_of_generated_in_order(@session)
     end
 
     def run(list_of_parameters : Array(Value)) : Array(Array(Value))

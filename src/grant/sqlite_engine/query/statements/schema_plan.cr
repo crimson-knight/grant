@@ -143,6 +143,7 @@ module Grant::SQLiteEngine::Query
         create_table_as(name, query, run)
         return
       end
+      CheckGeneratedColumnsOfTable.for_new_table(@session, @text, database).perform
       database.create_table(@text, schema_name)
     end
 

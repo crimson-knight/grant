@@ -199,7 +199,14 @@ module Grant::SQLiteEngine::Query
       # column is checked again only after every other column (C's second
       # pass), so a later column's failure is the one reported.
       list_of_replaced = nil.as(Array(ColumnRule)?)
-      table.list_of_columns.each do |column|
+      recomputed = false
+      table.list_of_columns_in_not_null_order.each do |column|
+        # A DEFAULT that REPLACE put in may be read by generated columns:
+        # they are computed again before their own NOT NULL is checked.
+        if column.generated? && list_of_replaced && !recomputed
+          compute_generated(table, row, rowid)
+          recomputed = true
+        end
         action = column.not_null
         next unless action
         next if column.position == table.rowid_alias
@@ -221,6 +228,7 @@ module Grant::SQLiteEngine::Query
         next unless row[column.position].nil?
         raise ConstraintError.new("NOT NULL constraint failed: #{table.name}.#{column.column_name}", ConflictAction::Abort)
       end
+      compute_generated(table, row, rowid) if list_of_replaced && !recomputed
       database.store_values!(definition, row)
       if (alias_index = table.rowid_alias) && rowid
         row[alias_index] = rowid
@@ -546,23 +554,6 @@ module Grant::SQLiteEngine::Query
       program.evaluate([] of Value).try(&.[0]?)
     end
 
-    # The values of the generated columns of a new or changed row.
-    def compute_generated(table : WriteTable, row : Array(Value), rowid : Int64?) : Nil
-      return unless table.has_generated_columns?
-      table.list_of_columns.each do |column|
-        expression = column.generated_expression
-        next unless expression
-        raise UnsupportedSQL.new("VIRTUAL generated column #{table.name}.#{column.column_name}") unless column.generated_stored?
-        program = table.generated_programs[column.position] ||= RowProgram.new(@session, RowProgram.columns([expression] of SQL::Expression),
-          [PseudoTable.new(table.name, table.table_info)])
-        pseudo = program.list_of_pseudo_tables[0]
-        pseudo.row = row
-        pseudo.rowid = rowid
-        value = program.evaluate(@list_of_parameters).try(&.[0]?)
-        row[column.position] = StoredValue.for_affinity(table.definition.list_of_columns[column.position].affinity, value)
-      end
-    end
-
     # --- Upsert -------------------------------------------------------------
 
     # sqlite3UpsertDoUpdate: the conflicting row *target* takes the DO
@@ -613,6 +604,7 @@ module Grant::SQLiteEngine::Query
           rowid = WriteRun.must_be_int(explicit_rowid)
         end
       end
+      fill_virtual_columns(table, old_row, old_rowid)
       compute_generated(table, new_row, rowid)
       result = check_constraints(table, rowid, new_row, {old_rowid, old_row}, override, nil)
       return if result[0].ignored?
@@ -650,6 +642,7 @@ module Grant::SQLiteEngine::Query
     # Deletes the row with its index entries, with foreign key processing.
     # *replace* marks a delete REPLACE makes (not counted in changes()).
     def delete_row(table : WriteTable, rowid : Int64?, row : Array(Value), replace : Bool = false) : Nil
+      fill_virtual_columns(table, row, rowid)
       if foreign_keys?
         child_removed(table, row)
         parent_removed(table, rowid, row)
@@ -844,7 +837,9 @@ module Grant::SQLiteEngine::Query
         cursor = IndexCursor.new(info.database, info.root_page, IndexOrder.new([] of Collation, [] of Bool))
         moved = cursor.first
         while moved
-          yield nil, info.row_from(nil, cursor.record)
+          row = info.row_from(nil, cursor.record)
+          fill_virtual_columns(table, row, nil)
+          yield nil, row
           moved = cursor.advance
         end
       else
@@ -852,7 +847,9 @@ module Grant::SQLiteEngine::Query
         moved = cursor.first
         while moved
           rowid = cursor.rowid
-          yield rowid, info.row_from(rowid, cursor.record)
+          row = info.row_from(rowid, cursor.record)
+          fill_virtual_columns(table, row, rowid)
+          yield rowid, row
           moved = cursor.advance
         end
       end
