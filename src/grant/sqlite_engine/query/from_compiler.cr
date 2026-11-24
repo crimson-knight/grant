@@ -198,7 +198,7 @@ module Grant::SQLiteEngine::Query
       table = @session.table(name, schema)
       # An eponymous table-valued function (pragma_database_list) named
       # without arguments reads as a table.
-      if table.nil? && (Catalog::COLUMNS.has_key?(name.downcase) || name.downcase.in?("json_each", "json_tree"))
+      if table.nil? && (Catalog.known?(name.downcase) || name.downcase.in?("json_each", "json_tree"))
         return catalog_source(name, alias_name, [] of Expr)
       end
       unless table
@@ -425,7 +425,7 @@ module Grant::SQLiteEngine::Query
         raise SQLError.new("'#{name}' is not a function")
       end
       lower = name.downcase
-      known = Catalog::COLUMNS.has_key?(lower) || lower.in?("json_each", "json_tree", "jsonb_each", "jsonb_tree")
+      known = Catalog.known?(lower) || lower.in?("json_each", "json_tree", "jsonb_each", "jsonb_tree")
       unless in_main && known
         full = schema ? "#{schema}.#{name}" : (@view_depth > 0 ? "main.#{name}" : name)
         raise SQLError.new("no such table: #{full}")
