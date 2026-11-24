@@ -292,9 +292,9 @@ describe "Grant::SQLiteEngine::Query SELECT" do
     end
   end
 
-  it "raises UnsupportedSQL naming milestone G6 for the JSON functions that build JSON" do
-    expect_raises(Grant::SQLiteEngine::UnsupportedSQL, /G6/) do
-      session.prepare("SELECT json_array(1, 2)")
+  it "raises UnsupportedSQL naming milestone G6 for the jsonb_each table function" do
+    expect_raises(Grant::SQLiteEngine::UnsupportedSQL, /jsonb_each \(milestone G6\)/) do
+      session.prepare("SELECT * FROM jsonb_each('[1]')")
     end
   end
 

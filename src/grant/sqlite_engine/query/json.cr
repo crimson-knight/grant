@@ -6,8 +6,9 @@ module Grant::SQLiteEngine::Query
   # json_type(), json_valid(), json_array_length(), json_error_position(),
   # and the json_each / json_tree table functions, with the JSON_SUBTYPE
   # their JSON text results carry (read by subtype()). The functions that
-  # build or edit JSON (json_array, json_object, json_set, ...) read
-  # argument subtypes and stay out of scope (milestone G6).
+  # build or edit JSON are in json_write_functions.cr and
+  # json_aggregates.cr, over the Editor of json_editor.cr and the parse
+  # cache of json_cache.cr.
   module Json
     NULL    =  0_u8
     TRUE    =  1_u8
@@ -204,31 +205,7 @@ module Grant::SQLiteEngine::Query
 
       # jsonbPayloadSize: the header size (0 when malformed) and payload size.
       def payload_size(index : Int32) : {Int32, Int32}
-        blob = @blob
-        return {0, 0} if index >= blob.size
-        x = blob[index] >> 4
-        if x <= 11
-          size = x.to_i64
-          header = 1
-        elsif x == 12
-          return {0, 0} if index + 1 >= blob.size
-          size = blob[index + 1].to_i64
-          header = 2
-        elsif x == 13
-          return {0, 0} if index + 2 >= blob.size
-          size = (blob[index + 1].to_i64 << 8) + blob[index + 2]
-          header = 3
-        elsif x == 14
-          return {0, 0} if index + 4 >= blob.size
-          size = (blob[index + 1].to_i64 << 24) + (blob[index + 2].to_i64 << 16) + (blob[index + 3].to_i64 << 8) + blob[index + 4]
-          header = 5
-        else
-          return {0, 0} if index + 8 >= blob.size || (1..4).any? { |offset| blob[index + offset] != 0 }
-          size = (blob[index + 5].to_i64 << 24) + (blob[index + 6].to_i64 << 16) + (blob[index + 7].to_i64 << 8) + blob[index + 8]
-          header = 9
-        end
-        return {0, 0} if index.to_i64 + size + header > blob.size
-        {header, size.to_i32}
+        Json.payload_size(@blob, index, @blob.size, 0)
       end
 
       # jsonbArrayCount.
@@ -385,7 +362,7 @@ module Grant::SQLiteEngine::Query
             end
             k += 1
           end
-          output.write(overflow ? "9.0e999" : value.to_s)
+          output.write_formatted(overflow ? "9.0e999" : value.to_s)
         when FLOAT5
           return malformed_at(index, header, size, output) if size == 0
           text = @blob[payload, size]
@@ -468,6 +445,7 @@ module Grant::SQLiteEngine::Query
             next
           end
           if byte <= 0x1f
+            output.make_room(7)
             Json.append_control(output, byte)
             position += 1
             remaining -= 1
@@ -750,25 +728,91 @@ module Grant::SQLiteEngine::Query
       end
     end
 
+    # jsonbPayloadSize over the first *limit* bytes of *blob*: the header size
+    # (0 when malformed) and payload size. *delta* is the size change of an
+    # edit in progress, whose enclosing sizes are not yet adjusted.
+    def self.payload_size(blob : Bytes, index : Int32, limit : Int32, delta : Int32) : {Int32, Int32}
+      return {0, 0} if index >= limit
+      x = blob[index] >> 4
+      if x <= 11
+        size = x.to_i64
+        header = 1
+      elsif x == 12
+        return {0, 0} if index + 1 >= limit
+        size = blob[index + 1].to_i64
+        header = 2
+      elsif x == 13
+        return {0, 0} if index + 2 >= limit
+        size = (blob[index + 1].to_i64 << 8) + blob[index + 2]
+        header = 3
+      elsif x == 14
+        return {0, 0} if index + 4 >= limit
+        size = (blob[index + 1].to_i64 << 24) + (blob[index + 2].to_i64 << 16) + (blob[index + 3].to_i64 << 8) + blob[index + 4]
+        header = 5
+      else
+        return {0, 0} if index + 8 >= limit || (1..4).any? { |offset| blob[index + offset] != 0 }
+        size = (blob[index + 5].to_i64 << 24) + (blob[index + 6].to_i64 << 16) + (blob[index + 7].to_i64 << 8) + blob[index + 8]
+        header = 9
+      end
+      finish = index.to_i64 + size + header
+      return {0, 0} if finish > limit && finish > limit.to_i64 - delta
+      {header, size.to_i32}
+    end
+
     # JsonString: JSON text being built, with its malformed flag.
     class TextOutput
+      # The bytes JsonString holds in its own space before it allocates.
+      STATIC_SIZE = 100
+
       property? malformed = false
+      # JSTRING_ERR: a BLOB that is not JSONB was given as a value. C reports
+      # it when the function returns, unless another error replaces it.
+      property? holds_blob_error = false
+      # Whether C would have moved the text out of JsonString.zSpace (bStatic
+      # cleared): only such results enter the parse cache (jsonReturnString).
+      getter? grown = false
       @io = IO::Memory.new
 
+      # jsonAppendRaw / jsonAppendRawNZ.
       def write(text : String) : Nil
+        @grown = true if @io.pos + text.bytesize >= STATIC_SIZE
         @io << text
       end
 
       def write(bytes : Bytes) : Nil
+        @grown = true if @io.pos + bytes.size >= STATIC_SIZE
         @io.write(bytes)
       end
 
+      # jsonAppendChar.
       def write_byte(byte : UInt8) : Nil
+        @grown = true if @io.pos >= STATIC_SIZE
         @io.write_byte(byte)
       end
 
+      # A direct store into the buffer, after the caller made room.
+      def store_byte(byte : UInt8) : Nil
+        @io.write_byte(byte)
+      end
+
+      def store(bytes : Bytes) : Nil
+        @io.write(bytes)
+      end
+
+      # jsonStringGrow where C asks for room for *count* more bytes and the
+      # text would pass *limit* (STATIC_SIZE, or one less for a >= test).
+      def make_room(count : Int32, limit : Int32 = STATIC_SIZE) : Nil
+        @grown = true if @io.pos + count > limit
+      end
+
+      # jsonPrintf(100, ...): always past the static space.
+      def write_formatted(text : String) : Nil
+        @grown = true
+        @io << text
+      end
+
       def size : Int64
-        @io.pos
+        @io.pos.to_i64
       end
 
       def last_byte : UInt8?
@@ -806,31 +850,33 @@ module Grant::SQLiteEngine::Query
                 when 0x0d then 'r'
                 end
       if special
-        output.write_byte('\\'.ord.to_u8)
-        output.write_byte(special.ord.to_u8)
+        output.store_byte('\\'.ord.to_u8)
+        output.store_byte(special.ord.to_u8)
       else
-        output.write("\\u00")
-        output.write_byte("0123456789abcdef".byte_at(byte >> 4))
-        output.write_byte("0123456789abcdef".byte_at(byte & 0xf))
+        output.store("\\u00".to_slice)
+        output.store_byte("0123456789abcdef".byte_at(byte >> 4))
+        output.store_byte("0123456789abcdef".byte_at(byte & 0xf))
       end
     end
 
-    # jsonAppendString: *text* as a JSON string literal.
+    # jsonAppendString: *text* as a JSON string literal, asking for room
+    # where C does.
     def self.append_string(output : TextOutput, text : Bytes) : Nil
-      output.write_byte('"'.ord.to_u8)
-      text.each do |byte|
-        if OK_BYTES[byte]
-          output.write_byte(byte)
+      output.make_room(text.size + 2, TextOutput::STATIC_SIZE - 1)
+      output.store_byte('"'.ord.to_u8)
+      text.each_with_index do |byte, index|
+        if OK_BYTES[byte] || byte == '\''.ord
+          output.store_byte(byte)
         elsif byte == '"'.ord || byte == '\\'.ord
-          output.write_byte('\\'.ord.to_u8)
-          output.write_byte(byte)
-        elsif byte == '\''.ord
-          output.write_byte(byte)
+          output.make_room(text.size - index + 3)
+          output.store_byte('\\'.ord.to_u8)
+          output.store_byte(byte)
         else
+          output.make_room(text.size - index + 7)
           append_control(output, byte)
         end
       end
-      output.write_byte('"'.ord.to_u8)
+      output.store_byte('"'.ord.to_u8)
     end
 
     # jsonBytesToBypass: escaped line breaks a JSON5 string skips.
@@ -1017,20 +1063,6 @@ module Grant::SQLiteEngine::Query
       {parsed.code, parsed.value}
     end
 
-    # Reads a function argument as C's jsonParseFuncArg does: NULL gives
-    # nil, a BLOB that is JSONB is used as is, anything else is JSON text.
-    def self.parse_argument(value : Value) : Document?
-      return if value.nil?
-      if value.is_a?(Bytes) && (document = jsonb_argument(value))
-        return document
-      end
-      text = ValueSemantics.text(value) || return
-      raise malformed if text.empty?
-      parser = Parser.new(text.to_slice)
-      document = parser.convert || raise malformed
-      Document.new(document, parser.non_standard?, text)
-    end
-
     # jsonArgIsJsonb.
     def self.jsonb_argument(bytes : Bytes) : Document?
       return if bytes.empty?
@@ -1074,6 +1106,13 @@ module Grant::SQLiteEngine::Query
           end
         end
         return if i <= 0
+        Bytes.new(@blob.size) { |index| @blob.unsafe_fetch(index) }
+      end
+
+      # jsonReturnStringAsBlob: the JSONB of text the caller built, taken as
+      # translated (no check of what follows the value).
+      def translate_only : Bytes
+        translate(0)
         Bytes.new(@blob.size) { |index| @blob.unsafe_fetch(index) }
       end
 

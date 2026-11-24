@@ -38,6 +38,8 @@ module Grant::SQLiteEngine::Query
     # The subtype the running scalar function gave its result
     # (sqlite3_result_subtype), read by FunctionExpr#value_with_subtype.
     property result_subtype = 0_u8
+    # The JSON texts the running statement has parsed (json.c's JsonCache).
+    getter json_cache : Json::Cache { Json::Cache.new }
 
     @user_functions = {} of String => Hash(Int32, UserFunction)
     # Tables found by a name without a schema, keyed by the name as the
