@@ -55,15 +55,37 @@
         end
 
         def backup_to(target : Engine::Database) : Int32
-          unless target.is_a?(Database)
-            raise ArgumentError.new("cannot back up a libsqlite3 database into #{target.class}")
+          return backup_through_file_to(target) unless target.is_a?(Database)
+          Database.copy_main(from: @handle, to: target.@handle)
+        end
+
+        def backup_to_file(path : String) : Int32
+          code = LibSQLite3.open_v2(path, out file_handle, (Flag::READWRITE | Flag::CREATE), nil)
+          begin
+            return code unless code == Engine::OK_CODE
+            Database.copy_main(from: @handle, to: file_handle)
+          ensure
+            LibSQLite3.close(file_handle)
           end
-          backup = LibSQLite3.backup_init(target.@handle, "main", @handle, "main")
-          return Engine::ERROR_CODE if backup.null?
+        end
 
-          step_code = LibSQLite3.backup_step(backup, -1)
-          return step_code.value unless step_code.done?
+        def restore_from_file(path : String) : Int32
+          code = LibSQLite3.open_v2(path, out file_handle, (Flag::READWRITE | Flag::CREATE), nil)
+          begin
+            return code unless code == Engine::OK_CODE
+            Database.copy_main(from: file_handle, to: @handle)
+          ensure
+            LibSQLite3.close(file_handle)
+          end
+        end
 
+        # sqlite3_backup_init, one sqlite3_backup_step over every page, and
+        # sqlite3_backup_finish, which reports the step's failure and leaves
+        # its message on the *to* handle.
+        protected def self.copy_main(*, from source : LibSQLite3::SQLite3, to target : LibSQLite3::SQLite3) : Int32
+          backup = LibSQLite3.backup_init(target, "main", source, "main")
+          return LibSQLite3.errcode(target) if backup.null?
+          LibSQLite3.backup_step(backup, -1)
           LibSQLite3.backup_finish(backup).value
         end
 

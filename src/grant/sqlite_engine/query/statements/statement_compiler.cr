@@ -26,7 +26,7 @@ module Grant::SQLiteEngine::Query
              when SQL::Explain             then ExplainPlan.new(session, statement)
              when SQL::Analyze             then NoRowsPlan.new
              when SQL::Reindex             then NoRowsPlan.new
-             when SQL::Vacuum              then NoRowsPlan.new
+             when SQL::Vacuum              then VacuumIntoPlan.for(session, statement) || NoRowsPlan.new
              when SQL::Attach, SQL::Detach then AttachPlan.new(session, statement)
              else
                raise UnsupportedSQL.new("#{PreparedQuery.statement_kind(statement)} statements")
