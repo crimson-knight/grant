@@ -70,13 +70,6 @@ module Grant::SQLiteEngine
     # SQLITE_DEFAULT_WAL_AUTOCHECKPOINT: a commit that leaves at least this
     # many frames in the WAL runs a passive checkpoint.
     DEFAULT_WAL_AUTOCHECKPOINT = 1_000
-    # How long an open waits for the SHARED lock it reads the header under.
-    # sqlite3_open_v2 takes no lock, so another connection's brief
-    # EXCLUSIVE (a rollback-journal commit, or the last WAL connection
-    # checkpointing as it closes) never fails an open in C; the engine
-    # waits it out on C's busy-handler schedule instead of failing.
-    OPEN_LOCK_WAIT = 5.seconds
-
     # PRAGMA synchronous: FULL (sync at every commit) by default, as C's
     # default build.
     getter synchronous : Synchronous = Synchronous::Full
@@ -114,8 +107,11 @@ module Grant::SQLiteEngine
     #
     # *log_pending* is true when the read-write open will read a WAL next:
     # the size check on page 1 waits for the WAL's snapshot.
+    #
+    # *unread* opens without reading the file, as an empty database; the
+    # first locked read finds the file changed and loads it.
     def initialize(@main : ByteSource, wal_source : ByteSource? = nil, @cache_pages : Int32 = DEFAULT_CACHE_PAGES,
-                   @log_pending : Bool = false)
+                   @log_pending : Bool = false, unread : Bool = false)
       wal = wal_source ? WalReader.read?(wal_source) : nil
       wal_source.close if wal_source && wal.nil?
       @wal = wal
@@ -123,7 +119,7 @@ module Grant::SQLiteEngine
       @usable_size = 0
       @page_count = 0_u32
       @header = nil
-      load_first_page
+      load_first_page unless unread
     end
 
     # Opens *path* for reading and writing through *file_system*, creating
@@ -134,6 +130,13 @@ module Grant::SQLiteEngine
     # *text_encoding* apply only when the first transaction creates the
     # database. *cache_pages* bounds the clean pages kept in memory; nil
     # sizes the cache as SQLite's default of 2,000 KiB.
+    #
+    # sqlite3_open_v2 takes no lock and reads nothing, so an open never
+    # fails because another connection holds the file. While one holds it
+    # exclusively (a rollback-journal commit, BEGIN EXCLUSIVE, the last WAL
+    # connection checkpointing as it closes) the open reads nothing either:
+    # the first statement loads the database under its own lock, waiting
+    # as busy_timeout says.
     def self.open_read_write(file_system : FileSystem, path : String, cache_pages : Int32? = nil,
                              page_size : Int32 = Limits::DEFAULT_PAGE_SIZE,
                              text_encoding : TextEncoding = TextEncoding::UTF8,
@@ -143,7 +146,13 @@ module Grant::SQLiteEngine
       raise ArgumentError.new("page_size #{page_size} is not a power of two from 512 to 65536") unless valid_size
       file = file_system.open(path)
       begin
-        raise Busy.new unless BusyWait.attempt(OPEN_LOCK_WAIT) { file.lock(LockLevel::Shared) }
+        unless file.lock(LockLevel::Shared)
+          unread = new(file, nil, unread: true)
+          unread.attach_writer(file_system, path, file, page_size, text_encoding, cache_pages)
+          unread.synchronous = synchronous
+          unread.wal_autocheckpoint = wal_autocheckpoint
+          return unread
+        end
         pager = begin
           roll_back_hot_journal(file_system, path, file)
           # pagerOpenWalIfPresent: a WAL beside an empty database is stale.
@@ -299,7 +308,7 @@ module Grant::SQLiteEngine
     def with_read_lock(& : -> T) : T forall T
       file = @file
       return yield unless file
-      begin_read(file) if @read_depth == 0 && !@in_write_transaction
+      begin_read(file) if (@read_depth == 0 || @read_lock_yielded) && !@in_write_transaction
       @read_depth += 1
       begin
         yield
@@ -316,8 +325,25 @@ module Grant::SQLiteEngine
     def acquire_read_lock : Nil
       file = @file
       return unless file
-      begin_read(file) if @read_depth == 0 && !@in_write_transaction
+      begin_read(file) if (@read_depth == 0 || @read_lock_yielded) && !@in_write_transaction
       @read_depth += 1
+    end
+
+    # Set while the open reads hold no SHARED lock because `yield_read_lock`
+    # gave it up; the next read or write takes it again.
+    @read_lock_yielded = false
+
+    # Gives up the SHARED lock the open reads hold on a rollback-journal
+    # database, keeping their count, for a connection about to wait for the
+    # write lock: C drops its read transaction before each call of the busy
+    # handler (unlockBtreeIfUnused in sqlite3BtreeBeginTrans), so the
+    # writer it waits for can take EXCLUSIVE and commit. In WAL mode a read
+    # mark stops no writer, and it stays.
+    def yield_read_lock : Nil
+      file = @file
+      return unless file && @wal_log.nil? && @read_depth > 0 && !@in_write_transaction
+      file.unlock(LockLevel::None)
+      @read_lock_yielded = true
     end
 
     def release_read_lock : Nil
@@ -337,7 +363,11 @@ module Grant::SQLiteEngine
         reload if log.begin_read
         return
       end
-      raise Busy.new unless file.lock(LockLevel::Shared)
+      unless file.lock(LockLevel::Shared)
+        @read_lock_yielded = @read_depth > 0
+        raise Busy.new
+      end
+      @read_lock_yielded = false
       begin
         reloaded = false
         if Pager.roll_back_hot_journal(writer_file_system, @path, file) || changed_on_disk?(file)
@@ -353,6 +383,7 @@ module Grant::SQLiteEngine
         @wal_log.try &.close(file, exclusive: false)
         @wal_log = nil
         file.unlock(LockLevel::None)
+        @read_lock_yielded = @read_depth > 0
         raise error
       end
     end
@@ -365,6 +396,7 @@ module Grant::SQLiteEngine
         run_due_checkpoint
       else
         file.unlock(LockLevel::None)
+        @read_lock_yielded = false
       end
     end
 
@@ -523,11 +555,15 @@ module Grant::SQLiteEngine
     # In WAL mode, a connection whose snapshot is older than the last
     # commit moves to the newest snapshot when *refresh_snapshot* is set
     # (nothing it read is kept), and otherwise raises `BusySnapshot`.
-    def begin_write(refresh_snapshot : Bool = true) : Nil
+    #
+    # *exclusive* (BEGIN EXCLUSIVE) also takes the EXCLUSIVE lock of a
+    # rollback-journal database, so no other connection reads until the
+    # transaction ends; in WAL mode it changes nothing, as in C.
+    def begin_write(refresh_snapshot : Bool = true, exclusive : Bool = false) : Nil
       file = @file
       raise ReadOnlyDatabase.new unless file
       raise Error.new("a write transaction is already open") if @in_write_transaction
-      begin_read(file) if @read_depth == 0
+      begin_read(file) if @read_depth == 0 || @read_lock_yielded
       if log = @wal_log
         begin
           reload if log.begin_write(refresh_snapshot)
@@ -543,6 +579,10 @@ module Grant::SQLiteEngine
       end
       unless file.lock(LockLevel::Reserved)
         file.unlock(LockLevel::None) if @read_depth == 0
+        raise Busy.new
+      end
+      if exclusive && !file.lock(LockLevel::Exclusive)
+        file.unlock(@read_depth > 0 ? LockLevel::Shared : LockLevel::None)
         raise Busy.new
       end
       check_writable_header { file.unlock(LockLevel::None) if @read_depth == 0 }
