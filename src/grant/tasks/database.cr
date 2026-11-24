@@ -379,11 +379,20 @@ module Grant
         URI.decode_www_form(URI.parse(@url).path.lstrip('/'))
       end
 
+      # The URL parameters that decide how a connection is secured. The
+      # maintenance connection keeps them, so it is made with the same TLS
+      # settings as the app's own.
+      LIST_OF_CONNECTION_SECURITY_PARAMETERS = %w[sslmode sslrootcert sslcert sslkey auth_methods ssl-mode ssl-ca ssl-cert ssl-key]
+
       # A short-lived connection to the server's maintenance database.
       private def with_maintenance_connection(& : DB::Connection -> T) : T forall T
         uri = URI.parse(@url)
         uri.path = adapter_kind.pg? ? "/postgres" : "/"
-        uri.query = nil
+        security_parameters = URI::Params.new
+        uri.query_params.each do |key, value|
+          security_parameters.add(key, value) if LIST_OF_CONNECTION_SECURITY_PARAMETERS.includes?(key)
+        end
+        uri.query = security_parameters.empty? ? nil : security_parameters.to_s
         DB.open(uri.to_s) { |db| db.using_connection { |connection| yield connection } }
       end
 

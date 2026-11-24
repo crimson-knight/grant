@@ -225,7 +225,7 @@ Grant::Connections << Grant::Adapter::Mysql.new(
 # With SSL
 Grant::Connections << Grant::Adapter::Mysql.new(
   name: "production",
-  url: "mysql://grant_user:password@host:3306/grant_production?sslmode=REQUIRED"
+  url: "mysql://grant_user:password@host:3306/grant_production?ssl-mode=required"
 )
 ```
 
@@ -509,12 +509,21 @@ Grant::Connections << Grant::Adapter::Pg.new(
 
 ### SSL/TLS Configuration
 ```crystal
-# PostgreSQL with SSL
-url = "postgresql://user:pass@host/db?sslmode=require&sslcert=/path/to/cert"
+# PostgreSQL: chain and host name checked against your CA
+url = "postgresql://user:pass@host/db?sslmode=verify-full&sslrootcert=/path/to/ca.pem"
 
-# MySQL with SSL
-url = "mysql://user:pass@host/db?sslmode=REQUIRED&sslca=/path/to/ca.pem"
+# MySQL: chain and host name checked against your CA
+url = "mysql://user:pass@host/db?ssl-mode=verify_identity&ssl-ca=/path/to/ca.pem"
 ```
+
+TLS runs on Beryl TLS 1.3, written in Crystal, so an app links no OpenSSL
+and needs no flag or setting. The server must offer TLS 1.3 (PostgreSQL 12
+or later, MySQL 8.0.16 or later); a server that stops at TLS 1.2 is refused
+with an error that says so. Without `sslrootcert` / `ssl-ca` the chain is
+checked against the system roots (the file `SSL_CERT_FILE` names, else the
+operating system bundle). Client certificates (`sslcert`/`sslkey`,
+`ssl-cert`/`ssl-key`) need the `-Duse_openssl` build flag, which keeps the
+OpenSSL path for one release.
 
 ## Troubleshooting
 

@@ -1,5 +1,5 @@
 require "uri"
-require "http"
+require "uri/params"
 require "system/user"
 require "socket"
 
@@ -85,7 +85,7 @@ module Grant::PQ
       port = uri.port || params["port"]?
       initialize(hostname, uri.path, uri.user, uri.password, port, nil, params.fetch("application_name", nil), params["replication"]?)
       if q = uri.query
-        HTTP::Params.parse(q) do |key, value|
+        URI::Params.parse(q) do |key, value|
           handle_sslparam(key, value)
         end
       end

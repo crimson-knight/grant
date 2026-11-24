@@ -170,7 +170,7 @@ jobs:
           SQLITE_DATABASE_URL: sqlite3:./grant.db
           SQLITE_REPLICA_URL: sqlite3:./grant_replica.db
 
-  # MySQL 8.0 and 9.x both default to caching_sha2_password, and the grant
+  # MySQL 8.4 and 9.x both default to caching_sha2_password, and the grant
   # user is pinned to it below, so every connection these jobs open goes
   # through Grant's caching_sha2_password handshake (Thread 3b). No
   # mysql_native_password override anywhere.
@@ -184,10 +184,10 @@ jobs:
         # Latest Crystal; minimum-crystal covers the floor from shard.yml.
         crystal: [1.21.0]
         mysql:
-          - version: "8.0"
-            digest: "7dcddc01f13bab2f15cde676d44d01f61fc9f99fe7785e86196dfc07d358ae2b"
-          - version: "9.0"
-            digest: "92dc869678019f65d761155dacac660a904f6245bfe1b7997da0a73b2bfc68c9"
+          - version: "8.4.13"
+            digest: "8c233bad33d520a7aae1c1e619c3a9775f4a1ba2d463d692fada04ec7f40be00"
+          - version: "9.7.4"
+            digest: "1f2ca53a9e94ff9f1f313099fa7dc7fb2f72e180ca5b2ef83574031e451bbbf1"
         shard: [1, 2, 3, 4, 5, 6]
     services:
       mysql-primary:
@@ -258,53 +258,31 @@ jobs:
           SPEC_GROUP_INCREMENTAL: "0"
           SPEC_GROUP_MAX_RSS_GB: "13"
           CURRENT_ADAPTER: mysql
-          MYSQL_DATABASE_URL: mysql://grant:password@127.0.0.1:3306/grant_db
-          MYSQL_REPLICA_URL: mysql://grant:password@127.0.0.1:3307/grant_replica_db
+          # ssl-mode=required: every connection runs over TLS (Beryl, TLS 1.3;
+          # the images generate their own certificates).
+          MYSQL_DATABASE_URL: mysql://grant:password@127.0.0.1:3306/grant_db?ssl-mode=required
+          MYSQL_REPLICA_URL: mysql://grant:password@127.0.0.1:3307/grant_replica_db?ssl-mode=required
 
+  # Every PostgreSQL server here takes TLS 1.3 only and refuses connections
+  # without TLS (scripts/pg-tls-test-servers.sh), and the suite connects with
+  # sslmode=verify-full, so each slice runs over Beryl TLS 1.3. The primary
+  # trusts its logins: a SCRAM-SHA-256 handshake runs 4,096 PBKDF2 rounds
+  # in Grant's driver for every new connection, and the pool specs open
+  # thousands. The replica server keeps scram-sha-256, and
+  # tls_verification_spec.cr logs in to it with SCRAM-SHA-256-PLUS.
   psql-spec:
-    name: psql-spec (${{ matrix.crystal }}, ${{ matrix.shard }}/6)
+    name: psql-spec (PostgreSQL ${{ matrix.postgres.version }}, ${{ matrix.shard }}/6)
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        # Latest Crystal; minimum-crystal covers the floor from shard.yml.
-        crystal: [1.21.0]
+        postgres:
+          - version: "17.12"
+            digest: "87c8b42f423b45d5247e6aa8fdb2e7762fec164c68a50fe3eb07e7bfcaf4dbcf"
+          - version: "19.0"
+            digest: "aaa10f7ba7328b4a221a6c3184d83eef885bd16bf1f6de864757863156b0a4d1"
         shard: [1, 2, 3, 4, 5, 6]
-    services:
-      # The primary trusts its local logins: a SCRAM-SHA-256 handshake runs
-      # 4,096 PBKDF2 rounds in Grant's driver for every new connection, and
-      # the pool specs open thousands (a 14-file connection-heavy binary ran
-      # 7.2 s with SCRAM and 3.4 s with trust on PostgreSQL 17). The replica
-      # keeps the image's scram-sha-256, so every slice still logs in with
-      # SCRAM through the replica URL, as sharding.yml and failover.yml do.
-      postgres-primary:
-        image: postgres:16@sha256:a3b7f434b2dc57ce85a67e171163eb8ab1a1ebcb39d27484661f26b1dfbe30d6
-        env:
-          POSTGRES_USER: grant
-          POSTGRES_PASSWORD: password
-          POSTGRES_DB: grant_db
-          POSTGRES_HOST_AUTH_METHOD: trust
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-        ports:
-          - 5432:5432
-      postgres-replica:
-        image: postgres:16@sha256:a3b7f434b2dc57ce85a67e171163eb8ab1a1ebcb39d27484661f26b1dfbe30d6
-        env:
-          POSTGRES_USER: grant
-          POSTGRES_PASSWORD: password
-          POSTGRES_DB: grant_replica_db
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-        ports:
-          - 5433:5432
     steps:
       - name: Download source
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -315,9 +293,11 @@ jobs:
       - name: Install Crystal
         uses: crystal-lang/install-crystal@d8ef131ecec0352ce0e39b81b0a6d95def58fe2f # v1
         with:
-          crystal: ${{ matrix.crystal }}
+          crystal: 1.21.0
       - name: Install shards
         run: shards install --frozen --skip-postinstall --skip-executables
+      - name: Start the TLS 1.3 PostgreSQL servers
+        run: scripts/pg-tls-test-servers.sh "postgres:${{ matrix.postgres.version }}@sha256:${{ matrix.postgres.digest }}" "$RUNNER_TEMP/pg-tls" >> "$GITHUB_ENV"
       - name: Run tests
         # The whole suite compiled as one program needs about 20 GB of RAM; a
         # runner has 16 GB. spec-groups.sh compiles one group at a time.
@@ -329,5 +309,3 @@ jobs:
           SPEC_GROUP_INCREMENTAL: "0"
           SPEC_GROUP_MAX_RSS_GB: "13"
           CURRENT_ADAPTER: pg
-          PG_DATABASE_URL: postgres://grant:password@localhost:5432/grant_db
-          PG_REPLICA_URL: postgres://grant:password@localhost:5433/grant_replica_db
