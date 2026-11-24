@@ -215,10 +215,16 @@ module Grant::SQLiteEngine::Query
     # transaction one more held until it ends, as C keeps SHARED from the
     # first read to COMMIT. Pages and schema another connection changed are
     # dropped first.
-    def begin_statement_read : Nil
+    #
+    # With *for_transaction* false (preparing a statement, which reads only
+    # the schema) the open transaction keeps no read of its own, as C's
+    # schema load opens and closes its own read transaction
+    # (sqlite3InitOne): a deferred transaction's first write can then still
+    # wait for the write lock and move to the newest snapshot.
+    def begin_statement_read(for_transaction : Bool = true) : Nil
       pager = @database.pager
       wait_while_busy { pager.acquire_read_lock }
-      if @in_transaction && !@holds_transaction_read_lock
+      if for_transaction && @in_transaction && !@holds_transaction_read_lock
         pager.acquire_read_lock
         @holds_transaction_read_lock = true
       end

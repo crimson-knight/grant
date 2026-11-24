@@ -112,6 +112,38 @@ describe "Grant::SQLite3 engine seam" do
     end
   end
 
+  it "lets a deferred transaction's first write wait out busy_timeout in WAL mode, as C does" do
+    {:grant, :libsqlite3}.each do |engine|
+      path = File.tempname("grant_engine_seam_busy", ".sqlite3")
+      Grant.settings.sqlite_engine = engine
+      first = DB.connect("sqlite3:#{path}?journal_mode=wal").as(Grant::SQLite3::Connection)
+      second = DB.connect("sqlite3:#{path}?journal_mode=wal&busy_timeout=5000").as(Grant::SQLite3::Connection)
+      begin
+        first.exec "CREATE TABLE entries (id INTEGER PRIMARY KEY, label TEXT)"
+        first.exec "BEGIN IMMEDIATE"
+        first.exec "INSERT INTO entries (label) VALUES ('first')"
+        committed = Channel(Nil).new
+        spawn do
+          sleep 300.milliseconds
+          first.exec "COMMIT"
+          committed.send(nil)
+        end
+        started = Time.instant
+        second.exec "BEGIN"
+        second.exec "INSERT INTO entries (label) VALUES ('second')"
+        second.exec "COMMIT"
+        committed.receive
+        (Time.instant - started).should be >= 250.milliseconds
+        second.scalar("SELECT group_concat(label, ',') FROM entries").should eq "first,second"
+      ensure
+        first.close
+        second.close
+        Grant.settings.sqlite_engine = GRANT_SQLITE_ENGINE
+        {path, "#{path}-wal", "#{path}-shm"}.each { |file| File.delete(file) if File.exists?(file) }
+      end
+    end
+  end
+
   it "keeps a row a savepoint inside a transaction updated, read from another connection" do
     path = File.tempname("grant_engine_seam_savepoint", ".sqlite3")
     Grant.settings.sqlite_engine = :grant

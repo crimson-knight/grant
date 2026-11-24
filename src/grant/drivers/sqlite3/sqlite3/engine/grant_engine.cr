@@ -82,7 +82,9 @@ module Grant::SQLite3
         query = if Database.transaction_control?(sql)
                   @session.prepare(sql)
                 else
-                  @session.begin_statement_read
+                  # Compiling reads the schema only; it leaves the open
+                  # transaction's snapshot unpinned, as C does.
+                  @session.begin_statement_read(for_transaction: false)
                   begin
                     @session.prepare(sql)
                   ensure
