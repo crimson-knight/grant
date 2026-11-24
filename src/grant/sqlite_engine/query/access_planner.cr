@@ -27,6 +27,8 @@ module Grant::SQLiteEngine::Query
       case expression
       when ColumnExpr
         into << expression.column if expression.slot == slot
+        # A VIRTUAL generated column reads the columns of its expression.
+        expression.children.each { |child| return unless columns_of(child, slot, into) }
       when SubqueryExpr
         return if expression.list_of_outer_slots.includes?(slot)
         expression.children.each { |child| return unless columns_of(child, slot, into) }

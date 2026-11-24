@@ -287,7 +287,9 @@ module Grant::SQLiteEngine
       SchemaEntry.new(object_type, object_name, table_name, root.to_u32, sql.is_a?(String) ? sql : nil)
     end
 
-    # Maps a stored record to the table's declared columns.
+    # Maps a stored record to the table's declared columns. A VIRTUAL
+    # generated column, which no record holds, reads NULL here: the query
+    # layer computes it (`Query::VirtualColumnExpr`).
     # :nodoc:
     struct RowMapping
       @stored_order : Array(Int32)
@@ -300,9 +302,6 @@ module Grant::SQLiteEngine
         @column_count = definition.list_of_columns.size
         @in_place = !definition.without_rowid? && @stored_order == (0...@column_count).to_a
         @real_columns = (0...@column_count).select { |index| definition.list_of_columns[index].affinity.real? }
-        if virtual = definition.list_of_columns.find(&.generated.virtual?)
-          raise UnsupportedSQL.new("VIRTUAL generated column #{table_name}.#{virtual.column_name}")
-        end
       end
 
       def map(rowid : Int64?, record : Array(Value)) : Array(Value)
