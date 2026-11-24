@@ -4,68 +4,47 @@ require "../../../src/grant/drivers/sqlite3/sqlite3/flags"
 require "../../../src/grant/drivers/sqlite3/sqlite3/engine"
 require "../../../src/grant/drivers/sqlite3/sqlite3/engine/grant_engine"
 require "../../../src/grant/drivers/sqlite3/libsqlite3"
+require "../../support/crystal_compiler"
 
 # Lock waits between processes, the same on Grant's engine as on C SQLite:
 # opening a WAL database a killed writer left, and writers that take turns.
-# The spec program runs itself again as each helper process.
+# Each process is the helper program spec/support/sqlite_engine/lock_wait_helper.cr,
+# built once for this file. SPEC_GROUP_LINK_FLAGS (the link flags
+# scripts/spec-groups.sh passes on) links the helper to the same pinned
+# libsqlite3 as the specs; without it the helper links the system's.
 module LockWaitProcesses
   alias Engine = Grant::SQLite3::Engine
 
   LIST_OF_ENGINES = {:libsqlite3, :grant}
-  ROLE_VARIABLE   = "GRANT_LOCK_WAIT_SPEC_ROLE"
-  ENGINE_VARIABLE = "GRANT_LOCK_WAIT_SPEC_ENGINE"
-  PATH_VARIABLE   = "GRANT_LOCK_WAIT_SPEC_PATH"
   # The rows each "inserter" helper adds, one transaction each.
-  INSERTS_EACH = 40
+  INSERTS_EACH  = 40
+  HELPER_SOURCE = Path[__DIR__] / ".." / ".." / "support" / "sqlite_engine" / "lock_wait_helper.cr"
+
+  class_property helper_path = ""
 
   def self.engine_named(name : Symbol) : Engine
     name == :grant ? Engine::GrantEngine.new : Engine::LibSQLite3Engine.new
   end
 
-  # Runs the helper *role* and leaves the process: 0 when every statement
-  # succeeded, with what happened on standard output.
-  def self.run_helper(role : String) : NoReturn
-    engine = engine_named(ENV[ENGINE_VARIABLE] == "grant" ? :grant : :libsqlite3)
-    code, database = engine.open(ENV[PATH_VARIABLE])
-    leave("open #{code} #{database.error_message}") unless code == Engine::OK_CODE
-    code = database.exec("PRAGMA busy_timeout=5000; PRAGMA synchronous=FULL;")
-    leave("pragmas #{code} #{database.error_message}") unless code == Engine::OK_CODE
-    case role
-    when "wal_switcher"
-      code = database.exec("PRAGMA journal_mode=WAL; INSERT INTO entries (label) VALUES ('#{Process.pid}')")
-      leave("switch: #{code} #{database.error_message}") unless code == Engine::OK_CODE
-      leave("rows 1", 0)
-    when "writer_to_kill"
-      number = 0
-      loop do
-        database.exec("BEGIN IMMEDIATE; INSERT INTO entries (label, filler) VALUES ('row #{number}', randomblob(2000)); COMMIT;")
-        number += 1
-      end
-    when "inserter"
-      INSERTS_EACH.times do |number|
-        code = database.exec("INSERT INTO entries (label, filler) VALUES ('#{Process.pid} #{number}', randomblob(200))")
-        leave("insert #{number}: #{code} #{database.error_message}") unless code == Engine::OK_CODE
-      end
-      leave("rows #{INSERTS_EACH}", 0)
-    else
-      code, statement = database.prepare("SELECT count(*) FROM entries")
-      leave("prepare #{code} #{database.error_message}") unless code == Engine::OK_CODE
-      code = statement.step
-      leave("step #{code} #{database.error_message}") unless code == Engine::ROW_CODE
-      leave("rows #{statement.column_int64(0)}", 0)
+  def self.build_helper : Nil
+    binary_path = File.tempname("grant_lock_wait_helper")
+    arguments = ["build", "--no-color", "-o", binary_path, HELPER_SOURCE.normalize.to_s]
+    if link_flags = ENV["SPEC_GROUP_LINK_FLAGS"]?
+      arguments << "--link-flags" << link_flags unless link_flags.empty?
     end
+    output = IO::Memory.new
+    status = Process.run(spec_crystal_compiler, arguments, output: output, error: output, chdir: File.expand_path("../../..", __DIR__))
+    raise "building the lock wait helper failed:\n#{output}" unless status.success?
+    self.helper_path = binary_path
   end
 
-  def self.leave(message : String, status : Int32 = 1) : NoReturn
-    STDOUT.puts message
-    STDOUT.flush
-    LibC._exit(status)
+  def self.remove_helper : Nil
+    File.delete?(helper_path)
+    File.delete?("#{helper_path}.dwarf")
   end
 
   def self.start_helper(role : String, engine : Symbol, path : String) : Process
-    program = Process.executable_path || raise "the spec program has no path"
-    environment = {ROLE_VARIABLE => role, ENGINE_VARIABLE => engine.to_s, PATH_VARIABLE => path}
-    Process.new(program, env: environment, output: Process::Redirect::Pipe, error: Process::Redirect::Pipe)
+    Process.new(helper_path, [role, engine.to_s, path], output: Process::Redirect::Pipe, error: Process::Redirect::Pipe)
   end
 
   # What each helper printed, once all have finished.
@@ -106,11 +85,10 @@ module LockWaitProcesses
   end
 end
 
-if helper_role = ENV[LockWaitProcesses::ROLE_VARIABLE]?
-  LockWaitProcesses.run_helper(helper_role)
-end
-
 describe "Grant::SQLiteEngine lock waits between processes" do
+  before_all { LockWaitProcesses.build_helper }
+  after_all { LockWaitProcesses.remove_helper }
+
   it "lets four processes open a WAL database at once after a writer was killed, each waiting out the recovery" do
     LockWaitProcesses::LIST_OF_ENGINES.each do |engine|
       4.times do |round|
