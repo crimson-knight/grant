@@ -515,6 +515,7 @@ module Grant::SQLiteEngine::Query
   # and returns the first *width* values of each.
   class SortProducer < Producer
     @rows = [] of Array(Value)
+    @collected = [] of Array(Value)
     @position = 0
     @tied = false
 
@@ -527,11 +528,14 @@ module Grant::SQLiteEngine::Query
       @input.open(frame)
       @has_previous = false
       return if @presorted
-      rows = [] of Array(Value)
+      # The list that collects the rows is kept for the next run; one row
+      # (a lookup by key) is already in order.
+      rows = @collected
+      rows.clear
       while row = @input.next_row(frame)
         rows << row
       end
-      @rows = Sorting.stable_sort(rows) { |left, right| compare(left, right) }
+      @rows = rows.size > 1 ? Sorting.stable_sort(rows) { |left, right| compare(left, right) } : rows
       @position = 0
     end
 

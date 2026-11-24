@@ -8,6 +8,9 @@ module Grant::SQLiteEngine::Query
 
     @compiled : CompiledSelect
     @slot : Int32
+
+    # The snapshot of a target found by rowid, which nothing reads or changes.
+    NO_SNAPSHOT = [] of Value
     # The index the rows are read through (nil: the table, in rowid order).
     getter scan_index_root : UInt32?
 
@@ -38,7 +41,15 @@ module Grant::SQLiteEngine::Query
     # Every target row once (the first match of an UPDATE ... FROM): its
     # rowid (nil for WITHOUT ROWID), its values and the computed columns.
     def collect(list_of_parameters : Array(Value)) : Array({Int64?, Array(Value), Array(Value)})
-      frame = Frame.new(@compiled.slot_count, @compiled.aggregate_count, list_of_parameters, @session)
+      Frame.reuse(@frame_keeper, @compiled.slot_count, @compiled.aggregate_count, list_of_parameters, @session) do |frame|
+        collect_in(frame)
+      end
+    end
+
+    # The frame collect runs in, kept for the next run.
+    @frame_keeper = FrameKeeper.new
+
+    private def collect_in(frame : Frame) : Array({Int64?, Array(Value), Array(Value)})
       producer = @compiled.producer
       producer.open(frame)
       rows = [] of {Int64?, Array(Value), Array(Value)}
@@ -52,7 +63,9 @@ module Grant::SQLiteEngine::Query
           next unless taken.add?(rowid)
         end
         frame.complete_row(@slot)
-        rows << {rowid, frame.list_of_rows[@slot].dup, values}
+        # A rowid table finds the row again by its rowid; only a WITHOUT
+        # ROWID table reads the snapshot (its primary key).
+        rows << {rowid, rowid ? NO_SNAPSHOT : frame.list_of_rows[@slot].dup, values}
       end
       rows
     end
@@ -106,7 +119,7 @@ module Grant::SQLiteEngine::Query
     end
 
     def run(list_of_parameters : Array(Value)) : Array(Array(Value))
-      returned = [] of Array(Value)
+      returned = @returning ? [] of Array(Value) : NO_ROWS
       @session.run_write(list_of_parameters, returning: !@returning.nil?) do |run|
         positions = @assignments.list_of_positions
         journal, _, in_rowid_order = journal_choices(@session.foreign_keys?) do
@@ -178,7 +191,7 @@ module Grant::SQLiteEngine::Query
     end
 
     def run(list_of_parameters : Array(Value)) : Array(Array(Value))
-      returned = [] of Array(Value)
+      returned = @returning ? [] of Array(Value) : NO_ROWS
       @session.run_write(list_of_parameters, returning: !@returning.nil?) do |run|
         journal, _, in_rowid_order = journal_choices(@session.foreign_keys?) do
           {StatementJournal.for_delete(@session, @table, @statement), false,

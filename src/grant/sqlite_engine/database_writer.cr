@@ -48,6 +48,10 @@ module Grant::SQLiteEngine
     SEQUENCE_TABLE_SQL = "CREATE TABLE sqlite_sequence(name,seq)"
 
     @table_layouts = {} of String => TableLayout
+    # Page copies and cell lists every b-tree change on this database borrows.
+    @btree_scratch = BTreeScratch.new
+    # The buffer write_row encodes each table record into.
+    @record_buffer = RecordEncoder::EncodeBuffer.new
 
     # Opens *path*. With `read_write: true` the database is created when the
     # file does not exist, a hot journal is rolled back, and the write API
@@ -363,9 +367,16 @@ module Grant::SQLiteEngine
       end
     end
 
+    # One writer while the text encoding and schema format stay the same.
     private def btree_writer : BTreeWriter
-      BTreeWriter.new(@pager, text_encoding, header.try(&.schema_format) || 4_u32)
+      encoding = text_encoding
+      schema_format = header.try(&.schema_format) || 4_u32
+      writer = @btree_writer
+      return writer if writer && writer.writes?(encoding, schema_format)
+      @btree_writer = BTreeWriter.new(@pager, encoding, schema_format, @btree_scratch)
     end
+
+    @btree_writer : BTreeWriter?
 
     private def schema_changed : Nil
       cookie = @pager.header_field(Pager::SCHEMA_COOKIE_OFFSET)
@@ -625,9 +636,8 @@ module Grant::SQLiteEngine
     # The stored values of the row with *rowid*, in declared order with the
     # rowid alias holding the rowid, or nil.
     private def read_row(layout : TableLayout, rowid : Int64) : Array(Value)?
-      record = btree_writer.table_record(layout.entry.root_page, rowid)
-      return unless record
-      values = Record.decode(record, text_encoding, layout.entry.root_page)
+      values = btree_writer.table_values(layout.entry.root_page, rowid, layout.entry.root_page)
+      return unless values
       stored_row!(layout.definition, layout.row_mapping.map(rowid, values))
     end
 

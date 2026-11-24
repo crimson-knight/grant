@@ -74,7 +74,7 @@ module Grant::SQLiteEngine::Query
   # Runs a statement plan when its query is first stepped and hands out
   # the rows it returned.
   class PlanProducer < Producer
-    @rows = [] of Array(Value)
+    @rows = StatementPlan::NO_ROWS
     @position = 0
 
     def initialize(@session : Session, @plan : StatementPlan, @statement : SQL::Statement, @text : String)

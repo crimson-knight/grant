@@ -116,8 +116,11 @@ module Grant::SQLiteEngine::Query
       core_plan = compile_core(core, context, statement.order_by, limit_rows(statement.limit))
       producer = core_plan.producer
       unless statement.order_by.empty?
+        # With every ORDER BY term pinned by an equality in WHERE, no
+        # key is left and rows pass through as they come, as C drops the
+        # sorter.
         producer = SortProducer.new(producer, core_plan.list_of_sort_keys, core_plan.list_of_columns.size,
-          presorted: core_plan.presorted?)
+          presorted: core_plan.presorted? || core_plan.list_of_sort_keys.empty?)
       end
       producer = LimitProducer.new(producer, limit[0], limit[1]) if limit
       propagate_correlation(context, parent)

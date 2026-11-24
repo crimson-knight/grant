@@ -203,6 +203,15 @@ module Grant::SQLiteEngine::Query
 
     def open(frame : Frame) : Nil
       @table.check_readable
+      if @key_expressions.size == 1
+        # One key (rowid = ?): the list is refilled, nothing allocated.
+        @keys.clear
+        key = ValueSemantics.apply_affinity(@key_expressions[0].evaluate(frame), ExpressionAffinity::Numeric)
+        @keys << key if key.is_a?(Int64)
+        @position = 0
+        @cursor ||= TableCursor.new(@database, @table.root_page)
+        return
+      end
       keys = Set(Int64).new
       @key_expressions.each do |expression|
         key = ValueSemantics.apply_affinity(expression.evaluate(frame), ExpressionAffinity::Numeric)
@@ -363,9 +372,10 @@ module Grant::SQLiteEngine::Query
         end
       end
       index_cursor = @index_cursor ||= IndexCursor.new(@database, @root_page, @order)
-      unless @opened_for.same?(frame)
+      unless frame.same_run?(@opened_for, @opened_run)
         index_cursor.forget_position
         @opened_for = frame
+        @opened_run = frame.run_number
       end
       @table_cursor ||= TableCursor.new(@database, @table.root_page)
       # A join probes in ascending key order: the last lookup stopped on
@@ -450,6 +460,7 @@ module Grant::SQLiteEngine::Query
     end
 
     @opened_for : Frame? = nil
+    @opened_run = 0
     @resume = false
     @can_resume = false
     @resume_after = [] of Value
@@ -562,17 +573,19 @@ module Grant::SQLiteEngine::Query
     @rows = [] of Array(Value)
     @exhausted = false
     @computed_for : Frame? = nil
+    @computed_run = 0
     @position = 0
 
     def initialize(@slot : Int32, @producer : Producer, @correlated : Bool)
     end
 
     def open(frame : Frame) : Nil
-      if @correlated || !@computed_for.same?(frame)
+      if @correlated || !frame.same_run?(@computed_for, @computed_run)
         @rows = [] of Array(Value)
         @exhausted = false
         @producer.open(frame)
         @computed_for = frame
+        @computed_run = frame.run_number
       end
       @position = 0
     end

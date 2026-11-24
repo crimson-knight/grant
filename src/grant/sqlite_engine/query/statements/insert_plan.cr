@@ -3,6 +3,8 @@ module Grant::SQLiteEngine::Query
   # DEFAULT VALUES, mapped to the table's columns, written with C's
   # constraint order, conflict resolution, upsert and RETURNING.
   class InsertPlan < StatementPlan
+    # Which columns the statement gives a value, for the row being built.
+    @assigned = [] of Bool
     @table : WriteTable
     @target_name : String
     # For each source column, the table position it fills (-1: the rowid).
@@ -75,7 +77,7 @@ module Grant::SQLiteEngine::Query
     end
 
     def run(list_of_parameters : Array(Value)) : Array(Array(Value))
-      returned = [] of Array(Value)
+      returned = @returning ? [] of Array(Value) : NO_ROWS
       @session.run_write(list_of_parameters, returning: !@returning.nil?) do |run|
         # A single-row INSERT (no SELECT, one VALUES row, no RETURNING
         # trigger, no REPLACE that deletes rows) raises an immediate foreign
@@ -90,7 +92,10 @@ module Grant::SQLiteEngine::Query
         run.open_autoincrement(@table)
         each_source_row(list_of_parameters) do |values|
           row = Array(Value).new(@table.list_of_columns.size, nil)
-          assigned = Array(Bool).new(row.size, false)
+          # Refilled for each row: it is read only before the row is written.
+          assigned = @assigned
+          assigned.clear
+          row.size.times { assigned << false }
           explicit_rowid = nil.as(Value)
           @list_of_source_positions.each_with_index do |position, index|
             if position < 0
@@ -137,14 +142,34 @@ module Grant::SQLiteEngine::Query
         yield [] of Value
         return
       end
-      frame = Frame.new(compiled.slot_count, compiled.aggregate_count, list_of_parameters, @session)
-      producer = compiled.producer
+      first, second, rows = Frame.reuse(@frame_keeper, compiled.slot_count, compiled.aggregate_count, list_of_parameters, @session) do |frame|
+        read_source_rows(compiled.producer, frame)
+      end
+      return unless first
+      unless second && rows
+        # One row (a VALUES row): read in full already, no list needed.
+        yield first
+        return
+      end
+      rows.each { |each_row| yield each_row }
+    end
+
+    # The frame the source rows are read in, kept for the next run.
+    @frame_keeper = FrameKeeper.new
+
+    # Every source row: the first, the second and, when there is a second,
+    # the list of them all.
+    private def read_source_rows(producer : Producer, frame : Frame) : {Array(Value)?, Array(Value)?, Array(Array(Value))?}
       producer.open(frame)
-      rows = [] of Array(Value)
+      first = producer.next_row(frame)
+      return {nil, nil, nil} unless first
+      second = producer.next_row(frame)
+      return {first, nil, nil} unless second
+      rows = [first, second]
       while row = producer.next_row(frame)
         rows << row
       end
-      rows.each { |each_row| yield each_row }
+      {first, second, rows}
     end
   end
 end

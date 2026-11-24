@@ -259,21 +259,32 @@ module Grant::SQLiteEngine
 
     # walIndexTryHdr.
     private def try_header : Bool
-      first = WalIndexHeader.new(@index.read_bytes(0, WalIndexHeader::SIZE))
+      first = @first_header_copy
+      @index.read_into(0, first)
       @index.barrier
-      second = WalIndexHeader.new(@index.read_bytes(HEADER_COPY_TWO, WalIndexHeader::SIZE))
+      second = @second_header_copy
+      @index.read_into(HEADER_COPY_TWO, second)
       return false unless first == second
-      return false unless first.valid?
-      unless first == @header
+      header = WalIndexHeader.new(first)
+      return false unless header.valid?
+      unless header == @header
         @changed = true
-        @header = first
+        @header = WalIndexHeader.new(first.dup)
       end
       true
     end
 
+    # The header in the wal-index now, read into a buffer the next call
+    # reuses: compare it or read a field, then let it go.
     private def live_header : WalIndexHeader
-      WalIndexHeader.new(@index.read_bytes(0, WalIndexHeader::SIZE))
+      @index.read_into(0, @live_header_copy)
+      WalIndexHeader.new(@live_header_copy)
     end
+
+    # Buffers the header reads above copy the wal-index header into.
+    @first_header_copy = Bytes.new(WalIndexHeader::SIZE)
+    @second_header_copy = Bytes.new(WalIndexHeader::SIZE)
+    @live_header_copy = Bytes.new(WalIndexHeader::SIZE)
 
     # walIndexWriteHdr: the second copy first, then the first.
     private def write_index_header : Nil

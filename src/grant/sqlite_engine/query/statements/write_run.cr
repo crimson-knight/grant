@@ -55,8 +55,9 @@ module Grant::SQLiteEngine::Query
 
     # AUTOINCREMENT: the largest rowid per table (memMax), written to
     # sqlite_sequence when the statement ends.
-    @autoincrement_maximum = {} of String => Int64
-    @list_of_autoincrement_tables = [] of WriteTable
+    # Made on first use: most statements touch no AUTOINCREMENT table.
+    @autoincrement_maximum : Hash(String, Int64)?
+    @list_of_autoincrement_tables : Array(WriteTable)?
 
     def initialize(@session : Session, @list_of_parameters : Array(Value))
     end
@@ -146,18 +147,19 @@ module Grant::SQLiteEngine::Query
 
     private def autoincrement_maximum(table : WriteTable) : Int64
       key = autoincrement_key(table)
-      if value = @autoincrement_maximum[key]?
+      maximum = @autoincrement_maximum ||= {} of String => Int64
+      if value = maximum[key]?
         return value
       end
-      @list_of_autoincrement_tables << table
-      @autoincrement_maximum[key] = table.database.sequence_of(table.name) || 0_i64
+      (@list_of_autoincrement_tables ||= [] of WriteTable) << table
+      maximum[key] = table.database.sequence_of(table.name) || 0_i64
     end
 
     private def note_autoincrement(table : WriteTable, rowid : Int64) : Nil
       return unless table.definition.autoincrement?
       key = autoincrement_key(table)
       current = autoincrement_maximum(table)
-      @autoincrement_maximum[key] = rowid if rowid > current
+      @autoincrement_maximum.try { |maximum| maximum[key] = rowid } if rowid > current
     end
 
     private def autoincrement_key(table : WriteTable) : String
@@ -173,8 +175,11 @@ module Grant::SQLiteEngine::Query
     # sqlite3AutoincrementEnd: each AUTOINCREMENT table's largest rowid goes
     # to sqlite_sequence when it passed the value stored there.
     def finish_autoincrement : Nil
-      @list_of_autoincrement_tables.each do |table|
-        value = @autoincrement_maximum[autoincrement_key(table)]
+      maximum = @autoincrement_maximum
+      list_of_tables = @list_of_autoincrement_tables
+      return unless maximum && list_of_tables
+      list_of_tables.each do |table|
+        value = maximum[autoincrement_key(table)]
         stored = table.database.sequence_of(table.name)
         next if stored && stored >= value
         table.database.write_sequence(table.name, value)
@@ -459,7 +464,27 @@ module Grant::SQLiteEngine::Query
       end
     end
 
-    # Each index of *table* that holds the row, with the row's entry.
+    # The index entries an UPDATE that keeps *rowid* removes and adds. When
+    # every index lacks a WHERE and expression terms and its columns hold
+    # the same values in both rows, every entry stays and no key is built;
+    # otherwise the entries of both rows are built and compared.
+    private def moved_index_entries(table : WriteTable, old_row : Array(Value), new_row : Array(Value),
+                                    rowid : Int64) : {Array({IndexLayout, Array(Value)}), Array({IndexLayout, Array(Value)})}
+      if table.list_of_index_layouts.all? { |index| !index.needs_evaluation? && same_columns?(index, old_row, new_row) }
+        return {[] of {IndexLayout, Array(Value)}, [] of {IndexLayout, Array(Value)}}
+      end
+      old_entries = index_entries(table, old_row, rowid)
+      new_entries = index_entries(table, new_row, rowid)
+      {WriteRun.entries_not_in(old_entries, new_entries), WriteRun.entries_not_in(new_entries, old_entries)}
+    end
+
+    # Whether *old_row* and *new_row* hold the same values (as same_key?
+    # compares them) in every column the entries of *index* hold.
+    private def same_columns?(index : IndexLayout, old_row : Array(Value), new_row : Array(Value)) : Bool
+      index.list_of_key_positions.all? { |position| WriteRun.same_value?(old_row[position], new_row[position]) } &&
+        index.list_of_tail_positions.all? { |position| WriteRun.same_value?(old_row[position], new_row[position]) }
+    end
+
     # The entries of *list* that *other* does not hold with the same key
     # (each value the same storage class and value).
     def self.entries_not_in(list : Array({IndexLayout, Array(Value)}), other : Array({IndexLayout, Array(Value)})) : Array({IndexLayout, Array(Value)})
@@ -471,14 +496,18 @@ module Grant::SQLiteEngine::Query
     def self.same_key?(left : Array(Value), right : Array(Value)) : Bool
       return false unless left.size == right.size
       left.each_with_index do |value, position|
-        other = right[position]
-        return false unless value.class == other.class && value == other
-        # -0.0 equals 0.0 but is stored with its own bits.
-        return false if value.is_a?(Float64) && other.is_a?(Float64) && value.unsafe_as(UInt64) != other.unsafe_as(UInt64)
+        return false unless same_value?(value, right[position])
       end
       true
     end
 
+    def self.same_value?(value : Value, other : Value) : Bool
+      return false unless value.class == other.class && value == other
+      # -0.0 equals 0.0 but is stored with its own bits.
+      !(value.is_a?(Float64) && other.is_a?(Float64) && value.unsafe_as(UInt64) != other.unsafe_as(UInt64))
+    end
+
+    # Each index of *table* that holds the row, with the row's entry.
     def index_entries(table : WriteTable, row : Array(Value), rowid : Int64?) : Array({IndexLayout, Array(Value)})
       table.list_of_index_layouts.compact_map do |index|
         next unless index_includes?(table, index, row, rowid)
@@ -591,15 +620,16 @@ module Grant::SQLiteEngine::Query
         child_removed(table, old_row, new_row, list_of_changed)
         parent_removed(table, old_rowid, old_row, new_row, list_of_changed)
       end
-      old_entries = index_entries(table, old_row, old_rowid)
-      new_entries = index_entries(table, new_row, rowid)
       if rowid && rowid == old_rowid && result[3].nil?
         # The row keeps its rowid: its cell is overwritten in place, and only
         # the index entries whose keys changed move (C leaves an index whose
         # columns the UPDATE does not change alone).
-        table.database.remove_index_entries(table.layout, WriteRun.entries_not_in(old_entries, new_entries))
-        table.database.write_row(table.layout, rowid, new_row, WriteRun.entries_not_in(new_entries, old_entries))
+        removed, added = moved_index_entries(table, old_row, new_row, rowid)
+        table.database.remove_index_entries(table.layout, removed)
+        table.database.write_row(table.layout, rowid, new_row, added)
       else
+        old_entries = index_entries(table, old_row, old_rowid)
+        new_entries = index_entries(table, new_row, rowid)
         table.database.remove_row(table.layout, old_rowid, old_row, old_entries)
         if replaced = result[3]
           delete_row(table, replaced[0], replaced[1], replace: true)
@@ -768,7 +798,9 @@ module Grant::SQLiteEngine::Query
     # earlier table's RESTRICT stops the statement.
     private def referencing(table : WriteTable) : Array({WriteTable, ForeignKeyRule, Array(Int32)})
       list = [] of {WriteTable, ForeignKeyRule, Array(Int32)}
-      @session.list_of_child_tables(table.name).each do |child_name|
+      list_of_children = @session.list_of_child_tables(table.name)
+      return list if list_of_children.empty?
+      list_of_children.each do |child_name|
         child = table(child_name)
         child.list_of_foreign_keys.each do |rule|
           next unless same_table?(rule.parent_table, table.name)
@@ -826,16 +858,18 @@ module Grant::SQLiteEngine::Query
       end
     end
 
-    @parent_lookups = {} of ForeignKeyRule => ParentLookup?
+    # Made on first use: most statements check no foreign key.
+    @parent_lookups : Hash(ForeignKeyRule, ParentLookup?)?
 
     # How to find a foreign key's parent row; raises C's errors for a
     # missing parent table and for parent columns without a UNIQUE index.
     private def parent_lookup(rule : ForeignKeyRule) : ParentLookup?
-      return @parent_lookups[rule] if @parent_lookups.has_key?(rule)
+      lookups = @parent_lookups ||= {} of ForeignKeyRule => ParentLookup?
+      return lookups[rule] if lookups.has_key?(rule)
       parent_info = @session.table(rule.parent_table)
       raise SQLError.new("no such table: main.#{rule.parent_table}") unless parent_info
       parent = table(rule.parent_table)
-      @parent_lookups[rule] = ParentLookup.locate(self, rule, parent)
+      lookups[rule] = ParentLookup.locate(self, rule, parent)
     end
   end
 

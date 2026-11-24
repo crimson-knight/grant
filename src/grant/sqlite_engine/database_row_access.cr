@@ -94,8 +94,13 @@ module Grant::SQLiteEngine
       writer = btree_writer
       if rowid
         alias_index = layout.definition.rowid_alias_index
-        record = RecordEncoder.encode(layout.list_of_stored_positions.map { |position| position == alias_index ? nil : row[position] },
-          text_encoding, writer_schema_format)
+        positions = layout.list_of_stored_positions
+        # Encoded into the database's record buffer: the table b-tree
+        # copies the record before anything encodes into it again.
+        record = RecordEncoder.encode(positions.size, text_encoding, writer_schema_format, @record_buffer) do |index|
+          position = positions.unsafe_fetch(index)
+          position == alias_index ? nil : row[position]
+        end
         writer.table_insert(layout.entry.root_page, rowid, record)
       else
         comparator = layout.comparator || raise Error.new("WITHOUT ROWID table #{layout.table_name} has no key order")

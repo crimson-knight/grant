@@ -652,17 +652,26 @@ module Grant::SQLiteEngine
         put_u32(page_one, VERSION_VALID_FOR_OFFSET, counter)
         put_u32(page_one, VERSION_NUMBER_OFFSET, WRITER_VERSION_NUMBER)
       end
-      list_of_pages = [] of {UInt32, Bytes}
-      @dirty.keys.sort!.each do |page_number|
-        list_of_pages << {page_number, @dirty[page_number]} if page_number <= @page_count
-      end
+      # Lists kept for the next commit: the log writes the frames before
+      # it returns.
+      list_of_numbers = @commit_page_numbers
+      list_of_numbers.clear
+      @dirty.each_key { |page_number| list_of_numbers << page_number if page_number <= @page_count }
+      list_of_numbers.sort!
+      list_of_pages = @commit_pages
+      list_of_pages.clear
+      list_of_numbers.each { |page_number| list_of_pages << {page_number, @dirty[page_number]} }
       log.commit(list_of_pages, @page_count, @page_size)
+      list_of_pages.clear
       @dirty.each { |page_number, buffer| @cache[page_number] = buffer }
       @header = DatabaseHeader.parse(read_page(1_u32))
       autocheckpoint = @wal_autocheckpoint
       @checkpoint_due = true if autocheckpoint > 0 && log.frame_count >= autocheckpoint
       finish_transaction(file)
     end
+
+    @commit_page_numbers = [] of UInt32
+    @commit_pages = [] of {UInt32, Bytes}
 
     private def finish_transaction(file : DatabaseFile) : Nil
       @dirty.clear
