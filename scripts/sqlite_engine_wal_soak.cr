@@ -19,7 +19,7 @@ require "../src/grant/drivers/sqlite3/sqlite3/type"
 require "../src/grant/drivers/sqlite3/sqlite3/flags"
 require "../src/grant/drivers/sqlite3/sqlite3/engine"
 require "../src/grant/drivers/sqlite3/sqlite3/engine/grant_engine"
-require "../src/grant/drivers/sqlite3/sqlite3/engine/lib_sqlite3_engine"
+require "../src/grant/drivers/sqlite3/libsqlite3"
 
 alias SoakEngine = Grant::SQLite3::Engine
 alias SoakValue = SoakEngine::Value
