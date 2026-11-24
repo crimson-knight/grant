@@ -18,12 +18,17 @@ module Grant::SQLiteEngine::Query
       "pragma_table_list"       => %w[schema name type ncol wr strict],
     }
 
+    # Whether *name* is a table-valued PRAGMA.
+    def self.known?(name : String) : Bool
+      COLUMNS.has_key?(name) || PragmaExtras::TABLE_VALUED.has_key?(name)
+    end
+
     def self.function_columns(name : String) : Array(String)
-      COLUMNS[name]? || [] of String
+      COLUMNS[name]? || PragmaExtras::TABLE_VALUED[name]? || [] of String
     end
 
     def self.function_producer(name : String, arguments : Array(Expr), session : Session) : Producer?
-      return unless COLUMNS.has_key?(name)
+      return unless known?(name)
       CatalogProducer.new(name, arguments, session)
     end
 
@@ -43,7 +48,7 @@ module Grant::SQLiteEngine::Query
       when "pragma_table_list"
         table_list(argument, session)
       else
-        [] of Array(Value)
+        PragmaExtras.table_valued_rows(name, argument, session)
       end
     end
 
@@ -97,12 +102,25 @@ module Grant::SQLiteEngine::Query
     end
 
     private def self.type_text(type_name : SQL::TypeName) : String
+      without_generated_always(full_type_text(type_name))
+    end
+
+    private def self.full_type_text(type_name : SQL::TypeName) : String
       if source_text = type_name.source_text
         return source_text
       end
       words = type_name.words.map(&.text).join(' ')
       return words if type_name.arguments.empty?
       "#{words}(#{type_name.arguments.join(',')})"
+    end
+
+    # build.c sqlite3AddColumn: a declared type of 16 bytes or more that
+    # ends in GENERATED ALWAYS loses those words.
+    private def self.without_generated_always(text : String) : String
+      return text unless text.bytesize >= 16 && text[-6..].compare("always", case_insensitive: true) == 0
+      trimmed = text[0...-6].rstrip
+      return trimmed unless trimmed.bytesize >= 9 && trimmed[-9..].compare("generated", case_insensitive: true) == 0
+      trimmed[0...-9].rstrip
     end
 
     private def self.indexes_of(table : TableInfo, session : Session) : Array(SchemaEntry)
@@ -215,6 +233,7 @@ module Grant::SQLiteEngine::Query
       # pragma_database_list takes no argument; the others yield no rows
       # without one.
       argument = "" if @name == "pragma_database_list"
+      argument ||= "" if PragmaExtras::TABLE_VALUED.has_key?(@name)
       @rows = argument ? Catalog.rows(@name, argument, @session) : [] of Array(Value)
       @position = 0
     end

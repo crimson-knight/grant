@@ -48,9 +48,11 @@ module Grant::SQLiteEngine::Query
                               when "integrity_check", "quick_check" then [name]
                               when "busy_timeout"                   then %w[timeout]
                               when "wal_checkpoint"                 then %w[busy log checkpointed]
-                              when "foreign_key_check"              then %w[table rowid parent fkid]
+                              when "foreign_key_check"              then ForeignKeyCheck.columns(@session, @statement.value.try { |text| PragmaPlan.unquote(text) })
                               else
-                                if REMEMBERED.has_key?(name)
+                                if extra_columns = PragmaExtras.columns(name, @statement.value)
+                                  extra_columns
+                                elsif REMEMBERED.has_key?(name)
                                   @statement.value && !SETTING_RETURNS_ROW.includes?(name) ? [] of String : [REMEMBERED[name][1]]
                                 elsif KNOWN_QUERIES.includes?(name) && (@statement.value.nil? || name == "journal_mode")
                                   [name]
@@ -110,8 +112,9 @@ module Grant::SQLiteEngine::Query
       when "integrity_check", "quick_check"
         IntegrityCheck.new(@session).rows
       when "foreign_key_check"
-        [] of Array(Value)
+        ForeignKeyCheck.new(@session, value).rows
       else
+        return PragmaExtras.rows(@session, name, value) if PragmaExtras.columns(name, value)
         if remembered = REMEMBERED[name]?
           if value
             number = PragmaPlan.integer(value) || PragmaPlan.named_level(name, value)
