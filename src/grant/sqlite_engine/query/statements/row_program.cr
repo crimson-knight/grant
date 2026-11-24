@@ -105,9 +105,12 @@ module Grant::SQLiteEngine::Query
     @compiled : CompiledSelect
 
     # *columns* are the result columns; *where*, when given, filters (an
-    # evaluation the WHERE rejects returns nil).
+    # evaluation the WHERE rejects returns nil). *deterministic_context*
+    # names the place whose expressions must be deterministic ("a CHECK
+    # constraint", "a generated column", "an index"), where C runs
+    # functions as OP_PureFunc.
     def initialize(@session : Session, columns : Array(SQL::ResultColumn), @list_of_pseudo_tables : Array(PseudoTable),
-                   where : SQL::Expression? = nil)
+                   where : SQL::Expression? = nil, @deterministic_context : String? = nil)
       items = @list_of_pseudo_tables.map_with_index do |pseudo, index|
         join = index == 0 ? nil : SQL::JoinOperator.new(true, [] of String)
         SQL::FromItem.new(join, SQL::TableReference.new(nil, SQL::Name.bare(pseudo.name), nil, nil, false), nil, nil)
@@ -133,8 +136,19 @@ module Grant::SQLiteEngine::Query
     def evaluate(list_of_parameters : Array(Value)) : Array(Value)?
       frame = Frame.new(@compiled.slot_count, @compiled.aggregate_count, list_of_parameters, @session)
       producer = @compiled.producer
-      producer.open(frame)
-      producer.next_row(frame)
+      context = @deterministic_context
+      unless context
+        producer.open(frame)
+        return producer.next_row(frame)
+      end
+      outer_context = @session.deterministic_context
+      @session.deterministic_context = context
+      begin
+        producer.open(frame)
+        producer.next_row(frame)
+      ensure
+        @session.deterministic_context = outer_context
+      end
     end
   end
 end

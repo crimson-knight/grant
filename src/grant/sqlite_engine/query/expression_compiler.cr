@@ -219,12 +219,7 @@ module Grant::SQLiteEngine::Query
               in .string? then SQL::Parser.dequote(literal.text)
               in .blob?   then literal_blob(literal.text)
               in .current_time?, .current_date?, .current_timestamp?
-                now = Time.utc
-                case literal.kind
-                when .current_time? then now.to_s("%H:%M:%S")
-                when .current_date? then now.to_s("%Y-%m-%d")
-                else                     now.to_s("%Y-%m-%d %H:%M:%S")
-                end
+                return DateTimeFunctions.keyword_expression(literal.kind)
               end
       ConstantExpr.new(value)
     end
@@ -766,7 +761,7 @@ module Grant::SQLiteEngine::Query
           raise SQLError.new("second argument to likelihood() must be a constant between 0.0 and 1.0")
         end
         return PassThroughExpr.new(compile_expression(call.arguments[0], context))
-      when "printf", "format", "date", "time", "datetime", "julianday", "strftime", "unixepoch"
+      when "printf", "format"
         raise UnsupportedSQL.new("function #{name}()")
       end
       if !ScalarFunctions.known?(lower) && JSON_FUNCTION_NAME.matches?(lower)

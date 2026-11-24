@@ -534,6 +534,7 @@ module Grant::SQLiteEngine::Query
         end,
       ]
       list.concat(JsonFunctions.list_of_definitions)
+      list.concat(DateTimeFunctions.list_of_definitions)
       table = {} of String => Array(Definition)
       list.each { |definition| (table[definition.name] ||= [] of Definition) << definition }
       table
