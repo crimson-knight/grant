@@ -4,7 +4,7 @@ require "../../../../src/grant/drivers/sqlite3/sqlite3/type"
 require "../../../../src/grant/drivers/sqlite3/sqlite3/flags"
 require "../../../../src/grant/drivers/sqlite3/sqlite3/engine"
 require "../../../../src/grant/drivers/sqlite3/sqlite3/engine/grant_engine"
-require "../../../../src/grant/drivers/sqlite3/sqlite3/engine/lib_sqlite3_engine"
+require "../../../../src/grant/drivers/sqlite3/libsqlite3"
 
 # Runs ANALYZE and PRAGMA optimize through Grant's engine and libsqlite3 on
 # the same schema and rows, and compares result codes, column names, the
