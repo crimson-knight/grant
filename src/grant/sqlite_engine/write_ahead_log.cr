@@ -31,23 +31,60 @@ module Grant::SQLiteEngine
 
   # Waits for a lock the way C SQLite's default busy handler does
   # (sqliteDefaultBusyCallback): sleeps of 1, 2, 5, 10, 15, 20, 25, 25, 25,
-  # 50, 50 and then 100 ms, until *timeout* has passed.
+  # 50, 50 and then 100 ms, until the timeout has passed.
   module BusyWait
     LIST_OF_DELAYS = [1, 2, 5, 10, 15, 20, 25, 25, 25, 50, 50, 100]
+    # The milliseconds slept before each of those delays.
+    LIST_OF_TOTALS = [0, 1, 3, 8, 18, 33, 53, 78, 103, 128, 178, 228]
+
+    # One busy handler with its count of calls (sqlite3's BusyHandler and
+    # its nBusy): the waits of one operation share it, so together they
+    # last no longer than the timeout.
+    class Handler
+      @count = 0
+
+      def initialize(@timeout : Time::Span)
+      end
+
+      # Sleeps the next delay and returns true; returns false, without
+      # sleeping, once the timeout is used up (or is zero: no handler).
+      def waited_for_another_try? : Bool
+        timeout = @timeout.total_milliseconds.to_i64
+        return false unless timeout > 0
+        last = LIST_OF_DELAYS.size - 1
+        if @count <= last
+          delay = LIST_OF_DELAYS[@count].to_i64
+          prior = LIST_OF_TOTALS[@count].to_i64
+        else
+          delay = LIST_OF_DELAYS[last].to_i64
+          prior = LIST_OF_TOTALS[last] + delay * (@count - last)
+        end
+        delay = timeout - prior if prior + delay > timeout
+        return false unless delay > 0
+        sleep delay.milliseconds
+        @count += 1
+        true
+      end
+    end
 
     # Yields until the block returns true or *timeout* runs out; returns
     # the block's last answer.
     def self.attempt(timeout : Time::Span?, & : -> Bool) : Bool
       return true if yield
-      return false unless timeout && timeout > Time::Span.zero
-      waited = Time::Span.zero
-      tries = 0
-      while waited < timeout
-        delay = LIST_OF_DELAYS[Math.min(tries, LIST_OF_DELAYS.size - 1)].milliseconds
-        delay = timeout - waited if waited + delay > timeout
-        sleep delay
-        waited += delay
-        tries += 1
+      return false unless timeout
+      handler = Handler.new(timeout)
+      while handler.waited_for_another_try?
+        return true if yield
+      end
+      false
+    end
+
+    # Yields until the block returns true or *handler* stops waiting (nil:
+    # one try only); returns the block's last answer.
+    def self.attempt(handler : Handler?, & : -> Bool) : Bool
+      return true if yield
+      return false unless handler
+      while handler.waited_for_another_try?
         return true if yield
       end
       false
@@ -117,11 +154,35 @@ module Grant::SQLiteEngine
       @log_path = WriteAheadLog.path_for(database_path)
       @log = @file_system.open(@log_path)
       @index = begin
-        @file_system.open_shared_memory(WriteAheadLog.index_path_for(database_path))
+        open_index(WriteAheadLog.index_path_for(database_path))
       rescue error
         @log.close
         raise error
       end
+    end
+
+    # Opens the wal-index. While another process holds its dead man switch
+    # exclusively (it is truncating the file a crash left), C's first read
+    # gets SQLITE_BUSY from xShmMap and tries again (WAL_RETRY in
+    # walTryBeginRead); the open tries again on the same schedule.
+    private def open_index(index_path : String) : SharedMemory
+      attempt = 1
+      loop do
+        return @file_system.open_shared_memory(index_path)
+      rescue Busy
+        attempt += 1
+        pause_before_retry(attempt)
+      end
+    end
+
+    # walTryBeginRead's pause before try number *attempt*: none for the
+    # first five, then 1 microsecond, then longer ones adding up to about
+    # ten seconds before try 100 gives up (SQLITE_PROTOCOL).
+    private def pause_before_retry(attempt : Int32) : Nil
+      return unless attempt > 5
+      raise Error.new("locking protocol (no WAL read mark after #{RETRY_LIMIT} tries)") if attempt > RETRY_LIMIT
+      delay = attempt >= 10 ? (attempt - 9) * (attempt - 9) * 39 : 1
+      sleep delay.microseconds
     end
 
     def reading? : Bool
@@ -178,11 +239,7 @@ module Grant::SQLiteEngine
 
     # walTryBeginRead: true once a read mark is held, false to try again.
     private def try_begin_read(use_wal : Bool, attempt : Int32) : Bool
-      if attempt > 5
-        raise Error.new("locking protocol (no WAL read mark after #{RETRY_LIMIT} tries)") if attempt > RETRY_LIMIT
-        delay = attempt >= 10 ? (attempt - 9) * (attempt - 9) * 39 : 1
-        sleep delay.microseconds
-      end
+      pause_before_retry(attempt)
       unless use_wal
         case read_index_header
         when .busy?
@@ -640,16 +697,20 @@ module Grant::SQLiteEngine
       @holds_checkpoint_lock = true
       effective_mode = mode
       @changed = false
+      # One busy handler for every lock this checkpoint waits for, as C
+      # passes the connection's handler to each walBusyLock.
+      handler = busy_timeout && !mode.passive? ? BusyWait::Handler.new(busy_timeout) : nil
       begin
         unless mode.passive?
-          if BusyWait.attempt(busy_timeout) { @index.lock_exclusive(WRITE_LOCK) }
+          if BusyWait.attempt(handler) { @index.lock_exclusive(WRITE_LOCK) }
             @writing = true
           else
             effective_mode = CheckpointMode::Passive
+            handler = nil
           end
         end
         return CheckpointResult.new(true, -1, -1) if read_index_header.busy?
-        completed = copy_frames(effective_mode, database, effective_mode.passive? ? nil : busy_timeout)
+        completed = copy_frames(effective_mode, database, handler)
         CheckpointResult.new(!completed || effective_mode != mode, @header.max_frame.to_i32, backfilled_frames.to_i32)
       ensure
         # A checkpoint that read a newer header leaves this connection's
@@ -665,7 +726,7 @@ module Grant::SQLiteEngine
     # after the backfilled ones and no later than the oldest read mark in
     # use, so no reader sees a page change under it. Returns false when a
     # FULL, RESTART or TRUNCATE checkpoint could not finish.
-    private def copy_frames(mode : CheckpointMode, database : DatabaseFile, busy_timeout : Time::Span?) : Bool
+    private def copy_frames(mode : CheckpointMode, database : DatabaseFile, handler : BusyWait::Handler?) : Bool
       page_size = @header.page_size
       if backfilled_frames < @header.max_frame
         safe_frame = @header.max_frame
@@ -673,16 +734,16 @@ module Grant::SQLiteEngine
         1.upto(READER_COUNT - 1) do |index|
           mark = read_mark(index)
           next unless safe_frame > mark
-          if lock_waiting(WalIndexLayout.read_lock(index), 1, busy_timeout)
+          if lock_waiting(WalIndexLayout.read_lock(index), 1, handler)
             set_read_mark(index, index == 1 ? safe_frame : READ_MARK_NOT_USED)
             @index.unlock(WalIndexLayout.read_lock(index))
           else
             safe_frame = mark
-            busy_timeout = nil
+            handler = nil
           end
         end
         backfilled = backfilled_frames
-        if backfilled < safe_frame && lock_waiting(WalIndexLayout.read_lock(0), 1, busy_timeout)
+        if backfilled < safe_frame && lock_waiting(WalIndexLayout.read_lock(0), 1, handler)
           begin
             @index.write_u32(BACKFILL_ATTEMPTED, safe_frame)
             @log.sync(@checkpoint_sync_mode) unless @synchronous.off?
@@ -718,7 +779,7 @@ module Grant::SQLiteEngine
       return false if backfilled_frames < @header.max_frame
       return true unless mode.restart? || mode.truncate?
       salt = Random.rand(UInt32)
-      return false unless lock_waiting(WalIndexLayout.read_lock(1), READER_COUNT - 1, busy_timeout)
+      return false unless lock_waiting(WalIndexLayout.read_lock(1), READER_COUNT - 1, handler)
       begin
         if mode.truncate?
           restart_header(salt)
@@ -730,10 +791,10 @@ module Grant::SQLiteEngine
       true
     end
 
-    # walBusyLock: an exclusive lock, waiting up to *busy_timeout* (nil:
+    # walBusyLock: an exclusive lock, waiting while *handler* allows (nil:
     # not at all).
-    private def lock_waiting(slot : Int32, count : Int32, busy_timeout : Time::Span?) : Bool
-      BusyWait.attempt(busy_timeout) { @index.lock_exclusive(slot, count) }
+    private def lock_waiting(slot : Int32, count : Int32, handler : BusyWait::Handler?) : Bool
+      BusyWait.attempt(handler) { @index.lock_exclusive(slot, count) }
     end
 
     # --- Closing ---------------------------------------------------------------

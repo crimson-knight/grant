@@ -78,11 +78,24 @@ module Grant::SQLite3
         end
       end
 
+      # Whether *sql* compiles without reading the schema, so preparing it
+      # takes no lock: transaction control, and a PRAGMA C compiles without
+      # PragFlg_NeedSchema (`PRAGMA busy_timeout` among them, which must
+      # succeed while another connection holds a lock).
+      def self.compiles_without_the_schema?(sql : String) : Bool
+        return true if transaction_control?(sql)
+        pragma_name = SQLiteEngine::Query::PragmaFileAccess.name_in(sql)
+        return false unless pragma_name
+        !SQLiteEngine::Query::PragmaFileAccess.compile_reads_schema?(pragma_name)
+      end
+
       def prepare(sql : String) : {Int32, Engine::PreparedStatement}
-        query = if Database.transaction_control?(sql)
+        query = if Database.compiles_without_the_schema?(sql)
                   @session.prepare(sql)
                 else
-                  @session.begin_statement_read
+                  # Compiling reads the schema only; it leaves the open
+                  # transaction's snapshot unpinned, as C does.
+                  @session.begin_statement_read(for_transaction: false)
                   begin
                     @session.prepare(sql)
                   ensure
