@@ -99,7 +99,8 @@ module Grant::SQLiteEngine::Query
           end
           threshold = -1 if lacks_statistics
           used = @session.list_of_tables_to_reanalyze.includes?(PlannerStatistics.key(schema_name, name))
-          next unless used || (@mask & 0x10000) != 0 || (!list_of_rules.empty? && threshold < 0)
+          rules_ask_for_it = !list_of_rules.empty? && threshold < 0
+          next unless used || (@mask & 0x10000) != 0 || rules_ask_for_it
           list << Candidate.new(database, schema_name, table, threshold)
         end
       end

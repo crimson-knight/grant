@@ -230,7 +230,8 @@ module Grant::SQLiteEngine::Query
     # has read nothing: it keeps no read of its own, so its next write
     # waits again, as C's transaction is back to no lock after SQLITE_BUSY.
     private def forget_unpinned_transaction_read : Nil
-      return unless @holds_transaction_read_lock && !@transaction_snapshot_pinned
+      return unless @holds_transaction_read_lock
+      return if @transaction_snapshot_pinned
       @holds_transaction_read_lock = false
       @database.pager.release_read_lock
     end

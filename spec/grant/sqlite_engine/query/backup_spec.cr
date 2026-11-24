@@ -32,7 +32,7 @@ private module BackupDifferential
     INSERT INTO settings VALUES ('theme', 'dark'), ('volume', 11);
     PRAGMA user_version = 42;
     PRAGMA application_id = 1196573268;
-  SQL
+    SQL
 
   def self.open(engine : Engine, path : String) : Engine::Database
     code, database = engine.open(path)

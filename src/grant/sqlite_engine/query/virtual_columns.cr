@@ -43,7 +43,7 @@ module Grant::SQLiteEngine::Query
     def evaluate(frame : Frame) : Value
       # OP_IfNullRow: the NULL row of a LEFT JOIN reads NULL whatever the
       # expression makes of NULL operands.
-      return nil if frame.list_of_rows.unsafe_fetch(@slot).empty?
+      return if frame.list_of_rows.unsafe_fetch(@slot).empty?
       VirtualColumnExpr.converted(@generated.evaluate(frame), @definition, @table_name, @strict)
     end
 

@@ -119,7 +119,7 @@ module Grant::SQLiteEngine::Query
       end
       table_info = @session.table(name.value, schema.try(&.value))
       # A view is found and carries no statistics.
-      if table_info.nil? && (view = @session.view(name.value))
+      if table_info.nil? && @session.view(name.value)
         return [Target.new(@session.database, @session.schema_name_of(@session.database), name.value, nil)]
       end
       unless table_info
@@ -181,9 +181,9 @@ module Grant::SQLiteEngine::Query
                       else
                         SchemaHashOrder.new(database.schema).list_of_table_names
                       end
-      list_of_names.select do |name|
-        entry = database.schema.list_of_tables.find { |candidate| candidate.object_name == name }
-        !entry.nil? && entry.has_a_btree? && !name.downcase.starts_with?("sqlite_")
+      list_of_names.select do |table_name|
+        entry = database.schema.list_of_tables.find { |candidate| candidate.object_name == table_name }
+        !entry.nil? && entry.has_a_btree? && !table_name.downcase.starts_with?("sqlite_")
       end
     end
 
@@ -258,7 +258,8 @@ module Grant::SQLiteEngine::Query
     # Index.uniqNotNull: a UNIQUE index whose key columns are all plain
     # columns declared NOT NULL.
     private def unique_and_not_null?(table : WriteTable, layout : IndexLayout) : Bool
-      return false unless layout.unique? && !layout.has_expressions?
+      return false unless layout.unique?
+      return false if layout.has_expressions?
       layout.list_of_key_positions.all? { |position| !table.list_of_columns[position].not_null.nil? }
     end
   end

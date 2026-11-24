@@ -381,7 +381,8 @@ module Grant::SQLiteEngine
     # mark stops no writer, and it stays.
     def yield_read_lock : Nil
       file = @file
-      return unless file && @wal_log.nil? && @read_depth > 0 && !@in_write_transaction
+      return unless file && @wal_log.nil? && @read_depth > 0
+      return if @in_write_transaction
       file.unlock(LockLevel::None)
       @read_lock_yielded = true
     end

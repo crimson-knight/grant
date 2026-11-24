@@ -25,7 +25,7 @@ module Grant::SQLiteEngine::Query
       # jsonCacheSearch: the entry whose text is this very string, else the
       # oldest entry with equal text; the entry found becomes the newest.
       def search(text : String) : Document?
-        index = @list_of_entries.index { |entry| entry.text.same?(text) }
+        index = @list_of_entries.index(&.text.same?(text))
         index ||= @list_of_entries.index { |entry| entry.text == text }
         return unless index
         entry = @list_of_entries.delete_at(index)

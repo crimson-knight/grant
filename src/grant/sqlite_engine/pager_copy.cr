@@ -129,7 +129,7 @@ module Grant::SQLiteEngine
         ensure
           journal.close
         end
-        journal_written = true
+        journal_written = true # ameba:disable Lint/UselessAssign (read in the ensure below)
         new_page_size = source.page_size
         last_page = source.page_count
         skipped_page = source.lock_byte_page
@@ -149,7 +149,7 @@ module Grant::SQLiteEngine
         file.truncate(last_page.to_i64 * new_page_size)
         file.sync
         file_system.delete(journal_path)
-        journal_written = false
+        journal_written = false # ameba:disable Lint/UselessAssign (read in the ensure below)
       ensure
         if journal_written
           journal = file_system.open(journal_path)

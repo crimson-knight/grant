@@ -264,7 +264,7 @@ def read_ledger(path : String) : Array(LedgerLine)
     next if line.empty?
     begin
       list_of_entries << LedgerLine.from_json(line)
-    rescue error : JSON::ParseException
+    rescue JSON::ParseException
       raise "ledger #{path} line #{index + 1} is damaged: #{line[0, 80].inspect}" unless index == list_of_lines.size - 1
     end
   end
@@ -613,8 +613,7 @@ class SoakSupervisor
   end
 
   def run : Int32
-    Signal::TERM.trap { @stop_requested = true }
-    Signal::INT.trap { @stop_requested = true }
+    Process.on_terminate { @stop_requested = true }
     create_database unless File.exists?(@database_path)
     resume_interrupted_cycle if @state.cycle_in_progress?
     while @state.outcome == "running" && @state.soak_seconds_run < @state.target_seconds && !@stop_requested
@@ -872,7 +871,7 @@ struct SoakStatus
       io << "workers:            " << @state.engine_workers << " engine, " << @state.c_workers << " C (libsqlite3); even-numbered durable (FULL + fullfsync)\n"
       io << "last verified:      " << @state.last_verified_at << "\n"
       io << "lost commits:       0 (any loss ends the soak as FAILED)\n" if @state.outcome != "failed"
-      counts.keys.sort.each { |key| io << "  " << key << ": " << counts[key] << "\n" }
+      counts.keys.sort!.each { |key| io << "  " << key << ": " << counts[key] << "\n" }
       io << "interruptions:      " << @state.list_of_interruptions.size << "\n"
       @state.list_of_interruptions.each do |interruption|
         io << "  cycle " << interruption.cycle << ": " << interruption.kind_of_interruption << ", last heartbeat " << interruption.last_heartbeat_at

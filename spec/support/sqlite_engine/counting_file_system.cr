@@ -24,7 +24,8 @@ class SQLiteEngineCountingFileSystem < Grant::SQLiteEngine::FileSystem
   @files = {} of String => Grant::SQLiteEngine::MemoryFile
 
   def open(path : String) : Grant::SQLiteEngine::DatabaseFile
-    CountingFile.new(self, SQLiteEngineCountingFileSystem.kind_of(path), @files[path] ||= Grant::SQLiteEngine::MemoryFile.new)
+    file = @files[path] ||= Grant::SQLiteEngine::MemoryFile.new
+    CountingFile.new(self, SQLiteEngineCountingFileSystem.kind_of(path), file)
   end
 
   def exists?(path : String) : Bool

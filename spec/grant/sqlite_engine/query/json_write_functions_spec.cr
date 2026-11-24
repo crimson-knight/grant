@@ -126,8 +126,8 @@ describe "Grant::SQLiteEngine::Query JSON functions that build and edit JSON" do
   session = Grant::SQLiteEngine::Query::Session.new(Grant::SQLiteEngine::Database.open(path))
 
   it "raises C's messages" do
-    JsonWriteSpecFixture::MESSAGES.each do |sql, message|
-      SQLiteQueryOracle.engine_query(session, sql).error.should eq(message)
+    JsonWriteSpecFixture::MESSAGES.each do |sql, expected_message|
+      SQLiteQueryOracle.engine_query(session, sql).error.should eq(expected_message)
     end
   end
 

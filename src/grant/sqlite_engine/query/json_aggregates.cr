@@ -60,7 +60,7 @@ module Grant::SQLiteEngine::Query
         output = @output
         return "#{opening}#{closing}" unless output
         raise Json.malformed if output.malformed?
-        text = "#{output.to_s}#{closing}"
+        text = "#{output}#{closing}"
         @binary ? Json.text_to_blob(text) : text
       end
 

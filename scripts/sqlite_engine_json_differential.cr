@@ -344,7 +344,7 @@ module JsonDifferential
       sql = generator.statement
       expected, _actual, difference = pair.compare(sql)
       errors += 1 if expected.error
-      sql.scan(/jsonb?(?:_[a-z_]+)?(?=\()|->>?/) { |match| counts[match[0]] += 1 }
+      sql.scan(/(jsonb?(?:_[a-z_]+)?)\(|->>?/) { |match| counts[match[1]? || match[0]] += 1 }
       if difference
         list_of_differences << "#{sql}\n    #{difference}"
       end

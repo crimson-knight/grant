@@ -198,7 +198,7 @@ describe "Grant::SQLiteEngine ANALYZE and sqlite_stat1" do
     INSERT INTO tags VALUES ('red', 1), ('blue', 2), ('red', 3);
     INSERT INTO only_partial VALUES (1, 'x'), (2, 'y'), (3, 'y');
     INSERT INTO memberships VALUES (1, 1, 'owner'), (1, 2, 'owner'), (2, 3, 'reader');
-  SQL
+    SQL
 
   statistics = AnalyzeDifferential::STATISTICS
   master = AnalyzeDifferential::MASTER

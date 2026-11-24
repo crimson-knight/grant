@@ -86,7 +86,7 @@ class SQLiteDateTimeGenerator
   end
 
   private def format : Value
-    return nil if pick(200) == 0
+    return if pick(200) == 0
     String.build do |io|
       (1 + pick(5)).times do
         io << {"", " ", "-", "T", "at ", "é", ":"}[pick(7)]

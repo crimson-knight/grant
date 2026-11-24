@@ -57,7 +57,8 @@ private module DurabilityDifferential
     end
   end
 
-  NAMES  = %w[fullfsync checkpoint_fullfsync FullFsync CHECKPOINT_FULLFSYNC]
+  NAMES = %w[fullfsync checkpoint_fullfsync FullFsync CHECKPOINT_FULLFSYNC]
+  # ameba:disable Lint/PercentArrays (quoted words are values under test)
   VALUES = %w[0 1 2 on off ON Off yes no YES true false TRUE FALSE full extra normal 00 01 007 255 256 257 512 1024 65536
     4294967296 2147483647 2147483648 99999999999 1.5 0.9 1e3 0x1 0x100 0x0 0xff -1 -0 +1 +0 'on' 'off' "yes" 'true' 'x'
     '' '1' '0' '256' maybe o tru onn]

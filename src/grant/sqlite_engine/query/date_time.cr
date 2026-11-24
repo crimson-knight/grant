@@ -69,8 +69,8 @@ module Grant::SQLiteEngine::Query
         position < @bytes.size ? @bytes.unsafe_fetch(position) : 0_u8
       end
 
-      def +(count : Int32) : Text
-        Text.new(@bytes, @start + count)
+      def +(other : Int32) : Text
+        Text.new(@bytes, @start + other)
       end
 
       # strlen.
