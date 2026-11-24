@@ -274,7 +274,7 @@ module Grant::SQLiteEngine
     private def index_insert_borrowing(root : UInt32, key : Array(Value), comparator : KeyComparator) : Nil
       path, page_number, index, found, _leaf = seek_key(root, key, comparator)
       raise CorruptDatabase.new("index b-tree already holds the entry", page_number) if found
-      record = RecordEncoder.encode(key.size, @encoding, @schema_format, @scratch.record_buffer) { |index| key.unsafe_fetch(index) }
+      record = RecordEncoder.encode(key.size, @encoding, @schema_format, @scratch.record_buffer) { |position| key.unsafe_fetch(position) }
       cell = build_cell(PageType::LeafIndex, record, scratch: true)
       editor = PageEditor.new(@pager.page_for_write(page_number), page_number, usable)
       return if editor.insert_cell(index, cell)
