@@ -159,7 +159,7 @@ module Grant::SQLite3
       READ_ONLY_DIRECTORY_CODE = 1544
 
       # Records *error* as C reports it: the result code and its message.
-      private def fail_with(error : Exception) : Int32
+      private def fail_with(error : ::Exception) : Int32
         if error.is_a?(SQLiteEngine::SQLError)
           fail(error.result_code, error.message || "SQL error")
         elsif error.is_a?(SQLiteEngine::Busy)

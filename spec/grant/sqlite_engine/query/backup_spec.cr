@@ -4,7 +4,7 @@ require "../../../../src/grant/drivers/sqlite3/sqlite3/type"
 require "../../../../src/grant/drivers/sqlite3/sqlite3/flags"
 require "../../../../src/grant/drivers/sqlite3/sqlite3/engine"
 require "../../../../src/grant/drivers/sqlite3/sqlite3/engine/grant_engine"
-require "../../../../src/grant/drivers/sqlite3/sqlite3/engine/lib_sqlite3_engine"
+require "../../../../src/grant/drivers/sqlite3/libsqlite3"
 
 # Copies databases with `Engine::Database#backup_to` and `VACUUM INTO`
 # through Grant's engine and libsqlite3, in every pairing of the two, and
