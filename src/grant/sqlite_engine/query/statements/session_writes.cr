@@ -67,8 +67,12 @@ module Grant::SQLiteEngine::Query
         end
         found
       end
-      map[parent.downcase]? || [] of String
+      # Keys are lower case: a lower-case name is looked up as it is.
+      map[parent]? || map[parent.downcase]? || NO_CHILD_TABLES
     end
+
+    # The child tables of a table no foreign key names; nothing changes it.
+    NO_CHILD_TABLES = [] of String
 
     # --- Transactions -------------------------------------------------------
     #

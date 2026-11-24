@@ -798,7 +798,9 @@ module Grant::SQLiteEngine::Query
     # earlier table's RESTRICT stops the statement.
     private def referencing(table : WriteTable) : Array({WriteTable, ForeignKeyRule, Array(Int32)})
       list = [] of {WriteTable, ForeignKeyRule, Array(Int32)}
-      @session.list_of_child_tables(table.name).each do |child_name|
+      list_of_children = @session.list_of_child_tables(table.name)
+      return list if list_of_children.empty?
+      list_of_children.each do |child_name|
         child = table(child_name)
         child.list_of_foreign_keys.each do |rule|
           next unless same_table?(rule.parent_table, table.name)
