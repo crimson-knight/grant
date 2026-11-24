@@ -125,6 +125,7 @@ module Grant::SQLiteEngine::Query
     def step : Bool
       return false if @done
       frame = @frame ||= begin
+        @session.json_cache.clear
         new_frame = frame_for_run
         @compiled.producer.open(new_frame)
         new_frame

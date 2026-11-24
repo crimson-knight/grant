@@ -6,13 +6,13 @@ module Grant::SQLiteEngine::Query
   module ScalarFunctions
     # What a call can see beyond its arguments: the collation the call
     # resolved to (min, max and nullif compare with it) and the connection.
-    record CallContext, collation : Collation, session : Session
+    record CallContext, collation : Collation, session : Session, list_of_subtypes : Array(UInt8)? = nil
 
     alias Implementation = Proc(Array(Value), CallContext, Value)
 
     # One function, for one range of argument counts (`maximum` -1 for any).
     record Definition, name : String, minimum : Int32, maximum : Int32, implementation : Implementation,
-      needs_collation : Bool = false
+      needs_collation : Bool = false, reads_subtypes : Bool = false
 
     HEX_DIGITS = "0123456789ABCDEF"
 
@@ -534,6 +534,7 @@ module Grant::SQLiteEngine::Query
         end,
       ]
       list.concat(JsonFunctions.list_of_definitions)
+      list.concat(JsonWriteFunctions.list_of_definitions)
       table = {} of String => Array(Definition)
       list.each { |definition| (table[definition.name] ||= [] of Definition) << definition }
       table

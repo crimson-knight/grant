@@ -16,41 +16,38 @@ module Grant::SQLiteEngine::Query
 
     def self.list_of_definitions : Array(Definition)
       [
-        definition_with_subtype("json", 1, 1) { |arguments, session| json(arguments[0], session) },
-        definition_with_subtype("json_extract", 0, -1) { |arguments, session| extract(arguments, ExtractMode::Extract, session) },
-        definition_with_subtype("->", 2, 2) { |arguments, session| extract(arguments, ExtractMode::JsonText, session) },
-        definition("->>", 2, 2) { |arguments| extract(arguments, ExtractMode::SqlValue) },
-        definition("json_type", 1, 2) { |arguments| type(arguments) },
-        definition("json_valid", 1, 2) { |arguments| valid(arguments) },
-        definition("json_array_length", 1, 2) { |arguments| array_length(arguments) },
-        definition("json_error_position", 1, 1) { |arguments| error_position(arguments[0]) },
+        definition("json", 1, 1) { |arguments, session| json(arguments[0], session) },
+        definition("json_extract", 0, -1) { |arguments, session| extract(arguments, ExtractMode::Extract, session) },
+        definition("->", 2, 2) { |arguments, session| extract(arguments, ExtractMode::JsonText, session) },
+        definition("->>", 2, 2) { |arguments, session| extract(arguments, ExtractMode::SqlValue, session) },
+        definition("json_type", 1, 2) { |arguments, session| type(arguments, session) },
+        definition("json_valid", 1, 2) { |arguments, session| valid(arguments, session) },
+        definition("json_array_length", 1, 2) { |arguments, session| array_length(arguments, session) },
+        definition("json_error_position", 1, 1) { |arguments, _session| error_position(arguments[0]) },
       ]
     end
 
-    private def self.definition(name : String, minimum : Int32, maximum : Int32, &implementation : Array(Value) -> Value) : Definition
-      Definition.new(name, minimum, maximum, ->(arguments : Array(Value), _context : ScalarFunctions::CallContext) { implementation.call(arguments) })
-    end
-
-    # A function whose results may carry JSON_SUBTYPE, which it sets on
-    # the session as C calls sqlite3_result_subtype.
-    private def self.definition_with_subtype(name : String, minimum : Int32, maximum : Int32,
-                                             &implementation : Array(Value), Session -> Value) : Definition
+    # Every function gets the session: its JSON cache (jsonParseFuncArg),
+    # and the result subtype a function sets as C calls
+    # sqlite3_result_subtype.
+    private def self.definition(name : String, minimum : Int32, maximum : Int32,
+                                &implementation : Array(Value), Session -> Value) : Definition
       Definition.new(name, minimum, maximum, ->(arguments : Array(Value), context : ScalarFunctions::CallContext) { implementation.call(arguments, context.session) })
     end
 
     # json(X): the minified text of X (jsonRemoveFunc with no paths), with
     # JSON_SUBTYPE.
-    def self.json(argument : Value, session : Session? = nil) : Value
-      document = Json.parse_argument(argument) || return
-      session.try(&.result_subtype = Json::SUBTYPE)
+    def self.json(argument : Value, session : Session) : Value
+      document = Json.parse_argument(argument, session.json_cache) || return
+      session.result_subtype = Json::SUBTYPE
       document.text_at(0)
     end
 
     # jsonExtractFunc: JSON text results (every -> result, a json_extract
     # container, a json_extract of several paths) carry JSON_SUBTYPE.
-    def self.extract(arguments : Array(Value), mode : ExtractMode, session : Session? = nil) : Value
+    def self.extract(arguments : Array(Value), mode : ExtractMode, session : Session, binary : Bool = false) : Value
       return if arguments.size < 2
-      document = Json.parse_argument(arguments[0]) || return
+      document = Json.parse_argument(arguments[0], session.json_cache) || return
       many = arguments.size > 2
       output = Json::TextOutput.new
       output.write_byte('['.ord.to_u8) if many
@@ -73,11 +70,17 @@ module Grant::SQLiteEngine::Query
             output.separate
             document.render(found, output)
           elsif mode.json_text?
-            session.try(&.result_subtype = Json::SUBTYPE)
+            session.result_subtype = Json::SUBTYPE
             return document.text_at(found)
           else
             if mode.extract? && document.type_at(found) >= Json::ARRAY
-              session.try(&.result_subtype = Json::SUBTYPE)
+              # jsonb_extract returns a container as its JSONB bytes.
+              if binary
+                header, size = document.payload_size(found)
+                raise Json.malformed if header == 0
+                return document.blob[found, header + size]
+              end
+              session.result_subtype = Json::SUBTYPE
             end
             return document.sql_value(found)
           end
@@ -93,7 +96,8 @@ module Grant::SQLiteEngine::Query
       end
       output.write_byte(']'.ord.to_u8)
       raise Json.malformed if output.malformed?
-      session.try(&.result_subtype = Json::SUBTYPE)
+      return Json.text_to_blob(output.to_s) if binary
+      session.result_subtype = Json::SUBTYPE
       output.to_s
     end
 
@@ -112,8 +116,8 @@ module Grant::SQLiteEngine::Query
     end
 
     # jsonTypeFunc.
-    def self.type(arguments : Array(Value)) : Value
-      document = Json.parse_argument(arguments[0]) || return
+    def self.type(arguments : Array(Value), session : Session) : Value
+      document = Json.parse_argument(arguments[0], session.json_cache) || return
       index = 0
       if arguments.size == 2
         path = ValueSemantics.text(arguments[1]) || return
@@ -129,8 +133,8 @@ module Grant::SQLiteEngine::Query
     end
 
     # jsonArrayLengthFunc.
-    def self.array_length(arguments : Array(Value)) : Value
-      document = Json.parse_argument(arguments[0]) || return
+    def self.array_length(arguments : Array(Value), session : Session) : Value
+      document = Json.parse_argument(arguments[0], session.json_cache) || return
       index = 0
       if arguments.size == 2
         path = ValueSemantics.text(arguments[1]) || return
@@ -146,7 +150,7 @@ module Grant::SQLiteEngine::Query
     end
 
     # jsonValidFunc.
-    def self.valid(arguments : Array(Value)) : Value
+    def self.valid(arguments : Array(Value), session : Session) : Value
       flags = 1_i64
       if arguments.size == 2
         given = ValueSemantics.integer_value(arguments[1])
@@ -163,11 +167,8 @@ module Grant::SQLiteEngine::Query
         return 0_i64
       end
       return 0_i64 if (flags & 0x3) == 0
-      text = ValueSemantics.text(argument) || return 0_i64
-      return 0_i64 if text.empty?
-      parser = Json::Parser.new(text.to_slice)
-      return 0_i64 unless parser.convert
-      (flags & 0x02) != 0 || !parser.non_standard? ? 1_i64 : 0_i64
+      document = Json.parse_argument?(argument, session.json_cache) || return 0_i64
+      (flags & 0x02) != 0 || !document.non_standard? ? 1_i64 : 0_i64
     end
 
     # jsonErrorFunc: 0 for well-formed JSON, else the 1-based character
