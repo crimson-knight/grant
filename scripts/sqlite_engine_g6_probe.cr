@@ -30,7 +30,7 @@ SETUP = <<-SQL
   INSERT INTO authors VALUES (2, 'Brian', 'bk@example.com', '1999-12-31 23:59:59.999999', '[1,2,{"x":"y"}]');
   INSERT INTO posts(author_id, title, body, score, created_at) VALUES (1, 'Hello World', 'abcdef', 1.5, '2026-11-24 00:00:00.000000');
   INSERT INTO posts(author_id, title, body, score, created_at) VALUES (2, 'Second Post', NULL, NULL, '2026-01-31 12:00:00.000001');
-SQL
+  SQL
 
 # Each case: a name, extra setup, and the statement whose rows are compared.
 CASES = [
@@ -160,7 +160,7 @@ def run_case(engine : ProbeEngine, path : String, extra : String, sql : String, 
     end
     message = step == ProbeEngine::DONE_CODE ? "" : database.error_message
     statement.finalize_statement
-    list_of_rows = list_of_rows.map { |row| row.first(3) } if eqp
+    list_of_rows = list_of_rows.map(&.first(3)) if eqp
     Outcome.new(step, list_of_columns, list_of_rows, message)
   ensure
     database.close

@@ -73,7 +73,7 @@ private module PragmaDifferential
     list_of_names = Array.new(random.rand(1..9)) { |index| "#{%w[author post Tag comment_ x LONGER_table_name q z9 m][index]}#{random.rand(100)}" }
     String.build do |sql|
       sql << "PRAGMA foreign_keys=OFF;\n"
-      list_of_names.each_with_index do |name, index|
+      list_of_names.each do |name|
         parent = random.rand(5) == 0 ? "missing_parent" : list_of_names.sample(random)
         second = list_of_names.sample(random)
         sql << "CREATE TABLE #{name}(id INTEGER PRIMARY KEY, code TEXT UNIQUE, "
@@ -103,7 +103,7 @@ describe "Grant::SQLiteEngine PRAGMAs of milestone G6" do
     PRAGMA foreign_keys=OFF;
     INSERT INTO posts(id, author_id) VALUES (1, 1), (2, 99), (3, NULL);
     PRAGMA user_version=7;
-  SQL
+    SQL
 
   it "reports generated column types, auto_vacuum, optimize and incremental_vacuum as C does" do
     list_of_queries = ["PRAGMA table_xinfo(posts)", "PRAGMA table_info(posts)", "PRAGMA auto_vacuum", "PRAGMA auto_vacuum=0",
