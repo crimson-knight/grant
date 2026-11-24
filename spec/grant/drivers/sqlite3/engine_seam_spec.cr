@@ -16,7 +16,8 @@ private def with_seam_connection(&)
 end
 
 describe "Grant::SQLite3 engine seam" do
-  it "uses the C library by default" do
+  it "uses the C library by default when the program required grant/adapter/sqlite" do
+    Grant::SQLite3::Engine.libsqlite3_compiled_in?.should be_true
     Grant::Settings.new.sqlite_engine.should eq :libsqlite3
 
     with_seam_connection do |connection|

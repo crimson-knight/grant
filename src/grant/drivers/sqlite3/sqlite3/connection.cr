@@ -67,7 +67,10 @@ class Grant::SQLite3::Connection < DB::Connection
     # The `REGEXP` SQL function is opt-in: `require "grant/regex"` defines
     # `RegexpFunction`, and only then does every connection register it.
     {% if Grant::SQLite3.has_constant?(:RegexpFunction) %}
-      check(engine_database, engine_database.create_function("regexp", SQLite3::RegexpFunction::ARGUMENT_COUNT) { |arguments| SQLite3::RegexpFunction.call(arguments) })
+      # A typed proc, so every engine's create_function sees the same
+      # Engine::UserFunction (a block literal is typed by its body).
+      regexp_function = Engine::UserFunction.new { |arguments| SQLite3::RegexpFunction.call(arguments) }
+      check(engine_database, engine_database.create_function("regexp", SQLite3::RegexpFunction::ARGUMENT_COUNT, &regexp_function))
     {% end %}
 
     if pragma_statement = sqlite3_options.pragma_statement

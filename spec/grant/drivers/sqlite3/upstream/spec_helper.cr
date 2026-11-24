@@ -2,6 +2,8 @@
 
 require "spec"
 require "../../../../../src/grant/drivers/sqlite3/sqlite3"
+# crystal-sqlite3's own specs, run against the C library as upstream runs them.
+require "../../../../../src/grant/drivers/sqlite3/libsqlite3"
 
 SQLITE_DRIVER_DB_FILENAME = "./test.db"
 
