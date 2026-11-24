@@ -91,10 +91,11 @@ module Grant::Beryl::TLS::Messages
       list = MessageReader.new(reader.read_vector16)
       reader.finish
       list_of_entries = [] of KeyShareEntry
+      seen_group_values = Set(UInt16).new
       until list.at_end?
         group = list.read_u16
         key_exchange = list.read_vector16(1)
-        if list_of_entries.any? { |entry| entry.group_value == group }
+        unless seen_group_values.add?(group)
           raise Error.new("two key shares for group #{group}", AlertDescription::IllegalParameter)
         end
         list_of_entries << KeyShareEntry.new(group, key_exchange)

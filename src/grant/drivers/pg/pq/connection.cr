@@ -29,6 +29,18 @@ module Grant::PQ
     # Verifies the server's chain to *trust_store* (RFC 5280 path
     # validation, the serverAuth purpose) without checking its name, which
     # is what sslmode=verify-ca asks for.
+    @@system_trust_store : Grant::Beryl::Certificates::TrustStore? = nil
+    @@system_trust_store_mutex = Mutex.new
+
+    # The system roots (`TrustStore.system`), read on first use and shared
+    # by every connection: a trust store is not changed after it is built,
+    # and reading the bundle costs more than a handshake.
+    def self.system_trust_store : Grant::Beryl::Certificates::TrustStore
+      @@system_trust_store_mutex.synchronize do
+        @@system_trust_store ||= Grant::Beryl::Certificates::TrustStore.system
+      end
+    end
+
     class ChainOnlyVerifier < Grant::Beryl::TLS::CertificateVerifier
       def initialize(trust_store : Grant::Beryl::Certificates::TrustStore)
         @verifier = Grant::Beryl::TLS::WebPkiVerifier.new(trust_store)
@@ -176,7 +188,7 @@ module Grant::PQ
 
         sslrootcert = @conninfo.sslrootcert
         trust_store = if sslrootcert.nil? || sslrootcert == "system"
-                        Grant::Beryl::Certificates::TrustStore.system
+                        PQ.system_trust_store
                       else
                         Grant::Beryl::Certificates::TrustStore.from_pem(File.read(sslrootcert))
                       end

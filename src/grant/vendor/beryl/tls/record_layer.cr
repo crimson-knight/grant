@@ -27,6 +27,10 @@ module Grant::Beryl::TLS
     # The most content bytes per record written (the peer's
     # record_size_limit less one, RFC 8449 §4).
     property largest_outgoing_fragment_bytesize : Int32 = LARGEST_FRAGMENT_BYTESIZE
+    # The largest inner plaintext (content, type and padding) a protected
+    # record may carry: this end's record_size_limit once both ends sent
+    # one (RFC 8449 §4), 2^14 + 1 bytes until then.
+    property largest_incoming_inner_plaintext_bytesize : Int32 = RecordProtection::LARGEST_INNER_PLAINTEXT_BYTESIZE
     # Bytes of records that fail to open which a server still skips, while
     # it refuses the 0-RTT data a client offered (RFC 9846 §4.2.10).
     property early_data_skip_budget : Int32 = 0
@@ -35,7 +39,8 @@ module Grant::Beryl::TLS
     # HelloRetryRequest may still send them (§4.2.10).
     property? is_skipping_plaintext_early_data : Bool = false
     # Whether one compatibility change_cipher_spec is still accepted
-    # (RFC 9846 §5, Appendix D.4). Turned off once the handshake ends.
+    # (RFC 9846 §5, Appendix D.4). A server turns it off until the first
+    # ClientHello is read; both ends turn it off once the handshake ends.
     property? is_change_cipher_spec_allowed : Bool = true
     # Whether a plaintext alert is read while protection is installed: a
     # server sets it while it waits for the client's flight, since a
@@ -181,17 +186,25 @@ module Grant::Beryl::TLS
           unless @is_change_cipher_spec_allowed && length == 1 && fragment[0] == 1
             raise Error.new("an unexpected change_cipher_spec record", AlertDescription::UnexpectedMessage)
           end
+          # A record boundary inside a handshake message is no place for it.
+          unless handshake_buffer_empty?
+            raise Error.new("a change_cipher_spec record inside a handshake message", AlertDescription::UnexpectedMessage)
+          end
           @is_change_cipher_spec_allowed = false
           next
         end
 
         content_type, content = if protection = @read_protection
                                   if outer_type.alert? && @is_accepting_plaintext_alerts && length == 2
-                                    return nil if read_alert(fragment)
+                                    return nil if read_alert(fragment, is_authenticated: false)
                                     next
                                   end
                                   unless outer_type.application_data?
                                     raise Error.new("a protected record of outer type #{outer_type}", AlertDescription::UnexpectedMessage)
+                                  end
+                                  # Checked before opening, so an oversized record costs no decryption.
+                                  if length - protection.tag_bytesize > @largest_incoming_inner_plaintext_bytesize
+                                    raise Error.new("a protected record over the record_size_limit of #{@largest_incoming_inner_plaintext_bytesize}", AlertDescription::RecordOverflow)
                                   end
                                   opened = protection.open(@record_header, fragment)
                                   unless opened
@@ -247,8 +260,10 @@ module Grant::Beryl::TLS
     end
 
     # Handles an alert; returns true for close_notify, raises for every
-    # other alert TLS 1.3 treats as fatal.
-    private def read_alert(content : Bytes) : Bool
+    # other alert TLS 1.3 treats as fatal. An alert read in plaintext while
+    # keys are installed (*is_authenticated* false) is reported as an
+    # `UnauthenticatedAlert`, since anyone on the path could have sent it.
+    private def read_alert(content : Bytes, *, is_authenticated : Bool = true) : Bool
       raise Error.new("an empty alert record", AlertDescription::UnexpectedMessage) if content.empty?
       raise Error.new("an alert of #{content.size} bytes", AlertDescription::DecodeError) unless content.size == 2
       unless handshake_buffer_empty?
@@ -256,6 +271,9 @@ module Grant::Beryl::TLS
       end
       level = content[0]
       description = AlertDescription.new(content[1])
+      unless is_authenticated
+        raise UnauthenticatedAlert.new("an unauthenticated plaintext alert #{description}, which may not come from the peer", description)
+      end
       if description.close_notify?
         @peer_closed = true
         return true

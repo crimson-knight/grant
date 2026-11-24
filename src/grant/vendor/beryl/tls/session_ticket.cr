@@ -1,5 +1,6 @@
 require "../crypto"
 require "./messages/message_reader"
+require "./certificate_verifier"
 
 module Grant::Beryl::TLS
   # What a server seals into a session ticket, and reads back when a client
@@ -67,7 +68,10 @@ module Grant::Beryl::TLS
     end
   end
 
-  # A ticket a client holds for one server name.
+  # A ticket a client holds for one server name, with the verifier that
+  # checked the server it came from: a ticket is offered only by a context
+  # that verifies the same way, so a ticket from an unverified connection
+  # never stands in for a verified one.
   record SessionTicket,
     server_name : String,
     cipher_suite : CipherSuite,
@@ -76,7 +80,8 @@ module Grant::Beryl::TLS
     ticket_age_add : UInt32,
     received_at : Time::Instant,
     lifetime : Time::Span,
-    alpn_protocol : String? do
+    alpn_protocol : String?,
+    certificate_verifier : CertificateVerifier do
     # Returns whether the ticket is still within its lifetime.
     def usable_at?(now : Time::Instant) : Bool
       now - received_at < lifetime

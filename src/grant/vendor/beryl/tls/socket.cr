@@ -32,6 +32,9 @@ module Grant::Beryl::TLS
     @key_update_times = Deque(Time::Instant).new
     @has_failed = false
     @is_key_update_owed = false
+    @are_secrets_wiped = false
+    # How many KeyUpdates this end sent.
+    getter sent_key_update_count : Int32 = 0
 
     protected def initialize(@io : IO, @sync_close : Bool, limits : Limits)
       @record_layer = RecordLayer.new(@io, limits)
@@ -72,6 +75,7 @@ module Grant::Beryl::TLS
     # §7.5), e.g. for channel binding.
     def export_keying_material(label : String, context : Bytes, bytesize : Int32) : Bytes
       outcome = handshake_outcome
+      raise ConnectionClosed.new("the connection's secrets were wiped when it closed", AlertDescription::InternalError) if @are_secrets_wiped
       KeySchedule.export_keying_material(outcome.cipher_suite.hash_algorithm, outcome.exporter_master_secret, label, context, bytesize)
     end
 
@@ -113,6 +117,7 @@ module Grant::Beryl::TLS
 
     def unbuffered_read(slice : Bytes) : Int32
       handshake_outcome
+      raise ConnectionClosed.new("the connection failed earlier", AlertDescription::InternalError) if @has_failed
       return 0 if slice.empty?
       while @read_buffer.empty?
         record = with_alert_on_failure { @record_layer.read_after_handshake }
@@ -135,7 +140,7 @@ module Grant::Beryl::TLS
       # After a fatal alert either way, nothing more is sent (§6.2).
       raise ConnectionClosed.new("the connection failed earlier", AlertDescription::InternalError) if @has_failed
       @write_mutex.synchronize do
-        if @is_key_update_owed
+        if @is_key_update_owed || is_key_worn_out?(slice.size)
           with_alert_on_failure { send_key_update(outcome, KeyUpdateRequest::UpdateNotRequested) }
           @is_key_update_owed = false
         end
@@ -147,11 +152,13 @@ module Grant::Beryl::TLS
       @write_mutex.synchronize { @io.flush }
     end
 
-    # Sends close_notify (once the handshake is done), then closes the IO
-    # below when `sync_close?`.
+    # Sends close_notify (once the handshake is done), wipes the
+    # connection's secrets, then closes the IO below when `sync_close?`.
     def unbuffered_close : Nil
-      if @outcome && !@has_failed
-        @write_mutex.synchronize { @record_layer.write_alert(AlertLevel::Warning, AlertDescription::CloseNotify) }
+      @write_mutex.synchronize do
+        @record_layer.write_alert(AlertLevel::Warning, AlertDescription::CloseNotify) if @outcome && !@has_failed
+      ensure
+        wipe_secrets
       end
     ensure
       @io.close if @sync_close
@@ -174,6 +181,11 @@ module Grant::Beryl::TLS
         raise ConnectionClosed.new("the handshake failed earlier", AlertDescription::InternalError) if @has_failed
         outcome = with_handshake_deadline { with_alert_on_failure { run_handshake } }
         @record_layer.largest_outgoing_fragment_bytesize = Math.min(RecordLayer::LARGEST_FRAGMENT_BYTESIZE, (outcome.peer_record_size_limit || 16_385) - 1)
+        # Both ends sent record_size_limit, so this end's own limit now holds
+        # for what it reads (RFC 8449 §4).
+        if outcome.peer_record_size_limit
+          @record_layer.largest_incoming_inner_plaintext_bytesize = @limits.record_size_limit
+        end
         @outcome = outcome
         outcome
       end
@@ -230,6 +242,33 @@ module Grant::Beryl::TLS
       @record_layer.write_protection = protection
     end
 
+    # Whether the sending key would seal more records than
+    # `Limits#largest_record_count_per_key` allows were *bytesize* bytes
+    # written under it (RFC 9846 §5.5).
+    private def is_key_worn_out?(bytesize : Int32) : Bool
+      protection = @record_layer.write_protection
+      return false unless protection
+      record_count = bytesize // @record_layer.largest_outgoing_fragment_bytesize + 1
+      protection.sequence_number + record_count > @limits.largest_record_count_per_key
+    end
+
+    # Wipes the traffic secrets, the exporter and resumption master
+    # secrets and the record keys. Called at close and after a failure,
+    # holding the write lock so no record is sealed while its key goes.
+    private def wipe_secrets : Nil
+      return if @are_secrets_wiped
+      @are_secrets_wiped = true
+      wipe_traffic_secrets
+      if outcome = @outcome
+        Crypto::SecretWiping.wipe(outcome.exporter_master_secret)
+        Crypto::SecretWiping.wipe(outcome.resumption_master_secret)
+      end
+      @record_layer.read_protection.try(&.wipe)
+      @record_layer.write_protection.try(&.wipe)
+    end
+
+    private abstract def wipe_traffic_secrets : Nil
+
     private def record_key_update : Nil
       now = Time.instant
       @key_update_times << now
@@ -241,24 +280,21 @@ module Grant::Beryl::TLS
       end
     end
 
+    # Runs the block; on a failure marks the connection failed, sends the
+    # alert a TLS error names and wipes the connection's secrets, all under
+    # the write lock: the read path sends alerts too, and two records
+    # sealed at once could share a nonce.
     private def with_alert_on_failure(&)
       yield
-    rescue error : PeerAlert
+    rescue error : TLS::Error | IO::Error
       @has_failed = true
-      raise error
-    rescue error : HandshakeTimeout
-      @has_failed = true
-      raise error
-    rescue error : TLS::Error
-      @has_failed = true
-      # The read path sends alerts too, so the alert takes the write lock:
-      # two records sealed at once could share a nonce.
-      unless error.is_a?(ConnectionClosed)
-        @write_mutex.synchronize { @record_layer.write_alert(AlertLevel::Fatal, error.alert_description) }
+      @write_mutex.synchronize do
+        if error.is_a?(TLS::Error) && !error.is_a?(PeerAlert | HandshakeTimeout | ConnectionClosed)
+          @record_layer.write_alert(AlertLevel::Fatal, error.alert_description)
+        end
+      ensure
+        wipe_secrets
       end
-      raise error
-    rescue error : IO::Error
-      @has_failed = true
       raise error
     end
 
@@ -358,7 +394,13 @@ module Grant::Beryl::TLS
         @record_layer.write_handshake(Messages::KeyUpdate.new(request).encode)
         @client_application_secret = next_secret(outcome.cipher_suite.hash_algorithm, @client_application_secret)
         replace_write_protection(RecordProtection.new(outcome.cipher_suite, @client_application_secret))
+        @sent_key_update_count += 1
         @io.flush
+      end
+
+      private def wipe_traffic_secrets : Nil
+        Crypto::SecretWiping.wipe(@client_application_secret)
+        Crypto::SecretWiping.wipe(@server_application_secret)
       end
 
       private def handle_other_post_handshake_message(handshake_type : HandshakeType?, body : Bytes) : Nil
@@ -377,7 +419,8 @@ module Grant::Beryl::TLS
         @context.session_cache.store(SessionTicket.new(
           hostname, outcome.cipher_suite,
           KeySchedule.resumption_pre_shared_key(hash, outcome.resumption_master_secret, ticket.ticket_nonce),
-          ticket.ticket, ticket.ticket_age_add, Time.instant, ticket.ticket_lifetime.seconds, outcome.alpn_protocol))
+          ticket.ticket, ticket.ticket_age_add, Time.instant, ticket.ticket_lifetime.seconds, outcome.alpn_protocol,
+          @context.certificate_verifier))
       end
     end
 
@@ -442,7 +485,13 @@ module Grant::Beryl::TLS
         @record_layer.write_handshake(Messages::KeyUpdate.new(request).encode)
         @server_application_secret = next_secret(outcome.cipher_suite.hash_algorithm, @server_application_secret)
         replace_write_protection(RecordProtection.new(outcome.cipher_suite, @server_application_secret))
+        @sent_key_update_count += 1
         @io.flush
+      end
+
+      private def wipe_traffic_secrets : Nil
+        Crypto::SecretWiping.wipe(@client_application_secret)
+        Crypto::SecretWiping.wipe(@server_application_secret)
       end
     end
   end

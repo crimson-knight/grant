@@ -4,6 +4,7 @@ require "./record_layer"
 require "./transcript_hash"
 require "./context"
 require "./handshake_outcome"
+require "./handshake_secrets"
 
 module Grant::Beryl::TLS
   # The server side of a TLS 1.3 handshake (RFC 9846 §2, §4), run over a
@@ -26,14 +27,29 @@ module Grant::Beryl::TLS
 
     @transcript = TranscriptHash.new
     @has_sent_change_cipher_spec = false
+    @secrets = HandshakeSecrets.new
 
     def initialize(@record_layer : RecordLayer, @context : Context::Server)
       @randomness = @context.randomness
     end
 
-    # Runs the handshake.
+    # Runs the handshake. Every secret it derived and does not hand on is
+    # wiped when it ends, and on failure the ones it would have handed on
+    # too.
     def perform : HandshakeOutcome
+      outcome = run_handshake
+      @secrets.complete
+      outcome
+    ensure
+      @secrets.wipe
+    end
+
+    private def run_handshake : HandshakeOutcome
+      # The compatibility change_cipher_spec may come only after the first
+      # ClientHello (RFC 9846 §5).
+      @record_layer.is_change_cipher_spec_allowed = false
       client_hello_message = @record_layer.read_handshake_message
+      @record_layer.is_change_cipher_spec_allowed = true
       expect_type(client_hello_message, HandshakeType::ClientHello)
       client_hello = Messages::ClientHello.decode(Messages.unwrap(client_hello_message)[1])
       check_client_hello(client_hello)
@@ -87,7 +103,7 @@ module Grant::Beryl::TLS
       @transcript.add(client_hello_message)
 
       key_exchange = KeyExchange.generate(selection.group, @randomness)
-      shared_secret = key_exchange.shared_secret(selection.client_key_share || raise Error.new("no client key share"))
+      shared_secret = @secrets.held(key_exchange.shared_secret(selection.client_key_share || raise Error.new("no client key share")))
       list_of_server_hello_extensions = [
         Messages::Extension.new(ExtensionType::KeyShare.value, ExtensionCodec.encode_server_key_share(
           ExtensionCodec::KeyShareEntry.new(selection.group.value, key_exchange.public_key_bytes))),
@@ -102,12 +118,13 @@ module Grant::Beryl::TLS
       send_change_cipher_spec_once if client_hello.legacy_session_id.size > 0
       @transcript.add(server_hello)
 
-      schedule = KeySchedule.new(hash, resumed_state.try(&.resumption_pre_shared_key))
+      schedule = @secrets.held(KeySchedule.new(hash, resumed_state.try(&.resumption_pre_shared_key)))
+      resumed_state.try { |state| @secrets.held(state.resumption_pre_shared_key) }
       schedule.enter_handshake_stage(shared_secret)
       Crypto::SecretWiping.wipe(shared_secret)
       handshake_digest = @transcript.digest(hash)
-      client_handshake_secret = schedule.client_handshake_traffic_secret(handshake_digest)
-      server_handshake_secret = schedule.server_handshake_traffic_secret(handshake_digest)
+      client_handshake_secret = @secrets.held(schedule.client_handshake_traffic_secret(handshake_digest))
+      server_handshake_secret = @secrets.held(schedule.server_handshake_traffic_secret(handshake_digest))
       @record_layer.write_protection = RecordProtection.new(selection.cipher_suite, server_handshake_secret)
 
       list_of_encrypted_extensions = [] of Messages::Extension
@@ -120,7 +137,7 @@ module Grant::Beryl::TLS
       end
       if selection.peer_record_size_limit
         list_of_encrypted_extensions << Messages::Extension.new(ExtensionType::RecordSizeLimit.value,
-          ExtensionCodec.encode_record_size_limit(RecordProtection::LARGEST_INNER_PLAINTEXT_BYTESIZE))
+          ExtensionCodec.encode_record_size_limit(@context.limits.record_size_limit))
       end
       write_and_record(Messages::EncryptedExtensions.new(list_of_encrypted_extensions).encode)
 
@@ -136,9 +153,9 @@ module Grant::Beryl::TLS
 
       schedule.enter_master_stage
       application_digest = @transcript.digest(hash)
-      client_application_secret = schedule.client_application_traffic_secret(application_digest)
-      server_application_secret = schedule.server_application_traffic_secret(application_digest)
-      exporter_master_secret = schedule.exporter_master_secret(application_digest)
+      client_application_secret = @secrets.handed_on(schedule.client_application_traffic_secret(application_digest))
+      server_application_secret = @secrets.handed_on(schedule.server_application_traffic_secret(application_digest))
+      exporter_master_secret = @secrets.handed_on(schedule.exporter_master_secret(application_digest))
       @record_layer.write_protection = RecordProtection.new(selection.cipher_suite, server_application_secret)
       @record_layer.flush
 
@@ -156,10 +173,7 @@ module Grant::Beryl::TLS
       @record_layer.is_change_cipher_spec_allowed = false
       @record_layer.early_data_skip_budget = 0
 
-      resumption_master_secret = schedule.resumption_master_secret(@transcript.digest(hash))
-      schedule.wipe
-      Crypto::SecretWiping.wipe(client_handshake_secret)
-      Crypto::SecretWiping.wipe(server_handshake_secret)
+      resumption_master_secret = @secrets.handed_on(schedule.resumption_master_secret(@transcript.digest(hash)))
       @transcript.clear
 
       outcome = HandshakeOutcome.new(selection.cipher_suite, client_application_secret, server_application_secret,
@@ -287,9 +301,11 @@ module Grant::Beryl::TLS
       end
 
       list_of_client_groups = ExtensionCodec.decode_u16_list(client_hello.extension(ExtensionType::SupportedGroups) || Bytes.empty)
+      # A set, so every share is checked against the groups in linear time.
+      client_group_values = list_of_client_groups.to_set
       list_of_shares = ExtensionCodec.decode_client_key_shares(client_hello.extension(ExtensionType::KeyShare) || Bytes.empty)
       list_of_shares.each do |share|
-        unless list_of_client_groups.includes?(share.group_value)
+        unless client_group_values.includes?(share.group_value)
           raise Error.new("a key share for group #{share.group_value}, which supported_groups does not list", AlertDescription::IllegalParameter)
         end
       end
@@ -350,7 +366,10 @@ module Grant::Beryl::TLS
         state = SealedSessionState.open(identity.identity, @context.ticket_key)
         next unless state
         next unless state.cipher_suite.hash_algorithm == hash
-        next unless now_milliseconds - state.issued_at_unix_milliseconds < state.lifetime_seconds.to_i64 * 1000
+        # A ticket from the future (another process's clock, or a forged
+        # issue time under a shared key) is never resumed.
+        age_milliseconds = now_milliseconds - state.issued_at_unix_milliseconds
+        next unless 0 <= age_milliseconds < state.lifetime_seconds.to_i64 * 1000
         next unless state.server_name == selection.server_name
         binder = list_of_binders[index]
         next unless binder.size == hash.bytesize

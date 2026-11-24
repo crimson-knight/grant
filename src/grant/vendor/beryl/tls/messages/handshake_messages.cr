@@ -37,11 +37,13 @@ module Grant::Beryl::TLS::Messages
   # that appears twice is refused (RFC 9846 §4.2).
   def self.read_extensions(reader : MessageReader) : Array(Extension)
     list_of_extensions = [] of Extension
+    # A set, so a block of many extensions is checked in linear time.
+    seen_type_values = Set(UInt16).new
     block = MessageReader.new(reader.read_vector16)
     until block.at_end?
       type_value = block.read_u16
       contents = block.read_vector16
-      if list_of_extensions.any? { |seen| seen.type_value == type_value }
+      unless seen_type_values.add?(type_value)
         raise Error.new("the extension #{type_value} appears twice", AlertDescription::IllegalParameter)
       end
       list_of_extensions << Extension.new(type_value, contents)

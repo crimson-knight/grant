@@ -123,8 +123,11 @@ module Grant::Beryl::TLS
     class Server < Context
       # The ticket lifetime the server states (and enforces).
       property ticket_lifetime : Time::Span = 2.hours
+      # The most tickets a server sends after one handshake.
+      LARGEST_SESSION_TICKET_COUNT = 16
+
       # How many tickets the server sends after a full handshake.
-      property session_ticket_count : Int32 = 1
+      getter session_ticket_count : Int32 = 1
       @certified_key : CertifiedKey? = nil
       @list_of_chain_certificates : Array(Certificates::Certificate)? = nil
       @private_key : Certificates::SigningKey? = nil
@@ -172,6 +175,15 @@ module Grant::Beryl::TLS
       # :nodoc:
       def ticket_key : Bytes
         @ticket_key
+      end
+
+      # Sets how many tickets the server sends, from 0 (none) to
+      # `LARGEST_SESSION_TICKET_COUNT`.
+      def session_ticket_count=(count : Int32) : Int32
+        unless 0 <= count <= LARGEST_SESSION_TICKET_COUNT
+          raise ArgumentError.new("a session ticket count of #{count}; 0 to #{LARGEST_SESSION_TICKET_COUNT} are allowed")
+        end
+        @session_ticket_count = count
       end
 
       # Whether the server sends session tickets.

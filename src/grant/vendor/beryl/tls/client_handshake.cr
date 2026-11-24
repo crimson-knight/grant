@@ -4,6 +4,7 @@ require "./record_layer"
 require "./transcript_hash"
 require "./context"
 require "./handshake_outcome"
+require "./handshake_secrets"
 
 module Grant::Beryl::TLS
   # The client side of a TLS 1.3 handshake (RFC 9846 §2, §4), run over a
@@ -31,6 +32,7 @@ module Grant::Beryl::TLS
     @transcript = TranscriptHash.new
     @has_sent_change_cipher_spec = false
     @hello_retry_cipher_suite : CipherSuite? = nil
+    @secrets = HandshakeSecrets.new
 
     def initialize(@record_layer : RecordLayer, @context : Context::Client, @hostname : String?)
       @randomness = @context.randomness
@@ -48,7 +50,19 @@ module Grant::Beryl::TLS
     #
     # Runs the handshake from the point where *offer* was sent. `perform`
     # calls it; the RFC 8448 specs call it with the trace's ClientHello.
+    #
+    # Every secret the handshake derived and does not hand on is wiped when
+    # it ends, and on failure the ones it would have handed on too.
     def complete(offer : Offer) : HandshakeOutcome
+      offer.session_ticket.try { |ticket| @secrets.held(ticket.resumption_pre_shared_key) }
+      outcome = run_handshake(offer)
+      @secrets.complete
+      outcome
+    ensure
+      @secrets.wipe
+    end
+
+    private def run_handshake(offer : Offer) : HandshakeOutcome
       @transcript.add(offer.message)
       server_hello_message = @record_layer.read_handshake_message
       server_hello = decode_server_hello(server_hello_message)
@@ -67,7 +81,7 @@ module Grant::Beryl::TLS
       key_share = ExtensionCodec.decode_server_key_share(server_hello.extension(ExtensionType::KeyShare) || raise Error.new("the ServerHello has no key_share", AlertDescription::MissingExtension))
       key_exchange = offer.list_of_key_exchanges.find { |exchange| exchange.group.value == key_share.group_value }
       raise Error.new("the server's key share is for a group the client sent no share for", AlertDescription::IllegalParameter) unless key_exchange
-      shared_secret = key_exchange.shared_secret(key_share.key_exchange)
+      shared_secret = @secrets.held(key_exchange.shared_secret(key_share.key_exchange))
 
       pre_shared_key = nil
       session_ticket = offer.session_ticket
@@ -84,12 +98,12 @@ module Grant::Beryl::TLS
       is_resumed = !pre_shared_key.nil?
 
       @transcript.add(server_hello_message)
-      schedule = KeySchedule.new(hash, pre_shared_key)
+      schedule = @secrets.held(KeySchedule.new(hash, pre_shared_key))
       schedule.enter_handshake_stage(shared_secret)
       Crypto::SecretWiping.wipe(shared_secret)
       handshake_digest = @transcript.digest(hash)
-      client_handshake_secret = schedule.client_handshake_traffic_secret(handshake_digest)
-      server_handshake_secret = schedule.server_handshake_traffic_secret(handshake_digest)
+      client_handshake_secret = @secrets.held(schedule.client_handshake_traffic_secret(handshake_digest))
+      server_handshake_secret = @secrets.held(schedule.server_handshake_traffic_secret(handshake_digest))
       install_read_protection(RecordProtection.new(cipher_suite, server_handshake_secret))
       # Installed now so that an alert sent while reading the server's
       # flight goes out under the handshake key the server reads with.
@@ -160,9 +174,9 @@ module Grant::Beryl::TLS
 
       schedule.enter_master_stage
       application_digest = @transcript.digest(hash)
-      client_application_secret = schedule.client_application_traffic_secret(application_digest)
-      server_application_secret = schedule.server_application_traffic_secret(application_digest)
-      exporter_master_secret = schedule.exporter_master_secret(application_digest)
+      client_application_secret = @secrets.handed_on(schedule.client_application_traffic_secret(application_digest))
+      server_application_secret = @secrets.handed_on(schedule.server_application_traffic_secret(application_digest))
+      exporter_master_secret = @secrets.handed_on(schedule.exporter_master_secret(application_digest))
       install_read_protection(RecordProtection.new(cipher_suite, server_application_secret))
 
       if certificate_request
@@ -179,10 +193,7 @@ module Grant::Beryl::TLS
       @record_layer.flush
       @record_layer.is_change_cipher_spec_allowed = false
 
-      resumption_master_secret = schedule.resumption_master_secret(@transcript.digest(hash))
-      schedule.wipe
-      Crypto::SecretWiping.wipe(client_handshake_secret)
-      Crypto::SecretWiping.wipe(server_handshake_secret)
+      resumption_master_secret = @secrets.handed_on(schedule.resumption_master_secret(@transcript.digest(hash)))
       @transcript.clear
 
       HandshakeOutcome.new(cipher_suite, client_application_secret, server_application_secret, exporter_master_secret,
@@ -371,6 +382,8 @@ module Grant::Beryl::TLS
       list_of_versions.unshift(grease[3]) if grease
       list_of_extensions << Messages::Extension.new(ExtensionType::SupportedVersions.value, ExtensionCodec.encode_client_supported_versions(list_of_versions))
       list_of_extensions << Messages::Extension.new(ExtensionType::PskKeyExchangeModes.value, ExtensionCodec.encode_psk_modes(Bytes[PskKeyExchangeMode::PskDheKe.value]))
+      # This end's own limit on the records it reads (RFC 8449).
+      list_of_extensions << Messages::Extension.new(ExtensionType::RecordSizeLimit.value, ExtensionCodec.encode_record_size_limit(@context.limits.record_size_limit))
       unless @context.list_of_alpn_protocols.empty?
         list_of_extensions << Messages::Extension.new(ExtensionType::ApplicationLayerProtocolNegotiation.value, ExtensionCodec.encode_protocol_names(@context.list_of_alpn_protocols))
       end
@@ -389,6 +402,9 @@ module Grant::Beryl::TLS
       ticket = @context.session_cache.take(hostname)
       return nil unless ticket
       return nil unless @context.list_of_cipher_suites.any? { |suite| suite.hash_algorithm == ticket.cipher_suite.hash_algorithm }
+      # Resumption skips certificate checks, so a ticket is used only by a
+      # context that would have verified its server the same way.
+      return nil unless ticket.certificate_verifier.same?(@context.certificate_verifier)
       ticket
     end
 

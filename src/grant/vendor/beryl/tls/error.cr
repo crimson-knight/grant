@@ -16,6 +16,13 @@ module Grant::Beryl::TLS
   class PeerAlert < Error
   end
 
+  # An alert that arrived in plaintext while the connection already had
+  # keys. Nothing authenticates it, so it may come from anyone on the path
+  # rather than the peer; it still ends the handshake, as any alert there
+  # would.
+  class UnauthenticatedAlert < PeerAlert
+  end
+
   # The handshake did not finish before its deadline.
   class HandshakeTimeout < Error
   end

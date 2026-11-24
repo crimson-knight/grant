@@ -1,6 +1,6 @@
 {
   "source": "https://github.com/amberframework/beryl",
-  "commit": "73aaa205c03781113b525f2bf8f4324aac5ce29c",
+  "commit": "15e214b8a8b0427da5ca7182501d5652800907cc",
   "namespace": "Grant::Beryl",
   "made_by": "scripts/vendor_into.rb",
   "note": "A pinned copy. Change Beryl in its own repository, then run the script again; edits made here fail the check.",
@@ -97,8 +97,8 @@
     },
     {
       "path": "beryl/certificates/trust_store.cr",
-      "sha256": "acf6303cb1fd66b6a10fc6b65ed9de9a268503ce7f9409510a668fa31ccac8f5",
-      "source_sha256": "0749fdab2404ec87332a2ab4c3acd8f0838379e11701dafa3042d1792d8c54cc"
+      "sha256": "26bf4fe2254a4043a9ffd54cc3c41c1c1684926dd3c987ec3810ed03701ee56c",
+      "source_sha256": "f1b09bc18cb26bf906040ed9ef957c8f740b25779a2c597667dd326ef0e32cdc"
     },
     {
       "path": "beryl/crypto.cr",
@@ -467,18 +467,18 @@
     },
     {
       "path": "beryl/tls/client_handshake.cr",
-      "sha256": "b91d093529543d94eb548422397abcf9ef372459cdff3603346e51858ff2e22d",
-      "source_sha256": "48db42e997b2f15901b23ad17ca4d0117558733866dd7eb63973460d04f0427c"
+      "sha256": "2926b9065c172ca16f4afff8b04bac770571abaa699b90a9f9caa1dcd6ebb2fe",
+      "source_sha256": "89d5675b7cad266599de872ba863971e3cc98ae7e9d86dbaa36b6d05b879979f"
     },
     {
       "path": "beryl/tls/context.cr",
-      "sha256": "2d60a6c5b23d1069ca93f300e4bff3d553873d2686701bf8b2085bbb834f3f79",
-      "source_sha256": "093c810a637015cfddcc56205dc3cf77c5d761b2a8725494184ab3fc55fdd0a8"
+      "sha256": "dc5b8d4fe7ea828081050e230d20453198097785af199cf832a99e7528dc52e1",
+      "source_sha256": "a92a06533978a6c2b2999f68f6e0a7ddc67fd4c368d4a24e42ad20facccc9c48"
     },
     {
       "path": "beryl/tls/error.cr",
-      "sha256": "00c9f393fd932862a40c03337bfa675d369536b1e420b3d47f317040b5c67a0d",
-      "source_sha256": "32587f003495ff5b205aa6784a41b53dd7a28a0844375a638c2088f34b77db38"
+      "sha256": "23078e160a67fee0ffd0b7c3d7e53d1a5999ea90b71f86ce547eefe99591c953",
+      "source_sha256": "0de64f5ce3a3d4bd512a2f22ecbb32e5c3d772e386942c6665006b41a514230a"
     },
     {
       "path": "beryl/tls/handshake_outcome.cr",
@@ -489,6 +489,11 @@
       "path": "beryl/tls/handshake_randomness.cr",
       "sha256": "55a06658802722d395a3b7c1665a6fcd8a2db3f083a8f1df97acdd5d7237f5b8",
       "source_sha256": "177d87a3becd611709d91064e68c571cedb94f514ebbc2dca9e0d5664efc6cad"
+    },
+    {
+      "path": "beryl/tls/handshake_secrets.cr",
+      "sha256": "d5692319511aea0ca910d22698606f7449b42a0537f46be31a8e14c51c90a42c",
+      "source_sha256": "3f1bdbd7257fb86d3b7988ec0b18dc31c7625c204f404e58a2b11b25476268d6"
     },
     {
       "path": "beryl/tls/hash_algorithm.cr",
@@ -502,18 +507,18 @@
     },
     {
       "path": "beryl/tls/limits.cr",
-      "sha256": "4972eb999615d4d8e5879c5d5f2e357e962122205db81ca6473a2acd608cbbaa",
-      "source_sha256": "79b114fd570f3509421f0853cfe0e49693b185878983495ddf23ef4a7f153849"
+      "sha256": "94a727f97b34bf9966fb49673f1d665e06bd5f0a2b4f7eed8d02a46d555e9451",
+      "source_sha256": "891869d9ee84a62c1129dd0339a2f418353a40cb4ec969364048fba2a8807bae"
     },
     {
       "path": "beryl/tls/messages/extension_codec.cr",
-      "sha256": "9ac7db254bcb157cd399e1ca42b39d8a649d9a1a5036bcb58950b153552a664b",
-      "source_sha256": "9406857971f5b75acf5099259d10258f55fa9cd01b73d8ff85570f2ab46dc350"
+      "sha256": "27527fb77fa780095ee5070bb26d6c56eb6c09c43c50e8ee456a7cf4c6d0ff29",
+      "source_sha256": "38cce4e04c5a3015baf8dc582907ffab000c394eedf90d41ad886a5620a1b17f"
     },
     {
       "path": "beryl/tls/messages/handshake_messages.cr",
-      "sha256": "7e7622b0aef6c98fe338ece8a1ea74ed808f951cf7915d193ce5b4960b313b04",
-      "source_sha256": "630947bed4b8a87d3eafd7946e5f85bb9dc4eb5c2aaef6274123189cb51c5d86"
+      "sha256": "10a1db1bc03a355a8ee38be55eced96e64de5d7a6135a9f6904fb48ca7660b43",
+      "source_sha256": "d186e22453bf8f8f9c9879505fc3cb6bbc516aadc2fa5b8fe3e71c39ff639890"
     },
     {
       "path": "beryl/tls/messages/message_reader.cr",
@@ -527,8 +532,8 @@
     },
     {
       "path": "beryl/tls/record_layer.cr",
-      "sha256": "535cfa7343877e2057ae4aaa412af8d0d424a1059d742b79b0b5edaca880e3f6",
-      "source_sha256": "8cea1d568a251610c6902d29c56309754c24c75a928f5215cbe3e2a95a96b968"
+      "sha256": "de74c8846bfaa04dbdd4316c2d600a69e115f9465f5decef5073dfacda37b8c7",
+      "source_sha256": "518523e5d0f30b1fa84a374326b142165216155b1e1ac0e2e3fc76f9eacf971c"
     },
     {
       "path": "beryl/tls/record_protection.cr",
@@ -537,18 +542,18 @@
     },
     {
       "path": "beryl/tls/server_handshake.cr",
-      "sha256": "bfac7d0b3fbeabac18fd7b1f73a696f8cf5cf4a3b674a0bfaf3e078c449d5acf",
-      "source_sha256": "21376b8b24e952907b8bcc92f5c1fca08c54680bd4b594ab12b63276db09bb56"
+      "sha256": "f4e2457dd7813db433f5b024487dfdcc0d7d04d8e877391e53684c6a40402fc1",
+      "source_sha256": "068a5564a23651ee520ff81e70e8938f5ee9c333562da79cf40f9452d87ac1f2"
     },
     {
       "path": "beryl/tls/session_ticket.cr",
-      "sha256": "d3f513fd7d75ec2244c36062944277e8e3c0cc65ad84d18beda662bd123b617f",
-      "source_sha256": "48e2d55aa58a0ae7c8119ab201b647305f1ea29884009e8fa6545232b221e892"
+      "sha256": "c30571c38be7b773af438cca3b019caf2efc88570d912d30615f1162bddc70ae",
+      "source_sha256": "6c29e36025df34d83a1e448e822e380a67d2416a31db7eca08679fd20dd474b8"
     },
     {
       "path": "beryl/tls/socket.cr",
-      "sha256": "ae583154dba89d7f90e4638ec3ea08c03288c6008241137ddd3810e899da8832",
-      "source_sha256": "5cd90df7053fc486248b90b39b461b4d956fb1315c9102e9a581bcc3d0d8fbaa"
+      "sha256": "0e0abfefc31a4bb879dd7495617e5d0be61e52ca6bf2ea28e27750f1c85ecbfc",
+      "source_sha256": "c7cbb601effd8b58d9abbec00e719c43dc3e595497e1caefc12ce7cdd6acd37b"
     },
     {
       "path": "beryl/tls/transcript_hash.cr",

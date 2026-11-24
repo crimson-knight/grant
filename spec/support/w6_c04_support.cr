@@ -33,6 +33,8 @@ module W6C04
   def self.pg_url(database : String) : String
     uri = URI.parse(ADAPTER_URL)
     uri.path = "/#{database}"
+    # Re-encoded the way the adapter writes the URL back, so the two compare.
+    uri.query = uri.query_params.to_s.presence
     uri.to_s
   end
 
