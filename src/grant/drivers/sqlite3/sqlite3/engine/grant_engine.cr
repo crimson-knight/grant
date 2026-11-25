@@ -17,7 +17,7 @@ module Grant::SQLite3
         pager = SQLiteEngine::Pager.open_read_write(SQLiteEngine::MemoryFileSystem.new, MEMORY_FILENAME)
         engine_database = SQLiteEngine::Database.new(pager)
       else
-        pager = SQLiteEngine::Pager.open_read_write(SQLiteEngine::PosixFileSystem.new, filename)
+        pager = SQLiteEngine::Pager.open_read_write(SQLiteEngine::FileSystem.native, filename)
         engine_database = SQLiteEngine::Database.new(pager, File.realpath(filename))
       end
       {Engine::OK_CODE, Database.new(engine_database)}

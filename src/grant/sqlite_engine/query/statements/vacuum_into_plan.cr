@@ -47,7 +47,7 @@ module Grant::SQLiteEngine::Query
       # unixFileSize reports a one-byte file as empty, so C writes over it.
       File.open(file, "r+", &.truncate) if File.exists?(file) && File.size(file) == 1
       target = begin
-        Pager.open_read_write(PosixFileSystem.new, file)
+        Pager.open_read_write(FileSystem.native, file)
       rescue File::Error
         raise SQLError.new("unable to open database: #{file}", CANNOT_OPEN_CODE)
       rescue CorruptDatabase

@@ -95,7 +95,8 @@ describe "Grant::SQLiteEngine lock waits between processes" do
         LockWaitProcesses.with_database("WAL") do |path|
           writer = LockWaitProcesses.start_helper("writer_to_kill", :grant, path)
           sleep 400.milliseconds
-          writer.signal(Signal::KILL)
+          # SIGKILL on POSIX systems, TerminateProcess on Windows.
+          writer.terminate(graceful: false)
           writer.wait
           list_of_readers = Array.new(4) { LockWaitProcesses.start_helper("reader", engine, path) }
           LockWaitProcesses.answers_of(list_of_readers).each do |answer|

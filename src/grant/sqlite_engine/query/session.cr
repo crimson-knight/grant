@@ -121,7 +121,7 @@ module Grant::SQLiteEngine::Query
                    Database.new(Pager.open_read_write(MemoryFileSystem.new, ":memory:"))
                  else
                    begin
-                     Database.new(Pager.open_read_write(PosixFileSystem.new, file), File.realpath(file))
+                     Database.new(Pager.open_read_write(FileSystem.native, file), File.realpath(file))
                    rescue Error | File::Error
                      raise SQLError.new("unable to open database: #{file}")
                    end

@@ -66,6 +66,46 @@ module Grant::SQLiteEngine
     abstract def close(delete : Bool) : Nil
   end
 
+  # The reads and writes of a wal-index whose regions are mapped into this
+  # process's memory (mmap(2) or MapViewOfFile): the byte at *offset* is in
+  # region `offset // REGION_SIZE`.
+  module MappedRegions
+    # The first byte of mapped region *index*.
+    abstract def region_address(index : Int32) : UInt8*
+
+    private def address(offset : Int32) : UInt8*
+      region_address(offset // SharedMemory::REGION_SIZE) + (offset % SharedMemory::REGION_SIZE)
+    end
+
+    def read_u32(offset : Int32) : UInt32
+      address(offset).as(UInt32*).value
+    end
+
+    def write_u32(offset : Int32, value : UInt32) : Nil
+      address(offset).as(UInt32*).value = value
+    end
+
+    def read_u16(offset : Int32) : UInt16
+      address(offset).as(UInt16*).value
+    end
+
+    def write_u16(offset : Int32, value : UInt16) : Nil
+      address(offset).as(UInt16*).value = value
+    end
+
+    def read_into(offset : Int32, buffer : Bytes) : Nil
+      buffer.to_unsafe.copy_from(address(offset), buffer.size)
+    end
+
+    def write_bytes(offset : Int32, bytes : Bytes) : Nil
+      address(offset).copy_from(bytes.to_unsafe, bytes.size)
+    end
+
+    def zero(offset : Int32, count : Int32) : Nil
+      Intrinsics.memset(address(offset).as(Void*), 0_u8, count, false)
+    end
+  end
+
   {% unless flag?(:win32) %}
     # The wal-index of a database on disk, shared with every other connection
     # through `mmap(2)` (MAP_SHARED), with C SQLite's fcntl(2) locks on the
@@ -73,6 +113,8 @@ module Grant::SQLiteEngine
     # descriptor, and the lock table orders them as unixShmNode does, because
     # POSIX locks belong to the process.
     class MappedSharedMemory < SharedMemory
+      include MappedRegions
+
       # The mapping, descriptor and lock counts every connection of this
       # process shares for one `-shm` file (unixShmNode).
       class Node
@@ -170,36 +212,9 @@ module Grant::SQLiteEngine
         @node.list_of_regions.size
       end
 
-      private def address(offset : Int32) : UInt8*
-        @node.list_of_regions.unsafe_fetch(offset // REGION_SIZE) + (offset % REGION_SIZE)
-      end
-
-      def read_u32(offset : Int32) : UInt32
-        address(offset).as(UInt32*).value
-      end
-
-      def write_u32(offset : Int32, value : UInt32) : Nil
-        address(offset).as(UInt32*).value = value
-      end
-
-      def read_u16(offset : Int32) : UInt16
-        address(offset).as(UInt16*).value
-      end
-
-      def write_u16(offset : Int32, value : UInt16) : Nil
-        address(offset).as(UInt16*).value = value
-      end
-
-      def read_into(offset : Int32, buffer : Bytes) : Nil
-        buffer.to_unsafe.copy_from(address(offset), buffer.size)
-      end
-
-      def write_bytes(offset : Int32, bytes : Bytes) : Nil
-        address(offset).copy_from(bytes.to_unsafe, bytes.size)
-      end
-
-      def zero(offset : Int32, count : Int32) : Nil
-        Intrinsics.memset(address(offset).as(Void*), 0_u8, count, false)
+      # The first byte of mapped region *index*.
+      def region_address(index : Int32) : UInt8*
+        @node.list_of_regions.unsafe_fetch(index)
       end
 
       # unixShmLock, shared branch.
