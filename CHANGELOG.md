@@ -14,8 +14,12 @@ identifier, as private database CAs make them, now verify).
 - The vendored Beryl moves from ed5f21e7 to 0.2.1: a leaf or intermediate
   without an authority key identifier is matched to its issuer by name and
   signature, as Go and OpenSSL do.
+- Without `sslrootcert`, the PostgreSQL driver checks the server against the
+  system roots; on macOS that is now /etc/ssl/cert.pem joined with Beryl's
+  pinned Mozilla roots, since macOS 27.2.1's file lacks roots the keychain
+  trusts (SSL.com TLS ECC Root CA 2022, AAA Certificate Services).
 - The MySQL development dependency (crimson-knight/crystal-mysql) moves to
-  0.18.1 (4ec0bcad), which pins the same Beryl 0.2.1.
+  0.18.1 (ce9cbfab), which pins the same Beryl 0.2.1.
 
 ### pg_dump and psql check the server as the app does
 
