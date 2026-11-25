@@ -19,7 +19,7 @@ identifier, as private database CAs make them, now verify).
   pinned Mozilla roots, since macOS 27.2.1's file lacks roots the keychain
   trusts (SSL.com TLS ECC Root CA 2022, AAA Certificate Services).
 - The MySQL development dependency (crimson-knight/crystal-mysql) moves to
-  0.18.1 (4ec0bcad), which pins the same Beryl 0.2.1.
+  0.18.1 (ce9cbfab), which pins the same Beryl 0.2.1.
 
 ### pg_dump and psql check the server as the app does
 

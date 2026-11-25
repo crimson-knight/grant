@@ -7,8 +7,8 @@ shards:
 
   beryl:
     git: https://github.com/amberframework/beryl.git
-    version: 0.2.1+git.commit.c51f5d231e699647076c91c2a91a5e4f64fa861c
-    checksum: sha256-v2:348ccb15ed9b242d1934e8d1875ad5fbe1c328b86d515fd053095c56d030924a
+    version: 0.2.1+git.commit.6afec738aac1aeefc016b0ba826d8d9f0acc3541
+    checksum: sha256-v2:15f5f2f4528b14f807239d5d7f9565680da29cdc3b3c647e6f4028b1444459fc
 
   db:
     git: https://github.com/crystal-lang/crystal-db.git
@@ -17,6 +17,6 @@ shards:
 
   mysql:
     git: https://github.com/crimson-knight/crystal-mysql.git
-    version: 0.18.1+git.commit.4ec0bcaddd436bcf19ef5072034fbef3b8282f63
-    checksum: sha256-v2:1f8c45363f95bf6c8f11f18edf637a8ffc153f16ff6057ee19acb50cd469c683
+    version: 0.18.1+git.commit.ce9cbfab8ba76f5b6d25386140aca0a409b1d585
+    checksum: sha256-v2:ea05767c3304dafd3d40096e39717ca2e4e79fdcfe6a07f7a5bea2852dce9343
 
