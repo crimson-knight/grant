@@ -69,7 +69,9 @@ for name in grant-pg-tls-primary grant-pg-tls-replica grant-pg-tls12; do
   docker exec "$name" psql -U grant -d postgres -Atc "SELECT version(); SHOW ssl_min_protocol_version; SHOW ssl_max_protocol_version" >&2
 done
 
-query="sslmode=verify-full&sslrootcert=$PWD/ca.pem"
+# The CA path percent-encoded, as the adapter writes a URL back, so specs
+# that compare URLs see the same text.
+query="sslmode=verify-full&sslrootcert=${PWD//\//%2F}%2Fca.pem"
 echo "PG_DATABASE_URL=postgres://grant@localhost:5432/grant_db?$query"
 echo "PG_REPLICA_URL=postgres://grant:password@localhost:5433/grant_replica_db?$query"
 echo "GRANT_PG_TLS_PORT=5433"

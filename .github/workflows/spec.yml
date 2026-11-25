@@ -279,8 +279,10 @@ jobs:
       matrix:
         postgres:
           - version: "17.12"
+            major: "17"
             digest: "87c8b42f423b45d5247e6aa8fdb2e7762fec164c68a50fe3eb07e7bfcaf4dbcf"
           - version: "19.0"
+            major: "19"
             digest: "aaa10f7ba7328b4a221a6c3184d83eef885bd16bf1f6de864757863156b0a4d1"
         shard: [1, 2, 3, 4, 5, 6]
     steps:
@@ -296,6 +298,14 @@ jobs:
           crystal: 1.21.0
       - name: Install shards
         run: shards install --frozen --skip-postinstall --skip-executables
+      - name: Install the PostgreSQL client tools of the server version
+        # pg_dump refuses a newer server, and the schema specs run it.
+        run: |
+          sudo apt-get install -y --no-install-recommends "postgresql-client-${PG_MAJOR}"
+          echo "/usr/lib/postgresql/${PG_MAJOR}/bin" >> "$GITHUB_PATH"
+          "/usr/lib/postgresql/${PG_MAJOR}/bin/pg_dump" --version
+        env:
+          PG_MAJOR: ${{ matrix.postgres.major }}
       - name: Start the TLS 1.3 PostgreSQL servers
         run: scripts/pg-tls-test-servers.sh "postgres:${{ matrix.postgres.version }}@sha256:${{ matrix.postgres.digest }}" "$RUNNER_TEMP/pg-tls" >> "$GITHUB_ENV"
       - name: Run tests
