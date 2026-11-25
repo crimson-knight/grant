@@ -1076,43 +1076,7 @@ module Grant::Validators
       # (before_validation -> validators -> after_validation), matching AR
       # semantics. If an around_validation callback fails to call its
       # continuation, the validation phase is halted (no validators run).
-      __run_around_validation do
-        # Run before_validation callbacks
-        before_validation if responds_to?(:before_validation)
-
-        run_all = active_contexts.includes?(:save)
-        self.class.__validators_for_validation.each do |validator|
-          unless run_all
-            validator_contexts = validator[:contexts]
-            # No `on:` (stored as :save) always runs; otherwise a context must match
-            next unless validator_contexts.includes?(:save) || validator_contexts.any? { |candidate| active_contexts.includes?(candidate) }
-          end
-
-          errors_before = errors.size
-          unless validator[:block].call(self)
-            message = validator[:message]
-            failure = Error.new(validator[:field], message, validator[:code], options: validator[:details], base: self)
-            # Validators that add their own errors (`validates_with`,
-            # `validates_each`, `validate :method`) carry an empty message.
-            own_errors = message.is_a?(String) && message.empty?
-            strict_factory = validator[:strict]
-            if strict_factory
-              # ActiveRecord raises on the first error a validator adds.
-              added = errors.objects[errors_before]?
-              text = own_errors && added ? added.to_s : failure.to_s
-              # The raised exception carries the failure; the errors the
-              # validator recorded on the way do not stay behind.
-              errors.truncate_to(errors_before)
-              raise strict_factory.call(text)
-            end
-            # They need no placeholder next to the errors they already recorded.
-            errors << failure unless own_errors && errors.size > errors_before
-          end
-        end
-
-        # Run after_validation callbacks
-        after_validation if responds_to?(:after_validation)
-      end
+      __run_validation_phase(active_contexts)
     ensure
       @validation_contexts = previous_contexts
       # Reset the flag
@@ -1120,6 +1084,55 @@ module Grant::Validators
     end
 
     errors.empty?
+  end
+
+  # Runs the validation phase of `#valid?` for this model: the
+  # `around_validation` chain wrapping `before_validation`, the validators of
+  # *active_contexts* and `after_validation`.
+  #
+  # It is typed for each model (no `@[TypeOnce]`): the callback macros it
+  # calls expand for the receiver's own type, so `#valid?` can stay typed once
+  # and still run every model's callbacks.
+  #
+  # :nodoc:
+  def __run_validation_phase(active_contexts : Array(Symbol)) : Nil
+    __run_around_validation do
+      # Run before_validation callbacks
+      before_validation if responds_to?(:before_validation)
+
+      run_all = active_contexts.includes?(:save)
+      self.class.__validators_for_validation.each do |validator|
+        unless run_all
+          validator_contexts = validator[:contexts]
+          # No `on:` (stored as :save) always runs; otherwise a context must match
+          next unless validator_contexts.includes?(:save) || validator_contexts.any? { |candidate| active_contexts.includes?(candidate) }
+        end
+
+        errors_before = errors.size
+        unless validator[:block].call(self)
+          message = validator[:message]
+          failure = Error.new(validator[:field], message, validator[:code], options: validator[:details], base: self)
+          # Validators that add their own errors (`validates_with`,
+          # `validates_each`, `validate :method`) carry an empty message.
+          own_errors = message.is_a?(String) && message.empty?
+          strict_factory = validator[:strict]
+          if strict_factory
+            # ActiveRecord raises on the first error a validator adds.
+            added = errors.objects[errors_before]?
+            text = own_errors && added ? added.to_s : failure.to_s
+            # The raised exception carries the failure; the errors the
+            # validator recorded on the way do not stay behind.
+            errors.truncate_to(errors_before)
+            raise strict_factory.call(text)
+          end
+          # They need no placeholder next to the errors they already recorded.
+          errors << failure unless own_errors && errors.size > errors_before
+        end
+      end
+
+      # Run after_validation callbacks
+      after_validation if responds_to?(:after_validation)
+    end
   end
 
   # Positional form: `record.valid?(:publish)`.
