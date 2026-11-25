@@ -25,6 +25,7 @@ module Grant::SQLiteEngine::Query
       "trusted_schema"            => {1_i64, "trusted_schema"},
       "max_page_count"            => {4294967294_i64, "max_page_count"},
       "threads"                   => {0_i64, "threads"},
+      "writable_schema"           => {0_i64, "writable_schema"},
     }
 
     # PRAGMAs that answer with one row named after themselves.

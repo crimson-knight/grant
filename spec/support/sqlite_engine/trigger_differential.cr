@@ -53,6 +53,11 @@ class TriggerDifferential
   # differs because it names one is listed with them.
   @list_of_skipped_names = [] of String
   @swapped = false
+  # A sqlite_schema write under PRAGMA writable_schema that only C made:
+  # from then on each side reads a different schema (C keeps the one it
+  # cached, the engine reads the rows C wrote), so every later difference
+  # of the scenario is downstream of it.
+  @schema_write_by_c : String? = nil
 
   def initialize(@report : TriggerReport, @work : String)
   end
@@ -63,6 +68,7 @@ class TriggerDifferential
     pair = SQLiteWriteOracle::Pair.new(directory, "trigger")
     @list_of_skipped_names.clear
     @swapped = false
+    @schema_write_by_c = nil
     trace = [] of String
     traced = false
     begin
@@ -122,7 +128,20 @@ class TriggerDifferential
   private def record_unexpressed(pair : SQLiteWriteOracle::Pair, name : String, sql : String, expected : SQLiteWriteOracle::StepResult, error : Exception) : Nil
     @report.unexpressed("#{name}\n  #{sql.strip}\n  engine: #{error.message}\n  C: #{expected.outcome.error || "ok"}")
     created_name(sql).try { |created| @list_of_skipped_names << created }
+    if error.is_a?(Grant::SQLiteEngine::UnsupportedSQL) && error.construct.includes?("writable_schema")
+      @schema_write_by_c ||= sql.strip
+    end
     swap(pair) if idle?(pair)
+  end
+
+  # Reports *difference*, or lists it as downstream when it follows a
+  # sqlite_schema write only C made.
+  private def report_difference(name : String, subject : String, difference : String) : Nil
+    if written = @schema_write_by_c
+      @report.unexpressed("#{name}\n  #{subject}\n  downstream of #{written.lines.first}, a sqlite_schema write only C made\n  #{difference}")
+      return
+    end
+    @report.difference("#{name}\n  #{subject}\n  #{difference}")
   end
 
   # A difference that names an object only C could create is downstream
@@ -131,7 +150,7 @@ class TriggerDifferential
     texts = [sql, expected.outcome.error || "", actual.outcome.error || ""]
     skipped = @list_of_skipped_names.find { |skipped_name| texts.any? { |text| mentions?(text, skipped_name) } }
     unless skipped
-      @report.difference("#{name}\n  #{sql.strip}\n  #{difference}")
+      report_difference(name, sql.strip, difference)
       return
     end
     @report.unexpressed("#{name}\n  #{sql.strip}\n  downstream of #{skipped}, which only C could create\n  #{difference}")
@@ -203,7 +222,7 @@ class TriggerDifferential
   private def compare_files(pair : SQLiteWriteOracle::Pair, name : String, moment : String) : Nil
     @report.count("file comparisons")
     if difference = pair.file_difference
-      @report.difference("#{name}\n  files after #{moment}\n  #{difference}")
+      report_difference(name, "files after #{moment}", difference)
     end
   end
 
@@ -213,7 +232,7 @@ class TriggerDifferential
     actual = pair.engine_step(sql)
     @report.count("temp schema comparisons")
     if difference = SQLiteQueryOracle.difference(expected.outcome, actual.outcome, true)
-      @report.difference("#{name}\n  TEMP schema at the end\n  #{difference}")
+      report_difference(name, "TEMP schema at the end", difference)
     end
   end
 

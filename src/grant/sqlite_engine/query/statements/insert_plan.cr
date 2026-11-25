@@ -30,6 +30,7 @@ module Grant::SQLiteEngine::Query
         raise SQLError.new("cannot modify #{table_name} because it is a view")
       end
       if Session::MASTER_NAMES.includes?(table_name.downcase) || Session::TEMP_MASTER_NAMES.includes?(table_name.downcase)
+        raise UnsupportedSQL.new("writing #{table_name} under PRAGMA writable_schema") if @session.writable_schema?
         raise SQLError.new("table #{table_name} may not be modified")
       end
       @table = @session.write_table(table_name, schema_text) || raise SQLError.new("no such table: #{schema_text ? "#{schema_text}." : ""}#{table_name}")
