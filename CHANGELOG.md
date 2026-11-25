@@ -1,6 +1,21 @@
 # Changelog
 
-## Unreleased
+## 0.28.0 (2026-11-25)
+
+Grant 0.28.0 connects to PostgreSQL over Beryl TLS 1.3 and runs its tests
+against MySQL through crimson-knight/crystal-mysql on Beryl, so an app on
+Grant links no OpenSSL with no flag and no setting. It ships in the Amber
+stack's Beryl-adoption release with Amber 2.0.0-beta.16 and Amber CLI
+2.0.17, and carries Beryl 0.2.1 (certificates without an authority key
+identifier, as private database CAs make them, now verify).
+
+### Beryl 0.2.1
+
+- The vendored Beryl moves from ed5f21e7 to 0.2.1: a leaf or intermediate
+  without an authority key identifier is matched to its issuer by name and
+  signature, as Go and OpenSSL do.
+- The MySQL development dependency (crimson-knight/crystal-mysql) moves to
+  0.18.1 (4ec0bcad), which pins the same Beryl 0.2.1.
 
 ### pg_dump and psql check the server as the app does
 

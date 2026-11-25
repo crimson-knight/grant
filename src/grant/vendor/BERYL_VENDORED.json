@@ -1,6 +1,6 @@
 {
   "source": "https://github.com/amberframework/beryl",
-  "commit": "ed5f21e7ddc3e30750abdd4c944ee22d16b12d57",
+  "commit": "c51f5d231e699647076c91c2a91a5e4f64fa861c",
   "namespace": "Grant::Beryl",
   "made_by": "scripts/vendor_into.rb",
   "note": "A pinned copy. Change Beryl in its own repository, then run the script again; edits made here fail the check.",
@@ -32,8 +32,8 @@
     },
     {
       "path": "beryl/certificates/chain_verification.cr",
-      "sha256": "3b1779def847364ccd42ec46e7befeeedff74ef8ba3e3278f1a4ff89196d7a2e",
-      "source_sha256": "6a6e229dd9602887b116bb3e97cfebf972f1527fae4ee2a15b37260bed7b560b"
+      "sha256": "99e7abf7a2471862e54e29ecfcae12aedb0db32c3180c1dc9abdfc0ac2cac5f6",
+      "source_sha256": "a406dede2c7a2d9b5577a585f9c243f115ec7e9b2fff9c989218e02bf821860c"
     },
     {
       "path": "beryl/certificates/data/mozilla_root_certificates.pem",
@@ -562,8 +562,8 @@
     },
     {
       "path": "beryl/version.cr",
-      "sha256": "f753bc2ab3444669cff286b13dbd08e547ec39daab798b7cf4fcc07ac4a882f3",
-      "source_sha256": "bfb8a6c3963f36b66bd6cfb10eb0c7a88653f930410963ffe8862ad36fea040a"
+      "sha256": "7ba9710f4017a94a2c7c4f1a95dd40670c740995da959e2408699cd5643257e8",
+      "source_sha256": "590e762deab12d7e0eb2f20a96aa5d71b468c824b2ef36cd48761f84d487e7ec"
     }
   ]
 }
