@@ -45,13 +45,11 @@ module Grant::Query::Finders(Model)
   end
 
   # :ditto:
-  @[TypeOnce]
   def create_with(attrs : Grant::ModelArgs) : self
     chain_copy.create_with!(attrs)
   end
 
   # In-place `create_with`, for a relation the caller owns.
-  @[TypeOnce]
   def create_with!(attrs : Grant::ModelArgs) : self
     if attrs.empty?
       @create_with_defaults = nil

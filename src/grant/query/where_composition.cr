@@ -383,7 +383,6 @@ class Grant::Query::Builder(Model)
 
   # A relation over the same tables and joins with no WHERE conditions, used to
   # build a group of conditions before they are folded into one clause.
-  @[TypeOnce]
   private def blank_where_scope : self
     scope = chain_copy
     scope.clear_where_fields
@@ -437,7 +436,6 @@ class Grant::Query::Builder(Model)
   # User.where(active: true, role: "admin").invert_where
   # # => WHERE NOT (active = true AND role = 'admin')
   # ```
-  @[TypeOnce]
   def invert_where! : self
     return self if @where_fields.empty?
 
@@ -449,7 +447,6 @@ class Grant::Query::Builder(Model)
     self
   end
 
-  @[TypeOnce]
   def invert_where : self
     chain_copy.invert_where!
   end
@@ -465,7 +462,6 @@ class Grant::Query::Builder(Model)
   # User.where(role: "admin").or(User.where(active: true))
   # # => WHERE (role = 'admin') OR (active = true)
   # ```
-  @[TypeOnce]
   def or!(other : Builder(Model)) : self
     ensure_structurally_compatible!(other, "or")
 
@@ -483,14 +479,12 @@ class Grant::Query::Builder(Model)
     self
   end
 
-  @[TypeOnce]
   def or(other : Builder(Model)) : self
     chain_copy.or!(other)
   end
 
   # ANDs *other*'s conditions onto this relation. Same compatibility rule as
   # `or`. Conditions on the same column are kept (use `merge` to replace them).
-  @[TypeOnce]
   def and!(other : Builder(Model)) : self
     ensure_structurally_compatible!(other, "and")
     return self if other.where_fields.empty?
@@ -505,7 +499,6 @@ class Grant::Query::Builder(Model)
     end
   end
 
-  @[TypeOnce]
   def and(other : Builder(Model)) : self
     chain_copy.and!(other)
   end
@@ -648,7 +641,6 @@ class Grant::Query::Builder(Model)
   end
 
   # :ditto:
-  @[TypeOnce]
   def unscope!(*, where columns : Symbol | Array(Symbol)) : self
     unscope_where_columns!(where_column_names(columns))
   end
@@ -658,7 +650,6 @@ class Grant::Query::Builder(Model)
   end
 
   # :ditto:
-  @[TypeOnce]
   def unscope(*, where columns : Symbol | Array(Symbol)) : self
     chain_copy.unscope!(where: columns)
   end
@@ -668,7 +659,6 @@ class Grant::Query::Builder(Model)
     columns.is_a?(Array) ? columns.map(&.to_s) : [columns.to_s]
   end
 
-  @[TypeOnce]
   protected def unscope_where_columns!(names : Array(String)) : self
     record_unscoped_columns(names)
     reset_load_state
@@ -724,7 +714,6 @@ class Grant::Query::Builder(Model)
     excluding!(records.to_a)
   end
 
-  @[TypeOnce]
   def excluding!(records : Array(Model)) : self
     return self if records.empty?
 
@@ -742,7 +731,6 @@ class Grant::Query::Builder(Model)
     chain_copy.excluding!(records.to_a)
   end
 
-  @[TypeOnce]
   def excluding(records : Array(Model)) : self
     chain_copy.excluding!(records)
   end
@@ -751,7 +739,6 @@ class Grant::Query::Builder(Model)
     excluding!(records.to_a)
   end
 
-  @[TypeOnce]
   def without!(records : Array(Model)) : self
     excluding!(records)
   end
@@ -760,7 +747,6 @@ class Grant::Query::Builder(Model)
     chain_copy.excluding!(records.to_a)
   end
 
-  @[TypeOnce]
   def without(records : Array(Model)) : self
     chain_copy.excluding!(records)
   end
@@ -788,26 +774,22 @@ class Grant::Query::Builder(Model)
   # Keeps only records that have a matching record in each named association:
   # one `EXISTS (...)` subquery per name, so a parent is returned once however
   # many children it has (no duplicate rows, no DISTINCT).
-  @[TypeOnce]
   def where_associated!(names : Array(Symbol)) : self
     names.each { |name| append_association_exists(name.to_s, negated: false) }
     self
   end
 
-  @[TypeOnce]
   def where_associated(names : Array(Symbol)) : self
     chain_copy.where_associated!(names)
   end
 
   # Keeps only records that have no matching record in any of the named
   # associations: one `NOT EXISTS (...)` per name.
-  @[TypeOnce]
   def where_missing!(names : Array(Symbol)) : self
     names.each { |name| append_association_exists(name.to_s, negated: true) }
     self
   end
 
-  @[TypeOnce]
   def where_missing(names : Array(Symbol)) : self
     chain_copy.where_missing!(names)
   end

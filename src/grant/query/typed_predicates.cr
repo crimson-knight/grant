@@ -20,26 +20,22 @@ class Grant::Query::Builder(Model)
   # ```
   # Post.where.array_contains(:tags, ["crystal", "orm"])
   # ```
-  @[TypeOnce]
   def array_contains!(field : Symbol | String, values : Grant::Columns::SupportedArrayTypes) : self
     add_array_predicate(field, "@>", values)
   end
 
   # Keeps rows whose array column shares at least one element with *values*
   # (`tags && ARRAY[...]`).
-  @[TypeOnce]
   def array_overlaps!(field : Symbol | String, values : Grant::Columns::SupportedArrayTypes) : self
     add_array_predicate(field, "&&", values)
   end
 
   # Keeps rows whose array column is contained in *values* (`tags <@ ARRAY[...]`).
-  @[TypeOnce]
   def array_contained_by!(field : Symbol | String, values : Grant::Columns::SupportedArrayTypes) : self
     add_array_predicate(field, "<@", values)
   end
 
   # Keeps rows whose array column holds *value* (`$1 = ANY(tags)`).
-  @[TypeOnce]
   def array_any!(field : Symbol | String, value : Grant::Columns::Type) : self
     require_array_support("array_any")
     predicate = "? = ANY(#{structured_field_sql(field.to_s)})"
@@ -55,7 +51,6 @@ class Grant::Query::Builder(Model)
   # Post.where.array_length(:tags, 3)
   # Post.where.array_length(:tags, 0, :gt)
   # ```
-  @[TypeOnce]
   def array_length!(field : Symbol | String, length : Int, operator : Symbol = :eq) : self
     require_array_support("array_length")
     sql_operator = ARRAY_LENGTH_OPERATORS[operator]? || raise ArgumentError.new("Unknown array_length operator #{operator.inspect}; use #{ARRAY_LENGTH_OPERATORS.keys.join(", ")}")
@@ -83,31 +78,26 @@ class Grant::Query::Builder(Model)
   end
 
   # :ditto:
-  @[TypeOnce]
   def array_length(field : Symbol | String, length : Int, operator : Symbol = :eq) : self
     dup.array_length!(field, length, operator)
   end
 
   # :ditto:
-  @[TypeOnce]
   def array_contains(field : Symbol | String, values : Grant::Columns::SupportedArrayTypes) : self
     dup.array_contains!(field, values)
   end
 
   # :ditto:
-  @[TypeOnce]
   def array_overlaps(field : Symbol | String, values : Grant::Columns::SupportedArrayTypes) : self
     dup.array_overlaps!(field, values)
   end
 
   # :ditto:
-  @[TypeOnce]
   def array_contained_by(field : Symbol | String, values : Grant::Columns::SupportedArrayTypes) : self
     dup.array_contained_by!(field, values)
   end
 
   # :ditto:
-  @[TypeOnce]
   def array_any(field : Symbol | String, value : Grant::Columns::Type) : self
     dup.array_any!(field, value)
   end
@@ -211,7 +201,6 @@ class Grant::Query::Builder(Model)
   # User.where.json_path(:settings, "theme", "dark")
   # User.where.json_path(:settings, %w(notifications email), true)
   # ```
-  @[TypeOnce]
   def json_path!(field : Symbol | String, path : String | Array(String), value : String | Int | Float | Bool?) : self
     column = structured_field_sql(field.to_s)
     segments = path.is_a?(String) ? path.split('.') : path
@@ -232,7 +221,6 @@ class Grant::Query::Builder(Model)
   # Keeps rows whose JSON object column has the top-level *key*
   # (`settings ? 'theme'` on PostgreSQL, `JSON_CONTAINS_PATH` on MySQL,
   # `json_type(settings, '$."theme"')` on SQLite).
-  @[TypeOnce]
   def json_has_key!(field : Symbol | String, key : String) : self
     column = structured_field_sql(field.to_s)
     case @db_type
@@ -252,13 +240,11 @@ class Grant::Query::Builder(Model)
   end
 
   # :ditto:
-  @[TypeOnce]
   def json_path(field : Symbol | String, path : String | Array(String), value : String | Int | Float | Bool?) : self
     dup.json_path!(field, path, value)
   end
 
   # :ditto:
-  @[TypeOnce]
   def json_has_key(field : Symbol | String, key : String) : self
     dup.json_has_key!(field, key)
   end
@@ -286,7 +272,6 @@ class Grant::Query::Builder(Model)
     end
   end
 
-  @[TypeOnce]
   private def add_array_predicate(field : Symbol | String, operator : String, values : Grant::Columns::SupportedArrayTypes) : self
     require_array_support("array operators")
     predicate = "#{structured_field_sql(field.to_s)} #{operator} ?"
