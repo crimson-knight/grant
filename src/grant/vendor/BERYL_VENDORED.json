@@ -1,6 +1,6 @@
 {
   "source": "https://github.com/amberframework/beryl",
-  "commit": "ebeb2650326a52cac9f6523d0baa90ac6f782b76",
+  "commit": "357b10ad61fdc0d795e1e390200ce3cdad6e2bfa",
   "namespace": "Grant::Beryl",
   "made_by": "scripts/vendor_into.rb",
   "note": "A pinned copy. Change Beryl in its own repository, then run the script again; edits made here fail the check.",
@@ -567,8 +567,8 @@
     },
     {
       "path": "beryl/version.cr",
-      "sha256": "777149b611ec7348ad82fff6462bee208810ffab422cc48cb71d519993f9ff83",
-      "source_sha256": "30cb5fea05bad144d810114c4dc7e8cc0779fd468090a7222fdc40e37efe0e42"
+      "sha256": "d82a3551ff80afd5806457118539b6c5f1e38ef14b8770f8575196768b1f5a59",
+      "source_sha256": "caf32fde97cece1e39301614a8f280e3d211c04e952517302db6570bc88c19a7"
     }
   ]
 }

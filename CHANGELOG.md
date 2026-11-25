@@ -15,7 +15,7 @@
   root), and `sslcert` without `sslkey` (or the reverse) is an error that
   names the missing parameter. Unlike libpq, Grant does not fall back to
   `~/.postgresql/postgresql.crt`: it presents only the files the URL names.
-- The vendored Beryl moves to ebeb2650 (client certificates).
+- The vendored Beryl moves to 0.2.3 (357b10ad, client certificates).
 - Tested against PostgreSQL 17.12 with `ssl_min_protocol_version = TLSv1.3`
   and `hostssl all all all cert clientcert=verify-full`.
 
