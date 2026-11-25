@@ -217,7 +217,7 @@ module MigrationDifferential
     # next point outside a transaction, so later statements start alike.
     private def step(pair : SQLiteWriteOracle::Pair, sql : String, context : String, probe : Bool = false) : Nil
       @report.count(probe ? "probe statements" : "statements")
-      if @copy_pending && pair.autocommit? && !pair.session.in_transaction?
+      if @copy_pending && idle?(pair)
         pair.copy_c_file_to_engine
         @copy_pending = false
       end
@@ -237,13 +237,20 @@ module MigrationDifferential
       else
         @report.count(probe ? "probe statements matching C" : "statements matching C")
       end
-      # changes() lines up again once both ran the same INSERT, UPDATE or
-      # DELETE; last_insert_rowid() once both ran the same INSERT.
-      if expected.outcome.error.nil? && actual.outcome.error.nil?
-        verb = MigrationDifferential.verb(sql)
-        pair.changes_in_step = true if verb.in?("INSERT", "REPLACE", "UPDATE", "DELETE", "WITH")
-        pair.rowid_in_step = true if verb.in?("INSERT", "REPLACE")
-      end
+      line_up(pair, sql) if expected.outcome.error.nil? && actual.outcome.error.nil?
+    end
+
+    # Neither connection is inside a transaction.
+    private def idle?(pair : SQLiteWriteOracle::Pair) : Bool
+      pair.autocommit? && !pair.session.in_transaction?
+    end
+
+    # changes() lines up again once both ran the same INSERT, UPDATE or
+    # DELETE; last_insert_rowid() once both ran the same INSERT.
+    private def line_up(pair : SQLiteWriteOracle::Pair, sql : String) : Nil
+      verb = MigrationDifferential.verb(sql)
+      pair.changes_in_step = true if verb.in?("INSERT", "REPLACE", "UPDATE", "DELETE", "WITH")
+      pair.rowid_in_step = true if verb.in?("INSERT", "REPLACE")
     end
 
     private def outcome_text(outcome : SQLiteQueryOracle::Outcome) : String
@@ -303,7 +310,7 @@ module MigrationDifferential
         end
       end
       # The files are compared as they stand, before a skipped write's copy.
-      return unless pair.autocommit? && !pair.session.in_transaction?
+      return unless idle?(pair)
       if found = pair.file_difference
         difference("#{context}: files\n  #{found}")
       end
