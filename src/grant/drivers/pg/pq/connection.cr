@@ -5,6 +5,7 @@ require "socket"
 require "socket/tcp_socket"
 require "socket/unix_socket"
 require "./notice"
+require "./client_certificate"
 require "../../../vendor/beryl"
 {% if flag?(:use_openssl) %}
   require "openssl"
@@ -117,11 +118,8 @@ module Grant::PQ
                                 OpenSSL::SSL::VerifyMode::NONE
                               end
 
-        if sslcert = @conninfo.sslcert
-          context.certificate_chain = sslcert
-        end
-        if sslkey = @conninfo.sslkey
-          context.private_key = sslkey
+        if client_certificate = ClientCertificate.from(@conninfo)
+          client_certificate.apply_to(context)
         end
         if sslrootcert = @conninfo.sslrootcert
           {% if flag?(:win32) %}
@@ -174,13 +172,14 @@ module Grant::PQ
       end
 
       private def ssl_context : Grant::Beryl::TLS::Context::Client
-        if @conninfo.sslcert || @conninfo.sslkey
-          raise ConnectionError.new(
-            "sslcert and sslkey (client certificates) are not supported by Grant's TLS; " \
-            "build with -Duse_openssl to use them")
-        end
-
         context = Grant::Beryl::TLS::Context::Client.new
+        # Every sslmode that reaches TLS presents the client certificate,
+        # since a server can ask for one (clientcert=verify-ca or
+        # verify-full, or the cert method) whether or not the client checks
+        # the server.
+        if client_certificate = ClientCertificate.from(@conninfo)
+          client_certificate.apply_to(context)
+        end
         unless sslmode_verifies_certificate?
           context.verify_mode = Grant::Beryl::TLS::VerifyMode::None
           return context
