@@ -1104,7 +1104,7 @@ module Grant::Validators
   # :nodoc:
   def __validate_inside_around_validation(active_contexts : Array(Symbol)) : Nil
     # Run before_validation callbacks
-    self.before_validation if responds_to?(:before_validation)
+    before_validation if responds_to?(:before_validation)
 
     run_all = active_contexts.includes?(:save)
     self.class.__validators_for_validation.each do |validator|
@@ -1137,7 +1137,7 @@ module Grant::Validators
     end
 
     # Run after_validation callbacks
-    self.after_validation if responds_to?(:after_validation)
+    after_validation if responds_to?(:after_validation)
   end
 
   # Positional form: `record.valid?(:publish)`.

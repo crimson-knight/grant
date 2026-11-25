@@ -270,22 +270,26 @@ module Grant::CommitCallbacks
   # `COMMIT_CALLBACK_BITS`, for the one operation the merged *action_bits*
   # resolve to (see `resolve_commit_action`), and exposes that operation to
   # `on:` conditions.
+  #
+  # The callbacks are called on `self`: this file is typed once for every
+  # model, and a receiverless call would find the class macro of the same name
+  # instead of the method each model defines.
   private def dispatch_commit_callbacks(commit_bits : UInt8, action_bits : UInt8) : Nil
     action = resolve_commit_action(action_bits)
     @_commit_action_bits = action
     begin
       if action == ACTION_CREATE
-        self.after_create_commit if (commit_bits & COMMIT_CALLBACK_BITS[:after_create_commit]) != 0 && responds_to?(:after_create_commit)
+        self.after_create_commit if (commit_bits & COMMIT_CALLBACK_BITS[:after_create_commit]) != 0 && responds_to?(:after_create_commit) # ameba:disable Style/RedundantSelf (a method call, not the class macro)
       end
       if action == ACTION_UPDATE
-        self.after_update_commit if (commit_bits & COMMIT_CALLBACK_BITS[:after_update_commit]) != 0 && responds_to?(:after_update_commit)
+        self.after_update_commit if (commit_bits & COMMIT_CALLBACK_BITS[:after_update_commit]) != 0 && responds_to?(:after_update_commit) # ameba:disable Style/RedundantSelf (a method call, not the class macro)
       end
       if action == ACTION_DESTROY
-        self.after_destroy_commit if (commit_bits & COMMIT_CALLBACK_BITS[:after_destroy_commit]) != 0 && responds_to?(:after_destroy_commit)
+        self.after_destroy_commit if (commit_bits & COMMIT_CALLBACK_BITS[:after_destroy_commit]) != 0 && responds_to?(:after_destroy_commit) # ameba:disable Style/RedundantSelf (a method call, not the class macro)
       else
-        self.after_save_commit if (commit_bits & COMMIT_CALLBACK_BITS[:after_save_commit]) != 0 && responds_to?(:after_save_commit)
+        self.after_save_commit if (commit_bits & COMMIT_CALLBACK_BITS[:after_save_commit]) != 0 && responds_to?(:after_save_commit) # ameba:disable Style/RedundantSelf (a method call, not the class macro)
       end
-      self.after_commit if (commit_bits & COMMIT_CALLBACK_BITS[:after_commit]) != 0 && responds_to?(:after_commit)
+      self.after_commit if (commit_bits & COMMIT_CALLBACK_BITS[:after_commit]) != 0 && responds_to?(:after_commit) # ameba:disable Style/RedundantSelf (a method call, not the class macro)
     ensure
       @_commit_action_bits = 0_u8
     end
@@ -294,7 +298,7 @@ module Grant::CommitCallbacks
   private def dispatch_rollback_callbacks(action_bits : UInt8) : Nil
     @_commit_action_bits = resolve_commit_action(action_bits)
     begin
-      self.after_rollback if responds_to?(:after_rollback)
+      self.after_rollback if responds_to?(:after_rollback) # ameba:disable Style/RedundantSelf (a method call, not the class macro)
     ensure
       @_commit_action_bits = 0_u8
     end
