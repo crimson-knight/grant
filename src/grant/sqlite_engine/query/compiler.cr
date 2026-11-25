@@ -40,7 +40,11 @@ module Grant::SQLiteEngine::Query
     @slot_count = 0
     @aggregate_count = 0
 
+    # NEW and OLD when the statement is a step of a trigger program.
+    @trigger_scope : TriggerScope?
+
     def initialize(@session : Session)
+      @trigger_scope = @session.trigger_scope
     end
 
     def compile(statement : SQL::SelectStatement) : CompiledSelect

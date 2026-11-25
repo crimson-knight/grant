@@ -15,7 +15,11 @@ module Grant::SQLiteEngine::Query
     @returning : RowProgram?
     @returning_pseudo : PseudoTable?
 
-    def initialize(@session : Session, @statement : SQL::Insert)
+    @trigger_programs : TriggerProgramCache?
+
+    # *override* is the conflict policy of the statement whose trigger runs
+    # this one: when it gave one, it replaces this statement's own.
+    def initialize(@session : Session, @statement : SQL::Insert, override : ConflictAction = ConflictAction::Default)
       table_name = @statement.table.name.value
       schema = @statement.table.schema
       if schema && !@session.schema?(schema.value)
@@ -32,6 +36,7 @@ module Grant::SQLiteEngine::Query
       info = @table.table_info
       @target_name = @statement.table.alias_name.try(&.value) || info.name
       @override = @statement.verb.replace? ? ConflictAction::Replace : ConflictAction.from(@statement.conflict)
+      @override = override unless override.default?
       generated = @table.list_of_columns.select(&.generated?).map(&.position).to_set
       positions = if columns = @statement.columns
                     columns.map do |column|
@@ -67,6 +72,9 @@ module Grant::SQLiteEngine::Query
         @source = compiled
       end
       @upsert = UpsertPlan.compile(@table, @statement.upserts, @target_name)
+      if (upsert = @upsert) && (scope = @session.trigger_scope)
+        upsert.list_of_clauses.each(&.trigger_scope=(scope))
+      end
       if returning = @statement.returning
         pseudo = PseudoTable.new(@target_name, info)
         @returning_pseudo = pseudo
@@ -77,6 +85,8 @@ module Grant::SQLiteEngine::Query
       # A loop among the generated columns fails the statement when it is
       # prepared, whatever rows it would write.
       @table.list_of_generated_in_order(@session)
+      @trigger_programs = TriggerProgramCache.for_plan(@session, @table.list_of_triggers(@session), @table.trigger_target,
+        SQL::TriggerEvent::Insert, nil, @override)
     end
 
     def run(list_of_parameters : Array(Value)) : Array(Array(Value))
@@ -86,46 +96,64 @@ module Grant::SQLiteEngine::Query
         # trigger, no REPLACE that deletes rows) raises an immediate foreign
         # key at once (fkLookupParent's !isMultiWrite case).
         multi, journal, _ = journal_choices(@session.foreign_keys?) do
-          several = StatementJournal.for_insert(@session, @table, @statement, @override, @list_of_source_positions,
-            !(@source.nil? || single_values_row?))
-          {several[0], several[1], false}
+          if @table.has_triggers_for?(@session, SQL::TriggerEvent::Insert)
+            # A trigger makes the INSERT a multi-write whose program may abort.
+            {true, true, false}
+          else
+            several = StatementJournal.for_insert(@session, @table, @statement, @override, @list_of_source_positions,
+              !(@source.nil? || single_values_row?))
+            {several[0], several[1], false}
+          end
         end
         run.single_row = !multi
         run.statement_journal = journal
-        run.open_autoincrement(@table)
-        each_source_row(list_of_parameters) do |values|
-          row = Array(Value).new(@table.list_of_columns.size, nil)
-          # Refilled for each row: it is read only before the row is written.
-          assigned = @assigned
-          assigned.clear
-          row.size.times { assigned << false }
-          explicit_rowid = nil.as(Value)
-          @list_of_source_positions.each_with_index do |position, index|
-            if position < 0
-              explicit_rowid = values[index]
-            else
-              row[position] = values[index]
-              assigned[position] = true
-            end
+        run.trigger_programs = @trigger_programs
+        write_returning_rows(run, list_of_parameters, returned)
+      end
+      returned
+    end
+
+    def write_rows(run : WriteRun, list_of_parameters : Array(Value)) : Nil
+      write_returning_rows(run, list_of_parameters, NO_ROWS)
+    end
+
+    private def write_returning_rows(run : WriteRun, list_of_parameters : Array(Value), returned : Array(Array(Value))) : Nil
+      run.open_autoincrement(@table)
+      each_source_row(list_of_parameters) do |values|
+        row = Array(Value).new(@table.list_of_columns.size, nil)
+        # Refilled for each row: it is read only before the row is written.
+        assigned = @assigned
+        assigned.clear
+        row.size.times { assigned << false }
+        explicit_rowid = nil.as(Value)
+        @list_of_source_positions.each_with_index do |position, index|
+          if position < 0
+            explicit_rowid = values[index]
+          else
+            row[position] = values[index]
+            assigned[position] = true
           end
-          @table.list_of_columns.each do |column|
-            next if assigned[column.position] || column.generated?
-            next if column.position == @table.rowid_alias
-            row[column.position] = run.default_value(@table, column)
-          end
-          result, rowid, stored = run.insert_row(@table, row, explicit_rowid, @override, @upsert)
-          next if result.ignored?
-          if program = @returning
-            pseudo = @returning_pseudo || raise Error.new("RETURNING without its row")
-            pseudo.row = stored
-            pseudo.rowid = rowid
-            if returned_row = program.evaluate(list_of_parameters)
-              returned << returned_row
-            end
+        end
+        @table.list_of_columns.each do |column|
+          next if assigned[column.position] || column.generated?
+          next if column.position == @table.rowid_alias
+          row[column.position] = run.default_value(@table, column)
+        end
+        result, rowid, stored = begin
+          run.insert_row(@table, row, explicit_rowid, @override, @upsert)
+        rescue TriggerIgnore
+          next
+        end
+        next if result.ignored?
+        if program = @returning
+          pseudo = @returning_pseudo || raise Error.new("RETURNING without its row")
+          pseudo.row = stored
+          pseudo.rowid = rowid
+          if returned_row = program.evaluate(list_of_parameters)
+            returned << returned_row
           end
         end
       end
-      returned
     end
 
     # A one-row VALUES without a compound: C inserts it without a

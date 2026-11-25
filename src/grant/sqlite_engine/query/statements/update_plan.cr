@@ -99,14 +99,20 @@ module Grant::SQLiteEngine::Query
     @returning : RowProgram?
     @returning_pseudo : PseudoTable?
     @statement : SQL::Update
+    @trigger_programs : TriggerProgramCache?
+    # The SET list's column names as written (UPDATE OF triggers match them).
+    @list_of_changed_names : Array(String)
 
-    def initialize(@session : Session, statement : SQL::Update)
+    # *override* is the conflict policy of the statement whose trigger runs
+    # this one: when it gave one, it replaces this statement's own.
+    def initialize(@session : Session, statement : SQL::Update, override : ConflictAction = ConflictAction::Default)
       @statement = statement
       @table = WritableTarget.check(@session, statement.table)
       info = @table.table_info
       generated = @table.list_of_columns.select(&.generated?).map(&.position).to_set
       @assignments = AssignmentList.compile(info, statement.assignments, generated)
-      @override = ConflictAction.from(statement.conflict)
+      @override = override.default? ? ConflictAction.from(statement.conflict) : override
+      @list_of_changed_names = statement.assignments.flat_map(&.columns).map(&.value)
       @targets = TargetRows.new(@session, info, statement.table, statement.indexed_by, statement.not_indexed,
         RowProgram.columns(@assignments.list_of_expressions), statement.from, statement.where, statement.with_clause)
       if returning = statement.returning
@@ -119,54 +125,81 @@ module Grant::SQLiteEngine::Query
       # A loop among the generated columns fails the statement when it is
       # prepared, whatever rows it would write.
       @table.list_of_generated_in_order(@session)
+      @trigger_programs = TriggerProgramCache.for_plan(@session, @table.list_of_triggers(@session), @table.trigger_target,
+        SQL::TriggerEvent::Update, @list_of_changed_names, @override)
     end
 
     def run(list_of_parameters : Array(Value)) : Array(Array(Value))
       returned = @returning ? [] of Array(Value) : NO_ROWS
       @session.run_write(list_of_parameters, returning: !@returning.nil?) do |run|
-        positions = @assignments.list_of_positions
-        journal, _, in_rowid_order = journal_choices(@session.foreign_keys?) do
+        journal, _, in_rowid_order = update_choices
+        run.statement_journal = journal
+        run.trigger_programs = @trigger_programs
+        write_returning_rows(run, list_of_parameters, returned, in_rowid_order)
+      end
+      returned
+    end
+
+    def write_rows(run : WriteRun, list_of_parameters : Array(Value)) : Nil
+      write_returning_rows(run, list_of_parameters, NO_ROWS, update_choices[2])
+    end
+
+    # The statement journal and whether rows go in rowid order.
+    private def update_choices : Tuple(Bool, Bool, Bool)
+      positions = @assignments.list_of_positions
+      journal_choices(@session.foreign_keys?) do
+        if @table.has_triggers_for?(@session, SQL::TriggerEvent::Update)
+          # A trigger makes the UPDATE a two-pass multi-write.
+          {true, false, true}
+        else
           {StatementJournal.for_update(@session, @table, @statement, @override, positions), false,
            StatementJournal.update_in_rowid_order?(@session, @table, @statement, @override, positions, @targets.scan_index_root)}
         end
-        run.statement_journal = journal
-        targets = @targets.collect(list_of_parameters)
-        if !@table.without_rowid? && in_rowid_order && targets.size > 1
-          targets = targets.sort_by { |target| target[0] || 0_i64 }
-        elsif @table.without_rowid? && !WithoutRowidScan.primary_key_changed?(@table, positions)
-          read = @statement.assignments.map(&.value)
-          layout = WithoutRowidScan.scan_layout(@table, @statement.where, read)
-          if layout && !StatementJournal.update_in_rowid_order?(@session, @table, @statement, @override, positions, layout.entry.root_page)
-            targets = WithoutRowidScan.sort(@table, targets, layout)
+      end
+    end
+
+    private def write_returning_rows(run : WriteRun, list_of_parameters : Array(Value), returned : Array(Array(Value)),
+                                     in_rowid_order : Bool) : Nil
+      positions = @assignments.list_of_positions
+      targets = @targets.collect(list_of_parameters)
+      if !@table.without_rowid? && in_rowid_order && targets.size > 1
+        targets = targets.sort_by { |target| target[0] || 0_i64 }
+      elsif @table.without_rowid? && !WithoutRowidScan.primary_key_changed?(@table, positions)
+        read = @statement.assignments.map(&.value)
+        layout = WithoutRowidScan.scan_layout(@table, @statement.where, read)
+        if layout && !StatementJournal.update_in_rowid_order?(@session, @table, @statement, @override, positions, layout.entry.root_page)
+          targets = WithoutRowidScan.sort(@table, targets, layout)
+        end
+      end
+      targets.each do |rowid, snapshot, values|
+        old = rowid ? @table.database.row_at(@table.layout, rowid) : @table.database.row_with_key_of(@table.layout, snapshot)
+        next unless old
+        new_row = old.dup
+        explicit_rowid = nil.as(Value)
+        positions.each_with_index do |position, index|
+          if position < 0
+            explicit_rowid = values[index]
+          else
+            new_row[position] = values[index]
           end
         end
-        targets.each do |rowid, snapshot, values|
-          old = rowid ? @table.database.row_at(@table.layout, rowid) : @table.database.row_with_key_of(@table.layout, snapshot)
-          next unless old
-          new_row = old.dup
-          explicit_rowid = nil.as(Value)
-          positions.each_with_index do |position, index|
-            if position < 0
-              explicit_rowid = values[index]
-            else
-              new_row[position] = values[index]
-            end
-          end
-          # A row an IGNORE conflict skipped returns nothing.
-          updated = run.update_row(@table, rowid, old, new_row, explicit_rowid, @override, positions)
-          next unless updated
-          new_rowid, stored = updated
-          if program = @returning
-            pseudo = @returning_pseudo || raise Error.new("RETURNING without its row")
-            pseudo.row = stored
-            pseudo.rowid = new_rowid
-            if returned_row = program.evaluate(list_of_parameters)
-              returned << returned_row
-            end
+        # A row an IGNORE conflict skipped returns nothing.
+        updated = begin
+          run.update_row(@table, rowid, old, new_row, explicit_rowid, @override, positions, @list_of_changed_names)
+        rescue TriggerIgnore
+          next
+        end
+        next unless updated
+        new_rowid, stored = updated
+        if program = @returning
+          pseudo = @returning_pseudo || raise Error.new("RETURNING without its row")
+          pseudo.row = stored
+          pseudo.rowid = new_rowid
+          if returned_row = program.evaluate(list_of_parameters)
+            returned << returned_row
           end
         end
       end
-      returned
     end
   end
 
@@ -177,6 +210,7 @@ module Grant::SQLiteEngine::Query
     @returning : RowProgram?
     @returning_pseudo : PseudoTable?
     @statement : SQL::Delete
+    @trigger_programs : TriggerProgramCache?
 
     def initialize(@session : Session, statement : SQL::Delete)
       @statement = statement
@@ -191,39 +225,63 @@ module Grant::SQLiteEngine::Query
         @returning = program
         @list_of_column_names = program.list_of_column_names
       end
+      @trigger_programs = TriggerProgramCache.for_plan(@session, @table.list_of_triggers(@session), @table.trigger_target,
+        SQL::TriggerEvent::Delete, nil, ConflictAction::Default)
     end
 
     def run(list_of_parameters : Array(Value)) : Array(Array(Value))
       returned = @returning ? [] of Array(Value) : NO_ROWS
       @session.run_write(list_of_parameters, returning: !@returning.nil?) do |run|
-        journal, _, in_rowid_order = journal_choices(@session.foreign_keys?) do
+        journal, _, in_rowid_order = delete_choices
+        run.statement_journal = journal
+        run.trigger_programs = @trigger_programs
+        write_returning_rows(run, list_of_parameters, returned, in_rowid_order)
+      end
+      returned
+    end
+
+    def write_rows(run : WriteRun, list_of_parameters : Array(Value)) : Nil
+      write_returning_rows(run, list_of_parameters, NO_ROWS, delete_choices[2])
+    end
+
+    # The statement journal and whether rows go in rowid order.
+    private def delete_choices : Tuple(Bool, Bool, Bool)
+      journal_choices(@session.foreign_keys?) do
+        if @table.has_triggers_for?(@session, SQL::TriggerEvent::Delete)
+          {true, false, true}
+        else
           {StatementJournal.for_delete(@session, @table, @statement), false,
            StatementJournal.delete_in_rowid_order?(@session, @table, @statement)}
         end
-        run.statement_journal = journal
-        targets = @targets.collect(list_of_parameters)
-        if !@table.without_rowid? && in_rowid_order && targets.size > 1
-          targets = targets.sort_by { |target| target[0] || 0_i64 }
-        elsif @table.without_rowid? && !in_rowid_order
-          if layout = WithoutRowidScan.scan_layout(@table, @statement.where, [] of SQL::Expression)
-            targets = WithoutRowidScan.sort(@table, targets, layout)
-          end
-        end
-        targets.each do |rowid, snapshot, _values|
-          old = rowid ? @table.database.row_at(@table.layout, rowid) : @table.database.row_with_key_of(@table.layout, snapshot)
-          next unless old
-          if program = @returning
-            pseudo = @returning_pseudo || raise Error.new("RETURNING without its row")
-            pseudo.row = old
-            pseudo.rowid = rowid
-            if returned_row = program.evaluate(list_of_parameters)
-              returned << returned_row
-            end
-          end
-          run.delete_row(@table, rowid, old)
+      end
+    end
+
+    private def write_returning_rows(run : WriteRun, list_of_parameters : Array(Value), returned : Array(Array(Value)),
+                                     in_rowid_order : Bool) : Nil
+      targets = @targets.collect(list_of_parameters)
+      if !@table.without_rowid? && in_rowid_order && targets.size > 1
+        targets = targets.sort_by { |target| target[0] || 0_i64 }
+      elsif @table.without_rowid? && !in_rowid_order
+        if layout = WithoutRowidScan.scan_layout(@table, @statement.where, [] of SQL::Expression)
+          targets = WithoutRowidScan.sort(@table, targets, layout)
         end
       end
-      returned
+      targets.each do |rowid, snapshot, _values|
+        old = rowid ? @table.database.row_at(@table.layout, rowid) : @table.database.row_with_key_of(@table.layout, snapshot)
+        next unless old
+        if program = @returning
+          pseudo = @returning_pseudo || raise Error.new("RETURNING without its row")
+          pseudo.row = old
+          pseudo.rowid = rowid
+          if returned_row = program.evaluate(list_of_parameters)
+            returned << returned_row
+          end
+        end
+        begin
+          run.delete_row(@table, rowid, old)
+        rescue TriggerIgnore
+        end
+      end
     end
   end
 end
