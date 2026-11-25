@@ -94,7 +94,6 @@ module Grant::SQLiteEngine::Query
       end
       trigger_name = found.trigger_name
       found.database.delete_schema_rows { |record| record[0]? == "trigger" && record[1]? == trigger_name }
-      found.database.note_schema_change
     end
 
     # DROP TABLE also drops the TEMP triggers on the table.
@@ -108,7 +107,6 @@ module Grant::SQLiteEngine::Query
       return if doomed.empty?
       names = doomed.map(&.trigger_name)
       temp_database.delete_schema_rows { |record| record[0]? == "trigger" && names.includes?(record[1]?) }
-      temp_database.note_schema_change
     end
 
     # sqlite3FixExpr refuses a bound parameter anywhere in a trigger.

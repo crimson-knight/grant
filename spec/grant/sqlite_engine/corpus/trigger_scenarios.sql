@@ -506,3 +506,19 @@ CREATE TRIGGER g2 AFTER INSERT ON g BEGIN UPDATE h SET y = CASE WHEN new.x > 5 T
 INSERT INTO g VALUES (1), (2), (9), (3);
 SELECT * FROM g;
 SELECT * FROM h;
+
+-- scenario: schema_version moves once per CREATE and DROP TRIGGER
+CREATE TABLE notes(id INTEGER PRIMARY KEY, body TEXT);
+CREATE TEMP TABLE scratch(x);
+PRAGMA schema_version;
+CREATE TRIGGER notes_guard BEFORE DELETE ON notes BEGIN SELECT RAISE(ABORT, 'locked'); END;
+CREATE TEMP TRIGGER notes_temp AFTER INSERT ON notes BEGIN INSERT INTO scratch VALUES (new.id); END;
+PRAGMA schema_version;
+SELECT type, name, tbl_name FROM sqlite_temp_master ORDER BY name;
+DROP TRIGGER notes_guard;
+PRAGMA schema_version;
+DROP TRIGGER IF EXISTS notes_guard;
+PRAGMA schema_version;
+DROP TABLE notes;
+PRAGMA schema_version;
+SELECT type, name, tbl_name FROM sqlite_temp_master ORDER BY name;
