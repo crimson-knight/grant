@@ -47,6 +47,9 @@ module Grant::SQLiteEngine::Query
       if entry && entry.object_type == "view"
         raise SQLError.new("view #{entry.object_name} may not be altered")
       end
+      if schema_table = Session.schema_table_name(name, @schema_name)
+        raise SQLError.new("table #{schema_table} may not be altered")
+      end
       raise SQLError.new("no such table: #{name}") unless entry && entry.table?
       if entry.object_name.downcase.starts_with?("sqlite_")
         raise SQLError.new("table #{entry.object_name} may not be altered")

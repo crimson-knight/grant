@@ -259,6 +259,9 @@ module Grant::SQLiteEngine::Query
       entry = entry_named(name)
       case statement.kind
       when .table?
+        if schema_table = Session.schema_table_name(name, schema_name)
+          raise SQLError.new("table #{schema_table} may not be dropped")
+        end
         unless entry && entry.table?
           if entry && entry.object_type == "view"
             raise SQLError.new("use DROP VIEW to delete view #{name}")
