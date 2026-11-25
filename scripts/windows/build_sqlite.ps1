@@ -22,15 +22,17 @@ Write-Output "$Name.zip sha256 $Actual (pinned)"
 Expand-Archive -Path $Zip -DestinationPath $Destination -Force
 $Source = Join-Path $Destination $Name
 
-# The shell starts with .crlf on under Windows and writes "\r\n" line ends;
-# the specs compare its output with "\n" ends, as on every other system.
-# Its one default changes (main_init), the rest of the source as pinned.
+# The shell starts with .crlf on under Windows and its standard output in
+# text mode, which writes "\r\n" line ends; the specs compare its output with
+# "\n" ends, as on every other system. main_init turns .crlf off and puts
+# standard output in binary mode, as .crlf off does for a redirected output;
+# the rest of the source is as pinned.
 $Shell = Join-Path $Source "shell.c"
 $ShellText = [System.IO.File]::ReadAllText($Shell)
 $CrlfDefault = "data->crlfMode = 1;"
 $Count = $ShellText.Split($CrlfDefault).Count - 1
 if ($Count -ne 1) { throw "shell.c: expected one '$CrlfDefault', found $Count" }
-[System.IO.File]::WriteAllText($Shell, $ShellText.Replace($CrlfDefault, "data->crlfMode = 0;"))
+[System.IO.File]::WriteAllText($Shell, $ShellText.Replace($CrlfDefault, "data->crlfMode = 0; _setmode(_fileno(stdout), _O_BINARY);"))
 
 $VsWhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
 $VsPath = & $VsWhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
