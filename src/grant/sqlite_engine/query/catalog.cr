@@ -3,9 +3,7 @@ module Grant::SQLiteEngine::Query
   # (pragma.html, "PRAGMA functions"): pragma_table_info,
   # pragma_table_xinfo, pragma_index_list, pragma_index_info,
   # pragma_index_xinfo, pragma_foreign_key_list, pragma_database_list and
-  # pragma_table_list (one named table),
-  # with the rows pragma.c
-  # of SQLite 3.51.0 produces.
+  # pragma_table_list, with the rows pragma.c of SQLite 3.51.0 produces.
   module Catalog
     COLUMNS = {
       "pragma_table_info"       => %w[cid name type notnull dflt_value pk],
@@ -46,7 +44,7 @@ module Grant::SQLiteEngine::Query
       when "pragma_database_list"
         session.database_list_rows
       when "pragma_table_list"
-        table_list(argument, session)
+        table_list(argument.empty? ? nil : argument, session)
       else
         PragmaExtras.table_valued_rows(name, argument, session)
       end
@@ -91,18 +89,65 @@ module Grant::SQLiteEngine::Query
       rows
     end
 
-    # pragma.c PragTyp_TABLE_LIST for one table of the main schema: its
-    # schema, name, kind, column count, WITHOUT ROWID and STRICT flags.
-    private def self.table_list(name : String, session : Session) : Array(Array(Value))
-      table = session.table(name)
-      return [] of Array(Value) unless table
-      definition = table.definition
-      [["main", table.name, "table", table.list_of_column_names.size.to_i64,
-        table.without_rowid? ? 1_i64 : 0_i64, definition.strict? ? 1_i64 : 0_i64] of Value]
+    # pragma.c PragTyp_TABLE_LIST: each table and view of main, temp and
+    # the attached schemas (only those named *name*, and only *schema* when
+    # given), with each schema table, as schema, name, kind, column count,
+    # WITHOUT ROWID and STRICT. C lists a schema in its table hash order;
+    # the engine lists it in sqlite_schema order, then the schema table.
+    def self.table_list(name : String?, session : Session, schema : String? = nil) : Array(Array(Value))
+      rows = [] of Array(Value)
+      main = session.database
+      temp = session.list_of_databases.find { |database| session.schema_name_of(database) == "temp" }
+      attached = session.list_of_databases.reject { |database| database.same?(main) || database.same?(temp) }
+      list = [{"main", main}, {"temp", temp}] of {String, Database?}
+      attached.each { |database| list << {session.schema_name_of(database), database} }
+      list.each do |(schema_name, database)|
+        next if schema && schema.compare(schema_name, case_insensitive: true) != 0
+        if database && database.page_count > 0
+          database.schema.list_of_entries.each do |entry|
+            next unless entry.table? || entry.object_type == "view"
+            next if name && name.compare(entry.object_name, case_insensitive: true) != 0
+            if row = table_list_row(schema_name, entry, session)
+              rows << row
+            end
+          end
+        end
+        schema_table = schema_name == "temp" ? "sqlite_temp_schema" : "sqlite_schema"
+        next if name && name.compare(schema_table, case_insensitive: true) != 0
+        rows << [schema_name, schema_table, "table", 5_i64, 0_i64, 0_i64] of Value
+      end
+      rows
     end
 
+    private def self.table_list_row(schema_name : String, entry : SchemaEntry, session : Session) : Array(Value)?
+      if entry.object_type == "view"
+        return [schema_name, entry.object_name, "view", view_column_count(schema_name, entry.object_name, session), 0_i64, 0_i64] of Value
+      end
+      return unless entry.has_a_btree?
+      table = session.table(entry.object_name, schema_name)
+      return unless table
+      [schema_name, table.name, "table", table.list_of_column_names.size.to_i64,
+       table.without_rowid? ? 1_i64 : 0_i64, table.definition.strict? ? 1_i64 : 0_i64] of Value
+    end
+
+    # The number of columns a view yields (sqlite3ViewGetColumnNames).
+    private def self.view_column_count(schema_name : String, name : String, session : Session) : Int64
+      session.prepare("SELECT * FROM #{quoted_name(schema_name)}.#{quoted_name(name)}").list_of_column_names.size.to_i64
+    rescue SQLError
+      0_i64
+    end
+
+    private def self.quoted_name(name : String) : String
+      "\"" + name.gsub("\"", "\"\"") + "\""
+    end
+
+    # build.c sqlite3AddColumn: a declared type that is exactly one of the
+    # standard type names, in any case, is kept as that name (upper case).
+    STANDARD_TYPES = %w[ANY BLOB INT INTEGER REAL TEXT]
+
     private def self.type_text(type_name : SQL::TypeName) : String
-      without_generated_always(full_type_text(type_name))
+      text = without_generated_always(full_type_text(type_name))
+      STANDARD_TYPES.find { |standard| standard.compare(text, case_insensitive: true) == 0 } || text
     end
 
     private def self.full_type_text(type_name : SQL::TypeName) : String
@@ -230,9 +275,10 @@ module Grant::SQLiteEngine::Query
     def open(frame : Frame) : Nil
       first = @list_of_arguments.first?
       argument = first ? ValueSemantics.text(first.evaluate(frame)) : nil
-      # pragma_database_list takes no argument; the others yield no rows
-      # without one.
+      # pragma_database_list takes no argument and pragma_table_list lists
+      # every table without one; the others yield no rows without one.
       argument = "" if @name == "pragma_database_list"
+      argument ||= "" if @name == "pragma_table_list"
       argument ||= "" if PragmaExtras::TABLE_VALUED.has_key?(@name)
       @rows = argument ? Catalog.rows(@name, argument, @session) : [] of Array(Value)
       @position = 0

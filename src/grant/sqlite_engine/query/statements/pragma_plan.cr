@@ -45,6 +45,7 @@ module Grant::SQLiteEngine::Query
                               when "table_info", "table_xinfo", "index_list", "index_info", "index_xinfo", "foreign_key_list"
                                 Catalog.function_columns("pragma_#{name}")
                               when "database_list"                  then %w[seq name file]
+                              when "table_list"                     then Catalog.function_columns("pragma_table_list")
                               when "integrity_check", "quick_check" then [name]
                               when "busy_timeout"                   then %w[timeout]
                               when "wal_checkpoint"                 then %w[busy log checkpointed]
@@ -71,6 +72,8 @@ module Grant::SQLiteEngine::Query
         Catalog.rows("pragma_#{name}", value, @session)
       when "database_list"
         @session.database_list_rows
+      when "table_list"
+        Catalog.table_list(value, @session, @statement.schema.try(&.value))
       when "foreign_keys"
         return [[@session.foreign_keys? ? 1_i64 : 0_i64] of Value] unless value
         @session.foreign_keys = PragmaPlan.boolean(value) unless @session.in_transaction?
