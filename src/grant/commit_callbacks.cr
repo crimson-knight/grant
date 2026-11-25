@@ -275,17 +275,17 @@ module Grant::CommitCallbacks
     @_commit_action_bits = action
     begin
       if action == ACTION_CREATE
-        after_create_commit if (commit_bits & COMMIT_CALLBACK_BITS[:after_create_commit]) != 0 && responds_to?(:after_create_commit)
+        self.after_create_commit if (commit_bits & COMMIT_CALLBACK_BITS[:after_create_commit]) != 0 && responds_to?(:after_create_commit)
       end
       if action == ACTION_UPDATE
-        after_update_commit if (commit_bits & COMMIT_CALLBACK_BITS[:after_update_commit]) != 0 && responds_to?(:after_update_commit)
+        self.after_update_commit if (commit_bits & COMMIT_CALLBACK_BITS[:after_update_commit]) != 0 && responds_to?(:after_update_commit)
       end
       if action == ACTION_DESTROY
-        after_destroy_commit if (commit_bits & COMMIT_CALLBACK_BITS[:after_destroy_commit]) != 0 && responds_to?(:after_destroy_commit)
+        self.after_destroy_commit if (commit_bits & COMMIT_CALLBACK_BITS[:after_destroy_commit]) != 0 && responds_to?(:after_destroy_commit)
       else
-        after_save_commit if (commit_bits & COMMIT_CALLBACK_BITS[:after_save_commit]) != 0 && responds_to?(:after_save_commit)
+        self.after_save_commit if (commit_bits & COMMIT_CALLBACK_BITS[:after_save_commit]) != 0 && responds_to?(:after_save_commit)
       end
-      after_commit if (commit_bits & COMMIT_CALLBACK_BITS[:after_commit]) != 0 && responds_to?(:after_commit)
+      self.after_commit if (commit_bits & COMMIT_CALLBACK_BITS[:after_commit]) != 0 && responds_to?(:after_commit)
     ensure
       @_commit_action_bits = 0_u8
     end
@@ -294,7 +294,7 @@ module Grant::CommitCallbacks
   private def dispatch_rollback_callbacks(action_bits : UInt8) : Nil
     @_commit_action_bits = resolve_commit_action(action_bits)
     begin
-      after_rollback if responds_to?(:after_rollback)
+      self.after_rollback if responds_to?(:after_rollback)
     ensure
       @_commit_action_bits = 0_u8
     end
