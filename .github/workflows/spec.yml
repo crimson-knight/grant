@@ -83,64 +83,64 @@ jobs:
       - name: Type-check for Windows
         run: crystal build --no-codegen --target x86_64-windows-msvc scripts/windows_type_check.cr
 
-# Windows: Grant's SQLite engine on real files through WindowsFileSystem
-# (os_win.c's LockFileEx locks, FlushFileBuffers and file-mapped
-# wal-index). Builds the reference C SQLite (3.51.0, pinned by hash) for
-# the specs that compare with it, runs an app's round trip through
-# Grant::Adapter::Sqlite on the engine in both journal modes, then the
-# engine's file, write, WAL, crash-recovery and lock specs.
-windows-engine:
-  runs-on: windows-2025
-  timeout-minutes: 50
-  defaults:
-    run:
-      shell: pwsh
-  steps:
-    - name: Download source
-      uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-    - name: Install Crystal
-      uses: crystal-lang/install-crystal@d8ef131ecec0352ce0e39b81b0a6d95def58fe2f # v1
-      with:
-        crystal: 1.21.0
-    - name: Install shards
-      run: shards install --frozen --skip-postinstall --skip-executables
-    - name: Build C SQLite 3.51.0 from the amalgamation pinned by hash
-      run: scripts/windows/build_sqlite.ps1 "$env:RUNNER_TEMP\sqlite"
-    - name: Show the tools the specs run
-      run: |
-        crystal --version
-        ruby --version
-        sqlite3 -version
-    - name: Run the end-to-end program on the engine
-      run: |
-        crystal build --no-color scripts/engine_end_to_end.cr -o engine_end_to_end.exe
-        ./engine_end_to_end.exe run "$env:RUNNER_TEMP\end_to_end" "$env:SQLITE3"
-        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-    - name: Run the engine's file, write, WAL, crash-recovery and lock specs
-      if: ${{ !cancelled() }}
-      run: |
-        crystal spec --no-color `
-          spec/grant/sqlite_engine/unit_spec.cr `
-          spec/grant/sqlite_engine/structure_spec.cr `
-          spec/grant/sqlite_engine/write_spec.cr `
-          spec/grant/sqlite_engine/wal_spec.cr `
-          spec/grant/sqlite_engine/crash_recovery_spec.cr `
-          spec/grant/sqlite_engine/lock_wait_processes_spec.cr
-        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-    - name: Run the engine's differential, corpus and statement specs
-      if: ${{ !cancelled() }}
-      run: |
-        crystal spec --no-color `
-          spec/grant/sqlite_engine/corpus_writes_spec.cr `
-          spec/grant/sqlite_engine/damage_fuzz_spec.cr `
-          spec/grant/sqlite_engine/differential_spec.cr `
-          spec/grant/sqlite_engine/random_differential_spec.cr `
-          spec/grant/sqlite_engine/random_writes_spec.cr `
-          spec/grant/sqlite_engine/query/date_time_spec.cr `
-          spec/grant/sqlite_engine/query/backup_spec.cr `
-          spec/grant/sqlite_engine/query/write_statements_spec.cr `
-          spec/grant/sqlite_engine/sql/acceptance_spec.cr
-        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+  # Windows: Grant's SQLite engine on real files through WindowsFileSystem
+  # (os_win.c's LockFileEx locks, FlushFileBuffers and file-mapped
+  # wal-index). Builds the reference C SQLite (3.51.0, pinned by hash) for
+  # the specs that compare with it, runs an app's round trip through
+  # Grant::Adapter::Sqlite on the engine in both journal modes, then the
+  # engine's file, write, WAL, crash-recovery and lock specs.
+  windows-engine:
+    runs-on: windows-2025
+    timeout-minutes: 50
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Download source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Install Crystal
+        uses: crystal-lang/install-crystal@d8ef131ecec0352ce0e39b81b0a6d95def58fe2f # v1
+        with:
+          crystal: 1.21.0
+      - name: Install shards
+        run: shards install --frozen --skip-postinstall --skip-executables
+      - name: Build C SQLite 3.51.0 from the amalgamation pinned by hash
+        run: scripts/windows/build_sqlite.ps1 "$env:RUNNER_TEMP\sqlite"
+      - name: Show the tools the specs run
+        run: |
+          crystal --version
+          ruby --version
+          sqlite3 -version
+      - name: Run the end-to-end program on the engine
+        run: |
+          crystal build --no-color scripts/engine_end_to_end.cr -o engine_end_to_end.exe
+          ./engine_end_to_end.exe run "$env:RUNNER_TEMP\end_to_end" "$env:SQLITE3"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Run the engine's file, write, WAL, crash-recovery and lock specs
+        if: ${{ !cancelled() }}
+        run: |
+          crystal spec --no-color `
+            spec/grant/sqlite_engine/unit_spec.cr `
+            spec/grant/sqlite_engine/structure_spec.cr `
+            spec/grant/sqlite_engine/write_spec.cr `
+            spec/grant/sqlite_engine/wal_spec.cr `
+            spec/grant/sqlite_engine/crash_recovery_spec.cr `
+            spec/grant/sqlite_engine/lock_wait_processes_spec.cr
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Run the engine's differential, corpus and statement specs
+        if: ${{ !cancelled() }}
+        run: |
+          crystal spec --no-color `
+            spec/grant/sqlite_engine/corpus_writes_spec.cr `
+            spec/grant/sqlite_engine/damage_fuzz_spec.cr `
+            spec/grant/sqlite_engine/differential_spec.cr `
+            spec/grant/sqlite_engine/random_differential_spec.cr `
+            spec/grant/sqlite_engine/random_writes_spec.cr `
+            spec/grant/sqlite_engine/query/date_time_spec.cr `
+            spec/grant/sqlite_engine/query/backup_spec.cr `
+            spec/grant/sqlite_engine/query/write_statements_spec.cr `
+            spec/grant/sqlite_engine/sql/acceptance_spec.cr
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
   # The floor is the minimum Crystal in shard.yml (scripts/crystal-floor.sh
   # reads it; no workflow repeats the number). This job builds Grant and runs
