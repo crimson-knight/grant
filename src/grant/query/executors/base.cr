@@ -31,6 +31,15 @@ module Grant::Query::Executor
         Grant::Logs::SQL.debug { "Query executed (#{duration_ms}ms) - #{sql} [#{model_name}] [rows: #{row_count}]" }
       end
       Grant::Logs.log_verbose(sql, duration, model_name)
+      record_query_analysis(sql, duration, model_name)
+    end
+
+    # Hands the query to `Grant::QueryAnalysis`. It does nothing until
+    # `grant/query_analysis` is required, which defines it again with the
+    # recording (and no `previous_def`, so `log_query_with_timing` and the
+    # executors' `run` stay typed once).
+    @[TypeOnce]
+    def record_query_analysis(sql : String, duration : Time::Span, model_name : String?) : Nil
     end
   end
 end
