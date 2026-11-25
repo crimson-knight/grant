@@ -30,6 +30,16 @@ module Grant::SQLiteEngine
     end
   end
 
+  # Raised when the engine is asked to open a database file on an operating
+  # system it does not support yet (Windows: its files use POSIX advisory
+  # locks and mmap(2), as os_unix.c does). The C SQLite library, Grant's
+  # default SQLite engine, runs there.
+  class UnsupportedPlatform < Error
+    def initialize(platform : String)
+      super("Grant's SQLite engine does not open database files on #{platform} yet; use the C SQLite library (require \"grant/adapter/sqlite\", the default)")
+    end
+  end
+
   # Raised when a table or index name is not in the schema.
   class UnknownSchemaObject < Error
     getter object_name : String
