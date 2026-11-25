@@ -78,7 +78,10 @@ module Grant::SQLiteEngine::Query
         end
         position = primary_key.index(column.name.value.downcase)
         pk = position ? (position + 1).to_i64 : 0_i64
-        not_null = column.constraints.any?(SQL::NotNullConstraint) ? 1_i64 : 0_i64
+        # build.c: a PRIMARY KEY column of a WITHOUT ROWID or STRICT table
+        # (not the rowid alias) is NOT NULL even when it does not say so.
+        implied = pk > 0 && (definition.without_rowid? || definition.strict?) && table.rowid_alias != index
+        not_null = column.constraints.any?(SQL::NotNullConstraint) || implied ? 1_i64 : 0_i64
         default = column.constraints.compact_map(&.as?(SQL::DefaultConstraint)).first?
         default_text = hidden >= 2 || default.nil? ? nil : default.value.to_sql
         type_text = column.type_name.try { |type_name| type_text(type_name) } || ""
@@ -171,13 +174,28 @@ module Grant::SQLiteEngine::Query
     private def self.indexes_of(table : TableInfo, session : Session) : Array(SchemaEntry)
       table.database.schema.list_of_indexes.select do |entry|
         entry.table_name.compare(table.name, case_insensitive: true) == 0
-      end.reverse!
+      end
     end
 
+    # One row of index_list before its position is known: name, unique,
+    # origin, partial, and whether its conflict action is REPLACE.
+    private record IndexListItem, index_name : String, unique : Int64, origin : String, partial : Int64, replace : Bool
+
+    # pragma.c PragTyp_INDEX_LIST walks the table's index list as
+    # sqlite3CreateIndex builds it: each new index linked at the head
+    # (autoindexes as CREATE TABLE makes them, then each CREATE INDEX),
+    # REPLACE indexes moved to the end. A WITHOUT ROWID table's PRIMARY
+    # KEY index, which has no sqlite_schema row, is listed too.
     private def self.index_list(name : String, session : Session) : Array(Array(Value))
       table = session.table(name)
       return [] of Array(Value) unless table
-      indexes_of(table, session).map_with_index do |entry, position|
+      rules = session.write_table(table.name, session.schema_name_of(table.database))
+      replacing = Set(String).new
+      if rules
+        rules.list_of_indexes.each { |rule| replacing << rule.layout.entry.object_name if rule.conflict.replace? }
+      end
+      entries = indexes_of(table, session)
+      items = entries.map do |entry|
         layout = table.list_of_indexes.find { |candidate| candidate.entry.object_name == entry.object_name }
         origin = if entry.sql
                    "c"
