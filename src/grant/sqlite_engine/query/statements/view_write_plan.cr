@@ -177,22 +177,20 @@ module Grant::SQLiteEngine::Query
     def write_rows(run : WriteRun, list_of_parameters : Array(Value)) : Nil
       width = @target.list_of_column_names.size
       each_row(list_of_parameters) do |values|
-        begin
-          case @event
-          when .insert?
-            new = Array(Value).new(width, nil)
-            @list_of_positions.each_with_index { |position, index| new[position] = values[index] }
-            run.fire_triggers(@list_of_triggers, @target, @event, true, nil, nil, nil, new, @override)
-          when .update?
-            old = values[0, width]
-            new = old.dup
-            @list_of_positions.each_with_index { |position, index| new[position] = values[width + index] }
-            run.fire_triggers(@list_of_triggers, @target, @event, true, nil, old, nil, new, @override, @list_of_changed_names)
-          else
-            run.fire_triggers(@list_of_triggers, @target, @event, true, nil, values[0, width], nil, nil, @override)
-          end
-        rescue TriggerIgnore
+        case @event
+        when .insert?
+          new = Array(Value).new(width, nil)
+          @list_of_positions.each_with_index { |position, index| new[position] = values[index] }
+          run.fire_triggers(@list_of_triggers, @target, @event, true, nil, nil, nil, new, @override)
+        when .update?
+          old = values[0, width]
+          new = old.dup
+          @list_of_positions.each_with_index { |position, index| new[position] = values[width + index] }
+          run.fire_triggers(@list_of_triggers, @target, @event, true, nil, old, nil, new, @override, @list_of_changed_names)
+        else
+          run.fire_triggers(@list_of_triggers, @target, @event, true, nil, values[0, width], nil, nil, @override)
         end
+      rescue TriggerIgnore
       end
     end
 
@@ -210,7 +208,7 @@ module Grant::SQLiteEngine::Query
       while row = producer.next_row(frame)
         rows << row.dup
       end
-      rows.each { |row| yield row }
+      rows.each { |each_row| yield each_row }
     end
   end
 end

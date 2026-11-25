@@ -100,7 +100,8 @@ module Grant::SQLiteEngine::Query
     # DROP TABLE also drops the TEMP triggers on the table.
     private def drop_temp_triggers_of(table_name : String) : Nil
       temp_database = @session.temp_database
-      return unless temp_database && !database.same?(temp_database) && temp_database.page_count > 0
+      return if temp_database.nil?
+      return if database.same?(temp_database) || temp_database.page_count == 0
       doomed = @session.list_of_triggers.select do |trigger|
         trigger.database.same?(temp_database) && trigger.table_name.compare(table_name, case_insensitive: true) == 0
       end

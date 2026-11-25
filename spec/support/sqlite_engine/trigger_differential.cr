@@ -105,33 +105,52 @@ class TriggerDifferential
     actual = begin
       pair.engine_step(attached_file(sql, pair, "engine"))
     rescue error : Grant::SQLiteEngine::UnsupportedSQL
-      @report.unexpressed("#{name}\n  #{sql.strip}\n  engine: #{error.message}\n  C: #{expected.outcome.error || "ok"}")
-      created_name(sql).try { |created| @list_of_skipped_names << created }
-      swap(pair) if pair.autocommit? && !pair.session.in_transaction?
+      record_unexpressed(pair, name, sql, expected, error)
       return
     end
     @report.count("C errors") if expected.outcome.error
     @report.count("rows compared", expected.outcome.list_of_rows.size.to_i64)
     if difference = SQLiteWriteOracle::Pair.difference(expected, actual, ordered?(sql), pair.changes_in_step?, pair.rowid_in_step?)
-      texts = [sql, expected.outcome.error || "", actual.outcome.error || ""]
-      if skipped = @list_of_skipped_names.find { |skipped_name| texts.any? { |text| mentions?(text, skipped_name) } }
-        @report.unexpressed("#{name}\n  #{sql.strip}\n  downstream of #{skipped}, which only C could create\n  #{difference}")
-        created_name(sql).try { |created| @list_of_skipped_names << created }
-        swap(pair) if expected.outcome.error.nil? && pair.autocommit? && !pair.session.in_transaction?
-        return
-      end
+      record_difference(pair, name, sql, expected, actual, difference)
+      return
+    end
+    record_match(pair, name, sql, expected)
+  end
+
+  # A statement the engine cannot express: C's result becomes the state
+  # both sides continue from.
+  private def record_unexpressed(pair : SQLiteWriteOracle::Pair, name : String, sql : String, expected : SQLiteWriteOracle::StepResult, error : Exception) : Nil
+    @report.unexpressed("#{name}\n  #{sql.strip}\n  engine: #{error.message}\n  C: #{expected.outcome.error || "ok"}")
+    created_name(sql).try { |created| @list_of_skipped_names << created }
+    swap(pair) if idle?(pair)
+  end
+
+  # A difference that names an object only C could create is downstream
+  # of an unexpressed statement; any other difference is reported.
+  private def record_difference(pair : SQLiteWriteOracle::Pair, name : String, sql : String, expected : SQLiteWriteOracle::StepResult, actual : SQLiteWriteOracle::StepResult, difference : String) : Nil
+    texts = [sql, expected.outcome.error || "", actual.outcome.error || ""]
+    skipped = @list_of_skipped_names.find { |skipped_name| texts.any? { |text| mentions?(text, skipped_name) } }
+    unless skipped
       @report.difference("#{name}\n  #{sql.strip}\n  #{difference}")
       return
     end
+    @report.unexpressed("#{name}\n  #{sql.strip}\n  downstream of #{skipped}, which only C could create\n  #{difference}")
+    created_name(sql).try { |created| @list_of_skipped_names << created }
+    swap(pair) if expected.outcome.error.nil? && idle?(pair)
+  end
+
+  private def record_match(pair : SQLiteWriteOracle::Pair, name : String, sql : String, expected : SQLiteWriteOracle::StepResult) : Nil
     @report.count("statements matching C")
     if expected.outcome.error.nil?
       word = first_word(sql)
       pair.changes_in_step = true if word.in?("INSERT", "REPLACE", "UPDATE", "DELETE", "WITH")
       pair.rowid_in_step = true if word.in?("INSERT", "REPLACE")
     end
-    if schema_change?(sql) && pair.autocommit? && !pair.session.in_transaction?
-      compare_files(pair, name, sql.strip)
-    end
+    compare_files(pair, name, sql.strip) if schema_change?(sql) && idle?(pair)
+  end
+
+  private def idle?(pair : SQLiteWriteOracle::Pair) : Bool
+    pair.autocommit? && !pair.session.in_transaction?
   end
 
   # An ATTACH of a file by name gets a file of its own for each side, in
