@@ -31,6 +31,20 @@ module Grant::SQLite3
     LIBSQLITE3_LEFT_OUT = "sqlite_engine :libsqlite3 needs the C SQLite engine: require \"grant/adapter/sqlite\" " \
                           "(or \"grant/adapter/sqlite/libsqlite3\"), in a program built without -Dgrant_without_libsqlite3"
 
+    # Why `:grant` is refused in a program that did not require Grant's engine.
+    GRANT_ENGINE_LEFT_OUT = "sqlite_engine :grant needs Grant's own SQLite engine: require \"grant/adapter/sqlite/grant_engine\""
+
+    # Whether this program has Grant's own engine: it required
+    # `grant/adapter/sqlite/grant_engine` (or the driver's `grant_engine`
+    # file). Without it the engine's code is not compiled in.
+    def self.grant_engine_compiled_in? : Bool
+      {% if Grant::SQLite3::Engine.has_constant?("GrantEngine") %}
+        true
+      {% else %}
+        false
+      {% end %}
+    end
+
     # Whether this program has the C SQLite engine: it required
     # `grant/adapter/sqlite` (or the driver's `libsqlite3` file) and was not
     # built with -Dgrant_without_libsqlite3. Without it the program links no
@@ -52,7 +66,12 @@ module Grant::SQLite3
         {% else %}
           raise ArgumentError.new(LIBSQLITE3_LEFT_OUT)
         {% end %}
-      when :grant then GrantEngine.new
+      when :grant
+        {% if Grant::SQLite3::Engine.has_constant?("GrantEngine") %}
+          GrantEngine.new
+        {% else %}
+          raise ArgumentError.new(GRANT_ENGINE_LEFT_OUT)
+        {% end %}
       else
         raise ArgumentError.new("sqlite_engine must be :libsqlite3 or :grant (got #{name.inspect})")
       end
@@ -67,8 +86,10 @@ module Grant::SQLite3
       {% else %}
         {% if Grant::SQLite3::Engine.has_constant?("LibSQLite3Engine") %}
           LibSQLite3Engine.new
-        {% else %}
+        {% elsif Grant::SQLite3::Engine.has_constant?("GrantEngine") %}
           GrantEngine.new
+        {% else %}
+          raise ArgumentError.new(GRANT_ENGINE_LEFT_OUT)
         {% end %}
       {% end %}
     end

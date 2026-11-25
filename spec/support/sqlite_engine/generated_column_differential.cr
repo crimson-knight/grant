@@ -2,7 +2,7 @@ require "file_utils"
 require "../../../src/grant/drivers/sqlite3/sqlite3/type"
 require "../../../src/grant/drivers/sqlite3/sqlite3/flags"
 require "../../../src/grant/drivers/sqlite3/sqlite3/engine"
-require "../../../src/grant/drivers/sqlite3/sqlite3/engine/grant_engine"
+require "../../../src/grant/drivers/sqlite3/grant_engine"
 require "../../../src/grant/drivers/sqlite3/libsqlite3"
 
 # Runs statements over tables with STORED and VIRTUAL generated columns
