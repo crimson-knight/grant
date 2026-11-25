@@ -149,7 +149,7 @@ module Grant::Schema
       guard!
       case @dialect
       in .sqlite? then load_sqlite_structure(path)
-      in .pg?     then run_tool("psql", ["--set=ON_ERROR_STOP=1", "--quiet", "--no-psqlrc", "--file=#{path}"] + pg_arguments, "PGPASSWORD")
+      in .pg?     then run_psql(path)
       in .mysql?  then run_mysql(path)
       end
       @adapter.reset_schema_caches!
@@ -216,10 +216,6 @@ module Grant::Schema
       end
     end
 
-    private def pg_arguments : Array(::String)
-      ConnectionSettings.parse(@adapter.url).pg_arguments
-    end
-
     private def run_mysql(path : ::String) : Nil
       settings = ConnectionSettings.parse(@adapter.url)
       executable = Process.find_executable("mysql") || raise StructureToolError.new("mysql was not found on the PATH; it is needed to load a structure file")
@@ -230,12 +226,15 @@ module Grant::Schema
       raise StructureToolError.new("mysql failed (#{status.exit_code}): #{error.to_s.strip}") unless status.success?
     end
 
-    private def run_tool(program : ::String, arguments : Array(::String), password_variable : ::String) : Nil
-      executable = Process.find_executable(program) || raise StructureToolError.new("#{program} was not found on the PATH; it is needed to load a structure file")
+    # psql gets the connection's TLS settings (`ConnectionSettings#pg_environment`),
+    # so it checks the server as the app does.
+    private def run_psql(path : ::String) : Nil
       settings = ConnectionSettings.parse(@adapter.url)
+      executable = Process.find_executable("psql") || raise StructureToolError.new("psql was not found on the PATH; it is needed to load a structure file")
+      arguments = ["--set=ON_ERROR_STOP=1", "--quiet", "--no-psqlrc", "--file=#{path}"] + settings.pg_arguments
       error = IO::Memory.new
-      status = Process.run(executable, arguments, env: settings.environment(password_variable), output: Process::Redirect::Close, error: error)
-      raise StructureToolError.new("#{program} failed (#{status.exit_code}): #{error.to_s.strip}") unless status.success?
+      status = Process.run(executable, arguments, env: settings.pg_environment, output: Process::Redirect::Close, error: error)
+      raise StructureToolError.new("psql failed (#{status.exit_code}): #{error.to_s.strip}") unless status.success?
     end
   end
 end

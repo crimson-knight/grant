@@ -306,7 +306,7 @@ jobs:
           mkdir -p "$tools"
           for tool in pg_dump psql; do
             printf '%s\n' '#!/bin/sh' \
-              "exec docker run --rm -i --network host -e PGPASSWORD -e PGSSLMODE -e PGSSLROOTCERT -v /tmp:/tmp -v \"$GITHUB_WORKSPACE:$GITHUB_WORKSPACE\" -v \"$RUNNER_TEMP:$RUNNER_TEMP\" -w \"\$PWD\" \"$PG_IMAGE\" $tool \"\$@\"" > "$tools/$tool"
+              "exec docker run --rm -i --network host -e PGPASSWORD -e PGSSLMODE -e PGSSLROOTCERT -e PGSSLMINPROTOCOLVERSION -e PGSSLCERT -e PGSSLKEY -v /tmp:/tmp -v \"$GITHUB_WORKSPACE:$GITHUB_WORKSPACE\" -v \"$RUNNER_TEMP:$RUNNER_TEMP\" -w \"\$PWD\" \"$PG_IMAGE\" $tool \"\$@\"" > "$tools/$tool"
             chmod +x "$tools/$tool"
           done
           echo "$tools" >> "$GITHUB_PATH"
