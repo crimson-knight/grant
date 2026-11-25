@@ -37,7 +37,7 @@ module Grant::SQLiteEngine::Query
     def initialize(@session : Session, @statement : SQL::Pragma)
       if schema = @statement.schema
         unless @session.schema?(schema.value)
-          raise SQLError.new("unknown database #{schema.value}")
+          raise SQLError.new("unknown database #{schema.text}")
         end
       end
       name = @statement.name.value.downcase

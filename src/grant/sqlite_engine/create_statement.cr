@@ -72,7 +72,7 @@ module Grant::SQLiteEngine
         known = database_name.compare("main", case_insensitive: true) == 0 ||
                 database_name.compare("temp", case_insensitive: true) == 0 ||
                 attached_as.try { |attached| database_name.compare(attached, case_insensitive: true) == 0 }
-        raise SchemaError.new("unknown database #{database_name}") unless known
+        raise SchemaError.new("unknown database #{name.text}") unless known
         name = tokens[position + 2]? || raise UnsupportedSQL.new("CREATE statement without a name")
       end
       @object_name = CreateStatement.unquote(name.text)
