@@ -51,9 +51,9 @@ module Grant::SQLiteEngine
       pattern = word.to_slice
       return false if pattern.size > bytes.size
       (0..bytes.size - pattern.size).any? do |start|
-        next false unless start == 0 || !word_byte?(bytes[start - 1], word_bytes)
+        next false if start > 0 && word_byte?(bytes[start - 1], word_bytes)
         finish = start + pattern.size
-        next false unless finish == bytes.size || !word_byte?(bytes[finish], word_bytes)
+        next false if finish < bytes.size && word_byte?(bytes[finish], word_bytes)
         same_bytes?(bytes, start, pattern, case_insensitive)
       end
     end
