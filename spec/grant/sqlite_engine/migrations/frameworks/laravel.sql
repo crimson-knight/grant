@@ -1,0 +1,58 @@
+-- Laravel 11 (SQLiteGrammar): migrations table, users/sessions/cache/jobs, enum CHECK, foreign keys,
+-- native rename/drop column, and the "__temp__" table rebuild for change().
+create table "migrations" ("id" integer primary key autoincrement not null, "migration" varchar not null, "batch" integer not null);
+select exists (select 1 from "main".sqlite_master where name = 'migrations' and type = 'table') as "exists";
+create table "users" ("id" integer primary key autoincrement not null, "name" varchar not null, "email" varchar not null, "email_verified_at" datetime, "password" varchar not null, "remember_token" varchar, "created_at" datetime, "updated_at" datetime);
+create unique index "users_email_unique" on "users" ("email");
+create table "password_reset_tokens" ("email" varchar not null, "token" varchar not null, "created_at" datetime, primary key ("email"));
+create table "sessions" ("id" varchar not null, "user_id" integer, "ip_address" varchar, "user_agent" text, "payload" text not null, "last_activity" integer not null, primary key ("id"));
+create index "sessions_user_id_index" on "sessions" ("user_id");
+create index "sessions_last_activity_index" on "sessions" ("last_activity");
+insert into "migrations" ("migration", "batch") values ('0001_01_01_000000_create_users_table', 1);
+create table "cache" ("key" varchar not null, "value" text not null, "expiration" integer not null, primary key ("key"));
+create table "cache_locks" ("key" varchar not null, "owner" varchar not null, "expiration" integer not null, primary key ("key"));
+create table "jobs" ("id" integer primary key autoincrement not null, "queue" varchar not null, "payload" text not null, "attempts" integer not null, "reserved_at" integer, "available_at" integer not null, "created_at" integer not null);
+create index "jobs_queue_index" on "jobs" ("queue");
+create table "job_batches" ("id" varchar not null, "name" varchar not null, "total_jobs" integer not null, "pending_jobs" integer not null, "failed_jobs" integer not null, "failed_job_ids" text not null, "options" text, "cancelled_at" integer, "created_at" integer not null, "finished_at" integer, primary key ("id"));
+create table "failed_jobs" ("id" integer primary key autoincrement not null, "uuid" varchar not null, "connection" text not null, "queue" text not null, "payload" text not null, "exception" text not null, "failed_at" datetime not null default CURRENT_TIMESTAMP);
+create unique index "failed_jobs_uuid_unique" on "failed_jobs" ("uuid");
+insert into "migrations" ("migration", "batch") values ('0001_01_01_000001_create_cache_table', 1);
+create table "orders" ("id" integer primary key autoincrement not null, "user_id" integer not null, "status" varchar check ("status" in ('pending', 'paid', 'shipped')) not null default 'pending', "total" numeric not null default '0', "meta" text, "uuid" varchar not null, "created_at" datetime, "updated_at" datetime, "deleted_at" datetime, foreign key("user_id") references "users"("id") on delete cascade on update cascade);
+create index "orders_status_created_at_index" on "orders" ("status", "created_at");
+create unique index "orders_uuid_unique" on "orders" ("uuid");
+insert into "migrations" ("migration", "batch") values ('2026_11_25_000000_create_orders_table', 1);
+PRAGMA foreign_keys = ON;
+insert into "users" ("name", "email", "password", "created_at", "updated_at") values ('Taylor', 't@example.com', 'secret', '2026-11-25 10:00:00', '2026-11-25 10:00:00');
+insert into "orders" ("user_id", "uuid", "created_at", "updated_at") values (1, 'u-1', '2026-11-25 10:00:00', '2026-11-25 10:00:00');
+insert into "orders" ("user_id", "uuid", "status") values (1, 'u-2', 'lost');
+insert into "orders" ("user_id", "uuid", "status", "total") values (1, 'u-3', 'paid', 19.99);
+insert into "cache" ("key", "value", "expiration") values ('laravel_cache_a', 's:1:"x";', 1790000000) on conflict ("key") do update set "value" = "excluded"."value", "expiration" = "excluded"."expiration";
+insert into "cache" ("key", "value", "expiration") values ('laravel_cache_a', 's:1:"y";', 1790000001) on conflict ("key") do update set "value" = "excluded"."value", "expiration" = "excluded"."expiration";
+insert or ignore into "cache_locks" ("key", "owner", "expiration") values ('lock', 'o1', 1);
+insert or ignore into "cache_locks" ("key", "owner", "expiration") values ('lock', 'o2', 2);
+-- batch 2: add, rename, drop and change columns
+alter table "users" add column "role" varchar not null default 'member';
+alter table "users" add column "phone" varchar;
+alter table "users" add column "settings" text not null default '{}';
+alter table "users" rename column "name" to "full_name";
+alter table "users" drop column "remember_token";
+create index "users_role_index" on "users" ("role");
+PRAGMA foreign_keys = OFF;
+create table "__temp__orders" ("id" integer primary key autoincrement not null, "user_id" integer not null, "status" varchar check ("status" in ('pending', 'paid', 'shipped', 'refunded')) not null default 'pending', "total" numeric not null default '0', "meta" text, "uuid" varchar not null, "created_at" datetime, "updated_at" datetime, "deleted_at" datetime, foreign key("user_id") references "users"("id") on delete cascade on update cascade);
+insert into "__temp__orders" ("id", "user_id", "status", "total", "meta", "uuid", "created_at", "updated_at", "deleted_at") select "id", "user_id", "status", "total", "meta", "uuid", "created_at", "updated_at", "deleted_at" from "orders";
+drop table "orders";
+alter table "__temp__orders" rename to "orders";
+create index "orders_status_created_at_index" on "orders" ("status", "created_at");
+create unique index "orders_uuid_unique" on "orders" ("uuid");
+PRAGMA foreign_keys = ON;
+drop index "users_role_index";
+alter table "users" drop column "role";
+drop table if exists "job_batches";
+insert into "migrations" ("migration", "batch") values ('2026_11_25_000001_alter_users', 2);
+select max("batch") as aggregate from "migrations";
+select "migration" from "migrations" order by "batch" asc, "migration" asc;
+-- rollback of batch 2
+delete from "migrations" where "migration" = '2026_11_25_000001_alter_users';
+alter table "users" rename column "full_name" to "name";
+alter table "users" drop column "settings";
+alter table "users" drop column "phone";
