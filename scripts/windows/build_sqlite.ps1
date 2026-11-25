@@ -1,7 +1,7 @@
 # Builds C SQLite 3.51.0, the library Grant's engine is checked against, on
 # Windows from the amalgamation pinned by hash (the same zip the engine's
-# evidence pins): sqlite3.lib, static and built /MT like Crystal's own
-# runtime, for the specs that link C SQLite, and sqlite3.exe for the ones
+# evidence pins): sqlite3.lib, static and built /MD to share the C runtime
+# DLL Crystal links (LNK4098 otherwise), for the specs that link C SQLite, and sqlite3.exe for the ones
 # that run the shell. Adds the directory to the job's PATH, LIB and
 # CRYSTAL_LIBRARY_PATH, and turns the shell's \r\n line ends off.
 #
@@ -25,7 +25,7 @@ $Source = Join-Path $Destination $Name
 $VsWhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
 $VsPath = & $VsWhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
 $VcVars = Join-Path $VsPath "VC\Auxiliary\Build\vcvars64.bat"
-$Build = "call `"$VcVars`" >nul && cd /d `"$Source`" && cl /nologo /O2 /MT /c sqlite3.c && lib /nologo /OUT:sqlite3.lib sqlite3.obj && cl /nologo /O2 /MT shell.c sqlite3.obj /Fe:sqlite3.exe"
+$Build = "call `"$VcVars`" >nul && cd /d `"$Source`" && cl /nologo /O2 /MD /c sqlite3.c && lib /nologo /OUT:sqlite3.lib sqlite3.obj && cl /nologo /O2 /MD shell.c sqlite3.obj /Fe:sqlite3.exe"
 cmd /c $Build
 if ($LASTEXITCODE -ne 0) { throw "building SQLite failed ($LASTEXITCODE)" }
 & (Join-Path $Source "sqlite3.exe") -version
