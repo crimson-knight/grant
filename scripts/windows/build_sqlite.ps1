@@ -3,7 +3,7 @@
 # evidence pins): sqlite3.lib, static and built /MT like Crystal's own
 # runtime, for the specs that link C SQLite, and sqlite3.exe for the ones
 # that run the shell. Adds the directory to the job's PATH, LIB and
-# CRYSTAL_LIBRARY_PATH.
+# CRYSTAL_LIBRARY_PATH, and turns the shell's \r\n line ends off.
 #
 #   pwsh scripts/windows/build_sqlite.ps1 C:\path\to\destination
 param([Parameter(Mandatory = $true)] [string] $Destination)
@@ -29,6 +29,10 @@ $Build = "call `"$VcVars`" >nul && cd /d `"$Source`" && cl /nologo /O2 /MT /c sq
 cmd /c $Build
 if ($LASTEXITCODE -ne 0) { throw "building SQLite failed ($LASTEXITCODE)" }
 & (Join-Path $Source "sqlite3.exe") -version
+
+# The shell writes "\r\n" line ends on Windows unless .crlf is off; the
+# specs compare its output with "\n" line ends, as on every other system.
+Set-Content -Path (Join-Path $env:USERPROFILE ".sqliterc") -Value ".crlf off"
 
 $LibraryPath = (crystal env CRYSTAL_LIBRARY_PATH).Trim()
 Add-Content -Path $env:GITHUB_PATH -Value $Source

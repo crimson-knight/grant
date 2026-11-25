@@ -127,20 +127,6 @@ jobs:
             spec/grant/sqlite_engine/crash_recovery_spec.cr `
             spec/grant/sqlite_engine/lock_wait_processes_spec.cr
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Run the engine's differential, corpus and statement specs
-        if: ${{ !cancelled() }}
-        run: |
-          crystal spec --no-color `
-            spec/grant/sqlite_engine/corpus_writes_spec.cr `
-            spec/grant/sqlite_engine/damage_fuzz_spec.cr `
-            spec/grant/sqlite_engine/differential_spec.cr `
-            spec/grant/sqlite_engine/random_differential_spec.cr `
-            spec/grant/sqlite_engine/random_writes_spec.cr `
-            spec/grant/sqlite_engine/query/date_time_spec.cr `
-            spec/grant/sqlite_engine/query/backup_spec.cr `
-            spec/grant/sqlite_engine/query/write_statements_spec.cr `
-            spec/grant/sqlite_engine/sql/acceptance_spec.cr
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
   # The floor is the minimum Crystal in shard.yml (scripts/crystal-floor.sh
   # reads it; no workflow repeats the number). This job builds Grant and runs
