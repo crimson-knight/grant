@@ -67,7 +67,11 @@ module Grant::SQLiteEngine
   # file at the same time.
   class PosixFileSystem < FileSystem
     def open(path : String) : DatabaseFile
-      PosixFile.new(path)
+      {% if flag?(:win32) %}
+        raise UnsupportedPlatform.new("Windows")
+      {% else %}
+        PosixFile.new(path)
+      {% end %}
     end
 
     def exists?(path : String) : Bool
@@ -79,10 +83,15 @@ module Grant::SQLiteEngine
     end
 
     def open_shared_memory(path : String) : SharedMemory
-      MappedSharedMemory.new(path)
+      {% if flag?(:win32) %}
+        raise UnsupportedPlatform.new("Windows")
+      {% else %}
+        MappedSharedMemory.new(path)
+      {% end %}
     end
   end
 
+  {% unless flag?(:win32) %}
   # fcntl(2) byte-range locks, bound from the C library Crystal already
   # links. The `flock` layout and command numbers differ between macOS and
   # Linux.
@@ -301,6 +310,7 @@ module Grant::SQLiteEngine
       LibFileLock.fcntl(@file.fd, LibFileLock::F_SETLK, pointerof(request)) == 0
     end
   end
+  {% end %}
 
   # The lock each connection of this process holds on each database file
   # (by real path), so that connections of one process exclude each other

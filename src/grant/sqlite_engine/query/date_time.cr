@@ -486,17 +486,29 @@ module Grant::SQLiteEngine::Query
       else
         unix_seconds = @julian_day_milliseconds.tdiv(1000) &- 210_866_760_000_i64
       end
-      seconds_since_epoch = LibC::TimeT.new!(unix_seconds)
-      local = uninitialized LibC::Tm
-      if LibC.localtime_r(pointerof(seconds_since_epoch), pointerof(local)).null?
-        raise SQLError.new("local time unavailable")
-      end
-      @year = local.tm_year + 1900 - year_difference
-      @month = local.tm_mon + 1
-      @day = local.tm_mday
-      @hour = local.tm_hour
-      @minute = local.tm_min
-      @seconds = local.tm_sec + @julian_day_milliseconds.remainder(1000) * 0.001
+      {% if flag?(:win32) %}
+        # Windows has no localtime_r; Crystal's local time zone gives the
+        # same calendar fields.
+        local = Time.unix(unix_seconds).in(Time::Location.local)
+        @year = local.year - year_difference
+        @month = local.month
+        @day = local.day
+        @hour = local.hour
+        @minute = local.minute
+        @seconds = local.second + @julian_day_milliseconds.remainder(1000) * 0.001
+      {% else %}
+        seconds_since_epoch = LibC::TimeT.new!(unix_seconds)
+        local = uninitialized LibC::Tm
+        if LibC.localtime_r(pointerof(seconds_since_epoch), pointerof(local)).null?
+          raise SQLError.new("local time unavailable")
+        end
+        @year = local.tm_year + 1900 - year_difference
+        @month = local.tm_mon + 1
+        @day = local.tm_mday
+        @hour = local.tm_hour
+        @minute = local.tm_min
+        @seconds = local.tm_sec + @julian_day_milliseconds.remainder(1000) * 0.001
+      {% end %}
       @has_valid_date = true
       @has_valid_time = true
       @has_valid_julian_day = false
