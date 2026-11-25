@@ -3,13 +3,24 @@ require "spec"
 {% skip_file unless env("CURRENT_ADAPTER") == "pg" %}
 
 require "file_utils"
-require "openssl"
+{% if flag?(:use_openssl) %}
+  require "openssl"
+{% end %}
 require "process"
 require "random/secure"
 require "socket"
 require "socket/tcp_server"
 require "socket/tcp_socket"
 require "../../../../src/grant/drivers/pg/pg"
+
+# What a refused handshake raises in the client: Grant's own ConnectionError
+# on Beryl TLS (the default), OpenSSL's error in a -Duse_openssl build. The
+# in-process server is Beryl's in both.
+{% if flag?(:use_openssl) %}
+  private alias TLSClientError = OpenSSL::SSL::Error
+{% else %}
+  private alias TLSClientError = Grant::PQ::ConnectionError
+{% end %}
 
 private record LocalTLSCertificates,
   ca_certificate_file : String,
@@ -49,6 +60,7 @@ private def with_local_tls_certificates(& : LocalTLSCertificates -> T) : T foral
       basicConstraints=critical,CA:FALSE
       keyUsage=critical,digitalSignature,keyEncipherment
       extendedKeyUsage=serverAuth
+      authorityKeyIdentifier=keyid
       EXTENSIONS
 
     run_openssl([
@@ -106,7 +118,8 @@ private def expect_local_startup_frame(attempt : LocalTLSAttempt, first_user : S
   startup_message.ends_with?("\0\0").should be_true
 end
 
-# Points OpenSSL's default trust store at *certificate_file* for the block.
+# Points the default trust store (OpenSSL's default paths, or Beryl's
+# `TrustStore.system`) at *certificate_file* for the block.
 private def with_system_certificate_file(certificate_file : String, &)
   previous_value = ENV["SSL_CERT_FILE"]?
   ENV["SSL_CERT_FILE"] = certificate_file
@@ -117,7 +130,7 @@ end
 
 private def attempt_local_tls_startup(host : String, sslmode : String, ca_file : String?, certificates : LocalTLSCertificates) : LocalTLSAttempt
   server = TCPServer.new("127.0.0.1", 0)
-  server_context = OpenSSL::SSL::Context::Server.new
+  server_context = Grant::Beryl::TLS::Context::Server.new
   server_context.certificate_chain = certificates.leaf_certificate_file
   server_context.private_key = certificates.leaf_private_key_file
   server_observation = Channel({Int32?, Bytes?, Exception?}).new
@@ -140,7 +153,7 @@ private def attempt_local_tls_startup(host : String, sslmode : String, ca_file :
 
         client << 'S'
         client.flush
-        tls_client = OpenSSL::SSL::Socket::Server.new(client, context: server_context, sync_close: true)
+        tls_client = Grant::Beryl::TLS::Socket::Server.new(client, server_context, sync_close: true)
         declared_startup_frame_length = tls_client.read_bytes(Int32, IO::ByteFormat::NetworkEndian)
         startup_declared_length = declared_startup_frame_length
         raise "The TLS client sent an invalid startup frame length" if declared_startup_frame_length < 8
@@ -180,7 +193,7 @@ private def attempt_local_tls_startup(host : String, sslmode : String, ca_file :
       pg_connection.soc.close
     rescue IO::Error
       # The local TLS server closes after observing the startup frame.
-    rescue OpenSSL::SSL::Error
+    rescue Grant::Beryl::TLS::Error
       # The peer may have completed its close before the client did.
     end
   end
@@ -213,7 +226,11 @@ private def plain_server_settings
 end
 
 private def pg_connection_info(host : String, port : String, database : String, sslmode : String, ca_file : String? = nil) : Grant::PQ::ConnInfo
-  conninfo = "host=#{host} port=#{port} dbname=#{database} user=postgres sslmode=#{sslmode}"
+  user = ENV["GRANT_PG_TLS_USER"]? || "postgres"
+  conninfo = "host=#{host} port=#{port} dbname=#{database} user=#{user} sslmode=#{sslmode}"
+  if password = ENV["GRANT_PG_TLS_PASSWORD"]?
+    conninfo += " password=#{password}"
+  end
   conninfo += " sslrootcert=#{ca_file}" if ca_file
   Grant::PQ::ConnInfo.from_conninfo_string(conninfo)
 end
@@ -293,7 +310,7 @@ describe Grant::PQ::Connection, "TLS certificate verification (D1)" do
           with_local_tls_certificates do |certificates|
             attempt = attempt_local_tls_startup("127.0.0.1", "verify-full", certificates.ca_certificate_file, certificates)
 
-            attempt.client_error.should be_a(OpenSSL::SSL::Error)
+            attempt.client_error.should be_a(TLSClientError)
             attempt.startup_declared_length.should be_nil
             attempt.startup_payload.should be_nil
           end
@@ -304,7 +321,7 @@ describe Grant::PQ::Connection, "TLS certificate verification (D1)" do
             with_system_certificate_file(certificates.ca_certificate_file) do
               attempt = attempt_local_tls_startup("localhost", "verify-full", certificates.unrelated_ca_certificate_file, certificates)
 
-              attempt.client_error.should be_a(OpenSSL::SSL::Error)
+              attempt.client_error.should be_a(TLSClientError)
               attempt.startup_payload.should be_nil
             end
           end
@@ -314,7 +331,7 @@ describe Grant::PQ::Connection, "TLS certificate verification (D1)" do
           with_local_tls_certificates do |certificates|
             attempt = attempt_local_tls_startup("localhost", "verify-ca", certificates.unrelated_ca_certificate_file, certificates)
 
-            attempt.client_error.should be_a(OpenSSL::SSL::Error)
+            attempt.client_error.should be_a(TLSClientError)
             attempt.startup_declared_length.should be_nil
             attempt.startup_payload.should be_nil
           end
@@ -426,6 +443,44 @@ describe Grant::PQ::Connection, "TLS certificate verification (D1)" do
       end
     end
   end
+
+  context "on a server that takes TLS 1.3 only" do
+    it "negotiates TLS 1.3 for verify-full" do
+      settings = tls_server_settings || pending!("needs GRANT_PG_TLS_PORT and GRANT_PG_TLS_DATABASE")
+      ca_file = settings[:ca_file] || pending!("needs GRANT_PG_TLS_CA_FILE")
+      conn_info = pg_connection_info("localhost", settings[:tls_port], settings[:database], "verify-full", ca_file)
+      with_pg_connection(conn_info) do |connection|
+        connection.query_one("SELECT version FROM pg_stat_ssl WHERE pid = pg_backend_pid()", as: String).should eq "TLSv1.3"
+      end
+    end
+
+    it "binds SCRAM to the server certificate (SCRAM-SHA-256-PLUS, tls-server-end-point)" do
+      settings = tls_server_settings || pending!("needs GRANT_PG_TLS_PORT and GRANT_PG_TLS_DATABASE")
+      ca_file = settings[:ca_file] || pending!("needs GRANT_PG_TLS_CA_FILE")
+      pending!("needs GRANT_PG_TLS_PASSWORD for a scram-sha-256 server") unless ENV["GRANT_PG_TLS_PASSWORD"]?
+      # Allowing only scram-sha-256-plus makes the driver refuse any other
+      # mechanism, and the server checks the binding data, so a login proves
+      # the hash of the certificate matched the server's own.
+      conninfo = pg_connection_info("localhost", settings[:tls_port], settings[:database], "verify-full", ca_file)
+      plus_only = Grant::PQ::ConnInfo.from_conninfo_string(
+        "postgres://#{conninfo.user}:#{conninfo.password}@localhost:#{settings[:tls_port]}/#{settings[:database]}" \
+        "?sslmode=verify-full&sslrootcert=#{ca_file}&auth_methods=scram-sha-256-plus")
+      with_pg_connection(plus_only) do |connection|
+        connection.query_one("SELECT 1", as: Int32).should eq 1
+      end
+    end
+  end
+
+  {% unless flag?(:use_openssl) %}
+    it "names the TLS 1.3 requirement when the server stops at TLS 1.2" do
+      port = ENV["GRANT_PG_TLS12_PORT"]? || pending!("needs GRANT_PG_TLS12_PORT")
+      conn_info = Grant::PQ::ConnInfo.new(host: "127.0.0.1", port: port, database: "grant_db",
+        user: ENV["GRANT_PG_TLS_USER"]? || "postgres", sslmode: :require)
+      expect_raises(Grant::PQ::ConnectionError, /TLS 1\.3/) do
+        Grant::PQ::Connection.new(conn_info)
+      end
+    end
+  {% end %}
 
   it "closes the socket and names each sslmode when a server answers N" do
     [:require, :"verify-ca", :"verify-full"].each do |sslmode|

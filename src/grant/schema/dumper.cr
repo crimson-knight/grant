@@ -840,7 +840,10 @@ module Grant::Schema
 
     private def mysqldump_command : {::String, Array(::String), Hash(::String, ::String)}
       connection = ConnectionSettings.parse(@adapter.url)
-      arguments = ["--no-data", "--skip-comments", "--skip-add-drop-table"]
+      # --set-gtid-purged=OFF: a structure dump carries no replication state.
+      # Without it, mysqldump from a server with GTIDs on (the MySQL 9.x
+      # images) writes SET @@GLOBAL.GTID_PURGED, which the load then refuses.
+      arguments = ["--no-data", "--skip-comments", "--skip-add-drop-table", "--set-gtid-purged=OFF"]
       arguments.concat(connection.mysql_arguments)
       {"mysqldump", arguments, connection.environment("MYSQL_PWD")}
     end

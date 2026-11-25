@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+### PostgreSQL TLS runs on Beryl TLS 1.3; no OpenSSL by default
+
+- The PostgreSQL driver connects over Beryl TLS 1.3, written in Crystal, so
+  an app on the PostgreSQL adapter links neither libssl nor libcrypto with no
+  flag and no setting. `sslmode` `require`, `verify-ca` and `verify-full`
+  work as before; `verify-ca` checks the chain only and `verify-full` the
+  chain and the host name. Without `sslrootcert` (or with
+  `sslrootcert=system`) the chain is checked against the system roots: the
+  file `SSL_CERT_FILE` names, else the operating system bundle.
+- SCRAM-SHA-256-PLUS binds to the server certificate (tls-server-end-point)
+  through Beryl.
+- **TLS 1.3 only.** A server that offers only TLS 1.2 is refused with an
+  error that names the requirement (set `ssl_min_protocol_version =
+  'TLSv1.3'`, PostgreSQL 12 or later). Tested on PostgreSQL 17.12 and 19.0.
+- `-Duse_openssl` keeps the OpenSSL path for one release, for servers that
+  stop at TLS 1.2 and for client certificates (`sslcert`, `sslkey`), which
+  the Beryl path refuses with an error that names the flag.
+  `-Dwithout_openssl` is no longer needed and changes nothing.
+- The driver no longer requires `http` (it needed only `URI::Params`), which
+  had pulled OpenSSL in through `HTTP::Client`.
+- `amber db create` and `drop` keep the TLS parameters of the database URL
+  (`sslmode`, `sslrootcert`, `ssl-mode`, `ssl-ca` and the rest) on their
+  connection to the maintenance database.
+
 ## 0.27.0 - 2026-11-24
 
 Grant 0.27.0 ships its own SQLite engine, written in Crystal

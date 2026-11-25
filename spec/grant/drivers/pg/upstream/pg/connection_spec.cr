@@ -13,7 +13,10 @@ describe Grant::PG::Connection, "#initialize" do
 
   it "set application name" do
     URI.parse(PG_DRIVER_DB_URL).tap do |uri|
-      uri.query = "application_name=specs"
+      # Keep the URL's own parameters (the TLS settings among them).
+      params = uri.query_params
+      params["application_name"] = "specs"
+      uri.query = params.to_s
       DB.open(uri.to_s) do |db|
         db.query_one("SHOW application_name", as: String).should eq("specs")
       end

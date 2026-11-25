@@ -1,13 +1,14 @@
 #!/usr/bin/ruby
-# Proves a Grant app built with -Dwithout_openssl links no OpenSSL.
+# Proves a Grant app links no OpenSSL by default.
 #
 # Builds the probes in scripts/linkage with $CRYSTAL (default crystal-alpha)
-# and the `without_openssl` flag, then counts OpenSSL in each binary:
-# `otool -L` (macOS) or `ldd` (Linux) for libssl and libcrypto, `nm` for
-# EVP_, SSL_ and OPENSSL_ symbols. The default-app and PostgreSQL probes must
-# show 0 and 0. The default-app probe built without the flag must show
-# OpenSSL, so the check is known to be able to fail. The flagged SQLite probe
-# is also run, so it must work as well as link cleanly.
+# and no flags, then counts OpenSSL in each binary: `otool -L` (macOS) or
+# `ldd` (Linux) for libssl and libcrypto, `nm` for EVP_, SSL_ and OPENSSL_
+# symbols. The default-app and PostgreSQL probes must show 0 and 0: the
+# PostgreSQL driver speaks TLS through Beryl. The PostgreSQL probe built
+# with -Duse_openssl (the opt-out kept for one release) must show OpenSSL,
+# so the check is known to be able to fail. The SQLite probe is also run,
+# so it must work as well as link cleanly.
 #
 #   /usr/bin/ruby scripts/check_openssl_linkage.rb
 require "open3"
@@ -22,9 +23,9 @@ OPENSSL_SYMBOL = /[ _](EVP|SSL|OPENSSL)_/
 Probe = Struct.new(:name, :source, :list_of_flags, :expect_openssl, :run)
 
 LIST_OF_PROBES = [
-  Probe.new("default app (SQLite)", "scripts/linkage/default_app_probe.cr", ["-Dwithout_openssl"], false, true),
-  Probe.new("PostgreSQL adapter", "scripts/linkage/pg_app_probe.cr", ["-Dwithout_openssl"], false, false),
-  Probe.new("control (flag not given)", "scripts/linkage/default_app_probe.cr", [], true, false),
+  Probe.new("default app (SQLite)", "scripts/linkage/default_app_probe.cr", [], false, true),
+  Probe.new("PostgreSQL adapter", "scripts/linkage/pg_app_probe.cr", [], false, false),
+  Probe.new("control (-Duse_openssl)", "scripts/linkage/pg_app_probe.cr", ["-Duse_openssl"], true, false),
 ]
 
 def count_matches(command, pattern)
@@ -56,7 +57,7 @@ Dir.mktmpdir("grant-openssl-linkage") do |directory|
 end
 
 if list_of_failures.empty?
-  puts "OpenSSL-free with -Dwithout_openssl: OK"
+  puts "OpenSSL-free by default: OK"
 else
   puts list_of_failures
   exit 1

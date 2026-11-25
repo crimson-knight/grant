@@ -28,11 +28,13 @@ module W6C04
     "grant_w6_c04_#{name}"
   end
 
-  # A URL on the PostgreSQL server of `PG_DATABASE_URL`, naming *database*.
+  # A URL on the PostgreSQL server of `PG_DATABASE_URL`, naming *database*,
+  # with the same parameters (the TLS settings among them).
   def self.pg_url(database : String) : String
     uri = URI.parse(ADAPTER_URL)
     uri.path = "/#{database}"
-    uri.query = nil
+    # Re-encoded the way the adapter writes the URL back, so the two compare.
+    uri.query = uri.query_params.to_s.presence
     uri.to_s
   end
 

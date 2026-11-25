@@ -16,8 +16,13 @@ describe Grant::PQ::Connection, "#server_parameters" do
     get.call.should eq("on")
     PG_DRIVER_DB.exec "set standard_conforming_strings to on"
     get.call.should eq("on")
-    PG_DRIVER_DB.exec "set standard_conforming_strings to off"
-    get.call.should eq("off")
+    # PostgreSQL 19 no longer accepts off ("non-standard string literals are
+    # not supported"); on those servers the off step is skipped.
+    server_major = PG_DRIVER_DB.scalar("SHOW server_version_num").as(String).to_i // 10000
+    if server_major < 19
+      PG_DRIVER_DB.exec "set standard_conforming_strings to off"
+      get.call.should eq("off")
+    end
     PG_DRIVER_DB.exec "set standard_conforming_strings to default"
     get.call.should eq("on")
   end

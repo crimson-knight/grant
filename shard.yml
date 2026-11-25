@@ -31,8 +31,9 @@ development_dependencies:
   # password inside the TLS tunnel and skips RSA).
   mysql:
     github: crimson-knight/crystal-mysql
-    version: "0.17.0"
-    commit: c061324dcef89a200a7a3f86a59b2ebf03f83602
+    version: "0.18.0"
+    # TLS 1.3 and the password exchanges on Beryl (crystal-mysql#1 to #3).
+    commit: 12169921c2920494caa4421f9b412838b4bb5195
   ameba:
     github: crystal-ameba/ameba
     # Crystal 1.21 compatibility pending Ameba 1.7.0.

@@ -5,8 +5,8 @@ require "socket"
 require "socket/tcp_socket"
 require "socket/unix_socket"
 require "./notice"
-require "../../../vendor/beryl/crypto"
-{% unless flag?(:without_openssl) %}
+require "../../../vendor/beryl"
+{% if flag?(:use_openssl) %}
   require "openssl"
   require "../ext/openssl"
 {% end %}
@@ -14,12 +14,42 @@ require "../../../vendor/beryl/crypto"
 module Grant::PQ
   record Notification, pid : Int32, channel : String, payload : String
 
-  # The sockets a connection runs over. TLS comes from OpenSSL, so a build
-  # made with `-Dwithout_openssl` has the two plain kinds only.
-  {% if flag?(:without_openssl) %}
-    alias ConnectionSocket = UNIXSocket | TCPSocket
+  # The TLS socket. Beryl TLS 1.3, in Crystal, by default; OpenSSL in a
+  # build made with `-Duse_openssl`, which is kept for one release.
+  {% if flag?(:use_openssl) %}
+    alias TLSSocket = OpenSSL::SSL::Socket::Client
   {% else %}
-    alias ConnectionSocket = UNIXSocket | TCPSocket | OpenSSL::SSL::Socket::Client
+    alias TLSSocket = Grant::Beryl::TLS::Socket::Client
+  {% end %}
+
+  # The sockets a connection runs over.
+  alias ConnectionSocket = UNIXSocket | TCPSocket | TLSSocket
+
+  {% unless flag?(:use_openssl) %}
+    # Verifies the server's chain to *trust_store* (RFC 5280 path
+    # validation, the serverAuth purpose) without checking its name, which
+    # is what sslmode=verify-ca asks for.
+    @@system_trust_store : Grant::Beryl::Certificates::TrustStore? = nil
+    @@system_trust_store_mutex = Mutex.new
+
+    # The system roots (`TrustStore.system`), read on first use and shared
+    # by every connection: a trust store is not changed after it is built,
+    # and reading the bundle costs more than a handshake.
+    def self.system_trust_store : Grant::Beryl::Certificates::TrustStore
+      @@system_trust_store_mutex.synchronize do
+        @@system_trust_store ||= Grant::Beryl::Certificates::TrustStore.system
+      end
+    end
+
+    class ChainOnlyVerifier < Grant::Beryl::TLS::CertificateVerifier
+      def initialize(trust_store : Grant::Beryl::Certificates::TrustStore)
+        @verifier = Grant::Beryl::TLS::WebPkiVerifier.new(trust_store)
+      end
+
+      def verify_chain(chain : Array(Grant::Beryl::Certificates::Certificate), hostname : String?) : Nil
+        @verifier.verify_chain(chain, nil)
+      end
+    end
   {% end %}
 
   # :nodoc:
@@ -58,39 +88,24 @@ module Grant::PQ
     def initialize(@soc, @conninfo)
     end
 
-    {% if flag?(:without_openssl) %}
-      # This build has no TLS. `sslmode=prefer` and `sslmode=allow` accept an
-      # unencrypted connection, so they continue without one; a mode that
-      # requires TLS raises.
-      private def negotiate_ssl
-        return unless sslmode_requires_tls?
+    private def negotiate_ssl
+      write_i32 8
+      write_i32 80877103
+      @soc.flush
 
-        close_socket_after_error
-        raise ConnectionError.new(
-          "sslmode=#{@conninfo.sslmode} needs TLS, and this app was built with -Dwithout_openssl. " \
-          "Build it without that flag, or connect with sslmode=disable to a database on a trusted network."
-        )
+      if process_ssl_message
+        @soc = open_tls_socket
+      elsif sslmode_requires_tls?
+        raise ConnectionError.new("sslmode=#{@conninfo.sslmode} and server did not establish SSL")
       end
-    {% else %}
-      private def negotiate_ssl
-        write_i32 8
-        write_i32 80877103
-        @soc.flush
+    rescue ex
+      close_socket_after_error
+      raise ex
+    end
 
-        if process_ssl_message
-          ctx = ssl_context
-          @soc = OpenSSL::SSL::Socket::Client.new(
-            @soc,
-            context: ctx,
-            sync_close: true,
-            hostname: ssl_hostname
-          )
-        elsif sslmode_requires_tls?
-          raise ConnectionError.new("sslmode=#{@conninfo.sslmode} and server did not establish SSL")
-        end
-      rescue ex
-        close_socket_after_error
-        raise ex
+    {% if flag?(:use_openssl) %}
+      private def open_tls_socket : TLSSocket
+        OpenSSL::SSL::Socket::Client.new(@soc, context: ssl_context, sync_close: true, hostname: ssl_hostname)
       end
 
       private def ssl_context : OpenSSL::SSL::Context::Client
@@ -121,6 +136,89 @@ module Grant::PQ
         end
 
         context
+      end
+
+      # tls-server-end-point (RFC 5929 §4.1): the server certificate hashed
+      # with its signature's hash, SHA-256 in place of MD5 and SHA-1.
+      private def tls_server_end_point : Bytes?
+        socket = @soc
+        return unless socket.is_a?(TLSSocket)
+
+        socket.peer_certificate.scram_signature
+      end
+    {% else %}
+      # The alerts that mean the server and Beryl share no protocol version:
+      # a server that stops at TLS 1.2 answers a TLS 1.3 ClientHello with one
+      # of them (or a ServerHello for TLS 1.2, which Beryl refuses with
+      # protocol_version).
+      LIST_OF_VERSION_ALERTS = [
+        Grant::Beryl::TLS::AlertDescription::ProtocolVersion,
+        Grant::Beryl::TLS::AlertDescription::HandshakeFailure,
+        Grant::Beryl::TLS::AlertDescription::InsufficientSecurity,
+      ]
+
+      private def open_tls_socket : TLSSocket
+        Grant::Beryl::TLS::Socket::Client.new(@soc, context: ssl_context, sync_close: true, hostname: ssl_hostname)
+      rescue error : Grant::Beryl::TLS::CertificateRejected
+        raise ConnectionError.new(
+          "sslmode=#{@conninfo.sslmode}: the certificate of #{@conninfo.host} did not verify: #{error.message}")
+      rescue error : Grant::Beryl::TLS::Error
+        if LIST_OF_VERSION_ALERTS.includes?(error.alert_description)
+          raise ConnectionError.new(
+            "#{@conninfo.host}:#{@conninfo.port} did not agree to TLS 1.3 (#{error.message}). " \
+            "Grant connects to PostgreSQL over TLS 1.3 only: set ssl_min_protocol_version = 'TLSv1.3' " \
+            "on the server (PostgreSQL 12 or later with OpenSSL 1.1.1 or later), " \
+            "or use sslmode=disable for a database on a trusted network")
+        end
+        raise ConnectionError.new("the TLS handshake with #{@conninfo.host}:#{@conninfo.port} failed: #{error.message}")
+      end
+
+      private def ssl_context : Grant::Beryl::TLS::Context::Client
+        if @conninfo.sslcert || @conninfo.sslkey
+          raise ConnectionError.new(
+            "sslcert and sslkey (client certificates) are not supported by Grant's TLS; " \
+            "build with -Duse_openssl to use them")
+        end
+
+        context = Grant::Beryl::TLS::Context::Client.new
+        unless sslmode_verifies_certificate?
+          context.verify_mode = Grant::Beryl::TLS::VerifyMode::None
+          return context
+        end
+
+        sslrootcert = @conninfo.sslrootcert
+        trust_store = if sslrootcert.nil? || sslrootcert == "system"
+                        PQ.system_trust_store
+                      else
+                        Grant::Beryl::Certificates::TrustStore.from_pem(File.read(sslrootcert))
+                      end
+        if @conninfo.sslmode == :"verify-ca"
+          # verify-ca checks the chain and not the name, so the handshake
+          # runs with no name to check and this verifier in place of the
+          # default one.
+          context.verify_mode = Grant::Beryl::TLS::VerifyMode::None
+          context.certificate_verifier = ChainOnlyVerifier.new(trust_store)
+        else
+          context.verify_mode = Grant::Beryl::TLS::VerifyMode::Peer
+          context.trust_store = trust_store
+        end
+        context
+      end
+
+      # tls-server-end-point (RFC 5929 §4.1): the server certificate hashed
+      # with its signature's hash, SHA-256 in place of MD5 and SHA-1 (and for
+      # signatures without a separate hash).
+      private def tls_server_end_point : Bytes?
+        socket = @soc
+        return unless socket.is_a?(TLSSocket)
+        certificate = socket.peer_certificate
+        return unless certificate
+
+        case certificate.signature_algorithm.hash_function
+        when .sha384? then Grant::Beryl::Crypto::V1::SHA384.digest(certificate.encoded)
+        when .sha512? then Grant::Beryl::Crypto::V1::SHA512.digest(certificate.encoded)
+        else               Grant::Beryl::Crypto::V1::SHA256.digest(certificate.encoded)
+        end
       end
     {% end %}
 
@@ -446,19 +544,18 @@ module Grant::PQ
       getter client_first_msg : String
       getter signature : Slice(UInt8)?
 
-      def initialize(@password : String, @cbind : Bool, soc)
+      # *channel_binding* is the tls-server-end-point data for
+      # SCRAM-SHA-256-PLUS, or `nil` for SCRAM-SHA-256.
+      def initialize(@password : String, channel_binding : Bytes?)
         @client_nonce = Random::Secure.urlsafe_base64(18)
 
         @name = SCRAM_NAME
         cbind_flag = "n"
-        {% unless flag?(:without_openssl) %}
-          if @cbind
-            @name = SCRAM_PLUS_NAME
-            cbind_flag = "p=tls-server-end-point"
-            cert = soc.as(OpenSSL::SSL::Socket::Client).peer_certificate
-            @signature = cert.scram_signature
-          end
-        {% end %}
+        if channel_binding
+          @name = SCRAM_PLUS_NAME
+          cbind_flag = "p=tls-server-end-point"
+          @signature = channel_binding
+        end
 
         @client_first_msg = "#{cbind_flag},,n=,r=#{@client_nonce}"
       end
@@ -503,17 +600,17 @@ module Grant::PQ
 
     private def handle_auth_sasl(mechanism_list)
       mechs = String.new(mechanism_list).split(Char::ZERO)
-      cbind = if tls_channel_binding_available? && mechs.includes?(SaslContext::SCRAM_PLUS_NAME)
-                check_auth_method!("scram-sha-256-plus")
-                true
-              elsif mechs.includes?(SaslContext::SCRAM_NAME)
-                check_auth_method!("scram-sha-256")
-                false
-              else
-                raise ConnectionError.new("no known sasl mechanism in list: #{mechs.join(", ")}")
-              end
+      channel_binding = tls_server_end_point
+      if channel_binding && mechs.includes?(SaslContext::SCRAM_PLUS_NAME)
+        check_auth_method!("scram-sha-256-plus")
+      elsif mechs.includes?(SaslContext::SCRAM_NAME)
+        check_auth_method!("scram-sha-256")
+        channel_binding = nil
+      else
+        raise ConnectionError.new("no known sasl mechanism in list: #{mechs.join(", ")}")
+      end
 
-      ctx = SaslContext.new(@conninfo.password || "", cbind, soc)
+      ctx = SaslContext.new(@conninfo.password || "", channel_binding)
 
       # send client-first-message
       write_chr 'p' # SASLInitialResponse
@@ -539,16 +636,6 @@ module Grant::PQ
       ctx.verify_server_signature(final.body)
       # receive OK
       expect_frame Frame::Authentication
-    end
-
-    # SCRAM-SHA-256-PLUS binds the exchange to the server's TLS certificate,
-    # so it needs a TLS socket.
-    private def tls_channel_binding_available? : Bool
-      {% if flag?(:without_openssl) %}
-        false
-      {% else %}
-        @soc.is_a?(OpenSSL::SSL::Socket::Client)
-      {% end %}
     end
 
     private def handle_auth_md5(salt)
