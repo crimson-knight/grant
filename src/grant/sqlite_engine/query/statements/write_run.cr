@@ -454,16 +454,34 @@ module Grant::SQLiteEngine::Query
     end
 
     # Compiles the expression terms of *rule*, raising what C's
-    # sqlite3ResolveSelfReference reports for them.
+    # sqlite3ResolveSelfReference reports for them and for a partial
+    # index's WHERE.
     def check_index_expressions(table : WriteTable, rule : IndexRule) : Nil
+      rule.list_of_key_expressions.each { |expression| refuse_in_index(expression, "index expressions") }
+      rule.where.try { |where| refuse_in_index(where, "partial index WHERE clauses") }
       return if rule.list_of_key_expressions.empty?
-      rule.list_of_key_expressions.each do |expression|
-        if TextScan.contains_word?(expression.to_sql, "SELECT")
-          raise SQLError.new("subqueries prohibited in index expressions")
-        end
-      end
       key_expression_program(table, rule)
     end
+
+    # Functions without SQLITE_FUNC_CONSTANT, which an index may not call.
+    INDEX_PROHIBITED_FUNCTIONS = ExpressionWalk::NONDETERMINISTIC +
+                                 %w[sqlite_version sqlite_source_id sqlite_compileoption_get sqlite_compileoption_used]
+
+    # resolve.c notValidImpl under NC_IdxExpr and NC_PartIdx: a subquery, a
+    # bound parameter or a non-deterministic function fails CREATE INDEX
+    # (the first met, walking the expression before its operands).
+    private def refuse_in_index(expression : SQL::Expression, context : String) : Nil
+      if expression.is_a?(SQL::ScalarSubquery) || expression.is_a?(SQL::Exists) || expression.is_a?(SQL::InSelect)
+        raise SQLError.new("subqueries prohibited in #{context}")
+      end
+      raise SQLError.new("parameters prohibited in #{context}") if expression.is_a?(SQL::Parameter)
+      if expression.is_a?(SQL::FunctionCall) && INDEX_PROHIBITED_FUNCTIONS.includes?(expression.name.value.downcase)
+        raise SQLError.new("non-deterministic functions prohibited in #{context}")
+      end
+      index_compiler.children_of(expression).each { |child| refuse_in_index(child, context) }
+    end
+
+    private getter index_compiler : Compiler { Compiler.new(@session) }
 
     private def key_expression_program(table : WriteTable, rule : IndexRule) : RowProgram
       table.key_expression_programs[rule.layout.entry.object_name] ||= begin
