@@ -297,12 +297,12 @@ def run_sequences(out_dir, count, seed, start, size, wal = false)
     random = Random.new(seed + number)
     sequence, sql = random_sequence(random, size, wal)
     name = format("seq_%05d", number)
-    File.write(File.join(out_dir, "#{name}.json"), JSON.generate(sequence.merge("seed" => seed + number)))
-    File.write(File.join(out_dir, "#{name}.sql"), sql)
+    File.binwrite(File.join(out_dir, "#{name}.json"), JSON.generate(sequence.merge("seed" => seed + number)))
+    File.binwrite(File.join(out_dir, "#{name}.sql"), sql)
     database = File.join(out_dir, "#{name}.c.db")
     FileUtils.rm_f([database, "#{database}-journal", "#{database}-wal", "#{database}-shm"])
     _output, error, _status = Open3.capture3(SQLITE3, database, stdin_data: sql)
-    File.write(File.join(out_dir, "#{name}.c.errors"), error.lines.count { |line| line =~ /error near line/i }.to_s)
+    File.binwrite(File.join(out_dir, "#{name}.c.errors"), error.lines.count { |line| line =~ /error near line/i }.to_s)
   end
 end
 
@@ -311,11 +311,11 @@ end
 def verify(database)
   base = database.sub(/\.db\z/, "")
   integrity, error, _status = Open3.capture3(SQLITE3, database, stdin_data: "PRAGMA integrity_check;")
-  File.write("#{base}.integrity", error.empty? ? integrity : "#{integrity}#{error}")
+  File.binwrite("#{base}.integrity", error.empty? ? integrity : "#{integrity}#{error}")
   return unless error.empty?
-  File.write("#{base}.schema", sqlite3(database, SCHEMA_SQL))
+  File.binwrite("#{base}.schema", sqlite3(database, SCHEMA_SQL))
   dump = expected_dump_sql(database)
-  File.write("#{base}.expected", dump.empty? ? "" : sqlite3(database, dump, "-list", "-bail"))
+  File.binwrite("#{base}.expected", dump.empty? ? "" : sqlite3(database, dump, "-list", "-bail"))
 end
 
 # The crash checks verify many small files whose schema is one of a few:
@@ -338,14 +338,14 @@ def run_verify_states(out_dir, suffix, threads)
         base = database.sub(/\.db\z/, "")
         output, error, _status = Open3.capture3(SQLITE3, database, stdin_data: "PRAGMA integrity_check;\nSELECT '--schema';\n#{SCHEMA_SQL}\n")
         integrity, schema = output.split("--schema\n", 2)
-        File.write("#{base}.integrity", error.empty? ? integrity.to_s : "#{integrity}#{error}")
+        File.binwrite("#{base}.integrity", error.empty? ? integrity.to_s : "#{integrity}#{error}")
         next unless error.empty? && integrity == "ok\n"
         dump = lock.synchronize { cache[schema] }
         unless dump
           dump = expected_dump_sql(database)
           lock.synchronize { cache[schema] = dump }
         end
-        File.write("#{base}.expected", dump.empty? ? "" : sqlite3(database, dump, "-list", "-bail"))
+        File.binwrite("#{base}.expected", dump.empty? ? "" : sqlite3(database, dump, "-list", "-bail"))
       end
     end
   end
@@ -392,11 +392,13 @@ def run_corpus_rows(out_dir, corpus_path, seed)
     end
   end
   verify(database)
-  File.write(File.join(out_dir, "corpus.json"), JSON.generate("statements" => creates, "accepted" => accepted, "rows" => rows, "manifest" => entry))
+  File.binwrite(File.join(out_dir, "corpus.json"), JSON.generate("statements" => creates, "accepted" => accepted, "rows" => rows, "manifest" => entry))
 end
 
 if __FILE__ == $PROGRAM_NAME
-  mode, out_dir = ARGV[0], ARGV[1]
+  # Dir.glob reads a backslash as an escape, so a Windows path is given
+  # forward slashes, which Windows accepts too.
+  mode, out_dir = ARGV[0], ARGV[1]&.tr("\\", "/")
   abort "usage: operations.rb sequences|verify|states|corpus OUT_DIR ..." unless %w[sequences verify states corpus].include?(mode) && out_dir
   FileUtils.mkdir_p(out_dir)
   case mode

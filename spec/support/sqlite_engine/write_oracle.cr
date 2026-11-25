@@ -58,7 +58,7 @@ module SQLiteWriteOracle
     end
 
     def self.open_session(path : String) : Grant::SQLiteEngine::Query::Session
-      pager = Grant::SQLiteEngine::Pager.open_read_write(Grant::SQLiteEngine::PosixFileSystem.new, path)
+      pager = Grant::SQLiteEngine::Pager.open_read_write(Grant::SQLiteEngine::FileSystem.native, path)
       database = Grant::SQLiteEngine::Database.new(pager, File.realpath(path))
       database.journal_mode = Grant::SQLiteEngine::JournalMode::Wal if Pair.wal?
       Grant::SQLiteEngine::Query::Session.new(database)

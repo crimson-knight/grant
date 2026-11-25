@@ -127,10 +127,10 @@ module SQLiteEngineCrashDriver
       end
       database.close
       SQLiteEngineWriteDriver.ruby(["states", directory.to_s, "crash", "4"])
-      Dir.glob((directory / "survivor_*").to_s).sort.each { |batch| verify_survivors(Path[batch]) }
+      Dir.glob((directory / "survivor_*").to_posix.to_s).sort.each { |batch| verify_survivors(Path[batch]) }
       written.each do |state_name, old_dump, new_dump, survivor|
         sqlite3_checked += 1
-        state_directory = survivor ? Dir.glob((directory / "survivor_*" / "#{state_name}.crash.db").to_s).first?.try { |file| Path[file].parent } : directory
+        state_directory = survivor ? Dir.glob((directory / "survivor_*" / "#{state_name}.crash.db").to_posix.to_s).first?.try { |file| Path[file].parent } : directory
         integrity_path = state_directory.try { |found| found / "#{state_name}.crash.integrity" }
         unless integrity_path && File.exists?(integrity_path)
           failures << "#{name} (seed #{sequence.seed}) #{state_name}: sqlite3 wrote no result"
@@ -164,21 +164,44 @@ module SQLiteEngineCrashDriver
   # holds each wal-index's dead man switch shared, as the surviving process
   # would, so sqlite3 reads the wal-index as the crash left it.
   def self.verify_survivors(batch : Path) : Nil
-    list_of_held = [] of File
+    list_of_switches = Dir.glob((batch / "*.crash.db-shm").to_posix.to_s).map { |shm| DeadManSwitch.new(shm) }
     begin
-      Dir.glob((batch / "*.crash.db-shm").to_s).each do |shm|
-        file = File.open(shm, "r+b")
-        list_of_held << file
+      SQLiteEngineWriteDriver.ruby(["states", batch.to_s, "crash", "4"])
+    ensure
+      list_of_switches.each(&.release)
+    end
+  end
+
+  # A shared lock on a wal-index's dead man switch, held through a handle of
+  # its own: fcntl(2) on POSIX systems, LockFileEx on Windows.
+  class DeadManSwitch
+    {% if flag?(:win32) %}
+      @handle : LibC::HANDLE
+
+      def initialize(path : String)
+        @handle = Grant::SQLiteEngine::WindowsHandle.open(path)
+        Grant::SQLiteEngine::WindowsHandle.lock(@handle, Grant::SQLiteEngine::SharedMemory::DEAD_MAN_BYTE, 1, exclusive: false)
+      end
+
+      def release : Nil
+        Grant::SQLiteEngine::WindowsHandle.close(@handle)
+      end
+    {% else %}
+      @file : File
+
+      def initialize(path : String)
+        @file = File.open(path, "r+b")
         request = Grant::SQLiteEngine::LibFileLock::Flock.new
         request.l_type = Grant::SQLiteEngine::LibFileLock::F_RDLCK.to_i16
         request.l_whence = IO::Seek::Set.value.to_i16
         request.l_start = Grant::SQLiteEngine::SharedMemory::DEAD_MAN_BYTE
         request.l_len = 1_i64
-        Grant::SQLiteEngine::LibFileLock.fcntl(file.fd, Grant::SQLiteEngine::LibFileLock::F_SETLK, pointerof(request))
+        Grant::SQLiteEngine::LibFileLock.fcntl(@file.fd, Grant::SQLiteEngine::LibFileLock::F_SETLK, pointerof(request))
       end
-      SQLiteEngineWriteDriver.ruby(["states", batch.to_s, "crash", "4"])
-    ensure
-      list_of_held.each(&.close)
-    end
+
+      def release : Nil
+        @file.close
+      end
+    {% end %}
   end
 end

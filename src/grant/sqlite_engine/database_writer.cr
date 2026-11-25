@@ -67,7 +67,7 @@ module Grant::SQLiteEngine
     # how long a write or checkpoint waits for another connection.
     def self.open(path : String | Path, *, read_write : Bool, cache_pages : Int32? = nil,
                   page_size : Int32 = Limits::DEFAULT_PAGE_SIZE, text_encoding : TextEncoding = TextEncoding::UTF8,
-                  file_system : FileSystem = PosixFileSystem.new, journal_mode : JournalMode? = nil,
+                  file_system : FileSystem = FileSystem.native, journal_mode : JournalMode? = nil,
                   synchronous : Synchronous = Synchronous::Full,
                   wal_autocheckpoint : Int32 = Pager::DEFAULT_WAL_AUTOCHECKPOINT,
                   busy_timeout : Time::Span = Time::Span.zero) : Database

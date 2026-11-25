@@ -51,6 +51,17 @@ module Grant::SQLiteEngine
   # Opens, tests and deletes the files of one database: the database and
   # its rollback journal.
   abstract class FileSystem
+    # The operating system's own files with the locks C SQLite takes there:
+    # `WindowsFileSystem` (os_win.c) on Windows, `PosixFileSystem`
+    # (os_unix.c) everywhere else.
+    def self.native : FileSystem
+      {% if flag?(:win32) %}
+        WindowsFileSystem.new
+      {% else %}
+        PosixFileSystem.new
+      {% end %}
+    end
+
     abstract def open(path : String) : DatabaseFile
     abstract def exists?(path : String) : Bool
     abstract def delete(path : String) : Nil
@@ -64,11 +75,12 @@ module Grant::SQLiteEngine
 
   # The operating system's files, with the POSIX advisory locks C SQLite
   # takes (os_unix.c), so a `sqlite3` process and the engine never write one
-  # file at the same time.
+  # file at the same time. Windows uses `WindowsFileSystem` instead
+  # (`FileSystem.native` picks the one for the platform).
   class PosixFileSystem < FileSystem
     def open(path : String) : DatabaseFile
       {% if flag?(:win32) %}
-        raise UnsupportedPlatform.new("Windows")
+        raise UnsupportedPlatform.new("PosixFileSystem", "Windows", "WindowsFileSystem")
       {% else %}
         PosixFile.new(path)
       {% end %}
@@ -84,7 +96,7 @@ module Grant::SQLiteEngine
 
     def open_shared_memory(path : String) : SharedMemory
       {% if flag?(:win32) %}
-        raise UnsupportedPlatform.new("Windows")
+        raise UnsupportedPlatform.new("PosixFileSystem", "Windows", "WindowsFileSystem")
       {% else %}
         MappedSharedMemory.new(path)
       {% end %}
@@ -215,17 +227,7 @@ module Grant::SQLiteEngine
     def lock(level : LockLevel) : Bool
       return true if level <= @lock_level
       @shared_locks.synchronize do
-        others = @shared_locks.highest_other(self)
-        case level
-        when .shared?
-          return false if others >= LockLevel::Pending
-        when .reserved?
-          return false if others >= LockLevel::Reserved
-        when .pending?
-          return false if others >= LockLevel::Pending
-        else
-          return false if others >= LockLevel::Shared || @shared_locks.any_other_shared?(self)
-        end
+          return false if @shared_locks.refuses?(self, level)
         held = @shared_locks.process_level
         if level > held
           unless process_lock(level, held)
@@ -342,6 +344,30 @@ module Grant::SQLiteEngine
           else
             @list_of_unused_files << descriptor
           end
+        end
+      end
+
+      # Forgets *file*'s lock when it closes. On Windows each connection has
+      # its own handle, whose locks go with it, so there is no descriptor to
+      # keep open.
+      def forget(file : DatabaseFile) : Nil
+        synchronize { @levels.delete(file.object_id) }
+      end
+
+      # True when another connection of this process holds a lock that
+      # keeps *file* from moving up to *level* (unixLock's checks against
+      # the other connections of one unixInodeInfo).
+      def refuses?(file : DatabaseFile, level : LockLevel) : Bool
+        others = highest_other(file)
+        case level
+        when .shared?
+          others >= LockLevel::Pending
+        when .reserved?
+          others >= LockLevel::Reserved
+        when .pending?
+          others >= LockLevel::Pending
+        else
+          others >= LockLevel::Shared || any_other_shared?(file)
         end
       end
 

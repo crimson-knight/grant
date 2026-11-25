@@ -30,13 +30,13 @@ module Grant::SQLiteEngine
     end
   end
 
-  # Raised when the engine is asked to open a database file on an operating
-  # system it does not support yet (Windows: its files use POSIX advisory
-  # locks and mmap(2), as os_unix.c does). The C SQLite library, Grant's
-  # default SQLite engine, runs there.
+  # Raised when a file system is asked to open a file on an operating
+  # system it was not written for (`PosixFileSystem` on Windows, whose
+  # files use POSIX advisory locks and mmap(2)). Names the one to use
+  # there; `FileSystem.native` picks it.
   class UnsupportedPlatform < Error
-    def initialize(platform : String)
-      super("Grant's SQLite engine does not open database files on #{platform} yet; use the C SQLite library (require \"grant/adapter/sqlite\", the default)")
+    def initialize(file_system : String, platform : String, alternative : String)
+      super("#{file_system} does not open files on #{platform}; use #{alternative} (Grant::SQLiteEngine::FileSystem.native)")
     end
   end
 

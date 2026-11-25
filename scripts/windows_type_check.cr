@@ -5,8 +5,8 @@
 #
 #   crystal build --no-codegen --target x86_64-windows-msvc scripts/windows_type_check.cr
 #
-# The engine opens no database file on Windows yet (it uses POSIX locks and
-# mmap(2), as os_unix.c does) and raises Grant::SQLiteEngine::UnsupportedPlatform.
+# On Windows the engine opens files through WindowsFileSystem (os_win.c's
+# LockFileEx locks and file-mapped wal-index); the windows-engine job runs it.
 require "../src/grant"
 require "../src/adapter/sqlite"
 require "../src/adapter/sqlite/grant_engine"
@@ -33,4 +33,5 @@ end
 
 WindowsTypeCheckPost.where(title: "x").first?
 WindowsTypeCheckPost.create(title: "x")
-Grant::SQLiteEngine::PosixFileSystem.new.open("windows_type_check.db")
+Grant::SQLiteEngine::FileSystem.native.open("windows_type_check.db").close
+Grant::SQLiteEngine::FileSystem.native.open_shared_memory("windows_type_check.db-shm").close(delete: true)
