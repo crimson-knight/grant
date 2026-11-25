@@ -108,7 +108,7 @@ module Grant::SQLiteEngine
     # Int64 is read as a REAL. Returns nil for text that is not a number.
     def self.number_from_text(text : String) : Value
       trimmed = text.strip(" \t\n\f\v\r")
-      return unless trimmed.matches?(/\A[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?\z/)
+      return unless TextScan.decimal_number?(trimmed)
       unless trimmed.includes?('.') || trimmed.includes?('e') || trimmed.includes?('E')
         if integer = trimmed.lchop('+').to_i64?
           return integer

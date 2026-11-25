@@ -56,7 +56,7 @@ module Grant::SQLiteEngine::Query
           database.schema.list_of_tables.each do |entry|
             next unless entry.has_a_btree?
             sql = entry.sql
-            next unless sql && sql.matches?(/references/i)
+            next unless sql && TextScan.contains_ignoring_case?(sql, "references")
             rules = write_table(entry.object_name, schema_name_of(database))
             next unless rules
             rules.list_of_foreign_keys.each do |rule|

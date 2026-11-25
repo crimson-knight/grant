@@ -705,7 +705,7 @@ class Grant::Adapter::Sqlite < Grant::Adapter::Base
       pieces = sqlite_index_pieces(create_sql)
       names = columns.map_with_index { |column, index| column || pieces[index]? || "(expression)" }
     end
-    where = create_sql.try { |text| text[/\sWHERE\s+(.*)\z/mi, 1]?.try(&.strip) }
+    where = create_sql.try { |text| Grant::SQLiteEngine::TextScan.partial_index_condition(text) }
     Grant::Schema::IndexInfo.new(table_name, index_name, names.compact, unique, where, expression)
   end
 

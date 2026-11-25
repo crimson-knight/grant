@@ -165,7 +165,7 @@ module Grant::SQLiteEngine::Query
     # right.
     private def check_compound_members(statement : SQL::SelectStatement, plans : Array(CorePlan),
                                        list_of_errors : Array(SQLError?)) : Nil
-      if expanding = list_of_errors.reverse.find { |error| error && EXPAND_ERROR.matches?(error.message || "") }
+      if expanding = list_of_errors.reverse.find { |error| error && Compiler.expand_error?(error) }
         raise expanding
       end
       widths = [] of Int32?

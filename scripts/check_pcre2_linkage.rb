@@ -3,10 +3,11 @@
 #
 # Builds the probes in scripts/linkage with $CRYSTAL (default crystal-alpha) and
 # counts PCRE2 in each binary: `otool -L` (macOS) or `ldd` (Linux) for the
-# linked library, `nm` for pcre2_ symbols. The default-app and PostgreSQL
-# probes must show 0 and 0; the control probe, which uses a Regex, must show
-# PCRE2, so the check is known to be able to fail. The SQLite probe is also
-# run, so it must work as well as link cleanly.
+# linked library, `nm` for pcre2_ symbols. The default-app probe, the same
+# workload on Grant's own SQLite engine (`grant/adapter/sqlite/grant_engine`)
+# and the PostgreSQL probe must show 0 and 0; the control probe, which uses a
+# Regex, must show PCRE2, so the check is known to be able to fail. The SQLite
+# probes are also run, so they must work as well as link cleanly.
 #
 #   /usr/bin/ruby scripts/check_pcre2_linkage.rb
 require "open3"
@@ -20,6 +21,7 @@ Probe = Struct.new(:name, :source, :expect_pcre2, :run)
 
 PROBES = [
   Probe.new("default app (SQLite)", "scripts/linkage/default_app_probe.cr", false, true),
+  Probe.new("SQLite, Grant's engine", "scripts/linkage/grant_engine_app_probe.cr", false, true),
   Probe.new("PostgreSQL adapter", "scripts/linkage/pg_app_probe.cr", false, false),
   Probe.new("control (uses Regex)", "scripts/linkage/regex_control_probe.cr", true, true),
 ]
