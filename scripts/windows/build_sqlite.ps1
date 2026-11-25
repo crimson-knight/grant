@@ -1,9 +1,9 @@
 # Builds C SQLite 3.51.0, the library Grant's engine is checked against, on
 # Windows from the amalgamation pinned by hash (the same zip the engine's
 # evidence pins): sqlite3.lib, static and built /MD to share the C runtime
-# DLL Crystal links (LNK4098 otherwise), for the specs that link C SQLite, and sqlite3.exe for the ones
-# that run the shell. Adds the directory to the job's PATH, LIB and
-# CRYSTAL_LIBRARY_PATH, and turns the shell's \r\n line ends off.
+# DLL Crystal links, for the specs that link C SQLite, and sqlite3.exe for
+# the ones that run the shell. Adds the directory to the job's PATH, LIB
+# and CRYSTAL_LIBRARY_PATH, and builds the shell with \r\n line ends off.
 #
 #   pwsh scripts/windows/build_sqlite.ps1 C:\path\to\destination
 param([Parameter(Mandatory = $true)] [string] $Destination)
@@ -22,6 +22,16 @@ Write-Output "$Name.zip sha256 $Actual (pinned)"
 Expand-Archive -Path $Zip -DestinationPath $Destination -Force
 $Source = Join-Path $Destination $Name
 
+# The shell starts with .crlf on under Windows and writes "\r\n" line ends;
+# the specs compare its output with "\n" ends, as on every other system.
+# Its one default changes (main_init), the rest of the source as pinned.
+$Shell = Join-Path $Source "shell.c"
+$ShellText = [System.IO.File]::ReadAllText($Shell)
+$CrlfDefault = "data->crlfMode = 1;"
+$Count = $ShellText.Split($CrlfDefault).Count - 1
+if ($Count -ne 1) { throw "shell.c: expected one '$CrlfDefault', found $Count" }
+[System.IO.File]::WriteAllText($Shell, $ShellText.Replace($CrlfDefault, "data->crlfMode = 0;"))
+
 $VsWhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
 $VsPath = & $VsWhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
 $VcVars = Join-Path $VsPath "VC\Auxiliary\Build\vcvars64.bat"
@@ -29,10 +39,6 @@ $Build = "call `"$VcVars`" >nul && cd /d `"$Source`" && cl /nologo /O2 /MD /c sq
 cmd /c $Build
 if ($LASTEXITCODE -ne 0) { throw "building SQLite failed ($LASTEXITCODE)" }
 & (Join-Path $Source "sqlite3.exe") -version
-
-# The shell writes "\r\n" line ends on Windows unless .crlf is off; the
-# specs compare its output with "\n" line ends, as on every other system.
-Set-Content -Path (Join-Path $env:USERPROFILE ".sqliterc") -Value ".crlf off"
 
 $LibraryPath = (crystal env CRYSTAL_LIBRARY_PATH).Trim()
 Add-Content -Path $env:GITHUB_PATH -Value $Source
