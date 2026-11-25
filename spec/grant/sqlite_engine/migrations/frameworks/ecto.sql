@@ -1,0 +1,50 @@
+-- Ecto (ecto_sqlite3): schema_migrations, phx.gen.auth tables, binary ids, references with
+-- ON DELETE, COLLATE NOCASE, partial indexes, and the add/rename/remove family.
+CREATE TABLE IF NOT EXISTS "schema_migrations" ("version" INTEGER PRIMARY KEY, "inserted_at" TEXT);
+BEGIN;
+CREATE TABLE "users" ("id" INTEGER PRIMARY KEY AUTOINCREMENT, "email" TEXT NOT NULL COLLATE NOCASE, "hashed_password" TEXT, "confirmed_at" TEXT_DATETIME, "inserted_at" TEXT_DATETIME NOT NULL, "updated_at" TEXT_DATETIME NOT NULL);
+CREATE UNIQUE INDEX "users_email_index" ON "users" ("email");
+CREATE TABLE "users_tokens" ("id" INTEGER PRIMARY KEY AUTOINCREMENT, "user_id" INTEGER NOT NULL CONSTRAINT "users_tokens_user_id_fkey" REFERENCES "users"("id") ON DELETE CASCADE, "token" BLOB NOT NULL, "context" TEXT NOT NULL, "sent_to" TEXT, "authenticated_at" TEXT_DATETIME, "inserted_at" TEXT_DATETIME NOT NULL);
+CREATE INDEX "users_tokens_user_id_index" ON "users_tokens" ("user_id");
+CREATE UNIQUE INDEX "users_tokens_context_token_index" ON "users_tokens" ("context", "token");
+INSERT INTO "schema_migrations" ("version","inserted_at") VALUES (20261125000000,'2026-11-25T10:00:00');
+COMMIT;
+BEGIN;
+CREATE TABLE "articles" ("id" TEXT NOT NULL PRIMARY KEY, "title" TEXT NOT NULL, "body" TEXT, "word_count" INTEGER DEFAULT 0 NOT NULL, "rating" DECIMAL, "published_at" TEXT_DATETIME, "tags" TEXT DEFAULT ('[]'), "author_id" INTEGER CONSTRAINT "articles_author_id_fkey" REFERENCES "users"("id") ON DELETE SET NULL, "inserted_at" TEXT_DATETIME NOT NULL, "updated_at" TEXT_DATETIME NOT NULL) WITHOUT ROWID;
+CREATE INDEX "articles_author_id_index" ON "articles" ("author_id");
+CREATE INDEX "articles_published_at_index" ON "articles" ("published_at") WHERE published_at IS NOT NULL;
+CREATE UNIQUE INDEX "articles_lower_title_index" ON "articles" (lower(title));
+INSERT INTO "schema_migrations" ("version","inserted_at") VALUES (20261125000001,'2026-11-25T10:00:01');
+COMMIT;
+PRAGMA foreign_keys = ON;
+INSERT INTO "users" ("email","hashed_password","inserted_at","updated_at") VALUES ('Jose@Example.com','h','2026-11-25T10:00:00','2026-11-25T10:00:00') RETURNING "id";
+INSERT INTO "users" ("email","hashed_password","inserted_at","updated_at") VALUES ('jose@example.com','h','2026-11-25T10:00:00','2026-11-25T10:00:00') RETURNING "id";
+INSERT INTO "users_tokens" ("user_id","token","context","inserted_at") VALUES (1, x'0102', 'session', '2026-11-25T10:00:00') RETURNING "id";
+INSERT INTO "articles" ("id","title","author_id","inserted_at","updated_at") VALUES ('a8f6c2d0-0000-4000-8000-000000000001','Elixir',1,'2026-11-25T10:00:00','2026-11-25T10:00:00');
+INSERT INTO "articles" ("id","title","author_id","inserted_at","updated_at") VALUES ('a8f6c2d0-0000-4000-8000-000000000002','ELIXIR',1,'2026-11-25T10:00:00','2026-11-25T10:00:00');
+INSERT INTO "articles" ("id","title","word_count","inserted_at","updated_at") VALUES ('a8f6c2d0-0000-4000-8000-000000000003','Phoenix','12','2026-11-25T10:00:00','2026-11-25T10:00:00') ON CONFLICT ("id") DO UPDATE SET "title" = EXCLUDED."title";
+INSERT INTO "articles" ("id","title","word_count","inserted_at","updated_at") VALUES ('a8f6c2d0-0000-4000-8000-000000000003','LiveView',13,'2026-11-25T10:00:00','2026-11-25T10:00:00') ON CONFLICT ("id") DO UPDATE SET "title" = EXCLUDED."title", "word_count" = "articles"."word_count" + 1;
+SELECT a0."id", a0."title", a0."word_count" FROM "articles" AS a0 ORDER BY a0."id";
+-- second migration: alter table
+BEGIN;
+ALTER TABLE "users" ADD COLUMN "role" TEXT DEFAULT 'user' NOT NULL;
+ALTER TABLE "users" ADD COLUMN "nickname" TEXT COLLATE NOCASE;
+ALTER TABLE "users" ADD COLUMN "org_id" INTEGER CONSTRAINT "users_org_id_fkey" REFERENCES "users"("id") ON DELETE CASCADE;
+ALTER TABLE "articles" RENAME COLUMN "body" TO "content";
+ALTER TABLE "articles" ADD COLUMN "summary" TEXT;
+ALTER TABLE "articles" DROP COLUMN "summary";
+ALTER TABLE "users_tokens" RENAME TO "user_tokens";
+DROP INDEX IF EXISTS "articles_published_at_index";
+DROP INDEX IF EXISTS "articles_published_at_index";
+INSERT INTO "schema_migrations" ("version","inserted_at") VALUES (20261125000002,'2026-11-25T10:00:02');
+COMMIT;
+DELETE FROM "users" WHERE "id" = 1;
+SELECT count(*) FROM "user_tokens";
+SELECT "author_id" FROM "articles" ORDER BY "id";
+SELECT s0."version" FROM "schema_migrations" AS s0 ORDER BY s0."version";
+-- rollback
+BEGIN;
+DELETE FROM "schema_migrations" WHERE "version" = 20261125000002;
+ALTER TABLE "users" DROP COLUMN "role";
+ALTER TABLE "users" DROP COLUMN "org_id";
+COMMIT;

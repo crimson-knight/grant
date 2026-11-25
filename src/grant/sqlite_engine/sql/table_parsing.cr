@@ -58,8 +58,28 @@ module Grant::SQLiteEngine::SQL
       end
       expect(TokenKind::RightParen)
       options = parse_table_options
+      check_strict_types(name.value, columns) if options.any? { |option| !option.without_rowid }
       CreateTable.new(temporary, if_not_exists, schema, name, columns, constraints, options, nil)
     end
+
+    # build.c sqlite3EndTable: every column of a STRICT table declares one
+    # of the standard types (ANY, BLOB, INT, INTEGER, REAL, TEXT); the first
+    # that does not stops the statement.
+    private def check_strict_types(table_name : String, columns : Array(ColumnDefinition)) : Nil
+      return if reading_schema?
+      columns.each do |column|
+        type_name = column.type_name
+        unless type_name
+          action_error("missing datatype for #{table_name}.#{column.name.value}")
+        end
+        word = standard_type_word(type_name)
+        next if word && STANDARD_TYPES.any? { |standard| standard.compare(word, case_insensitive: true) == 0 }
+        text = type_name.source_text || type_name.words.map(&.text).join(' ')
+        action_error(%(unknown datatype for #{table_name}.#{column.name.value}: "#{text}"))
+      end
+    end
+
+    STANDARD_TYPES = %w[ANY BLOB INT INTEGER REAL TEXT]
 
     private def parse_if_not_exists : Bool
       return false unless kind.if?
@@ -122,16 +142,25 @@ module Grant::SQLiteEngine::SQL
     # sqlite3AddColumn).
     private def integer_type?(type_name : TypeName?) : Bool
       return false unless type_name
-      return false unless type_name.arguments.empty?
+      word = standard_type_word(type_name)
+      !word.nil? && word.compare("INTEGER", case_insensitive: true) == 0
+    end
+
+    # The single word a declared type is, dequoted, once a trailing
+    # "GENERATED ALWAYS" the type absorbed is removed; nil for a type of
+    # several words or with arguments (build.c sqlite3AddColumn compares
+    # only such a word with the standard type names).
+    private def standard_type_word(type_name : TypeName) : String?
+      return unless type_name.arguments.empty?
       words = type_name.words.map(&.text)
       if words.size >= 2 && words.last.compare("always", case_insensitive: true) == 0
         words.pop
         words.pop if words.last.compare("generated", case_insensitive: true) == 0
       end
-      return false unless words.size == 1
+      return unless words.size == 1
       word = words.first
       word = word[1, word.size - 2] if word.size >= 2 && word[0].in?('"', '\'', '`', '[') && !word[1, word.size - 2].each_char.any?(&.in?('"', '\'', '`', '[', ']'))
-      word.compare("INTEGER", case_insensitive: true) == 0
+      word
     end
 
     private def parse_column_constraints(table : TableUnderConstruction, column : Int32) : Array(ColumnConstraint)

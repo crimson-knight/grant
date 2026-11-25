@@ -79,8 +79,8 @@ describe Engine::StoredValue do
   end
 
   it "raises a datatype constraint for STRICT columns" do
-    expect_raises(Engine::ConstraintViolation, /DATATYPE/) do
-      Engine::StoredValue.for_strict_column("INTEGER", "c", "abc")
+    expect_raises(Engine::ConstraintViolation, "cannot store TEXT value in INTEGER column t.c") do
+      Engine::StoredValue.for_strict_column("INTEGER", "t.c", "abc")
     end
     Engine::StoredValue.for_strict_column("INTEGER", "c", "12").should eq(12_i64)
   end

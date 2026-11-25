@@ -39,7 +39,9 @@ module Grant::SQLiteEngine
     end
 
     # The value a STRICT column of *declared_type* stores, or raises
-    # `ConstraintViolation` (Datatype) naming *column_name*.
+    # `ConstraintViolation` (Datatype) with OP_TypeCheck's message, which
+    # names the refused value's type once the column's affinity is applied
+    # and *column_name* (written table.column).
     def self.for_strict_column(declared_type : String, column_name : String, value : Value) : Value
       return value if value.nil?
       upper = declared_type.upcase
@@ -57,7 +59,7 @@ module Grant::SQLiteEngine
                  else                       true
                  end
       unless accepted
-        raise ConstraintViolation.new(ConstraintViolation::Kind::Datatype, "cannot store #{type_name(value)} value in #{upper} column #{column_name}")
+        raise ConstraintViolation.new(ConstraintViolation::Kind::Datatype, "cannot store #{type_name(converted)} value in #{upper} column #{column_name}")
       end
       converted
     end
@@ -119,9 +121,10 @@ module Grant::SQLiteEngine
       whole_number(real)
     end
 
+    # vdbeMemTypeName: an integer is "INT".
     private def self.type_name(value : Value) : String
       case value
-      when Int64   then "INTEGER"
+      when Int64   then "INT"
       when Float64 then "REAL"
       when String  then "TEXT"
       else              "BLOB"

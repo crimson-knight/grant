@@ -47,6 +47,9 @@ module Grant::SQLiteEngine::Query
       if entry && entry.object_type == "view"
         raise SQLError.new("view #{entry.object_name} may not be altered")
       end
+      if schema_table = Session.schema_table_name(name, @schema_name)
+        raise SQLError.new("table #{schema_table} may not be altered")
+      end
       raise SQLError.new("no such table: #{name}") unless entry && entry.table?
       if entry.object_name.downcase.starts_with?("sqlite_")
         raise SQLError.new("table #{entry.object_name} may not be altered")
@@ -101,6 +104,7 @@ module Grant::SQLiteEngine::Query
         raise SQLError.new("there is already another table or index with this name: #{target}")
       end
       raise SQLError.new("object name reserved for internal use: #{target}") if target.downcase.starts_with?("sqlite_")
+      check_views("")
       replacement = SchemaAlteration.quoted(target)
       database.rewrite_schema_rows do |record|
         type, name, table_name, root, sql = record[0]?, record[1]?, record[2]?, record[3]?, record[4]?
@@ -187,6 +191,7 @@ module Grant::SQLiteEngine::Query
       info = @session.table(entry.object_name, @schema_name) || raise SQLError.new("no such table: #{entry.object_name}")
       position = info.column_index(old_column)
       raise SQLError.new(%(no such column: "#{old_name.text}")) unless position
+      check_views("")
       target = new_name.value
       if info.list_of_column_names.each_with_index.any? { |column, index| index != position && column.compare(target, case_insensitive: true) == 0 }
         raise SQLError.new("error in table #{entry.object_name} after rename: duplicate column name: #{target}")
@@ -438,6 +443,7 @@ module Grant::SQLiteEngine::Query
       if info.list_of_column_names.size == 1
         raise SQLError.new(%(cannot drop column "#{actual}": no other columns exist))
       end
+      check_views("")
       sql = entry.sql || raise SQLError.new("table #{entry.object_name} has no CREATE statement")
       new_sql = SchemaAlteration.without_column(sql, position)
       table_name = entry.object_name
@@ -457,53 +463,92 @@ module Grant::SQLiteEngine::Query
       end
     end
 
-    # C re-parses the schema after the edit; an index, CHECK, foreign key
-    # or view that names the dropped column fails the statement.
+    # C re-parses the schema after the edit (renameTestSchema, with
+    # double-quoted strings off), object by object in sqlite_schema order:
+    # the first index, CHECK, foreign key or view that names the dropped
+    # column fails the statement.
     private def check_after_drop(table_name : String, column_name : String) : Nil
       info = @session.table(table_name, @schema_name) || return
-      # renameTestSchema re-reads every index in schema order, with
-      # double-quoted strings off: an index of this table that names the
-      # column, or of any table that names no column at all, fails.
-      database.schema.list_of_indexes.each do |entry|
-        sql = entry.sql
-        next unless sql
-        if entry.table_name.compare(table_name, case_insensitive: true) == 0
-          if SchemaAlteration.tokens(sql).any?(&.same_name?(column_name))
-            raise SQLError.new("error in index #{entry.object_name} after drop column: no such column: #{column_name}")
+      database.schema.list_of_entries.each do |entry|
+        if entry.table? && entry.object_name.compare(table_name, case_insensitive: true) == 0
+          check_table_after_drop(info, table_name, column_name)
+        elsif entry.index?
+          sql = entry.sql
+          next unless sql
+          if entry.table_name.compare(table_name, case_insensitive: true) == 0
+            # An index of this table that names the column.
+            if token = SchemaAlteration.tokens(sql).find(&.same_name?(column_name))
+              raise SQLError.new("error in index #{entry.object_name} after drop column: #{SchemaAlteration.no_such_column(token.text)}")
+            end
+          elsif missing = missing_index_column(entry, sql)
+            raise SQLError.new("error in index #{entry.object_name} after drop column: no such column: #{missing}")
           end
-        elsif missing = missing_index_column(entry, sql)
-          raise SQLError.new("error in index #{entry.object_name} after drop column: no such column: #{missing}")
+        elsif entry.object_type == "view"
+          check_view(entry, "after drop column")
+        end
+      end
+    end
+
+    # The table re-parsed as sqlite3EndTable reads it: its CHECK and
+    # FOREIGN KEY clauses, then its generated columns.
+    private def check_table_after_drop(info : TableInfo, table_name : String, column_name : String) : Nil
+      sql = info.entry.sql || return
+      statement = begin
+        SQL::Parser.parse_schema(sql)
+      rescue error : SQL::ParseError
+        # A FOREIGN KEY clause naming the dropped column fails the parse.
+        raise SQLError.new("error in table #{table_name} after drop column: #{error.message}")
+      end
+      return unless statement.is_a?(SQL::CreateTable)
+      statement.constraints.each do |constraint|
+        case constraint
+        when SQL::CheckTableConstraint
+          if constraint.expression.to_sql.downcase.includes?(column_name.downcase) &&
+             SchemaAlteration.tokens(constraint.expression.to_sql).any?(&.same_name?(column_name))
+            raise SQLError.new("error in table #{table_name} after drop column: no such column: #{column_name}")
+          end
+        when SQL::ForeignKeyTableConstraint
+          if constraint.columns.any?(&.same?(column_name))
+            raise SQLError.new(%(error in table #{table_name} after drop column: unknown column "#{column_name}" in foreign key definition))
+          end
         end
       end
       if message = CheckGeneratedColumnsOfTable.new(@session, info).parse_error
         raise SQLError.new("error in table #{table_name} after drop column: #{message}")
       end
-      sql = info.entry.sql || return
-      statement = SQL::Parser.parse_schema(sql)
-      if statement.is_a?(SQL::CreateTable)
-        statement.constraints.each do |constraint|
-          case constraint
-          when SQL::CheckTableConstraint
-            if constraint.expression.to_sql.downcase.includes?(column_name.downcase) &&
-               SchemaAlteration.tokens(constraint.expression.to_sql).any?(&.same_name?(column_name))
-              raise SQLError.new("error in table #{table_name} after drop column: no such column: #{column_name}")
-            end
-          when SQL::ForeignKeyTableConstraint
-            if constraint.columns.any?(&.same?(column_name))
-              raise SQLError.new(%(error in table #{table_name} after drop column: unknown column "#{column_name}" in foreign key definition))
-            end
-          end
-        end
+    end
+
+    # resolve.c lookupName's message for a column name *text* (as written)
+    # that names no column: a double-quoted name, which renameTestSchema
+    # reads with double-quoted strings off after DROP COLUMN, gets the hint
+    # about quotes.
+    def self.no_such_column(text : String) : String
+      if text.size >= 2 && text[0] == '"'
+        %(no such column: "#{SQL::Parser.dequote(text)}" - should this be a string literal in single-quotes?)
+      else
+        "no such column: #{SQL::Parser.dequote(text)}"
       end
+    end
+
+    # renameTestSchema before ALTER TABLE edits the schema: every view of
+    # the database must still resolve (a view naming a table that was
+    # dropped fails RENAME TO, RENAME COLUMN and DROP COLUMN).
+    private def check_views(moment : String) : Nil
+      return unless database.same?(@session.database)
       database.schema.list_of_entries.each do |entry|
-        next unless entry.object_type == "view"
-        view = @session.view(entry.object_name) || next
-        begin
-          Compiler.new(@session).compile(view.query)
-        rescue error : SQLError
-          raise SQLError.new("error in view #{entry.object_name} after drop column: #{error.message}")
-        end
+        check_view(entry, moment) if entry.object_type == "view"
       end
+    end
+
+    # The view of *entry* resolved as a query in main reads it, failing as
+    # "error in view NAME[ MOMENT]: MESSAGE".
+    private def check_view(entry : SchemaEntry, moment : String) : Nil
+      return unless database.same?(@session.database)
+      return unless @session.view(entry.object_name)
+      query = SQL::Parser.parse("SELECT * FROM main.#{SchemaAlteration.quoted(entry.object_name)}").as?(SQL::SelectStatement)
+      Compiler.new(@session).compile(query) if query
+    rescue error : SQLError
+      raise SQLError.new("error in view #{entry.object_name}#{moment.empty? ? "" : " #{moment}"}: #{error.message}")
     end
 
     # The first indexed name of *entry* that is no column of its table.

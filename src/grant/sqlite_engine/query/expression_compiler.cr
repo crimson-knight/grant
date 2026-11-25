@@ -740,7 +740,11 @@ module Grant::SQLiteEngine::Query
       if call.star
         known = ScalarFunctions.known?(lower) || @session.user_function(lower, -1) || @session.user_function(lower, 0)
         raise SQLError.new("no such function: #{name}") unless known
-        raise SQLError.new("wrong number of arguments to function #{name}()")
+        # parse.y: `name(*)` calls a function with no arguments, so
+        # sqlite_version(*) and random(*) work (Rails asks for
+        # sqlite_version(*)).
+        takes_no_arguments = @session.user_function(lower, 0) || ScalarFunctions.accepts?(lower, 0)
+        raise SQLError.new("wrong number of arguments to function #{name}()") unless takes_no_arguments
       end
       if call.distinct.distinct?
         raise SQLError.new("DISTINCT aggregates must have exactly one argument") if ScalarFunctions.known?(lower)

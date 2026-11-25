@@ -458,7 +458,7 @@ module Grant::SQLiteEngine
         column = columns[position]
         value = values.unsafe_fetch(position)
         values[position] = if strict
-                             StoredValue.for_strict_column(column.declared_type, column.column_name, value)
+                             StoredValue.for_strict_column(column.declared_type, "#{definition.table_name}.#{column.column_name}", value)
                            else
                              StoredValue.for_affinity(column.affinity, value)
                            end
@@ -473,7 +473,7 @@ module Grant::SQLiteEngine
       values.map_with_index do |value, position|
         column = columns[position]
         if definition.strict?
-          StoredValue.for_strict_column(column.declared_type, column.column_name, value)
+          StoredValue.for_strict_column(column.declared_type, "#{definition.table_name}.#{column.column_name}", value)
         else
           StoredValue.for_affinity(column.affinity, value)
         end
@@ -523,7 +523,7 @@ module Grant::SQLiteEngine
         alias_value = row[alias_index]
         if alias_value
           unless alias_value.is_a?(Int64)
-            raise ConstraintViolation.new(ConstraintViolation::Kind::Datatype, "datatype mismatch in #{layout.table_name}.#{columns[alias_index].column_name}")
+            raise ConstraintViolation.new(ConstraintViolation::Kind::Datatype, "datatype mismatch")
           end
           raise ArgumentError.new("rowid #{rowid} differs from #{columns[alias_index].column_name} #{alias_value}") if rowid && rowid != alias_value
           rowid = alias_value

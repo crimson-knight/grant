@@ -189,7 +189,9 @@ module SQLiteWriteOracle
       "file contents: engine has #{actual.size - expected.size} more lines: #{actual[expected.size]?}"
     end
 
-    # A logical dump through C: schema rows, then each table's rows.
+    # A logical dump through C: schema rows, then each table's rows, read
+    # from main so a temp table of the same name (temp.sqlite_sequence after
+    # an AUTOINCREMENT temp table) does not hide them.
     def self.dump(connection : SQLiteQueryOracle::Connection) : Array(String)
       lines = [] of String
       schema = connection.query("SELECT type, name, tbl_name, sql FROM sqlite_master ORDER BY type, name")
@@ -200,9 +202,9 @@ module SQLiteWriteOracle
         sql = row[3].as?(String) || ""
         quoted = %("#{name.gsub('"', "\"\"")}")
         query = if sql.matches?(/without\s+rowid/i)
-                  "SELECT * FROM #{quoted} ORDER BY 1"
+                  "SELECT * FROM main.#{quoted} ORDER BY 1"
                 else
-                  "SELECT rowid, * FROM #{quoted} ORDER BY rowid"
+                  "SELECT rowid, * FROM main.#{quoted} ORDER BY rowid"
                 end
         result = connection.query(query, row_limit: 1_000_000)
         lines << "rows of #{name}: #{result.error}" if result.error

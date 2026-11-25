@@ -48,7 +48,7 @@ module Grant::SQLiteEngine::Query
     private def check_schema_name(schema : SQL::Name?) : Nil
       return unless schema
       return if @session.schema?(schema.value)
-      raise SQLError.new("unknown database #{schema.value}")
+      raise SQLError.new("unknown database #{schema.text}")
     end
 
     # The database the statement changes: the one it names; for CREATE
@@ -87,9 +87,9 @@ module Grant::SQLiteEngine::Query
     def run(list_of_parameters : Array(Value)) : Array(Array(Value))
       return [] of Array(Value) if @drops_nothing
       statement = @statement
-      # sqlite3FkDropTable runs a DELETE first, which sets changes().
-      counts = statement.is_a?(SQL::Drop) && statement.kind.table? && @session.foreign_keys? &&
-               !@session.list_of_child_tables(statement.name.value).empty? && !@session.table(statement.name.value).nil?
+      # sqlite3FkDropTable codes a DELETE first, which sets changes().
+      counts = statement.is_a?(SQL::Drop) && statement.kind.table? && !@session.table(statement.name.value).nil? &&
+               codes_implicit_delete?(statement.name.value)
       @session.run_write(list_of_parameters, counts_changes: counts) do |run|
         choose_target(statement)
         case statement
@@ -259,6 +259,9 @@ module Grant::SQLiteEngine::Query
       entry = entry_named(name)
       case statement.kind
       when .table?
+        if schema_table = Session.schema_table_name(name, schema_name)
+          raise SQLError.new("table #{schema_table} may not be dropped")
+        end
         unless entry && entry.table?
           if entry && entry.object_type == "view"
             raise SQLError.new("use DROP VIEW to delete view #{name}")
@@ -270,7 +273,7 @@ module Grant::SQLiteEngine::Query
         if name.downcase.starts_with?("sqlite_") && !name.downcase.starts_with?("sqlite_stat")
           raise SQLError.new("table #{entry.object_name} may not be dropped")
         end
-        drop_table_rows(entry.object_name, run) if @session.foreign_keys?
+        drop_table_rows(entry.object_name, run)
         database.drop(entry.object_name)
       when .view?
         unless entry && entry.object_type == "view"
@@ -291,11 +294,26 @@ module Grant::SQLiteEngine::Query
       end
     end
 
-    # sqlite3FkDropTable: with foreign keys on, dropping a parent table
-    # first deletes its rows (running the children's actions); a child row
-    # left without its parent fails the DROP.
+    # sqlite3FkDropTable: with foreign keys on, DROP TABLE first runs a
+    # DELETE of every row when the table is a parent, or when one of its
+    # own foreign keys is deferred (or PRAGMA defer_foreign_keys is on)
+    # and the transaction holds deferred violations (OP_FkIfZero). Either
+    # way the statement then sets changes(), to 0 when the DELETE was
+    # skipped.
+    private def codes_implicit_delete?(name : String, schema : String? = nil) : Bool
+      return false unless @session.foreign_keys?
+      return true unless @session.list_of_child_tables(name).empty?
+      rules = @session.write_table(name, schema)
+      return false unless rules
+      rules.list_of_foreign_keys.any? { |rule| rule.deferred? || @session.defer_foreign_keys? }
+    end
+
+    # The DELETE of sqlite3FkDropTable: deleting a parent's rows runs the
+    # children's actions, and a child row left without its parent fails
+    # the DROP.
     private def drop_table_rows(name : String, run : WriteRun) : Nil
-      return if @session.list_of_child_tables(name).empty?
+      return unless codes_implicit_delete?(name, schema_name)
+      return if @session.list_of_child_tables(name).empty? && @session.deferred_violations == 0
       table = run.table(name, schema_name)
       rows = [] of {Int64?, Array(Value)}
       run.cursor_rows(table) { |rowid, row| rows << {rowid, row} }

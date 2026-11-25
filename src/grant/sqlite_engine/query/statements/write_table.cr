@@ -127,6 +127,7 @@ module Grant::SQLiteEngine::Query
         end
       end
       read_primary_key(constraint_conflicts) if without_rowid?
+      read_strict_primary_key if definition.strict? && !without_rowid?
       rules = @table_info.list_of_indexes.map do |index|
         where, expressions = index_syntax(index)
         IndexRule.new(index, index_conflict(index, constraint_conflicts), where, columns_text(index), expressions)
@@ -198,6 +199,17 @@ module Grant::SQLiteEngine::Query
       end
       if found = constraint_conflicts.find { |names, _| names.sort == key_names.sort }
         @primary_key_conflict = found[1]
+      end
+    end
+
+    # sqlite3EndTable: in a STRICT table every PRIMARY KEY column but the
+    # rowid alias is NOT NULL (ABORT).
+    private def read_strict_primary_key : Nil
+      key_names = definition.list_of_primary_key_columns.map(&.downcase)
+      @list_of_columns.each_with_index do |rule, position|
+        next if position == @table_info.rowid_alias
+        next unless key_names.includes?(rule.column_name.downcase)
+        rule.not_null ||= ConflictAction::Abort
       end
     end
 
@@ -317,6 +329,10 @@ module Grant::SQLiteEngine::Query
     # declaration order: its CONSTRAINT name, or its text between the
     # parentheses (sqlite3AddCheckConstraint). A CONSTRAINT name holds until
     # the next column or table constraint.
+    #
+    # The text goes through sqlite3Dequote: text that opens with a quote
+    # character becomes what that quoted span holds, so CHECK ("rating" >= 0)
+    # is named rating; other text is kept whole.
     def self.check_names(sql : String) : Array(String)
       tokenizer = SQL::Tokenizer.new(sql)
       tokens = [] of SQL::Token
@@ -354,13 +370,35 @@ module Grant::SQLiteEngine::Query
             close_token = tokens[close]? || break
             start = open.start + 1
             text = sql.byte_slice(start, close_token.start - start).strip
-            names << (constraint_name || text)
+            names << (constraint_name || WriteTable.dequoted(text))
             index = close
           end
         end
         index += 1
       end
       names
+    end
+
+    # util.c sqlite3Dequote: the content of the quoted span *text* opens
+    # with (a doubled closing quote stands for one), or *text* unchanged
+    # when it does not open with a quote character.
+    def self.dequoted(text : String) : String
+      opening = text[0]?
+      return text unless opening && opening.in?('"', '\'', '`', '[')
+      closing = opening == '[' ? ']' : opening
+      reader = Char::Reader.new(text)
+      reader.next_char
+      String.build do |io|
+        while reader.has_next?
+          char = reader.current_char
+          if char == closing
+            break unless reader.peek_next_char == closing
+            reader.next_char
+          end
+          io << char
+          reader.next_char
+        end
+      end
     end
   end
 end

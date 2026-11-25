@@ -29,6 +29,19 @@ module Grant::SQLiteEngine::Query
     TEMP_MASTER_SQL   = "CREATE TABLE sqlite_temp_master(type text,name text,tbl_name text,rootpage int,sql text)"
     TEMP_MASTER_NAMES = %w[sqlite_temp_master sqlite_temp_schema]
 
+    # The name C gives the schema table *name* means in the schema named
+    # *schema_name* (sqlite_master, or sqlite_temp_master in temp), or nil
+    # when *name* is no schema table; DROP TABLE and ALTER TABLE refuse it
+    # by that name.
+    def self.schema_table_name(name : String, schema_name : String) : String?
+      lower = name.downcase
+      if TEMP_MASTER_NAMES.includes?(lower) || (schema_name == "temp" && MASTER_NAMES.includes?(lower))
+        "sqlite_temp_master"
+      elsif MASTER_NAMES.includes?(lower)
+        "sqlite_master"
+      end
+    end
+
     alias UserFunction = Array(Value) -> Value
 
     getter database : Database
