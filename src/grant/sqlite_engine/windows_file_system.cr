@@ -127,9 +127,16 @@
       # Sets the file's size to *size* (winTruncate: move the file pointer,
       # then SetEndOfFile).
       def self.truncate(handle : LibC::HANDLE, size : Int64) : Nil
-        if LibC.SetFilePointerEx(handle, size, nil, FROM_START) == 0 || LibC.SetEndOfFile(handle) == 0
-          raise IO::Error.from_winerror("Error truncating file")
+        if error = truncate_error(handle, size)
+          raise IO::Error.from_os_error("Error truncating file", error)
         end
+      end
+
+      # Sets the file's size to *size*; returns the error that stopped it, or
+      # nil. ERROR_USER_MAPPED_FILE says a view of the file is still mapped.
+      def self.truncate_error(handle : LibC::HANDLE, size : Int64) : WinError?
+        return nil if LibC.SetFilePointerEx(handle, size, nil, FROM_START) != 0 && LibC.SetEndOfFile(handle) != 0
+        WinError.value
       end
 
       # Takes the byte-range lock *start* to *start* + *length* - 1 without

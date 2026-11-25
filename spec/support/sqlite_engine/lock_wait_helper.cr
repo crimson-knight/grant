@@ -19,7 +19,15 @@ module LockWaitHelper
 
   INSERTS_EACH = 40
 
-  def self.leave(message : String, status : Int32 = 1) : NoReturn
+  # Prints *message* and exits with *status*, closing *database* first (and
+  # finalizing *statement*) so the connection unmaps the wal-index before it
+  # lets go of the dead man switch, as a closing connection does. A process
+  # that exits with the file still mapped lets go of its locks first on
+  # Windows, and the next opener could not empty the file.
+  def self.leave(message : String, status : Int32 = 1, database : Engine::Database? = nil,
+                 statement : Engine::PreparedStatement? = nil) : NoReturn
+    statement.try(&.finalize_statement)
+    database.try(&.close)
     STDOUT.puts message
     STDOUT.flush
     exit status
@@ -30,12 +38,12 @@ module LockWaitHelper
     code, database = engine.open(path)
     leave("open #{code} #{database.error_message}") unless code == Engine::OK_CODE
     code = database.exec("PRAGMA busy_timeout=5000; PRAGMA synchronous=FULL;")
-    leave("pragmas #{code} #{database.error_message}") unless code == Engine::OK_CODE
+    leave("pragmas #{code} #{database.error_message}", database: database) unless code == Engine::OK_CODE
     case role
     when "wal_switcher"
       code = database.exec("PRAGMA journal_mode=WAL; INSERT INTO entries (label) VALUES ('#{Process.pid}')")
-      leave("switch: #{code} #{database.error_message}") unless code == Engine::OK_CODE
-      leave("rows 1", 0)
+      leave("switch: #{code} #{database.error_message}", database: database) unless code == Engine::OK_CODE
+      leave("rows 1", 0, database)
     when "writer_to_kill"
       number = 0
       loop do
@@ -45,15 +53,15 @@ module LockWaitHelper
     when "inserter"
       INSERTS_EACH.times do |number|
         code = database.exec("INSERT INTO entries (label, filler) VALUES ('#{Process.pid} #{number}', randomblob(200))")
-        leave("insert #{number}: #{code} #{database.error_message}") unless code == Engine::OK_CODE
+        leave("insert #{number}: #{code} #{database.error_message}", database: database) unless code == Engine::OK_CODE
       end
-      leave("rows #{INSERTS_EACH}", 0)
+      leave("rows #{INSERTS_EACH}", 0, database)
     else
       code, statement = database.prepare("SELECT count(*) FROM entries")
-      leave("prepare #{code} #{database.error_message}") unless code == Engine::OK_CODE
+      leave("prepare #{code} #{database.error_message}", database: database) unless code == Engine::OK_CODE
       code = statement.step
-      leave("step #{code} #{database.error_message}") unless code == Engine::ROW_CODE
-      leave("rows #{statement.column_int64(0)}", 0)
+      leave("step #{code} #{database.error_message}", database: database, statement: statement) unless code == Engine::ROW_CODE
+      leave("rows #{statement.column_int64(0)}", 0, database, statement)
     end
   end
 end

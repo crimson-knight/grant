@@ -114,12 +114,20 @@
       # winLockSharedMemory: an exclusive lock on the switch means no other
       # connection has the file open, so it is emptied; then every
       # connection holds the switch shared.
+      #
+      # A process that ends without closing its connection (killed, or exiting
+      # with it open) lets go of its locks before Windows unmaps its views, so
+      # for a moment the switch is free while a view of the file is still
+      # mapped, and SetEndOfFile refuses with ERROR_USER_MAPPED_FILE. That is
+      # `Busy`: the open tries again, as it does while another process empties
+      # the file, and the view is gone a moment later.
       private def self.take_dead_man_switch(node : Node) : Nil
         if WindowsHandle.lock(node.handle, DEAD_MAN_BYTE, 1, exclusive: true)
-          begin
-            WindowsHandle.truncate(node.handle, 0)
-          ensure
-            WindowsHandle.unlock(node.handle, DEAD_MAN_BYTE, 1)
+          error = WindowsHandle.truncate_error(node.handle, 0)
+          WindowsHandle.unlock(node.handle, DEAD_MAN_BYTE, 1)
+          if error
+            raise Busy.new("database is locked (a process that ended still maps the wal-index)") if error.error_user_mapped_file?
+            raise IO::Error.from_os_error("Error truncating file", error)
           end
         end
         raise Busy.new unless WindowsHandle.lock(node.handle, DEAD_MAN_BYTE, 1, exclusive: false)
