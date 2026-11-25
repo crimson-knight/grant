@@ -433,6 +433,7 @@ module Grant
     # encrypted attribute, value object) raises `Grant::UnknownAttributeError`
     # before anything is assigned. `new`, `create` and `update` keep ignoring
     # unknown keys.
+    @[TypeOnce]
     def assign_attributes(hash : Hash) : self
       hash.each_key do |key|
         attribute_name = key.to_s
@@ -491,6 +492,7 @@ module Grant
 
     # Whether the attribute holds a value: not nil and not an empty String,
     # Array or Slice. An unknown attribute raises `Grant::UnknownAttributeError`.
+    @[TypeOnce]
     def attribute_present?(name : String | Symbol) : Bool
       value = self[name]
       if value.nil?

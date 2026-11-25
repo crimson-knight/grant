@@ -3,6 +3,7 @@ require "../../strict_annotations"
 # Query runner which finalizes a query and runs it.
 # This will likely require adapter specific subclassing :[.
 module Grant::Query::Assembler
+  @[TypeBound(Model, Grant::Base)]
   class Pg(Model) < Base(Model)
     @placeholder = "?"
 

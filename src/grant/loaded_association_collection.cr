@@ -1,8 +1,12 @@
+require "./strict_annotations"
+
 # A collection wrapper for already-loaded associations.
 #
 # Generated associations provide an owner and foreign-key context so mutation
 # methods persist changes just like `Grant::AssociationCollection`. The
 # records-only constructor remains available for read-only snapshots.
+@[TypeBound(Owner, Grant::Base)]
+@[TypeBound(Target, Grant::Base)]
 class Grant::LoadedAssociationCollection(Owner, Target)
   include Enumerable(Target)
 

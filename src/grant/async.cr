@@ -14,6 +14,7 @@ module Grant
     # Module to be included in Grant::Base
     module ClassMethods
       # Async count
+      @[TypeOnce]
       def async_count : AsyncResult(Int64)
         query = current_scope
         AsyncResult(Int64).new do
@@ -22,6 +23,7 @@ module Grant
       end
 
       # Async sum
+      @[TypeOnce]
       def async_sum(column : Symbol | String) : AsyncResult(Grant::Query::Builder::SumValue)
         query = current_scope
         AsyncResult(Grant::Query::Builder::SumValue).new do
@@ -32,6 +34,7 @@ module Grant
       end
 
       # Async average
+      @[TypeOnce]
       def async_avg(column : Symbol | String) : AsyncResult(Float64?)
         query = current_scope
         AsyncResult(Float64?).new do
@@ -42,6 +45,7 @@ module Grant
       end
 
       # Async min
+      @[TypeOnce]
       def async_min(column : Symbol | String) : AsyncResult(Grant::Columns::Type)
         query = current_scope
         AsyncResult(Grant::Columns::Type).new do
@@ -52,6 +56,7 @@ module Grant
       end
 
       # Async max
+      @[TypeOnce]
       def async_max(column : Symbol | String) : AsyncResult(Grant::Columns::Type)
         query = current_scope
         AsyncResult(Grant::Columns::Type).new do
@@ -62,6 +67,7 @@ module Grant
       end
 
       # Async pluck
+      @[TypeOnce]
       def async_pluck(column : Symbol | String) : AsyncResult(Array(Grant::Columns::Type))
         query = current_scope
         AsyncResult(Array(Grant::Columns::Type)).new do
@@ -70,6 +76,7 @@ module Grant
       end
 
       # Async pick (first value)
+      @[TypeOnce]
       def async_pick(column : Symbol | String) : AsyncResult(Grant::Columns::Type?)
         query = current_scope
         if query.order_fields.empty?
@@ -81,11 +88,13 @@ module Grant
       end
 
       # Async average, ActiveRecord's name for `async_avg`
+      @[TypeOnce]
       def async_average(column : Symbol | String) : AsyncResult(Float64?)
         async_avg(column)
       end
 
       # Async primary keys of the current scope
+      @[TypeOnce]
       def async_ids : AsyncResult(Array(Grant::Columns::Type))
         query = current_scope
         AsyncResult(Array(Grant::Columns::Type)).new do
@@ -94,6 +103,7 @@ module Grant
       end
 
       # Async existence check of the current scope
+      @[TypeOnce]
       def async_exists? : AsyncResult(Bool)
         query = current_scope
         AsyncResult(Bool).new do
@@ -104,6 +114,7 @@ module Grant
       # Async `find_by_sql`: hydrates the rows of *sql* as this model on a
       # background fiber. Raw SQL gets no default scope, so a scoped model
       # raises unless the call sits inside `unscoped { }`, as `find_by_sql`.
+      @[TypeOnce]
       def async_find_by_sql(sql : String, binds : Array(Grant::Columns::Type) = [] of Grant::Columns::Type) : AsyncResult(Array(self))
         ensure_raw_sql_unscoped!
         AsyncResult(Array(self)).new do
@@ -144,6 +155,7 @@ module Grant
       end
 
       # Async first
+      @[TypeOnce]
       def async_first : AsyncResult(self?)
         query = current_scope
         AsyncResult(self?).new do
@@ -152,6 +164,7 @@ module Grant
       end
 
       # Async first!
+      @[TypeOnce]
       def async_first! : AsyncResult(self)
         query = current_scope
         AsyncResult(self).new do
@@ -160,6 +173,7 @@ module Grant
       end
 
       # Async last
+      @[TypeOnce]
       def async_last : AsyncResult(self?)
         query = current_scope
         AsyncResult(self?).new do
@@ -168,6 +182,7 @@ module Grant
       end
 
       # Async last!
+      @[TypeOnce]
       def async_last! : AsyncResult(self)
         query = current_scope
         AsyncResult(self).new do
@@ -176,6 +191,7 @@ module Grant
       end
 
       # Async all
+      @[TypeOnce]
       def async_all : AsyncResult(Array(self))
         query = current_scope
         AsyncResult(Array(self)).new do
@@ -192,6 +208,7 @@ module Grant
       #
       # For filtered reads, prefer the query-builder form
       # (`User.where(...).load_async`).
+      @[TypeOnce]
       def load_async : AsyncResult(Array(self))
         async_all
       end

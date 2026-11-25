@@ -82,6 +82,7 @@ module Grant::Query
   end
 end
 
+@[TypeBound(Model, Grant::Base)]
 class Grant::Query::Builder(Model)
   include Grant::Async::QueryMethods(Model)
   include Enumerable(Model)

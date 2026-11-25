@@ -6,6 +6,7 @@ module Grant::Aggregations
     # columns to `Float64`, anything else (an expression, a joined column) to
     # `Int64` or `BigDecimal`. Raises `ArgumentError` on a grouped scope; use
     # `group(...).sum(...)` on a relation for the per-group `Hash`.
+    @[TypeOnce]
     def sum(column : Symbol | String) : Grant::Query::Builder::SumValue
       result = current_scope.sum(column)
       raise ArgumentError.new("sum on a grouped scope returns a Hash per group; call it on the relation") if result.is_a?(Hash)
@@ -13,6 +14,7 @@ module Grant::Aggregations
     end
 
     # Calculate average of a specific column
+    @[TypeOnce]
     def avg(column : Symbol | String) : Float64?
       result = current_scope.avg(column)
       raise ArgumentError.new("avg on a grouped scope returns a Hash per group; call it on the relation") if result.is_a?(Hash)
@@ -26,38 +28,45 @@ module Grant::Aggregations
     end
 
     # ActiveRecord-compatible name for `avg`.
+    @[TypeOnce]
     def average(column : Symbol | String) : Float64?
       avg(column)
     end
 
     # Find minimum value of a specific column
+    @[TypeOnce]
     def min(column : Symbol | String) : Grant::Columns::Type
       result = current_scope.min(column)
       raise ArgumentError.new("min on a grouped scope returns a Hash per group; call it on the relation") if result.is_a?(Hash)
       result
     end
 
+    @[TypeOnce]
     def minimum(column : Symbol | String) : Grant::Columns::Type
       min(column)
     end
 
     # Find maximum value of a specific column
+    @[TypeOnce]
     def max(column : Symbol | String) : Grant::Columns::Type
       result = current_scope.max(column)
       raise ArgumentError.new("max on a grouped scope returns a Hash per group; call it on the relation") if result.is_a?(Hash)
       result
     end
 
+    @[TypeOnce]
     def maximum(column : Symbol | String) : Grant::Columns::Type
       max(column)
     end
 
     # Pluck values from a specific column
+    @[TypeOnce]
     def pluck(column : Symbol | String) : Array(Grant::Columns::Type)
       current_scope.pluck(column).map(&.first)
     end
 
     # Pick the first value from a specific column
+    @[TypeOnce]
     def pick(column : Symbol | String) : Grant::Columns::Type?
       query = current_scope
       if query.order_fields.empty?
@@ -67,6 +76,7 @@ module Grant::Aggregations
     end
 
     # Get the last record
+    @[TypeOnce]
     def last : self?
       current_scope.last
     end

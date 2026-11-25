@@ -544,6 +544,7 @@ module Grant::Callbacks
   # event = :save
   # order.run_callbacks(event) # => true
   # ```
+  @[TypeOnce]
   def run_callbacks(event : Symbol) : Bool
     {% begin %}
       case event

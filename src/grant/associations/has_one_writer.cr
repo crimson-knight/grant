@@ -1,3 +1,4 @@
+# crystal: strict
 module Grant::Associations
   # The write behind `owner.profile = child` for a saved owner, as in
   # ActiveRecord's `HasOneAssociation#replace`: inside one transaction the

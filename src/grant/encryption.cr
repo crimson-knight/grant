@@ -242,6 +242,7 @@ module Grant::Encryption
     # user.encrypted_attribute?(:email) # => true
     # user.encrypted_attribute?(:name)  # => false
     # ```
+    @[TypeOnce]
     def encrypted_attribute?(attribute_name : Symbol | String) : Bool
       return false unless self.class.encrypted_query_attribute(attribute_name.to_s)
       stored = ciphertext_for(attribute_name)
@@ -259,6 +260,7 @@ module Grant::Encryption
     # ```
     # user.ciphertext_for(:email) # => "AQ3x..." (Base64)
     # ```
+    @[TypeOnce]
     def ciphertext_for(attribute_name : Symbol | String) : String?
       encrypted_attribute_named(attribute_name).ciphertext_for(self)
     end
@@ -266,6 +268,7 @@ module Grant::Encryption
     # Rewrites every encrypted attribute of this persisted record with fresh
     # ciphertext (for example after enabling encryption on data read through
     # `support_unencrypted_data`). Skips validations, callbacks and timestamps.
+    @[TypeOnce]
     def encrypt : Bool
       rewrite_encrypted_columns(plaintext: false)
     end
@@ -274,6 +277,7 @@ module Grant::Encryption
     # column. The counterpart of `#encrypt`, for backing out of encryption.
     # Attributes declared in the `<attr>_encrypted` form have no plaintext
     # column and are left alone.
+    @[TypeOnce]
     def decrypt : Bool
       rewrite_encrypted_columns(plaintext: true)
     end
@@ -282,6 +286,7 @@ module Grant::Encryption
     # before a whole-record serialization.
     #
     # :nodoc:
+    @[TypeOnce]
     def __unseal_lazy_attributes : Nil
       self.class.encrypted_attributes.each_value(&.unseal(self))
     end
@@ -292,6 +297,7 @@ module Grant::Encryption
         raise ArgumentError.new("#{self.class.name}##{attribute_name} is not an encrypted attribute")
     end
 
+    @[TypeOnce]
     private def rewrite_encrypted_columns(plaintext : Bool) : Bool
       raise ArgumentError.new("Cannot rewrite encrypted columns of a new record") unless persisted?
 

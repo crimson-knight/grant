@@ -2,6 +2,7 @@ require "../../strict_annotations"
 require "../../aggregations"
 
 module Grant::Query::Assembler
+  @[TypeBound(Model, Grant::Base)]
   abstract class Base(Model)
     include Grant::Aggregations::QueryMethods(Model)
     @placeholder : String = ""

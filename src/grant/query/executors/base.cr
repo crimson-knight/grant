@@ -20,6 +20,7 @@ module Grant::Query::Executor
       Grant::Logs::SQL.debug { "Query prepared - #{sql} [#{model_name}] [args: #{args.size}]" }
     end
 
+    @[TypeOnce]
     def log_query_with_timing(sql : String, args : Array(Grant::Columns::Type), duration : Time::Span, row_count : Int32? = nil, model_name : String? = nil) : Nil
       duration_ms = duration.total_milliseconds
 

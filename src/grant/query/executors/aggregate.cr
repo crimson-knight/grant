@@ -1,5 +1,7 @@
 # crystal: strict
 
+require "../../strict_annotations"
+
 module Grant::Query::Executor
   alias AggregateRow = Tuple(Array(Grant::Columns::Type), Grant::Columns::Type)
 
@@ -7,6 +9,7 @@ module Grant::Query::Executor
   # ungrouped aggregate) followed by one aggregate value, and returns one
   # `{key, value}` pair per row. A grouped aggregate is one GROUP BY statement,
   # never a query per key.
+  @[TypeBound(Model, Grant::Base)]
   class Aggregate(Model)
     include Shared
 
