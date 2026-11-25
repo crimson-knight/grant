@@ -181,7 +181,12 @@ class Grant::Query::Builder(Model)
 
   @[TypeOnce]
   def order(sql : String | Grant::Query::SqlExpression::Trusted) : self
-    chain_copy.order!(sql)
+    # Narrowed per member, so each reaches its own typed `order!` overload.
+    if sql.is_a?(String)
+      chain_copy.order!(sql)
+    else
+      chain_copy.order!(sql)
+    end
   end
 
   @[TypeOnce]
