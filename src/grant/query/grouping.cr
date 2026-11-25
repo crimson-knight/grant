@@ -29,12 +29,14 @@ class Grant::Query::Builder(Model)
   end
 
   # :ditto:
+  @[TypeOnce]
   def group_by!(expression : String) : self
     stripped = Grant::Query::SqlExpression.validate!(expression, "GROUP BY expression")
     own_group_fields << {field: stripped}
     self
   end
 
+  @[TypeOnce]
   def group_by(expression : String) : self
     chain_copy.group_by!(expression)
   end
@@ -47,6 +49,7 @@ class Grant::Query::Builder(Model)
     chain_copy.group!(*expressions)
   end
 
+  @[TypeOnce]
   def group(fields : Array(Symbol)) : self
     chain_copy.group_by!(fields)
   end

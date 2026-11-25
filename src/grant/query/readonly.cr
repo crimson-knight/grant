@@ -1,3 +1,4 @@
+# crystal: strict
 require "../strict_annotations"
 require "./builder"
 

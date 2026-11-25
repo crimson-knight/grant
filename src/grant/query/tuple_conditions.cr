@@ -38,6 +38,7 @@ class Grant::Query::Builder(Model)
   # Raises `ArgumentError` for an unknown column, a tuple of the wrong size, or
   # more than `Grant.settings.in_clause_limit` tuples (chunk the list, or use
   # `find_keys` which does).
+  @[TypeOnce]
   def where_tuples!(columns : Array(String), tuples : Array(Array(Grant::Columns::Type)),
                     strategy : Grant::Query::TupleStrategy = :auto, negated : Bool = false) : self
     raise ArgumentError.new("where_tuples needs at least one column") if columns.empty?
@@ -72,6 +73,7 @@ class Grant::Query::Builder(Model)
   end
 
   # :ditto:
+  @[TypeOnce]
   def where_tuples(columns : Array(String), tuples : Array(Array(Grant::Columns::Type)),
                    strategy : Grant::Query::TupleStrategy = :auto, negated : Bool = false) : self
     chain_copy.where_tuples!(columns, tuples, strategy, negated)
@@ -79,12 +81,14 @@ class Grant::Query::Builder(Model)
 
   # Typed form: *columns* as symbols or strings (an array or a tuple) and
   # *tuples* as an array of `Tuple`s.
+  @[TypeOnce]
   def where_tuples(columns : Array | Tuple, tuples : Array(Tuple),
                    strategy : Grant::Query::TupleStrategy = :auto, negated : Bool = false) : self
     where_tuples(columns.to_a.map(&.to_s), tuples.map { |tuple| tuple_values(tuple) }, strategy, negated)
   end
 
   # Keeps only rows that match none of *tuples* (`NOT IN`).
+  @[TypeOnce]
   def where_not_tuples(columns : Array | Tuple, tuples : Array(Tuple),
                        strategy : Grant::Query::TupleStrategy = :auto) : self
     where_tuples(columns, tuples, strategy, negated: true)
@@ -93,6 +97,7 @@ class Grant::Query::Builder(Model)
   # Keeps the row(s) whose key columns (`Model.persistence_key_columns`: the
   # `query_constraints`, else the composite primary key, else the primary key)
   # equal *key*, given as a `Tuple` in column order.
+  @[TypeOnce]
   def where_key(key : Tuple) : self
     columns = lookup_key_columns
     if key.size != columns.size
@@ -111,6 +116,7 @@ class Grant::Query::Builder(Model)
   end
 
   # :ditto: *key* names every key column, in any order.
+  @[TypeOnce]
   def where_key(key : NamedTuple) : self
     columns = lookup_key_columns
     if key.size != columns.size
@@ -130,6 +136,7 @@ class Grant::Query::Builder(Model)
   end
 
   # Keeps the rows whose key columns equal any of *keys*: one row-value `IN`.
+  @[TypeOnce]
   def where_keys(keys : Array(Tuple), strategy : Grant::Query::TupleStrategy = :auto) : self
     where_tuples(lookup_key_columns, keys, strategy)
   end
@@ -208,6 +215,7 @@ class Grant::Query::Builder(Model)
 
   # The builder takes homogeneous lists, so a single key column's values are
   # narrowed to their concrete type first (see `AssociationLoader.where_in`).
+  @[TypeOnce]
   private def and_single_column_in(column : String, values : Array(Grant::Columns::Type), negated : Bool) : self
     case values.find { |value| !value.nil? }
     when Int64  then and_in!(column, values.map(&.as(Int64?)), negated)
