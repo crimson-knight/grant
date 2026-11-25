@@ -387,7 +387,6 @@ module Grant::EagerLoading
   module ClassMethods
     include Grant::Reflection::ClassMethods
 
-    @[TypeOnce]
     def strict_loading(value : Bool = true) : Grant::Query::Builder(self)
       query = get_query_builder
       query.strict_loading!(value)

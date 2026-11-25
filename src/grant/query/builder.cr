@@ -414,7 +414,6 @@ class Grant::Query::Builder(Model)
   # ```
   # User.where(active: true).and(:id, :gt, 100)
   # ```
-  @[TypeOnce]
   def and!(field : (Symbol | String), operator : Symbol, value : Grant::Columns::Type) : self
     own_where_fields << {join: :and, field: field.to_s, operator: operator, value: value}
 
@@ -426,19 +425,16 @@ class Grant::Query::Builder(Model)
   # ```
   # User.where(active: true).and("LENGTH(email) > ?", 10)
   # ```
-  @[TypeOnce]
   def and!(stmt : String) : self
     own_where_fields << {join: :and, stmt: stmt, value: nil.as(Grant::Columns::Type)}
     self
   end
 
-  @[TypeOnce]
   def and!(stmt : String, value : Nil) : self
     own_where_fields << {join: :and, stmt: stmt, values: [value.as(Grant::Columns::Type)]}
     self
   end
 
-  @[TypeOnce]
   def and!(stmt : String, value : Grant::Columns::Type) : self
     if values = raw_bind_values(value)
       own_where_fields << {join: :and, stmt: stmt, values: values}
@@ -866,7 +862,6 @@ class Grant::Query::Builder(Model)
   # Parent.left_joins(:students)
   # # => SELECT ... FROM parents LEFT JOIN students ON students.parent_id = parents.id
   # ```
-  @[TypeOnce]
   def left_joins!(association : Symbol) : self
     add_join_clauses(resolve_association_join(association, :left))
     self
@@ -962,7 +957,6 @@ class Grant::Query::Builder(Model)
   # User.where(active: true).distinct
   # # => SELECT DISTINCT ... FROM users WHERE active = true
   # ```
-  @[TypeOnce]
   def distinct! : self
     reset_load_state
     @distinct = true

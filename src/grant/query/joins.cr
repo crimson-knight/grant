@@ -250,7 +250,6 @@ class Grant::Query::Builder(Model)
   # ```
   # User.joins("INNER JOIN posts ON posts.user_id = users.id AND posts.published")
   # ```
-  @[TypeOnce]
   def joins!(sql : String) : self
     add_join_clause({type: :raw, table: "", on: Grant::Query::SqlExpression.validate!(sql, "JOIN fragment")})
     self
@@ -264,7 +263,6 @@ class Grant::Query::Builder(Model)
   # ```
   # User.joins("INNER JOIN posts ON posts.user_id = users.id AND posts.score > ?", 10)
   # ```
-  @[TypeOnce]
   def joins!(sql : String, binds : Array) : self
     validated = Grant::Query::SqlExpression.validate!(sql, "JOIN fragment")
     arguments = [] of Grant::Columns::Type
@@ -297,18 +295,15 @@ class Grant::Query::Builder(Model)
   # # User belongs_to :manager (a User)
   # User.joins(:manager, as: "managers").where("managers.name": "Ada")
   # ```
-  @[TypeOnce]
   def joins!(association : Symbol, *, as as_name : String) : self
     add_join_clauses(Grant::Query::JoinSupport.resolve(Model, association, :inner, as_name, @join_clauses))
     self
   end
 
-  @[TypeOnce]
   def joins(sql : String) : self
     chain_copy.joins!(sql)
   end
 
-  @[TypeOnce]
   def joins(sql : String, binds : Array) : self
     chain_copy.joins!(sql, binds)
   end
@@ -321,19 +316,16 @@ class Grant::Query::Builder(Model)
     chain_copy.joins!(**nested)
   end
 
-  @[TypeOnce]
   def joins(association : Symbol, *, as as_name : String) : self
     chain_copy.joins!(association, as: as_name)
   end
 
   # LEFT JOIN counterparts of `joins`. A raw fragment is emitted as written, so
   # it carries its own `LEFT OUTER JOIN` keywords.
-  @[TypeOnce]
   def left_joins!(sql : String) : self
     joins!(sql)
   end
 
-  @[TypeOnce]
   def left_joins!(sql : String, binds : Array) : self
     joins!(sql, binds)
   end
@@ -347,18 +339,15 @@ class Grant::Query::Builder(Model)
     self
   end
 
-  @[TypeOnce]
   def left_joins!(association : Symbol, *, as as_name : String) : self
     add_join_clauses(Grant::Query::JoinSupport.resolve(Model, association, :left, as_name, @join_clauses))
     self
   end
 
-  @[TypeOnce]
   def left_joins(sql : String) : self
     chain_copy.left_joins!(sql)
   end
 
-  @[TypeOnce]
   def left_joins(sql : String, binds : Array) : self
     chain_copy.left_joins!(sql, binds)
   end
@@ -371,19 +360,16 @@ class Grant::Query::Builder(Model)
     chain_copy.left_joins!(**nested)
   end
 
-  @[TypeOnce]
   def left_joins(association : Symbol, *, as as_name : String) : self
     chain_copy.left_joins!(association, as: as_name)
   end
 
   # `left_outer_joins` is ActiveRecord's name for `left_joins`; every form is
   # shared.
-  @[TypeOnce]
   def left_outer_joins!(table : String, *, on : String) : self
     left_joins!(table, on: on)
   end
 
-  @[TypeOnce]
   def left_outer_joins!(association : Symbol) : self
     left_joins!(association)
   end
@@ -392,7 +378,6 @@ class Grant::Query::Builder(Model)
     left_joins!(*associations, **nested)
   end
 
-  @[TypeOnce]
   def left_outer_joins!(sql : String) : self
     left_joins!(sql)
   end
@@ -401,17 +386,14 @@ class Grant::Query::Builder(Model)
     left_joins!(**nested)
   end
 
-  @[TypeOnce]
   def left_outer_joins!(association : Symbol, *, as as_name : String) : self
     left_joins!(association, as: as_name)
   end
 
-  @[TypeOnce]
   def left_outer_joins(table : String, *, on : String) : self
     chain_copy.left_joins!(table, on: on)
   end
 
-  @[TypeOnce]
   def left_outer_joins(association : Symbol) : self
     chain_copy.left_joins!(association)
   end
@@ -420,7 +402,6 @@ class Grant::Query::Builder(Model)
     chain_copy.left_joins!(*associations, **nested)
   end
 
-  @[TypeOnce]
   def left_outer_joins(sql : String) : self
     chain_copy.left_joins!(sql)
   end
@@ -429,7 +410,6 @@ class Grant::Query::Builder(Model)
     chain_copy.left_joins!(**nested)
   end
 
-  @[TypeOnce]
   def left_outer_joins(association : Symbol, *, as as_name : String) : self
     chain_copy.left_joins!(association, as: as_name)
   end

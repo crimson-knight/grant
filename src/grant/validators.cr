@@ -1062,7 +1062,6 @@ module Grant::Validators
   # record.valid?(context: :update) # keyword form
   # record.valid?(context: [:create, :publish])
   # ```
-  @[TypeOnce]
   def valid?(skip_normalization : Bool = false, context : (Symbol | Array(Symbol))? = nil) : Bool
     # A value that could not be converted to its column's type was recorded
     # as a `ConversionError`. It fails validation, unless a numericality
@@ -1141,7 +1140,6 @@ module Grant::Validators
   end
 
   # Positional form: `record.valid?(:publish)`.
-  @[TypeOnce]
   def valid?(context : Symbol | Array(Symbol)) : Bool
     valid?(context: context)
   end
@@ -1165,7 +1163,6 @@ module Grant::Validators
   end
 
   # ActiveModel's `validate(context)`: an alias for `#valid?`.
-  @[TypeOnce]
   def validate(context : (Symbol | Array(Symbol))? = nil) : Bool
     valid?(context: context)
   end
