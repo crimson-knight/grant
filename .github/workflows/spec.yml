@@ -64,7 +64,7 @@ jobs:
           CRYSTAL: crystal
 
   # Windows: type-checks the code an app reaches (the SQLite adapter on the C
-  # library, which also compiles Grant's own engine, and PostgreSQL) for
+  # library, Grant's own engine, and PostgreSQL) for
   # x86_64-windows-msvc, so POSIX-only code that would stop a Windows build
   # fails here. Nothing is linked or run.
   windows-type-check:

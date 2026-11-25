@@ -1,7 +1,6 @@
 # Type-checks Grant for Windows without linking, the way an app reaches it:
-# the SQLite adapter on the C library (which also compiles Grant's own
-# engine), the engine's own adapter, PostgreSQL, and a model queried through
-# each. CI runs:
+# the SQLite adapter on the C library, Grant's own engine, PostgreSQL, and a
+# model queried through them. CI runs:
 #
 #   crystal build --no-codegen --target x86_64-windows-msvc scripts/windows_type_check.cr
 #
