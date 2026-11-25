@@ -1,3 +1,4 @@
+require "../strict_annotations"
 require "./builder"
 
 class Grant::Query::Builder(Model)
@@ -9,6 +10,7 @@ class Grant::Query::Builder(Model)
   # ```
   # Post.where(published: true).extract_associated(:author) # => [#<Author ...>, ...]
   # ```
+  @[TypeOnce]
   def extract_associated(association : Symbol) : Array(Grant::Base)
     loaded = preload(association).select
     seen = Set({String, Grant::Columns::Type}).new

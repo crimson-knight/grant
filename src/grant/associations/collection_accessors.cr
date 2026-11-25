@@ -1,3 +1,4 @@
+# crystal: strict
 module Grant::Associations
   # Defines `<singular>_ids` and `<singular>_ids=` for a `has_many`, including
   # `as:` and `through:` collections.

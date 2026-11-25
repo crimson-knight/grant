@@ -1,3 +1,5 @@
+require "./strict_annotations"
+
 module Grant::Aggregations
   module ClassMethods
     # Sum the values of a specific column. Integer columns sum to `Int64`, float
@@ -77,6 +79,7 @@ module Grant::Aggregations
 
   # Module for query builder aggregation methods
   module QueryMethods(Model)
+    @[TypeOnce]
     private def aggregate_field(column : Symbol | String) : String
       field = column.to_s
       if @query.join_clauses.any?
@@ -100,6 +103,7 @@ module Grant::Aggregations
     #   returns a double precision number; `:none` leaves the driver type.
     # - *distinct* aggregates over distinct values (`SUM(DISTINCT x)`,
     #   `COUNT(DISTINCT x)`), never over a subquery of full rows.
+    @[TypeOnce]
     def aggregate_sql(function : String, column : String, cast : Symbol = :none, distinct : Bool = false) : String
       keyword = distinct ? "DISTINCT " : ""
 
@@ -150,6 +154,7 @@ module Grant::Aggregations
       end
     end
 
+    @[TypeOnce]
     private def aggregate_expression(function : String, argument : String, cast : Symbol) : String
       expression = "#{function}(#{argument})"
       case cast
@@ -160,17 +165,20 @@ module Grant::Aggregations
     end
 
     # The type name `CAST(... AS type)` uses to return text. Adapters override.
+    @[TypeOnce]
     protected def text_cast_type : String
       "TEXT"
     end
 
     # *expression* as a double precision number. Adapters override.
+    @[TypeOnce]
     protected def double_cast_sql(expression : String) : String
       "CAST(#{expression} AS DOUBLE PRECISION)"
     end
 
     # A column name, `table.column` of the model or a joined table, or a trusted
     # SQL expression such as `price * quantity`. `*` stays as written.
+    @[TypeOnce]
     private def aggregate_column_sql(column : String) : String
       return "*" if column == "*"
 
@@ -190,6 +198,7 @@ module Grant::Aggregations
     end
 
     # Pluck with query conditions
+    @[TypeOnce]
     def pluck(column : Symbol | String) : Array(Grant::Columns::Type)
       results = [] of Grant::Columns::Type
       sql = build_sql do |s|
@@ -216,6 +225,7 @@ module Grant::Aggregations
     end
 
     # Pick with query conditions
+    @[TypeOnce]
     def pick(column : Symbol | String) : Grant::Columns::Type?
       sql = build_sql do |s|
         s << "SELECT #{aggregate_field(column)}"
@@ -240,6 +250,7 @@ module Grant::Aggregations
     end
 
     # Last with query conditions
+    @[TypeOnce]
     def last : Model?
       # Reverse the order for last
       reverse_order = @order_fields.map { |field| Grant::Query::OrderSupport.reverse(field) }
@@ -260,6 +271,7 @@ module Grant::Aggregations
     end
 
     # Last! with query conditions
+    @[TypeOnce]
     def last! : Model
       last || raise Grant::Querying::NotFound.new("No record found")
     end

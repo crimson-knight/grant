@@ -1,9 +1,12 @@
+require "../../strict_annotations"
+
 # Query runner which finalizes a query and runs it.
 # This will likely require adapter specific subclassing :[.
 module Grant::Query::Assembler
   class Mysql(Model) < Base(Model)
     @placeholder = "?"
 
+    @[TypeOnce]
     def add_parameter(value : Grant::Columns::Type) : String
       value = value.to_s if value.is_a?(UUID)
       @numbered_parameters << value
@@ -12,6 +15,7 @@ module Grant::Query::Assembler
 
     # MySQL has no NULLS FIRST/LAST, so an `ISNULL(column)` term goes first (1
     # for NULL): descending puts NULLs first, ascending puts them last.
+    @[TypeOnce]
     protected def nulls_ordering_sql(field : String, keyword : String, first : Bool) : String
       "ISNULL(#{field}) #{first ? "DESC" : "ASC"}, #{field} #{keyword}"
     end

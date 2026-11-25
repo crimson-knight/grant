@@ -1,3 +1,4 @@
+# crystal: strict
 module Grant::Associations
   # Declares a many-to-many association over a bare join table, the way
   # ActiveRecord's `has_and_belongs_to_many` does. The macro defines a hidden

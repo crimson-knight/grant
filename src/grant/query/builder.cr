@@ -1,3 +1,4 @@
+require "../strict_annotations"
 require "../vendor/beryl/crypto"
 require "../columns"
 require "../async"
@@ -216,6 +217,7 @@ class Grant::Query::Builder(Model)
   {% end %}
 
   # Drops memoized records so the next read runs a fresh query.
+  @[TypeOnce]
   private def reset_load_state : Nil
     @records = nil
     @cache_version = nil
@@ -251,6 +253,7 @@ class Grant::Query::Builder(Model)
   end
 
   # :nodoc:
+  @[TypeOnce]
   protected def forget_copied_state : Nil
     @records = nil
     @cache_version = nil
@@ -411,6 +414,7 @@ class Grant::Query::Builder(Model)
   # ```
   # User.where(active: true).and(:id, :gt, 100)
   # ```
+  @[TypeOnce]
   def and!(field : (Symbol | String), operator : Symbol, value : Grant::Columns::Type) : self
     own_where_fields << {join: :and, field: field.to_s, operator: operator, value: value}
 
@@ -422,16 +426,19 @@ class Grant::Query::Builder(Model)
   # ```
   # User.where(active: true).and("LENGTH(email) > ?", 10)
   # ```
+  @[TypeOnce]
   def and!(stmt : String) : self
     own_where_fields << {join: :and, stmt: stmt, value: nil.as(Grant::Columns::Type)}
     self
   end
 
+  @[TypeOnce]
   def and!(stmt : String, value : Nil) : self
     own_where_fields << {join: :and, stmt: stmt, values: [value.as(Grant::Columns::Type)]}
     self
   end
 
+  @[TypeOnce]
   def and!(stmt : String, value : Grant::Columns::Type) : self
     if values = raw_bind_values(value)
       own_where_fields << {join: :and, stmt: stmt, values: values}
@@ -497,6 +504,7 @@ class Grant::Query::Builder(Model)
     self
   end
 
+  @[TypeOnce]
   private def raw_bind_values(value : Grant::Columns::Type) : Array(Grant::Columns::Type)?
     if value.is_a?(Array)
       values = [] of Grant::Columns::Type
@@ -629,6 +637,7 @@ class Grant::Query::Builder(Model)
     self
   end
 
+  @[TypeOnce]
   private def structured_field_sql(field : String) : String
     parts = field.split('.')
     unless parts.size.in?(1..2) && parts.all? { |part| Grant::TextMatching.simple_identifier?(part) }
@@ -857,6 +866,7 @@ class Grant::Query::Builder(Model)
   # Parent.left_joins(:students)
   # # => SELECT ... FROM parents LEFT JOIN students ON students.parent_id = parents.id
   # ```
+  @[TypeOnce]
   def left_joins!(association : Symbol) : self
     add_join_clauses(resolve_association_join(association, :left))
     self
@@ -881,6 +891,7 @@ class Grant::Query::Builder(Model)
   #   model's PK, so `target.foreign_key = current.primary_key`.
   #
   # Raises `ArgumentError` if the association is unknown.
+  @[TypeOnce]
   private def resolve_association_join(association : Symbol, type : Symbol) : Array(NamedTuple(type: Symbol, table: String, on: String))
     Grant::Query::JoinSupport.resolve(Model, association, type, nil, @join_clauses)
   end
@@ -951,6 +962,7 @@ class Grant::Query::Builder(Model)
   # User.where(active: true).distinct
   # # => SELECT DISTINCT ... FROM users WHERE active = true
   # ```
+  @[TypeOnce]
   def distinct! : self
     reset_load_state
     @distinct = true
@@ -2036,6 +2048,7 @@ class Grant::Query::Builder(Model)
     self
   end
 
+  @[TypeOnce]
   private def add_association_specs(target : Array(Grant::Includes), positional : Tuple, nested : NamedTuple) : Nil
     Grant::AssociationLoader.enable(Model)
     positional.each { |spec| target.concat(Grant::AssociationLoader.normalize(spec)) }

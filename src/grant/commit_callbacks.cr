@@ -1,3 +1,5 @@
+require "./strict_annotations"
+
 # Transaction-aware commit/rollback callbacks (ActiveRecord-compatible).
 #
 # The `after_commit`, `after_rollback`, and the per-operation
@@ -112,10 +114,12 @@ module Grant::CommitCallbacks
       @list_of_contributions = [lead]
     end
 
+    @[TypeOnce]
     def live_commit_bits : UInt8
       list_of_contributions.reduce(0_u8) { |bits, contribution| contribution.live? ? bits | contribution.commit_bits : bits }
     end
 
+    @[TypeOnce]
     def live_action_bits : UInt8
       list_of_contributions.reduce(0_u8) { |bits, contribution| contribution.live? ? bits | contribution.action_bits : bits }
     end
@@ -149,7 +153,8 @@ module Grant::CommitCallbacks
 
   # Queue a callback symbol for this instance (used internally after save/destroy).
   # A queued create or update commit also queues `after_save_commit`.
-  private def queue_commit_callback(callback_name : Symbol)
+  @[TypeOnce]
+  private def queue_commit_callback(callback_name : Symbol) : Array(Symbol)?
     _pending_commit_callbacks << callback_name
     if callback_name == :after_create_commit || callback_name == :after_update_commit
       _pending_commit_callbacks << :after_save_commit
@@ -161,6 +166,7 @@ module Grant::CommitCallbacks
   # compile time).
   #
   # :nodoc:
+  @[TypeOnce]
   def __commit_on?(action_mask : UInt8) : Bool
     # Called outside a dispatch (a direct `record.after_rollback`): infer the
     # operation from the record's state.
@@ -183,7 +189,7 @@ module Grant::CommitCallbacks
   # If there is NO explicit transaction open (implicit single-operation
   # transaction) the callbacks are fired immediately, preserving the
   # pre-existing behaviour.
-  private def run_commit_callbacks
+  private def run_commit_callbacks : Nil
     return if _pending_commit_callbacks.empty?
 
     commit_bits = 0_u8
@@ -299,6 +305,7 @@ module Grant::CommitCallbacks
   # single one its commit and rollback callbacks belong to, as ActiveRecord
   # does: a destroyed record is a destroy, a record created in the
   # transaction (then perhaps updated) is a create, anything else an update.
+  @[TypeOnce]
   private def resolve_commit_action(action_bits : UInt8) : UInt8
     if (action_bits & ACTION_DESTROY) != 0
       ACTION_DESTROY
@@ -311,7 +318,8 @@ module Grant::CommitCallbacks
 
   # Clears pending instance-level queued callbacks (used when an operation
   # fails before run_commit_callbacks is reached).
-  private def clear_commit_callbacks
+  @[TypeOnce]
+  private def clear_commit_callbacks : Array(Symbol)
     _pending_commit_callbacks.clear
   end
 
@@ -319,7 +327,7 @@ module Grant::CommitCallbacks
   # implicit per-save rollback is signalled via after_rollback.  When inside
   # an explicit transaction this is a no-op: the transaction's own rollback
   # path will fire after_rollback for all pending instances at once.
-  private def run_rollback_callbacks
+  private def run_rollback_callbacks : Nil
     clear_commit_callbacks
     unless Grant::Transaction.in_explicit_transaction?
       dispatch_rollback_callbacks(ACTION_DESTROY)

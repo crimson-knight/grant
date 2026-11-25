@@ -1,3 +1,4 @@
+require "../strict_annotations"
 require "./builder"
 require "./sql_expression"
 
@@ -11,12 +12,14 @@ module Grant::Query::SelectExtras
 
   # Values of the result columns that are not model columns, keyed by name or
   # alias. Empty for a record loaded without a computed `select`.
+  @[TypeOnce]
   def extra_attributes : Hash(String, Grant::Columns::Type)
     @extra_attributes || {} of String => Grant::Columns::Type
   end
 
   # The computed column *name* (`select("COUNT(*) AS n")` is `"n"`), or `nil`
   # when the record has no such column.
+  @[TypeOnce]
   def extra_attribute(name : String | Symbol) : Grant::Columns::Type
     @extra_attributes.try(&.[name.to_s]?)
   end
@@ -33,6 +36,7 @@ module Grant::Query::SelectExtras
   end
 
   # :nodoc:
+  @[TypeOnce]
   def store_extra_attribute(name : String, value : Grant::Columns::Type) : Nil
     (@extra_attributes ||= {} of String => Grant::Columns::Type)[name] = value
   end

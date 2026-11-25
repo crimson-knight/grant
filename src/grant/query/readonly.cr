@@ -1,7 +1,10 @@
+# crystal: strict
+require "../strict_annotations"
 require "./builder"
 
 class Grant::Query::Builder(Model)
   # `true` when records loaded through this relation are marked read-only.
+  @[TypeOnce]
   def readonly? : Bool
     @readonly
   end

@@ -1,3 +1,4 @@
+require "./strict_annotations"
 require "./connection_registry"
 require "./connection_context"
 require "./connection_handling"
@@ -21,6 +22,7 @@ module Grant::ConnectionManagement
   # explicit writing role) still lifts that owner's prevention.
   #
   # :nodoc:
+  @[TypeOnce]
   def self.preventing_writes? : Bool
     return false unless state = ConnectionState.current?
 
@@ -36,6 +38,7 @@ module Grant::ConnectionManagement
   end
 
   # :nodoc:
+  @[TypeOnce]
   def self.guard_writes! : Nil
     return unless preventing_writes?
 
@@ -47,16 +50,19 @@ module Grant::ConnectionManagement
   # role.
   #
   # :nodoc:
+  @[TypeOnce]
   def self.canonical_role(role : Symbol) : Symbol
     role == :primary ? Grant.settings.writing_role : role
   end
 
   # :nodoc:
+  @[TypeOnce]
   def self.reading_role?(role : Symbol) : Bool
     canonical_role(role) == Grant.settings.reading_role
   end
 
   # :nodoc:
+  @[TypeOnce]
   def self.writing_role?(role : Symbol) : Bool
     canonical_role(role) == Grant.settings.writing_role
   end
@@ -67,6 +73,7 @@ module Grant::ConnectionManagement
   # connection established without a role.
   #
   # :nodoc:
+  @[TypeOnce]
   def self.registry_role(role : Symbol) : Symbol
     settings = Grant.settings
     role = canonical_role(role)
@@ -104,7 +111,8 @@ module Grant::ConnectionManagement
     # ```
     # tracker.mark_write
     # ```
-    def mark_write
+    @[TypeOnce]
+    def mark_write : Bool
       @last_write_time = Time.instant
       @written = true
     end
@@ -125,6 +133,7 @@ module Grant::ConnectionManagement
     # ```
     # tracker.can_use_replica?(2.seconds) # => true once 2s have passed write-free
     # ```
+    @[TypeOnce]
     def can_use_replica?(wait_period : Time::Span) : Bool
       now = Time.instant
 
@@ -173,11 +182,13 @@ module Grant::ConnectionManagement
   # The lag threshold a model uses until it sets its own.
   #
   # :nodoc:
+  @[TypeOnce]
   def self.default_replica_lag_threshold : Time::Span
     2.seconds
   end
 
   # :nodoc:
+  @[TypeOnce]
   def self.replica_lag_threshold(model_name : String) : Time::Span
     @@replica_lag_mutex.synchronize do
       @@replica_lag_thresholds[model_name]? || default_replica_lag_threshold
@@ -185,6 +196,7 @@ module Grant::ConnectionManagement
   end
 
   # :nodoc:
+  @[TypeOnce]
   def self.store_replica_lag_threshold(model_name : String, threshold : Time::Span) : Time::Span
     @@replica_lag_mutex.synchronize do
       @@replica_lag_thresholds[model_name] = threshold
@@ -576,7 +588,8 @@ module Grant::ConnectionManagement
     # ```
     # User.connection_switch_wait_period # => 2000
     # ```
-    def connection_switch_wait_period
+    @[TypeOnce]
+    def connection_switch_wait_period : Int32
       Grant::Connections.connection_switch_wait_period
     end
 
@@ -731,6 +744,7 @@ module Grant::ConnectionManagement
 
     # Removes every context `#connecting_to` or `#connected_to` created for this
     # class in the current fiber.
+    @[TypeOnce]
     def reset_connecting_to : Nil
       self.connection_context = nil
     end
@@ -779,6 +793,7 @@ module Grant::ConnectionManagement
     end
 
     # Returns `true` while `#prohibit_shard_swapping` is active in this fiber.
+    @[TypeOnce]
     def shard_swapping_prohibited? : Bool
       return false unless state = ConnectionState.current?
 
@@ -786,12 +801,14 @@ module Grant::ConnectionManagement
     end
 
     # Shard names declared with `connects_to(shards: ...)`, in declaration order.
+    @[TypeOnce]
     def shard_keys : Array(Symbol)
       shard_config.keys
     end
 
     # The shard an unsharded connection counts as: `:default` when declared,
     # otherwise the first declared shard, otherwise `:default`.
+    @[TypeOnce]
     def default_shard : Symbol
       return :default if shard_config.has_key?(:default)
 
@@ -799,6 +816,7 @@ module Grant::ConnectionManagement
     end
 
     # Returns `true` when `connects_to(shards: ...)` declared any shard.
+    @[TypeOnce]
     def sharded? : Bool
       !shard_config.empty?
     end
@@ -860,6 +878,7 @@ module Grant::ConnectionManagement
     # User.current_database                                              # => "primary"
     # User.connected_to(database: "analytics") { User.current_database } # => "analytics"
     # ```
+    @[TypeOnce]
     def current_database : String
       connection_context_database || default_database_name
     end
@@ -885,6 +904,7 @@ module Grant::ConnectionManagement
     # User.current_shard                                          # => nil
     # User.connected_to(shard: :shard_two) { User.current_shard } # => :shard_two
     # ```
+    @[TypeOnce]
     def current_shard : Symbol?
       connection_context.try(&.shard)
     end
@@ -897,6 +917,7 @@ module Grant::ConnectionManagement
     # User.preventing_writes?                                  # => false
     # User.while_preventing_writes { User.preventing_writes? } # => true
     # ```
+    @[TypeOnce]
     def preventing_writes? : Bool
       connection_context.try(&.prevent_writes) || false
     end
@@ -1009,6 +1030,7 @@ module Grant::ConnectionManagement
       end
     end
 
+    @[TypeOnce]
     private def registered_for_shard?(database : String, registry_role : Symbol, shard : Symbol) : Bool
       registry = Grant::ConnectionRegistry
       registry.connection_exists?(database, registry_role, shard) ||
@@ -1040,6 +1062,7 @@ module Grant::ConnectionManagement
     # User.create(name: "Ada")
     # User.last_write_time # => a monotonic Time::Instant just recorded
     # ```
+    @[TypeOnce]
     def last_write_time : Time::Instant
       key = replica_tracker_key
       with_replica_lag_tracker(key, &.last_write_time)
@@ -1054,6 +1077,7 @@ module Grant::ConnectionManagement
     # User.adapter.open { |db| db.exec("UPDATE users SET ...") }
     # User.mark_write_operation # tell the splitter a write happened
     # ```
+    @[TypeOnce]
     def mark_write_operation : Nil
       key = replica_tracker_key
       with_replica_lag_tracker(key, &.mark_write)
@@ -1067,6 +1091,7 @@ module Grant::ConnectionManagement
     # User.stick_to_primary(10.seconds)
     # User.where(active: true).select # served by the primary for the next 10s
     # ```
+    @[TypeOnce]
     def stick_to_primary(duration : Time::Span = 5.seconds) : Nil
       key = replica_tracker_key
       with_replica_lag_tracker(key) { |tracker| tracker.stick_to_primary(duration) }
@@ -1099,6 +1124,7 @@ module Grant::ConnectionManagement
     end
 
     # Get key for replica tracker
+    @[TypeOnce]
     private def replica_tracker_key : String
       if shard = current_shard
         "#{current_database}:#{shard}"

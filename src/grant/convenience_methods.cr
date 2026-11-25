@@ -38,6 +38,8 @@
 # User.where(active: true).annotate("Called from dashboard").select
 # ```
 
+require "./strict_annotations"
+
 module Grant::ConvenienceMethods(Model)
   # Returns the values of the given *fields* for the matching rows, skipping
   # model instantiation.
@@ -145,6 +147,7 @@ module Grant::ConvenienceMethods(Model)
   # The comment is wrapped in `/* ... */`. Any `*/` sequence in the supplied
   # comment is stripped so it cannot terminate the comment early and inject
   # trailing SQL. Returns `nil` when no annotation is set.
+  @[TypeOnce]
   def annotation_comment : String?
     if ann = @query_annotation
       safe = ann.gsub("*/", "")

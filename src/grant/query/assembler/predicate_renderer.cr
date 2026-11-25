@@ -1,3 +1,4 @@
+# crystal: strict
 # Renders WHERE predicates for the assemblers. Nothing here depends on the
 # model type: the assembler passes in the model's name, table, columns, and how
 # to quote identifiers and bind parameters, so one copy of this code serves every model and SQL

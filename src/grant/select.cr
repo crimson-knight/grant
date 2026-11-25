@@ -1,9 +1,10 @@
+# crystal: strict
 module Grant::Select
   struct Container
     property custom : String?
     getter table_name, fields
 
-    def initialize(@custom = nil, @table_name = "", @fields = [] of String)
+    def initialize(@custom : String? = nil, @table_name : String = "", @fields : Array(String) = [] of String)
     end
   end
 

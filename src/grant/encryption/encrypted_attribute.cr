@@ -1,3 +1,5 @@
+require "../strict_annotations"
+
 module Grant::Encryption
   # Keeps each model's encrypted attribute definitions isolated. Inherited
   # class variables made one model's declarations visible to every other model.
@@ -87,6 +89,7 @@ module Grant::Encryption
     end
 
     # Assigns plaintext through the model's generated encrypted setter.
+    @[TypeOnce]
     def assign(record : Grant::Base, value : String?) : Nil
       @writer.call(record, value)
     end

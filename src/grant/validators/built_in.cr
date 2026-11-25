@@ -1,3 +1,4 @@
+# crystal: strict
 # Built-in validators for Grant ORM
 #
 # Provides Rails-style validation helpers for common validation patterns.

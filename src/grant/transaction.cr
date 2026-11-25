@@ -1,10 +1,12 @@
+require "./strict_annotations"
+
 module Grant
   # Raised when `isolation:` is passed to a transaction that would join or
   # nest inside an already-open transaction on the same connection. The
   # isolation level can only be chosen when the real transaction begins; use
   # `independent: true` to open a separate transaction with its own level.
   class TransactionIsolationError < Grant::ErrorBase
-    def initialize(message = "Cannot set the isolation level of a nested transaction; it is fixed by the outermost transaction")
+    def initialize(message : String = "Cannot set the isolation level of a nested transaction; it is fixed by the outermost transaction")
       super(message)
     end
   end
@@ -41,7 +43,7 @@ module Grant::Transaction
   # Raised when a write is attempted inside a `readonly: true` transaction (or
   # when the database reports a "read-only transaction" error).
   class ReadOnlyError < Grant::ErrorBase
-    def initialize(message = "Cannot modify data in read-only transaction")
+    def initialize(message : String = "Cannot modify data in read-only transaction")
       super(message)
     end
   end
@@ -69,6 +71,7 @@ module Grant::Transaction
     # ```
     # Grant::Transaction::IsolationLevel::RepeatableRead.to_sql # => "REPEATABLE READ"
     # ```
+    @[TypeOnce]
     def to_sql : String
       case self
       when ReadUncommitted then "READ UNCOMMITTED"
@@ -189,6 +192,7 @@ module Grant::Transaction
 
     # The transaction's connection. Asking for it means a statement is about to
     # run on it, so a deferred `BEGIN` is sent first.
+    @[TypeOnce]
     def connection : DB::Connection
       Grant::Transaction.send_deferred_begin(self) if @begin_pending
       @connection
@@ -197,24 +201,29 @@ module Grant::Transaction
     # The connection without triggering a deferred `BEGIN`.
     #
     # :nodoc:
+    @[TypeOnce]
     def raw_connection : DB::Connection
       @connection
     end
 
     # :nodoc:
+    @[TypeOnce]
     def defer_begin! : Nil
       @begin_pending = true
     end
 
     # :nodoc:
-    def begin_pending=(value : Bool)
+    @[TypeOnce]
+    def begin_pending=(value : Bool) : Bool
       @begin_pending = value
     end
 
+    @[TypeOnce]
     def close : Nil
       @open = false
     end
 
+    @[TypeOnce]
     def handle : Handle
       @handle ||= Handle.new(self)
     end
@@ -223,6 +232,7 @@ module Grant::Transaction
 
     # Returns a fresh savepoint name for the next nested transaction, bumping
     # the per-transaction counter. Unique for the life of this transaction.
+    @[TypeOnce]
     def next_savepoint_name : String
       @savepoint_counter += 1
       "sp_#{@savepoint_counter}"
@@ -262,21 +272,25 @@ module Grant::Transaction
     end
 
     # Whether the transaction (or manual savepoint) is still open.
+    @[TypeOnce]
     def open? : Bool
       state = @state
       return false unless state
       state.open? && !@settled
     end
 
+    @[TypeOnce]
     def closed? : Bool
       !open?
     end
 
     # The isolation level the outermost transaction was opened with, if any.
+    @[TypeOnce]
     def isolation : IsolationLevel?
       @state.try(&.options.isolation)
     end
 
+    @[TypeOnce]
     def readonly? : Bool
       state = @state
       state ? state.options.readonly : false
@@ -285,6 +299,7 @@ module Grant::Transaction
     # Registers *block* to run when this transaction commits durably. If the
     # transaction is not open, the block runs immediately. Work registered
     # inside a savepoint that is rolled back is dropped.
+    @[TypeOnce]
     def after_commit(&block : -> Nil) : Nil
       state = @state
       if state && open?
@@ -296,6 +311,7 @@ module Grant::Transaction
 
     # Registers *block* to run if this transaction rolls back. A no-op when the
     # transaction is not open.
+    @[TypeOnce]
     def after_rollback(&block : -> Nil) : Nil
       state = @state
       if state && open?
@@ -305,22 +321,26 @@ module Grant::Transaction
 
     # Commits a transaction opened with `Connection#begin_transaction`
     # (releases the savepoint for a nested manual handle).
+    @[TypeOnce]
     def commit : Nil
       Grant::Transaction.commit_manual(self)
     end
 
     # Rolls back a transaction opened with `Connection#begin_transaction`
     # (rolls back to the savepoint for a nested manual handle).
+    @[TypeOnce]
     def rollback : Nil
       Grant::Transaction.rollback_manual(self)
     end
 
     # :nodoc:
+    @[TypeOnce]
     def savepoint? : SavepointMarker?
       @savepoint
     end
 
     # :nodoc:
+    @[TypeOnce]
     def settle : Nil
       @settled = true
     end
@@ -338,12 +358,14 @@ module Grant::Transaction
   @@transaction_stacks = {} of Fiber => Array(TransactionState)
   @@transaction_stacks_mutex = Mutex.new
 
+  @[TypeOnce]
   private def self.stack_for_current_fiber? : Array(TransactionState)?
     fiber = Fiber.current
     @@transaction_stacks_mutex.synchronize { @@transaction_stacks[fiber]? }
   end
 
   # Returns the transaction stack for the current fiber, lazily creating it.
+  @[TypeOnce]
   def self.fiber_stack : Array(TransactionState)
     fiber = Fiber.current
     @@transaction_stacks_mutex.synchronize do
@@ -352,6 +374,7 @@ module Grant::Transaction
   end
 
   # Removes the current fiber's stack entry (called after the outermost transaction exits).
+  @[TypeOnce]
   def self.clear_fiber_stack : Nil
     fiber = Fiber.current
     @@transaction_stacks_mutex.synchronize { @@transaction_stacks.delete(fiber) }
@@ -360,12 +383,14 @@ module Grant::Transaction
 
   # Returns true when the current fiber has at least one explicit transaction open.
   # Used by CommitCallbacks to decide whether to defer or fire immediately.
+  @[TypeOnce]
   def self.in_explicit_transaction? : Bool
     stack = stack_for_current_fiber?
     !stack.nil? && !stack.empty?
   end
 
   # Returns the innermost open state for the current fiber, or `nil`.
+  @[TypeOnce]
   def self.current_state? : TransactionState?
     stack_for_current_fiber?.try(&.last?)
   end
@@ -373,6 +398,7 @@ module Grant::Transaction
   # Returns the innermost open state on *adapter* for the current fiber, or
   # `nil`. A transaction on another database may be nested inside it, so this
   # searches the whole stack rather than only its top.
+  @[TypeOnce]
   def self.current_state_for?(adapter : Grant::Adapter::Base) : TransactionState?
     stack = stack_for_current_fiber?
     return unless stack
@@ -383,6 +409,7 @@ module Grant::Transaction
   end
 
   # Returns the `Handle` of the innermost open transaction, or a null handle.
+  @[TypeOnce]
   def self.current_handle : Handle
     if state = current_state?
       state.handle
@@ -401,6 +428,7 @@ module Grant::Transaction
   #
   # If no transaction is open the on_commit closure fires immediately — callers
   # normally check in_explicit_transaction? first, so this is a safety net.
+  @[TypeOnce]
   def self.enqueue_pending_callback(on_commit : Proc(Nil), on_rollback : Proc(Nil)) : Nil
     if state = current_state?
       state.pending_callbacks << {on_commit: on_commit, on_rollback: on_rollback}
@@ -417,6 +445,7 @@ module Grant::Transaction
   # ```
   # Grant.after_all_transactions_commit { Cache.bust("orders") }
   # ```
+  @[TypeOnce]
   def self.after_all_transactions_commit(&block : -> Nil) : Nil
     if state = current_state?
       state.after_all_commit_callbacks << block
@@ -427,6 +456,7 @@ module Grant::Transaction
 
   # Enlists a record snapshot with the innermost open transaction. The snapshot
   # is discarded on commit and called in reverse order on rollback.
+  @[TypeOnce]
   def self.enlist_record_rollback_action(rollback_action : Proc(Nil)) : Nil
     if state = current_state?
       state.list_of_record_rollback_actions << rollback_action
@@ -443,6 +473,7 @@ module Grant::Transaction
   # in one process), DML on a model whose adapter did not start the transaction
   # must NOT be routed onto the transaction connection — it belongs to a
   # different database entirely and gets its own pool connection instead.
+  @[TypeOnce]
   def self.current_connection?(adapter : Grant::Adapter::Base) : DB::Connection?
     current_state_for?(adapter).try(&.connection)
   end
@@ -550,6 +581,7 @@ module Grant::Transaction
   # Treats the release of a savepoint under a non-joinable level as that
   # work's commit: its record snapshots are discarded and the after_commit
   # closures enqueued since *marks* are returned for the caller to run.
+  @[TypeOnce]
   private def self.take_released_savepoint_callbacks(state : TransactionState, marks : NamedTuple(callbacks: Int32, records: Int32, after_all: Int32)) : Array(Proc(Nil))
     released_records = state.list_of_record_rollback_actions.size - marks[:records]
     state.list_of_record_rollback_actions.pop(released_records) if released_records > 0
@@ -559,6 +591,7 @@ module Grant::Transaction
     state.pending_callbacks.pop(released_callbacks).map(&.[:on_commit])
   end
 
+  @[TypeOnce]
   private def self.savepoint_marks(state : TransactionState) : NamedTuple(callbacks: Int32, records: Int32, after_all: Int32)
     {
       callbacks: state.pending_callbacks.size,
@@ -572,6 +605,7 @@ module Grant::Transaction
   # ROLLBACK discards that work permanently, so callbacks enqueued after the
   # mark are pruned and get after_rollback (after_all blocks are dropped)
   # rather than waiting to receive after_commit at the outer commit.
+  @[TypeOnce]
   private def self.rollback_to_savepoint(state : TransactionState, name : String, marks : NamedTuple(callbacks: Int32, records: Int32, after_all: Int32)) : Nil
     execute_control(state.connection, state.adapter, "ROLLBACK TO SAVEPOINT #{name}")
     restore_savepoint_records(state, marks[:records])
@@ -579,11 +613,13 @@ module Grant::Transaction
     fire_savepoint_rollback_callbacks(state, marks[:callbacks])
   end
 
+  @[TypeOnce]
   private def self.prune_after_all(state : TransactionState, mark : Int32) : Nil
     excess = state.after_all_commit_callbacks.size - mark
     state.after_all_commit_callbacks.pop(excess) if excess > 0
   end
 
+  @[TypeOnce]
   private def self.fire_savepoint_rollback_callbacks(state : TransactionState, mark : Int32) : Nil
     excess = state.pending_callbacks.size - mark
     return if excess <= 0
@@ -591,6 +627,7 @@ module Grant::Transaction
     pruned.each(&.[:on_rollback].call)
   end
 
+  @[TypeOnce]
   private def self.restore_savepoint_records(state : TransactionState, mark : Int32) : Nil
     number_to_restore = state.list_of_record_rollback_actions.size - mark
     return if number_to_restore <= 0
@@ -599,6 +636,7 @@ module Grant::Transaction
     rollback_actions.reverse_each(&.call)
   end
 
+  @[TypeOnce]
   private def self.restore_transaction_records(state : TransactionState) : Nil
     state.list_of_record_rollback_actions.reverse_each(&.call)
     state.list_of_record_rollback_actions.clear
@@ -662,6 +700,7 @@ module Grant::Transaction
 
   # Issues ROLLBACK and settles the state. The state leaves the stack even if
   # ROLLBACK itself fails. Returns the rollback callbacks to run.
+  @[TypeOnce]
   private def self.abort_real(state : TransactionState) : Array(Proc(Nil))
     begin
       execute_control(state.raw_connection, state.adapter, "ROLLBACK") unless state.begin_pending?
@@ -672,6 +711,7 @@ module Grant::Transaction
     finalize_rollback(state)
   end
 
+  @[TypeOnce]
   private def self.leave_stack(state : TransactionState) : Nil
     stack = fiber_stack
     stack.delete(state)
@@ -680,18 +720,21 @@ module Grant::Transaction
   end
 
   # *savepoint_name* is `nil` for a real transaction.
+  @[TypeOnce]
   private def self.publish_transaction_start(state : TransactionState, savepoint_name : String?) : Nil
     Grant::Notifications.instrument(Grant::Events::TransactionStart) do
       Grant::Events::TransactionStart.new(state.adapter.name, state.options, savepoint_name)
     end
   end
 
+  @[TypeOnce]
   private def self.publish_transaction_end(state : TransactionState, outcome : Grant::Events::TransactionOutcome, started_at : Time::Instant = state.started_at, savepoint_name : String? = nil) : Nil
     Grant::Notifications.instrument(Grant::Events::Transaction) do
       Grant::Events::Transaction.new(state.adapter.name, outcome, Time.instant - started_at, state.options, savepoint_name)
     end
   end
 
+  @[TypeOnce]
   private def self.finalize_rollback(state : TransactionState) : Array(Proc(Nil))
     pending = state.begin_pending?
     leave_stack(state)
@@ -703,6 +746,7 @@ module Grant::Transaction
   # A transaction committed durably on its own connection (true even for an
   # independent transaction nested inside another), so its after_commit
   # callbacks fire now. after_all blocks wait for the outermost commit.
+  @[TypeOnce]
   private def self.finalize_commit(state : TransactionState) : Array(Proc(Nil))
     pending = state.begin_pending?
     leave_stack(state)
@@ -720,6 +764,7 @@ module Grant::Transaction
   # crystal-mysql's prepared-statement protocol does not implement transaction
   # control commands. Route those statements over COM_QUERY for MySQL; the
   # other adapters accept them through the normal DB execution path.
+  @[TypeOnce]
   private def self.execute_control(conn : DB::Connection, adapter : Grant::Adapter::Base, statement : String) : Nil
     Grant::Logs::Transaction.debug { statement }
     if adapter.mysql?
@@ -738,6 +783,7 @@ module Grant::Transaction
   # about to run on its connection.
   #
   # :nodoc:
+  @[TypeOnce]
   def self.send_deferred_begin(state : TransactionState) : Nil
     return unless state.begin_pending?
 
@@ -753,6 +799,7 @@ module Grant::Transaction
     publish_transaction_start(state, nil)
   end
 
+  @[TypeOnce]
   private def self.execute_begin(conn : DB::Connection, adapter : Grant::Adapter::Base, options : Options) : Nil
     begin_statements(adapter, options).each { |statement| execute_control(conn, adapter, statement) }
   end
@@ -760,6 +807,7 @@ module Grant::Transaction
   # The statements that open a real transaction with *options*, in the order
   # they are sent. MySQL needs `SET TRANSACTION ISOLATION LEVEL` before
   # `START TRANSACTION` (issued after, it would apply to the next transaction).
+  @[TypeOnce]
   def self.begin_statements(adapter : Grant::Adapter::Base, options : Options) : Array(String)
     if adapter.mysql?
       statements = [] of String
@@ -793,6 +841,7 @@ module Grant::Transaction
 
   # Re-raises *ex* as the matching `Grant::ErrorBase` when *adapter*
   # recognizes it, and unchanged otherwise.
+  @[TypeOnce]
   private def self.handle_transaction_error(adapter : Grant::Adapter::Base, ex : DB::Error) : NoReturn
     raise adapter.translate_exception(ex)
   end
@@ -801,6 +850,7 @@ module Grant::Transaction
   # On an adapter with no open transaction this begins a real transaction on a
   # checked-out pool connection (held until settled); when one is already open
   # on the adapter it opens a savepoint and returns a nested handle.
+  @[TypeOnce]
   def self.begin_manual(adapter : Grant::Adapter::Base, options : Options) : Handle
     if state = current_state_for?(adapter)
       raise Grant::TransactionIsolationError.new if options.isolation
@@ -836,6 +886,7 @@ module Grant::Transaction
   end
 
   # :nodoc:
+  @[TypeOnce]
   def self.commit_manual(handle : Handle) : Nil
     state = handle.state
     raise NotOpenError.new unless state && handle.open?
@@ -863,6 +914,7 @@ module Grant::Transaction
   end
 
   # :nodoc:
+  @[TypeOnce]
   def self.rollback_manual(handle : Handle) : Nil
     state = handle.state
     raise NotOpenError.new unless state && handle.open?
@@ -884,6 +936,7 @@ module Grant::Transaction
     callbacks.each(&.call)
   end
 
+  @[TypeOnce]
   private def self.release_manual(state : TransactionState) : Nil
     state.manual_savepoints.each(&.settle)
     state.manual_savepoints.clear
@@ -965,6 +1018,7 @@ module Grant::Transaction
     #   User.transaction(requires_new: true) { inner.save! } # SAVEPOINT
     # end
     # ```
+    @[Override]
     def transaction(isolation : IsolationLevel? = nil, readonly : Bool = false, requires_new : Bool = false, joinable : Bool = true, independent : Bool = false, & : -> T) : T? forall T
       options = Transaction::Options.new(
         isolation: isolation,
@@ -983,6 +1037,7 @@ module Grant::Transaction
     # User.transaction_open?                      # => false
     # User.transaction { User.transaction_open? } # => true (inside the block)
     # ```
+    @[TypeOnce]
     def transaction_open? : Bool
       Grant::Transaction.in_explicit_transaction?
     end
@@ -996,12 +1051,14 @@ module Grant::Transaction
     #   User.current_transaction.after_commit { puts "committed" }
     # end
     # ```
+    @[TypeOnce]
     def current_transaction : Transaction::Handle
       Grant::Transaction.current_handle
     end
 
     # Runs *block* after the outermost transaction commits, or immediately when
     # none is open. Dropped on rollback.
+    @[TypeOnce]
     def after_all_transactions_commit(&block : -> Nil) : Nil
       Grant::Transaction.after_all_transactions_commit(&block)
     end

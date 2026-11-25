@@ -1,3 +1,4 @@
+require "./strict_annotations"
 require "json"
 require "uuid"
 require "uuid/json"
@@ -32,14 +33,17 @@ module Grant::Columns
   module VirtualAttributeRegistry
     @@setters = {} of Tuple(String, String) => Proc(Grant::Base, Type, Nil)
 
+    @[TypeOnce]
     def self.register(model_name : String, attribute_name : String, setter : Proc(Grant::Base, Type, Nil)) : Nil
       @@setters[{model_name, attribute_name}] = setter
     end
 
+    @[TypeOnce]
     def self.registered?(model_name : String, attribute_name : String) : Bool
       @@setters.has_key?({model_name, attribute_name})
     end
 
+    @[TypeOnce]
     def self.assign(record : Grant::Base, attribute_name : String, value : Type) : Bool
       if setter = @@setters[{record.class.name, attribute_name}]?
         setter.call(record, value)
@@ -49,6 +53,7 @@ module Grant::Columns
       end
     end
 
+    @[TypeOnce]
     def self.string_value(value : Type) : String?
       case value
       when Nil    then nil
@@ -88,6 +93,7 @@ module Grant::Columns
     # many rows from one result set does not repeat the work per row.
     #
     # :nodoc:
+    @[TypeOnce]
     def __column_plan(result : DB::ResultSet, adapter : Grant::Adapter::Base) : Grant::ColumnPlan
       names = result.column_names
       ordinals = Array(Int32).new(names.size)
@@ -107,6 +113,7 @@ module Grant::Columns
     #
     # Read-only columns may be set when a record is created. Direct writes via
     # `update_columns` reject them; normal updates omit them.
+    @[TypeOnce]
     def readonly_attributes : Array(String)
       [] of String
     end
@@ -914,6 +921,7 @@ module Grant::Columns
   end
 
   # Check if model has composite primary key
+  @[TypeOnce]
   def self.composite_primary_key? : Bool
     primary_key_columns.size > 1
   end

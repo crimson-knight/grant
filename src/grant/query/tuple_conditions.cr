@@ -1,3 +1,5 @@
+require "../strict_annotations"
+
 module Grant::Query
   # How a multi-column `IN` over key tuples is written.
   #
@@ -36,6 +38,7 @@ class Grant::Query::Builder(Model)
   # Raises `ArgumentError` for an unknown column, a tuple of the wrong size, or
   # more than `Grant.settings.in_clause_limit` tuples (chunk the list, or use
   # `find_keys` which does).
+  @[TypeOnce]
   def where_tuples!(columns : Array(String), tuples : Array(Array(Grant::Columns::Type)),
                     strategy : Grant::Query::TupleStrategy = :auto, negated : Bool = false) : self
     raise ArgumentError.new("where_tuples needs at least one column") if columns.empty?
@@ -70,6 +73,7 @@ class Grant::Query::Builder(Model)
   end
 
   # :ditto:
+  @[TypeOnce]
   def where_tuples(columns : Array(String), tuples : Array(Array(Grant::Columns::Type)),
                    strategy : Grant::Query::TupleStrategy = :auto, negated : Bool = false) : self
     chain_copy.where_tuples!(columns, tuples, strategy, negated)
@@ -77,12 +81,14 @@ class Grant::Query::Builder(Model)
 
   # Typed form: *columns* as symbols or strings (an array or a tuple) and
   # *tuples* as an array of `Tuple`s.
+  @[TypeOnce]
   def where_tuples(columns : Array | Tuple, tuples : Array(Tuple),
                    strategy : Grant::Query::TupleStrategy = :auto, negated : Bool = false) : self
     where_tuples(columns.to_a.map(&.to_s), tuples.map { |tuple| tuple_values(tuple) }, strategy, negated)
   end
 
   # Keeps only rows that match none of *tuples* (`NOT IN`).
+  @[TypeOnce]
   def where_not_tuples(columns : Array | Tuple, tuples : Array(Tuple),
                        strategy : Grant::Query::TupleStrategy = :auto) : self
     where_tuples(columns, tuples, strategy, negated: true)
@@ -91,6 +97,7 @@ class Grant::Query::Builder(Model)
   # Keeps the row(s) whose key columns (`Model.persistence_key_columns`: the
   # `query_constraints`, else the composite primary key, else the primary key)
   # equal *key*, given as a `Tuple` in column order.
+  @[TypeOnce]
   def where_key(key : Tuple) : self
     columns = lookup_key_columns
     if key.size != columns.size
@@ -109,6 +116,7 @@ class Grant::Query::Builder(Model)
   end
 
   # :ditto: *key* names every key column, in any order.
+  @[TypeOnce]
   def where_key(key : NamedTuple) : self
     columns = lookup_key_columns
     if key.size != columns.size
@@ -128,6 +136,7 @@ class Grant::Query::Builder(Model)
   end
 
   # Keeps the rows whose key columns equal any of *keys*: one row-value `IN`.
+  @[TypeOnce]
   def where_keys(keys : Array(Tuple), strategy : Grant::Query::TupleStrategy = :auto) : self
     where_tuples(lookup_key_columns, keys, strategy)
   end
@@ -135,11 +144,13 @@ class Grant::Query::Builder(Model)
   # Returns the rows matching any of *keys* (tuples in key column order), in
   # *keys* order; missing keys are skipped. Lists longer than
   # `Grant.settings.in_clause_limit` run as several queries.
+  @[TypeOnce]
   def find_keys(keys : Array(Tuple)) : Array(Model)
     found_records_by_keys(keys).first
   end
 
   # Like `find_keys`, raising `Grant::Querying::NotFound` naming every missing key.
+  @[TypeOnce]
   def find_keys!(keys : Array(Tuple)) : Array(Model)
     records, missing = found_records_by_keys(keys)
     unless missing.empty?
@@ -149,27 +160,32 @@ class Grant::Query::Builder(Model)
   end
 
   # Returns the row with key *key* in this relation, or `nil`.
+  @[TypeOnce]
   def find(key : Tuple) : Model?
     where_key(key).first
   end
 
   # :ditto:
+  @[TypeOnce]
   def find(key : NamedTuple) : Model?
     where_key(key).first
   end
 
   # Like `find(key)`, raising `Grant::Querying::NotFound` when there is no row.
+  @[TypeOnce]
   def find!(key : Tuple) : Model
     find(key) || raise Grant::Querying::NotFound.new("Couldn't find #{Model.name} with '#{lookup_key_columns.join(", ")}'=(#{key.to_a.join(", ")})")
   end
 
   # :ditto:
+  @[TypeOnce]
   def find!(key : NamedTuple) : Model
     find(key) || raise Grant::Querying::NotFound.new("Couldn't find #{Model.name} with #{key}")
   end
 
   # Columns a key lookup uses: the model's persistence key when it declares one
   # (composite key or `query_constraints`), else its primary key column.
+  @[TypeOnce]
   private def lookup_key_columns : Array(String)
     {% if Model.class.has_method?(:persistence_key_columns) %}
       Model.persistence_key_columns
@@ -181,6 +197,7 @@ class Grant::Query::Builder(Model)
   # `where(id: [[shop, id], ...])` or `where(id: {shop, id})` on a model with a
   # composite primary key addresses whole key tuples, as in ActiveRecord.
   # Returns false, adding nothing, for every other condition.
+  @[TypeOnce]
   private def add_composite_key_tuples_condition(join : Symbol, field : String, values : Array) : Nil
     unless join == :and && field == "id" && composite_key_model?
       raise ArgumentError.new("#{field.inspect} cannot be compared with key tuples on #{Model.name}; only where(id: [[a, b], ...]) on a composite primary key is supported")
@@ -188,6 +205,7 @@ class Grant::Query::Builder(Model)
     where_tuples!(lookup_key_columns, values.map { |element| tuple_values(element) })
   end
 
+  @[TypeOnce]
   private def add_composite_key_tuple_condition(join : Symbol, field : String, value : Tuple) : Nil
     unless join == :and && field == "id" && composite_key_model?
       raise ArgumentError.new("A tuple value is only accepted for the composite primary key of #{Model.name} (where(id: {a, b}))")
@@ -197,6 +215,7 @@ class Grant::Query::Builder(Model)
 
   # The builder takes homogeneous lists, so a single key column's values are
   # narrowed to their concrete type first (see `AssociationLoader.where_in`).
+  @[TypeOnce]
   private def and_single_column_in(column : String, values : Array(Grant::Columns::Type), negated : Bool) : self
     case values.find { |value| !value.nil? }
     when Int64  then and_in!(column, values.map(&.as(Int64?)), negated)
@@ -210,6 +229,7 @@ class Grant::Query::Builder(Model)
     end
   end
 
+  @[TypeOnce]
   private def composite_key_model? : Bool
     {% if Model.class.has_method?(:composite_primary_key_columns) %}
       Model.composite_primary_key?
@@ -218,18 +238,21 @@ class Grant::Query::Builder(Model)
     {% end %}
   end
 
+  @[TypeOnce]
   private def tuple_values(list : Array) : Array(Grant::Columns::Type)
     values = [] of Grant::Columns::Type
     list.each { |value| values << value.as(Grant::Columns::Type) }
     values
   end
 
+  @[TypeOnce]
   private def tuple_values(tuple : Tuple) : Array(Grant::Columns::Type)
     values = [] of Grant::Columns::Type
     tuple.each { |value| values << value.as(Grant::Columns::Type) }
     values
   end
 
+  @[TypeOnce]
   private def found_records_by_keys(keys : Array(Tuple)) : {Array(Model), Array(String)}
     return {[] of Model, [] of String} if keys.empty?
 
@@ -256,10 +279,12 @@ class Grant::Query::Builder(Model)
   end
 
   # Text identity of a key tuple, so Int32 and Int64 spellings of one key match.
+  @[TypeOnce]
   private def tuple_identity(values : Array(Grant::Columns::Type)) : String
     values.map(&.to_s).join('\u{1f}')
   end
 
+  @[TypeOnce]
   private def use_or_expansion?(strategy : Grant::Query::TupleStrategy, tuples : Array(Array(Grant::Columns::Type))) : Bool
     case strategy
     in .or_expansion? then true
@@ -268,6 +293,7 @@ class Grant::Query::Builder(Model)
     end
   end
 
+  @[TypeOnce]
   private def tuple_row_value_sql(columns_sql : Array(String), tuples : Array(Array(Grant::Columns::Type)),
                                   values : Array(Grant::Columns::Type), negated : Bool) : String
     row = "(#{Array.new(columns_sql.size, "?").join(", ")})"
@@ -279,6 +305,7 @@ class Grant::Query::Builder(Model)
     "(#{columns_sql.join(", ")}) #{operator} (#{list})"
   end
 
+  @[TypeOnce]
   private def tuple_or_expansion_sql(columns_sql : Array(String), tuples : Array(Array(Grant::Columns::Type)),
                                      values : Array(Grant::Columns::Type), negated : Bool) : String
     if tuples.size > Grant::Query::TupleConditions::OR_EXPANSION_LIMIT

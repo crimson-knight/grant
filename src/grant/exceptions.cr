@@ -1,3 +1,5 @@
+require "./strict_annotations"
+
 module Grant
   # Raised by `save!`, `create!` and `update!` when the record could not be
   # persisted. Validation failures raise the `Grant::RecordInvalid` subclass.
@@ -18,6 +20,7 @@ module Grant
     # The first recorded error, or a fixed sentence when a callback halted the
     # save without recording one.
     # :nodoc:
+    @[TypeOnce]
     def self.reason_for(model : Grant::Base) : String
       first_error = model.errors.first?
       first_error.try(&.message) || "the save was halted before the record was persisted"

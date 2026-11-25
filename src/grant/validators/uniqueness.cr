@@ -1,3 +1,4 @@
+# crystal: strict
 module Grant::Validators
   # Validates that a field value is unique in the database.
   #

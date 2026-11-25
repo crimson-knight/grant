@@ -1,3 +1,5 @@
+require "../../strict_annotations"
+
 # Base class for database-specific query assemblers
 #
 # This is the base interface for all query assemblers. Each database
@@ -108,6 +110,7 @@ module Grant::Query::Assembler
       result
     end
 
+    @[TypeOnce]
     def quote_identifier(name : String) : String
       raise NotImplementedError.new("Must be implemented by subclass")
     end

@@ -1,3 +1,5 @@
+require "./strict_annotations"
+
 # Autosave for associations: what saving an owner does to the records staged on
 # it, and how their validation errors reach the owner.
 #
@@ -97,6 +99,7 @@ module Grant::Autosave
   end
 
   # :nodoc:
+  @[TypeOnce]
   def _autosave_staged(name : String) : Array(Grant::Base)
     staged = @_autosave_staged
     return [] of Grant::Base unless staged
@@ -107,6 +110,7 @@ module Grant::Autosave
   # Drops the staged records of *name* that are persisted now.
   #
   # :nodoc:
+  @[TypeOnce]
   def _autosave_unstage_saved(name : String) : Nil
     staged = @_autosave_staged
     return unless staged

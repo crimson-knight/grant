@@ -1,3 +1,5 @@
+require "../../strict_annotations"
+
 module Grant::Query::Executor
   class Grouped(Model)
     include Shared
@@ -5,6 +7,7 @@ module Grant::Query::Executor
     def initialize(@sql : String, @group_count : Int32, @args = [] of Grant::Columns::Type)
     end
 
+    @[TypeOnce]
     def run : Hash(Array(Grant::Columns::Type), Int64)
       log @sql, @args
 

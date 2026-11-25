@@ -1,3 +1,5 @@
+require "../strict_annotations"
+
 # ActiveRecord-compatible blankness, shared by `validates_presence_of`,
 # `validates_absence_of` and every `allow_blank:` option.
 #
@@ -5,22 +7,27 @@
 # an empty Array/Hash/Set (any collection that answers `empty?`). Numbers,
 # `true`, Symbols and Time values are never blank.
 module Grant::Validators
+  @[TypeOnce]
   def self.blank?(value : Nil) : Bool
     true
   end
 
+  @[TypeOnce]
   def self.blank?(value : String) : Bool
     value.blank?
   end
 
+  @[TypeOnce]
   def self.blank?(value : Bool) : Bool
     !value
   end
 
+  @[TypeOnce]
   def self.blank?(value : Number) : Bool
     false
   end
 
+  @[TypeOnce]
   def self.blank?(value : Array | Hash | Set | Slice) : Bool
     value.empty?
   end

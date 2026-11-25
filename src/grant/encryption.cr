@@ -1,3 +1,4 @@
+require "./strict_annotations"
 require "./encryption/key_provider"
 require "./encryption/cipher"
 require "./encryption/encrypted_attribute"
@@ -93,6 +94,7 @@ module Grant::Encryption
   # Grant::Encryption.configure { |c| c.primary_key = Grant::Encryption::Config.generate_key }
   # Grant::Encryption.configured? # => true
   # ```
+  @[TypeOnce]
   def self.configured? : Bool
     !KeyProvider.primary_key.nil?
   end
@@ -110,12 +112,14 @@ module Grant::Encryption
   # sealed = Grant::Encryption.encrypt("123-45-6789", "User", "ssn")
   # sealed # => Base64 ciphertext (String), differs each call (non-deterministic)
   # ```
+  @[TypeOnce]
   def self.encrypt(value : String, model_name : String, attribute_name : String, deterministic : Bool = false) : String
     key = KeyProvider.derive_key(model_name, attribute_name, deterministic)
     encrypted_bytes = Cipher.encrypt(value, key, deterministic)
     Base64.strict_encode(encrypted_bytes)
   end
 
+  @[TypeOnce]
   def self.encrypt(value : String?, model_name : String, attribute_name : String, deterministic : Bool = false) : String?
     return if value.nil?
     encrypt(value, model_name, attribute_name, deterministic)
@@ -135,6 +139,7 @@ module Grant::Encryption
   # sealed = Grant::Encryption.encrypt("hello", "User", "note").not_nil!
   # Grant::Encryption.decrypt(sealed, "User", "note") # => "hello"
   # ```
+  @[TypeOnce]
   def self.decrypt(encrypted : String?, model_name : String, attribute_name : String) : String?
     return if encrypted.nil? || encrypted.empty?
 
@@ -157,6 +162,7 @@ module Grant::Encryption
   end
 
   # :nodoc:
+  @[TypeOnce]
   def self.encrypt_with_keys(
     value : String,
     model_name : String,
@@ -173,6 +179,7 @@ module Grant::Encryption
   end
 
   # :nodoc:
+  @[TypeOnce]
   def self.decrypt_with_keys(
     encrypted : String,
     model_name : String,
@@ -213,6 +220,7 @@ module Grant::Encryption
   # cache. You normally do not include this directly — `Grant::Base` already does.
   module Model
     module ClassMethods
+      @[TypeOnce]
       def encrypted_attributes : Hash(String, Grant::Encryption::EncryptedAttribute)
         Grant::Encryption::EncryptedAttributeRegistry.for(name)
       end
@@ -220,6 +228,7 @@ module Grant::Encryption
       # The encrypted attribute *field* names, if it is one. Used by the query
       # builder to encrypt values in `where(email: ...)`; a plain hash probe,
       # with no copy of the registry.
+      @[TypeOnce]
       def encrypted_query_attribute(field : String) : Grant::Encryption::EncryptedAttribute?
         Grant::Encryption::EncryptedAttributeRegistry.lookup(name, field)
       end
@@ -277,6 +286,7 @@ module Grant::Encryption
       self.class.encrypted_attributes.each_value(&.unseal(self))
     end
 
+    @[TypeOnce]
     private def encrypted_attribute_named(attribute_name : Symbol | String) : Grant::Encryption::EncryptedAttribute
       self.class.encrypted_query_attribute(attribute_name.to_s) ||
         raise ArgumentError.new("#{self.class.name}##{attribute_name} is not an encrypted attribute")

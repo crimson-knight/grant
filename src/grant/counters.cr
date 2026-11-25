@@ -1,3 +1,4 @@
+require "./strict_annotations"
 require "./timestamps"
 
 # Atomic counter updates. `col = COALESCE(col, 0) + n` runs in the database, so
@@ -101,6 +102,7 @@ module Grant::Counters
     # Named columns must be declared `Time` columns.
     #
     # :nodoc:
+    @[TypeOnce]
     def __counter_touch_columns(touch : Bool | Symbol | Array(Symbol)) : Array(String)
       columns = [] of String
       case touch

@@ -1,3 +1,4 @@
+require "../strict_annotations"
 require "./builder"
 require "./type_name_rooting"
 
@@ -9,6 +10,7 @@ module Grant::Query::JoinedColumns
   # True or false when *qualifier* (an association name or a table name) maps
   # to a model declared as an association of *owner_name*; nil when the
   # registry knows no model for it (a raw joined table).
+  @[TypeOnce]
   def self.known_column?(owner_name : String, qualifier : String, column : String) : Bool?
     Grant::AssociationRegistry.reflections_for(owner_name).each do |reflection|
       next if reflection.polymorphic?
@@ -22,6 +24,7 @@ module Grant::Query::JoinedColumns
 
   # The table name behind *qualifier* (an association name or a table name),
   # or nil when no association of *owner_name* points at it.
+  @[TypeOnce]
   def self.table_for(owner_name : String, qualifier : String) : String?
     Grant::AssociationRegistry.reflections_for(owner_name).each do |reflection|
       next if reflection.polymorphic?
@@ -53,6 +56,7 @@ class Grant::Query::Builder(Model)
 
   # Records that the raw *stmt* constrains *field* only; *equality* marks a
   # plain `IN` list.
+  @[TypeOnce]
   protected def register_raw_where_column(stmt : String, field : String, equality : Bool = false) : Nil
     raw_columns = @raw_where_columns ||= {} of String => Tuple(String, Bool)
     raw_columns[stmt] = {where_column_key(field), equality}
@@ -60,6 +64,7 @@ class Grant::Query::Builder(Model)
 
   # The column a raw clause was registered for and whether it is a plain `IN`
   # list; nil for a user-written or multi-column statement.
+  @[TypeOnce]
   protected def raw_where_column(stmt : String) : Tuple(String, Bool)?
     if raw_columns = @raw_where_columns
       raw_columns[stmt]?
@@ -68,6 +73,7 @@ class Grant::Query::Builder(Model)
 
   # Column a WHERE clause constrains when it is tied to exactly one column:
   # a structured field clause, or a raw clause registered for one column.
+  @[TypeOnce]
   private def where_clause_column(clause : WhereField) : String?
     if clause.is_a?(FieldClause)
       where_column_key(clause[:field])
@@ -159,6 +165,7 @@ class Grant::Query::Builder(Model)
 
   # `field IN (...) OR field IS NULL OR (field >= ? AND field <= ?)` for an
   # array that mixes plain values, nil and ranges.
+  @[TypeOnce]
   private def add_mixed_array_condition(join : Symbol, field : String, values : Array) : Nil
     field_sql = structured_field_sql(field)
     scalars = [] of Grant::Columns::Type
@@ -191,6 +198,7 @@ class Grant::Query::Builder(Model)
 
   # SQL for one range over an already-quoted column: the bounds it has, ANDed
   # (`1=1` when it has neither), with their values.
+  @[TypeOnce]
   private def range_predicate(field_sql : String, range : Range) : Tuple(String, Array(Grant::Columns::Type))
     parts = [] of String
     values = [] of Grant::Columns::Type
@@ -205,6 +213,7 @@ class Grant::Query::Builder(Model)
     {parts.empty? ? "1=1" : "(#{parts.join(" AND ")})", values}
   end
 
+  @[TypeOnce]
   private def add_field_condition(join : Symbol, field : String, operator : Symbol, value : Grant::Columns::Type) : Nil
     own_where_fields << {join: join, field: field, operator: operator, value: value}
   end
@@ -212,6 +221,7 @@ class Grant::Query::Builder(Model)
   # A range becomes `>=` and `<=` (or `<` for an exclusive end). A beginless
   # or endless range keeps only its one bound; a range with neither bound
   # constrains nothing.
+  @[TypeOnce]
   private def add_range_condition(join : Symbol, field : String, range : Range) : Nil
     upper_operator = range.exclusive? ? :lt : :lteq
 
@@ -250,6 +260,7 @@ class Grant::Query::Builder(Model)
   end
 
   # True when *field* is not a column but names a `belongs_to` association.
+  @[TypeOnce]
   private def association_condition?(field : String) : Bool
     return false if Model.fields.includes?(field)
 
@@ -340,6 +351,7 @@ class Grant::Query::Builder(Model)
 
   # `field IN (?, ?)` for *keys*; a nil key also matches NULL, an empty list
   # matches nothing.
+  @[TypeOnce]
   private def key_list_predicate(field_sql : String, keys : Array(Grant::Columns::Type)) : Tuple(String, Array(Grant::Columns::Type))
     present = keys.reject(&.nil?) # ameba:disable Style/IsAFilter (reject(Nil) would narrow the element type)
     has_nil = present.size != keys.size
@@ -371,6 +383,7 @@ class Grant::Query::Builder(Model)
 
   # A relation over the same tables and joins with no WHERE conditions, used to
   # build a group of conditions before they are folded into one clause.
+  @[TypeOnce]
   private def blank_where_scope : self
     scope = chain_copy
     scope.clear_where_fields
@@ -424,6 +437,7 @@ class Grant::Query::Builder(Model)
   # User.where(active: true, role: "admin").invert_where
   # # => WHERE NOT (active = true AND role = 'admin')
   # ```
+  @[TypeOnce]
   def invert_where! : self
     return self if @where_fields.empty?
 
@@ -435,6 +449,7 @@ class Grant::Query::Builder(Model)
     self
   end
 
+  @[TypeOnce]
   def invert_where : self
     chain_copy.invert_where!
   end
@@ -450,6 +465,7 @@ class Grant::Query::Builder(Model)
   # User.where(role: "admin").or(User.where(active: true))
   # # => WHERE (role = 'admin') OR (active = true)
   # ```
+  @[TypeOnce]
   def or!(other : Builder(Model)) : self
     ensure_structurally_compatible!(other, "or")
 
@@ -467,12 +483,14 @@ class Grant::Query::Builder(Model)
     self
   end
 
+  @[TypeOnce]
   def or(other : Builder(Model)) : self
     chain_copy.or!(other)
   end
 
   # ANDs *other*'s conditions onto this relation. Same compatibility rule as
   # `or`. Conditions on the same column are kept (use `merge` to replace them).
+  @[TypeOnce]
   def and!(other : Builder(Model)) : self
     ensure_structurally_compatible!(other, "and")
     return self if other.where_fields.empty?
@@ -487,11 +505,13 @@ class Grant::Query::Builder(Model)
     end
   end
 
+  @[TypeOnce]
   def and(other : Builder(Model)) : self
     chain_copy.and!(other)
   end
 
   # Names of the relation components on which this relation and *other* differ.
+  @[TypeOnce]
   protected def structurally_incompatible_values(other : Builder(Model)) : Array(Symbol)
     differing = [] of Symbol
     differing << :order if @order_fields != other.order_fields
@@ -508,6 +528,7 @@ class Grant::Query::Builder(Model)
     differing
   end
 
+  @[TypeOnce]
   private def ensure_structurally_compatible!(other : Builder(Model), method_name : String) : Nil
     differing = structurally_incompatible_values(other)
     return if differing.empty?
@@ -573,6 +594,7 @@ class Grant::Query::Builder(Model)
   end
 
   # Column a condition applies to, without the model's own table qualifier.
+  @[TypeOnce]
   private def where_column_key(field : String) : String
     prefix = "#{Model.table_name}."
     field.starts_with?(prefix) ? field[prefix.size..] : field
@@ -580,12 +602,14 @@ class Grant::Query::Builder(Model)
 
   # Drops every condition tied to one of *columns*: structured clauses on it
   # and the raw clauses this relation generated for it.
+  @[TypeOnce]
   private def remove_where_columns!(columns : Set(String)) : Nil
     return unless @where_fields.any? { |clause| where_clause_on?(clause, columns) }
 
     own_where_fields.reject! { |clause| where_clause_on?(clause, columns) }
   end
 
+  @[TypeOnce]
   private def where_clause_on?(clause : WhereField, columns : Set(String)) : Bool
     if column = where_clause_column(clause)
       columns.includes?(column)
@@ -624,6 +648,7 @@ class Grant::Query::Builder(Model)
   end
 
   # :ditto:
+  @[TypeOnce]
   def unscope!(*, where columns : Symbol | Array(Symbol)) : self
     unscope_where_columns!(where_column_names(columns))
   end
@@ -633,14 +658,17 @@ class Grant::Query::Builder(Model)
   end
 
   # :ditto:
+  @[TypeOnce]
   def unscope(*, where columns : Symbol | Array(Symbol)) : self
     chain_copy.unscope!(where: columns)
   end
 
+  @[TypeOnce]
   private def where_column_names(columns : Symbol | Array(Symbol)) : Array(String)
     columns.is_a?(Array) ? columns.map(&.to_s) : [columns.to_s]
   end
 
+  @[TypeOnce]
   protected def unscope_where_columns!(names : Array(String)) : self
     record_unscoped_columns(names)
     reset_load_state
@@ -650,6 +678,7 @@ class Grant::Query::Builder(Model)
     self
   end
 
+  @[TypeOnce]
   private def expand_where_column_name(name : String) : Array(String)
     return [name] if Model.fields.includes?(name)
 
@@ -664,6 +693,7 @@ class Grant::Query::Builder(Model)
   end
 
   # Components `unscope` accepts beyond the ones in `builder.cr`.
+  @[TypeOnce]
   protected def unscope_extra_component!(component : Symbol) : Bool
     case component
     when :includes
@@ -694,6 +724,7 @@ class Grant::Query::Builder(Model)
     excluding!(records.to_a)
   end
 
+  @[TypeOnce]
   def excluding!(records : Array(Model)) : self
     return self if records.empty?
 
@@ -711,6 +742,7 @@ class Grant::Query::Builder(Model)
     chain_copy.excluding!(records.to_a)
   end
 
+  @[TypeOnce]
   def excluding(records : Array(Model)) : self
     chain_copy.excluding!(records)
   end
@@ -719,6 +751,7 @@ class Grant::Query::Builder(Model)
     excluding!(records.to_a)
   end
 
+  @[TypeOnce]
   def without!(records : Array(Model)) : self
     excluding!(records)
   end
@@ -727,10 +760,12 @@ class Grant::Query::Builder(Model)
     chain_copy.excluding!(records.to_a)
   end
 
+  @[TypeOnce]
   def without(records : Array(Model)) : self
     chain_copy.excluding!(records)
   end
 
+  @[TypeOnce]
   private def exclude_composite_keys(columns : Array(String), records : Array(Model)) : Nil
     alternatives = [] of String
     values = [] of Grant::Columns::Type
@@ -753,22 +788,26 @@ class Grant::Query::Builder(Model)
   # Keeps only records that have a matching record in each named association:
   # one `EXISTS (...)` subquery per name, so a parent is returned once however
   # many children it has (no duplicate rows, no DISTINCT).
+  @[TypeOnce]
   def where_associated!(names : Array(Symbol)) : self
     names.each { |name| append_association_exists(name.to_s, negated: false) }
     self
   end
 
+  @[TypeOnce]
   def where_associated(names : Array(Symbol)) : self
     chain_copy.where_associated!(names)
   end
 
   # Keeps only records that have no matching record in any of the named
   # associations: one `NOT EXISTS (...)` per name.
+  @[TypeOnce]
   def where_missing!(names : Array(Symbol)) : self
     names.each { |name| append_association_exists(name.to_s, negated: true) }
     self
   end
 
+  @[TypeOnce]
   def where_missing(names : Array(Symbol)) : self
     chain_copy.where_missing!(names)
   end

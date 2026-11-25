@@ -32,7 +32,7 @@ module Grant::Tables
       adapter.quote(table_name)
     end
 
-    def quote(column_name) : String
+    def quote(column_name : String) : String
       adapter.quote(column_name)
     end
 

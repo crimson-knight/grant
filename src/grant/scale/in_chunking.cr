@@ -1,3 +1,5 @@
+require "../strict_annotations"
+
 module Grant::Query::InChunks
   # Runs *work* in one transaction on *adapter*, as `Model.transaction` does.
   # `Transaction.run` yields, so every call site gets its own copy of the
@@ -41,6 +43,7 @@ class Grant::Query::Builder(Model)
   end
 
   # The effective IN-chunk size (per-query override or global setting).
+  @[TypeOnce]
   protected def effective_in_chunk_size : Int32
     @in_chunk_size || Grant.settings.in_clause_limit
   end
@@ -61,6 +64,7 @@ class Grant::Query::Builder(Model)
   # exceeds the chunk size, or nil if no chunking is needed. We chunk a single
   # oversized IN list (the documented, common large-table case); other WHERE
   # conditions are replayed verbatim on every chunk.
+  @[TypeOnce]
   protected def oversized_in_index : Int32?
     limit = effective_in_chunk_size
     @where_fields.each_with_index do |field, idx|
@@ -87,6 +91,7 @@ class Grant::Query::Builder(Model)
   # User.where(id: [1, 2, 3]).should_chunk_in?                   # => false
   # User.where(id: huge_array).in_chunks(of: 2).should_chunk_in? # => true
   # ```
+  @[TypeOnce]
   def should_chunk_in? : Bool
     !oversized_in_index.nil?
   end

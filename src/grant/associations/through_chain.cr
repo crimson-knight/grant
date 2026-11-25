@@ -1,3 +1,5 @@
+require "../strict_annotations"
+
 module Grant::Associations
   # Raised when a `:through` association cannot be resolved into a chain of
   # joins, for example a polymorphic source without `source_type:`, a
@@ -50,6 +52,7 @@ module Grant::Associations
     # The chain of the `:through` association *name* on *owner*, or `nil` when
     # it is the plain two-hop form (an association through a direct one), which
     # the collection reads with its own join keys. Cached per association.
+    @[TypeOnce]
     def self.for(owner : Grant::Base.class, name : String) : ThroughChain?
       key = {owner.name, name}
       if @@cache.has_key?(key)
@@ -65,6 +68,7 @@ module Grant::Associations
     end
 
     # True when *name* needs a chain rather than the plain two-hop form.
+    @[TypeOnce]
     private def self.chain_needed?(owner : Grant::Base.class, reflection : Grant::Reflection) : Bool
       return true if reflection.options.has_key?("source_type")
       through_name = reflection.through || return false
@@ -76,6 +80,7 @@ module Grant::Associations
       !source.nil? && (source.through? || source.polymorphic?)
     end
 
+    @[TypeOnce]
     private def self.resolve(owner : Grant::Base.class, name : String) : ThroughChain?
       reflection = Grant::AssociationRegistry.reflection(owner.name, name) || return
       return unless reflection.through?
@@ -88,6 +93,7 @@ module Grant::Associations
     # Appends the links of the association *name* of *model* and returns the
     # model they arrive at. *target* and *source_type* carry the class a
     # polymorphic source resolves to.
+    @[TypeOnce]
     private def self.append(links : Array(Link), model : Grant::Base.class, name : String,
                             target : (Grant::Base.class)?, source_type : Bool) : Grant::Base.class
       reflection = Grant::AssociationRegistry.reflection(model.name, name) ||
@@ -107,6 +113,7 @@ module Grant::Associations
       end
     end
 
+    @[TypeOnce]
     private def self.direct_link(model : Grant::Base.class, reflection : Grant::Reflection,
                                  target : (Grant::Base.class)?, source_type : Bool) : Link
       if reflection.belongs_to?
@@ -131,6 +138,7 @@ module Grant::Associations
     end
 
     # The key of *owner* the first link starts from.
+    @[TypeOnce]
     def owner_key(owner : Grant::Base) : Grant::Columns::Type
       owner.read_attribute(@links.first.from_column)
     end
@@ -146,6 +154,7 @@ module Grant::Associations
     end
 
     # The `WHERE` fragment (with one `?` for the owner's key) for raw clauses.
+    @[TypeOnce]
     def where_clause(target : Grant::Base.class) : String
       predicates = ["#{target.quoted_table_name}.#{target.quote(@links.last.to_column)} IN (#{sub_select})"]
       if type = @links.last.to_type
@@ -157,6 +166,7 @@ module Grant::Associations
     # `SELECT <key the last hop matches> FROM m1 JOIN m2 ... WHERE m1.key = ?`
     # over every model before the target. Tables are aliased so a model can
     # appear twice in one chain.
+    @[TypeOnce]
     private def sub_select : String
       last = @links.size - 1
       first = @links.first
@@ -186,16 +196,19 @@ module Grant::Associations
       "SELECT #{column(@links[last - 1].model, last - 1, closing.from_column)} FROM #{joins} WHERE #{predicates.join(" AND ")}"
     end
 
+    @[TypeOnce]
     private def alias_of(index : Int32) : String
       "grant_hop_#{index}"
     end
 
+    @[TypeOnce]
     private def column(model : Grant::Base.class, index : Int32, name : String) : String
       "#{alias_of(index)}.#{model.quote(name)}"
     end
 
     # A type name written as an SQL string literal. Class names never hold
     # user input; the quote is doubled anyway.
+    @[TypeOnce]
     private def literal(value : String) : String
       "'#{value.gsub("'", "''")}'"
     end

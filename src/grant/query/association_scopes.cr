@@ -1,3 +1,4 @@
+# crystal: strict
 # Association scope lambdas, reachable at run time.
 #
 # A scope declared on an association (`has_many :posts, -> { where(published: true) }`)

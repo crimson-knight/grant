@@ -1,3 +1,5 @@
+require "./strict_annotations"
+
 # Named scopes and default scopes for Grant models.
 #
 # A **named scope** (`scope`) defines a reusable class method that returns a
@@ -52,12 +54,14 @@ module Grant::Scoping
 
   # Tracks unscoped blocks per model and fiber so one request cannot disable
   # another request's default scope.
+  @[TypeOnce]
   def self.unscoped?(model_name : String) : Bool
     @@unscoped_mutex.synchronize do
       @@unscoped_fibers[{Fiber.current, model_name}]? == 1
     end
   end
 
+  @[TypeOnce]
   def self.set_unscoped(model_name : String, value : Bool) : Nil
     @@unscoped_mutex.synchronize do
       key = {Fiber.current, model_name}
@@ -255,6 +259,7 @@ module Grant::Scoping
   end
 
   # :nodoc:
+  @[TypeOnce]
   def __ensure_current_tenant! : Nil
   end
 
@@ -273,6 +278,7 @@ module Grant::Scoping
   end
 
   module ClassMethods
+    @[TypeOnce]
     def _has_default_scope? : Bool
       false
     end
@@ -282,23 +288,28 @@ module Grant::Scoping
     end
 
     # :nodoc:
+    @[TypeOnce]
     def __sti_model? : Bool
       false
     end
 
+    @[TypeOnce]
     def sti_root_class? : Bool
       true
     end
 
+    @[TypeOnce]
     def sti_names_for_query : Array(String)
       [] of String
     end
 
+    @[TypeOnce]
     def inheritance_column : String
       "type"
     end
 
     # :nodoc:
+    @[TypeOnce]
     def __multitenant? : Bool
       false
     end
@@ -317,6 +328,7 @@ module Grant::Scoping
     # a conflicting row that belongs to another tenant is left alone. Nil for
     # models without tenancy.
     # :nodoc:
+    @[TypeOnce]
     def __bulk_tenant_guard_column : String?
       nil
     end
@@ -643,6 +655,7 @@ module Grant::Scoping
     # Column names that order an unordered relation for `first`, `last`, the
     # ordinal finders and `find_each`, ahead of the primary key. Empty unless
     # the model declares `implicit_order_column`.
+    @[TypeOnce]
     def implicit_order_columns : Array(String)
       [] of String
     end

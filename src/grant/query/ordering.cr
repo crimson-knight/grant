@@ -1,3 +1,4 @@
+require "../strict_annotations"
 require "./builder"
 require "./sql_expression"
 
@@ -8,6 +9,7 @@ module Grant::Query::OrderSupport
   # Returns *term* ordered the other way. A raw term has its trailing
   # `ASC`/`DESC` (and `NULLS FIRST`/`LAST`) flipped on every comma-separated
   # part, or gains `DESC` when it names no direction.
+  @[TypeOnce]
   def self.reverse(term : Term) : Term
     if term[:direction].raw?
       {field: reverse_raw(term[:field]), direction: term[:direction]}
@@ -16,6 +18,7 @@ module Grant::Query::OrderSupport
     end
   end
 
+  @[TypeOnce]
   def self.reverse_raw(sql : String) : String
     Grant::Query::SqlExpression.split_terms(sql).map do |part|
       if found = Grant::TextMatching.raw_direction(part)
@@ -29,6 +32,7 @@ module Grant::Query::OrderSupport
   end
 
   # The `Sort` for an optional direction word and NULL placement word.
+  @[TypeOnce]
   def self.sort_for(direction : String?, nulls : String?) : Grant::Query::Builder::Sort
     descending = !direction.nil? && direction.downcase == "desc"
     placement = nulls.try(&.downcase)
@@ -60,15 +64,18 @@ class Grant::Query::Builder(Model)
   # User.order("lower(email) DESC")
   # User.order(Grant.sql("CASE WHEN admin THEN 0 ELSE 1 END"))
   # ```
+  @[TypeOnce]
   def order!(sql : String) : self
     append_order_terms(sql, trusted: false)
   end
 
   # :ditto:
+  @[TypeOnce]
   def order!(sql : Grant::Query::SqlExpression::Trusted) : self
     append_order_terms(sql.sql, trusted: true)
   end
 
+  @[TypeOnce]
   private def append_order_terms(sql : String, trusted : Bool) : self
     Grant::Query::SqlExpression.split_terms(sql).each do |term|
       if parsed = Grant::TextMatching.order_term(term)
@@ -82,6 +89,7 @@ class Grant::Query::Builder(Model)
 
   # Validates a raw ORDER BY *term*: always a single expression, and, unless
   # *trusted*, a function of columns only.
+  @[TypeOnce]
   private def raw_order_term(term : String, trusted : Bool) : String
     expression = Grant::Query::SqlExpression.validate!(term, "ORDER BY expression")
     unless trusted || Grant::Query::SqlExpression.column_function?(expression)
@@ -101,6 +109,7 @@ class Grant::Query::Builder(Model)
   # User.order(:deleted_at, :asc, nulls: :last)
   # User.order("posts.title", :desc)
   # ```
+  @[TypeOnce]
   def order!(field : Symbol | String, direction : Symbol, *, nulls : Symbol? = nil) : self
     unless direction == :asc || direction == :desc
       raise ArgumentError.new("order direction must be :asc or :desc (got #{direction.inspect})")
@@ -119,6 +128,7 @@ class Grant::Query::Builder(Model)
   # :ditto:
   #
   # Ascending order with a NULL placement.
+  @[TypeOnce]
   def order!(field : Symbol | String, *, nulls : Symbol) : self
     order!(field, :asc, nulls: nulls)
   end
@@ -137,6 +147,7 @@ class Grant::Query::Builder(Model)
   # ```
   # Post.in_order_of(:status, ["published", "draft"]).select
   # ```
+  @[TypeOnce]
   def in_order_of!(column : Symbol | String, values : Array, filter : Bool = true) : self
     name = column.to_s
     unless Grant::Query::SqlExpression.identifier?(name)
@@ -163,6 +174,7 @@ class Grant::Query::Builder(Model)
     self
   end
 
+  @[TypeOnce]
   def in_order_of(column : Symbol | String, values : Array, filter : Bool = true) : self
     chain_copy.in_order_of!(column, values, filter)
   end
@@ -171,15 +183,18 @@ class Grant::Query::Builder(Model)
     chain_copy.order!(sql)
   end
 
+  @[TypeOnce]
   def order(field : Symbol | String, direction : Symbol, *, nulls : Symbol? = nil) : self
     chain_copy.order!(field, direction, nulls: nulls)
   end
 
+  @[TypeOnce]
   def order(field : Symbol | String, *, nulls : Symbol) : self
     chain_copy.order!(field, nulls: nulls)
   end
 
   # Quotes a `column` or `table.column` reference for an expression built here.
+  @[TypeOnce]
   private def order_column_sql(name : String) : String
     parts = name.split('.')
     if parts.size == 2

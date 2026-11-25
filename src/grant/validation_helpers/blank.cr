@@ -1,3 +1,4 @@
+# crystal: strict
 # Lightweight `validate_*` helper macros.
 #
 # `Grant::ValidationHelpers` provides a set of terse, single-purpose validation

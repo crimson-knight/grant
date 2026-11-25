@@ -1,3 +1,5 @@
+require "../strict_annotations"
+
 # The query side of `Grant::AssociationCollection`: the owner-scoped relation
 # and the relation methods the collection forwards to it, so
 # `user.posts.order(:id).limit(3).pluck(:title)` runs as one statement instead of
@@ -11,6 +13,7 @@ class Grant::AssociationCollection(Owner, Target)
   # ```
   # user.posts.scope.where(published: true).count
   # ```
+  @[TypeOnce]
   def scope : Grant::Query::Builder(Target)
     ensure_lazy_loading_allowed
     association_relation
@@ -20,6 +23,7 @@ class Grant::AssociationCollection(Owner, Target)
   # because destroying an owner is not a lazy read.
   #
   # :nodoc:
+  @[TypeOnce]
   def dependent_scope : Grant::Query::Builder(Target)
     association_relation
   end
@@ -62,11 +66,13 @@ class Grant::AssociationCollection(Owner, Target)
   end
 
   # :ditto:
+  @[TypeOnce]
   def where(field : Symbol | String, operator : Symbol, value : Grant::Columns::Type) : Grant::Query::Builder(Target)
     scope.where(field, operator, value)
   end
 
   # :ditto:
+  @[TypeOnce]
   def where(stmt : String, value : Grant::Columns::Type = nil) : Grant::Query::Builder(Target)
     scope.where(stmt, value)
   end
@@ -77,6 +83,7 @@ class Grant::AssociationCollection(Owner, Target)
   end
 
   # :ditto:
+  @[TypeOnce]
   def where : Grant::Query::WhereChain(Target)
     scope.where
   end

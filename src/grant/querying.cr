@@ -1,3 +1,5 @@
+require "./strict_annotations"
+
 # The SELECT statements behind `Model.find(id)`, kept per model, adapter family
 # and key type. A key lookup on a plain model (no default scope, scoping block
 # or inheritance filter) always renders the same statement, so it is built
@@ -21,6 +23,7 @@ module Grant::PrimaryKeyLookup
   end
 
   # Drops every kept statement (a model's table or scope changed).
+  @[TypeOnce]
   def self.clear : Nil
     @@mutex.synchronize { @@statements.clear }
   end
@@ -52,6 +55,7 @@ module Grant::Querying
     # models resolve their adapter per query, so they take the relation path.
     #
     # :nodoc:
+    @[TypeOnce]
     def __sharded_model? : Bool
       false
     end
@@ -61,6 +65,7 @@ module Grant::Querying
     # inheritance filter) and nothing tags statements with a comment.
     #
     # :nodoc:
+    @[TypeOnce]
     def __plain_lookup? : Bool
       return false if Fiber.current.grant_scoping_stacks
       return false if __sharded_model?
@@ -163,6 +168,7 @@ module Grant::Querying
 
     # Returns a SQL string unchanged, or sanitizes an array condition using
     # this model's current adapter.
+    @[TypeOnce]
     def sanitize_sql(sql : String) : String
       sql
     end

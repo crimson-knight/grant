@@ -1,3 +1,4 @@
+require "../strict_annotations"
 require "./builder"
 require "./executors/aggregate"
 
@@ -13,6 +14,7 @@ module Grant
     # Maps the ActiveRecord operation names (`:count`, `:sum`, `:average` or
     # `:avg`, `:minimum` or `:min`, `:maximum` or `:max`) to a `Calculation`.
     # Raises `ArgumentError` for any other symbol.
+    @[TypeOnce]
     def self.from_symbol(name : Symbol) : Calculation
       case name
       when :count         then Count
@@ -57,6 +59,7 @@ class Grant::Query::Builder(Model)
   # User.count(:email, distinct: true)      # distinct emails
   # Order.group(:status).count(:shipped_at) # => {"open" => 2, "done" => 5}
   # ```
+  @[TypeOnce]
   def count(column : Symbol | String, distinct : Bool = false) : CountResult
     name = column.to_s
     return count if (name == "all" || name == "*") && !distinct
@@ -94,6 +97,7 @@ class Grant::Query::Builder(Model)
   # Order.where(paid: true).sum(:cents) # => 1_250_000_i64
   # Order.group(:status).sum(:cents)    # => {"open" => 400_i64, "done" => 850_i64}
   # ```
+  @[TypeOnce]
   def sum(column : Symbol | String) : SumResult
     name = column.to_s
     kind = numeric_kind(name)
@@ -137,6 +141,7 @@ class Grant::Query::Builder(Model)
 
   # The average of *column*, `nil` when no rows match. A grouped relation
   # returns a `Hash` per group.
+  @[TypeOnce]
   def avg(column : Symbol | String) : AverageResult
     name = column.to_s
     if is_none?
@@ -155,26 +160,31 @@ class Grant::Query::Builder(Model)
     end
   end
 
+  @[TypeOnce]
   def average(column : Symbol | String) : AverageResult
     avg(column)
   end
 
   # The smallest value of *column*, `nil` when no rows match. A grouped relation
   # returns a `Hash` per group.
+  @[TypeOnce]
   def min(column : Symbol | String) : ExtremumResult
     extremum("MIN", column.to_s)
   end
 
+  @[TypeOnce]
   def minimum(column : Symbol | String) : ExtremumResult
     min(column)
   end
 
   # The largest value of *column*, `nil` when no rows match. A grouped relation
   # returns a `Hash` per group.
+  @[TypeOnce]
   def max(column : Symbol | String) : ExtremumResult
     extremum("MAX", column.to_s)
   end
 
+  @[TypeOnce]
   def maximum(column : Symbol | String) : ExtremumResult
     max(column)
   end
@@ -190,6 +200,7 @@ class Grant::Query::Builder(Model)
   # Order.calculate(:sum, :cents)
   # Order.group(:status).calculate(:count)
   # ```
+  @[TypeOnce]
   def calculate(operation : Grant::Calculation | Symbol, column : Symbol | String? = nil) : CalculationResult
     calculation = operation.is_a?(Symbol) ? Grant::Calculation.from_symbol(operation) : operation
     if calculation.count?
@@ -207,12 +218,14 @@ class Grant::Query::Builder(Model)
 
   # Executes one aggregate statement (no IN-chunking) and returns its
   # `{group key, value}` rows.
+  @[TypeOnce]
   protected def aggregate_rows(function : String, column : String, cast : Symbol, distinct : Bool) : AggregateRows
     aggregate_assembler = assembler
     sql = aggregate_assembler.aggregate_sql(function, column, cast, distinct)
     Grant::Query::Executor::Aggregate(Model).new(sql, aggregate_assembler.numbered_parameters, group_fields.size).run
   end
 
+  @[TypeOnce]
   private def extremum(function : String, column : String) : ExtremumResult
     if is_none?
       return group_fields.empty? ? nil : {} of Grant::Columns::Type => Grant::Columns::Type
@@ -237,6 +250,7 @@ class Grant::Query::Builder(Model)
     end
   end
 
+  @[TypeOnce]
   private def better_extremum?(function : String, candidate : Grant::Columns::Type, current : Grant::Columns::Type) : Bool
     ordering = compare_values(candidate, current)
     function == "MIN" ? ordering < 0 : ordering > 0
@@ -264,10 +278,12 @@ class Grant::Query::Builder(Model)
     end
   end
 
+  @[TypeOnce]
   private def empty_aggregate_count : CountResult
     group_fields.empty? ? 0_i64 : empty_group_count
   end
 
+  @[TypeOnce]
   private def count_of_rows(rows : AggregateRows) : Int64
     value = rows.first?.try(&.[1])
     value.is_a?(Int) ? value.to_i64 : 0_i64
@@ -278,6 +294,7 @@ class Grant::Query::Builder(Model)
   # `:integer`, `:float` or `:unknown` from the declared type of *column* on this
   # model. Read at compile time from the column annotations, so a sum of an
   # `Int64` column never passes through `Float64`.
+  @[TypeOnce]
   private def numeric_kind(column : String) : Symbol
     parts = column.split('.')
     return :unknown unless parts.size == 1 || (parts.size == 2 && parts[0] == Model.table_name)
@@ -304,16 +321,19 @@ class Grant::Query::Builder(Model)
     {% end %}
   end
 
+  @[TypeOnce]
   private def zero_sum(kind : Symbol) : SumValue
     kind == :float ? 0.0 : 0_i64
   end
 
   # Float columns are summed natively; the rest come back as text so no digit
   # passes through a Float64.
+  @[TypeOnce]
   private def sum_cast(kind : Symbol) : Symbol
     kind == :float ? :none : :text
   end
 
+  @[TypeOnce]
   private def parse_sum(value : Grant::Columns::Type, kind : Symbol, zero : SumValue) : SumValue
     case value
     when Float then value.to_f64
@@ -328,6 +348,7 @@ class Grant::Query::Builder(Model)
     end
   end
 
+  @[TypeOnce]
   private def average_value(value : Grant::Columns::Type) : Float64?
     value.is_a?(Float) ? value.to_f64 : nil
   end
@@ -402,6 +423,7 @@ class Grant::Query::Builder(Model)
     end
   {% end %}
 
+  @[TypeOnce]
   private def chunked_decimal_total(column : String) : ChunkTotal
     if group_fields.any? || @limit || @offset || distinct?
       raise ArgumentError.new("sum with a chunked IN list cannot preserve group, limit, offset or distinct")
@@ -414,6 +436,7 @@ class Grant::Query::Builder(Model)
     total
   end
 
+  @[TypeOnce]
   private def chunked_sum(column : String, kind : Symbol, zero : SumValue) : SumValue
     total = chunked_decimal_total(column)
     {% if Grant::BIG_DECIMAL_SUPPORT %}
@@ -423,6 +446,7 @@ class Grant::Query::Builder(Model)
     {% end %}
   end
 
+  @[TypeOnce]
   private def chunked_average(column : String) : Float64?
     if group_fields.any? || @limit || @offset || distinct?
       raise ArgumentError.new("avg with a chunked IN list cannot preserve group, limit, offset or distinct")

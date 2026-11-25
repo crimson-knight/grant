@@ -1,3 +1,5 @@
+# crystal: strict
+require "../strict_annotations"
 require "./association_scopes"
 
 # Resolves an association into the simple steps ("hops") a JOIN or an EXISTS
@@ -20,6 +22,7 @@ module Grant::Query::AssociationHops
   # Raises `ArgumentError` for a path that has no single table to join: a
   # polymorphic `belongs_to`, a polymorphic through association, or a
   # polymorphic source without `source_type:`.
+  @[TypeOnce]
   def self.resolve(owner : Grant::Base.class, reflection : Grant::Reflection, label : String) : Array(Hop)
     through_name = reflection.through
     unless through_name

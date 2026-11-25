@@ -1,3 +1,4 @@
+# crystal: strict
 module Grant::Associations
   # Rejects an option the association macro does not understand, so a typo
   # such as `dependant: :destroy` or `foriegn_key:` fails the build instead of

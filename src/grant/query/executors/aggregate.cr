@@ -1,3 +1,5 @@
+# crystal: strict
+
 module Grant::Query::Executor
   alias AggregateRow = Tuple(Array(Grant::Columns::Type), Grant::Columns::Type)
 

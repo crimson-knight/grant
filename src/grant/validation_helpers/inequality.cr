@@ -1,3 +1,4 @@
+# crystal: strict
 module Grant::ValidationHelpers
   # Validates that *field* is greater than *amount* (or `>=` when
   # *or_equal_to* is `true`).

@@ -1,3 +1,4 @@
+require "../strict_annotations"
 require "./builder"
 
 # State and helpers behind `merge`, `reorder` and the later `unscope`
@@ -23,6 +24,7 @@ class Grant::Query::RelationNotes
                  @eager_load_distinct : Bool = false)
   end
 
+  @[TypeOnce]
   def with(reordering : Bool = @reordering,
            unscoped_components : Array(Symbol) = @unscoped_components,
            unscoped_columns : Array(String) = @unscoped_columns,
@@ -35,38 +37,45 @@ end
 class Grant::Query::Builder(Model)
   @notes : Grant::Query::RelationNotes? = nil
 
+  @[TypeOnce]
   protected def notes : Grant::Query::RelationNotes
     @notes || Grant::Query::RelationNotes::EMPTY
   end
 
   # `true` after `reorder`, so a relation merged into another replaces its
   # ORDER BY instead of appending to it.
+  @[TypeOnce]
   def reordering? : Bool
     notes.reordering?
   end
 
   # Clears the ORDER BY and marks the relation as reordered.
+  @[TypeOnce]
   protected def start_reordering! : Nil
     clear_order_fields
     @notes = notes.with(reordering: true) unless reordering?
   end
 
+  @[TypeOnce]
   protected def record_unscope(components : Array(Symbol)) : Nil
     return if components.empty?
 
     @notes = notes.with(unscoped_components: notes.unscoped_components | components)
   end
 
+  @[TypeOnce]
   protected def record_unscoped_columns(names : Array(String)) : Nil
     return if names.empty?
 
     @notes = notes.with(unscoped_columns: notes.unscoped_columns | names)
   end
 
+  @[TypeOnce]
   protected def unscoped_components : Array(Symbol)
     notes.unscoped_components
   end
 
+  @[TypeOnce]
   protected def unscoped_columns : Array(String)
     notes.unscoped_columns
   end
@@ -97,6 +106,7 @@ class Grant::Query::Builder(Model)
 
   # Remembers the JOIN clauses (and the DISTINCT) that `eager_load` added, so
   # `unscope(:eager_load)` can take them back.
+  @[TypeOnce]
   protected def record_eager_load_joins(added : Array(Grant::Query::JoinSupport::Clause), distinct_added : Bool) : Nil
     return if added.empty? && !distinct_added
 
@@ -104,6 +114,7 @@ class Grant::Query::Builder(Model)
   end
 
   # Removes the joins and DISTINCT `eager_load` added, for `unscope(:eager_load)`.
+  @[TypeOnce]
   protected def drop_eager_load_joins! : Nil
     current = notes
     unless current.eager_load_joins.empty?
@@ -115,6 +126,7 @@ class Grant::Query::Builder(Model)
   end
 
   # Drops the LEFT JOIN clauses (`left: true`) or every other join clause.
+  @[TypeOnce]
   protected def drop_join_clauses!(left : Bool) : Nil
     return unless @join_clauses.any? { |clause| (clause[:type] == :left) == left }
 
@@ -122,6 +134,7 @@ class Grant::Query::Builder(Model)
   end
 
   # Components `unscope` accepts that carry relation state of their own.
+  @[TypeOnce]
   protected def unscope_relation_state!(component : Symbol) : Bool
     case component
     when :annotate

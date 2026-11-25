@@ -1,3 +1,5 @@
+require "../../strict_annotations"
+
 module Grant::Query::Executor
   class MultiValue(Model, Scalar)
     include Shared
@@ -5,6 +7,7 @@ module Grant::Query::Executor
     def initialize(@sql : String, @args = [] of Grant::Columns::Type, @default : Scalar = nil)
     end
 
+    @[TypeOnce]
     def run : Array(Scalar)
       log @sql, @args
 

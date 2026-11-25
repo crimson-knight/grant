@@ -1,3 +1,4 @@
+require "./strict_annotations"
 require "./validator_info"
 require "./error"
 require "./errors"
@@ -36,6 +37,7 @@ abstract class Grant::Validator
   # # inside LimitValidator#validate
   # options[:limit] # => 100
   # ```
+  @[TypeOnce]
   def options : Grant::Error::Options
     @validator_options ||= Grant::Error::Options.new
   end
@@ -50,6 +52,7 @@ abstract class Grant::Validator
   end
 
   # :nodoc:
+  @[TypeOnce]
   def __assign_options(options : Grant::Error::Options) : Nil
     @validator_options = options
   end
@@ -86,6 +89,7 @@ abstract class Grant::TypedValidator(T) < Grant::Validator
   abstract def validate(record : T)
 
   # :nodoc:
+  @[Override]
   def validate(record)
     validate(record.as(T))
   end
@@ -119,6 +123,7 @@ abstract class Grant::EachValidator < Grant::Validator
 
   # Runs `validate_each` for each configured attribute. Subclasses normally
   # use this through `validates_with PresenceEachValidator, :a, :b`.
+  @[Override]
   def validate(record)
     @attributes.each do |attribute|
       validate_each(record, attribute, record_attribute(record, attribute))
@@ -1046,7 +1051,7 @@ module Grant::Validators
   # record.valid?(context: :update) # keyword form
   # record.valid?(context: [:create, :publish])
   # ```
-  def valid?(skip_normalization : Bool = false, context : (Symbol | Array(Symbol))? = nil)
+  def valid?(skip_normalization : Bool = false, context : (Symbol | Array(Symbol))? = nil) : Bool
     # A value that could not be converted to its column's type was recorded
     # as a `ConversionError`. It fails validation, unless a numericality
     # validator on that attribute takes it over and reports `:not_a_number`
@@ -1116,7 +1121,7 @@ module Grant::Validators
   end
 
   # Positional form: `record.valid?(:publish)`.
-  def valid?(context : Symbol | Array(Symbol))
+  def valid?(context : Symbol | Array(Symbol)) : Bool
     valid?(context: context)
   end
 
@@ -1160,6 +1165,7 @@ module Grant::Validators
   # `:create` for a new record and `:update` for a persisted one.
   #
   # :nodoc:
+  @[TypeOnce]
   def __active_validation_contexts(context : (Symbol | Array(Symbol))?) : Array(Symbol)
     if context.is_a?(Array)
       context
@@ -1181,6 +1187,7 @@ module Grant::Validators
   # numericality validator can report it. Called by mass assignment.
   #
   # :nodoc:
+  @[TypeOnce]
   def __record_unconvertible_input(attribute : String, raw : Grant::Columns::Type) : Nil
     capture_before_type_cast(attribute, raw)
     inputs = @unconvertible_inputs ||= {} of String => Grant::Columns::Type
@@ -1191,6 +1198,7 @@ module Grant::Validators
   # and no typed write has replaced it since; nil otherwise.
   #
   # :nodoc:
+  @[TypeOnce]
   def __unconvertible_input(attribute : String) : Grant::Columns::Type?
     inputs = @unconvertible_inputs
     return if inputs.nil?
@@ -1224,12 +1232,14 @@ module Grant::Validators
   # The context validation is currently running in (the first one when several
   # are active), or nil outside a validation run. Custom validators and
   # validation callbacks can branch on it.
+  @[TypeOnce]
   def validation_context : Symbol?
     contexts = @validation_contexts
     contexts ? contexts.first? : nil
   end
 
   # Every context validation is currently running in; empty outside a run.
+  @[TypeOnce]
   def validation_contexts : Array(Symbol)
     @validation_contexts || [] of Symbol
   end
@@ -1238,6 +1248,7 @@ module Grant::Validators
   # `before_validation` / `after_validation` callbacks.
   #
   # :nodoc:
+  @[TypeOnce]
   def __in_validation_context?(context : Symbol) : Bool
     contexts = @validation_contexts
     contexts ? contexts.includes?(context) : false

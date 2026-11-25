@@ -1,3 +1,4 @@
+# crystal: strict
 module Grant::Associations
   # Raised when a write to a `has_many :through` collection cannot be expressed
   # as join-row writes, for example when the source association on the join

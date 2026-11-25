@@ -1,7 +1,10 @@
+require "../../strict_annotations"
+
 module Grant::Query::Assembler
   class Sqlite(Model) < Base(Model)
     @placeholder = "?"
 
+    @[TypeOnce]
     def add_parameter(value : Grant::Columns::Type) : String
       @numbered_parameters << value
       "?"

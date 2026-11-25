@@ -1,3 +1,4 @@
+require "./strict_annotations"
 require "./collection"
 require "./association_collection"
 require "./loaded_association_collection"
@@ -177,18 +178,22 @@ abstract class Grant::Base
   # We override them here with abstract-safe stubs so the abstract base satisfies
   # the `JSON/YAML::Serializable` *type* without instantiating a broken concrete
   # serializer. See issues #39/#41.
+  @[Override]
   protected def self.new(ctx : ::YAML::ParseContext, node : ::YAML::Nodes::Node)
     raise "Grant::Base is abstract and cannot be deserialized directly; deserialize a concrete subclass instead"
   end
 
+  @[Override]
   protected def self.new(pull : ::JSON::PullParser)
     raise "Grant::Base is abstract and cannot be deserialized directly; deserialize a concrete subclass instead"
   end
 
+  @[Override]
   def initialize(*, __context_for_yaml_serializable ctx : ::YAML::ParseContext, __node_for_yaml_serializable node : ::YAML::Nodes::Node)
     raise "Grant::Base is abstract and cannot be deserialized directly; deserialize a concrete subclass instead"
   end
 
+  @[Override]
   def initialize(*, __pull_for_json_serializable pull : ::JSON::PullParser)
     raise "Grant::Base is abstract and cannot be deserialized directly; deserialize a concrete subclass instead"
   end
@@ -239,6 +244,7 @@ abstract class Grant::Base
   # user.destroy
   # user.persisted? # => false  (destroyed)
   # ```
+  @[TypeOnce]
   def persisted? : Bool
     !(new_record? || destroyed?)
   end
@@ -247,6 +253,7 @@ abstract class Grant::Base
   # further persistence: `save`, `update`, `touch` and friends raise
   # `Grant::RecordDestroyedError`. Mirrors ActiveRecord's `frozen?` after
   # `destroy`.
+  @[TypeOnce]
   def frozen? : Bool
     destroyed?
   end
@@ -289,6 +296,7 @@ abstract class Grant::Base
   # User.find!(1) == User.find!(1) # => true
   # User.new == User.new           # => false
   # ```
+  @[TypeOnce]
   def ==(other : Grant::Base) : Bool
     return true if same?(other)
     key = __identity_key
@@ -300,6 +308,7 @@ abstract class Grant::Base
   # Hashes by class and primary key so equal records collapse in a `Set`,
   # `uniq` and as `Hash` keys. A record without a primary key hashes by
   # identity, and so changes hash once it is saved (as in ActiveRecord).
+  @[Override]
   def hash(hasher)
     key = __identity_key
     if key.nil?
@@ -314,6 +323,7 @@ abstract class Grant::Base
   # match `no_touching` / `suppress` blocks declared on a parent class.
   #
   # :nodoc:
+  @[TypeOnce]
   def self.__lineage_names : Array(String)
     [] of String
   end
