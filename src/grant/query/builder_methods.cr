@@ -15,12 +15,10 @@ module Grant::Query::BuilderMethods
     __builder.where(matches)
   end
 
-  @[TypeOnce]
   def where(field : Symbol | String, operator : Symbol, value : Grant::Columns::Type) : Grant::Query::Builder(self)
     __builder.where(field, operator, value)
   end
 
-  @[TypeOnce]
   def where(stmt : String, value : Grant::Columns::Type = nil) : Grant::Query::Builder(self)
     __builder.where(stmt, value)
   end
@@ -29,7 +27,6 @@ module Grant::Query::BuilderMethods
     __builder.where(stmt, first, second, *rest)
   end
 
-  @[TypeOnce]
   def where : Grant::Query::WhereChain(self)
     __builder.where
   end

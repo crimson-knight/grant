@@ -76,7 +76,6 @@ module Grant::Aggregations
     end
 
     # Get the last record
-    @[TypeOnce]
     def last : self?
       current_scope.last
     end
