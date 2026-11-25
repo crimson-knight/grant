@@ -491,6 +491,7 @@ module Grant
 
     # Whether the attribute holds a value: not nil and not an empty String,
     # Array or Slice. An unknown attribute raises `Grant::UnknownAttributeError`.
+    @[TypeOnce]
     def attribute_present?(name : String | Symbol) : Bool
       value = self[name]
       if value.nil?

@@ -195,6 +195,7 @@ module Grant::Validators
   # record.errors.full_messages # => ["Name can't be blank"]
   # record.errors.add(:base, "Something went wrong")
   # ```
+  @[TypeOnce]
   def errors : Errors
     @errors ||= Errors.new(self)
   end
@@ -220,6 +221,16 @@ module Grant::Validators
       # Macro control flow nested in `macro included` is escaped with a leading
       # backslash so it evaluates at each subclass's `inherited` expansion.
       @@validators = Array({field: String, message: Grant::Error::Message, block: Proc(Grant::Base, Bool), contexts: Array(Symbol), code: Symbol?, strict: Proc(String, Exception) | Nil, details: Grant::Error::Options?, info: Grant::ValidatorInfo}).new
+
+      # The validation phase of `#valid?`, defined on every model so the
+      # `around_validation` chain expands for that model. `#valid?` is typed
+      # once and reaches each model's chain through this method.
+      disable_grant_docs? def __run_validation_phase(active_contexts : Array(Symbol)) : Nil
+        __run_around_validation do
+          __validate_inside_around_validation(active_contexts)
+        end
+        nil
+      end
 
       \{% if @type.superclass.id == "Grant::Base" %}
       disable_grant_docs? def self.__validators_for_validation
@@ -1051,6 +1062,7 @@ module Grant::Validators
   # record.valid?(context: :update) # keyword form
   # record.valid?(context: [:create, :publish])
   # ```
+  @[TypeOnce]
   def valid?(skip_normalization : Bool = false, context : (Symbol | Array(Symbol))? = nil) : Bool
     # A value that could not be converted to its column's type was recorded
     # as a `ConversionError`. It fails validation, unless a numericality
@@ -1074,43 +1086,7 @@ module Grant::Validators
       # (before_validation -> validators -> after_validation), matching AR
       # semantics. If an around_validation callback fails to call its
       # continuation, the validation phase is halted (no validators run).
-      __run_around_validation do
-        # Run before_validation callbacks
-        before_validation if responds_to?(:before_validation)
-
-        run_all = active_contexts.includes?(:save)
-        self.class.__validators_for_validation.each do |validator|
-          unless run_all
-            validator_contexts = validator[:contexts]
-            # No `on:` (stored as :save) always runs; otherwise a context must match
-            next unless validator_contexts.includes?(:save) || validator_contexts.any? { |candidate| active_contexts.includes?(candidate) }
-          end
-
-          errors_before = errors.size
-          unless validator[:block].call(self)
-            message = validator[:message]
-            failure = Error.new(validator[:field], message, validator[:code], options: validator[:details], base: self)
-            # Validators that add their own errors (`validates_with`,
-            # `validates_each`, `validate :method`) carry an empty message.
-            own_errors = message.is_a?(String) && message.empty?
-            strict_factory = validator[:strict]
-            if strict_factory
-              # ActiveRecord raises on the first error a validator adds.
-              added = errors.objects[errors_before]?
-              text = own_errors && added ? added.to_s : failure.to_s
-              # The raised exception carries the failure; the errors the
-              # validator recorded on the way do not stay behind.
-              errors.truncate_to(errors_before)
-              raise strict_factory.call(text)
-            end
-            # They need no placeholder next to the errors they already recorded.
-            errors << failure unless own_errors && errors.size > errors_before
-          end
-        end
-
-        # Run after_validation callbacks
-        after_validation if responds_to?(:after_validation)
-      end
+      __run_validation_phase(active_contexts)
     ensure
       @validation_contexts = previous_contexts
       # Reset the flag
@@ -1120,7 +1096,52 @@ module Grant::Validators
     errors.empty?
   end
 
+  # Runs `before_validation`, the validators of *active_contexts* and
+  # `after_validation`: the part of the validation phase that
+  # `around_validation` wraps (see `__run_validation_phase`, which each model
+  # defines).
+  #
+  # :nodoc:
+  def __validate_inside_around_validation(active_contexts : Array(Symbol)) : Nil
+    # Run before_validation callbacks
+    before_validation if responds_to?(:before_validation)
+
+    run_all = active_contexts.includes?(:save)
+    self.class.__validators_for_validation.each do |validator|
+      unless run_all
+        validator_contexts = validator[:contexts]
+        # No `on:` (stored as :save) always runs; otherwise a context must match
+        next unless validator_contexts.includes?(:save) || validator_contexts.any? { |candidate| active_contexts.includes?(candidate) }
+      end
+
+      errors_before = errors.size
+      unless validator[:block].call(self)
+        message = validator[:message]
+        failure = Error.new(validator[:field], message, validator[:code], options: validator[:details], base: self)
+        # Validators that add their own errors (`validates_with`,
+        # `validates_each`, `validate :method`) carry an empty message.
+        own_errors = message.is_a?(String) && message.empty?
+        strict_factory = validator[:strict]
+        if strict_factory
+          # ActiveRecord raises on the first error a validator adds.
+          added = errors.objects[errors_before]?
+          text = own_errors && added ? added.to_s : failure.to_s
+          # The raised exception carries the failure; the errors the
+          # validator recorded on the way do not stay behind.
+          errors.truncate_to(errors_before)
+          raise strict_factory.call(text)
+        end
+        # They need no placeholder next to the errors they already recorded.
+        errors << failure unless own_errors && errors.size > errors_before
+      end
+    end
+
+    # Run after_validation callbacks
+    after_validation if responds_to?(:after_validation)
+  end
+
   # Positional form: `record.valid?(:publish)`.
+  @[TypeOnce]
   def valid?(context : Symbol | Array(Symbol)) : Bool
     valid?(context: context)
   end
@@ -1144,6 +1165,7 @@ module Grant::Validators
   end
 
   # ActiveModel's `validate(context)`: an alias for `#valid?`.
+  @[TypeOnce]
   def validate(context : (Symbol | Array(Symbol))? = nil) : Bool
     valid?(context: context)
   end
@@ -1214,6 +1236,7 @@ module Grant::Validators
   # context, and the raw input is still known.
   #
   # :nodoc:
+  @[TypeOnce]
   def __numericality_claims_conversion_errors?(context : (Symbol | Array(Symbol))?) : Bool
     contexts = __active_validation_contexts(context)
     run_all = contexts.includes?(:save)

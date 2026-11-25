@@ -1,6 +1,7 @@
 require "../../strict_annotations"
 
 module Grant::Query::Executor
+  @[TypeBound(Model, Grant::Base)]
   class Pluck(Model)
     include Shared
 

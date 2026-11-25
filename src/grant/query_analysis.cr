@@ -260,10 +260,9 @@ module Grant::QueryAnalysis
   # Integration with Grant's query execution
   module Integration
     macro included
-      # Hook into query execution to record metrics
-      def log_query_with_timing(sql : String, args : Array(Grant::Columns::Type), duration : Time::Span, row_count : Int32? = nil, model_name : String? = nil)
-        previous_def
-
+      # Hook into query execution to record metrics (called by
+      # `log_query_with_timing` after it logs the query).
+      def record_query_analysis(sql : String, duration : Time::Span, model_name : String?) : Nil
         # Record for N+1 detection
         if detector = Grant::QueryAnalysis::N1Detector.instance
           if detector.enabled? && model_name

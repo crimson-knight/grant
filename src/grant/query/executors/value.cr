@@ -1,3 +1,5 @@
+require "../../strict_annotations"
+
 module Grant::Query::Executor
   class Value(Model, Scalar)
     include Shared

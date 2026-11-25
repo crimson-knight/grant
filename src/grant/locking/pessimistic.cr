@@ -1,3 +1,4 @@
+require "../strict_annotations"
 require "../locking"
 require "../transaction"
 require "./clause"
@@ -134,6 +135,7 @@ module Grant::Locking::Pessimistic
     reload_with_lock(clause, force: force)
   end
 
+  @[TypeOnce]
   private def guard_row_lock!(mode : LockMode, force : Bool) : Nil
     raise Grant::UnsavedChangesLockError.new if !force && changed?
     if self.class.adapter.supports_lock_mode?(mode) && !Grant::Transaction.in_explicit_transaction?

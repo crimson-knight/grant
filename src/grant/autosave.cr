@@ -123,6 +123,7 @@ module Grant::Autosave
   # `association.attribute` (`association[index].attribute` with *index*).
   #
   # :nodoc:
+  @[TypeOnce]
   def _autosave_import_errors(association : String, record : Grant::Base, index : Int32?) : Nil
     prefix = index ? "#{association}[#{index}]" : association
     record.errors.each do |error|

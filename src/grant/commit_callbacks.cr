@@ -1,3 +1,5 @@
+# crystal: strict
+
 require "./strict_annotations"
 
 # Transaction-aware commit/rollback callbacks (ActiveRecord-compatible).
@@ -114,12 +116,10 @@ module Grant::CommitCallbacks
       @list_of_contributions = [lead]
     end
 
-    @[TypeOnce]
     def live_commit_bits : UInt8
       list_of_contributions.reduce(0_u8) { |bits, contribution| contribution.live? ? bits | contribution.commit_bits : bits }
     end
 
-    @[TypeOnce]
     def live_action_bits : UInt8
       list_of_contributions.reduce(0_u8) { |bits, contribution| contribution.live? ? bits | contribution.action_bits : bits }
     end
@@ -153,7 +153,6 @@ module Grant::CommitCallbacks
 
   # Queue a callback symbol for this instance (used internally after save/destroy).
   # A queued create or update commit also queues `after_save_commit`.
-  @[TypeOnce]
   private def queue_commit_callback(callback_name : Symbol) : Array(Symbol)?
     _pending_commit_callbacks << callback_name
     if callback_name == :after_create_commit || callback_name == :after_update_commit
@@ -166,7 +165,6 @@ module Grant::CommitCallbacks
   # compile time).
   #
   # :nodoc:
-  @[TypeOnce]
   def __commit_on?(action_mask : UInt8) : Bool
     # Called outside a dispatch (a direct `record.after_rollback`): infer the
     # operation from the record's state.
@@ -189,6 +187,7 @@ module Grant::CommitCallbacks
   # If there is NO explicit transaction open (implicit single-operation
   # transaction) the callbacks are fired immediately, preserving the
   # pre-existing behaviour.
+  @[TypeOnce]
   private def run_commit_callbacks : Nil
     return if _pending_commit_callbacks.empty?
 
@@ -271,22 +270,26 @@ module Grant::CommitCallbacks
   # `COMMIT_CALLBACK_BITS`, for the one operation the merged *action_bits*
   # resolve to (see `resolve_commit_action`), and exposes that operation to
   # `on:` conditions.
+  #
+  # The callbacks are called on `self`: this file is typed once for every
+  # model, and a receiverless call would find the class macro of the same name
+  # instead of the method each model defines.
   private def dispatch_commit_callbacks(commit_bits : UInt8, action_bits : UInt8) : Nil
     action = resolve_commit_action(action_bits)
     @_commit_action_bits = action
     begin
       if action == ACTION_CREATE
-        after_create_commit if (commit_bits & COMMIT_CALLBACK_BITS[:after_create_commit]) != 0 && responds_to?(:after_create_commit)
+        self.after_create_commit if (commit_bits & COMMIT_CALLBACK_BITS[:after_create_commit]) != 0 && responds_to?(:after_create_commit) # ameba:disable Style/RedundantSelf (a method call, not the class macro)
       end
       if action == ACTION_UPDATE
-        after_update_commit if (commit_bits & COMMIT_CALLBACK_BITS[:after_update_commit]) != 0 && responds_to?(:after_update_commit)
+        self.after_update_commit if (commit_bits & COMMIT_CALLBACK_BITS[:after_update_commit]) != 0 && responds_to?(:after_update_commit) # ameba:disable Style/RedundantSelf (a method call, not the class macro)
       end
       if action == ACTION_DESTROY
-        after_destroy_commit if (commit_bits & COMMIT_CALLBACK_BITS[:after_destroy_commit]) != 0 && responds_to?(:after_destroy_commit)
+        self.after_destroy_commit if (commit_bits & COMMIT_CALLBACK_BITS[:after_destroy_commit]) != 0 && responds_to?(:after_destroy_commit) # ameba:disable Style/RedundantSelf (a method call, not the class macro)
       else
-        after_save_commit if (commit_bits & COMMIT_CALLBACK_BITS[:after_save_commit]) != 0 && responds_to?(:after_save_commit)
+        self.after_save_commit if (commit_bits & COMMIT_CALLBACK_BITS[:after_save_commit]) != 0 && responds_to?(:after_save_commit) # ameba:disable Style/RedundantSelf (a method call, not the class macro)
       end
-      after_commit if (commit_bits & COMMIT_CALLBACK_BITS[:after_commit]) != 0 && responds_to?(:after_commit)
+      self.after_commit if (commit_bits & COMMIT_CALLBACK_BITS[:after_commit]) != 0 && responds_to?(:after_commit) # ameba:disable Style/RedundantSelf (a method call, not the class macro)
     ensure
       @_commit_action_bits = 0_u8
     end
@@ -295,7 +298,7 @@ module Grant::CommitCallbacks
   private def dispatch_rollback_callbacks(action_bits : UInt8) : Nil
     @_commit_action_bits = resolve_commit_action(action_bits)
     begin
-      after_rollback if responds_to?(:after_rollback)
+      self.after_rollback if responds_to?(:after_rollback) # ameba:disable Style/RedundantSelf (a method call, not the class macro)
     ensure
       @_commit_action_bits = 0_u8
     end
@@ -305,7 +308,6 @@ module Grant::CommitCallbacks
   # single one its commit and rollback callbacks belong to, as ActiveRecord
   # does: a destroyed record is a destroy, a record created in the
   # transaction (then perhaps updated) is a create, anything else an update.
-  @[TypeOnce]
   private def resolve_commit_action(action_bits : UInt8) : UInt8
     if (action_bits & ACTION_DESTROY) != 0
       ACTION_DESTROY
@@ -318,7 +320,6 @@ module Grant::CommitCallbacks
 
   # Clears pending instance-level queued callbacks (used when an operation
   # fails before run_commit_callbacks is reached).
-  @[TypeOnce]
   private def clear_commit_callbacks : Array(Symbol)
     _pending_commit_callbacks.clear
   end
