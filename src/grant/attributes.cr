@@ -433,13 +433,20 @@ module Grant
     # encrypted attribute, value object) raises `Grant::UnknownAttributeError`
     # before anything is assigned. `new`, `create` and `update` keep ignoring
     # unknown keys.
-    @[TypeOnce]
     def assign_attributes(hash : Hash) : self
+      raise_on_unknown_attribute(hash)
+      set_attributes(hash.transform_keys { |key| key.to_s.as(String | Symbol) })
+    end
+
+    # Raises `Grant::UnknownAttributeError` for the first key of *hash* that
+    # names no assignable attribute. Typed once; `assign_attributes` stays typed
+    # for each model, so it returns the model's own type.
+    @[TypeOnce]
+    private def raise_on_unknown_attribute(hash : Hash) : Nil
       hash.each_key do |key|
         attribute_name = key.to_s
         raise Grant::UnknownAttributeError.new(self.class.name, attribute_name) unless assignable_attribute?(attribute_name)
       end
-      set_attributes(hash.transform_keys { |key| key.to_s.as(String | Symbol) })
     end
 
     # :ditto:
