@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### pg_dump and psql check the server as the app does
+
+- `structure_dump` and `schema_load` pass the database URL's `sslmode`,
+  `sslrootcert`, `sslcert` and `sslkey` to `pg_dump` and `psql` (as
+  `PGSSLMODE`, `PGSSLROOTCERT`, `PGSSLCERT`, `PGSSLKEY`), with
+  `PGSSLMINPROTOCOLVERSION=TLSv1.3`. With `verify-ca` or `verify-full` and
+  no `sslrootcert` (or `sslrootcert=system`), libpq gets the bundle the
+  driver reads: the file `SSL_CERT_FILE` names, else the operating system's.
+  A URL without `sslmode` gets the driver's default (`disable` on this
+  machine, `prefer` elsewhere), and these values replace the caller's own
+  `PGSSL*` variables. Before, the tools connected with libpq's defaults
+  and did not verify the server.
+
 ### PostgreSQL TLS runs on Beryl TLS 1.3; no OpenSSL by default
 
 - The PostgreSQL driver connects over Beryl TLS 1.3, written in Crystal, so

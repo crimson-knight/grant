@@ -2,6 +2,7 @@ require "./introspection"
 require "./schema_statements"
 require "./constraint_catalog"
 require "./schema_migration"
+require "../vendor/beryl/certificates/trust_store"
 
 module Grant::Schema
   # The file format of a schema dump: a Crystal `Grant::Schema.define` block or
@@ -835,7 +836,7 @@ module Grant::Schema
       arguments.concat(connection.pg_arguments)
       schema = @adapter.schema.namespace
       arguments << "--schema=#{schema}" if schema
-      {"pg_dump", arguments, connection.environment("PGPASSWORD")}
+      {"pg_dump", arguments, connection.pg_environment}
     end
 
     private def mysqldump_command : {::String, Array(::String), Hash(::String, ::String)}
@@ -882,15 +883,23 @@ module Grant::Schema
     getter user : ::String?
     getter password : ::String?
     getter database : ::String
+    # The URL's TLS parameters, named as Grant's PostgreSQL driver reads them.
+    getter sslmode : ::String?
+    getter sslrootcert : ::String?
+    getter sslcert : ::String?
+    getter sslkey : ::String?
 
-    def initialize(@host : ::String?, @port : Int32?, @user : ::String?, @password : ::String?, @database : ::String)
+    def initialize(@host : ::String?, @port : Int32?, @user : ::String?, @password : ::String?, @database : ::String,
+                   *, @sslmode : ::String? = nil, @sslrootcert : ::String? = nil, @sslcert : ::String? = nil, @sslkey : ::String? = nil)
     end
 
     def self.parse(url : ::String) : ConnectionSettings
       uri = URI.parse(url)
       database = URI.decode_www_form(uri.path.lstrip('/'))
+      query = uri.query_params
       new(uri.hostname, uri.port, uri.user.try { |name| URI.decode_www_form(name) },
-        uri.password.try { |secret| URI.decode_www_form(secret) }, database)
+        uri.password.try { |secret| URI.decode_www_form(secret) }, database,
+        sslmode: query["sslmode"]?, sslrootcert: query["sslrootcert"]?, sslcert: query["sslcert"]?, sslkey: query["sslkey"]?)
     end
 
     # The password goes through the environment, never the argument list.
@@ -900,6 +909,52 @@ module Grant::Schema
         result[variable] = secret
       end
       result
+    end
+
+    # The environment for `pg_dump` and `psql`, so libpq checks the server
+    # as Grant's driver does: the same sslmode (the driver's default when
+    # the URL names none: `disable` for a database on this machine, `prefer`
+    # for any other host), TLS 1.3 at least, and for `verify-ca` and
+    # `verify-full` the same trust anchors. With no `sslrootcert`, or
+    # `sslrootcert=system`, those are the system bundle the driver reads
+    # (the file `SSL_CERT_FILE` names, else the operating system's), passed
+    # as a file so every libpq version reads it. These variables replace the
+    # caller's own, so a stray `PGSSLMODE` cannot loosen the check.
+    def pg_environment : Hash(::String, ::String)
+      result = environment("PGPASSWORD")
+      mode = @sslmode || (database_is_on_this_machine? ? "disable" : "prefer")
+      result["PGSSLMODE"] = mode
+      return result if mode == "disable"
+
+      result["PGSSLMINPROTOCOLVERSION"] = "TLSv1.3"
+      result["PGSSLROOTCERT"] = trust_anchor_file if mode == "verify-ca" || mode == "verify-full"
+      if certificate = @sslcert
+        result["PGSSLCERT"] = certificate
+      end
+      if key = @sslkey
+        result["PGSSLKEY"] = key
+      end
+      result
+    end
+
+    private def trust_anchor_file : ::String
+      root_certificate = @sslrootcert
+      return root_certificate if root_certificate && root_certificate != "system"
+
+      Grant::Beryl::Certificates::TrustStore.system_bundle_path
+    rescue error : Grant::Beryl::Certificates::Error
+      raise StructureToolError.new("sslmode=#{@sslmode} needs trust anchors for pg_dump and psql: #{error.message}")
+    end
+
+    # The driver's rule (`PQ::Conninfo`): a Unix socket, localhost or a
+    # loopback address.
+    private def database_is_on_this_machine? : Bool
+      host = @host
+      return true if host.nil? || host.empty? || host.starts_with?('/')
+      return true if host.compare("localhost", case_insensitive: true) == 0
+      return false unless Socket::IPAddress.valid?(host)
+
+      Socket::IPAddress.new(host, 0).loopback?
     end
 
     def pg_arguments : Array(::String)
