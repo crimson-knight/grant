@@ -145,11 +145,12 @@ module Grant::SQLiteEngine::Query
     end
 
     # build.c sqlite3AddColumn: a declared type that is exactly one of the
-    # standard type names, in any case, is kept as that name (upper case).
+    # standard type names, in any case, is kept as that name (upper case);
+    # the text goes through sqlite3Dequote first, so "Text" reads TEXT.
     STANDARD_TYPES = %w[ANY BLOB INT INTEGER REAL TEXT]
 
     private def self.type_text(type_name : SQL::TypeName) : String
-      text = without_generated_always(full_type_text(type_name))
+      text = WriteTable.dequoted(without_generated_always(full_type_text(type_name)))
       STANDARD_TYPES.find { |standard| standard.compare(text, case_insensitive: true) == 0 } || text
     end
 
