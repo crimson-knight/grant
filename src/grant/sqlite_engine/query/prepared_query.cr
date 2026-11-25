@@ -18,7 +18,8 @@ module Grant::SQLiteEngine::Query
     # False for a statement that only moves the transaction state (BEGIN
     # DEFERRED, COMMIT, ROLLBACK of the whole transaction, SAVEPOINT,
     # RELEASE): like C's OP_AutoCommit and OP_Savepoint, it reads no page,
-    # so running it takes no read lock of its own.
+    # so running it takes no read lock of its own. False too for a PRAGMA
+    # that reads no page (`PragmaFileAccess`).
     getter? reads_database = true
     @frame : Frame? = nil
     @done = false
@@ -72,7 +73,7 @@ module Grant::SQLiteEngine::Query
         if @parameter_count > SQL::Limits::MAX_VARIABLE_NUMBER
           raise SQLError.new("too many SQL variables")
         end
-        @reads_database = !PreparedQuery.transaction_control?(statement)
+        @reads_database = !PreparedQuery.transaction_control?(statement) && PragmaFileAccess.run_reads_file?(statement)
         plan = StatementCompiler.compile(@session, statement, prepared.text)
         producer = PlanProducer.new(@session, plan, statement, prepared.text)
         @compiled = CompiledSelect.new(producer, plan.list_of_column_names, 0, 0, false)
@@ -124,7 +125,20 @@ module Grant::SQLiteEngine::Query
     # query is finished.
     def step : Bool
       return false if @done
+      outer_clock = @session.statement_clock
+      @session.statement_clock = @statement_clock
+      begin
+        advance
+      ensure
+        @session.statement_clock = outer_clock
+      end
+    end
+
+    @statement_clock = StatementClock.new
+
+    private def advance : Bool
       frame = @frame ||= begin
+        @session.json_cache.clear
         new_frame = frame_for_run
         @compiled.producer.open(new_frame)
         new_frame
@@ -148,6 +162,7 @@ module Grant::SQLiteEngine::Query
     end
 
     def reset : Nil
+      @statement_clock.reset
       @frame = nil
       @done = false
       @row = NO_ROW

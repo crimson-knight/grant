@@ -78,11 +78,24 @@ module Grant::SQLite3
         end
       end
 
+      # Whether *sql* compiles without reading the schema, so preparing it
+      # takes no lock: transaction control, and a PRAGMA C compiles without
+      # PragFlg_NeedSchema (`PRAGMA busy_timeout` among them, which must
+      # succeed while another connection holds a lock).
+      def self.compiles_without_the_schema?(sql : String) : Bool
+        return true if transaction_control?(sql)
+        pragma_name = SQLiteEngine::Query::PragmaFileAccess.name_in(sql)
+        return false unless pragma_name
+        !SQLiteEngine::Query::PragmaFileAccess.compile_reads_schema?(pragma_name)
+      end
+
       def prepare(sql : String) : {Int32, Engine::PreparedStatement}
-        query = if Database.transaction_control?(sql)
+        query = if Database.compiles_without_the_schema?(sql)
                   @session.prepare(sql)
                 else
-                  @session.begin_statement_read
+                  # Compiling reads the schema only; it leaves the open
+                  # transaction's snapshot unpinned, as C does.
+                  @session.begin_statement_read(for_transaction: false)
                   begin
                     @session.prepare(sql)
                   ensure
@@ -111,34 +124,70 @@ module Grant::SQLite3
         Engine::OK_CODE
       end
 
-      # Copies every table, index and view of this database over *target*'s
-      # main schema, as one transaction on *target* (sqlite3_backup's
-      # result: the same schema and rows).
+      # Copies this database's pages over *target*'s main schema as one
+      # transaction on *target* (sqlite3_backup_init, _step(-1) and _finish):
+      # the same schema, rows, sqlite_sequence, user_version and
+      # application_id. A failure is a result code, with the message on
+      # *target*.
       def backup_to(target : Engine::Database) : Int32
-        return Engine::ERROR_CODE unless target.is_a?(Database)
-        target.restore_from(self)
+        return backup_through_file_to(target) unless target.is_a?(Database)
+        target.restore_from(@session.database.pager)
+      end
+
+      def backup_to_file(path : String) : Int32
+        code, file_database = GrantEngine.new.open(path)
+        return fail(code, file_database.error_message) unless file_database.is_a?(Database)
+        begin
+          code = file_database.restore_from(@session.database.pager)
+          code == Engine::OK_CODE ? succeed : fail(code, file_database.error_message)
+        ensure
+          file_database.close
+        end
+      end
+
+      def restore_from_file(path : String) : Int32
+        source = SQLiteEngine::Database.open(path)
+        begin
+          restore_from(source.pager)
+        ensure
+          source.close
+        end
+      rescue error : SQLiteEngine::Error | File::Error
+        fail_with(error)
       end
 
       # :nodoc:
-      protected def restore_from(source : Database) : Int32
-        statements = SQLiteEngine::Query::Backup.statements(source.session, session)
-        code = exec("BEGIN")
-        return code unless code == Engine::OK_CODE
-        statements.each do |statement|
-          code, prepared = prepare(statement[0])
-          unless code == Engine::OK_CODE
-            exec("ROLLBACK")
-            return code
-          end
-          statement[1].each_with_index { |value, index| prepared.as(PreparedStatement).bind_value(index + 1, value) }
-          step_code = prepared.step
-          prepared.finalize_statement
-          unless step_code == Engine::DONE_CODE || step_code == Engine::ROW_CODE
-            exec("ROLLBACK")
-            return step_code
-          end
+      protected def restore_from(source : SQLiteEngine::Pager) : Int32
+        SQLiteEngine::Query::Backup.copy(source, @session)
+        succeed
+      rescue error : SQLiteEngine::Error | File::Error
+        fail_with(error)
+      end
+
+      BUSY_CODE        =  5
+      READ_ONLY_CODE   =  8
+      CORRUPT_CODE     = 11
+      CANNOT_OPEN_CODE = 14
+      # SQLITE_READONLY_DIRECTORY: the folder takes no journal file.
+      READ_ONLY_DIRECTORY_CODE = 1544
+
+      # Records *error* as C reports it: the result code and its message.
+      private def fail_with(error : ::Exception) : Int32
+        if error.is_a?(SQLiteEngine::SQLError)
+          fail(error.result_code, error.message || "SQL error")
+        elsif error.is_a?(SQLiteEngine::Busy)
+          fail(BUSY_CODE, "database is locked")
+        elsif error.is_a?(SQLiteEngine::ReadOnlyDatabase)
+          fail(READ_ONLY_CODE, "attempt to write a readonly database")
+        elsif error.is_a?(SQLiteEngine::CorruptDatabase)
+          fail(CORRUPT_CODE, "database disk image is malformed")
+        elsif error.is_a?(File::AccessDeniedError)
+          fail(READ_ONLY_DIRECTORY_CODE, "attempt to write a readonly database")
+        elsif error.is_a?(File::Error)
+          fail(CANNOT_OPEN_CODE, "unable to open database file")
+        else
+          fail(Engine::ERROR_CODE, error.message || "SQL error")
         end
-        exec("COMMIT")
       end
 
       # Statements prepared and not yet finalized.
@@ -342,6 +391,14 @@ module Grant::SQLite3
       end
 
       def backup_to(target : Engine::Database) : Int32
+        @error_code
+      end
+
+      def backup_to_file(path : String) : Int32
+        @error_code
+      end
+
+      def restore_from_file(path : String) : Int32
         @error_code
       end
 

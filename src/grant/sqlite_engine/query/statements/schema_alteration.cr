@@ -354,9 +354,24 @@ module Grant::SQLiteEngine::Query
       offset = SchemaAlteration.column_list_end(sql)
       new_sql = "#{sql.byte_slice(0, offset)}, #{column_text}#{sql.byte_slice(offset)}"
       table_name = entry.object_name
+      if message = CheckGeneratedColumnsOfTable.for_new_table(@session, new_sql, database).parse_error
+        raise SQLError.new("error in table #{table_name} after add column: #{message}")
+      end
       database.rewrite_schema_rows do |record|
         next unless record[0]? == "table" && record[1]? == table_name
         [record[0]?, record[1]?, record[2]?, record[3]?, new_sql] of Value
+      end
+      refuse_null_in_added_generated_column(table_name) if generated && has_rows && constraints.any?(SQL::NotNullConstraint)
+    end
+
+    # C checks the rows of the table against a new NOT NULL generated
+    # column (the ALTER's own `raise(ABORT, ...)` test over quick_check).
+    private def refuse_null_in_added_generated_column(table_name : String) : Nil
+      @session.reset_schema
+      table = @run.table(table_name, @schema_name)
+      position = table.list_of_columns.size - 1
+      @run.cursor_rows(table) do |_rowid, row|
+        raise SQLError.new("NOT NULL constraint failed") if row[position].nil?
       end
     end
 
@@ -459,6 +474,9 @@ module Grant::SQLiteEngine::Query
         elsif missing = missing_index_column(entry, sql)
           raise SQLError.new("error in index #{entry.object_name} after drop column: no such column: #{missing}")
         end
+      end
+      if message = CheckGeneratedColumnsOfTable.new(@session, info).parse_error
+        raise SQLError.new("error in table #{table_name} after drop column: #{message}")
       end
       sql = info.entry.sql || return
       statement = SQL::Parser.parse_schema(sql)

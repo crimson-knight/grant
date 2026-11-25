@@ -24,9 +24,9 @@ module Grant::SQLiteEngine::Query
                   SQL::CreateTrigger, SQL::CreateVirtualTable
                SchemaPlan.new(session, statement, text)
              when SQL::Explain             then ExplainPlan.new(session, statement)
-             when SQL::Analyze             then NoRowsPlan.new
+             when SQL::Analyze             then AnalyzePlan.new(session, statement)
              when SQL::Reindex             then NoRowsPlan.new
-             when SQL::Vacuum              then NoRowsPlan.new
+             when SQL::Vacuum              then VacuumIntoPlan.for(session, statement) || NoRowsPlan.new
              when SQL::Attach, SQL::Detach then AttachPlan.new(session, statement)
              else
                raise UnsupportedSQL.new("#{PreparedQuery.statement_kind(statement)} statements")
@@ -37,7 +37,7 @@ module Grant::SQLiteEngine::Query
   end
 
   # A statement that does nothing on this engine and returns no rows
-  # (ANALYZE, REINDEX and VACUUM leave a correct database as it is).
+  # (REINDEX and VACUUM leave a correct database as it is).
   class NoRowsPlan < StatementPlan
     def run(list_of_parameters : Array(Value)) : Array(Array(Value))
       [] of Array(Value)

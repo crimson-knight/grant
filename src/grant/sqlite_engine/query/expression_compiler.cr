@@ -219,12 +219,7 @@ module Grant::SQLiteEngine::Query
               in .string? then SQL::Parser.dequote(literal.text)
               in .blob?   then literal_blob(literal.text)
               in .current_time?, .current_date?, .current_timestamp?
-                now = Time.utc
-                case literal.kind
-                when .current_time? then now.to_s("%H:%M:%S")
-                when .current_date? then now.to_s("%Y-%m-%d")
-                else                     now.to_s("%Y-%m-%d %H:%M:%S")
-                end
+                return DateTimeFunctions.keyword_expression(literal.kind)
               end
       ConstantExpr.new(value)
     end
@@ -690,8 +685,8 @@ module Grant::SQLiteEngine::Query
 
     # ---------------------------------------------------------- functions
 
-    # The JSON functions of json.c not yet ported (those that build or edit
-    # JSON, which need value subtypes) arrive with milestone G6.
+    # A name shaped like a json.c function that the engine does not have is
+    # reported as unsupported.
     JSON_FUNCTION_NAME = /\Ajsonb?(_[a-z_]+)?\z/
 
     # resolveExprStep checks a function before walking its arguments: its
@@ -766,7 +761,7 @@ module Grant::SQLiteEngine::Query
           raise SQLError.new("second argument to likelihood() must be a constant between 0.0 and 1.0")
         end
         return PassThroughExpr.new(compile_expression(call.arguments[0], context))
-      when "printf", "format", "date", "time", "datetime", "julianday", "strftime", "unixepoch"
+      when "printf", "format"
         raise UnsupportedSQL.new("function #{name}()")
       end
       if !ScalarFunctions.known?(lower) && JSON_FUNCTION_NAME.matches?(lower)
@@ -774,7 +769,7 @@ module Grant::SQLiteEngine::Query
       end
       definition = ScalarFunctions.lookup(lower, count) || raise SQLError.new("no such function: #{name}")
       arguments = call.arguments.map { |argument| compile_expression(argument, context) }
-      function = FunctionExpr.new(definition, arguments)
+      function = definition.reads_subtypes ? SubtypeReadingFunctionExpr.new(definition, arguments) : FunctionExpr.new(definition, arguments)
       note_collation_use(function.needed_unknown_collation)
       function
     end
@@ -816,7 +811,7 @@ module Grant::SQLiteEngine::Query
       else
         collector.list_of_calls << AggregateCall.new(kind, arguments, call.distinct.distinct?, filter, collation, index)
       end
-      AggregateResultExpr.new(index)
+      kind.json? ? JsonAggregateResultExpr.new(index) : AggregateResultExpr.new(index)
     end
 
     private def aggregate_owner(arguments : Array(Expr), filter : Expr?, context : QueryContext) : QueryContext

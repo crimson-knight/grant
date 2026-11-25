@@ -8,7 +8,7 @@ Grant is an ActiveRecord-pattern ORM for the Crystal programming language, pursu
 - **Pattern**: ActiveRecord (models inherit from `Grant::Base`)
 - **Language**: Crystal (>= 1.19.0, < 2.0.0; see `docs/RELEASING.md`)
 - **License**: MIT
-- **Version**: 0.26.0
+- **Version**: 0.27.0
 
 ## Build and Test Commands
 
@@ -89,7 +89,7 @@ splits any group that passes `SPEC_GROUP_MAX_RSS_GB` (default 10), and retries.
 |----------|-------------|-------|
 | PostgreSQL | owned, `src/grant/drivers/pg` (from crystal-pg 0.30.0) | Full feature support (arrays, JSONB, UUID, all lock modes) |
 | MySQL | `crystal-lang/crystal-mysql` shard | Full support (JSON 5.7+, basic lock modes) |
-| SQLite | owned, `src/grant/drivers/sqlite3` (from crystal-sqlite3 0.23.0) | Local dev/testing, no row-level locking, requires >= 3.24.0 |
+| SQLite | owned, `src/grant/drivers/sqlite3` (from crystal-sqlite3 0.23.0) on libsqlite3, or `Grant::SQLiteEngine` in Crystal (`require "grant/adapter/sqlite/grant_engine"`) | No row-level locking; libsqlite3 >= 3.24.0 |
 
 ## Branch Convention
 

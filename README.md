@@ -89,6 +89,32 @@ in Crystal, so it calls no libz. An app built with
 `scripts/check_zlib_linkage.rb` builds probe apps that way and checks their
 binaries.
 
+## SQLite on Grant's own engine (no libsqlite3)
+
+Grant includes a SQLite engine written in Crystal (`Grant::SQLiteEngine`). It
+reads and writes ordinary SQLite database files (rollback journal and WAL,
+with the C library's file format and locks), so a database it writes opens in
+the `sqlite3` tool and passes `PRAGMA integrity_check`, and a database the C
+library wrote opens in Grant. It runs the SQL Grant, micrate and the Amber CLI
+emit, with SQLite 3.51.0's results, messages and result codes; a construct it
+leaves out (window functions, RIGHT and FULL joins, `CREATE TABLE ... AS SELECT`, triggers, virtual tables, `load_extension`) raises
+`Grant::SQLiteEngine::UnsupportedSQL` naming it.
+
+To run an app on the engine and link no C SQLite library, require the adapter
+this way:
+
+```crystal
+require "grant"
+require "grant/adapter/sqlite/grant_engine"
+```
+
+`Grant.settings.sqlite_engine` then starts at `:grant`. `require
+"grant/adapter/sqlite"` keeps both engines with the C library as the default;
+with it, `Grant.settings.sqlite_engine = :grant` (in
+`config/initializers/grant.cr`) moves an app onto the engine while keeping
+the C library one setting away. `scripts/check_sqlite3_linkage.rb` builds
+probe apps both ways and checks their binaries.
+
 ## Comprehensive Feature Examples
 
 Here are 3 example models that demonstrate every feature available in Grant:

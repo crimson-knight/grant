@@ -9,7 +9,7 @@ module Grant::SQLiteEngine::Query
       statement = @statement
       case statement
       when SQL::Begin
-        @session.begin_transaction(immediate: statement.mode.immediate? || statement.mode.exclusive?)
+        @session.begin_transaction(immediate: statement.mode.immediate? || statement.mode.exclusive?, exclusive: statement.mode.exclusive?)
       when SQL::Commit
         @session.commit_transaction
       when SQL::Rollback

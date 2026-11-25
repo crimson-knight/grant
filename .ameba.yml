@@ -85,6 +85,14 @@ Metrics/CyclomaticComplexity:
     # and the write differential walks every statement shape it generates.
     - src/grant/sqlite_engine/query/statements/*.cr
     - scripts/sqlite_engine_write_differential.cr
+    # The durability soak's supervisor loop and status writer, and the
+    # differential generators for JSON, date and time, generated columns and
+    # ANALYZE, each walk every case they generate in one place.
+    - scripts/sqlite_engine_durability_soak.cr
+    - scripts/sqlite_engine_json_differential.cr
+    - spec/grant/sqlite_engine/query/analyze_spec.cr
+    - spec/support/sqlite_engine/date_time_generator.cr
+    - spec/support/sqlite_engine/generated_column_differential.cr
     - scripts/sqlite_engine_wal_soak.cr
     - spec/support/sqlite_engine/write_oracle.cr
     - scripts/sqlite_engine_query_*.cr

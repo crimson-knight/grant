@@ -313,6 +313,10 @@ module Grant::SQLiteEngine::Query
         if filter = call.filter
           next unless filter.holds?(frame)
         end
+        if call.kind.json?
+          JsonAggregates.step(call, group.list_of_accumulators.unsafe_fetch(index), group.list_of_distinct_sets.unsafe_fetch(index), frame)
+          next
+        end
         list_of_arguments = call.list_of_arguments
         # One argument (or count's none) without DISTINCT needs no argument
         # array.

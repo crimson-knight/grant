@@ -114,7 +114,7 @@ module Grant::SQLiteEngine::Query
       when "foreign_key_check"
         ForeignKeyCheck.new(@session, value).rows
       else
-        return PragmaExtras.rows(@session, name, value) if PragmaExtras.columns(name, value)
+        return PragmaExtras.rows(@session, name, value, @statement.schema.try(&.value)) if PragmaExtras.columns(name, value)
         if remembered = REMEMBERED[name]?
           if value
             number = PragmaPlan.integer(value) || PragmaPlan.named_level(name, value)

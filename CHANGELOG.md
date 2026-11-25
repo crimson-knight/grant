@@ -26,6 +26,87 @@
   (`sslmode`, `sslrootcert`, `ssl-mode`, `ssl-ca` and the rest) on their
   connection to the maintenance database.
 
+## 0.27.0 - 2026-11-24
+
+Grant 0.27.0 ships its own SQLite engine, written in Crystal
+(`Grant::SQLiteEngine`), as an opt-in. An app that requires
+`grant/adapter/sqlite/grant_engine` instead of `grant/adapter/sqlite` runs
+every statement on the engine and links no C SQLite library, with no build
+flag. Its database files are ordinary SQLite files: they open in the
+`sqlite3` tool and pass `PRAGMA integrity_check`, and files the C library
+wrote open in Grant. Apps that keep `require "grant/adapter/sqlite"` are
+unchanged: the C library stays the default, and
+`Grant.settings.sqlite_engine = :grant` moves them onto the engine.
+
+Minimum Crystal: 1.19.0
+
+### Grant's SQLite engine
+
+Added:
+
+- `Grant::SQLiteEngine`: the SQLite file format (reader, b-tree writer,
+  rollback journal, WAL with C SQLite's `-shm` layout and locks, so engine
+  and C processes can share a database), a parser for the SQL Grant, micrate
+  and the Amber CLI emit, a planner and executor with SQLite 3.51.0's
+  results, column names, error messages and result codes. Grant's whole
+  SQLite suite passes on it.
+- `require "grant/adapter/sqlite/grant_engine"`: the SQLite adapter on the
+  engine alone. The program links no libsqlite3 and
+  `Grant.settings.sqlite_engine` starts at `:grant`; `:libsqlite3` is refused
+  with a message naming the require to add. `require
+  "grant/adapter/sqlite/libsqlite3"` is the two-engine adapter under an
+  explicit name. `-Dgrant_without_libsqlite3` still works.
+- `Grant.settings.sqlite_engine` (`:libsqlite3` or `:grant`).
+- SQL the engine now runs as C SQLite 3.51.0 does, each checked by a
+  seeded random comparison with C: VIRTUAL generated columns (read, written,
+  indexed, altered; 3,000 random tables, 0 differences); the date and time
+  functions (`date`, `time`, `datetime`, `julianday`, `unixepoch`,
+  `strftime`, `timediff`, every modifier; 500,000 calls, 0 differences); the
+  JSON builders, editors and aggregates (`json_array`, `json_object`,
+  `json_set`/`insert`/`replace`/`remove`, `json_patch`, `json_group_array`,
+  `json_group_object`, the `jsonb_` forms; 150,000 statements, 0
+  differences); `ANALYZE`, `sqlite_stat1`, `PRAGMA analysis_limit` and
+  `PRAGMA optimize`; the backup API (`Connection#dump`) between any pair of
+  engines and `VACUUM INTO`; `PRAGMA foreign_key_check`, `auto_vacuum`,
+  `incremental_vacuum` and the `pragma_*` table-valued forms;
+  `PRAGMA fullfsync` and `checkpoint_fullfsync` (F_FULLFSYNC on macOS).
+- `scripts/check_sqlite3_linkage.rb` builds the default app workload on
+  `grant_engine` with no flags and with the flag, and a control that must link
+  libsqlite3.
+- `scripts/sqlite_engine_durability_soak.cr`: a resumable multi-day soak
+  (engine and C processes, kills, checkpoints, every acknowledged commit
+  verified, `integrity_check` in `/usr/bin/sqlite3`).
+
+Left out (each raises `Grant::SQLiteEngine::UnsupportedSQL` naming it):
+window functions, RIGHT and FULL joins, `CREATE TABLE ... AS SELECT`,
+triggers, virtual tables, `load_extension`.
+
+Speed against libsqlite3 3.51.0 on the same machine: reads 1.03x to 4.5x as
+fast; every query workload and WAL-mode model writes at least as fast.
+
+Fixed (engine):
+
+- A deferred transaction's first write waits out `busy_timeout` in WAL mode
+  while another process holds the write lock, as C does; it used to fail at
+  once with `database is locked`.
+- Rollback-journal `synchronous` handling and journal headers with
+  `journal_mode=OFF` match C.
+
+Known differences from C SQLite (results are the same unless stated):
+
+- Opening a read-only database file fails with code 14; C opens it read-only. (#106)
+- An all-digit text literal of 1,952+ characters stays TEXT in a NUMERIC column; C stores REAL. (#106)
+- Plain VACUUM inside a transaction, and `VACUUM unknown_schema`, succeed; C refuses both. (#106)
+- VACUUM INTO copies pages (free pages included); C writes a compacted file. Rows, schema and integrity are equal. (#106)
+- PRAGMA synchronous=... inside a transaction is accepted; C refuses. Unusual synchronous values are stored as given. (#105)
+- The directory sync after creating a journal or WAL file (UNIXFILE_DIRSYNC) is not made. (#105)
+- foreign_key_check row order differs from C for schemas with more than three tables (same rows). (#102)
+- date(*) with a star argument is refused; C accepts it. (#103)
+- The planner does not yet read sqlite_stat1, so index choice on an ANALYZEd database follows C's default estimates (results are the same; plans may differ). Follow-up packet G6_CATALOG_B2. ANALYZE sqlite_autoindex_<t>_1 of a WITHOUT ROWID table answers 'no such table'. (#107)
+- JSON subtype is lost through a scalar subquery: json_array((SELECT json('[1]'))) gives ["[1]"], C gives [[1]]. Window use of JSON aggregates and jsonb_each/jsonb_tree are refused with a named error. (#109)
+- `EXPLAIN QUERY PLAN` detail text differs (display only).
+- A VIRTUAL column of REAL affinity reads REAL where C may read an integer after a sorter or index read (C's MEM_IntReal). (#108)
+
 ## 0.26.0 - 2026-11-22
 
 An app on Grant 0.26.0 can be built with `-Dwithout_openssl -Dwithout_zlib`

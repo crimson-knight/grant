@@ -25,9 +25,6 @@ module Grant::SQLiteEngine::Query
       @stored_order = @definition.stored_column_order
       @in_place = !@definition.without_rowid? && @stored_order == (0...columns.size).to_a
       @real_columns = (0...columns.size).select { |index| columns[index].affinity.real? }
-      if virtual = columns.find(&.generated.virtual?)
-        @unsupported = "VIRTUAL generated column #{name}.#{virtual.column_name}"
-      end
     end
 
     @unsupported : String? = nil
