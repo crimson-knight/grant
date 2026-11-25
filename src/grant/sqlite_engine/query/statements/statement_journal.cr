@@ -15,17 +15,20 @@ module Grant::SQLiteEngine::Query
     AGGREGATE_NAMES = %w[COUNT SUM TOTAL AVG MIN MAX GROUP_CONCAT STRING_AGG]
     # Keywords that read as functions when a parenthesis follows them.
     FUNCTION_KEYWORDS = %w[REPLACE LIKE GLOB IF]
+    # Operators that call a function (likeFunc, globFunc, regexp, match).
+    PATTERN_OPERATORS = %w[LIKE GLOB REGEXP MATCH]
 
     # True when *text* (SQL expressions) calls a function: a name before
     # "(" that is no keyword, or a LIKE, GLOB, REGEXP or MATCH operator.
     def self.calls_function?(text : String) : Bool
-      stripped = text.gsub(/'(?:[^']|'')*'/, "''")
-      return true if stripped.matches?(/\b(LIKE|GLOB|REGEXP|MATCH)\b/i)
-      stripped.scan(/([A-Za-z_][A-Za-z0-9_$]*)\s*\(/).any? do |match|
-        name = match[1].upcase
-        next false if AGGREGATE_NAMES.includes?(name)
-        !SQL::Keywords::TABLE.has_key?(name) || FUNCTION_KEYWORDS.includes?(name)
+      stripped = TextScan.blank_quoted_strings(text)
+      return true if TextScan.contains_any_word?(stripped, PATTERN_OPERATORS)
+      TextScan.each_function_name(stripped) do |written_name|
+        name = written_name.upcase
+        next if AGGREGATE_NAMES.includes?(name)
+        return true if !SQL::Keywords::TABLE.has_key?(name) || FUNCTION_KEYWORDS.includes?(name)
       end
+      false
     end
 
     # The action a constraint resolves to: the statement's OR clause, else
@@ -192,7 +195,7 @@ module Grant::SQLiteEngine::Query
         return true if child || !session.list_of_child_tables(table.name).empty?
       end
       where = statement.where
-      return true if where && where.to_sql.matches?(/\bSELECT\b/i)
+      return true if where && TextScan.contains_word?(where.to_sql, "SELECT")
       return false unless scan_index_root
       table.list_of_indexes.any? do |rule|
         rule.layout.entry.root_page == scan_index_root &&
@@ -206,7 +209,8 @@ module Grant::SQLiteEngine::Query
     def self.delete_in_rowid_order?(session : Session, table : WriteTable, statement : SQL::Delete) : Bool
       return true unless statement.returning.nil?
       return true if foreign_keys_required?(session, table)
-      statement.where.try(&.to_sql.matches?(/\bSELECT\b/i)) || false
+      where = statement.where
+      !where.nil? && TextScan.contains_word?(where.to_sql, "SELECT")
     end
 
     # An immediate foreign key naming *table* as parent whose action is
@@ -313,7 +317,7 @@ module Grant::SQLiteEngine::Query
 
     private def self.mentions_any?(text : String, names : Array(String)) : Bool
       lowered = text.downcase
-      names.any? { |name| lowered.matches?(/(?:^|\W)#{Regex.escape(name)}(?:\W|$)/) }
+      names.any? { |name| TextScan.contains_word?(lowered, name, case_insensitive: false) }
     end
 
     # One-pass in C: a WHERE that names one row by its rowid.

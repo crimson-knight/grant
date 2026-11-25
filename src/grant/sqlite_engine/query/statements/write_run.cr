@@ -458,7 +458,7 @@ module Grant::SQLiteEngine::Query
     def check_index_expressions(table : WriteTable, rule : IndexRule) : Nil
       return if rule.list_of_key_expressions.empty?
       rule.list_of_key_expressions.each do |expression|
-        if expression.to_sql.matches?(/\bSELECT\b/i)
+        if TextScan.contains_word?(expression.to_sql, "SELECT")
           raise SQLError.new("subqueries prohibited in index expressions")
         end
       end

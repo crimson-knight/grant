@@ -99,9 +99,10 @@ module Grant::SQLiteEngine::Query
     private def self.referenced_columns(info : TableInfo, list_of_expressions : Array(SQL::Expression)) : Array(Int32)
       texts = list_of_expressions.map(&.to_sql)
       info.list_of_column_names.each_index.select do |position|
-        name = Regex.escape(info.list_of_column_names[position])
-        pattern = Regex.new("(?:^|[^A-Za-z0-9_$])[\"`\\[]?#{name}[\"`\\]]?(?:$|[^A-Za-z0-9_$])", Regex::Options::IGNORE_CASE)
-        texts.any? { |text| pattern.matches?(text) }
+        name = info.list_of_column_names[position]
+        # A quote or bracket around the name is itself a non-word byte, so
+        # the whole-word test covers `"name"`, `` `name` `` and `[name]`.
+        texts.any? { |text| TextScan.contains_word?(text, name, word_bytes: TextScan::WordBytes::AsciiIdentifier) }
       end.to_a
     end
   end

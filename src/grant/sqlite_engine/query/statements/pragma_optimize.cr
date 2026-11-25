@@ -57,11 +57,17 @@ module Grant::SQLiteEngine::Query
     # sqlite3Atoi: the leading decimal or hexadecimal integer, else 0.
     def self.integer_prefix(text : String) : Int64
       text = text.strip
-      if match = text.match(/\A0[xX]([0-9a-fA-F]+)/)
-        return match[1].to_u64?(16).try(&.to_i64!) || 0_i64
+      bytes = text.to_slice
+      if bytes.size > 2 && bytes[0] === '0' && (bytes[1] === 'x' || bytes[1] === 'X') && bytes[2].unsafe_chr.hex?
+        hex_end = 3
+        while hex_end < bytes.size && bytes[hex_end].unsafe_chr.hex?
+          hex_end += 1
+        end
+        return String.new(bytes[2, hex_end - 2]).to_u64?(16).try(&.to_i64!) || 0_i64
       end
-      match = text.match(/\A[+-]?\d+/)
-      number = match ? match[0].to_i64? : nil
+      digits_start = TextScan.sign_end(bytes, 0)
+      digits_end = TextScan.digits_end(bytes, digits_start)
+      number = digits_end > digits_start ? String.new(bytes[0, digits_end]).to_i64? : nil
       (number || 0_i64).clamp(Int32::MIN.to_i64, Int32::MAX.to_i64)
     end
 

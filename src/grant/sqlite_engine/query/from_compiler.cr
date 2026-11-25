@@ -225,7 +225,18 @@ module Grant::SQLiteEngine::Query
     # names itself runs through RecursiveProducer.
     # Expand-phase errors stop withExpand before it compares the CTE's
     # column list with the width of its leftmost SELECT.
-    EXPAND_ERROR = /\A(no such table|no such index|'.*' is not a function|circular reference|multiple (recursive )?references|too many)/
+    EXPAND_ERROR_PREFIXES = {"no such table", "no such index", "circular reference", "multiple references",
+                             "multiple recursive references", "too many"}
+
+    # Whether *error*'s message starts like one of `EXPAND_ERROR_PREFIXES`
+    # or reads `'<name>' is not a function` (the name on one line).
+    def self.expand_error?(error : Exception) : Bool
+      message = error.message || ""
+      return true if EXPAND_ERROR_PREFIXES.any? { |prefix| message.starts_with?(prefix) }
+      return false unless message.starts_with?('\'')
+      suffix = message.index("' is not a function", 1)
+      !suffix.nil? && !message[1, suffix - 1].includes?('\n')
+    end
 
     # withExpand checks the column list against the leftmost SELECT once
     # its body is expanded, before names resolve: a width mismatch is
@@ -237,7 +248,7 @@ module Grant::SQLiteEngine::Query
       begin
         compile_cte_body(definition, context)
       rescue error : SQLError
-        raise error if EXPAND_ERROR.matches?(error.message || "")
+        raise error if Compiler.expand_error?(error)
         raise SQLError.new("table #{definition.name} has #{width} values for #{names.size} columns")
       end
     end

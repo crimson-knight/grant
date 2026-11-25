@@ -40,6 +40,7 @@ end
 
 require "./sqlite_engine/errors"
 require "./sqlite_engine/limits"
+require "./sqlite_engine/text_scan"
 require "./sqlite_engine/value"
 require "./sqlite_engine/varint"
 require "./sqlite_engine/database_header"

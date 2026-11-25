@@ -81,10 +81,12 @@ module Grant::SQLiteEngine
       if real = text.to_f64?(whitespace: false, strict: true)
         return real
       end
-      match = text.match(/\A([+-]?)(\d+\.?\d*|\.\d+)[eE]([+-]?)\d+\z/)
-      return unless match
-      magnitude = match[3] == "-" ? 0.0 : Float64::INFINITY
-      match[1] == "-" ? -magnitude : magnitude
+      bytes = text.to_slice
+      mantissa_start = TextScan.sign_end(bytes, 0)
+      mantissa_end = TextScan.mantissa_end(bytes, mantissa_start)
+      return unless mantissa_end && TextScan.exponent_end(bytes, mantissa_end) == bytes.size
+      magnitude = bytes[mantissa_end + 1] === '-' ? 0.0 : Float64::INFINITY
+      mantissa_start > 0 && bytes[0] === '-' ? -magnitude : magnitude
     end
   end
 end

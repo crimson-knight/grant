@@ -177,6 +177,15 @@ jobs:
         run: ruby scripts/check_sqlite3_linkage.rb
         env:
           CRYSTAL: crystal
+      - name: Check that Grant apps link no PCRE2
+        # Builds the default app workload on the C library and on Grant's own
+        # engine, and the PostgreSQL probe, and runs the SQLite ones; the
+        # control probe uses a Regex and must link PCRE2, so the check is
+        # known to be able to fail.
+        if: matrix.shard == 4
+        run: ruby scripts/check_pcre2_linkage.rb
+        env:
+          CRYSTAL: crystal
       - name: Run tests
         # The whole suite compiled as one program needs about 20 GB of RAM; a
         # runner has 16 GB. spec-groups.sh compiles one group at a time.

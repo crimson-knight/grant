@@ -70,11 +70,23 @@ module Grant::SQLiteEngine::Query
     # An error resolveExprStep records and walks on past (it counts nNcErr):
     # sqlite3ErrorMsg keeps the last message, so of these the last one in
     # walk order is reported, a function's own error before its arguments'.
-    CONTINUING_ERROR = /\A(no such function|wrong number of arguments|misuse of aggregate)/
+    CONTINUING_ERROR_PREFIXES = {"no such function", "wrong number of arguments", "misuse of aggregate"}
 
     # lookupName's errors end the walk of the expression (WRC_Abort), except
     # under IS NULL and NOT NULL, whose operand walk's result is ignored.
-    LOOKUP_ERROR = /\A(no such column|ambiguous column name)/
+    LOOKUP_ERROR_PREFIXES = {"no such column", "ambiguous column name"}
+
+    # Whether *error*'s message starts like one of `CONTINUING_ERROR_PREFIXES`.
+    def self.continuing_error?(error : Exception) : Bool
+      message = error.message || ""
+      CONTINUING_ERROR_PREFIXES.any? { |prefix| message.starts_with?(prefix) }
+    end
+
+    # Whether *error*'s message starts like one of `LOOKUP_ERROR_PREFIXES`.
+    def self.lookup_error?(error : Exception) : Bool
+      message = error.message || ""
+      LOOKUP_ERROR_PREFIXES.any? { |prefix| message.starts_with?(prefix) }
+    end
 
     # Compiles one expression the way sqlite3ResolveExprNames walks it: name
     # errors are recorded and the walk goes on; the first one is raised.
@@ -115,7 +127,7 @@ module Grant::SQLiteEngine::Query
     # Records *error* when an expression is being resolved; false otherwise.
     private def record_name_error(error : SQLError) : Bool
       errors = @list_of_name_errors
-      return false if errors.nil? || error.is_a?(ResolveError) || !CONTINUING_ERROR.matches?(error.message || "")
+      return false if errors.nil? || error.is_a?(ResolveError) || !ExpressionCompiler.continuing_error?(error)
       errors << error
       true
     end
@@ -125,7 +137,7 @@ module Grant::SQLiteEngine::Query
       raise ResolveAbort.new if errors && !errors.empty? && aborts_after_error?(expression)
       compile_expression_node(expression, context)
     rescue error : SQLError
-      if errors && !error.is_a?(ResolveError) && LOOKUP_ERROR.matches?(error.message || "")
+      if errors && !error.is_a?(ResolveError) && ExpressionCompiler.lookup_error?(error)
         errors << error
         raise ResolveAbort.new
       end
@@ -494,7 +506,7 @@ module Grant::SQLiteEngine::Query
       ConstantExpr.new(nil)
     rescue error : SQLError
       errors = @list_of_name_errors
-      raise error if errors.nil? || error.is_a?(ResolveError) || !CONTINUING_ERROR.matches?(error.message || "")
+      raise error if errors.nil? || error.is_a?(ResolveError) || !ExpressionCompiler.continuing_error?(error)
       errors << error
       begin
         compile_expression(expression.pattern, context)
@@ -642,7 +654,7 @@ module Grant::SQLiteEngine::Query
       ConstantExpr.new(nil)
     rescue error : SQLError
       errors = @list_of_name_errors
-      raise error unless errors && (error.is_a?(ResolveError) || LOOKUP_ERROR.matches?(error.message || ""))
+      raise error unless errors && (error.is_a?(ResolveError) || ExpressionCompiler.lookup_error?(error))
       errors << error
       ConstantExpr.new(nil)
     end
@@ -685,9 +697,16 @@ module Grant::SQLiteEngine::Query
 
     # ---------------------------------------------------------- functions
 
-    # A name shaped like a json.c function that the engine does not have is
-    # reported as unsupported.
-    JSON_FUNCTION_NAME = /\Ajsonb?(_[a-z_]+)?\z/
+    # Whether *name* is shaped like a json.c function: `json` or `jsonb`,
+    # optionally followed by `_` and lower-case letters or underscores
+    # (`/\Ajsonb?(_[a-z_]+)?\z/`). A function so named that the engine does
+    # not have is reported as unsupported.
+    def self.json_function_name?(name : String) : Bool
+      rest = name.lchop?("jsonb") || name.lchop?("json")
+      return false unless rest
+      return true if rest.empty?
+      rest.size > 1 && rest.starts_with?('_') && rest.each_byte.all? { |byte| byte.unsafe_chr.ascii_lowercase? || byte === '_' }
+    end
 
     # resolveExprStep checks a function before walking its arguments: its
     # own error is recorded first, and the arguments are walked after it.
@@ -698,7 +717,7 @@ module Grant::SQLiteEngine::Query
       ConstantExpr.new(nil)
     rescue error : SQLError
       errors = @list_of_name_errors
-      raise error if errors.nil? || error.is_a?(ResolveError) || !CONTINUING_ERROR.matches?(error.message || "")
+      raise error if errors.nil? || error.is_a?(ResolveError) || !ExpressionCompiler.continuing_error?(error)
       errors << error
       begin
         call.arguments.each { |argument| compile_expression(argument, context) }
@@ -726,7 +745,7 @@ module Grant::SQLiteEngine::Query
       if call.distinct.distinct?
         raise SQLError.new("DISTINCT aggregates must have exactly one argument") if ScalarFunctions.known?(lower)
       end
-      if JSON_FUNCTION_NAME.matches?(lower) && !ScalarFunctions.known?(lower)
+      if ExpressionCompiler.json_function_name?(lower) && !ScalarFunctions.known?(lower)
         raise UnsupportedSQL.new("JSON function #{name}() (milestone G6)")
       end
       unless call.order_by.empty?
@@ -764,7 +783,7 @@ module Grant::SQLiteEngine::Query
       when "printf", "format"
         raise UnsupportedSQL.new("function #{name}()")
       end
-      if !ScalarFunctions.known?(lower) && JSON_FUNCTION_NAME.matches?(lower)
+      if !ScalarFunctions.known?(lower) && ExpressionCompiler.json_function_name?(lower)
         raise UnsupportedSQL.new("JSON function #{name}() (milestone G6)")
       end
       definition = ScalarFunctions.lookup(lower, count) || raise SQLError.new("no such function: #{name}")

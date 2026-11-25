@@ -53,8 +53,8 @@ module Grant::SQLiteEngine::Query
       return 1 unless text_or_blob
       value = 16
       if digits = size_text
-        number = digits.match(/\d+/)
-        value = number ? (number[0].to_i? || 0) : 0
+        number = TextScan.first_digits(digits)
+        value = number ? (number.to_i? || 0) : 0
       end
       Math.min(value // 4 + 1, 255)
     end
