@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.28.2 (2026-11-25)
+
+- **SQL migrations are found on Windows.** `MigrationContext` listed a
+  migration directory with `Dir.glob(File.join(directory, "*.sql"))`. On
+  Windows `File.join` puts `# Changelog
+
+ between the parts, and `Dir.glob` reads `# Changelog
+
+ as
+  an escape, so the pattern matched no file and `migrate` reported nothing to
+  run. The pattern is now a `Path`, which `Dir.glob` reads with `/` on every
+  platform. Nothing changes on macOS or Linux.
+
+Minimum Crystal: 1.19.0
+
 ## 0.28.1 (2026-11-25)
 
 Grant builds on Windows again, and an app on the C SQLite library compiles

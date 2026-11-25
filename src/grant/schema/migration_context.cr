@@ -338,7 +338,9 @@ module Grant::Schema
     private def load_entries : Array(MigrationEntry)
       all = @entries.dup
       @paths.each do |directory|
-        Dir.glob(File.join(directory, "*.sql")).sort!.each do |path|
+        # A Path pattern: Dir.glob splits on "/" and reads "\" as an escape, so the
+        # "\" that File.join puts between parts on Windows would match nothing.
+        Dir.glob(Path[directory, "*.sql"]).sort!.each do |path|
           all << sql_entry(path)
         end
       end
