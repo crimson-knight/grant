@@ -32,6 +32,22 @@ module Grant::Beryl::TLS
   class ConnectionClosed < Error
   end
 
+  # A TLS failure raised as an `IO::Error`, by a socket with
+  # `Socket#is_raising_io_errors?` on. The TLS error is `tls_error` (and
+  # `cause`).
+  class ConnectionFailed < IO::Error
+    getter tls_error : Error
+
+    def initialize(@tls_error : Error)
+      super(@tls_error.message, cause: @tls_error)
+    end
+
+    # The alert the connection sent or received.
+    def alert_description : AlertDescription
+      @tls_error.alert_description
+    end
+  end
+
   # The peer's certificate chain did not verify.
   class CertificateRejected < Error
   end
