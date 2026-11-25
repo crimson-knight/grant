@@ -1,7 +1,6 @@
 require "../../strict_annotations"
 
 module Grant::Query::Assembler
-  @[TypeBound(Model, Grant::Base)]
   class Sqlite(Model) < Base(Model)
     @placeholder = "?"
 
