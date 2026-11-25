@@ -31,6 +31,13 @@ module Grant::SQLiteEngine::Query
       DEFINITIONS.has_key?(name.downcase)
     end
 
+    # Whether *name* has a definition taking *count* arguments.
+    def self.accepts?(name : String, count : Int32) : Bool
+      list = DEFINITIONS[name.downcase]?
+      return false unless list
+      list.any? { |definition| count >= definition.minimum && (definition.maximum < 0 || count <= definition.maximum) }
+    end
+
     private def self.text(value : Value) : String?
       ValueSemantics.text(value)
     end
