@@ -127,10 +127,10 @@ module SQLiteEngineCrashDriver
       end
       database.close
       SQLiteEngineWriteDriver.ruby(["states", directory.to_s, "crash", "4"])
-      Dir.glob((directory / "survivor_*").to_s).sort.each { |batch| verify_survivors(Path[batch]) }
+      Dir.glob((directory / "survivor_*").to_posix.to_s).sort.each { |batch| verify_survivors(Path[batch]) }
       written.each do |state_name, old_dump, new_dump, survivor|
         sqlite3_checked += 1
-        state_directory = survivor ? Dir.glob((directory / "survivor_*" / "#{state_name}.crash.db").to_s).first?.try { |file| Path[file].parent } : directory
+        state_directory = survivor ? Dir.glob((directory / "survivor_*" / "#{state_name}.crash.db").to_posix.to_s).first?.try { |file| Path[file].parent } : directory
         integrity_path = state_directory.try { |found| found / "#{state_name}.crash.integrity" }
         unless integrity_path && File.exists?(integrity_path)
           failures << "#{name} (seed #{sequence.seed}) #{state_name}: sqlite3 wrote no result"
@@ -164,7 +164,7 @@ module SQLiteEngineCrashDriver
   # holds each wal-index's dead man switch shared, as the surviving process
   # would, so sqlite3 reads the wal-index as the crash left it.
   def self.verify_survivors(batch : Path) : Nil
-    list_of_switches = Dir.glob((batch / "*.crash.db-shm").to_s).map { |shm| DeadManSwitch.new(shm) }
+    list_of_switches = Dir.glob((batch / "*.crash.db-shm").to_posix.to_s).map { |shm| DeadManSwitch.new(shm) }
     begin
       SQLiteEngineWriteDriver.ruby(["states", batch.to_s, "crash", "4"])
     ensure

@@ -228,7 +228,7 @@ module SQLiteEngineWriteDriver
         failures << "#{name}: #{problem}"
         if keep
           Dir.mkdir_p(keep)
-          Dir.glob((directory / "#{name}.*").to_s).each { |file| File.copy(file, Path[keep] / Path[file].basename) }
+          Dir.glob((directory / "#{name}.*").to_posix.to_s).each { |file| File.copy(file, Path[keep] / Path[file].basename) }
         end
       end
       FileUtils.rm_rf(directory)
