@@ -68,7 +68,9 @@ module Grant::SQLiteEngine
 
   # Raised when a write would break a constraint: UNIQUE, PRIMARY KEY,
   # NOT NULL, or a STRICT column's datatype. Nothing the write started is
-  # kept.
+  # kept. A datatype refusal carries C's message as it stands ("cannot
+  # store TEXT value in INT column t.a", "datatype mismatch"); the others
+  # read "<KIND> constraint failed: <detail>".
   class ConstraintViolation < Error
     enum Kind
       Unique
@@ -80,7 +82,7 @@ module Grant::SQLiteEngine
     getter kind : Kind
 
     def initialize(@kind : Kind, detail : String)
-      super("#{@kind.to_s.underscore.upcase.tr("_", " ")} constraint failed: #{detail}")
+      super(@kind.datatype? ? detail : "#{@kind.to_s.underscore.upcase.tr("_", " ")} constraint failed: #{detail}")
     end
   end
 

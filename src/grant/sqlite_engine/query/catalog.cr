@@ -188,8 +188,32 @@ module Grant::SQLiteEngine::Query
                  end
         unique = layout ? (layout.unique? ? 1_i64 : 0_i64) : 0_i64
         partial = (sql = entry.sql) && IndexDefinition.parse(sql).partial? ? 1_i64 : 0_i64
-        [position.to_i64, entry.object_name, unique, origin, partial] of Value
+        IndexListItem.new(entry.object_name, unique, origin, partial, replacing.includes?(entry.object_name))
       end
+      if table.without_rowid? && rules
+        add_without_rowid_key(items, table, rules.primary_key_conflict.replace?)
+      end
+      items.reverse!
+      ordered = items.reject(&.replace) + items.select(&.replace)
+      ordered.map_with_index do |item, position|
+        [position.to_i64, item.index_name, item.unique, item.origin, item.partial] of Value
+      end
+    end
+
+    # The PRIMARY KEY index of a WITHOUT ROWID table takes the autoindex
+    # number the stored autoindexes leave free, and its place among them.
+    private def self.add_without_rowid_key(items : Array(IndexListItem), table : TableInfo, replace : Bool) : Nil
+      prefix = "sqlite_autoindex_#{table.name}_"
+      numbers = items.compact_map do |item|
+        item.index_name.starts_with?(prefix) ? item.index_name[prefix.size..].to_i? : nil
+      end
+      number = (1..numbers.size + 1).find { |candidate| !numbers.includes?(candidate) } || numbers.size + 1
+      key = IndexListItem.new("#{prefix}#{number}", 1_i64, "pk", 0_i64, replace)
+      position = items.index do |item|
+        later = item.index_name.starts_with?(prefix) && (item.index_name[prefix.size..].to_i? || 0) > number
+        later || item.origin == "c"
+      end
+      items.insert(position || items.size, key)
     end
 
     private def self.index_info(name : String, session : Session, extended : Bool) : Array(Array(Value))

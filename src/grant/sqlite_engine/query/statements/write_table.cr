@@ -127,6 +127,7 @@ module Grant::SQLiteEngine::Query
         end
       end
       read_primary_key(constraint_conflicts) if without_rowid?
+      read_strict_primary_key if definition.strict? && !without_rowid?
       rules = @table_info.list_of_indexes.map do |index|
         where, expressions = index_syntax(index)
         IndexRule.new(index, index_conflict(index, constraint_conflicts), where, columns_text(index), expressions)
@@ -198,6 +199,17 @@ module Grant::SQLiteEngine::Query
       end
       if found = constraint_conflicts.find { |names, _| names.sort == key_names.sort }
         @primary_key_conflict = found[1]
+      end
+    end
+
+    # sqlite3EndTable: in a STRICT table every PRIMARY KEY column but the
+    # rowid alias is NOT NULL (ABORT).
+    private def read_strict_primary_key : Nil
+      key_names = definition.list_of_primary_key_columns.map(&.downcase)
+      @list_of_columns.each_with_index do |rule, position|
+        next if position == @table_info.rowid_alias
+        next unless key_names.includes?(rule.column_name.downcase)
+        rule.not_null ||= ConflictAction::Abort
       end
     end
 

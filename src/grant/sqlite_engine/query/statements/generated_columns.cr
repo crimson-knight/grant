@@ -65,7 +65,7 @@ module Grant::SQLiteEngine::Query
         column_definition = list_of_definitions[column.position]
         value = row[column.position]
         row[column.position] = if strict
-                                 StoredValue.for_strict_column(column_definition.declared_type, column_definition.column_name, value)
+                                 StoredValue.for_strict_column(column_definition.declared_type, "#{definition.table_name}.#{column_definition.column_name}", value)
                                else
                                  StoredValue.for_affinity(column_definition.affinity, value)
                                end
