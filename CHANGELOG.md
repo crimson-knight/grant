@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+### PostgreSQL client certificates on Beryl TLS
+
+- `sslcert` and `sslkey` now work on the default Beryl TLS path, so an app
+  logs in to a server that requires a client certificate
+  (`clientcert=verify-full`, or the `cert` method) with no
+  `-Duse_openssl`:
+  `postgres://app_user@db.example.com/app_db?sslmode=verify-full&sslrootcert=/etc/app/server-ca.pem&sslcert=/etc/app/client.pem&sslkey=/etc/app/client.key`.
+  The certificate is presented for every `sslmode` that uses TLS.
+- As libpq does, a key file readable by group or others is refused (0600
+  or less when owned by the current user, 0640 or less when owned by
+  root), and `sslcert` without `sslkey` (or the reverse) is an error that
+  names the missing parameter. Unlike libpq, Grant does not fall back to
+  `~/.postgresql/postgresql.crt`: it presents only the files the URL names.
+- The vendored Beryl moves to ebeb2650 (client certificates).
+- Tested against PostgreSQL 17.12 with `ssl_min_protocol_version = TLSv1.3`
+  and `hostssl all all all cert clientcert=verify-full`.
+
 ## 0.28.0 (2026-11-25)
 
 Grant 0.28.0 connects to PostgreSQL over Beryl TLS 1.3 and runs its tests
