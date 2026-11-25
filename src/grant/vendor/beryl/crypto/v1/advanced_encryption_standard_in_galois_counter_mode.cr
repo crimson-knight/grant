@@ -83,6 +83,15 @@ module Grant::Beryl::Crypto::V1
       NONCE_BYTESIZE
     end
 
+    # Zeroes the expanded round keys and the GHASH key state (the portable
+    # code's words, or the processor code's round key bytes and H to H^8).
+    protected def wipe_key_material : Nil
+      SecretWiping.wipe(@round_keys)
+      SecretWiping.wipe(@hash_key_state)
+      SecretWiping.wipe(@round_key_bytes)
+      SecretWiping.wipe(@hash_key_powers)
+    end
+
     protected def ensure_nonce_is_accepted(nonce : Bytes) : Nil
       raise NonceSizeMismatch.new("a GCM nonce holds at least one byte") if nonce.empty?
     end
