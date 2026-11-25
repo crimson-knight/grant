@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.28.1 (2026-11-25)
+
+Grant builds on Windows again. Grant's SQLite driver compiles its own
+engine alongside the C library, and the engine's operating-system files use
+POSIX locks, mmap(2) and localtime_r, so an app on
+`require "grant/adapter/sqlite"` (the C library, the default) did not
+compile for Windows on 0.27.0 and 0.28.0. On Windows those files are left
+out: opening a database file through Grant's engine raises
+`Grant::SQLiteEngine::UnsupportedPlatform`, naming the C library, and the C
+library runs as before. Nothing changes on macOS or Linux. A CI job now
+type-checks Grant for x86_64-windows-msvc.
+
+Minimum Crystal: 1.19.0
+
 ## 0.28.0 (2026-11-25)
 
 Grant 0.28.0 connects to PostgreSQL over Beryl TLS 1.3 and runs its tests

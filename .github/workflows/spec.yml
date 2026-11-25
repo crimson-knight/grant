@@ -2,9 +2,9 @@ name: spec
 on:
   # Branch pushes are checked through their pull request.
   push:
-    branches: [main, master]
+    branches: [main, master, "release-*"]
   pull_request:
-    branches: [main, master]
+    branches: [main, master, "release-*"]
   schedule:
     - cron: "0 6 * * 6" # Every Saturday 6 AM
 
