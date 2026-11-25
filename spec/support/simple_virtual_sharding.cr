@@ -110,6 +110,16 @@ module Grant::Testing
       track_query(query)
     end
 
+    # Row iteration, as DB::Connection#query_each takes it (Grant::Seeds.applied
+    # reads the seed table this way). The empty result set yields no rows.
+    def query_each(query : String, args : Enumerable, &)
+      track_query(query)
+    end
+
+    def query_each(query : String, *args, &)
+      track_query(query)
+    end
+
     # Exec support for non-select queries
     def exec(query : String) : DB::ExecResult
       track_query(query)
