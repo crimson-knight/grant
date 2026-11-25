@@ -268,7 +268,6 @@ module Grant::Encryption
     # Rewrites every encrypted attribute of this persisted record with fresh
     # ciphertext (for example after enabling encryption on data read through
     # `support_unencrypted_data`). Skips validations, callbacks and timestamps.
-    @[TypeOnce]
     def encrypt : Bool
       rewrite_encrypted_columns(plaintext: false)
     end
@@ -277,7 +276,6 @@ module Grant::Encryption
     # column. The counterpart of `#encrypt`, for backing out of encryption.
     # Attributes declared in the `<attr>_encrypted` form have no plaintext
     # column and are left alone.
-    @[TypeOnce]
     def decrypt : Bool
       rewrite_encrypted_columns(plaintext: true)
     end
@@ -297,7 +295,6 @@ module Grant::Encryption
         raise ArgumentError.new("#{self.class.name}##{attribute_name} is not an encrypted attribute")
     end
 
-    @[TypeOnce]
     private def rewrite_encrypted_columns(plaintext : Bool) : Bool
       raise ArgumentError.new("Cannot rewrite encrypted columns of a new record") unless persisted?
 
