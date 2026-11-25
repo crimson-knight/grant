@@ -317,7 +317,11 @@ module Grant::SQLiteEngine::Query
       reset_schema unless list_of_pagers.map(&.generation) == list_of_generations
     end
 
+    # A transaction's end, committed or rolled back, turns PRAGMA
+    # defer_foreign_keys off again (vdbe.c sqlite3VdbeHalt, main.c
+    # sqlite3RollbackAll).
     private def end_transaction : Nil
+      @defer_foreign_keys = false
       @in_transaction = false
       @transaction_snapshot_pinned = false
       @opened_by_savepoint = false
@@ -460,6 +464,7 @@ module Grant::SQLiteEngine::Query
     # busy_timeout for readers; a commit still refused rolls back.
     private def commit_statement_transaction : Nil
       @deferred_violations = 0_i64
+      @defer_foreign_keys = false
       begin
         wait_while_busy { @database.pager.commit }
         commit_secondaries
@@ -475,6 +480,7 @@ module Grant::SQLiteEngine::Query
       if autocommit
         rollback_everywhere
         @deferred_violations = 0_i64
+        @defer_foreign_keys = false
       elsif pager.in_write_transaction?
         rollback_to_savepoint_everywhere(depth)
         release_savepoint_everywhere(depth)
