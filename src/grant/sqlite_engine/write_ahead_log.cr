@@ -842,10 +842,33 @@ module Grant::SQLiteEngine
           index += 2
         end
       else
-        while index + 1 < count
-          sum0 = sum0 &+ words[index] &+ sum1
-          sum1 = sum1 &+ words[index + 1] &+ sum0
-          index += 2
+        # A page's checksum runs on every commit. Each pair of words is
+        # read as one 64-bit load (the low half is the first word on a
+        # little-endian host, as the 32-bit reads above assume), four pairs
+        # per turn of the loop; the sums are the same as pair by pair.
+        pairs = data.to_unsafe.as(UInt64*)
+        pair_count = count // 2
+        pair = 0
+        while pair + 4 <= pair_count
+          first = pairs[pair]
+          second = pairs[pair + 1]
+          third = pairs[pair + 2]
+          fourth = pairs[pair + 3]
+          sum0 = sum0 &+ first.to_u32! &+ sum1
+          sum1 = sum1 &+ (first >> 32).to_u32! &+ sum0
+          sum0 = sum0 &+ second.to_u32! &+ sum1
+          sum1 = sum1 &+ (second >> 32).to_u32! &+ sum0
+          sum0 = sum0 &+ third.to_u32! &+ sum1
+          sum1 = sum1 &+ (third >> 32).to_u32! &+ sum0
+          sum0 = sum0 &+ fourth.to_u32! &+ sum1
+          sum1 = sum1 &+ (fourth >> 32).to_u32! &+ sum0
+          pair += 4
+        end
+        while pair < pair_count
+          word_pair = pairs[pair]
+          sum0 = sum0 &+ word_pair.to_u32! &+ sum1
+          sum1 = sum1 &+ (word_pair >> 32).to_u32! &+ sum0
+          pair += 1
         end
       end
       {sum0, sum1}

@@ -62,6 +62,22 @@ module Grant::SQLiteEngine::Query
     def initialize(@session : Session, @list_of_parameters : Array(Value))
     end
 
+    # Makes this finished run the run of a new statement of the same
+    # session, as `new` would make it: every instance variable (those the
+    # other files of the class declare too) goes back to its declared
+    # default, so no counter or cache of the last statement remains. The
+    # session keeps one finished run for the next write
+    # (`Session#run_write`), since every write statement makes one.
+    def restart(list_of_parameters : Array(Value)) : self
+      {% for ivar in @type.instance_vars %}
+        {% unless ivar.name == "session".id || ivar.name == "list_of_parameters".id %}
+          @{{ ivar.name }} = {{ ivar.default_value }}
+        {% end %}
+      {% end %}
+      @list_of_parameters = list_of_parameters
+      self
+    end
+
     # The main database; a table's own is `WriteTable#database`.
     def database : Database
       @session.database
@@ -89,11 +105,15 @@ module Grant::SQLiteEngine::Query
         fire_table_triggers(table, SQL::TriggerEvent::Insert, true, nil, nil, new_rowid, new, override)
       end
       rowid = nil.as(Int64?)
+      # A rowid new_rowid chose is one no row has (the largest plus one, or
+      # a random one checked to be unused), so no check looks it up again.
+      rowid_is_new = false
       unless table.without_rowid?
         alias_index = table.rowid_alias
         candidate = alias_index ? row[alias_index] : explicit_rowid
         if candidate.nil?
           rowid = new_rowid(table)
+          rowid_is_new = true
         else
           rowid = WriteRun.must_be_int(candidate)
         end
@@ -103,7 +123,7 @@ module Grant::SQLiteEngine::Query
         note_autoincrement(table, rowid)
       end
       compute_generated(table, row, rowid)
-      result = check_constraints(table, rowid, row, nil, override, upsert)
+      result = check_constraints(table, rowid, row, nil, override, upsert, rowid_is_new)
       return {result[0], result[1], result[2]} unless result[0].inserted?
       if replaced = result[3]
         delete_row(table, replaced[0], replaced[1], replace: true, override: ConflictAction::Replace)
@@ -208,7 +228,8 @@ module Grant::SQLiteEngine::Query
     # the outcome (Inserted means "write it"), the rowid and row of an
     # upsert, and the row a REPLACE of the rowid must delete first.
     def check_constraints(table : WriteTable, rowid : Int64?, row : Array(Value), old : {Int64?, Array(Value)}?,
-                          override : ConflictAction, upsert : UpsertPlan?) : {InsertResult, Int64?, Array(Value), {Int64?, Array(Value)}?}
+                          override : ConflictAction, upsert : UpsertPlan?,
+                          rowid_is_new : Bool = false) : {InsertResult, Int64?, Array(Value), {Int64?, Array(Value)}?}
       definition = table.definition
       # NOT NULL, in column order. REPLACE puts the DEFAULT in and the
       # column is checked again only after every other column (C's second
@@ -297,7 +318,7 @@ module Grant::SQLiteEngine::Query
         delay_rowid = true
       end
       unless delay_rowid
-        outcome = check_rowid(table, rowid, row, old, rowid_action, rowid_clause, upsert)
+        outcome = check_rowid(table, rowid, row, old, rowid_action, rowid_clause, upsert, rowid_is_new)
         return outcome if outcome
         rowid_checked = true
       end
@@ -345,10 +366,10 @@ module Grant::SQLiteEngine::Query
         end
       end
       unless rowid_checked
-        outcome = check_rowid(table, rowid, row, old, rowid_action, rowid_clause, upsert)
+        outcome = check_rowid(table, rowid, row, old, rowid_action, rowid_clause, upsert, rowid_is_new)
         return outcome if outcome
       end
-      if rowid && !table.without_rowid? && rowid_action.replace? && !(old && old[0] == rowid)
+      if rowid && !rowid_is_new && !table.without_rowid? && rowid_action.replace? && !(old && old[0] == rowid)
         if victim = table.database.row_at(table.layout, rowid)
           replace_row = {rowid.as(Int64?), victim}
         end
@@ -359,8 +380,8 @@ module Grant::SQLiteEngine::Query
     # The rowid uniqueness check (nil when it passes or REPLACE resolves it).
     private def check_rowid(table : WriteTable, rowid : Int64?, row : Array(Value), old : {Int64?, Array(Value)}?,
                             action : ConflictAction, clause : UpsertClause?,
-                            upsert : UpsertPlan?) : {InsertResult, Int64?, Array(Value), {Int64?, Array(Value)}?}?
-      return if rowid.nil? || table.without_rowid?
+                            upsert : UpsertPlan?, rowid_is_new : Bool) : {InsertResult, Int64?, Array(Value), {Int64?, Array(Value)}?}?
+      return if rowid.nil? || rowid_is_new || table.without_rowid?
       return if old && old[0] == rowid
       return unless table.database.row_exists?(table.layout, rowid)
       case action
@@ -509,6 +530,10 @@ module Grant::SQLiteEngine::Query
       end
     end
 
+    # What `moved_index_entries` returns when no entry moves (the common
+    # UPDATE of columns no index holds); its callers only read it.
+    NO_INDEX_ENTRIES = [] of {IndexLayout, Array(Value)}
+
     # The index entries an UPDATE that keeps *rowid* removes and adds. When
     # every index lacks a WHERE and expression terms and its columns hold
     # the same values in both rows, every entry stays and no key is built;
@@ -516,7 +541,7 @@ module Grant::SQLiteEngine::Query
     private def moved_index_entries(table : WriteTable, old_row : Array(Value), new_row : Array(Value),
                                     rowid : Int64) : {Array({IndexLayout, Array(Value)}), Array({IndexLayout, Array(Value)})}
       if table.list_of_index_layouts.all? { |index| !index.needs_evaluation? && same_columns?(index, old_row, new_row) }
-        return {[] of {IndexLayout, Array(Value)}, [] of {IndexLayout, Array(Value)}}
+        return {NO_INDEX_ENTRIES, NO_INDEX_ENTRIES}
       end
       old_entries = index_entries(table, old_row, rowid)
       new_entries = index_entries(table, new_row, rowid)
@@ -751,7 +776,14 @@ module Grant::SQLiteEngine::Query
         child_removed(table, row)
         parent_removed(table, rowid, row)
       end
-      table.database.remove_row(table.layout, rowid, row, index_entries(table, row, rowid))
+      # The entries are built in the session's reused list, as an insert's
+      # are; remove_row reads them only while it runs.
+      entry_list = @session.take_index_entry_list
+      begin
+        table.database.remove_row(table.layout, rowid, row, index_entries_into(entry_list, table, row, rowid))
+      ensure
+        @session.give_back_index_entry_list(entry_list)
+      end
       parent_actions(table, row, nil) if foreign_keys?
       count_change unless replace
       fire_table_triggers(table, SQL::TriggerEvent::Delete, false, rowid, original_row, nil, nil, override) if fires
@@ -889,15 +921,21 @@ module Grant::SQLiteEngine::Query
       left.compare(right, case_insensitive: true) == 0
     end
 
+    # What `referencing` returns for a table no foreign key names; nothing
+    # adds to it.
+    NO_REFERENCES = [] of {WriteTable, ForeignKeyRule, Array(Int32)}
+
     # The foreign keys of every table that name *table* as parent, with the
     # parent key positions each refers to, newest first: C links each new
     # foreign key at the head of its parent's list (sqlite3CreateForeignKey,
     # fkeyHash), so sqlite3FkActions runs a later table's CASCADE before an
     # earlier table's RESTRICT stops the statement.
     private def referencing(table : WriteTable) : Array({WriteTable, ForeignKeyRule, Array(Int32)})
-      list = [] of {WriteTable, ForeignKeyRule, Array(Int32)}
       list_of_children = @session.list_of_child_tables(table.name)
-      return list if list_of_children.empty?
+      # Callers only read the list, so a table no foreign key names shares
+      # one empty list instead of a new one for every row written.
+      return NO_REFERENCES if list_of_children.empty?
+      list = [] of {WriteTable, ForeignKeyRule, Array(Int32)}
       list_of_children.each do |child_name|
         child = table(child_name)
         child.list_of_foreign_keys.each do |rule|

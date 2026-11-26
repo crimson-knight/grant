@@ -127,6 +127,11 @@ module Grant::SQLiteEngine
       raise CorruptDatabase.new("cell pointer array runs past the usable size", @number) if pointers_end > Math.min(@usable_size, @data.size)
       copy.copy_from(@data.to_unsafe, @data.size)
       data = @data
+      # The copy holds the whole page (copy_from checked its size), and each
+      # cell below is checked to end inside the usable size, so its view is
+      # made without a second bounds check.
+      limit = Math.min(@usable_size, @data.size)
+      copy_start = copy.to_unsafe
       # A leaf index cell whose payload size fits one varint byte and stays
       # on the page is that byte and the payload (the common case).
       index_leaf = type.leaf_index?
@@ -143,8 +148,8 @@ module Grant::SQLiteEngine
                else
                  PageEditor.cell_content_size(data, offset, type, @usable_size, @number)
                end
-        raise CorruptDatabase.new("cell #{index} runs past the usable size", @number) if offset + size > @usable_size
-        list << copy[offset, size]
+        raise CorruptDatabase.new("cell #{index} runs past the usable size", @number) if offset + size > limit
+        list << Slice.new(copy_start + offset, size)
       end
       list
     end

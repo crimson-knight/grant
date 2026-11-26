@@ -5,7 +5,7 @@ module Grant::SQLiteEngine
     # Returns the payload. A payload that fits on its page is returned as a
     # slice of the page, without copying.
     def self.read(pager : Pager, page : BTreePage, location : PayloadLocation) : Bytes
-      local = page.data[location.local_offset, location.local_size]
+      local = local_part(page.data, location)
       return local unless location.spills?
       payload = Bytes.new(location.total_size)
       payload.copy_from(local.to_unsafe, local.size)
@@ -32,6 +32,17 @@ module Grant::SQLiteEngine
         next_page = (overflow[0].to_u32 << 24) | (overflow[1].to_u32 << 16) | (overflow[2].to_u32 << 8) | overflow[3]
       end
       payload
+    end
+
+    # The part of the payload kept on the page, as a view of *page_bytes*. A
+    # b-tree seek reads one for every key it compares, so the bounds are
+    # checked here, inline, instead of through `Slice#[]`.
+    @[AlwaysInline]
+    private def self.local_part(page_bytes : Bytes, location : PayloadLocation) : Bytes
+      offset = location.local_offset
+      size = location.local_size
+      raise IndexError.new unless 0 <= offset && 0 <= size && size <= page_bytes.size - offset
+      Slice.new(page_bytes.to_unsafe + offset, size, read_only: page_bytes.read_only?)
     end
   end
 end
