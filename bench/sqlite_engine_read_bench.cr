@@ -184,19 +184,6 @@ module SQLiteEngineReadBench
     {(Time.instant - started).total_seconds, result}
   end
 
-  # Writes the seconds of every round of one workload to *io* as one line,
-  # after the workload's summary line, so the median ratio can be recomputed
-  # exactly: "round seconds: WORKLOAD; engine S S ...; c_library S S ...".
-  # Plain IO writes: the JSON shard's code shifted the read workloads' code
-  # layout and slowed the index scan by about 5% on x86-64.
-  def self.print_round_seconds(io : IO, workload_name : String, engine_times : Array(Float64), c_times : Array(Float64)) : Nil
-    io << "round seconds: " << workload_name << "; engine"
-    engine_times.each { |seconds| io << ' ' << seconds }
-    io << "; c_library"
-    c_times.each { |seconds| io << ' ' << seconds }
-    io << '\n'
-  end
-
   def self.describe_ratio(ratio : Float64) : String
     ratio >= 1.0 ? "#{ratio.round(2)}× as fast" : "#{(1.0 / ratio).round(2)}× slower"
   end
@@ -234,7 +221,6 @@ module SQLiteEngineReadBench
       STDOUT.puts "#{workload.workload_name}: engine #{(engine_times.sort[rounds // 2] * 1000).round(2)} ms, " \
                   "C #{(c_times.sort[rounds // 2] * 1000).round(2)} ms median; " \
                   "#{describe_ratio(median)} (rounds' range #{describe_ratio(low)} to #{describe_ratio(high)}); #{engine_count} values each"
-      print_round_seconds(STDERR, workload.workload_name, engine_times, c_times)
     end
   end
 end
