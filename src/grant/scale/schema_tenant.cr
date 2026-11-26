@@ -44,9 +44,6 @@ module Grant
       end
     end
 
-    @@contexts = {} of Fiber => Context
-    @@mutex = Mutex.new
-
     # Runs *block* with *schema* first in PostgreSQL's search_path and `public`
     # second. All model statements use one pinned connection for the block.
     # Nested calls reuse that connection and restore the outer schema on exit.
@@ -309,21 +306,21 @@ module Grant
       Grant::ConnectionRegistry.get_adapter(database, :writing)
     end
 
+    # The context lives in a slot on the fiber (`Fiber#grant_schema_tenant`),
+    # which only that fiber reads or writes, so no lock is taken. A fiber
+    # spawned inside a block starts outside it.
     private def self.current_context : Context?
-      @@mutex.synchronize { @@contexts[Fiber.current]? }
+      Fiber.current.grant_schema_tenant
     end
 
     private def self.set_current_context(context : Context) : Nil
-      @@mutex.synchronize { @@contexts[Fiber.current] = context }
+      Fiber.current.grant_schema_tenant = context
     end
 
     private def self.clear_current_context(context : Context) : Nil
-      @@mutex.synchronize do
-        fiber = Fiber.current
-        if @@contexts[fiber]?.try(&.same?(context))
-          @@contexts.delete(fiber)
-        end
-      end
+      fiber = Fiber.current
+      current = fiber.grant_schema_tenant
+      fiber.grant_schema_tenant = nil if current && current.same?(context)
     end
 
     private def self.ensure_same_adapter!(context : Context, adapter : Grant::Adapter::Base) : Nil
@@ -366,4 +363,10 @@ module Grant
       end
     end
   end
+end
+
+class Fiber
+  # Fiber-local slot for the `Grant::SchemaTenant.with` block this fiber runs in.
+  # :nodoc:
+  property grant_schema_tenant : Grant::SchemaTenant::Context?
 end

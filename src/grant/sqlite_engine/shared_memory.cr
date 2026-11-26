@@ -143,6 +143,9 @@ module Grant::SQLiteEngine
       @@nodes_mutex = Mutex.new
 
       @node : Node
+      # The regions this connection has seen mapped. A node unmaps only when
+      # its last connection closes, so they stay mapped while this one is open.
+      @known_region_count = 0
       @shared_mask = 0
       @exclusive_mask = 0
       @closed = false
@@ -190,9 +193,13 @@ module Grant::SQLiteEngine
       end
 
       def map_region(index : Int32, grow : Bool) : Bool
+        return true if index < @known_region_count
         node = @node
         node.mutex.synchronize do
-          return true if index < node.list_of_regions.size
+          if index < node.list_of_regions.size
+            @known_region_count = node.list_of_regions.size
+            return true
+          end
           needed = (index.to_i64 + 1) * REGION_SIZE
           if node.file.info.size < needed
             return false unless grow
@@ -204,6 +211,7 @@ module Grant::SQLiteEngine
             raise Error.new("could not map the wal-index file") if address == LibC::MAP_FAILED
             node.list_of_regions << address.as(UInt8*)
           end
+          @known_region_count = node.list_of_regions.size
           true
         end
       end
