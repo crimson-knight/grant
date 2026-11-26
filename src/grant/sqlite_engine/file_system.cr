@@ -63,6 +63,15 @@ module Grant::SQLiteEngine
     end
 
     abstract def open(path : String) : DatabaseFile
+
+    # Opens the rollback journal *path* for a commit to write, empty: created
+    # when it does not exist, cut to nothing when it does.
+    def create_journal(path : String) : DatabaseFile
+      journal = open(path)
+      journal.truncate(0)
+      journal
+    end
+
     abstract def exists?(path : String) : Bool
     abstract def delete(path : String) : Nil
 
@@ -83,6 +92,16 @@ module Grant::SQLiteEngine
         raise UnsupportedPlatform.new("PosixFileSystem", "Windows", "WindowsFileSystem")
       {% else %}
         PosixFile.new(path)
+      {% end %}
+    end
+
+    # C's unixOpen of a journal: one open(2) that creates the file or, here,
+    # cuts a stale one to nothing (`O_TRUNC`), with no lock and no other call.
+    def create_journal(path : String) : DatabaseFile
+      {% if flag?(:win32) %}
+        raise UnsupportedPlatform.new("PosixFileSystem", "Windows", "WindowsFileSystem")
+      {% else %}
+        PosixJournalFile.new(path)
       {% end %}
     end
 
@@ -145,6 +164,55 @@ module Grant::SQLiteEngine
     fun fcntl(fd : Int32, command : Int32, ...) : Int32
   end
 
+  # pwrite(2), which the standard library's LibC leaves out (it binds pread).
+  lib LibPositionedWrite
+    fun pwrite(fd : Int32, buffer : Void*, count : LibC::SizeT, offset : LibC::OffT) : LibC::SSizeT
+  end
+
+  # Reads and writes at an offset of a descriptor with pread(2) and
+  # pwrite(2), as os_unix.c's seekAndRead and seekAndWrite do: one call per
+  # transfer, with no lseek(2) first.
+  module PositionedIO
+    # Reads into *buffer* from *offset* until it is full or the file ends;
+    # returns the bytes read.
+    def self.read_at(descriptor : Int32, offset : Int64, buffer : Bytes, path : String) : Int32
+      total = 0
+      while total < buffer.size
+        count = LibC.pread(descriptor, (buffer + total).to_unsafe.as(Void*), buffer.size - total, offset + total)
+        if count < 0
+          next if Errno.value == Errno::EINTR
+          raise IO::Error.from_errno("Error reading #{path}")
+        end
+        break if count == 0
+        total += count
+      end
+      total
+    end
+
+    # Writes all of *bytes_to_write* at *offset*.
+    def self.write_at(descriptor : Int32, offset : Int64, bytes_to_write : Bytes, path : String) : Nil
+      written = 0
+      while written < bytes_to_write.size
+        count = LibPositionedWrite.pwrite(descriptor, (bytes_to_write + written).to_unsafe.as(Void*),
+          bytes_to_write.size - written, offset + written)
+        if count < 0
+          next if Errno.value == Errno::EINTR
+          raise IO::Error.from_errno("Error writing #{path}")
+        end
+        written += count
+      end
+    end
+
+    # unixSync on *descriptor*: `fcntl(F_FULLFSYNC)` for a `Full` sync on
+    # macOS, falling back when the file system refuses it; fdatasync on
+    # Linux; fsync elsewhere.
+    def self.sync(descriptor : Int32, mode : SyncMode, path : String) : Nil
+      return if mode.full? && PosixFile.full_fsync?(descriptor)
+      result = PosixFile.sync_flushes_metadata? ? LibC.fsync(descriptor) : LibC.fdatasync(descriptor)
+      raise IO::Error.from_errno("Error syncing #{path}") if result != 0
+    end
+  end
+
   # A file opened read-write (created 0644, masked by the umask, when it
   # does not exist), locked the way os_unix.c locks it: the PENDING byte at
   # 2^30, the RESERVED byte after it and the 510-byte SHARED range after that.
@@ -174,19 +242,11 @@ module Grant::SQLiteEngine
     end
 
     def read_at(offset : Int64, buffer : Bytes) : Int32
-      @file.pos = offset
-      total = 0
-      while total < buffer.size
-        count = @file.read(buffer[total..])
-        break if count == 0
-        total += count
-      end
-      total
+      PositionedIO.read_at(@file.fd, offset, buffer, @file.path)
     end
 
     def write_at(offset : Int64, bytes_to_write : Bytes) : Nil
-      @file.pos = offset
-      @file.write(bytes_to_write)
+      PositionedIO.write_at(@file.fd, offset, bytes_to_write, @file.path)
     end
 
     def sync : Nil
@@ -200,8 +260,7 @@ module Grant::SQLiteEngine
     # data and the metadata needed to read it back (the file size), and
     # leaves out the timestamps. Elsewhere it is fsync.
     def sync(mode : SyncMode) : Nil
-      return if mode.full? && PosixFile.full_fsync?(@file.fd)
-      @file.fsync(flush_metadata: PosixFile.sync_flushes_metadata?)
+      PositionedIO.sync(@file.fd, mode, @file.path)
     end
 
     # True where a sync is fsync (every metadata field); false on Linux,
@@ -297,8 +356,9 @@ module Grant::SQLiteEngine
     private def process_unlock(level : LockLevel) : Nil
       if level >= LockLevel::Shared
         set_lock(LibFileLock::F_RDLCK, SHARED_FIRST, SHARED_SIZE)
-        set_lock(LibFileLock::F_UNLCK, PENDING_BYTE, 1)
-        set_lock(LibFileLock::F_UNLCK, RESERVED_BYTE, 1) if level < LockLevel::Reserved
+        # The PENDING byte and, below RESERVED, the RESERVED byte after it
+        # in one call, as posixUnlock does.
+        set_lock(LibFileLock::F_UNLCK, PENDING_BYTE, level < LockLevel::Reserved ? 2_i64 : 1_i64)
       else
         set_lock(LibFileLock::F_UNLCK, 0_i64, 0_i64)
       end
@@ -323,6 +383,79 @@ module Grant::SQLiteEngine
       request.l_start = start
       request.l_len = length
       LibFileLock.fcntl(@file.fd, LibFileLock::F_SETLK, pointerof(request)) == 0
+    end
+  end
+
+  # A rollback journal a commit writes: one open(2) creating it or cutting a
+  # stale one to nothing, positioned reads and writes, and no locks (C locks
+  # only the database file). Its first sync also syncs the folder that holds
+  # it, so the new journal's name is on the disk before the commit counts on
+  # it, as os_unix.c does for a journal it creates (UNIXFILE_DIRSYNC).
+  class PosixJournalFile < DatabaseFile
+    @directory_sync_due = true
+
+    def initialize(@path : String)
+      @descriptor = LibC.open(@path, LibC::O_RDWR | LibC::O_CREAT | LibC::O_TRUNC | LibC::O_CLOEXEC, 0o644)
+      # The errno's own `File::Error` (File::AccessDeniedError for a folder
+      # that takes no new file), as `File.open` raises, which the driver
+      # turns into C's result code.
+      raise File::Error.from_errno("Error opening file", file: @path) if @descriptor < 0
+    end
+
+    def size : Int64
+      raise IO::Error.from_errno("Error reading the size of #{@path}") if LibC.fstat(@descriptor, out status) != 0
+      status.st_size.to_i64
+    end
+
+    def read_at(offset : Int64, buffer : Bytes) : Int32
+      PositionedIO.read_at(@descriptor, offset, buffer, @path)
+    end
+
+    def write_at(offset : Int64, bytes_to_write : Bytes) : Nil
+      PositionedIO.write_at(@descriptor, offset, bytes_to_write, @path)
+    end
+
+    def sync : Nil
+      sync(SyncMode::Normal)
+    end
+
+    # unixSync: the file, then, the first time, its folder, whose sync
+    # failing is ignored as C ignores it. A folder's sync is a plain one
+    # (full_fsync of the directory asks no F_FULLFSYNC).
+    def sync(mode : SyncMode) : Nil
+      PositionedIO.sync(@descriptor, mode, @path)
+      return unless @directory_sync_due
+      @directory_sync_due = false
+      directory = LibC.open(File.dirname(@path), LibC::O_RDONLY | LibC::O_CLOEXEC)
+      return if directory < 0
+      PosixFile.sync_flushes_metadata? ? LibC.fsync(directory) : LibC.fdatasync(directory)
+      LibC.close(directory)
+    end
+
+    def truncate(size : Int64) : Nil
+      raise IO::Error.from_errno("Error truncating #{@path}") if LibC.ftruncate(@descriptor, size) != 0
+    end
+
+    def close : Nil
+      return if @descriptor < 0
+      LibC.close(@descriptor)
+      @descriptor = -1
+    end
+
+    # The journal takes no lock; the database file's lock covers it.
+    def lock(level : LockLevel) : Bool
+      true
+    end
+
+    def unlock(level : LockLevel) : Nil
+    end
+
+    def lock_level : LockLevel
+      LockLevel::None
+    end
+
+    def reserved_elsewhere? : Bool
+      false
     end
   end
   {% end %}

@@ -644,8 +644,8 @@ module Grant::SQLiteEngine
         raise Busy.new
       end
       check_writable_header { file.unlock(LockLevel::None) if @read_depth == 0 }
-      # A journal left behind that was not hot (empty, or zeroed) is stale.
-      writer_file_system.delete(RollbackJournal.path_for(@path))
+      # A journal left behind that was not hot (empty, or zeroed) is stale:
+      # the commit's `FileSystem#create_journal` cuts it to nothing.
       @in_write_transaction = true
       @original_page_count = @page_count
       create_first_page if @page_count == 0
@@ -694,7 +694,7 @@ module Grant::SQLiteEngine
       put_u32(page_one, VERSION_NUMBER_OFFSET, WRITER_VERSION_NUMBER)
       file_system = writer_file_system
       journal_path = RollbackJournal.path_for(@path)
-      journal = file_system.open(journal_path)
+      journal = file_system.create_journal(journal_path)
       begin
         images = @journal_images.keys.sort!.map { |page_number| {page_number, @journal_images[page_number]} }
         RollbackJournal.write(journal, @page_size, @original_page_count, images, Random.rand(UInt32), @synchronous, sync_mode)
