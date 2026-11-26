@@ -143,6 +143,40 @@ describe "Grant::SQLiteEngine writes" do
     sqlite3(path, "SELECT id, email, n FROM t ORDER BY id;").should eq("2|b@example.com|2\n5|c@example.com|3\n")
   end
 
+  it "replaces rows in place in a table without indexes, keeping the rest of the transaction after a refused update" do
+    path = temporary_database("updates_in_place")
+    database = Engine::Database.open(path, read_write: true, page_size: 512)
+    database.create_table("CREATE TABLE t(id INTEGER PRIMARY KEY, label TEXT NOT NULL, n)")
+    database.create_table("CREATE TABLE u(a, b)")
+    database.transaction do |writer|
+      (1_i64..300_i64).each do |number|
+        writer.insert("t", nil, values(nil, "label #{number}", number))
+        writer.insert("u", nil, values(number, "b #{number}"))
+      end
+    end
+    database.transaction do |writer|
+      (1_i64..300_i64).each do |number|
+        label = number % 7 == 0 ? "long #{"z" * 2_000}" : (number.even? ? "l#{number}" : "longer label #{number} #{"y" * 40}")
+        writer.update("t", number, values(number.odd? ? number : nil, label, number * 2)).should be_true
+      end
+      writer.update("t", 301_i64, values(nil, "absent", 0_i64)).should be_false
+      writer.update("t", 301_i64, values(nil, nil, 0_i64)).should be_false
+      writer.update("t", 301_i64, values(nil, "short")).should be_false
+      expect_raises(Engine::ConstraintViolation, /NOT NULL/) { writer.update("t", 5_i64, values(nil, nil, 0_i64)) }
+      expect_raises(Engine::ConstraintViolation, /datatype mismatch/) { writer.update("t", 6_i64, values("six", "x", 0_i64)) }
+      writer.update("u", 10_i64, values(10_i64, "changed")).should be_true
+    end
+    database.update("t", 3_i64, values(400_i64, "moved", 0_i64)).should be_true
+    database.update("t", 4_i64, values(4_i64, "kept", 1_i64)).should be_true
+    database.close
+    sqlite3(path, "PRAGMA integrity_check;").should eq("ok\n")
+    sqlite3(path, "SELECT count(*), sum(n) FROM t;").should eq("300|#{(1..300).sum { |number| number * 2 } - 6 - 8 + 1}\n")
+    sqlite3(path, "SELECT id, label, n FROM t WHERE id IN (2, 3, 4, 5, 400) ORDER BY id;").should eq(
+      "2|l2|4\n4|kept|1\n5|longer label 5 #{"y" * 40}|10\n400|moved|0\n")
+    sqlite3(path, "SELECT length(label) FROM t WHERE id = 7;").should eq("#{5 + 2_000}\n")
+    sqlite3(path, "SELECT rowid, a, b FROM u WHERE rowid IN (9, 10) ORDER BY rowid;").should eq("9|9|b 9\n10|10|changed\n")
+  end
+
   it "rolls a transaction back" do
     path = temporary_database("rollback")
     database = Engine::Database.open(path, read_write: true)
