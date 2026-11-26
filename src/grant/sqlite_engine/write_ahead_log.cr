@@ -370,9 +370,13 @@ module Grant::SQLiteEngine
     end
 
     # The page number frame *frame* holds, from the wal-index.
-    private def page_of_frame(frame : UInt32) : UInt32
+    # *mapped_region* names a region already mapped, which needs no new
+    # look (a region stays mapped until the index closes).
+    private def page_of_frame(frame : UInt32, mapped_region : Int32 = -1) : UInt32
       region = WalIndexLayout.region_of(frame)
-      raise CorruptDatabase.new("the wal-index lacks region #{region}") unless @index.map_region(region, grow: false)
+      unless region == mapped_region || @index.map_region(region, grow: false)
+        raise CorruptDatabase.new("the wal-index lacks region #{region}")
+      end
       slot = frame - WalIndexLayout.first_frame_before(region)
       @index.read_u32(WalIndexLayout.page_array_offset(region) + (slot.to_i32 - 1) * 4)
     end
@@ -387,8 +391,10 @@ module Grant::SQLiteEngine
         @indexed_salts = salts.dup
       end
       frame = @indexed_frames + 1
+      mapped_region = -1
       while frame <= @header.max_frame
-        @frame_of_page[page_of_frame(frame)] = frame
+        @frame_of_page[page_of_frame(frame, mapped_region)] = frame
+        mapped_region = WalIndexLayout.region_of(frame)
         frame += 1
       end
       @indexed_frames = @header.max_frame
@@ -456,8 +462,17 @@ module Grant::SQLiteEngine
       first_frame = @header.max_frame + 1
       @log.write_at(frame_offset(first_frame, page_size), buffer)
       @log.sync(@sync_mode) if @synchronous >= Synchronous::Full
+      # A region of the wal-index, once mapped, stays mapped until the
+      # index closes, so each region is mapped once for the whole commit.
+      mapped_region = -1
       list_of_pages.each_with_index do |(page_number, _image), position|
-        append_to_index(first_frame + position, page_number)
+        frame = first_frame + position
+        region = WalIndexLayout.region_of(frame)
+        unless region == mapped_region
+          @index.map_region(region, grow: true)
+          mapped_region = region
+        end
+        append_to_index(frame, page_number)
       end
       @header.page_size = page_size
       @header.max_frame = first_frame + list_of_pages.size - 1
@@ -543,9 +558,9 @@ module Grant::SQLiteEngine
     # walIndexAppend: the frame's page number into the region's array and
     # its index into the hash table; a region's first frame clears the
     # region, and leftovers of a writer that stopped midway are removed.
+    # The frame's region is mapped already.
     private def append_to_index(frame : UInt32, page_number : UInt32) : Nil
       region = WalIndexLayout.region_of(frame)
-      @index.map_region(region, grow: true)
       slot = (frame - WalIndexLayout.first_frame_before(region)).to_i32
       pages = WalIndexLayout.page_array_offset(region)
       hashes = WalIndexLayout.hash_table_offset(region)
@@ -842,36 +857,129 @@ module Grant::SQLiteEngine
           index += 2
         end
       else
-        # A page's checksum runs on every commit. Each pair of words is
-        # read as one 64-bit load (the low half is the first word on a
-        # little-endian host, as the 32-bit reads above assume), four pairs
-        # per turn of the loop; the sums are the same as pair by pair.
         pairs = data.to_unsafe.as(UInt64*)
         pair_count = count // 2
-        pair = 0
-        while pair + 4 <= pair_count
-          first = pairs[pair]
-          second = pairs[pair + 1]
-          third = pairs[pair + 2]
-          fourth = pairs[pair + 3]
-          sum0 = sum0 &+ first.to_u32! &+ sum1
-          sum1 = sum1 &+ (first >> 32).to_u32! &+ sum0
-          sum0 = sum0 &+ second.to_u32! &+ sum1
-          sum1 = sum1 &+ (second >> 32).to_u32! &+ sum0
-          sum0 = sum0 &+ third.to_u32! &+ sum1
-          sum1 = sum1 &+ (third >> 32).to_u32! &+ sum0
-          sum0 = sum0 &+ fourth.to_u32! &+ sum1
-          sum1 = sum1 &+ (fourth >> 32).to_u32! &+ sum0
-          pair += 4
-        end
-        while pair < pair_count
-          word_pair = pairs[pair]
-          sum0 = sum0 &+ word_pair.to_u32! &+ sum1
-          sum1 = sum1 &+ (word_pair >> 32).to_u32! &+ sum0
-          pair += 1
-        end
+        return checksum_of_lanes(pairs, pair_count, seed) if pair_count >= LANE_MINIMUM_PAIRS
+        return checksum_of_pairs(pairs, pair_count, seed)
       end
       {sum0, sum1}
+    end
+
+    # Pages this long or longer take the four-lane checksum.
+    LANE_MINIMUM_PAIRS = 64
+
+    # One step of the checksum takes a pair of words (w0, w1) and the sums
+    # (s0, s1) to (s0 + s1 + w0, s0 + 2·s1 + w0 + w1): a fixed matrix
+    # [[1, 1], [1, 2]] times the sums, plus the words. So the sums after
+    # a run of pairs are that matrix's power times the starting sums, plus
+    # what the run gives from sums of zero, all modulo 2^32. The page is
+    # cut into four runs whose chains of additions are independent, so the
+    # processor adds them side by side; each run's part is moved past the
+    # runs after it by a power of the matrix. The result is the serial
+    # checksum's, bit for bit.
+    private def self.checksum_of_lanes(pairs : UInt64*, pair_count : Int32, seed : {UInt32, UInt32}) : {UInt32, UInt32}
+      run_length = pair_count // 4
+      first_run = pairs
+      second_run = pairs + run_length
+      third_run = pairs + 2 * run_length
+      fourth_run = pairs + 3 * run_length
+      first0 = first1 = second0 = second1 = third0 = third1 = fourth0 = fourth1 = 0_u32
+      index = 0
+      while index < run_length
+        first_pair = first_run[index]
+        second_pair = second_run[index]
+        third_pair = third_run[index]
+        fourth_pair = fourth_run[index]
+        first0 = first0 &+ first_pair.to_u32! &+ first1
+        second0 = second0 &+ second_pair.to_u32! &+ second1
+        third0 = third0 &+ third_pair.to_u32! &+ third1
+        fourth0 = fourth0 &+ fourth_pair.to_u32! &+ fourth1
+        first1 = first1 &+ (first_pair >> 32).to_u32! &+ first0
+        second1 = second1 &+ (second_pair >> 32).to_u32! &+ second0
+        third1 = third1 &+ (third_pair >> 32).to_u32! &+ third0
+        fourth1 = fourth1 &+ (fourth_pair >> 32).to_u32! &+ fourth0
+        index += 1
+      end
+      one_run = ChecksumStep.power(run_length)
+      two_runs = one_run * one_run
+      three_runs = two_runs * one_run
+      sum0, sum1 = (two_runs * two_runs).apply(seed[0], seed[1])
+      part0, part1 = three_runs.apply(first0, first1)
+      sum0 &+= part0
+      sum1 &+= part1
+      part0, part1 = two_runs.apply(second0, second1)
+      sum0 &+= part0
+      sum1 &+= part1
+      part0, part1 = one_run.apply(third0, third1)
+      sum0 &+= part0 &+ fourth0
+      sum1 &+= part1 &+ fourth1
+      checksum_of_pairs(pairs + 4 * run_length, pair_count - 4 * run_length, {sum0, sum1})
+    end
+
+    # The checksum pair by pair; each pair of words is one 64-bit load (the
+    # low half is the first word on a little-endian host), four pairs per
+    # turn of the loop.
+    private def self.checksum_of_pairs(pairs : UInt64*, pair_count : Int32, seed : {UInt32, UInt32}) : {UInt32, UInt32}
+      sum0, sum1 = seed
+      pair = 0
+      while pair + 4 <= pair_count
+        first = pairs[pair]
+        second = pairs[pair + 1]
+        third = pairs[pair + 2]
+        fourth = pairs[pair + 3]
+        sum0 = sum0 &+ first.to_u32! &+ sum1
+        sum1 = sum1 &+ (first >> 32).to_u32! &+ sum0
+        sum0 = sum0 &+ second.to_u32! &+ sum1
+        sum1 = sum1 &+ (second >> 32).to_u32! &+ sum0
+        sum0 = sum0 &+ third.to_u32! &+ sum1
+        sum1 = sum1 &+ (third >> 32).to_u32! &+ sum0
+        sum0 = sum0 &+ fourth.to_u32! &+ sum1
+        sum1 = sum1 &+ (fourth >> 32).to_u32! &+ sum0
+        pair += 4
+      end
+      while pair < pair_count
+        word_pair = pairs[pair]
+        sum0 = sum0 &+ word_pair.to_u32! &+ sum1
+        sum1 = sum1 &+ (word_pair >> 32).to_u32! &+ sum0
+        pair += 1
+      end
+      {sum0, sum1}
+    end
+
+    # A power of the checksum step's matrix [[1, 1], [1, 2]], modulo 2^32.
+    struct ChecksumStep
+      getter top_left : UInt32
+      getter top_right : UInt32
+      getter bottom_left : UInt32
+      getter bottom_right : UInt32
+
+      def initialize(@top_left : UInt32, @top_right : UInt32, @bottom_left : UInt32, @bottom_right : UInt32)
+      end
+
+      # The matrix to the power *exponent*, by repeated squaring.
+      def self.power(exponent : Int32) : ChecksumStep
+        result = new(1_u32, 0_u32, 0_u32, 1_u32)
+        base = new(1_u32, 1_u32, 1_u32, 2_u32)
+        while exponent > 0
+          result = result * base if exponent.odd?
+          base = base * base
+          exponent >>= 1
+        end
+        result
+      end
+
+      def *(other : ChecksumStep) : ChecksumStep
+        ChecksumStep.new(
+          @top_left &* other.top_left &+ @top_right &* other.bottom_left,
+          @top_left &* other.top_right &+ @top_right &* other.bottom_right,
+          @bottom_left &* other.top_left &+ @bottom_right &* other.bottom_left,
+          @bottom_left &* other.top_right &+ @bottom_right &* other.bottom_right)
+      end
+
+      # The matrix times the sums (*sum0*, *sum1*).
+      def apply(sum0 : UInt32, sum1 : UInt32) : {UInt32, UInt32}
+        {@top_left &* sum0 &+ @top_right &* sum1, @bottom_left &* sum0 &+ @bottom_right &* sum1}
+      end
     end
 
     private def put_big_endian(bytes : Bytes, offset : Int32, value : UInt32) : Nil

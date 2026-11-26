@@ -95,8 +95,8 @@ module Grant::SQLiteEngine
       {% end %}
     end
 
-    # C's unixOpen of a journal: one open(2) that creates the file or, here,
-    # cuts a stale one to nothing (`O_TRUNC`), with no lock and no other call.
+    # C's unixOpen of a journal: one open(2) with C's flags, creating the
+    # file, and no lock. A stale journal left behind is cut to nothing.
     def create_journal(path : String) : DatabaseFile
       {% if flag?(:win32) %}
         raise UnsupportedPlatform.new("PosixFileSystem", "Windows", "WindowsFileSystem")
@@ -386,20 +386,31 @@ module Grant::SQLiteEngine
     end
   end
 
-  # A rollback journal a commit writes: one open(2) creating it or cutting a
-  # stale one to nothing, positioned reads and writes, and no locks (C locks
-  # only the database file). Its first sync also syncs the folder that holds
-  # it, so the new journal's name is on the disk before the commit counts on
-  # it, as os_unix.c does for a journal it creates (UNIXFILE_DIRSYNC).
+  # A rollback journal a commit writes: opened with C's flags, cut to
+  # nothing when a stale one was left behind, positioned reads and writes,
+  # and no locks (C locks only the database file). Its first sync also syncs
+  # the folder that holds it, so the new journal's name is on the disk
+  # before the commit counts on it, as os_unix.c does for a journal it
+  # creates (UNIXFILE_DIRSYNC).
   class PosixJournalFile < DatabaseFile
     @directory_sync_due = true
 
+    # unixOpen's flags for a journal (O_RDWR|O_CREAT|O_NOFOLLOW|O_CLOEXEC).
+    # C opens without `O_TRUNC`; a journal the last commit deleted is new,
+    # so only a stale one left behind has bytes to cut, and the fstat(2)
+    # that finds them is the one C makes after its open (robust_open).
     def initialize(@path : String)
-      @descriptor = LibC.open(@path, LibC::O_RDWR | LibC::O_CREAT | LibC::O_TRUNC | LibC::O_CLOEXEC, 0o644)
+      @descriptor = LibC.open(@path, LibC::O_RDWR | LibC::O_CREAT | LibC::O_NOFOLLOW | LibC::O_CLOEXEC, 0o644)
       # The errno's own `File::Error` (File::AccessDeniedError for a folder
       # that takes no new file), as `File.open` raises, which the driver
       # turns into C's result code.
       raise File::Error.from_errno("Error opening file", file: @path) if @descriptor < 0
+      begin
+        truncate(0) if size > 0
+      rescue error
+        close
+        raise error
+      end
     end
 
     def size : Int64

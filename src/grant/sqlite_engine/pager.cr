@@ -65,7 +65,7 @@ module Grant::SQLiteEngine
     # before trusting it, so it is only ever a shortcut.
     property rightmost_path_hint : {UInt32, Array({UInt32, Int32}), UInt32}? = nil
 
-    @cache = {} of UInt32 => Bytes
+    @cache = PageTable.new
 
     # SQLITE_DEFAULT_WAL_AUTOCHECKPOINT: a commit that leaves at least this
     # many frames in the WAL runs a passive checkpoint.
@@ -96,8 +96,8 @@ module Grant::SQLiteEngine
     @path = ""
     @new_page_size = Limits::DEFAULT_PAGE_SIZE
     @new_text_encoding = TextEncoding::UTF8
-    @dirty = {} of UInt32 => Bytes
-    @journal_images = {} of UInt32 => Bytes
+    @dirty = PageTable.new
+    @journal_images = PageTable.new
     @original_page_count = 0_u32
     @in_write_transaction = false
     @read_depth = 0
@@ -694,19 +694,31 @@ module Grant::SQLiteEngine
       put_u32(page_one, VERSION_NUMBER_OFFSET, WRITER_VERSION_NUMBER)
       file_system = writer_file_system
       journal_path = RollbackJournal.path_for(@path)
+      # The page images and the changed pages, each in page order, in lists
+      # kept from one commit to the next (as `commit_to_log` keeps its own).
+      list_of_images = @commit_images
+      list_of_images.clear
+      @journal_images.each { |page_number, image| list_of_images << {page_number, image} }
+      list_of_images.sort! { |left, right| left[0] <=> right[0] }
+      list_of_pages = @commit_pages
+      list_of_pages.clear
+      @dirty.each { |page_number, buffer| list_of_pages << {page_number, buffer} }
+      list_of_pages.sort! { |left, right| left[0] <=> right[0] }
       journal = file_system.create_journal(journal_path)
       begin
-        images = @journal_images.keys.sort!.map { |page_number| {page_number, @journal_images[page_number]} }
-        RollbackJournal.write(journal, @page_size, @original_page_count, images, Random.rand(UInt32), @synchronous, sync_mode)
+        RollbackJournal.write(journal, @page_size, @original_page_count, list_of_images, Random.rand(UInt32), @synchronous, sync_mode,
+          @journal_write_buffer)
       ensure
         journal.close
       end
-      @dirty.keys.sort!.each do |page_number|
-        file.write_at((page_number.to_i64 - 1) * @page_size, @dirty[page_number])
+      list_of_images.clear
+      list_of_pages.each do |page_number, buffer|
+        file.write_at((page_number.to_i64 - 1) * @page_size, buffer)
       end
       file.sync(sync_mode) unless @synchronous.off?
       file_system.delete(journal_path)
-      @dirty.each { |page_number, buffer| @cache[page_number] = buffer }
+      list_of_pages.each { |page_number, buffer| @cache[page_number] = buffer }
+      list_of_pages.clear
       @header = DatabaseHeader.parse(page_one)
       finish_transaction(file)
     end
@@ -752,15 +764,12 @@ module Grant::SQLiteEngine
         put_u32(page_one, VERSION_VALID_FOR_OFFSET, counter)
         put_u32(page_one, VERSION_NUMBER_OFFSET, WRITER_VERSION_NUMBER)
       end
-      # Lists kept for the next commit: the log writes the frames before
+      # A list kept for the next commit: the log writes the frames before
       # it returns.
-      list_of_numbers = @commit_page_numbers
-      list_of_numbers.clear
-      @dirty.each_key { |page_number| list_of_numbers << page_number if page_number <= @page_count }
-      list_of_numbers.sort!
       list_of_pages = @commit_pages
       list_of_pages.clear
-      list_of_numbers.each { |page_number| list_of_pages << {page_number, @dirty[page_number]} }
+      @dirty.each { |page_number, buffer| list_of_pages << {page_number, buffer} if page_number <= @page_count }
+      list_of_pages.sort! { |left, right| left[0] <=> right[0] }
       log.commit(list_of_pages, @page_count, @page_size)
       list_of_pages.clear
       @dirty.each { |page_number, buffer| @cache[page_number] = buffer }
@@ -770,11 +779,15 @@ module Grant::SQLiteEngine
       finish_transaction(file)
     end
 
-    @commit_page_numbers = [] of UInt32
     @commit_pages = [] of {UInt32, Bytes}
+    @commit_images = [] of {UInt32, Bytes}
+    @journal_write_buffer = RollbackJournal::WriteBuffer.new
 
     private def finish_transaction(file : DatabaseFile) : Nil
       @dirty.clear
+      # The journal's page images are written (or the transaction rolled
+      # back); the next transaction's images reuse them.
+      @journal_images.each_value { |image| recycle_image(image) }
       @journal_images.clear
       @list_of_savepoint_levels.clear
       @in_write_transaction = false
@@ -897,7 +910,9 @@ module Grant::SQLiteEngine
           else
             @dirty.delete(page_number)
             @cache.delete(page_number)
-            @journal_images.delete(page_number)
+            if journal_image = @journal_images.delete(page_number)
+              recycle_image(journal_image)
+            end
           end
         end
         @page_count = level.page_count
@@ -924,7 +939,7 @@ module Grant::SQLiteEngine
       # A rollback journal needs each page's original; in WAL mode a rollback
       # reads the originals back from the snapshot.
       if @wal_log.nil? && page_number <= @original_page_count && !@journal_images.has_key?(page_number)
-        @journal_images[page_number] = buffer.dup
+        @journal_images[page_number] = image_of(buffer)
       end
       if level = imaging_level
         level.images[page_number] = nil unless level.images.has_key?(page_number)

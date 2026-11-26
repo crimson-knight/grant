@@ -35,10 +35,16 @@ module Grant::SQLiteEngine
     # count, as C's header does when it will not be synced
     # (writeJournalHdr). The header and the records go out together, up to
     # `RECORDS_PER_WRITE` records a write.
+    #
+    # The writes are gathered in *write_buffer*, which a caller keeps from
+    # one commit to the next so a commit allocates nothing.
     def self.write(journal : DatabaseFile, page_size : Int32, initial_page_count : UInt32, list_of_images : Array({UInt32, Bytes}), nonce : UInt32,
-                   synchronous : Synchronous = Synchronous::Full, sync_mode : SyncMode = SyncMode::Normal) : Nil
+                   synchronous : Synchronous = Synchronous::Full, sync_mode : SyncMode = SyncMode::Normal,
+                   write_buffer : WriteBuffer = WriteBuffer.new) : Nil
       record_size = page_size + 8
-      buffer = Bytes.new(SECTOR_SIZE + record_size * Math.min(list_of_images.size, RECORDS_PER_WRITE))
+      buffer = write_buffer.take(SECTOR_SIZE + record_size * Math.min(list_of_images.size, RECORDS_PER_WRITE))
+      # The header sector's bytes past its fields stay zero, as C's do.
+      buffer.to_unsafe.clear(SECTOR_SIZE)
       buffer.copy_from(MAGIC.to_unsafe, MAGIC.size)
       put_u32(buffer, 8, synchronous.off? ? RECORD_COUNT_FROM_SIZE : 0_u32)
       put_u32(buffer, 12, nonce)
@@ -53,16 +59,18 @@ module Grant::SQLiteEngine
           file_offset += filled
           filled = 0
         end
+        raise ArgumentError.new("page image of #{image.size} bytes for #{page_size}-byte pages") unless image.size == page_size
         put_u32(buffer, filled, page_number)
-        (buffer + filled + 4).copy_from(image.to_unsafe, page_size)
+        (buffer.to_unsafe + filled + 4).copy_from(image.to_unsafe, page_size)
         put_u32(buffer, filled + 4 + page_size, checksum(nonce, image))
         filled += record_size
       end
       journal.write_at(file_offset, buffer[0, filled])
       return if synchronous.off?
       journal.sync(sync_mode) if synchronous >= Synchronous::Full
-      count = Bytes.new(12)
-      count.copy_from(MAGIC.to_unsafe, MAGIC.size)
+      # The records are on their way to the disk; the buffer's first bytes
+      # carry the record count now.
+      count = buffer[0, 12]
       put_u32(count, 8, list_of_images.size.to_u32)
       journal.write_at(0, count)
       journal.sync(sync_mode)
@@ -72,12 +80,28 @@ module Grant::SQLiteEngine
     # down from 200 bytes before its end.
     def self.checksum(nonce : UInt32, page : Bytes) : UInt32
       sum = nonce
+      bytes = page.to_unsafe
       index = page.size - 200
       while index > 0
-        sum &+= page[index]
+        sum &+= bytes[index]
         index -= 200
       end
       sum
+    end
+
+    # The bytes a journal is written from, kept between commits (a fresh
+    # buffer per commit is a large allocation, and large allocations are
+    # what start the garbage collector). It holds at most a header and
+    # `RECORDS_PER_WRITE` records.
+    class WriteBuffer
+      @bytes = Bytes.empty
+
+      # *size* bytes of the kept buffer, which grows to hold them. Their
+      # contents are what the last write left.
+      def take(size : Int32) : Bytes
+        @bytes = Bytes.new(size) if @bytes.size < size
+        @bytes[0, size]
+      end
     end
 
     # True when a journal must be rolled back before the database is read
