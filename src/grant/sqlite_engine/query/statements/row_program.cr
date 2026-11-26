@@ -37,14 +37,14 @@ module Grant::SQLiteEngine::Query
 
   class Compiler
     # Tables a write statement substitutes by name (lower case).
-    getter pseudo_tables = {} of String => PseudoTable
+    getter(pseudo_tables : Hash(String, PseudoTable)) { {} of String => PseudoTable }
     # The table whose top-level FROM entry a write statement reads rows
     # from (UPDATE, DELETE): its slot is captured while compiling.
     property capture_name : String? = nil
     getter captured_slot : Int32? = nil
 
     private def compile_table_reference(reference : SQL::TableReference, context : QueryContext) : {FromEntry, RowSource}
-      if reference.schema.nil? && (pseudo = @pseudo_tables[reference.name.value.downcase]?)
+      if reference.schema.nil? && (tables = @pseudo_tables) && (pseudo = tables[reference.name.value.downcase]?)
         slot = allocate_slot
         table = pseudo.table
         columns = (0...table.list_of_column_names.size).map do |index|

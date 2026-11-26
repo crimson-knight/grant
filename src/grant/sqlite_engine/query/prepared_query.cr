@@ -211,14 +211,20 @@ module Grant::SQLiteEngine::Query
   # assigned, and the numbers of named parameters.
   module ParameterScan
     def self.scan(statement : SQL::SelectStatement) : {Int32, Hash(String, Int32)}
-      names = {} of String => Int32
+      names : Hash(String, Int32)? = nil
       highest = 0
       visit_select(statement) do |parameter|
         highest = Math.max(highest, parameter.number)
         text = parameter.text
-        names[text] = parameter.number unless text == "?"
+        unless text == "?"
+          # The block captures *names*, so a local holds the narrowed table.
+          table = names
+          names = table = {} of String => Int32 if table.nil?
+          table[text] = parameter.number
+        end
       end
-      {highest, names}
+      found = names
+      {highest, found || PreparedQuery::NO_PARAMETER_NAMES}
     end
 
     private def self.visit_select(statement : SQL::SelectStatement, &block : SQL::Parameter ->) : Nil

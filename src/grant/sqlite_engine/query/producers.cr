@@ -79,7 +79,9 @@ module Grant::SQLiteEngine::Query
   # result columns followed by *extra* values (ORDER BY keys) that a
   # SortProducer above reads and drops.
   class CoreProducer < Producer
-    @groups = [] of Group
+    # The aggregate-only buffers below are created on first use: a query
+    # without GROUP BY or aggregates allocates none of them.
+    private getter(groups : Array(Group)) { [] of Group }
     @group_position = 0
     @seen : Set(Array(EqualityKey))? = nil
 
@@ -103,7 +105,7 @@ module Grant::SQLiteEngine::Query
           # A group left unfinished by the last execution (a LIMIT stopped
           # it) is kept for reuse with the shown ones.
           if unfinished = @current
-            @list_of_spare_groups << unfinished
+            list_of_spare_groups << unfinished
           end
           @current = nil
           @source_done = false
@@ -121,8 +123,8 @@ module Grant::SQLiteEngine::Query
         return next_streaming_row(frame, aggregation)
       end
       if aggregation = @aggregation
-        while @group_position < @groups.size
-          group = @groups[@group_position]
+        while @group_position < groups.size
+          group = groups[@group_position]
           @group_position += 1
           restore(frame, group, aggregation)
           if having = aggregation.having
@@ -193,9 +195,9 @@ module Grant::SQLiteEngine::Query
         return unless group
         # The source reads outer rows from the frame (join keys), so the
         # frame gets its rows back after the group is shown.
-        saved_rows = @saved_rows
-        saved_rowids = @saved_rowids
-        saved_pending = @saved_pending
+        saved_rows = self.saved_rows
+        saved_rowids = self.saved_rowids
+        saved_pending = self.saved_pending
         if saved_rows.size == slots.size
           slots.each_with_index do |slot, position|
             saved_rows.unsafe_put(position, frame.list_of_rows[slot])
@@ -224,7 +226,7 @@ module Grant::SQLiteEngine::Query
         end
         # Nothing holds the shown group's arrays now; the group after the
         # current one reuses them.
-        @list_of_spare_groups << group
+        list_of_spare_groups << group
         return row if row
       end
     end
@@ -244,7 +246,7 @@ module Grant::SQLiteEngine::Query
         end
         # Rows arrive in group order, so a row starts a new group when its
         # key compares unequal to the current group's (OP_Compare).
-        scratch = @scratch_keys
+        scratch = scratch_keys
         group_keys = aggregation.list_of_group_keys
         if scratch.size == group_keys.size
           group_keys.each_with_index { |key, position| scratch.unsafe_put(position, Expr.value_of(key, frame)) }
@@ -267,22 +269,22 @@ module Grant::SQLiteEngine::Query
       finished
     end
 
-    @scratch_keys = [] of Value
-    @saved_rows = [] of Array(Value)
-    @saved_rowids = [] of Int64?
-    @saved_pending = [] of TableScanSource?
+    private getter(scratch_keys : Array(Value)) { [] of Value }
+    private getter(saved_rows : Array(Array(Value))) { [] of Array(Value) }
+    private getter(saved_rowids : Array(Int64?)) { [] of Int64? }
+    private getter(saved_pending : Array(TableScanSource?)) { [] of TableScanSource? }
     # Finished groups whose arrays and accumulators the next groups reuse,
     # kept from one execution to the next.
-    @list_of_spare_groups = [] of Group
+    private getter(list_of_spare_groups : Array(Group)) { [] of Group }
 
     private def recycled_group(keys : Array(Value)) : Group?
-      spare = @list_of_spare_groups.pop?
+      spare = list_of_spare_groups.pop?
       return unless spare
       spare.recycle(keys)
       spare
     end
 
-    @list_of_argument_buffers = [] of Array(Value)
+    private getter(list_of_argument_buffers : Array(Array(Value))) { [] of Array(Value) }
 
     private def same_group_key?(keys : Array(Value), current : Array(Value), collations : Array(Collation)) : Bool
       keys.each_with_index do |value, index|
@@ -294,7 +296,7 @@ module Grant::SQLiteEngine::Query
     # One argument array per aggregate call, refilled for each row (no
     # accumulator keeps the array it is given).
     private def argument_buffer(index : Int32) : Array(Value)
-      buffers = @list_of_argument_buffers
+      buffers = list_of_argument_buffers
       while buffers.size <= index
         buffers << [] of Value
       end

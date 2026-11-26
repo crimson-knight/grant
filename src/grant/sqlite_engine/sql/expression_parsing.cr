@@ -322,7 +322,8 @@ module Grant::SQLiteEngine::SQL
                  end
                else
                  syntax_error(token) if raw[0] == '#' && raw.size > 1 && raw[1].ascii_number?
-                 @named_parameters[raw]? || (@named_parameters[raw] = (@parameter_count += 1))
+                 names = @named_parameters ||= {} of String => Int32
+                 names[raw]? || (names[raw] = (@parameter_count += 1))
                end
       if number > Limits::MAX_VARIABLE_NUMBER
         raise ParseError.new("too many SQL variables", token.start)

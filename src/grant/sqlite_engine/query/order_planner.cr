@@ -28,10 +28,10 @@ module Grant::SQLiteEngine::Query
     # *ordering* wanted, the first FROM entry is read the cheapest way
     # counting the sort (whereSortingCost, about n log n) a path needs when
     # its order does not give the wanted order. Returns the choice and
-    # whether its order gives *ordering*.
-    private def choose_ordered_access(step : JoinStep, terms : Array(Expr), context : QueryContext,
+    # whether its order gives *ordering*. *available* holds the slots of the
+    # FROM entries read before this one.
+    private def choose_ordered_access(step : JoinStep, terms : Array(Expr), available : Set(Int32), context : QueryContext,
                                       ordering : Array(OrderTerm), limit_rows : Float64? = nil) : {AccessChoice, Bool}
-      available = Set(Int32).new
       filtering = choose_access(step, terms, available, context)
       return {filtering, false} if ordering.empty?
       best = filtering
@@ -155,8 +155,7 @@ module Grant::SQLiteEngine::Query
         end
         if decided
           next if ExpressionWalk.constant_term?(term.expression)
-          used = ExpressionWalk.slots(term.expression)
-          next if used.all? { |used_slot| used_slot == slot }
+          next if slots_read_by(term.expression).all? { |used_slot| used_slot == slot }
           return false
         end
         column = ordering_column(expression, entry)

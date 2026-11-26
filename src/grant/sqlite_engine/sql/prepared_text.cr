@@ -28,14 +28,14 @@ module Grant::SQLiteEngine::SQL
       skip_semicolons
       return if kind.end_of_input?
       @parameter_count = 0
-      @named_parameters.clear
+      @named_parameters = nil
       @has_with = false
       start = peek.start
       statement = parse_statement
       finish = peek.start
       expect_statement_end
       text = sql.byte_slice(start, finish - start).rstrip
-      PreparedText.new(statement, text, @parameter_count, @named_parameters.dup)
+      PreparedText.new(statement, text, @parameter_count, @named_parameters || NO_PARAMETER_NAMES)
     end
   end
 end

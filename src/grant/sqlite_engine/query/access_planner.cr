@@ -125,41 +125,52 @@ module Grant::SQLiteEngine::Query
       return {SingleRowSource.new.as(RowSource), where, false} if steps.empty?
       check_partial_index_hints(steps, where)
       ordered = false
-      slot_position = {} of Int32 => Int32
-      steps.each_with_index { |step, index| slot_position[step.entry.slot] = index }
       # sqlite3ProcessJoin ANDs every inner join's ON onto the end of WHERE.
       where_terms = ExpressionWalk.conjuncts(where)
-      steps.each { |step| where_terms.concat(ExpressionWalk.conjuncts(step.on)) unless step.left_join? }
+      steps.each { |step| ExpressionWalk.conjuncts(step.on, where_terms) unless step.left_join? }
       # sqlite3SimplifyJoin... (select.c, "LEFT JOIN simplification"): a
       # LEFT JOIN whose right table a WHERE term needs non-NULL runs as an
-      # inner join, its ON terms joining the WHERE terms.
-      outer = steps.map_with_index do |step, index|
-        step.left_join? && index > 0 && where_terms.none? { |term| ExpressionWalk.implies_non_null_row?(term, step.entry.slot) }
+      # inner join, its ON terms joining the WHERE terms. Nil when no step
+      # is a LEFT JOIN.
+      outer = if steps.any?(&.left_join?)
+                steps.map_with_index do |step, index|
+                  step.left_join? && index > 0 && where_terms.none? { |term| ExpressionWalk.implies_non_null_row?(term, step.entry.slot) }
+                end
+              end
+      if outer
+        steps.each_with_index do |step, index|
+          ExpressionWalk.conjuncts(step.on, where_terms) if step.left_join? && !outer[index]
+        end
       end
-      steps.each_with_index do |step, index|
-        where_terms.concat(ExpressionWalk.conjuncts(step.on)) if step.left_join? && !outer[index]
-      end
-      constant_terms, terms = where_terms.partition { |term| ExpressionWalk.constant_term?(term) }
+      # Most queries have one FROM entry and only terms it can test, so the
+      # lists of constant and residual terms start empty and nil.
+      constant_terms = nil
+      residual = nil
       pushed = Array(Array(Expr)).new(steps.size) { [] of Expr }
-      residual = [] of Expr
-      terms.each do |term|
+      where_terms.each do |term|
+        if ExpressionWalk.constant_term?(term)
+          (constant_terms ||= [] of Expr) << term
+          next
+        end
         # The last step whose row the term reads (the first when it reads none).
         owner = 0
-        ExpressionWalk.slots(term).each do |slot|
-          position = slot_position[slot]?
+        slots_read_by(term).each do |slot|
+          position = steps.index { |step| step.entry.slot == slot }
           owner = position if position && position > owner
         end
-        if outer[owner] || term.is_a?(AggregateResultExpr)
-          residual << term
+        if (outer && outer[owner]) || term.is_a?(AggregateResultExpr)
+          (residual ||= [] of Expr) << term
         else
           pushed[owner] << term
         end
       end
       source = SingleRowSource.new.as(RowSource)
+      # The slots of the steps before the current one, filled as the loop
+      # moves on (none before a lone step).
+      available = steps.size > 1 ? Set(Int32).new : NO_SLOTS
       steps.each_with_index do |step, index|
-        available = Set(Int32).new
-        index.times { |prior| available << steps[prior].entry.slot }
-        if outer[index]
+        available << steps[index - 1].entry.slot if index > 0
+        if outer && outer[index]
           access = choose_access(step, ExpressionWalk.conjuncts(step.on), available, context).source
           source = JoinSource.new(source, access, step.on, true, [step.entry.slot])
           next
@@ -170,13 +181,13 @@ module Grant::SQLiteEngine::Query
         step_terms = pushed[index]
         if index == 0
           # A LIMIT stops a join only through its first entry's rows.
-          choice, ordered = choose_ordered_access(step, step_terms, context, ordering, steps.size == 1 ? limit_rows : nil)
+          choice, ordered = choose_ordered_access(step, step_terms, available, context, ordering,
+            steps.size == 1 ? limit_rows : nil)
           access = choice.source
         else
           access = choose_access(step, step_terms, available, context).source
         end
-        seeks, others = step_terms.partition { |term| seek_term?(term, step.entry, available, context) }
-        filter_terms = seeks + others
+        filter_terms = seeks_first(step_terms, step.entry, available, context)
         scan = access.as?(TableScanSource)
         if scan && !filter_terms.empty? && (table = step.entry.table) && !table.without_rowid?
           slot = step.entry.slot
@@ -186,10 +197,40 @@ module Grant::SQLiteEngine::Query
         end
         source = index == 0 ? access : JoinSource.new(source, access, nil, false, [step.entry.slot])
       end
-      if gate = ExpressionWalk.conjunction(constant_terms)
+      if gate = constant_terms.try { |terms| ExpressionWalk.conjunction(terms) }
         source = ConstantGateSource.new(source, gate)
       end
-      {source, ExpressionWalk.conjunction(residual), ordered}
+      {source, residual.try { |terms| ExpressionWalk.conjunction(terms) }, ordered}
+    end
+
+    # *terms* with the equalities a seek would use first (SQLite consumes
+    # those in the seek), each group in its own order; *terms* itself when
+    # it is already in that order.
+    private def seeks_first(terms : Array(Expr), entry : FromEntry, available : Set(Int32),
+                            context : QueryContext) : Array(Expr)
+      other_seen = false
+      in_order = terms.all? do |term|
+        seek = seek_term?(term, entry, available, context)
+        other_seen ||= !seek
+        !(seek && other_seen)
+      end
+      return terms if in_order
+      seeks, others = terms.partition { |term| seek_term?(term, entry, available, context) }
+      seeks.concat(others)
+    end
+
+    # The slots before a FROM entry with none before it, shared: nothing
+    # adds to it.
+    NO_SLOTS = Set(Int32).new
+
+    # Scratch set of `slots_read_by`, cleared on every call.
+    @slots_scratch = Set(Int32).new
+
+    # The slots *expression* reads (`ExpressionWalk.slots`), in a set the
+    # compiler reuses: it holds until the next call.
+    private def slots_read_by(expression : Expr) : Set(Int32)
+      @slots_scratch.clear
+      ExpressionWalk.slots(expression, @slots_scratch)
     end
 
     # An equality between a column (or rowid) of *entry* and a value known
@@ -204,7 +245,7 @@ module Grant::SQLiteEngine::Query
     # has a row: it reads only earlier entries, outer queries, parameters
     # and constants.
     private def available?(expression : Expr, slot : Int32, available : Set(Int32), context : QueryContext) : Bool
-      ExpressionWalk.slots(expression).all? do |used|
+      slots_read_by(expression).all? do |used|
         used != slot && (available.includes?(used) || !context.owns_slot?(used))
       end
     end

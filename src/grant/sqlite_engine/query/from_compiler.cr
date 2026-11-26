@@ -106,7 +106,7 @@ module Grant::SQLiteEngine::Query
       plan.outer_slots.each do |slot|
         next if context.owns_slot?(slot)
         context.correlated = true
-        context.outer_slots << slot
+        context.add_outer_slot(slot)
       end
       plan
     end
@@ -171,7 +171,7 @@ module Grant::SQLiteEngine::Query
           return {FromEntry.new(alias_name, slot, columns, nil), linked.as(RowSource)}
         end
         if definition = context.ctes.try(&.find(name))
-          if error = @list_of_cte_errors.find { |(expanding, _)| expanding.same?(definition) }
+          if error = @list_of_cte_errors.try(&.find { |(expanding, _)| expanding.same?(definition) })
             raise SQLError.new("#{error[1]}: #{definition.name}")
           end
           plan = compile_cte(definition, context)
@@ -282,22 +282,24 @@ module Grant::SQLiteEngine::Query
       plan.outer_slots.each do |slot|
         next if context.owns_slot?(slot)
         context.correlated = true
-        context.outer_slots << slot
+        context.add_outer_slot(slot)
       end
       plan
     end
 
-    @list_of_cte_errors = [] of {CteDefinition, String}
+    # Nil until a CTE body is expanded.
+    @list_of_cte_errors : Array({CteDefinition, String})? = nil
     @recursive_depth = 0
 
     # Compiles with references to *definition* raising *message* (the
     # zCteErr withExpand sets while it expands a CTE's own body).
     private def with_cte_error(definition : CteDefinition, message : String, &)
-      @list_of_cte_errors << {definition, message}
+      list_of_errors = @list_of_cte_errors ||= [] of {CteDefinition, String}
+      list_of_errors << {definition, message}
       begin
         yield
       ensure
-        @list_of_cte_errors.pop
+        list_of_errors.pop
       end
     end
 

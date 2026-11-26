@@ -111,15 +111,14 @@ module Grant::SQLiteEngine::Query
     # Compiles one expression the way sqlite3ResolveExprNames walks it: name
     # errors are recorded and the walk goes on; the first one is raised.
     def resolve_expression(expression : SQL::Expression, context : QueryContext) : Expr
-      saved = @list_of_name_errors
-      errors = [] of SQLError
-      @list_of_name_errors = errors
+      saved = start_name_resolution
+      errors = nil
       begin
         compiled = compile_expression(expression, context)
       ensure
-        @list_of_name_errors = saved
+        errors = finish_name_resolution(saved)
       end
-      if last = errors.last?
+      if errors && (last = errors.last?)
         raise ResolveError.new(last.message || "SQL error", last.result_code)
       end
       compiled
@@ -146,19 +145,17 @@ module Grant::SQLiteEngine::Query
 
     # Records *error* when an expression is being resolved; false otherwise.
     private def record_name_error(error : SQLError) : Bool
-      errors = @list_of_name_errors
-      return false if errors.nil? || error.is_a?(ResolveError) || !ExpressionCompiler.continuing_error?(error)
-      errors << error
+      return false if !@resolving_names || error.is_a?(ResolveError) || !ExpressionCompiler.continuing_error?(error)
+      note_name_error(error)
       true
     end
 
     def compile_expression(expression : SQL::Expression, context : QueryContext) : Expr
-      errors = @list_of_name_errors
-      raise ResolveAbort.new if errors && !errors.empty? && aborts_after_error?(expression)
+      raise ResolveAbort.new if name_error_recorded? && aborts_after_error?(expression)
       compile_expression_node(expression, context)
     rescue error : SQLError
-      if errors && !error.is_a?(ResolveError) && ExpressionCompiler.lookup_error?(error)
-        errors << error
+      if @resolving_names && !error.is_a?(ResolveError) && ExpressionCompiler.lookup_error?(error)
+        note_name_error(error)
         raise ResolveAbort.new
       end
       raise error unless record_name_error(error)
@@ -360,7 +357,7 @@ module Grant::SQLiteEngine::Query
       current = context
       while current && !current.same?(owner)
         current.correlated = true
-        current.outer_slots << slot
+        current.add_outer_slot(slot)
         current = current.parent
       end
     end
@@ -372,7 +369,7 @@ module Grant::SQLiteEngine::Query
       current = context
       while current && !current.same?(owner)
         current.correlated = true
-        slots.each { |slot| current.outer_slots << slot }
+        slots.each { |slot| current.add_outer_slot(slot) }
         current = current.parent
       end
     end
@@ -387,7 +384,7 @@ module Grant::SQLiteEngine::Query
       context.list_of_entries.each do |entry|
         next unless candidate_entry?(entry, table_name, schema_database)
         if index = entry.column_index(column_name)
-          next if table_name.nil? && entry.merged_columns.includes?(index)
+          next if table_name.nil? && entry.merged_column?(index)
           table = entry.table
           found = table && table.rowid_alias == index ? rowid_expression(entry) : column_expression(entry, index)
           ambiguous = true if match
@@ -540,9 +537,8 @@ module Grant::SQLiteEngine::Query
       # C ignores the walk result of a function's argument list.
       ConstantExpr.new(nil)
     rescue error : SQLError
-      errors = @list_of_name_errors
-      raise error if errors.nil? || error.is_a?(ResolveError) || !ExpressionCompiler.continuing_error?(error)
-      errors << error
+      raise error if !@resolving_names || error.is_a?(ResolveError) || !ExpressionCompiler.continuing_error?(error)
+      note_name_error(error)
       begin
         compile_expression(expression.pattern, context)
         compile_expression(expression.operand, context)
@@ -688,9 +684,8 @@ module Grant::SQLiteEngine::Query
     rescue ResolveAbort
       ConstantExpr.new(nil)
     rescue error : SQLError
-      errors = @list_of_name_errors
-      raise error unless errors && (error.is_a?(ResolveError) || ExpressionCompiler.lookup_error?(error))
-      errors << error
+      raise error unless @resolving_names && (error.is_a?(ResolveError) || ExpressionCompiler.lookup_error?(error))
+      note_name_error(error)
       ConstantExpr.new(nil)
     end
 
@@ -706,7 +701,7 @@ module Grant::SQLiteEngine::Query
       plan.outer_slots.each do |slot|
         next if context.owns_slot?(slot)
         context.correlated = true
-        context.outer_slots << slot
+        context.add_outer_slot(slot)
       end
       plan
     end
@@ -751,9 +746,8 @@ module Grant::SQLiteEngine::Query
       # An argument's walk stopped; C ignores the argument list's result.
       ConstantExpr.new(nil)
     rescue error : SQLError
-      errors = @list_of_name_errors
-      raise error if errors.nil? || error.is_a?(ResolveError) || !ExpressionCompiler.continuing_error?(error)
-      errors << error
+      raise error if !@resolving_names || error.is_a?(ResolveError) || !ExpressionCompiler.continuing_error?(error)
+      note_name_error(error)
       begin
         call.arguments.each { |argument| compile_expression(argument, context) }
         call.filter.try { |filter| compile_expression(filter, context) }

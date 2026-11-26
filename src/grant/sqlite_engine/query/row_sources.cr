@@ -46,18 +46,26 @@ module Grant::SQLiteEngine::Query
       @started = false
     end
 
+    # Empty lists the four term lists start as, shared and never changed:
+    # `filter_by` and `prepare_masks` replace them, so a scan that never
+    # filters (or is never chosen) allocates none.
+    NO_TERMS          = [] of {Expr, Set(Int32)?}
+    NO_TERM_POSITIONS = [] of Array(Int32)
+    NO_POSITIONS      = [] of Int32
+    NO_TESTS          = [] of ScanTest?
+
     # WHERE terms on this table's rows, tested as each row is read: each
     # term's columns are decoded just before it is tested, so a row a term
     # rejects never has its other columns decoded (OP_Column reads a
     # column when it is needed). Each term comes with the columns it
     # reads, nil when it reads the whole row.
-    @list_of_terms = [] of {Expr, Set(Int32)?}
-    @list_of_term_positions = [] of Array(Int32)
-    @rest_positions = [] of Int32
+    @list_of_terms = NO_TERMS
+    @list_of_term_positions = NO_TERM_POSITIONS
+    @rest_positions = NO_POSITIONS
     # Per term, the test that decides it from the stored record when the
     # stored value allows (`ScanTest`), so a row a term rejects is often
     # rejected before any of its values is decoded.
-    @list_of_tests = [] of ScanTest?
+    @list_of_tests = NO_TESTS
     # Terms of the current row a test passed without decoding their
     # columns; those columns are decoded before a later term or the query
     # reads them.

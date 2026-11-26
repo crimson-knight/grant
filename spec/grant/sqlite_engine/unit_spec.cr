@@ -146,3 +146,69 @@ describe Grant::SQLiteEngine::Error do
     Grant::SQLiteEngine::CorruptDatabase.new("x").should be_a(Grant::SQLiteEngine::Error)
   end
 end
+
+# A database whose table `t` (root page 2) is a chain of *interior* interior
+# table pages linked by their right children, ending in one empty leaf; when
+# *last_child* is given, the last interior page points there instead (a page
+# already on the path from the root) and there is no leaf.
+private def database_with_chained_root(interior : Int32, last_child : UInt32? = nil) : Grant::SQLiteEngine::Database
+  path = File.tempname("btree_count", ".db")
+  begin
+    writer = Grant::SQLiteEngine::Database.open(path, read_write: true, page_size: 512)
+    writer.create_table("CREATE TABLE t (a)")
+    writer.close
+    bytes = File.read(path).to_slice
+  ensure
+    File.delete?(path)
+  end
+  page_size = Grant::SQLiteEngine::DatabaseHeader.page_size_from(bytes)
+  page_count = 1 + interior + (last_child ? 0 : 1)
+  image = Bytes.new(page_count * page_size)
+  bytes[0, page_size].copy_to(image)
+  IO::ByteFormat::BigEndian.encode(page_count.to_u32, image[28, 4])
+  # The header's page count holds only while version-valid-for equals the
+  # change counter.
+  image[24, 4].copy_to(image[92, 4])
+  content_start = page_size == 65536 ? 0_u16 : page_size.to_u16
+  interior.times do |index|
+    page = image[(index + 1) * page_size, page_size]
+    page[0] = 0x05_u8
+    IO::ByteFormat::BigEndian.encode(content_start, page[5, 2])
+    child = index + 1 == interior && last_child ? last_child : (index + 3).to_u32
+    IO::ByteFormat::BigEndian.encode(child, page[8, 4])
+  end
+  unless last_child
+    leaf = image[(interior + 1) * page_size, page_size]
+    leaf[0] = 0x0d_u8
+    IO::ByteFormat::BigEndian.encode(content_start, leaf[5, 2])
+  end
+  Grant::SQLiteEngine::Database.from_bytes(image)
+end
+
+private def count_rows_of_t(database : Grant::SQLiteEngine::Database) : Grant::SQLiteEngine::Value
+  query = Grant::SQLiteEngine::Query::Session.new(database).prepare("SELECT count(*) FROM t")
+  query.step
+  query.row[0]
+end
+
+describe Grant::SQLiteEngine::Query::BTreeCount do
+  describe ".entries" do
+    it "counts the rows below a chain of interior pages" do
+      count_rows_of_t(database_with_chained_root(3)).should eq(0_i64)
+    end
+
+    it "raises CorruptDatabase for a child already on the path from the root" do
+      expect_raises(Grant::SQLiteEngine::CorruptDatabase, /reaches the page twice/) do
+        count_rows_of_t(database_with_chained_root(3, last_child: 3_u32))
+      end
+    end
+
+    it "raises CorruptDatabase for a tree deeper than MAX_BTREE_DEPTH" do
+      depth = Grant::SQLiteEngine::Limits::MAX_BTREE_DEPTH
+      count_rows_of_t(database_with_chained_root(depth - 1)).should eq(0_i64)
+      expect_raises(Grant::SQLiteEngine::CorruptDatabase, /deeper than #{depth} pages/) do
+        count_rows_of_t(database_with_chained_root(depth))
+      end
+    end
+  end
+end

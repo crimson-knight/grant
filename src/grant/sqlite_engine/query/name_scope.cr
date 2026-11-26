@@ -14,7 +14,8 @@ module Grant::SQLiteEngine::Query
     getter table : TableInfo?
     # Columns of this entry merged into an earlier entry by USING or
     # NATURAL: skipped by unqualified names and by `*`.
-    getter merged_columns = Set(Int32).new
+    # Nil until a column is merged.
+    @merged_columns : Set(Int32)? = nil
     property? right_of_left_join = false
     # Index hint: the INDEXED BY name, or NOT INDEXED.
     property indexed_by : String? = nil
@@ -37,6 +38,15 @@ module Grant::SQLiteEngine::Query
                    visible_column_count : Int32? = nil, @rowid_column : Int32? = nil, database : Database? = nil)
       @visible_column_count = visible_column_count || @list_of_columns.size
       @database = database || @table.try(&.database)
+    end
+
+    def merged_columns : Set(Int32)
+      @merged_columns ||= Set(Int32).new
+    end
+
+    def merged_column?(index : Int32) : Bool
+      merged = @merged_columns
+      !merged.nil? && merged.includes?(index)
     end
 
     def has_rowid? : Bool
@@ -115,8 +125,21 @@ module Grant::SQLiteEngine::Query
     # Set when an expression of this query (or a query inside it) refers to
     # a row of an enclosing query.
     property? correlated = false
-    # Slots of enclosing queries this query refers to.
-    getter outer_slots = Set(Int32).new
+    # Slots of enclosing queries this query refers to; nil until it
+    # refers to one.
+    @outer_slots : Set(Int32)? = nil
+
+    # The outer slots of a query that refers to none, shared by every such
+    # query: nothing adds to it (`add_outer_slot` adds to the query's own).
+    NO_OUTER_SLOTS = Set(Int32).new
+
+    def outer_slots : Set(Int32)
+      @outer_slots || NO_OUTER_SLOTS
+    end
+
+    def add_outer_slot(slot : Int32) : Nil
+      (@outer_slots ||= Set(Int32).new) << slot
+    end
 
     def initialize(@parent : QueryContext?, @first_slot : Int32, @ctes : CteScope?)
     end
