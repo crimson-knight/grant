@@ -38,21 +38,33 @@ module Grant::SQLiteEngine::Query
       @list_of_column_names = @compiled.list_of_column_names
     end
 
-    # Every target row once (the first match of an UPDATE ... FROM): its
-    # rowid (nil for WITHOUT ROWID), its values and the computed columns.
-    def collect(list_of_parameters : Array(Value)) : Array({Int64?, Array(Value), Array(Value)})
+    # Yields every target row once (the first match of an UPDATE ... FROM):
+    # its rowid (nil for WITHOUT ROWID), its values and the computed
+    # columns. The list is kept for the next run once the block returns,
+    # so the block must not keep it; a run inside the block (a trigger that
+    # comes back to this statement) collects into a list of its own.
+    def collect(list_of_parameters : Array(Value), & : Array({Int64?, Array(Value), Array(Value)}) ->) : Nil
+      rows = @spare_rows || [] of {Int64?, Array(Value), Array(Value)}
+      @spare_rows = nil
       Frame.reuse(@frame_keeper, @compiled.slot_count, @compiled.aggregate_count, list_of_parameters, @session) do |frame|
-        collect_in(frame)
+        collect_in(frame, rows)
+      end
+      begin
+        yield rows
+      ensure
+        rows.clear
+        @spare_rows = rows
       end
     end
+
+    @spare_rows : Array({Int64?, Array(Value), Array(Value)})? = nil
 
     # The frame collect runs in, kept for the next run.
     @frame_keeper = FrameKeeper.new
 
-    private def collect_in(frame : Frame) : Array({Int64?, Array(Value), Array(Value)})
+    private def collect_in(frame : Frame, rows : Array({Int64?, Array(Value), Array(Value)})) : Nil
       producer = @compiled.producer
       producer.open(frame)
-      rows = [] of {Int64?, Array(Value), Array(Value)}
       # The rowids taken so far, built once a second row arrives (most
       # writes change one row).
       seen = nil.as(Set(Int64)?)
@@ -67,7 +79,6 @@ module Grant::SQLiteEngine::Query
         # ROWID table reads the snapshot (its primary key).
         rows << {rowid, rowid ? NO_SNAPSHOT : frame.list_of_rows[@slot].dup, values}
       end
-      rows
     end
   end
 
@@ -161,8 +172,16 @@ module Grant::SQLiteEngine::Query
 
     private def write_returning_rows(run : WriteRun, list_of_parameters : Array(Value), returned : Array(Array(Value)),
                                      in_rowid_order : Bool) : Nil
+      @targets.collect(list_of_parameters) do |collected|
+        write_target_rows(run, list_of_parameters, returned, in_rowid_order, collected)
+      end
+    end
+
+    # Writes the collected targets; the list is the one TargetRows#collect
+    # keeps for its next run, so only this call reads it.
+    private def write_target_rows(run : WriteRun, list_of_parameters : Array(Value), returned : Array(Array(Value)),
+                                  in_rowid_order : Bool, targets : Array({Int64?, Array(Value), Array(Value)})) : Nil
       positions = @assignments.list_of_positions
-      targets = @targets.collect(list_of_parameters)
       if !@table.without_rowid? && in_rowid_order && targets.size > 1
         targets = targets.sort_by { |target| target[0] || 0_i64 }
       elsif @table.without_rowid? && !WithoutRowidScan.primary_key_changed?(@table, positions)
@@ -259,7 +278,15 @@ module Grant::SQLiteEngine::Query
 
     private def write_returning_rows(run : WriteRun, list_of_parameters : Array(Value), returned : Array(Array(Value)),
                                      in_rowid_order : Bool) : Nil
-      targets = @targets.collect(list_of_parameters)
+      @targets.collect(list_of_parameters) do |collected|
+        write_target_rows(run, list_of_parameters, returned, in_rowid_order, collected)
+      end
+    end
+
+    # Writes the collected targets; the list is the one TargetRows#collect
+    # keeps for its next run, so only this call reads it.
+    private def write_target_rows(run : WriteRun, list_of_parameters : Array(Value), returned : Array(Array(Value)),
+                                  in_rowid_order : Bool, targets : Array({Int64?, Array(Value), Array(Value)})) : Nil
       if !@table.without_rowid? && in_rowid_order && targets.size > 1
         targets = targets.sort_by { |target| target[0] || 0_i64 }
       elsif @table.without_rowid? && !in_rowid_order

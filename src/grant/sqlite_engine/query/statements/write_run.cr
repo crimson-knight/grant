@@ -530,6 +530,10 @@ module Grant::SQLiteEngine::Query
       end
     end
 
+    # What `moved_index_entries` returns when no entry moves (the common
+    # UPDATE of columns no index holds); its callers only read it.
+    NO_INDEX_ENTRIES = [] of {IndexLayout, Array(Value)}
+
     # The index entries an UPDATE that keeps *rowid* removes and adds. When
     # every index lacks a WHERE and expression terms and its columns hold
     # the same values in both rows, every entry stays and no key is built;
@@ -537,7 +541,7 @@ module Grant::SQLiteEngine::Query
     private def moved_index_entries(table : WriteTable, old_row : Array(Value), new_row : Array(Value),
                                     rowid : Int64) : {Array({IndexLayout, Array(Value)}), Array({IndexLayout, Array(Value)})}
       if table.list_of_index_layouts.all? { |index| !index.needs_evaluation? && same_columns?(index, old_row, new_row) }
-        return {[] of {IndexLayout, Array(Value)}, [] of {IndexLayout, Array(Value)}}
+        return {NO_INDEX_ENTRIES, NO_INDEX_ENTRIES}
       end
       old_entries = index_entries(table, old_row, rowid)
       new_entries = index_entries(table, new_row, rowid)
@@ -772,7 +776,14 @@ module Grant::SQLiteEngine::Query
         child_removed(table, row)
         parent_removed(table, rowid, row)
       end
-      table.database.remove_row(table.layout, rowid, row, index_entries(table, row, rowid))
+      # The entries are built in the session's reused list, as an insert's
+      # are; remove_row reads them only while it runs.
+      entry_list = @session.take_index_entry_list
+      begin
+        table.database.remove_row(table.layout, rowid, row, index_entries_into(entry_list, table, row, rowid))
+      ensure
+        @session.give_back_index_entry_list(entry_list)
+      end
       parent_actions(table, row, nil) if foreign_keys?
       count_change unless replace
       fire_table_triggers(table, SQL::TriggerEvent::Delete, false, rowid, original_row, nil, nil, override) if fires
