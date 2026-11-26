@@ -396,7 +396,10 @@ module Grant::SQLiteEngine
 
     def initialize(@path : String)
       @descriptor = LibC.open(@path, LibC::O_RDWR | LibC::O_CREAT | LibC::O_TRUNC | LibC::O_CLOEXEC, 0o644)
-      raise IO::Error.from_errno("Error opening #{@path}") if @descriptor < 0
+      # The errno's own `File::Error` (File::AccessDeniedError for a folder
+      # that takes no new file), as `File.open` raises, which the driver
+      # turns into C's result code.
+      raise File::Error.from_errno("Error opening file", file: @path) if @descriptor < 0
     end
 
     def size : Int64
