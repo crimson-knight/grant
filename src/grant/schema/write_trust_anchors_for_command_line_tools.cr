@@ -29,13 +29,12 @@ module Grant::Schema
     end
 
     # This user's cache directory for Grant: `~/Library/Caches/grant` on
-    # macOS, else `$XDG_CACHE_HOME/grant` or `~/.cache/grant`.
+    # macOS, else `~/.cache/grant`.
     def self.cache_directory : ::String
       {% if flag?(:darwin) %}
         File.join(Path.home.to_s, "Library", "Caches", "grant")
       {% else %}
-        base = ENV["XDG_CACHE_HOME"]?.presence || File.join(Path.home.to_s, ".cache")
-        File.join(base, "grant")
+        File.join(Path.home.to_s, ".cache", "grant")
       {% end %}
     end
 
