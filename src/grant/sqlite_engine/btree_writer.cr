@@ -363,7 +363,9 @@ module Grant::SQLiteEngine
         equal = false
         while low < high
           middle = (low + high) // 2
-          payload = PayloadReader.read(@pager, page, page.payload(middle))
+          # A key kept wholly on the page is read in place (the common
+          # case); any other goes through the overflow chain and its checks.
+          payload = page.local_index_payload(middle) || PayloadReader.read(@pager, page, page.payload(middle))
           result = comparator.compare_record(payload, key) || comparator.compare(Record.decode(payload, @encoding, page.number), key)
           if result < 0
             low = middle + 1
@@ -700,25 +702,35 @@ module Grant::SQLiteEngine
     # divider.
     private def distribute(cells : Array(Bytes), consume : Bool, capacity : Int32) : {Array(Int32), Array(Int32), Array(Int32)}
       starts = [0]
-      counts = [0]
-      used = [0]
+      counts = [] of Int32
+      used = [] of Int32
       dividers = [] of Int32
+      # The page being filled is counted in locals and recorded when the
+      # next one starts: this loop runs once per cell of every balance.
+      page_cell_count = 0
+      page_used = 0
       cells.each_with_index do |cell, position|
         cost = PageEditor.cost(cell.size)
-        if used.last + cost <= capacity
-          counts[-1] += 1
-          used[-1] += cost
-        elsif consume
+        if page_used + cost <= capacity
+          page_cell_count += 1
+          page_used += cost
+          next
+        end
+        counts << page_cell_count
+        used << page_used
+        if consume
           dividers << position
           starts << position + 1
-          counts << 0
-          used << 0
+          page_cell_count = 0
+          page_used = 0
         else
           starts << position
-          counts << 1
-          used << cost
+          page_cell_count = 1
+          page_used = cost
         end
       end
+      counts << page_cell_count
+      used << page_used
       if consume && starts.size > 1 && counts.last == 0
         # The last page is empty: the last divider moves down into it and
         # the previous page's last cell becomes the divider.
