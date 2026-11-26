@@ -20,7 +20,23 @@ module Grant::SQLiteEngine::Query
       when SQL::Exists, SQL::ScalarSubquery
         false
       else
-        children_of(expression).any? { |child| contains_aggregate?(child) }
+        each_child_of(expression) { |child| return true if contains_aggregate?(child) }
+        false
+      end
+    end
+
+    # Yields each of `children_of(expression)` in order; operators of one or
+    # two operands, which every statement has, yield them without building
+    # the list.
+    def each_child_of(expression : SQL::Expression, & : SQL::Expression ->) : Nil
+      case expression
+      when SQL::UnaryOperation then yield expression.operand
+      when SQL::BinaryOperation
+        yield expression.left
+        yield expression.right
+      when SQL::NullTest, SQL::Cast, SQL::Collate then yield expression.operand
+      else
+        children_of(expression).each { |child| yield child }
       end
     end
 
@@ -63,9 +79,13 @@ module Grant::SQLiteEngine::Query
         end
         list
       else
-        [] of SQL::Expression
+        NO_SUB_EXPRESSIONS
       end
     end
+
+    # The sub-expressions of a name, literal or parameter, shared: nothing
+    # adds to it.
+    NO_SUB_EXPRESSIONS = [] of SQL::Expression
 
     # An error resolveExprStep records and walks on past (it counts nNcErr):
     # sqlite3ErrorMsg keeps the last message, so of these the last one in
@@ -91,15 +111,13 @@ module Grant::SQLiteEngine::Query
     # Compiles one expression the way sqlite3ResolveExprNames walks it: name
     # errors are recorded and the walk goes on; the first one is raised.
     def resolve_expression(expression : SQL::Expression, context : QueryContext) : Expr
-      saved = @list_of_name_errors
-      errors = [] of SQLError
-      @list_of_name_errors = errors
+      saved = start_name_resolution
       begin
         compiled = compile_expression(expression, context)
       ensure
-        @list_of_name_errors = saved
+        errors = finish_name_resolution(saved)
       end
-      if last = errors.last?
+      if errors && (last = errors.last?)
         raise ResolveError.new(last.message || "SQL error", last.result_code)
       end
       compiled
@@ -126,19 +144,17 @@ module Grant::SQLiteEngine::Query
 
     # Records *error* when an expression is being resolved; false otherwise.
     private def record_name_error(error : SQLError) : Bool
-      errors = @list_of_name_errors
-      return false if errors.nil? || error.is_a?(ResolveError) || !ExpressionCompiler.continuing_error?(error)
-      errors << error
+      return false if !@resolving_names || error.is_a?(ResolveError) || !ExpressionCompiler.continuing_error?(error)
+      note_name_error(error)
       true
     end
 
     def compile_expression(expression : SQL::Expression, context : QueryContext) : Expr
-      errors = @list_of_name_errors
-      raise ResolveAbort.new if errors && !errors.empty? && aborts_after_error?(expression)
+      raise ResolveAbort.new if name_error_recorded? && aborts_after_error?(expression)
       compile_expression_node(expression, context)
     rescue error : SQLError
-      if errors && !error.is_a?(ResolveError) && ExpressionCompiler.lookup_error?(error)
-        errors << error
+      if @resolving_names && !error.is_a?(ResolveError) && ExpressionCompiler.lookup_error?(error)
+        note_name_error(error)
         raise ResolveAbort.new
       end
       raise error unless record_name_error(error)
@@ -243,7 +259,7 @@ module Grant::SQLiteEngine::Query
     # An integer literal: decimal digits past the Int64 range read as a
     # REAL (codeInteger); hexadecimal is a 64-bit two's complement pattern.
     def literal_integer(text : String, negative : Bool) : Value
-      digits = text.delete('_')
+      digits = text.includes?('_') ? text.delete('_') : text
       if digits.size > 2 && digits[0] == '0' && digits[1].in?('x', 'X')
         hex = digits[2..]
         raise SQLError.new("hex literal too big: #{negative ? "-" : ""}#{text}") if hex.size > 16
@@ -340,7 +356,7 @@ module Grant::SQLiteEngine::Query
       current = context
       while current && !current.same?(owner)
         current.correlated = true
-        current.outer_slots << slot
+        current.add_outer_slot(slot)
         current = current.parent
       end
     end
@@ -352,7 +368,7 @@ module Grant::SQLiteEngine::Query
       current = context
       while current && !current.same?(owner)
         current.correlated = true
-        slots.each { |slot| current.outer_slots << slot }
+        slots.each { |slot| current.add_outer_slot(slot) }
         current = current.parent
       end
     end
@@ -360,36 +376,41 @@ module Grant::SQLiteEngine::Query
     # lookupName within one query level.
     private def resolve_in(context : QueryContext, column_name : String, table_name : String?,
                            schema_database : Database? = nil) : Expr?
-      matches = [] of Expr
-      candidates = context.list_of_entries.select do |entry|
-        next false if schema_database && !schema_database.same?(entry.database)
-        table_name.nil? || entry.match_name.compare(table_name, case_insensitive: true) == 0
-      end
-      candidates.each do |entry|
+      # One pass over the FROM entries, with no list of candidates or
+      # matches: every statement resolves each of its column names here.
+      match = nil
+      ambiguous = false
+      context.list_of_entries.each do |entry|
+        next unless candidate_entry?(entry, table_name, schema_database)
         if index = entry.column_index(column_name)
-          next if table_name.nil? && entry.merged_columns.includes?(index)
+          next if table_name.nil? && entry.merged_column?(index)
           table = entry.table
-          if table && table.rowid_alias == index
-            matches << rowid_expression(entry)
-          else
-            matches << column_expression(entry, index)
-          end
+          found = table && table.rowid_alias == index ? rowid_expression(entry) : column_expression(entry, index)
+          ambiguous = true if match
+          match = found
         end
       end
-      if matches.size > 1
+      if ambiguous
         raise SQLError.new("ambiguous column name: #{table_name ? "#{table_name}.#{column_name}" : column_name}")
       end
-      return matches.first if matches.size == 1
+      return match if match
       if ROWID_NAMES.includes?(column_name.downcase)
-        with_rowid = candidates.select(&.has_rowid?)
-        if with_rowid.size > 1
-          raise SQLError.new("ambiguous column name: #{column_name}")
+        with_rowid = nil
+        context.list_of_entries.each do |entry|
+          next unless candidate_entry?(entry, table_name, schema_database) && entry.has_rowid?
+          raise SQLError.new("ambiguous column name: #{column_name}") if with_rowid
+          with_rowid = entry
         end
-        if entry = with_rowid.first?
-          return rowid_expression(entry)
-        end
+        return rowid_expression(with_rowid) if with_rowid
       end
       nil
+    end
+
+    # Whether *entry* is one *table_name* (and *schema_database*) can name:
+    # any entry when the column reference names no table.
+    private def candidate_entry?(entry : FromEntry, table_name : String?, schema_database : Database?) : Bool
+      return false if schema_database && !schema_database.same?(entry.database)
+      table_name.nil? || entry.match_name.compare(table_name, case_insensitive: true) == 0
     end
 
     # ---------------------------------------------------------- operators
@@ -515,9 +536,8 @@ module Grant::SQLiteEngine::Query
       # C ignores the walk result of a function's argument list.
       ConstantExpr.new(nil)
     rescue error : SQLError
-      errors = @list_of_name_errors
-      raise error if errors.nil? || error.is_a?(ResolveError) || !ExpressionCompiler.continuing_error?(error)
-      errors << error
+      raise error if !@resolving_names || error.is_a?(ResolveError) || !ExpressionCompiler.continuing_error?(error)
+      note_name_error(error)
       begin
         compile_expression(expression.pattern, context)
         compile_expression(expression.operand, context)
@@ -663,9 +683,8 @@ module Grant::SQLiteEngine::Query
     rescue ResolveAbort
       ConstantExpr.new(nil)
     rescue error : SQLError
-      errors = @list_of_name_errors
-      raise error unless errors && (error.is_a?(ResolveError) || ExpressionCompiler.lookup_error?(error))
-      errors << error
+      raise error unless @resolving_names && (error.is_a?(ResolveError) || ExpressionCompiler.lookup_error?(error))
+      note_name_error(error)
       ConstantExpr.new(nil)
     end
 
@@ -681,7 +700,7 @@ module Grant::SQLiteEngine::Query
       plan.outer_slots.each do |slot|
         next if context.owns_slot?(slot)
         context.correlated = true
-        context.outer_slots << slot
+        context.add_outer_slot(slot)
       end
       plan
     end
@@ -726,9 +745,8 @@ module Grant::SQLiteEngine::Query
       # An argument's walk stopped; C ignores the argument list's result.
       ConstantExpr.new(nil)
     rescue error : SQLError
-      errors = @list_of_name_errors
-      raise error if errors.nil? || error.is_a?(ResolveError) || !ExpressionCompiler.continuing_error?(error)
-      errors << error
+      raise error if !@resolving_names || error.is_a?(ResolveError) || !ExpressionCompiler.continuing_error?(error)
+      note_name_error(error)
       begin
         call.arguments.each { |argument| compile_expression(argument, context) }
         call.filter.try { |filter| compile_expression(filter, context) }

@@ -211,14 +211,20 @@ module Grant::SQLiteEngine::Query
   # assigned, and the numbers of named parameters.
   module ParameterScan
     def self.scan(statement : SQL::SelectStatement) : {Int32, Hash(String, Int32)}
-      names = {} of String => Int32
+      names : Hash(String, Int32)? = nil
       highest = 0
       visit_select(statement) do |parameter|
         highest = Math.max(highest, parameter.number)
         text = parameter.text
-        names[text] = parameter.number unless text == "?"
+        unless text == "?"
+          # The block captures *names*, so a local holds the narrowed table.
+          table = names
+          names = table = {} of String => Int32 if table.nil?
+          table[text] = parameter.number
+        end
       end
-      {highest, names}
+      found = names
+      {highest, found || PreparedQuery::NO_PARAMETER_NAMES}
     end
 
     private def self.visit_select(statement : SQL::SelectStatement, &block : SQL::Parameter ->) : Nil
@@ -271,7 +277,7 @@ module Grant::SQLiteEngine::Query
         visit_expression(expression.operand, &block)
         expression.arguments.try(&.each { |argument| visit_expression(argument, &block) })
       else
-        Walker.children(expression).each { |child| visit_expression(child, &block) }
+        Walker.each_child(expression) { |child| visit_expression(child, &block) }
       end
     end
 
@@ -281,6 +287,10 @@ module Grant::SQLiteEngine::Query
 
       def self.children(expression : SQL::Expression) : Array(SQL::Expression)
         children_of(expression)
+      end
+
+      def self.each_child(expression : SQL::Expression, & : SQL::Expression ->) : Nil
+        each_child_of(expression) { |child| yield child }
       end
     end
   end

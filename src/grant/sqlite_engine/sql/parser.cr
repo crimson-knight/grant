@@ -45,7 +45,12 @@ module Grant::SQLiteEngine::SQL
     @lookahead = Array(Token).new(4)
     @depth = 0
     @parameter_count = 0
-    @named_parameters = {} of String => Int32
+    # The number of each named parameter of the statement being parsed;
+    # nil until it names one.
+    @named_parameters : Hash(String, Int32)? = nil
+    # The parameter names of a statement that names none, shared by every
+    # such statement: nothing changes it.
+    NO_PARAMETER_NAMES = {} of String => Int32
     # Set once a WITH clause names a table (parse.y withnm, pParse->bHasWith).
     @has_with = false
     # Inside a trigger body, which SQLite parses but does not resolve.
@@ -73,7 +78,7 @@ module Grant::SQLiteEngine::SQL
         skip_semicolons
         break if kind.end_of_input?
         @parameter_count = 0
-        @named_parameters.clear
+        @named_parameters = nil
         @has_with = false
         statements << parse_statement
         expect_statement_end
@@ -126,8 +131,23 @@ module Grant::SQLiteEngine::SQL
       advance
     end
 
+    # The texts of the last tokens `text` returned, so a word the statement
+    # repeats (the table in `users.id`, `users.email` and `FROM users`)
+    # shares one String; Strings never change, so sharing is safe.
+    RECENT_TEXT_CAPACITY = 8
+    @list_of_recent_texts = StaticArray(String, RECENT_TEXT_CAPACITY).new("")
+    @recent_text_count = 0
+
     private def text(token : Token) : String
-      @tokenizer.text(token)
+      known_count = Math.min(@recent_text_count, RECENT_TEXT_CAPACITY)
+      known_count.times do |index|
+        known = @list_of_recent_texts.unsafe_fetch(index)
+        return known if @tokenizer.text_is?(token, known)
+      end
+      fresh = @tokenizer.text(token)
+      @list_of_recent_texts[@recent_text_count % RECENT_TEXT_CAPACITY] = fresh
+      @recent_text_count &+= 1
+      fresh
     end
 
     # parse.y's %syntax_error: `near "X": syntax error`, or `incomplete

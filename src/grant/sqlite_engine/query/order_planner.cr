@@ -17,6 +17,11 @@ module Grant::SQLiteEngine::Query
     fixed : Array(Int32)
 
   class Compiler
+    # The empty order and fixed-column lists access choices share: a
+    # choice's lists are only read.
+    NO_ORDER         = [] of OrderElement
+    NO_FIXED_COLUMNS = [] of Int32
+
     # SQLite assumes a table of about a million rows when it has no
     # statistics (sqlite3DefaultRowEst: nRowLogEst 200, about 2^20).
     DEFAULT_TABLE_ROWS = 1_048_576.0
@@ -28,10 +33,10 @@ module Grant::SQLiteEngine::Query
     # *ordering* wanted, the first FROM entry is read the cheapest way
     # counting the sort (whereSortingCost, about n log n) a path needs when
     # its order does not give the wanted order. Returns the choice and
-    # whether its order gives *ordering*.
-    private def choose_ordered_access(step : JoinStep, terms : Array(Expr), context : QueryContext,
+    # whether its order gives *ordering*. *available* holds the slots of the
+    # FROM entries read before this one.
+    private def choose_ordered_access(step : JoinStep, terms : Array(Expr), available : Set(Int32), context : QueryContext,
                                       ordering : Array(OrderTerm), limit_rows : Float64? = nil) : {AccessChoice, Bool}
-      available = Set(Int32).new
       filtering = choose_access(step, terms, available, context)
       return {filtering, false} if ordering.empty?
       best = filtering
@@ -76,7 +81,7 @@ module Grant::SQLiteEngine::Query
       return choices if table.nil? || table.without_rowid?
       unless entry.indexed_by
         choices << AccessChoice.new(step.base_source, 3.0 * DEFAULT_TABLE_ROWS, DEFAULT_TABLE_ROWS,
-          [OrderElement.new(entry.slot, nil, Collation::Binary, false, true)], [] of Int32)
+          [OrderElement.new(entry.slot, nil, Collation::Binary, false, true)], NO_FIXED_COLUMNS)
       end
       return choices if entry.not_indexed?
       table.list_of_indexes.each do |layout|
@@ -155,8 +160,7 @@ module Grant::SQLiteEngine::Query
         end
         if decided
           next if ExpressionWalk.constant_term?(term.expression)
-          used = ExpressionWalk.slots(term.expression)
-          next if used.all? { |used_slot| used_slot == slot }
+          next if slots_read_by(term.expression).all? { |used_slot| used_slot == slot }
           return false
         end
         column = ordering_column(expression, entry)

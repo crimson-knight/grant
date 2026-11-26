@@ -14,9 +14,9 @@ module Grant::SQLiteEngine::Query
       when RowidExpr  then into << expression.slot
       when SubqueryExpr
         expression.list_of_outer_slots.each { |slot| into << slot }
-        ExpressionWalk.children(expression).each { |child| slots(child, into) }
+        expression.each_child { |child| slots(child, into) }
       else
-        ExpressionWalk.children(expression).each { |child| slots(child, into) }
+        expression.each_child { |child| slots(child, into) }
       end
       into
     end
@@ -28,12 +28,12 @@ module Grant::SQLiteEngine::Query
       when ColumnExpr
         into << expression.column if expression.slot == slot
         # A VIRTUAL generated column reads the columns of its expression.
-        expression.children.each { |child| return unless columns_of(child, slot, into) }
+        expression.each_child { |child| return unless columns_of(child, slot, into) }
       when SubqueryExpr
         return if expression.list_of_outer_slots.includes?(slot)
-        expression.children.each { |child| return unless columns_of(child, slot, into) }
+        expression.each_child { |child| return unless columns_of(child, slot, into) }
       else
-        expression.children.each { |child| return unless columns_of(child, slot, into) }
+        expression.each_child { |child| return unless columns_of(child, slot, into) }
       end
       into
     end
@@ -46,7 +46,8 @@ module Grant::SQLiteEngine::Query
       return false if expression.is_a?(ColumnExpr) || expression.is_a?(RowidExpr) || expression.is_a?(SubqueryExpr) ||
                       expression.is_a?(AggregateResultExpr) || expression.is_a?(UserFunctionExpr)
       return false if expression.is_a?(FunctionExpr) && NONDETERMINISTIC.includes?(expression.function_name)
-      ExpressionWalk.children(expression).all? { |child| constant_term?(child) }
+      expression.each_child { |child| return false unless constant_term?(child) }
+      true
     end
 
     # sqlite3ExprImpliesNonNullRow (expr.c): true when *expression* cannot
@@ -86,7 +87,8 @@ module Grant::SQLiteEngine::Query
       when InListExpr
         !expression.list.empty? && walk_non_null(expression.operand, slot)
       when NotExpr, ArithmeticExpr, BitwiseExpr, ConcatExpr, NegateExpr, BitNotExpr, CollateExpr, UnaryPlusExpr, CastExpr
-        expression.children.any? { |child| walk_non_null(child, slot) }
+        expression.each_child { |child| return true if walk_non_null(child, slot) }
+        false
       else
         false
       end
@@ -123,38 +125,56 @@ module Grant::SQLiteEngine::Query
       return {SingleRowSource.new.as(RowSource), where, false} if steps.empty?
       check_partial_index_hints(steps, where)
       ordered = false
-      slot_position = {} of Int32 => Int32
-      steps.each_with_index { |step, index| slot_position[step.entry.slot] = index }
       # sqlite3ProcessJoin ANDs every inner join's ON onto the end of WHERE.
       where_terms = ExpressionWalk.conjuncts(where)
-      steps.each { |step| where_terms.concat(ExpressionWalk.conjuncts(step.on)) unless step.left_join? }
+      steps.each { |step| ExpressionWalk.conjuncts(step.on, where_terms) unless step.left_join? }
       # sqlite3SimplifyJoin... (select.c, "LEFT JOIN simplification"): a
       # LEFT JOIN whose right table a WHERE term needs non-NULL runs as an
-      # inner join, its ON terms joining the WHERE terms.
-      outer = steps.map_with_index do |step, index|
-        step.left_join? && index > 0 && where_terms.none? { |term| ExpressionWalk.implies_non_null_row?(term, step.entry.slot) }
+      # inner join, its ON terms joining the WHERE terms. Nil when no step
+      # is a LEFT JOIN.
+      outer = if steps.any?(&.left_join?)
+                steps.map_with_index do |step, index|
+                  step.left_join? && index > 0 && where_terms.none? { |term| ExpressionWalk.implies_non_null_row?(term, step.entry.slot) }
+                end
+              end
+      if outer
+        steps.each_with_index do |step, index|
+          ExpressionWalk.conjuncts(step.on, where_terms) if step.left_join? && !outer[index]
+        end
       end
-      steps.each_with_index do |step, index|
-        where_terms.concat(ExpressionWalk.conjuncts(step.on)) if step.left_join? && !outer[index]
-      end
-      constant_terms, terms = where_terms.partition { |term| ExpressionWalk.constant_term?(term) }
+      # Most queries have one FROM entry and only terms it can test, so the
+      # lists of constant and residual terms start empty and nil.
+      constant_terms = nil
+      residual = nil
       pushed = Array(Array(Expr)).new(steps.size) { [] of Expr }
-      residual = [] of Expr
-      terms.each do |term|
-        used = ExpressionWalk.slots(term).compact_map { |slot| slot_position[slot]? }
-        owner = used.max? || 0
-        if outer[owner] || term.is_a?(AggregateResultExpr)
-          residual << term
+      where_terms.each do |term|
+        if ExpressionWalk.constant_term?(term)
+          (constant_terms ||= [] of Expr) << term
+          next
+        end
+        # The last step whose row the term reads (the first when it reads none).
+        owner = 0
+        slots_read_by(term).each do |slot|
+          position = steps.index { |step| step.entry.slot == slot }
+          owner = position if position && position > owner
+        end
+        if (outer && outer[owner]) || term.is_a?(AggregateResultExpr)
+          (residual ||= [] of Expr) << term
         else
           pushed[owner] << term
         end
       end
-      source = SingleRowSource.new.as(RowSource)
+      # The rows of the steps so far: nil before the first, which is never
+      # a LEFT JOIN's right side (outer[0] is false).
+      joined = nil.as(RowSource?)
+      # The slots of the steps before the current one, filled as the loop
+      # moves on (none before a lone step).
+      available = steps.size > 1 ? Set(Int32).new : NO_SLOTS
       steps.each_with_index do |step, index|
-        available = steps[0, index].map(&.entry.slot).to_set
-        if outer[index]
+        available << steps[index - 1].entry.slot if index > 0
+        if outer && outer[index]
           access = choose_access(step, ExpressionWalk.conjuncts(step.on), available, context).source
-          source = JoinSource.new(source, access, step.on, true, [step.entry.slot])
+          joined = JoinSource.new(joined || SingleRowSource.new, access, step.on, true, [step.entry.slot])
           next
         end
         # The WHERE terms this step completes (ON terms of inner joins among
@@ -163,13 +183,13 @@ module Grant::SQLiteEngine::Query
         step_terms = pushed[index]
         if index == 0
           # A LIMIT stops a join only through its first entry's rows.
-          choice, ordered = choose_ordered_access(step, step_terms, context, ordering, steps.size == 1 ? limit_rows : nil)
+          choice, ordered = choose_ordered_access(step, step_terms, available, context, ordering,
+            steps.size == 1 ? limit_rows : nil)
           access = choice.source
         else
           access = choose_access(step, step_terms, available, context).source
         end
-        seeks, others = step_terms.partition { |term| seek_term?(term, step.entry, available, context) }
-        filter_terms = seeks + others
+        filter_terms = seeks_first(step_terms, step.entry, available, context)
         scan = access.as?(TableScanSource)
         if scan && !filter_terms.empty? && (table = step.entry.table) && !table.without_rowid?
           slot = step.entry.slot
@@ -177,12 +197,43 @@ module Grant::SQLiteEngine::Query
         elsif filter = ExpressionWalk.conjunction(filter_terms)
           access = FilterSource.new(access, filter)
         end
-        source = index == 0 ? access : JoinSource.new(source, access, nil, false, [step.entry.slot])
+        joined = joined ? JoinSource.new(joined, access, nil, false, [step.entry.slot]) : access
       end
-      if gate = ExpressionWalk.conjunction(constant_terms)
+      source = joined || SingleRowSource.new
+      if gate = constant_terms.try { |terms| ExpressionWalk.conjunction(terms) }
         source = ConstantGateSource.new(source, gate)
       end
-      {source, ExpressionWalk.conjunction(residual), ordered}
+      {source, residual.try { |terms| ExpressionWalk.conjunction(terms) }, ordered}
+    end
+
+    # *terms* with the equalities a seek would use first (SQLite consumes
+    # those in the seek), each group in its own order; *terms* itself when
+    # it is already in that order.
+    private def seeks_first(terms : Array(Expr), entry : FromEntry, available : Set(Int32),
+                            context : QueryContext) : Array(Expr)
+      other_seen = false
+      in_order = terms.all? do |term|
+        seek = seek_term?(term, entry, available, context)
+        other_seen ||= !seek
+        !(seek && other_seen)
+      end
+      return terms if in_order
+      seeks, others = terms.partition { |term| seek_term?(term, entry, available, context) }
+      seeks.concat(others)
+    end
+
+    # The slots before a FROM entry with none before it, shared: nothing
+    # adds to it.
+    NO_SLOTS = Set(Int32).new
+
+    # Scratch set of `slots_read_by`, cleared on every call.
+    @slots_scratch = Set(Int32).new
+
+    # The slots *expression* reads (`ExpressionWalk.slots`), in a set the
+    # compiler reuses: it holds until the next call.
+    private def slots_read_by(expression : Expr) : Set(Int32)
+      @slots_scratch.clear
+      ExpressionWalk.slots(expression, @slots_scratch)
     end
 
     # An equality between a column (or rowid) of *entry* and a value known
@@ -197,7 +248,7 @@ module Grant::SQLiteEngine::Query
     # has a row: it reads only earlier entries, outer queries, parameters
     # and constants.
     private def available?(expression : Expr, slot : Int32, available : Set(Int32), context : QueryContext) : Bool
-      ExpressionWalk.slots(expression).all? do |used|
+      slots_read_by(expression).all? do |used|
         used != slot && (available.includes?(used) || !context.owns_slot?(used))
       end
     end
@@ -236,7 +287,7 @@ module Grant::SQLiteEngine::Query
       table = entry.table
       rows_order = [OrderElement.new(entry.slot, nil, Collation::Binary, false, true)]
       if table.nil? || table.without_rowid?
-        return AccessChoice.new(step.base_source, DEFAULT_TABLE_ROWS, DEFAULT_TABLE_ROWS, [] of OrderElement, [] of Int32)
+        return AccessChoice.new(step.base_source, DEFAULT_TABLE_ROWS, DEFAULT_TABLE_ROWS, NO_ORDER, NO_FIXED_COLUMNS)
       end
       database = table.database
       seek_cost = Math.log2(DEFAULT_TABLE_ROWS)
@@ -247,7 +298,7 @@ module Grant::SQLiteEngine::Query
            term.list.all? { |value| available?(value, entry.slot, available, context) }
           keys = term.list.size.to_f64
           return AccessChoice.new(RowidLookupSource.new(database, table, entry.slot, term.list, entry.column_use),
-            keys * seek_cost, keys, rows_order, [] of Int32)
+            keys * seek_cost, keys, rows_order, NO_FIXED_COLUMNS)
         end
         oriented = oriented(term, entry, available, context)
         next unless oriented
@@ -256,7 +307,7 @@ module Grant::SQLiteEngine::Query
         case operator
         when .equal?
           return AccessChoice.new(RowidLookupSource.new(database, table, entry.slot, [other], entry.column_use),
-            seek_cost, 1.0, rows_order, [] of Int32)
+            seek_cost, 1.0, rows_order, NO_FIXED_COLUMNS)
         when .greater?, .greater_or_equal?
           low ||= other
         when .less?, .less_or_equal?
@@ -274,14 +325,14 @@ module Grant::SQLiteEngine::Query
         rows /= 4.0 if high
         rows /= 4.0 if low && high
         return AccessChoice.new(RowidRangeSource.new(database, table, entry.slot, low, high, entry.column_use),
-          3.0 * rows + seek_cost, rows, rows_order, [] of Int32)
+          3.0 * rows + seek_cost, rows, rows_order, NO_FIXED_COLUMNS)
       end
       unless entry.not_indexed?
         if partial = partial_index_scan(entry, table, terms)
           return partial
         end
       end
-      AccessChoice.new(step.base_source, 3.0 * DEFAULT_TABLE_ROWS, DEFAULT_TABLE_ROWS, rows_order, [] of Int32)
+      AccessChoice.new(step.base_source, 3.0 * DEFAULT_TABLE_ROWS, DEFAULT_TABLE_ROWS, rows_order, NO_FIXED_COLUMNS)
     end
 
     # A full scan of a partial index the WHERE implies, which costs less

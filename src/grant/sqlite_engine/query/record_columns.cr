@@ -6,14 +6,25 @@ module Grant::SQLiteEngine::Query
   # that needs whole rows calls `mark_all`.
   class ColumnUse
     @all = false
-    @columns = Set(Int32).new
+    # The marked columns: those below 64 as bits, any others in a set made
+    # when the first of them is marked.
+    @low_columns = 0_u64
+    @high_columns : Set(Int32)? = nil
     @stored_mask : Array(Bool)? = nil
     @mask_ready = false
-    @stored_positions = [] of Int32
+    # Replaced by the positions `stored_mask` finds; nothing changes it.
+    NO_POSITIONS = [] of Int32
+    @stored_positions = NO_POSITIONS
 
     def mark(column : Int32) : Nil
-      @mask_ready = false unless @columns.includes?(column)
-      @columns << column
+      return if marked?(column)
+      @mask_ready = false
+      if low_column?(column)
+        @low_columns |= 1_u64 << column
+      else
+        high_columns = @high_columns ||= Set(Int32).new
+        high_columns << column
+      end
     end
 
     def mark_all : Nil
@@ -26,14 +37,26 @@ module Grant::SQLiteEngine::Query
     end
 
     def includes?(column : Int32) : Bool
-      @all || @columns.includes?(column)
+      @all || marked?(column)
+    end
+
+    private def marked?(column : Int32) : Bool
+      if low_column?(column)
+        return (@low_columns >> column) & 1_u64 == 1_u64
+      end
+      high_columns = @high_columns
+      !high_columns.nil? && high_columns.includes?(column)
+    end
+
+    private def low_column?(column : Int32) : Bool
+      column >= 0 && column < 64
     end
 
     # The stored record positions to decode for *table*.
     def stored_mask(table : TableInfo) : Array(Bool)
       mask = @stored_mask
       return mask if mask && @mask_ready
-      mask = @all ? table.stored_mask_for(nil) : table.stored_mask_for(@columns)
+      mask = table.stored_mask_for(self)
       @stored_mask = mask
       @stored_positions = (0...mask.size).select { |position| mask[position] }
       @mask_ready = true

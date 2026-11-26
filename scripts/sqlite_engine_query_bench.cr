@@ -3,7 +3,11 @@
 #
 #   crystal-alpha build --release scripts/sqlite_engine_query_bench.cr -o bench \
 #     --link-flags "-L DIR -Wl,-rpath,DIR"
-#   ./bench ROWS ROUNDS REPORT_DIR
+#   ./bench ROWS ROUNDS REPORT_DIR [LABELS]
+#
+# LABELS, when given, is a comma-separated list of workload labels to run
+# (e.g. "count(*) full table,prepare + find by primary key"), for profiling
+# one row at a time; without it every workload runs.
 #
 # Each workload runs a prepared statement many times with new parameters
 # (reset, bind, step to the end, reading every column), as Grant's driver
@@ -67,6 +71,7 @@ end
 rows = ARGV[0].to_i
 rounds = ARGV[1].to_i
 directory = ARGV[2]
+list_of_labels = ARGV[3]?.try(&.split(",").map(&.strip))
 path = File.join(Dir.tempdir, "grant-query-bench-#{Process.pid}.db")
 connection = SQLiteQueryOracle::Connection.new(path)
 connection.exec <<-SQL
@@ -113,6 +118,9 @@ workloads = [
   Workload.new("prepare + find by primary key", "SELECT users.id, users.email, users.name FROM users WHERE users.id = ? LIMIT 1", 20_000, true,
     ->(run : Int32) { [(run % rows + 1).to_i64] of Value }),
 ]
+
+workloads.select! { |workload| list_of_labels.includes?(workload.label) } if list_of_labels
+abort "no workload matches " if workloads.empty?
 
 session = Grant::SQLiteEngine::Query::Session.new(Grant::SQLiteEngine::Database.open(path))
 lines = [] of String

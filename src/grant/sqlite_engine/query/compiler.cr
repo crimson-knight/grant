@@ -48,9 +48,11 @@ module Grant::SQLiteEngine::Query
     end
 
     def compile(statement : SQL::SelectStatement) : CompiledSelect
+      # A caller of `compile` reads only the result column names.
+      @top_level_subquery_names = false
       plan = compile_query(statement, nil, nil)
       # sqlite3ErrorMsg keeps the last message.
-      if message = @list_of_codegen_errors.last?
+      if message = @list_of_codegen_errors.try(&.last?)
         raise SQLError.new(message)
       end
       CompiledSelect.new(plan.producer, plan.list_of_column_names, @slot_count, @aggregate_count,
@@ -59,10 +61,11 @@ module Grant::SQLiteEngine::Query
 
     # Errors C SQLite raises while generating code, after every name of
     # the statement is resolved: the first is raised once compiling ends.
-    @list_of_codegen_errors = [] of String
+    # Nil until one is recorded.
+    @list_of_codegen_errors : Array(String)? = nil
 
     protected def record_codegen_error(message : String) : Nil
-      @list_of_codegen_errors << message
+      (@list_of_codegen_errors ||= [] of String) << message
     end
 
     protected def allocate_slot : Int32
@@ -105,8 +108,44 @@ module Grant::SQLiteEngine::Query
     end
 
     # The name errors recorded while resolving the current expression
-    # (ExpressionCompiler#resolve_expression); nil when none is.
+    # (ExpressionCompiler#resolve_expression); nil until one is.
     @list_of_name_errors : Array(SQLError)? = nil
+    # Whether an expression is being resolved (name errors are recorded).
+    @resolving_names = false
+
+    # Starts resolving an expression with no name error recorded; returns
+    # the state `finish_name_resolution` restores.
+    protected def start_name_resolution : {Array(SQLError)?, Bool}
+      saved = {@list_of_name_errors, @resolving_names}
+      @list_of_name_errors = nil
+      @resolving_names = true
+      saved
+    end
+
+    # Restores the state *saved* by `start_name_resolution`; returns the
+    # name errors the expression recorded (nil when none).
+    protected def finish_name_resolution(saved : {Array(SQLError)?, Bool}) : Array(SQLError)?
+      errors = @list_of_name_errors
+      @list_of_name_errors, @resolving_names = saved
+      errors
+    end
+
+    # Records a name error of the expression being resolved; the list is
+    # created with the first one, so an expression that resolves cleanly
+    # allocates none.
+    protected def note_name_error(error : SQLError) : Nil
+      (@list_of_name_errors ||= [] of SQLError) << error
+    end
+
+    # Whether the expression being resolved has recorded a name error.
+    protected def name_error_recorded? : Bool
+      errors = @list_of_name_errors
+      !errors.nil? && !errors.empty?
+    end
+
+    # Whether the outermost query level computes the names its columns
+    # have as a subquery (CREATE TABLE AS reads them; `compile` does not).
+    @top_level_subquery_names = true
 
     # How many compile_query calls are active: tells a recursive CTE's
     # own FROM reference from one inside a subquery.
@@ -128,10 +167,11 @@ module Grant::SQLiteEngine::Query
       end
       producer = LimitProducer.new(producer, limit[0], limit[1]) if limit
       propagate_correlation(context, parent)
-      QueryPlan.new(producer, core_plan.list_of_names, core_plan.list_of_columns,
-        core_plan.list_of_columns.map { |column| column.collation_sequence || Collation::Binary },
-        core_plan.list_of_columns.map(&.affinity), context.outer_slots, core_plan.list_of_columns.map(&.affinity),
-        list_of_subquery_names: core_plan.list_of_subquery_names)
+      # The affinities serve as both lists: nothing changes them.
+      affinities = core_plan.list_of_columns.map(&.affinity)
+      subquery_names = core_plan.list_of_subquery_names if @query_depth > 1 || @top_level_subquery_names
+      QueryPlan.new(producer, core_plan.list_of_names, core_plan.list_of_columns, core_plan.list_of_collations,
+        affinities, context.outer_slots, affinities, list_of_subquery_names: subquery_names)
     end
 
     private def apply_limit(producer : Producer, limit : SQL::Limit?, context : QueryContext) : Producer
@@ -158,7 +198,7 @@ module Grant::SQLiteEngine::Query
       context.outer_slots.each do |slot|
         next if parent.owns_slot?(slot)
         parent.correlated = true
-        parent.outer_slots << slot
+        parent.add_outer_slot(slot)
       end
     end
 
@@ -300,7 +340,8 @@ module Grant::SQLiteEngine::Query
     private def contains_collate?(expression : SQL::Expression) : Bool
       return true if expression.is_a?(SQL::Collate)
       return false if expression.is_a?(SQL::ScalarSubquery) || expression.is_a?(SQL::Exists)
-      children_of(expression).any? { |child| contains_collate?(child) }
+      each_child_of(expression) { |child| return true if contains_collate?(child) }
+      false
     end
 
     # A compound's ORDER BY term must name a result column: by number, by
@@ -325,10 +366,11 @@ module Grant::SQLiteEngine::Query
         plans.each do |plan|
           break if position
           if expression.is_a?(SQL::ColumnReference) && expression.table.nil?
-            position = plan.list_of_aliases.index { |alias_name| alias_name && alias_name.compare(expression.column.value, case_insensitive: true) == 0 }
+            position = CorePlan.alias_position(plan.list_of_result_columns, expression.column.value)
             break if position
           end
-          plan.list_of_syntax.each_with_index do |syntax, column|
+          plan.list_of_result_columns.each_with_index do |result_column, column|
+            syntax = result_column.try(&.expression)
             if syntax && syntax == expression
               position = column
               break
@@ -412,26 +454,37 @@ module Grant::SQLiteEngine::Query
       getter producer : Producer
       getter list_of_columns : Array(Expr)
       getter list_of_names : Array(String)
-      # The alias of each result column, nil where it has none.
-      getter list_of_aliases : Array(String?)
-      # The syntax of each result column (nil for `*` expansions).
-      getter list_of_syntax : Array(SQL::Expression?)
+      # The syntax of each result column (its expression, alias and
+      # source text), nil for a column of a `*` expansion.
+      getter list_of_result_columns : Array(SQL::ExpressionColumn?)
       getter list_of_sort_keys : Array(SortKey)
+      # The collation of each result column (BINARY where it has none).
+      getter list_of_collations : Array(Collation)
 
       def initialize(@producer : Producer, @list_of_columns : Array(Expr), @list_of_names : Array(String),
-                     @list_of_aliases : Array(String?), @list_of_syntax : Array(SQL::Expression?),
-                     @list_of_sort_keys : Array(SortKey), @presorted : Bool = false)
+                     @list_of_result_columns : Array(SQL::ExpressionColumn?), @list_of_sort_keys : Array(SortKey), @presorted : Bool = false,
+                     list_of_collations : Array(Collation)? = nil)
+        @list_of_collations = list_of_collations || @list_of_columns.map { |column| column.collation_sequence || Collation::Binary }
       end
 
       # True when the core's rows already come in ORDER BY order.
       getter? presorted : Bool
+
+      # The position of the first of *result_columns* whose alias is
+      # *name*, ignoring ASCII case; nil when none is.
+      def self.alias_position(result_columns : Array(SQL::ExpressionColumn?), name : String) : Int32?
+        result_columns.index do |column|
+          alias_name = column.try(&.alias_value)
+          !alias_name.nil? && alias_name.compare(name, case_insensitive: true) == 0
+        end
+      end
 
       # sqlite3ColumnsFromExprList: the alias, else the column a result
       # expression names once COLLATE and likely() are skipped, else the
       # name the result column already has (its text).
       def list_of_subquery_names : Array(String)
         @list_of_columns.map_with_index do |column, index|
-          alias_name = @list_of_aliases[index]
+          alias_name = @list_of_result_columns[index].try(&.alias_value)
           next alias_name if alias_name
           inner = column
           while inner.is_a?(CollateExpr) || inner.is_a?(PassThroughExpr)
@@ -471,37 +524,39 @@ module Grant::SQLiteEngine::Query
       end
       raise UnsupportedSQL.new("#{core.class.name} as a SELECT core") unless core.is_a?(SQL::SelectClause)
       raise UnsupportedSQL.new("WINDOW clause") unless core.windows.empty?
-      codegen_mark = @list_of_codegen_errors.size
+      codegen_mark = @list_of_codegen_errors.try(&.size) || 0
       steps = compile_from(core.from, context)
       # countOfViewOptimization turns count(*) over a UNION ALL subquery
       # into a sum of counts of its SELECTs, whose result columns are then
       # never coded: an aggregate there that belongs to an outer query
       # raises no "misuse of aggregate".
-      if count_of_view?(core, order_by)
-        kept = @list_of_codegen_errors[codegen_mark..].reject(&.starts_with?("misuse of aggregate"))
-        @list_of_codegen_errors.truncate(0, codegen_mark)
-        @list_of_codegen_errors.concat(kept)
+      if (codegen_errors = @list_of_codegen_errors) && count_of_view?(core, order_by)
+        kept = codegen_errors[codegen_mark..].reject(&.starts_with?("misuse of aggregate"))
+        codegen_errors.truncate(0, codegen_mark)
+        codegen_errors.concat(kept)
       end
-      # Result columns: `*` and `table.*` expanded.
-      syntax = [] of SQL::Expression?
-      aliases = [] of String?
-      spans = [] of String?
+      # Result columns: `*` and `table.*` expanded. Each comes with its
+      # syntax (its expression, alias and source text), nil for a column
+      # of a `*` expansion.
+      result_columns = [] of SQL::ExpressionColumn?
       expanded = [] of Expr
+      # Stands in for each result expression until it is compiled below.
+      placeholder = ConstantExpr.new(nil)
       core.columns.each do |column|
         case column
         when SQL::AllColumns
-          expand_star(column, context, expanded, syntax, aliases, spans)
+          expand_star(column, context, expanded, result_columns)
         when SQL::ExpressionColumn
-          syntax << column.expression
-          aliases << column.alias_name.try(&.value)
-          spans << column.span
-          expanded << ConstantExpr.new(nil) # placeholder, compiled below
+          result_columns << column
+          expanded << placeholder
         end
       end
-      context.list_of_aliases = [] of {String, SQL::Expression}
-      syntax.each_with_index do |expression, index|
-        alias_name = aliases[index]
-        context.list_of_aliases << {alias_name, expression} if alias_name && expression
+      context.list_of_aliases.clear
+      result_columns.each do |column|
+        next unless column
+        if alias_name = column.alias_value
+          context.list_of_aliases << {alias_name, column.expression}
+        end
       end
       context.aggregate_query = !core.group_by.empty? ||
                                 core.columns.any? { |column| column.is_a?(SQL::ExpressionColumn) && contains_aggregate?(column.expression) }
@@ -515,8 +570,8 @@ module Grant::SQLiteEngine::Query
       context.aggregates_allowed = true
       context.aliases_visible = false
       result_uses = collation_uses do
-        syntax.each_with_index do |expression, index|
-          expanded[index] = resolve_expression(expression, context) if expression
+        result_columns.each_with_index do |column, index|
+          expanded[index] = resolve_expression(column.expression, context) if column
         end
       end
       aggregate = !core.group_by.empty? || !collector.list_of_calls.empty?
@@ -544,10 +599,12 @@ module Grant::SQLiteEngine::Query
       # they fail when code is generated.
       context.aggregates = aggregate ? collector : nil
       context.aggregates_allowed = true
-      names = (0...expanded.size).map { |index| result_name(aliases[index], expanded[index], spans[index], index) }
-      sort_keys = [] of SortKey
-      sort_unknowns = [] of String?
-      extras = [] of Expr
+      names = (0...expanded.size).map { |index| result_name(result_columns[index], expanded[index], index) }
+      # Without ORDER BY (or GROUP BY, below) the lists stay the shared
+      # empty ones.
+      sort_keys = order_by.empty? ? NO_SORT_KEYS : Array(SortKey).new(order_by.size)
+      sort_unknowns = order_by.empty? ? NO_UNKNOWN_COLLATIONS : Array(String?).new(order_by.size)
+      extras = order_by.empty? ? NO_EXPRESSIONS : Array(Expr).new(order_by.size)
       order_by.each_with_index do |term, term_index|
         expression = term.expression
         explicit = nil
@@ -561,7 +618,7 @@ module Grant::SQLiteEngine::Query
         end
         position = integer_term(expression, expanded.size, "ORDER", term_index)
         if position.nil? && expression.is_a?(SQL::ColumnReference) && expression.table.nil?
-          position = aliases.index { |alias_name| alias_name && alias_name.compare(expression.column.value, case_insensitive: true) == 0 }
+          position = CorePlan.alias_position(result_columns, expression.column.value)
         end
         if position
           key_expression = expanded[position]
@@ -575,13 +632,13 @@ module Grant::SQLiteEngine::Query
       end
       context.aggregates = nil
       context.aggregates_allowed = false
-      group_keys = [] of Expr
+      group_keys = core.group_by.empty? ? NO_EXPRESSIONS : Array(Expr).new(core.group_by.size)
       core.group_by.each_with_index do |term, index|
         if contains_aggregate?(term)
           raise SQLError.new("aggregate functions are not allowed in the GROUP BY clause")
         end
-        if position = integer_term(term, syntax.size, "GROUP", index)
-          group_syntax = syntax[position]
+        if position = integer_term(term, result_columns.size, "GROUP", index)
+          group_syntax = result_columns[position].try(&.expression)
           if group_syntax && contains_aggregate?(group_syntax)
             raise SQLError.new("aggregate functions are not allowed in the GROUP BY clause")
           end
@@ -593,23 +650,23 @@ module Grant::SQLiteEngine::Query
       context.aliases_visible = false
       # selectCheckOnClauses runs once the whole SELECT has resolved.
       raise SQLError.new("ON clause references tables to its right") if on_reaches_right
-      distinct_unknowns = core.distinct.distinct? ? expanded.map(&.unknown_collation) : [] of String?
-      record_collation_error(group_keys.map(&.unknown_collation), sort_unknowns, distinct_unknowns,
-        [where_uses, having_uses, result_uses])
+      record_collation_error(group_keys, sort_unknowns, core.distinct.distinct? ? expanded : nil,
+        where_uses, having_uses, result_uses)
       aggregation = nil
       if aggregate
         key_collations = group_keys.map { |key| key.collation_sequence || Collation::Binary }
         slots = context.list_of_entries.map(&.slot)
         aggregation = Aggregation.new(group_keys, key_collations, collector.list_of_calls, having_expression, slots)
       end
-      if !aggregate && !core.distinct.distinct?
+      if !aggregate && !core.distinct.distinct? && !sort_keys.empty?
         local = context.list_of_entries.map(&.slot).to_set
         sort_keys = sort_keys.reject do |key|
           term = extras[key.position - expanded.size]?
           term && pinned_by_equality?(term, key.collation, where, local)
         end
       end
-      ordering = [] of OrderTerm
+      ordering_size = aggregation ? aggregation.list_of_group_keys.size : sort_keys.size
+      ordering = ordering_size == 0 ? NO_ORDERING : Array(OrderTerm).new(ordering_size)
       if aggregation
         aggregation.list_of_group_keys.each_with_index do |key, index|
           ordering << OrderTerm.new(key, aggregation.list_of_key_collations[index], false, true)
@@ -630,8 +687,15 @@ module Grant::SQLiteEngine::Query
       if table = simple_count_table(core, steps, order_by)
         producer = TableCountProducer.new(table.database, table)
       end
-      CorePlan.new(producer, expanded, names, aliases, syntax, sort_keys, presorted)
+      CorePlan.new(producer, expanded, names, result_columns, sort_keys, presorted, column_collations)
     end
+
+    # The empty lists `compile_core` starts with for an absent ORDER BY or
+    # GROUP BY, shared: nothing adds to them.
+    NO_SORT_KEYS          = [] of SortKey
+    NO_UNKNOWN_COLLATIONS = [] of String?
+    NO_EXPRESSIONS        = [] of Expr
+    NO_ORDERING           = [] of OrderTerm
 
     # Groups come out in ascending key order (sorted, or read in that
     # order), so an ORDER BY that is a prefix of the GROUP BY keys, each
@@ -713,44 +777,43 @@ module Grant::SQLiteEngine::Query
         raise UnsupportedSQL.new("ORDER BY expression on VALUES") unless position
         sort_key(term, position, Collation::Binary)
       end
-      CorePlan.new(ValuesProducer.new(rows), first, names, Array(String?).new(width, nil),
-        Array(SQL::Expression?).new(width, nil), sort_keys)
+      CorePlan.new(ValuesProducer.new(rows), first, names, Array(SQL::ExpressionColumn?).new(width, nil), sort_keys)
     end
 
     # generateColumnNames: the alias, else a column's declared name, else
     # the expression's source text.
-    private def result_name(alias_name : String?, expression : Expr, span : String?, index : Int32) : String
-      return alias_name if alias_name
+    private def result_name(syntax : SQL::ExpressionColumn?, expression : Expr, index : Int32) : String
+      if alias_name = syntax.try(&.alias_value)
+        return alias_name
+      end
       if name = expression.column_name?
         return name if expression.is_a?(ColumnExpr) || expression.is_a?(RowidExpr)
       end
-      span || "column#{index + 1}"
+      syntax.try(&.span) || "column#{index + 1}"
     end
 
     private def expand_star(column : SQL::AllColumns, context : QueryContext, expanded : Array(Expr),
-                            syntax : Array(SQL::Expression?), aliases : Array(String?), spans : Array(String?)) : Nil
+                            result_columns : Array(SQL::ExpressionColumn?)) : Nil
       entries = context.list_of_entries
       if table = column.table
         entry = entries.find { |candidate| candidate.match_name.compare(table.value, case_insensitive: true) == 0 }
         raise SQLError.new("no such table: #{table.value}") unless entry
-        entry.visible_column_count.times { |index| append_column(entry, index, expanded, syntax, aliases, spans) }
+        entry.visible_column_count.times { |index| append_column(entry, index, expanded, result_columns) }
         return
       end
       raise SQLError.new("no tables specified") if entries.empty?
       entries.each do |entry|
         entry.visible_column_count.times do |index|
-          next if entry.merged_columns.includes?(index)
-          append_column(entry, index, expanded, syntax, aliases, spans)
+          next if entry.merged_column?(index)
+          append_column(entry, index, expanded, result_columns)
         end
       end
     end
 
-    private def append_column(entry : FromEntry, index : Int32, expanded : Array(Expr), syntax : Array(SQL::Expression?),
-                              aliases : Array(String?), spans : Array(String?)) : Nil
+    private def append_column(entry : FromEntry, index : Int32, expanded : Array(Expr),
+                              result_columns : Array(SQL::ExpressionColumn?)) : Nil
       expanded << column_expression(entry, index)
-      syntax << nil
-      aliases << nil
-      spans << nil
+      result_columns << nil
     end
 
     protected def column_expression(entry : FromEntry, index : Int32) : Expr
@@ -805,25 +868,30 @@ module Grant::SQLiteEngine::Query
     end
 
     # The unknown collations the clause being compiled uses, in the order
-    # its comparisons and aggregates are built; nil outside a clause.
+    # its comparisons and aggregates are built: nil until the clause uses
+    # one, and outside a clause (`@collecting_collation_uses` false).
     @list_of_collation_uses : Array(String)? = nil
+    @collecting_collation_uses = false
 
     protected def note_collation_use(name : String?) : Nil
-      return unless name
-      @list_of_collation_uses.try(&.<<(name))
+      return unless name && @collecting_collation_uses
+      (@list_of_collation_uses ||= [] of String) << name
     end
 
-    # Runs the block with a fresh list of collation uses; returns the list.
-    private def collation_uses(& : ->) : Array(String)
+    # Runs the block collecting the unknown collations it uses; returns
+    # them, or nil when it uses none.
+    private def collation_uses(& : ->) : Array(String)?
       saved = @list_of_collation_uses
-      uses = [] of String
-      @list_of_collation_uses = uses
+      saved_collecting = @collecting_collation_uses
+      @list_of_collation_uses = nil
+      @collecting_collation_uses = true
       begin
         yield
+        @list_of_collation_uses
       ensure
         @list_of_collation_uses = saved
+        @collecting_collation_uses = saved_collecting
       end
-      uses
     end
 
     # sqlite3Select builds the GROUP BY, ORDER BY and DISTINCT key
@@ -831,11 +899,19 @@ module Grant::SQLiteEngine::Query
     # before it codes WHERE, HAVING and the result set (where code
     # generation stops at the first unknown one); the first step that
     # meets one decides the message.
-    private def record_collation_error(group_keys : Array(String?), sort_keys : Array(String?), distinct_keys : Array(String?),
-                                       clauses : Array(Array(String))) : Nil
-      name = group_keys.compact.last? || sort_keys.compact.last? || distinct_keys.compact.last?
-      name ||= clauses.compact_map(&.first?).first?
+    private def record_collation_error(group_keys : Array(Expr), sort_keys : Array(String?), distinct_keys : Array(Expr)?,
+                                       *clauses : Array(String)?) : Nil
+      name = last_unknown_collation(group_keys)
+      sort_keys.reverse_each { |unknown| break name = unknown if unknown } unless name
+      name ||= distinct_keys.try { |keys| last_unknown_collation(keys) }
+      clauses.each { |uses| break name = uses.first if !name && uses && !uses.empty? }
       record_codegen_error("no such collation sequence: #{name}") if name
+    end
+
+    # The unknown collation of the last of *keys* that has one.
+    private def last_unknown_collation(keys : Array(Expr)) : String?
+      keys.reverse_each { |key| key.unknown_collation.try { |unknown| return unknown } }
+      nil
     end
   end
 end

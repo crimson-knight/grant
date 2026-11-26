@@ -22,10 +22,18 @@ module Grant::SQLiteEngine::Query
     # record); nil when the row in the slot is complete.
     getter list_of_pending : Array(TableScanSource?)
 
+    # The row of a slot no source has filled yet, shared by every slot of
+    # every frame: sources put their own arrays in their slots and nothing
+    # writes into a slot's array, so it stays empty.
+    NO_ROW_YET = [] of Value
+    # The aggregate values of a statement without aggregates, shared: an
+    # empty list is never written to.
+    NO_AGGREGATE_VALUES = [] of Value
+
     def initialize(slot_count : Int32, aggregate_count : Int32, @list_of_parameters : Array(Value), @session : Session)
-      @list_of_rows = Array(Array(Value)).new(slot_count) { [] of Value }
+      @list_of_rows = Array(Array(Value)).new(slot_count, NO_ROW_YET)
       @list_of_rowids = Array(Int64?).new(slot_count, nil)
-      @list_of_aggregate_values = Array(Value).new(aggregate_count, nil)
+      @list_of_aggregate_values = aggregate_count == 0 ? NO_AGGREGATE_VALUES : Array(Value).new(aggregate_count, nil)
       @list_of_pending = Array(TableScanSource?).new(slot_count, nil)
     end
 
@@ -35,12 +43,12 @@ module Grant::SQLiteEngine::Query
     getter run_number = 0
 
     # Readies the frame for another run with *list_of_parameters*, as a new
-    # frame starts: every slot empty (a new array, since a source may have
-    # put one of its own in the slot), no rowids, aggregates or pending
+    # frame starts: every slot empty (`NO_ROW_YET` again, in place of the
+    # array a source put in the slot), no rowids, aggregates or pending
     # decodes.
     def start_run(@list_of_parameters : Array(Value)) : Nil
       @run_number &+= 1
-      @list_of_rows.map! { [] of Value }
+      @list_of_rows.fill(NO_ROW_YET)
       @list_of_rowids.fill(nil)
       @list_of_aggregate_values.fill(nil)
       @list_of_pending.fill(nil)

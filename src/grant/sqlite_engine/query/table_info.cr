@@ -27,6 +27,14 @@ module Grant::SQLiteEngine::Query
       @real_columns = (0...columns.size).select { |index| columns[index].affinity.real? }
     end
 
+    # The columns as a FROM entry naming the table reads them, built on
+    # first use and shared by every such entry (nothing changes them).
+    getter(list_of_source_columns : Array(SourceColumn)) do
+      (0...@list_of_column_names.size).map do |index|
+        SourceColumn.new(@list_of_column_names[index], @list_of_affinities[index], @list_of_collations[index])
+      end
+    end
+
     @unsupported : String? = nil
 
     def name : String
@@ -94,8 +102,17 @@ module Grant::SQLiteEngine::Query
       @stored_order.index(column_index)
     end
 
+    # The stored record positions holding the columns *use* includes.
+    def stored_mask_for(use : ColumnUse) : Array(Bool)
+      mask = Array(Bool).new(@stored_order.size, false)
+      @stored_order.each_with_index do |column_index, position|
+        mask[position] = true if use.includes?(column_index)
+      end
+      mask
+    end
+
     # The stored record positions holding *columns* (declared indexes; nil
-    # for every column), for `ColumnUse`.
+    # for every column).
     def stored_mask_for(columns : Set(Int32)?) : Array(Bool)
       mask = Array(Bool).new(@stored_order.size, false)
       @stored_order.each_with_index do |column_index, position|

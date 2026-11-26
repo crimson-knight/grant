@@ -46,6 +46,12 @@ module Grant::SQLiteEngine::SQL
     # The source bytes from *start* up to *finish*, without leading or
     # trailing whitespace.
     def span(start : Int32, finish : Int32) : String
+      start, size = span_bounds(start, finish)
+      String.new(@bytes[start, size])
+    end
+
+    # The start and size of `span`'s text, which lies inside `source`.
+    def span_bounds(start : Int32, finish : Int32) : {Int32, Int32}
       finish = Math.min(finish, @bytes.size)
       while start < finish && span_space?(@bytes[start])
         start += 1
@@ -53,7 +59,7 @@ module Grant::SQLiteEngine::SQL
       while finish > start && span_space?(@bytes[finish - 1])
         finish -= 1
       end
-      String.new(@bytes[start, finish - start])
+      {start, finish - start}
     end
 
     private def span_space?(byte : UInt8) : Bool
@@ -62,6 +68,11 @@ module Grant::SQLiteEngine::SQL
 
     def text(token : Token) : String
       String.new(@bytes[token.start, token.size])
+    end
+
+    # Whether the token's text is exactly *text*, compared byte for byte.
+    def text_is?(token : Token, text : String) : Bool
+      token.size == text.bytesize && @bytes[token.start, token.size] == text.to_slice
     end
 
     def byte_at(offset : Int32) : UInt8

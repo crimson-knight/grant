@@ -3,8 +3,17 @@ module Grant::SQLiteEngine::Query
   # "which frame slots does this term read". Subqueries list their operands
   # here and their outer slots through `SubqueryExpr#list_of_outer_slots`.
   abstract class Expr
+    # The children of an expression that has none, shared: nothing adds to it.
+    NO_CHILDREN = [] of Expr
+
     def children : Array(Expr)
-      [] of Expr
+      NO_CHILDREN
+    end
+
+    # Yields each of `children` in order. The kinds the planner walks most
+    # (one or two operands) yield their operands without building the list.
+    def each_child(& : Expr ->) : Nil
+      children.each { |child| yield child }
     end
   end
 
@@ -13,6 +22,10 @@ module Grant::SQLiteEngine::Query
       def children : Array(Expr)
         [@operand] of Expr
       end
+
+      def each_child(& : Expr ->) : Nil
+        yield @operand
+      end
     end
   {% end %}
 
@@ -20,6 +33,11 @@ module Grant::SQLiteEngine::Query
     class {{name.id}}
       def children : Array(Expr)
         [@left, @right] of Expr
+      end
+
+      def each_child(& : Expr ->) : Nil
+        yield @left
+        yield @right
       end
     end
   {% end %}

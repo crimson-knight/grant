@@ -37,14 +37,14 @@ module Grant::SQLiteEngine::Query
 
   class Compiler
     # Tables a write statement substitutes by name (lower case).
-    getter pseudo_tables = {} of String => PseudoTable
+    getter(pseudo_tables : Hash(String, PseudoTable)) { {} of String => PseudoTable }
     # The table whose top-level FROM entry a write statement reads rows
     # from (UPDATE, DELETE): its slot is captured while compiling.
     property capture_name : String? = nil
     getter captured_slot : Int32? = nil
 
-    private def compile_table_reference(reference : SQL::TableReference, context : QueryContext) : {FromEntry, RowSource}
-      if reference.schema.nil? && (pseudo = @pseudo_tables[reference.name.value.downcase]?)
+    private def compile_table_reference(reference : SQL::TableReference, context : QueryContext) : {FromEntry, RowSource?}
+      if reference.schema.nil? && (tables = @pseudo_tables) && (pseudo = tables[reference.name.value.downcase]?)
         slot = allocate_slot
         table = pseudo.table
         columns = (0...table.list_of_column_names.size).map do |index|
@@ -77,8 +77,8 @@ module Grant::SQLiteEngine::Query
     getter captured_index_root : UInt32? = nil
 
     private def choose_access(step : JoinStep, terms : Array(Expr), available : Set(Int32), context : QueryContext) : AccessChoice
-      if step.base_source.is_a?(PseudoRowSource)
-        return AccessChoice.new(step.base_source, 1.0, 1.0, [] of OrderElement, [] of Int32)
+      if step.reads_a_pseudo_table?
+        return AccessChoice.new(step.base_source, 1.0, 1.0, NO_ORDER, NO_FIXED_COLUMNS)
       end
       choice = previous_def
       source = choice.source
@@ -89,7 +89,7 @@ module Grant::SQLiteEngine::Query
     end
 
     private def simple_count_table(core : SQL::SelectClause, steps : Array(JoinStep), order_by : Array(SQL::OrderingTerm)) : TableInfo?
-      return if steps.any?(&.base_source.is_a?(PseudoRowSource))
+      return if steps.any?(&.reads_a_pseudo_table?)
       previous_def
     end
   end

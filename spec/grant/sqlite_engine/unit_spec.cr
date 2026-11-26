@@ -146,3 +146,128 @@ describe Grant::SQLiteEngine::Error do
     Grant::SQLiteEngine::CorruptDatabase.new("x").should be_a(Grant::SQLiteEngine::Error)
   end
 end
+
+# A database whose table `t` (root page 2) is a chain of *interior* interior
+# table pages linked by their right children, ending in one empty leaf; when
+# *last_child* is given, the last interior page points there instead (a page
+# already on the path from the root) and there is no leaf.
+private def database_with_chained_root(interior : Int32, last_child : UInt32? = nil) : Grant::SQLiteEngine::Database
+  path = File.tempname("btree_count", ".db")
+  begin
+    writer = Grant::SQLiteEngine::Database.open(path, read_write: true, page_size: 512)
+    writer.create_table("CREATE TABLE t (a)")
+    writer.close
+    bytes = File.read(path).to_slice
+  ensure
+    File.delete?(path)
+  end
+  page_size = Grant::SQLiteEngine::DatabaseHeader.page_size_from(bytes)
+  page_count = 1 + interior + (last_child ? 0 : 1)
+  image = Bytes.new(page_count * page_size)
+  bytes[0, page_size].copy_to(image)
+  IO::ByteFormat::BigEndian.encode(page_count.to_u32, image[28, 4])
+  # The header's page count holds only while version-valid-for equals the
+  # change counter.
+  image[24, 4].copy_to(image[92, 4])
+  content_start = page_size == 65536 ? 0_u16 : page_size.to_u16
+  interior.times do |index|
+    page = image[(index + 1) * page_size, page_size]
+    page[0] = 0x05_u8
+    IO::ByteFormat::BigEndian.encode(content_start, page[5, 2])
+    child = index + 1 == interior && last_child ? last_child : (index + 3).to_u32
+    IO::ByteFormat::BigEndian.encode(child, page[8, 4])
+  end
+  unless last_child
+    leaf = image[(interior + 1) * page_size, page_size]
+    leaf[0] = 0x0d_u8
+    IO::ByteFormat::BigEndian.encode(content_start, leaf[5, 2])
+  end
+  Grant::SQLiteEngine::Database.from_bytes(image)
+end
+
+private def count_rows_of_t(database : Grant::SQLiteEngine::Database) : Grant::SQLiteEngine::Value
+  query = Grant::SQLiteEngine::Query::Session.new(database).prepare("SELECT count(*) FROM t")
+  query.step
+  query.row[0]
+end
+
+describe Grant::SQLiteEngine::Query::BTreeCount do
+  describe ".entries" do
+    it "counts the rows below a chain of interior pages" do
+      count_rows_of_t(database_with_chained_root(3)).should eq(0_i64)
+    end
+
+    it "raises CorruptDatabase for a child already on the path from the root" do
+      expect_raises(Grant::SQLiteEngine::CorruptDatabase, /reaches the page twice/) do
+        count_rows_of_t(database_with_chained_root(3, last_child: 3_u32))
+      end
+    end
+
+    it "raises CorruptDatabase for a tree deeper than MAX_BTREE_DEPTH" do
+      depth = Grant::SQLiteEngine::Limits::MAX_BTREE_DEPTH
+      count_rows_of_t(database_with_chained_root(depth - 1)).should eq(0_i64)
+      expect_raises(Grant::SQLiteEngine::CorruptDatabase, /deeper than #{depth} pages/) do
+        count_rows_of_t(database_with_chained_root(depth))
+      end
+    end
+  end
+end
+
+# A session on a fresh database holding tables `u` (rowid alias `id`) and
+# `p` (rows of `u` by `u_id`) with a few rows.
+private def session_with_users_and_posts : Grant::SQLiteEngine::Query::Session
+  path = File.tempname("shared_lists", ".db")
+  database = Grant::SQLiteEngine::Database.open(path, read_write: true)
+  session = Grant::SQLiteEngine::Query::Session.new(database)
+  ["CREATE TABLE u (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)",
+   "CREATE TABLE p (id INTEGER PRIMARY KEY, u_id INTEGER, title TEXT)",
+   "CREATE INDEX p_u ON p (u_id)",
+   "INSERT INTO u VALUES (1, 'ann', 30), (2, 'bob', 40), (3, 'cy', 50)",
+   "INSERT INTO p (u_id, title) VALUES (1, 'a'), (1, 'b'), (2, 'c')"].each do |sql|
+    query = session.prepare(sql)
+    while query.step
+    end
+  end
+  session
+end
+
+private def rows_of(session : Grant::SQLiteEngine::Query::Session, sql : String) : Array(Array(Grant::SQLiteEngine::Value))
+  query = session.prepare(sql)
+  list_of_rows = [] of Array(Grant::SQLiteEngine::Value)
+  while query.step
+    list_of_rows << query.row.dup
+  end
+  list_of_rows
+end
+
+describe Grant::SQLiteEngine::Query::Compiler do
+  it "names result columns by alias, column name, then source text" do
+    session = session_with_users_and_posts
+    query = session.prepare("SELECT u.name, age AS years,  age + 1 , upper( name ) FROM u WHERE id = ?")
+    query.list_of_column_names.should eq(["name", "years", "age + 1", "upper( name )"])
+  end
+
+  it "leaves the shared empty lists empty after a mix of statements" do
+    session = session_with_users_and_posts
+    rows_of(session, "SELECT name FROM u WHERE id = 2").should eq([["bob"]])
+    rows_of(session, "SELECT u.name, count(p.id) FROM u LEFT JOIN p ON p.u_id = u.id GROUP BY u.id ORDER BY u.id")
+      .should eq([["ann", 2_i64], ["bob", 1_i64], ["cy", 0_i64]])
+    rows_of(session, "SELECT name FROM u WHERE age > 35 UNION ALL SELECT title FROM p WHERE u_id = 1")
+      .should eq([["bob"], ["cy"], ["a"], ["b"]])
+    rows_of(session, "SELECT EXISTS (SELECT 1 FROM p WHERE p.u_id = u.id) FROM u ORDER BY id")
+      .should eq([[1_i64], [1_i64], [0_i64]])
+    rows_of(session, "SELECT * FROM u, p WHERE p.u_id = u.id AND p.title = 'c'")
+      .should eq([[2_i64, "bob", 40_i64, 3_i64, 2_i64, "c"]])
+    rows_of(session, "SELECT count(*) FROM p").should eq([[3_i64]])
+    Grant::SQLiteEngine::Query::Frame::NO_ROW_YET.should be_empty
+    Grant::SQLiteEngine::Query::Frame::NO_AGGREGATE_VALUES.should be_empty
+    Grant::SQLiteEngine::Query::Compiler::NO_SORT_KEYS.should be_empty
+    Grant::SQLiteEngine::Query::Compiler::NO_UNKNOWN_COLLATIONS.should be_empty
+    Grant::SQLiteEngine::Query::Compiler::NO_EXPRESSIONS.should be_empty
+    Grant::SQLiteEngine::Query::Compiler::NO_ORDERING.should be_empty
+    Grant::SQLiteEngine::SQL::Parser::NO_COMPOUND_OPERATORS.should be_empty
+    Grant::SQLiteEngine::SQL::Parser::NO_EXPRESSIONS.should be_empty
+    Grant::SQLiteEngine::SQL::Parser::NO_WINDOWS.should be_empty
+    Grant::SQLiteEngine::SQL::Parser::NO_ORDERING_TERMS.should be_empty
+  end
+end

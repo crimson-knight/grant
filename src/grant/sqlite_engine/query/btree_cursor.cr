@@ -41,25 +41,52 @@ module Grant::SQLiteEngine::Query
   # cell counts without decoding a record. A table b-tree keeps its rows
   # in leaf cells; an index b-tree keeps entries in interior cells too.
   module BTreeCount
+    #
+    # The walk goes depth first, as C's does, keeping only the interior
+    # pages from the root to the current page and the next child of each.
+    # A child already on that path (a cycle) or a tree deeper than
+    # `Limits::MAX_BTREE_DEPTH` is `CorruptDatabase`, as for a cursor; a walk
+    # that reads more pages than the file holds has reached one twice.
     def self.entries(database : Database, root_page : UInt32, session : Session) : Int64
       pager = database.pager
       pager.check_page_number(root_page)
       total = 0_i64
-      pending = [root_page]
-      visited = Set(UInt32).new
-      while number = pending.pop?
-        raise CorruptDatabase.new("b-tree reaches the page twice", number) unless visited.add?(number)
+      pages_read = 0_u32
+      path = [] of {BTreePage, Int32}
+      number = root_page
+      while number
+        if path.size >= Limits::MAX_BTREE_DEPTH
+          raise CorruptDatabase.new("b-tree is deeper than #{Limits::MAX_BTREE_DEPTH} pages", number)
+        end
+        pages_read += 1
+        if pages_read > pager.page_count || path.any? { |(ancestor, _)| ancestor.number == number }
+          raise CorruptDatabase.new("b-tree reaches the page twice", number)
+        end
         session.tick
         page = BTreePage.read(pager, number)
         if page.page_type.leaf?
           total += page.cell_count
         else
           total += page.cell_count unless page.page_type.table?
-          page.cell_count.times { |index| pending << page.left_child(index) }
-          pending << page.right_child
+          path << {page, 0}
         end
+        number = next_child(path)
       end
       total
+    end
+
+    # The next page to read: the next child of the deepest interior page
+    # that has one left (its left children in order, then its right child),
+    # or nil once every page is read. Pages with none left come off the path.
+    private def self.next_child(path : Array({BTreePage, Int32})) : UInt32?
+      while entry = path.last?
+        page, index = entry
+        if index <= page.cell_count
+          path[-1] = {page, index + 1}
+          return index < page.cell_count ? page.left_child(index) : page.right_child
+        end
+        path.pop
+      end
     end
   end
 

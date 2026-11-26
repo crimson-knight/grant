@@ -256,9 +256,36 @@ module Grant::SQLiteEngine::SQL
   define_node ExpressionColumn, ResultColumn, expression : Expression, alias_name : Name?
 
   class ExpressionColumn
+    # Where the expression's source text lies in the statement: the text
+    # is copied out only when it is asked for, since a column reference
+    # or an aliased column is named without it. Not part of the node's
+    # value.
+    @span_source : String? = nil
+    @span_start = 0
+    @span_size = 0
+
+    # Records that the expression's source text is the *size* bytes of
+    # *source* from *start*.
+    def mark_span(source : String, start : Int32, size : Int32) : Nil
+      @span_source = source
+      @span_start = start
+      @span_size = size
+    end
+
     # The expression's source text, which names the column when it has no
-    # alias. Not part of the node's value.
-    property span : String? = nil
+    # alias; nil when none was recorded.
+    def span : String?
+      source = @span_source
+      return unless source
+      String.new(source.to_slice[@span_start, @span_size])
+    end
+
+    # The alias's name, nil when the column has none.
+    def alias_value : String?
+      if name = alias_name
+        name.value
+      end
+    end
   end
 
   abstract class TableSource < Node

@@ -91,7 +91,7 @@ module Grant::SQLiteEngine::Query
     # The virtual columns whose expressions are being compiled, as
     # {slot, column}: a column met again inside its own expression is a
     # loop (COLFLAG_BUSY).
-    @virtual_columns_in_progress = Set({Int32, Int32}).new
+    private getter(virtual_columns_in_progress : Set({Int32, Int32})) { Set({Int32, Int32}).new }
 
     protected def column_expression(entry : FromEntry, index : Int32) : Expr
       plain = previous_def
@@ -101,14 +101,14 @@ module Grant::SQLiteEngine::Query
       expression = table.list_of_generated_expressions[index]
       return plain unless expression
       key = {entry.slot, index}
-      if @virtual_columns_in_progress.includes?(key)
+      if virtual_columns_in_progress.includes?(key)
         raise SQLError.new(%(generated column loop on "#{table.list_of_column_names[index]}"))
       end
-      @virtual_columns_in_progress << key
+      virtual_columns_in_progress << key
       begin
         generated = compile_row_expression(entry, table, expression)
       ensure
-        @virtual_columns_in_progress.delete(key)
+        virtual_columns_in_progress.delete(key)
       end
       VirtualColumnExpr.new(plain, generated, table.definition.list_of_columns[index], table.name, table.definition.strict?)
     end
