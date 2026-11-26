@@ -22,6 +22,7 @@
 # Only this benchmark links libsqlite3; the engine itself links no native
 # library.
 require "file_utils"
+require "json"
 require "../src/grant/sqlite_engine"
 
 @[Link("sqlite3")]
@@ -252,6 +253,20 @@ module SQLiteEngineWriteBench
     (Time.instant - started).total_seconds
   end
 
+  # The seconds of every round of one workload, printed to stderr as one
+  # JSON line after the workload's summary line, so the median ratio can be
+  # recomputed exactly: "round seconds: {...}".
+  struct RoundSeconds
+    include JSON::Serializable
+
+    getter workload : String
+    getter engine : Array(Float64)
+    getter c_library : Array(Float64)
+
+    def initialize(@workload, @engine, @c_library)
+    end
+  end
+
   def self.describe_ratio(ratio : Float64) : String
     ratio >= 1.0 ? "#{ratio.round(2)}× as fast" : "#{(1.0 / ratio).round(2)}× slower"
   end
@@ -301,6 +316,7 @@ module SQLiteEngineWriteBench
       STDOUT.puts "#{workload.workload_name}: engine #{(engine_times.sort[rounds // 2] * 1000).round(2)} ms, " \
                   "C #{(c_times.sort[rounds // 2] * 1000).round(2)} ms median; " \
                   "#{describe_ratio(median)} (rounds' range #{describe_ratio(low)} to #{describe_ratio(high)})"
+      STDERR.puts "round seconds: #{RoundSeconds.new(workload.workload_name, engine_times, c_times).to_json}"
     end
   end
 end
