@@ -123,7 +123,7 @@ module Grant::SQLiteEngine
         (1_u32..@page_count).each do |page_number|
           list_of_images << {page_number, read_page(page_number).dup} unless page_number == skipped_page
         end
-        journal = file_system.open(journal_path)
+        journal = file_system.create_journal(journal_path)
         begin
           RollbackJournal.write(journal, @page_size, @original_page_count, list_of_images, Random.rand(UInt32))
         ensure

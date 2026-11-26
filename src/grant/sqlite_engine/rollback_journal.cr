@@ -7,10 +7,15 @@ module Grant::SQLiteEngine
     MAGIC = Bytes[0xd9, 0xd5, 0x05, 0xf9, 0x20, 0xa1, 0x63, 0xd7]
 
     # The header takes one sector. C SQLite's unix VFS reports 4,096-byte
-    # sectors (SQLITE_DEFAULT_SECTOR_SIZE), and before it reads a journal's
-    # header it ignores any journal shorter than that, so the engine writes
-    # the same size.
-    SECTOR_SIZE = 4_096
+    # sectors, but its pager journals in 512-byte ones when the file system
+    # promises powersafe overwrite, as the unix VFS does by default
+    # (setSectorSize, SQLITE_POWERSAFE_OVERWRITE), so the engine writes the
+    # same 512-byte header. A reader takes the sector size from the header.
+    SECTOR_SIZE = 512
+
+    # The most page records gathered into one write: the header and the
+    # records go to the file in as few writes as this allows.
+    RECORDS_PER_WRITE = 64
 
     # nRec of a journal whose record count is the file size's to tell.
     RECORD_COUNT_FROM_SIZE = 0xffff_ffff_u32
@@ -21,32 +26,39 @@ module Grant::SQLiteEngine
     end
 
     # Writes and syncs a journal holding *list_of_images* (page number and
-    # original bytes), the way syncJournal does: the header (with a record
-    # count of 0) and the records, a sync when *synchronous* is FULL or
-    # EXTRA, then the record count, then a sync. Each sync is made in
-    # *sync_mode*. With *synchronous* OFF nothing is synced, and the header
-    # says from the start that the file's size tells the record count, as
-    # C's header does when it will not be synced (writeJournalHdr).
+    # original bytes) into the empty file *journal* (from
+    # `FileSystem#create_journal`), the way syncJournal does: the header
+    # (with a record count of 0) and the records, a sync when *synchronous*
+    # is FULL or EXTRA, then the record count, then a sync. Each sync is
+    # made in *sync_mode*. With *synchronous* OFF nothing is synced, and the
+    # header says from the start that the file's size tells the record
+    # count, as C's header does when it will not be synced
+    # (writeJournalHdr). The header and the records go out together, up to
+    # `RECORDS_PER_WRITE` records a write.
     def self.write(journal : DatabaseFile, page_size : Int32, initial_page_count : UInt32, list_of_images : Array({UInt32, Bytes}), nonce : UInt32,
                    synchronous : Synchronous = Synchronous::Full, sync_mode : SyncMode = SyncMode::Normal) : Nil
-      header = Bytes.new(SECTOR_SIZE)
-      header.copy_from(MAGIC.to_unsafe, MAGIC.size)
-      put_u32(header, 8, synchronous.off? ? RECORD_COUNT_FROM_SIZE : 0_u32)
-      put_u32(header, 12, nonce)
-      put_u32(header, 16, initial_page_count)
-      put_u32(header, 20, SECTOR_SIZE.to_u32)
-      put_u32(header, 24, page_size.to_u32)
-      journal.truncate(0)
-      journal.write_at(0, header)
-      offset = SECTOR_SIZE.to_i64
-      record = Bytes.new(page_size + 8)
+      record_size = page_size + 8
+      buffer = Bytes.new(SECTOR_SIZE + record_size * Math.min(list_of_images.size, RECORDS_PER_WRITE))
+      buffer.copy_from(MAGIC.to_unsafe, MAGIC.size)
+      put_u32(buffer, 8, synchronous.off? ? RECORD_COUNT_FROM_SIZE : 0_u32)
+      put_u32(buffer, 12, nonce)
+      put_u32(buffer, 16, initial_page_count)
+      put_u32(buffer, 20, SECTOR_SIZE.to_u32)
+      put_u32(buffer, 24, page_size.to_u32)
+      file_offset = 0_i64
+      filled = SECTOR_SIZE
       list_of_images.each do |page_number, image|
-        put_u32(record, 0, page_number)
-        (record + 4).copy_from(image.to_unsafe, page_size)
-        put_u32(record, page_size + 4, checksum(nonce, image))
-        journal.write_at(offset, record)
-        offset += record.size
+        if filled + record_size > buffer.size
+          journal.write_at(file_offset, buffer[0, filled])
+          file_offset += filled
+          filled = 0
+        end
+        put_u32(buffer, filled, page_number)
+        (buffer + filled + 4).copy_from(image.to_unsafe, page_size)
+        put_u32(buffer, filled + 4 + page_size, checksum(nonce, image))
+        filled += record_size
       end
+      journal.write_at(file_offset, buffer[0, filled])
       return if synchronous.off?
       journal.sync(sync_mode) if synchronous >= Synchronous::Full
       count = Bytes.new(12)
