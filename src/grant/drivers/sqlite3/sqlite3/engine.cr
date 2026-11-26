@@ -26,6 +26,8 @@ module Grant::SQLite3
     ERROR_CODE =   1
     ROW_CODE   = 100
     DONE_CODE  = 101
+    # SQLITE_MISUSE: a call on a statement already finalized.
+    MISUSE_CODE = 21
 
     # Why `:libsqlite3` is refused in a program that left the C engine out.
     LIBSQLITE3_LEFT_OUT = "sqlite_engine :libsqlite3 needs the C SQLite engine: require \"grant/adapter/sqlite\" " \

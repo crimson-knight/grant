@@ -672,6 +672,8 @@ module Grant::SQLiteEngine::Query
   # `VALUES (...), (...)`.
   class ValuesProducer < Producer
     @position = 0
+    # The one array every row is evaluated into once `lend_rows` is called.
+    @lent_row : Array(Value)? = nil
 
     def initialize(@list_of_rows : Array(Array(Expr)))
     end
@@ -680,11 +682,20 @@ module Grant::SQLiteEngine::Query
       @position = 0
     end
 
+    def lend_rows : Nil
+      @lent_row ||= [] of Value
+    end
+
     def next_row(frame : Frame) : Array(Value)?
       return if @position >= @list_of_rows.size
-      row = @list_of_rows[@position].map(&.evaluate(frame))
+      expressions = @list_of_rows[@position]
       @position += 1
-      row
+      if lent_row = @lent_row
+        lent_row.clear
+        expressions.each { |expression| lent_row << expression.evaluate(frame) }
+        return lent_row
+      end
+      expressions.map(&.evaluate(frame))
     end
   end
 

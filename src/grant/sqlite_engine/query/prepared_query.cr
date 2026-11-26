@@ -168,6 +168,26 @@ module Grant::SQLiteEngine::Query
       @row = NO_ROW
     end
 
+    # Whether this is a SAVEPOINT or RELEASE read without the parser: its
+    # plan is shared, and only the name and the text tell two apart.
+    def savepoint_statement? : Bool
+      !@savepoint_name.nil?
+    end
+
+    # Makes a finished savepoint statement, which nothing uses any more,
+    # the statement *sql*: the savepoint *name* with the shared plan of its
+    # shape (*compiled*), as `new` would compile it.
+    def restart_as_savepoint(sql : String, name : String, compiled : CompiledSelect) : self
+      raise Error.new("only a savepoint statement restarts as another") unless savepoint_statement?
+      reset
+      @savepoint_name = name
+      @compiled = compiled
+      @list_of_column_names = @compiled.list_of_column_names
+      @sql = sql
+      @compiled_schema_cookie = @session.schema_stamp
+      self
+    end
+
     # A statement run through its plan reads only the parameters from its
     # frame, so it keeps one frame and copies the bindings into it. A
     # SELECT keeps one too, started for each run: what uncorrelated

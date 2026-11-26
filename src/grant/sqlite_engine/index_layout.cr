@@ -59,7 +59,12 @@ module Grant::SQLiteEngine
     # *expression_values* hold the values of the expression terms in key
     # order; an index with expression terms needs them.
     def entry_for(values : Array(Value), rowid : Int64?, expression_values : Array(Value)? = nil) : Array(Value)
-      key = Array(Value).new(@list_of_key_positions.size + @list_of_tail_positions.size + 1)
+      fill_entry(Array(Value).new(@list_of_key_positions.size + @list_of_tail_positions.size + 1), values, rowid, expression_values)
+    end
+
+    # `entry_for`, written into *key* (emptied first) instead of a new array.
+    def fill_entry(key : Array(Value), values : Array(Value), rowid : Int64?, expression_values : Array(Value)? = nil) : Array(Value)
+      key.clear
       next_expression = 0
       @list_of_key_positions.each do |position|
         if position == EXPRESSION

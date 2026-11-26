@@ -71,6 +71,9 @@ module Grant::SQLiteEngine::Query
           raise SQLError.new("#{width} values for #{positions.size} columns")
         end
         @source = compiled
+        # One VALUES row is copied into the table row before anything is
+        # written, so its values can be evaluated into one reused array.
+        compiled.producer.lend_rows if single_values_row?
       end
       @upsert = UpsertPlan.compile(@table, @statement.upserts, @target_name)
       if (upsert = @upsert) && (scope = @session.trigger_scope)
@@ -121,40 +124,63 @@ module Grant::SQLiteEngine::Query
     private def write_returning_rows(run : WriteRun, list_of_parameters : Array(Value), returned : Array(Array(Value))) : Nil
       run.open_autoincrement(@table)
       each_source_row(list_of_parameters) do |values|
-        row = Array(Value).new(@table.list_of_columns.size, nil)
-        # Refilled for each row: it is read only before the row is written.
-        assigned = @assigned
-        assigned.clear
-        row.size.times { assigned << false }
-        explicit_rowid = nil.as(Value)
-        @list_of_source_positions.each_with_index do |position, index|
-          if position < 0
-            explicit_rowid = values[index]
-          else
-            row[position] = values[index]
-            assigned[position] = true
+        row = take_row_buffer
+        begin
+          # Refilled for each row: it is read only before the row is written.
+          assigned = @assigned
+          assigned.clear
+          row.size.times { assigned << false }
+          explicit_rowid = nil.as(Value)
+          @list_of_source_positions.each_with_index do |position, index|
+            if position < 0
+              explicit_rowid = values[index]
+            else
+              row[position] = values[index]
+              assigned[position] = true
+            end
           end
-        end
-        @table.list_of_columns.each do |column|
-          next if assigned[column.position] || column.generated?
-          next if column.position == @table.rowid_alias
-          row[column.position] = run.default_value(@table, column)
-        end
-        result, rowid, stored = begin
-          run.insert_row(@table, row, explicit_rowid, @override, @upsert)
-        rescue TriggerIgnore
-          next
-        end
-        next if result.ignored?
-        if program = @returning
-          pseudo = @returning_pseudo || raise Error.new("RETURNING without its row")
-          pseudo.row = stored
-          pseudo.rowid = rowid
-          if returned_row = program.evaluate(list_of_parameters)
-            returned << returned_row
+          @table.list_of_columns.each do |column|
+            next if assigned[column.position] || column.generated?
+            next if column.position == @table.rowid_alias
+            row[column.position] = run.default_value(@table, column)
           end
+          result, rowid, stored = begin
+            run.insert_row(@table, row, explicit_rowid, @override, @upsert)
+          rescue TriggerIgnore
+            next
+          end
+          next if result.ignored?
+          if program = @returning
+            pseudo = @returning_pseudo || raise Error.new("RETURNING without its row")
+            pseudo.row = stored
+            pseudo.rowid = rowid
+            if returned_row = program.evaluate(list_of_parameters)
+              returned << returned_row
+            end
+          end
+        ensure
+          give_back_row_buffer(row)
         end
       end
+    end
+
+    # The table row each source row is built in. One array is kept for the
+    # next row, since nothing holds the row once it is written; a nested
+    # run of this plan (a trigger that comes back to it) builds its own.
+    @row_buffer : Array(Value)? = nil
+
+    private def take_row_buffer : Array(Value)
+      width = @table.list_of_columns.size
+      row = @row_buffer
+      return Array(Value).new(width, nil) unless row
+      @row_buffer = nil
+      row.clear
+      width.times { row << nil }
+      row
+    end
+
+    private def give_back_row_buffer(row : Array(Value)) : Nil
+      @row_buffer = row
     end
 
     # A one-row VALUES without a compound: C inserts it without a

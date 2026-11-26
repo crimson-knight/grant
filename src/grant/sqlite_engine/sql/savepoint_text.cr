@@ -8,13 +8,22 @@ module Grant::SQLiteEngine::SQL
   # parser's.
   module SavepointText
     def self.parse(sql : String) : Statement?
+      shape = read(sql)
+      return unless shape
+      release, savepoint_keyword, name = shape
+      release ? Release.new(savepoint_keyword, Name.bare(name)) : Savepoint.new(Name.bare(name))
+    end
+
+    # What `parse` reads, without building the statement: whether it is a
+    # RELEASE, whether a RELEASE spells the SAVEPOINT keyword, and the name.
+    def self.read(sql : String) : {Bool, Bool, String}?
       bytes = sql.to_slice
       position = skip_space(bytes, 0)
       word_end = word_end(bytes, position)
       if keyword?(bytes, position, word_end, "SAVEPOINT")
         name, finish = bare_name(bytes, skip_space(bytes, word_end))
         return unless name && statement_end?(bytes, finish)
-        return Savepoint.new(name)
+        return {false, false, name}
       end
       return unless keyword?(bytes, position, word_end, "RELEASE")
       position = skip_space(bytes, word_end)
@@ -23,7 +32,7 @@ module Grant::SQLiteEngine::SQL
       position = skip_space(bytes, following_end) if savepoint_keyword
       name, finish = bare_name(bytes, position)
       return unless name && statement_end?(bytes, finish)
-      Release.new(savepoint_keyword, name)
+      {true, savepoint_keyword, name}
     end
 
     # The savepoint a statement `parse` returned names.
@@ -35,12 +44,12 @@ module Grant::SQLiteEngine::SQL
 
     # The name starting at *start* when it is a bare identifier that is no
     # keyword, and the position after it.
-    private def self.bare_name(bytes : Bytes, start : Int32) : {Name?, Int32}
+    private def self.bare_name(bytes : Bytes, start : Int32) : {String?, Int32}
       finish = word_end(bytes, start)
       return {nil, finish} if finish == start || digit?(bytes[start])
       return {nil, finish} if finish < bytes.size && bytes[finish] >= 0x80_u8
       return {nil, finish} if Keywords.lookup(bytes, start, finish - start)
-      {Name.bare(String.new(bytes[start, finish - start])), finish}
+      {String.new(bytes[start, finish - start]), finish}
     end
 
     # Only whitespace, then at most one semicolon and more whitespace.

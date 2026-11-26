@@ -264,7 +264,27 @@ module Grant::SQLiteEngine::Query
 
     # Compiles the first statement of *sql*.
     def prepare(sql : String) : PreparedQuery
+      if (spare = @list_of_spare_savepoint_queries.last?) && (shape = SQL::SavepointText.read(sql))
+        release, savepoint_keyword, name = shape
+        if compiled = @savepoint_shapes[{release, savepoint_keyword}]?
+          @list_of_spare_savepoint_queries.pop
+          return spare.restart_as_savepoint(sql, name, compiled)
+        end
+      end
       PreparedQuery.new(self, sql)
+    end
+
+    # Finalized SAVEPOINT and RELEASE statements, kept for the next ones: an
+    # ORM sends two around every row it writes in a transaction, each with
+    # a new name.
+    @list_of_spare_savepoint_queries = [] of PreparedQuery
+    SPARE_SAVEPOINT_QUERY_LIMIT = 4
+
+    # Takes back a statement its owner finalized and will not use again.
+    def take_back_finalized(query : PreparedQuery) : Nil
+      return unless query.savepoint_statement?
+      return if @list_of_spare_savepoint_queries.size >= SPARE_SAVEPOINT_QUERY_LIMIT
+      @list_of_spare_savepoint_queries << query
     end
 
     # The table named *name*, or nil: without a *schema*, a TEMP table
