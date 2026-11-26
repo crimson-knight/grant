@@ -160,6 +160,8 @@ describe "Grant::SQLiteEngine writes" do
         writer.update("t", number, values(number.odd? ? number : nil, label, number * 2)).should be_true
       end
       writer.update("t", 301_i64, values(nil, "absent", 0_i64)).should be_false
+      writer.update("t", 301_i64, values(nil, nil, 0_i64)).should be_false
+      writer.update("t", 301_i64, values(nil, "short")).should be_false
       expect_raises(Engine::ConstraintViolation, /NOT NULL/) { writer.update("t", 5_i64, values(nil, nil, 0_i64)) }
       expect_raises(Engine::ConstraintViolation, /datatype mismatch/) { writer.update("t", 6_i64, values("six", "x", 0_i64)) }
       writer.update("u", 10_i64, values(10_i64, "changed")).should be_true

@@ -499,9 +499,15 @@ module Grant::SQLiteEngine
     end
 
     # Replaces the record under *rowid* (see `replaces_in_place?`); false
-    # when there is no such row.
+    # when there is no such row. Values refused for a row that does not
+    # exist are no error, as an UPDATE that matches no row checks nothing.
     private def replace_row(layout : TableLayout, rowid : Int64, values : Array(Value)) : Bool
-      row = checked_row(layout, values)
+      row = begin
+        checked_row(layout, values)
+      rescue error
+        raise error if btree_writer.table_contains?(layout.entry.root_page, rowid)
+        return false
+      end
       alias_index = layout.definition.rowid_alias_index
       positions = layout.list_of_stored_positions
       # Encoded into the database's record buffer: the table b-tree copies
