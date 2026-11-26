@@ -172,6 +172,41 @@ jobs:
           fi
           echo "Grant does not compile on Crystal $BELOW, as expected for the declared floor."
 
+  # The same suite with every SQLite spec on Grant's own engine
+  # (GRANT_SQLITE_ENGINE=grant, read by spec/spec_helper.cr), so the engine
+  # that new Amber apps use passes everything the C library passes.
+  sqlite-engine-spec:
+    name: sqlite-engine-spec (${{ matrix.crystal }}, ${{ matrix.shard }}/6)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        crystal: [1.21.0]
+        shard: [1, 2, 3, 4, 5, 6]
+    steps:
+      - name: Download source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Refresh apt package index
+        run: sudo apt-get update
+      - name: Install Crystal
+        uses: crystal-lang/install-crystal@d8ef131ecec0352ce0e39b81b0a6d95def58fe2f # v1
+        with:
+          crystal: ${{ matrix.crystal }}
+      - name: Install shards
+        run: shards install --frozen --skip-postinstall --skip-executables
+      - name: Run tests on Grant's engine
+        timeout-minutes: 25
+        run: scripts/spec-groups.sh --shard ${{ matrix.shard }}/6 sqlite
+        env:
+          CRYSTAL: crystal
+          SPEC_GROUP_INCREMENTAL: "0"
+          SPEC_GROUP_MAX_RSS_GB: "13"
+          CURRENT_ADAPTER: sqlite
+          SQLITE_DATABASE_URL: sqlite3:./grant.db
+          SQLITE_REPLICA_URL: sqlite3:./grant_replica.db
+          GRANT_SQLITE_ENGINE: grant
+
   # The database suites run in six slices each (spec-groups.sh --shard), side
   # by side, so no job comes near its timeout. Compiling each group is most of
   # the cost; the slices are balanced on an estimate of it. A slice that runs
