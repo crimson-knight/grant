@@ -18,8 +18,10 @@ module Grant::SQLiteEngine::Query
 
       @list_of_entries = [] of Entry
 
+      # Every statement run empties the cache, and almost every run finds it
+      # empty already, so an empty cache is left as it is.
       def clear : Nil
-        @list_of_entries.clear
+        @list_of_entries.clear unless @list_of_entries.empty?
       end
 
       # jsonCacheSearch: the entry whose text is this very string, else the
