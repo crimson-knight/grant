@@ -114,6 +114,7 @@ module Grant
       # Async `find_by_sql`: hydrates the rows of *sql* as this model on a
       # background fiber. Raw SQL gets no default scope, so a scoped model
       # raises unless the call sits inside `unscoped { }`, as `find_by_sql`.
+      @[TypeOnce]
       def async_find_by_sql(sql : String, binds : Array(Grant::Columns::Type) = [] of Grant::Columns::Type) : AsyncResult(Array(self))
         ensure_raw_sql_unscoped!
         AsyncResult(Array(self)).new do
@@ -154,6 +155,7 @@ module Grant
       end
 
       # Async first
+      @[TypeOnce]
       def async_first : AsyncResult(self?)
         query = current_scope
         AsyncResult(self?).new do
@@ -162,6 +164,7 @@ module Grant
       end
 
       # Async first!
+      @[TypeOnce]
       def async_first! : AsyncResult(self)
         query = current_scope
         AsyncResult(self).new do
@@ -170,6 +173,7 @@ module Grant
       end
 
       # Async last
+      @[TypeOnce]
       def async_last : AsyncResult(self?)
         query = current_scope
         AsyncResult(self?).new do
@@ -178,6 +182,7 @@ module Grant
       end
 
       # Async last!
+      @[TypeOnce]
       def async_last! : AsyncResult(self)
         query = current_scope
         AsyncResult(self).new do
@@ -186,6 +191,7 @@ module Grant
       end
 
       # Async all
+      @[TypeOnce]
       def async_all : AsyncResult(Array(self))
         query = current_scope
         AsyncResult(Array(self)).new do
@@ -202,6 +208,7 @@ module Grant
       #
       # For filtered reads, prefer the query-builder form
       # (`User.where(...).load_async`).
+      @[TypeOnce]
       def load_async : AsyncResult(Array(self))
         async_all
       end

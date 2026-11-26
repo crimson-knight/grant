@@ -16,6 +16,7 @@ class Grant::Query::Builder(Model)
   # User.order(:name).reorder("created_at DESC, id")
   # # => ORDER BY created_at DESC, id ASC
   # ```
+  @[TypeOnce]
   def reorder!(sql : String) : self
     start_reordering!
     order!(sql)
@@ -24,12 +25,14 @@ class Grant::Query::Builder(Model)
   # :ditto:
   #
   # A `Grant.sql(...)` expression is emitted as written.
+  @[TypeOnce]
   def reorder!(sql : Grant::Query::SqlExpression::Trusted) : self
     start_reordering!
     order!(sql)
   end
 
   # Replaces the ORDER BY with a single column and direction.
+  @[TypeOnce]
   def reorder!(field : Symbol | String, direction : Symbol, *, nulls : Symbol? = nil) : self
     start_reordering!
     # `reorder(:name, :score)` is two ascending columns, not a direction.
@@ -43,19 +46,23 @@ class Grant::Query::Builder(Model)
   end
 
   # Replaces the ORDER BY with a column ascending and a NULL placement.
+  @[TypeOnce]
   def reorder!(field : Symbol | String, *, nulls : Symbol) : self
     start_reordering!
     order!(field, nulls: nulls)
   end
 
+  @[TypeOnce]
   def reorder(sql : String | Grant::Query::SqlExpression::Trusted) : self
     chain_copy.reorder!(sql)
   end
 
+  @[TypeOnce]
   def reorder(field : Symbol | String, direction : Symbol, *, nulls : Symbol? = nil) : self
     chain_copy.reorder!(field, direction, nulls: nulls)
   end
 
+  @[TypeOnce]
   def reorder(field : Symbol | String, *, nulls : Symbol) : self
     chain_copy.reorder!(field, nulls: nulls)
   end
@@ -71,6 +78,7 @@ class Grant::Query::Builder(Model)
   end
 
   # :ditto:
+  @[TypeOnce]
   def reselect!(columns : ColumnList) : self
     reset_load_state
     @select_columns = columns.map do |column|
@@ -83,6 +91,7 @@ class Grant::Query::Builder(Model)
     chain_copy.select!(*columns)
   end
 
+  @[TypeOnce]
   def reselect(columns : ColumnList) : self
     chain_copy.reselect!(columns)
   end
@@ -98,6 +107,7 @@ class Grant::Query::Builder(Model)
   end
 
   # :ditto:
+  @[TypeOnce]
   def regroup!(fields : ColumnList) : self
     clear_group_fields
     fields.each do |field|
@@ -114,6 +124,7 @@ class Grant::Query::Builder(Model)
     chain_copy.regroup!(fields.to_a)
   end
 
+  @[TypeOnce]
   def regroup(fields : ColumnList) : self
     chain_copy.regroup!(fields)
   end
