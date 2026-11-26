@@ -26,12 +26,29 @@ module Grant::Beryl::Crypto::V1
   # a message that fails the check returns `nil` (or `false`) and leaves the
   # caller's buffer exactly as it was. The check takes the same time
   # whatever the key, the message and the tag hold.
+  #
+  # `wipe` zeroes every buffer derived from the key; after it, every
+  # encryption, decryption and tag check raises `KeyWiped`.
   abstract class AuthenticatedEncryption
     # The size of a full tag, in bytes, for every cipher in this shard.
     FULL_TAG_BYTESIZE = 16
 
     # Returns the number of bytes of tag at the end of each encrypted message.
     getter tag_bytesize : Int32 = FULL_TAG_BYTESIZE
+
+    # Returns whether `wipe` has zeroed this cipher's key.
+    getter? is_wiped : Bool = false
+
+    # Zeroes the key and everything derived from it (round keys, hash keys)
+    # through `SecretWiping`. The cipher cannot be used afterward: every
+    # encryption, decryption and tag check raises `KeyWiped`.
+    def wipe : Nil
+      @is_wiped = true
+      wipe_key_material
+    end
+
+    # Zeroes, in place, every buffer this cipher derived from its key.
+    protected abstract def wipe_key_material : Nil
 
     # Returns the nonce size this cipher is meant to be used with, in bytes.
     abstract def nonce_bytesize : Int32
@@ -83,6 +100,7 @@ module Grant::Beryl::Crypto::V1
     # must be `tag_bytesize` bytes longer than the plaintext.
     def encrypt(plaintext : Bytes | String, *, into ciphertext_and_tag : Bytes, nonce : Bytes,
                 associated_data : Bytes | String = Bytes.empty) : Nil
+      ensure_key_is_not_wiped
       plaintext_bytes = plaintext.to_slice
       ensure_nonce_is_accepted(nonce)
       unless ciphertext_and_tag.size == plaintext_bytes.size + @tag_bytesize
@@ -103,6 +121,7 @@ module Grant::Beryl::Crypto::V1
     # Returns the plaintext of *ciphertext_and_tag*, or `nil` when the
     # message, the nonce or the associated data is not what was encrypted.
     def decrypt(ciphertext_and_tag : Bytes, *, nonce : Bytes, associated_data : Bytes | String = Bytes.empty) : Bytes?
+      ensure_key_is_not_wiped
       ensure_nonce_is_accepted(nonce)
       return nil if ciphertext_and_tag.size < @tag_bytesize
 
@@ -117,6 +136,7 @@ module Grant::Beryl::Crypto::V1
     # leaves *plaintext* untouched when the message fails authentication.
     def decrypt(ciphertext_and_tag : Bytes, *, into plaintext : Bytes, nonce : Bytes,
                 associated_data : Bytes | String = Bytes.empty) : Bool
+      ensure_key_is_not_wiped
       ensure_nonce_is_accepted(nonce)
       return false if ciphertext_and_tag.size < @tag_bytesize
       unless plaintext.size == ciphertext_and_tag.size - @tag_bytesize
@@ -137,6 +157,7 @@ module Grant::Beryl::Crypto::V1
     # and *associated_data*, without decrypting it. The comparison runs in
     # constant time.
     def authentic?(ciphertext_and_tag : Bytes, *, nonce : Bytes, associated_data : Bytes | String = Bytes.empty) : Bool
+      ensure_key_is_not_wiped
       ensure_nonce_is_accepted(nonce)
       return false if ciphertext_and_tag.size < @tag_bytesize
 
@@ -151,6 +172,12 @@ module Grant::Beryl::Crypto::V1
       end
       SecretWiping.wipe(full_tag_storage.to_slice)
       tags_match
+    end
+
+    # One check per call, before any secret is touched; `@is_wiped` is
+    # public state, so the branch leaks nothing.
+    private def ensure_key_is_not_wiped : Nil
+      raise KeyWiped.new("this #{self.class.name} was wiped; its key can no longer seal or open a message") if @is_wiped
     end
   end
 

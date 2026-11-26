@@ -29,10 +29,16 @@ module Grant::PQ
     # any other host; an explicit sslmode always wins.
     getter sslmode : Symbol
 
-    # The sslcert. Optional.
+    # The path of the PEM client certificate chain (leaf first) presented when
+    # the server asks for one (`clientcert=verify-ca`/`verify-full` or the
+    # `cert` method in pg_hba.conf). Optional; given together with `sslkey`.
+    # With neither set, no certificate is presented: Grant does not fall back
+    # to `~/.postgresql/postgresql.crt` as libpq does (see `ClientCertificate`).
     getter sslcert : String?
 
-    # The sslkey. Optional.
+    # The path of the PEM private key of `sslcert`. Optional; given together
+    # with `sslcert`. The file must be readable by its owner only (0600), or
+    # also by its group (0640) when owned by root, as libpq requires.
     getter sslkey : String?
 
     # The sslrootcert. Optional.

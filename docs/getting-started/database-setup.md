@@ -512,6 +512,12 @@ Grant::Connections << Grant::Adapter::Pg.new(
 # PostgreSQL: chain and host name checked against your CA
 url = "postgresql://user:pass@host/db?sslmode=verify-full&sslrootcert=/path/to/ca.pem"
 
+# PostgreSQL with a client certificate (mutual TLS), for a server whose
+# pg_hba.conf says `cert` or `clientcert=verify-full`: the certificate's CN
+# is the user, and the key file must be mode 0600
+url = "postgresql://user@host/db?sslmode=verify-full&sslrootcert=/path/to/ca.pem" \
+      "&sslcert=/path/to/client.pem&sslkey=/path/to/client.key"
+
 # MySQL: chain and host name checked against your CA
 url = "mysql://user:pass@host/db?ssl-mode=verify_identity&ssl-ca=/path/to/ca.pem"
 ```
@@ -521,9 +527,12 @@ and needs no flag or setting. The server must offer TLS 1.3 (PostgreSQL 12
 or later, MySQL 8.0.16 or later); a server that stops at TLS 1.2 is refused
 with an error that says so. Without `sslrootcert` / `ssl-ca` the chain is
 checked against the system roots (the file `SSL_CERT_FILE` names, else the
-operating system bundle). Client certificates (`sslcert`/`sslkey`,
-`ssl-cert`/`ssl-key`) need the `-Duse_openssl` build flag, which keeps the
-OpenSSL path for one release.
+operating system bundle). PostgreSQL client certificates (`sslcert` and
+`sslkey`, given together) work on Beryl with no flag; as with libpq, a key
+file readable by group or others is refused, and unlike libpq no
+`~/.postgresql/postgresql.crt` default is read. MySQL client certificates
+(`ssl-cert`/`ssl-key`) still need the `-Duse_openssl` build flag with the
+pinned MySQL driver.
 
 ## Troubleshooting
 
