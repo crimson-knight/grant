@@ -73,7 +73,10 @@ module Grant::SQLiteEngine::Query
         end
         found
       end
-      # Keys are lower case: a lower-case name is looked up as it is.
+      # Keys are lower case: a lower-case name is looked up as it is. With
+      # no foreign key in the schema, no name is lowered (a write asks for
+      # every row it changes).
+      return NO_CHILD_TABLES if map.empty?
       map[parent]? || map[parent.downcase]? || NO_CHILD_TABLES
     end
 
@@ -395,7 +398,7 @@ module Grant::SQLiteEngine::Query
       pager = @database.pager
       depth = open_savepoint_everywhere
       saved_deferred = @deferred_violations
-      run = WriteRun.new(self, list_of_parameters)
+      run = take_write_run(list_of_parameters)
       run.autocommit = autocommit
       hold = false
       begin
@@ -444,7 +447,23 @@ module Grant::SQLiteEngine::Query
           commit_statement_transaction
         end
       end
+      # Nothing holds the run once its statement finished; a run that
+      # failed is not kept.
+      @spare_write_run = run
       result
+    end
+
+    # A finished WriteRun kept for the next write statement, which
+    # `WriteRun#restart` makes as new; a write inside another write's run
+    # (a nested statement) finds none and makes its own.
+    @spare_write_run : WriteRun? = nil
+
+    private def take_write_run(list_of_parameters : Array(Value)) : WriteRun
+      if spare = @spare_write_run
+        @spare_write_run = nil
+        return spare.restart(list_of_parameters)
+      end
+      WriteRun.new(self, list_of_parameters)
     end
 
     # An autocommit statement's RETURNING rows are still being read.

@@ -62,6 +62,22 @@ module Grant::SQLiteEngine::Query
     def initialize(@session : Session, @list_of_parameters : Array(Value))
     end
 
+    # Makes this finished run the run of a new statement of the same
+    # session, as `new` would make it: every instance variable (those the
+    # other files of the class declare too) goes back to its declared
+    # default, so no counter or cache of the last statement remains. The
+    # session keeps one finished run for the next write
+    # (`Session#run_write`), since every write statement makes one.
+    def restart(list_of_parameters : Array(Value)) : self
+      {% for ivar in @type.instance_vars %}
+        {% unless ivar.name == "session".id || ivar.name == "list_of_parameters".id %}
+          @{{ ivar.name }} = {{ ivar.default_value }}
+        {% end %}
+      {% end %}
+      @list_of_parameters = list_of_parameters
+      self
+    end
+
     # The main database; a table's own is `WriteTable#database`.
     def database : Database
       @session.database
@@ -889,15 +905,21 @@ module Grant::SQLiteEngine::Query
       left.compare(right, case_insensitive: true) == 0
     end
 
+    # What `referencing` returns for a table no foreign key names; nothing
+    # adds to it.
+    NO_REFERENCES = [] of {WriteTable, ForeignKeyRule, Array(Int32)}
+
     # The foreign keys of every table that name *table* as parent, with the
     # parent key positions each refers to, newest first: C links each new
     # foreign key at the head of its parent's list (sqlite3CreateForeignKey,
     # fkeyHash), so sqlite3FkActions runs a later table's CASCADE before an
     # earlier table's RESTRICT stops the statement.
     private def referencing(table : WriteTable) : Array({WriteTable, ForeignKeyRule, Array(Int32)})
-      list = [] of {WriteTable, ForeignKeyRule, Array(Int32)}
       list_of_children = @session.list_of_child_tables(table.name)
-      return list if list_of_children.empty?
+      # Callers only read the list, so a table no foreign key names shares
+      # one empty list instead of a new one for every row written.
+      return NO_REFERENCES if list_of_children.empty?
+      list = [] of {WriteTable, ForeignKeyRule, Array(Int32)}
       list_of_children.each do |child_name|
         child = table(child_name)
         child.list_of_foreign_keys.each do |rule|
