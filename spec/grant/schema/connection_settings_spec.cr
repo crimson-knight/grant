@@ -34,18 +34,39 @@ describe Grant::Schema::ConnectionSettings do
       environment["PGSSLROOTCERT"].should eq("/etc/app/ca.pem")
     end
 
-    it "points libpq at the bundle the driver reads when sslrootcert is absent or system" do
+    it "points libpq at the anchors the driver trusts when sslrootcert is absent or system" do
       bundle = File.tempname("grant-system-bundle", ".pem")
-      File.write(bundle, "")
+      File.write(bundle, Grant::Beryl::Certificates::TrustStore.mozilla.list_of_certificates.first(2).join(&.to_pem))
       begin
         with_ssl_cert_file(bundle) do
-          pg_environment_for("postgres://grant@db.example.com/app?sslmode=verify-full")["PGSSLROOTCERT"].should eq(bundle)
-          pg_environment_for("postgres://grant@db.example.com/app?sslmode=verify-full&sslrootcert=system")["PGSSLROOTCERT"].should eq(bundle)
+          when_absent = pg_environment_for("postgres://grant@db.example.com/app?sslmode=verify-full")["PGSSLROOTCERT"]
+          when_system = pg_environment_for("postgres://grant@db.example.com/app?sslmode=verify-full&sslrootcert=system")["PGSSLROOTCERT"]
+          when_system.should eq(when_absent)
+          {% if flag?(:darwin) %}
+            # libpq reads one file, so Grant writes TrustStore.system's set.
+            when_absent.should start_with(Grant::Schema::WriteTrustAnchorsForCommandLineTools.cache_directory)
+            Grant::Beryl::Certificates::TrustStore.from_pem(File.read(when_absent)).list_of_certificates
+              .should eq(Grant::Beryl::Certificates::TrustStore.system.list_of_certificates)
+          {% else %}
+            when_absent.should eq(bundle)
+          {% end %}
         end
       ensure
         File.delete?(bundle)
       end
     end
+
+    {% if flag?(:darwin) %}
+      it "gives libpq /etc/ssl/cert.pem joined with Beryl's pinned Mozilla roots on macOS" do
+        with_ssl_cert_file(nil) do
+          path = pg_environment_for("postgres://grant@db.example.com/app?sslmode=verify-full")["PGSSLROOTCERT"]
+
+          Grant::Beryl::Certificates::TrustStore.from_pem(File.read(path)).list_of_certificates
+            .should eq(Grant::Beryl::Certificates::TrustStore.system.list_of_certificates)
+          path.should_not eq("/etc/ssl/cert.pem")
+        end
+      end
+    {% end %}
 
     it "raises a StructureToolError when verification needs a system bundle that is missing" do
       with_ssl_cert_file("/nonexistent/grant-bundle.pem") do
@@ -101,5 +122,32 @@ describe "pg_dump with Grant::Schema::ConnectionSettings#pg_environment" do
     status = Process.run(pg_dump, ["--schema-only"] + untrusted.pg_arguments, env: untrusted.pg_environment, output: Process::Redirect::Close, error: error)
     status.success?.should be_false
     error.to_s.should match(/certificate verify failed|certificate/i)
+  end
+
+  it "verifies the server against the anchors SSL_CERT_FILE names when the URL names no sslrootcert" do
+    pg_dump = Process.find_executable("pg_dump")
+    unrelated_ca_file = ENV["GRANT_PG_TLS_UNRELATED_CA_FILE"]?
+    next unless CURRENT_ADAPTER == "pg" && pg_dump && unrelated_ca_file && ADAPTER_URL.includes?("sslmode=verify-full")
+
+    uri = URI.parse(ADAPTER_URL)
+    query = uri.query_params
+    ca_file = query["sslrootcert"]?
+    next unless ca_file
+    query.delete("sslrootcert")
+    uri.query = query.to_s
+    settings = Grant::Schema::ConnectionSettings.parse(uri.to_s)
+
+    with_ssl_cert_file(ca_file) do
+      error = IO::Memory.new
+      status = Process.run(pg_dump, ["--schema-only"] + settings.pg_arguments, env: settings.pg_environment, output: Process::Redirect::Close, error: error)
+      status.success?.should be_true, "pg_dump under SSL_CERT_FILE=#{ca_file} failed: #{error}"
+    end
+
+    with_ssl_cert_file(unrelated_ca_file) do
+      error = IO::Memory.new
+      status = Process.run(pg_dump, ["--schema-only"] + settings.pg_arguments, env: settings.pg_environment, output: Process::Redirect::Close, error: error)
+      status.success?.should be_false
+      error.to_s.should match(/certificate verify failed|certificate/i)
+    end
   end
 end

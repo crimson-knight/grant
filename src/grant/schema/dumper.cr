@@ -3,6 +3,7 @@ require "./schema_statements"
 require "./constraint_catalog"
 require "./schema_migration"
 require "../vendor/beryl/certificates/trust_store"
+require "./write_trust_anchors_for_command_line_tools"
 
 module Grant::Schema
   # The file format of a schema dump: a Crystal `Grant::Schema.define` block or
@@ -916,10 +917,15 @@ module Grant::Schema
     # the URL names none: `disable` for a database on this machine, `prefer`
     # for any other host), TLS 1.3 at least, and for `verify-ca` and
     # `verify-full` the same trust anchors. With no `sslrootcert`, or
-    # `sslrootcert=system`, those are the system bundle the driver reads
-    # (the file `SSL_CERT_FILE` names, else the operating system's), passed
-    # as a file so every libpq version reads it. These variables replace the
-    # caller's own, so a stray `PGSSLMODE` cannot loosen the check.
+    # `sslrootcert=system`, those are the anchors the driver reads
+    # (`Grant::Beryl::Certificates::TrustStore.system`: the file
+    # `SSL_CERT_FILE` names, else the operating system's bundle), passed as
+    # a file so every libpq version reads it. On macOS that set is not one
+    # file (Beryl joins its pinned Mozilla roots to `/etc/ssl/cert.pem`,
+    # which trails the keychain), so Grant writes the set to a file in this
+    # user's cache (`WriteTrustAnchorsForCommandLineTools`). These
+    # variables replace the caller's own, so a stray `PGSSLMODE` cannot
+    # loosen the check.
     def pg_environment : Hash(::String, ::String)
       result = environment("PGPASSWORD")
       mode = @sslmode || (database_is_on_this_machine? ? "disable" : "prefer")
@@ -941,7 +947,11 @@ module Grant::Schema
       root_certificate = @sslrootcert
       return root_certificate if root_certificate && root_certificate != "system"
 
-      Grant::Beryl::Certificates::TrustStore.system_bundle_path
+      {% if flag?(:darwin) %}
+        WriteTrustAnchorsForCommandLineTools.new(Grant::Beryl::Certificates::TrustStore.system).perform
+      {% else %}
+        Grant::Beryl::Certificates::TrustStore.system_bundle_path
+      {% end %}
     rescue error : Grant::Beryl::Certificates::Error
       raise StructureToolError.new("sslmode=#{@sslmode} needs trust anchors for pg_dump and psql: #{error.message}")
     end
