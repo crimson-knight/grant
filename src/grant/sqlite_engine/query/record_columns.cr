@@ -52,8 +52,6 @@ module Grant::SQLiteEngine::Query
   # values can be decoded one at a time in any order. Each entry read is
   # checked as `Record.decode` checks it.
   class RecordHeader
-    INITIAL_CAPACITY = 16
-
     @payload = Bytes.empty
     @page_number = 0_u32
     @header_end = 0
@@ -62,13 +60,10 @@ module Grant::SQLiteEngine::Query
     @count = 0
     # Per entry read: its serial type, body offset and size, in buffers
     # that grow to the widest record seen and are reused for every row.
-    # They are allocated on the first read: a source that never reads a
-    # record through its header (a table scan a rowid seek replaced)
-    # allocates none.
-    @capacity = 0
-    @serial_types = Pointer(Int64).null
-    @offsets = Pointer(Int32).null
-    @sizes = Pointer(Int32).null
+    @capacity = 16
+    @serial_types = Pointer(Int64).malloc(16)
+    @offsets = Pointer(Int32).malloc(16)
+    @sizes = Pointer(Int32).malloc(16)
 
     def parse(payload : Bytes, page_number : UInt32) : Nil
       @payload = payload
@@ -203,13 +198,6 @@ module Grant::SQLiteEngine::Query
 
     @[NoInline]
     private def grow : Nil
-      if @capacity == 0
-        @serial_types = Pointer(Int64).malloc(INITIAL_CAPACITY)
-        @offsets = Pointer(Int32).malloc(INITIAL_CAPACITY)
-        @sizes = Pointer(Int32).malloc(INITIAL_CAPACITY)
-        @capacity = INITIAL_CAPACITY
-        return
-      end
       capacity = @capacity * 2
       @serial_types = @serial_types.realloc(capacity)
       @offsets = @offsets.realloc(capacity)
