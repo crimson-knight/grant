@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+### Beryl is the only TLS backend; `-Duse_openssl` is removed
+
+- The PostgreSQL driver connects over Beryl TLS 1.3 only. The `-Duse_openssl`
+  opt-out, kept for one release after 0.28.0, is gone with its OpenSSL
+  context, socket and `OpenSSL::X509::Certificate` extension
+  (`drivers/pg/ext/openssl.cr`). A build that still passes `-Duse_openssl`
+  gets Beryl and links no OpenSSL. `Grant::PQ::TLSSocket` and
+  `Grant::PQ::ClientCertificate::TLSContext` keep their names and now always
+  name Beryl types.
+- A server that stops at TLS 1.2 is refused with the error that names the
+  TLS 1.3 requirement (PostgreSQL 12 or later with
+  `ssl_min_protocol_version = 'TLSv1.3'`).
+- `scripts/check_openssl_linkage.rb` checks that a `-Duse_openssl` build links
+  no OpenSSL; its control is now a program that requires `openssl` itself.
+- Development dependency crystal-mysql moves to 0.18.2 plus the matching
+  opt-out removal (67da8ba1, crystal-mysql#7) on Beryl 0.2.3.
+
 ### PostgreSQL client certificates on Beryl TLS
 
 - `sslcert` and `sslkey` now work on the default Beryl TLS path, so an app

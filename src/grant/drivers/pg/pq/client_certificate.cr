@@ -22,18 +22,10 @@ module Grant::PQ
     # :nodoc:
     #
     # What the TLS library raises for a PEM file it cannot use.
-    {% if flag?(:use_openssl) %}
-      alias UnusablePemError = Grant::Beryl::Error | OpenSSL::Error
-    {% else %}
-      alias UnusablePemError = Grant::Beryl::Error
-    {% end %}
+    alias UnusablePemError = Grant::Beryl::Error
 
-    # The client context of the TLS library this build connects with.
-    {% if flag?(:use_openssl) %}
-      alias TLSContext = OpenSSL::SSL::Context::Client
-    {% else %}
-      alias TLSContext = Grant::Beryl::TLS::Context::Client
-    {% end %}
+    # The client context connections use: Beryl's.
+    alias TLSContext = Grant::Beryl::TLS::Context::Client
 
     # The line that opens each certificate in a PEM file.
     PEM_CERTIFICATE_HEADER = "-----BEGIN CERTIFICATE-----"
@@ -66,8 +58,7 @@ module Grant::PQ
     end
 
     # Loads the certificate chain and private key into *context*, a
-    # `Grant::Beryl::TLS::Context::Client` or, in a `-Duse_openssl` build,
-    # an `OpenSSL::SSL::Context::Client`. The key's permissions are checked
+    # `Grant::Beryl::TLS::Context::Client`. The key's permissions are checked
     # first, as libpq checks them (see `refuse_a_private_key_open_to_others`).
     # Raises `ConnectionError` naming the file that could not be used.
     def apply_to(context : TLSContext) : Nil

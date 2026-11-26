@@ -16,4 +16,4 @@ Changes made in Grant, on top of the renames: a private `grant-postgres` scheme,
 named prepared statements (`pg/statement.cr`, `pg/connection.cr`, `pq/connection.cr`,
 `pq/frame.cr`), a `disable` sslmode default for a database on the same machine
 (`pq/conninfo.cr`), and TLS and SCRAM channel binding on Grant's vendored Beryl
-(TLS 1.3, no OpenSSL; `pq/connection.cr`), with OpenSSL behind `-Duse_openssl`.
+(TLS 1.3, no OpenSSL; `pq/connection.cr`). Beryl is the only TLS backend.

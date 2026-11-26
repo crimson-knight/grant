@@ -5,10 +5,11 @@
 # and no flags, then counts OpenSSL in each binary: `otool -L` (macOS) or
 # `ldd` (Linux) for libssl and libcrypto, `nm` for EVP_, SSL_ and OPENSSL_
 # symbols. The default-app and PostgreSQL probes must show 0 and 0: the
-# PostgreSQL driver speaks TLS through Beryl. The PostgreSQL probe built
-# with -Duse_openssl (the opt-out kept for one release) must show OpenSSL,
-# so the check is known to be able to fail. The SQLite probe is also run,
-# so it must work as well as link cleanly.
+# PostgreSQL driver speaks TLS through Beryl only. The PostgreSQL probe built
+# with -Duse_openssl must show 0 and 0 too: the opt-out was removed and the
+# flag now changes nothing. The control requires the standard library's
+# OpenSSL itself and must show it, so the check is known to be able to fail.
+# The SQLite probe is also run, so it must work as well as link cleanly.
 #
 #   /usr/bin/ruby scripts/check_openssl_linkage.rb
 require "open3"
@@ -25,7 +26,8 @@ Probe = Struct.new(:name, :source, :list_of_flags, :expect_openssl, :run)
 LIST_OF_PROBES = [
   Probe.new("default app (SQLite)", "scripts/linkage/default_app_probe.cr", [], false, true),
   Probe.new("PostgreSQL adapter", "scripts/linkage/pg_app_probe.cr", [], false, false),
-  Probe.new("control (-Duse_openssl)", "scripts/linkage/pg_app_probe.cr", ["-Duse_openssl"], true, false),
+  Probe.new("PostgreSQL, -Duse_openssl", "scripts/linkage/pg_app_probe.cr", ["-Duse_openssl"], false, false),
+  Probe.new("control (require openssl)", "scripts/linkage/openssl_control_probe.cr", [], true, false),
 ]
 
 def count_matches(command, pattern)

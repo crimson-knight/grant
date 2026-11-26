@@ -3,9 +3,6 @@ require "spec"
 {% skip_file unless env("CURRENT_ADAPTER") == "pg" %}
 
 require "file_utils"
-{% if flag?(:use_openssl) %}
-  require "openssl"
-{% end %}
 require "process"
 require "random/secure"
 require "socket"
@@ -13,14 +10,9 @@ require "socket/tcp_server"
 require "socket/tcp_socket"
 require "../../../../src/grant/drivers/pg/pg"
 
-# What a refused handshake raises in the client: Grant's own ConnectionError
-# on Beryl TLS (the default), OpenSSL's error in a -Duse_openssl build. The
-# in-process server is Beryl's in both.
-{% if flag?(:use_openssl) %}
-  private alias TLSClientError = OpenSSL::SSL::Error
-{% else %}
-  private alias TLSClientError = Grant::PQ::ConnectionError
-{% end %}
+# What a refused handshake raises in the client: Grant's own ConnectionError.
+# The in-process server is Beryl's.
+private alias TLSClientError = Grant::PQ::ConnectionError
 
 private record LocalTLSCertificates,
   ca_certificate_file : String,
@@ -118,8 +110,7 @@ private def expect_local_startup_frame(attempt : LocalTLSAttempt, first_user : S
   startup_message.ends_with?("\0\0").should be_true
 end
 
-# Points the default trust store (OpenSSL's default paths, or Beryl's
-# `TrustStore.system`) at *certificate_file* for the block.
+# Points the default trust store (Beryl's `TrustStore.system`) at *certificate_file* for the block.
 private def with_system_certificate_file(certificate_file : String, &)
   previous_value = ENV["SSL_CERT_FILE"]?
   ENV["SSL_CERT_FILE"] = certificate_file
@@ -471,16 +462,14 @@ describe Grant::PQ::Connection, "TLS certificate verification (D1)" do
     end
   end
 
-  {% unless flag?(:use_openssl) %}
-    it "names the TLS 1.3 requirement when the server stops at TLS 1.2" do
-      port = ENV["GRANT_PG_TLS12_PORT"]? || pending!("needs GRANT_PG_TLS12_PORT")
-      conn_info = Grant::PQ::ConnInfo.new(host: "127.0.0.1", port: port, database: "grant_db",
-        user: ENV["GRANT_PG_TLS_USER"]? || "postgres", sslmode: :require)
-      expect_raises(Grant::PQ::ConnectionError, /TLS 1\.3/) do
-        Grant::PQ::Connection.new(conn_info)
-      end
+  it "names the TLS 1.3 requirement when the server stops at TLS 1.2" do
+    port = ENV["GRANT_PG_TLS12_PORT"]? || pending!("needs GRANT_PG_TLS12_PORT")
+    conn_info = Grant::PQ::ConnInfo.new(host: "127.0.0.1", port: port, database: "grant_db",
+      user: ENV["GRANT_PG_TLS_USER"]? || "postgres", sslmode: :require)
+    expect_raises(Grant::PQ::ConnectionError, /TLS 1\.3/) do
+      Grant::PQ::Connection.new(conn_info)
     end
-  {% end %}
+  end
 
   it "closes the socket and names each sslmode when a server answers N" do
     [:require, :"verify-ca", :"verify-full"].each do |sslmode|
