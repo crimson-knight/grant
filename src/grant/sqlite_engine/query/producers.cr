@@ -79,7 +79,7 @@ module Grant::SQLiteEngine::Query
   # result columns followed by *extra* values (ORDER BY keys) that a
   # SortProducer above reads and drops.
   class CoreProducer < Producer
-    @groups = [] of Group
+    @groups : Array(Group)
     @group_position = 0
     @seen : Set(Array(EqualityKey))? = nil
 
@@ -90,7 +90,36 @@ module Grant::SQLiteEngine::Query
     def initialize(@source : RowSource, @where : Expr?, @list_of_columns : Array(Expr), @list_of_extras : Array(Expr),
                    @aggregation : Aggregation?, @distinct : Bool, @list_of_column_collations : Array(Collation),
                    @streaming : Bool = false)
+      # The aggregate-only buffers are real arrays only for a query that
+      # aggregates; any other holds the shared empty ones, which nothing
+      # touches without an aggregation. Either way they are never nil, so
+      # the per-row paths read them without a check.
+      if @aggregation
+        @groups = [] of Group
+        @scratch_keys = [] of Value
+        @saved_rows = [] of Array(Value)
+        @saved_rowids = [] of Int64?
+        @saved_pending = [] of TableScanSource?
+        @list_of_spare_groups = [] of Group
+        @list_of_argument_buffers = [] of Array(Value)
+      else
+        @groups = NO_GROUPS
+        @scratch_keys = NO_VALUES
+        @saved_rows = NO_ROWS
+        @saved_rowids = NO_ROWIDS
+        @saved_pending = NO_PENDING
+        @list_of_spare_groups = NO_GROUPS
+        @list_of_argument_buffers = NO_ROWS
+      end
     end
+
+    # The empty buffers of a query without aggregation, shared: only the
+    # aggregation paths change the buffers.
+    NO_GROUPS  = [] of Group
+    NO_VALUES  = [] of Value
+    NO_ROWS    = [] of Array(Value)
+    NO_ROWIDS  = [] of Int64?
+    NO_PENDING = [] of TableScanSource?
 
     @current : Group? = nil
     @source_done = false
@@ -267,13 +296,13 @@ module Grant::SQLiteEngine::Query
       finished
     end
 
-    @scratch_keys = [] of Value
-    @saved_rows = [] of Array(Value)
-    @saved_rowids = [] of Int64?
-    @saved_pending = [] of TableScanSource?
+    @scratch_keys : Array(Value)
+    @saved_rows : Array(Array(Value))
+    @saved_rowids : Array(Int64?)
+    @saved_pending : Array(TableScanSource?)
     # Finished groups whose arrays and accumulators the next groups reuse,
     # kept from one execution to the next.
-    @list_of_spare_groups = [] of Group
+    @list_of_spare_groups : Array(Group)
 
     private def recycled_group(keys : Array(Value)) : Group?
       spare = @list_of_spare_groups.pop?
@@ -282,7 +311,7 @@ module Grant::SQLiteEngine::Query
       spare
     end
 
-    @list_of_argument_buffers = [] of Array(Value)
+    @list_of_argument_buffers : Array(Array(Value))
 
     private def same_group_key?(keys : Array(Value), current : Array(Value), collations : Array(Collation)) : Bool
       keys.each_with_index do |value, index|
