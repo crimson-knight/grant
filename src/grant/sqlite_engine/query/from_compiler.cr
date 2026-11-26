@@ -3,16 +3,33 @@ module Grant::SQLiteEngine::Query
     # One FROM entry with how it joins to the entries before it.
     class JoinStep
       getter entry : FromEntry
-      # The source used when no index or rowid path applies.
-      getter base_source : RowSource
       getter? left_join : Bool
       property on : Expr?
       # The ON clause, compiled after WHERE (sqlite3ProcessJoin ANDs it onto
       # the end of WHERE before names are resolved).
       getter on_syntax : SQL::Expression?
 
-      def initialize(@entry : FromEntry, @base_source : RowSource, @left_join : Bool, @on : Expr?,
+      # *base_source* is nil for a table, whose full scan `base_source`
+      # builds when first asked for.
+      def initialize(@entry : FromEntry, @base_source : RowSource?, @left_join : Bool, @on : Expr?,
                      @on_syntax : SQL::Expression? = nil)
+      end
+
+      # The source used when no index or rowid path applies. A table's
+      # full scan is built on first use: a rowid seek or an index path
+      # usually replaces it, and then none is built.
+      def base_source : RowSource
+        if source = @base_source
+          return source
+        end
+        table = @entry.table
+        raise UnsupportedSQL.new("FROM entry #{@entry.match_name} has no table to scan") unless table
+        @base_source = TableScanSource.new(table.database, table, @entry.slot, @entry.column_use)
+      end
+
+      # Whether the entry reads a pseudo table (a write statement's row).
+      def reads_a_pseudo_table? : Bool
+        @base_source.is_a?(PseudoRowSource)
       end
     end
 
@@ -65,8 +82,9 @@ module Grant::SQLiteEngine::Query
       steps
     end
 
-    # The entry and source for one FROM item.
-    private def compile_source(source : SQL::TableSource, context : QueryContext) : {FromEntry, RowSource}
+    # The entry and source for one FROM item; no source for a table,
+    # whose step builds its scan when one is needed.
+    private def compile_source(source : SQL::TableSource, context : QueryContext) : {FromEntry, RowSource?}
       case source
       when SQL::TableReference then compile_table_reference(source, context)
       when SQL::SubquerySource
@@ -154,7 +172,7 @@ module Grant::SQLiteEngine::Query
       end
     end
 
-    private def compile_table_reference(reference : SQL::TableReference, context : QueryContext) : {FromEntry, RowSource}
+    private def compile_table_reference(reference : SQL::TableReference, context : QueryContext) : {FromEntry, RowSource?}
       name = reference.name.value
       alias_name = reference.alias_name.try(&.value) || name
       schema = reference.schema.try(&.value)
@@ -207,10 +225,7 @@ module Grant::SQLiteEngine::Query
         raise SQLError.new("no such table: #{full}")
       end
       slot = allocate_slot
-      columns = (0...table.list_of_column_names.size).map do |index|
-        SourceColumn.new(table.list_of_column_names[index], table.list_of_affinities[index], table.list_of_collations[index])
-      end
-      entry = FromEntry.new(alias_name, slot, columns, table)
+      entry = FromEntry.new(alias_name, slot, table.list_of_source_columns, table)
       if indexed_by = reference.indexed_by
         unless table.list_of_indexes.any? { |index| index.entry.object_name.compare(indexed_by.value, case_insensitive: true) == 0 }
           raise SQLError.new("no such index: #{indexed_by.value}")
@@ -218,7 +233,8 @@ module Grant::SQLiteEngine::Query
         entry.indexed_by = indexed_by.value
       end
       entry.not_indexed = reference.not_indexed
-      {entry, TableScanSource.new(table.database, table, slot, entry.column_use).as(RowSource)}
+      # The step builds the table scan if no rowid or index path replaces it.
+      {entry, nil}
     end
 
     # A CTE's body, compiled once per reference. A recursive CTE whose body

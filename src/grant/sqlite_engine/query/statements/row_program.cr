@@ -43,7 +43,7 @@ module Grant::SQLiteEngine::Query
     property capture_name : String? = nil
     getter captured_slot : Int32? = nil
 
-    private def compile_table_reference(reference : SQL::TableReference, context : QueryContext) : {FromEntry, RowSource}
+    private def compile_table_reference(reference : SQL::TableReference, context : QueryContext) : {FromEntry, RowSource?}
       if reference.schema.nil? && (tables = @pseudo_tables) && (pseudo = tables[reference.name.value.downcase]?)
         slot = allocate_slot
         table = pseudo.table
@@ -77,7 +77,7 @@ module Grant::SQLiteEngine::Query
     getter captured_index_root : UInt32? = nil
 
     private def choose_access(step : JoinStep, terms : Array(Expr), available : Set(Int32), context : QueryContext) : AccessChoice
-      if step.base_source.is_a?(PseudoRowSource)
+      if step.reads_a_pseudo_table?
         return AccessChoice.new(step.base_source, 1.0, 1.0, [] of OrderElement, [] of Int32)
       end
       choice = previous_def
@@ -89,7 +89,7 @@ module Grant::SQLiteEngine::Query
     end
 
     private def simple_count_table(core : SQL::SelectClause, steps : Array(JoinStep), order_by : Array(SQL::OrderingTerm)) : TableInfo?
-      return if steps.any?(&.base_source.is_a?(PseudoRowSource))
+      return if steps.any?(&.reads_a_pseudo_table?)
       previous_def
     end
   end

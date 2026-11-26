@@ -131,8 +131,23 @@ module Grant::SQLiteEngine::SQL
       advance
     end
 
+    # The texts of the last tokens `text` returned, so a word the statement
+    # repeats (the table in `users.id`, `users.email` and `FROM users`)
+    # shares one String; Strings never change, so sharing is safe.
+    RECENT_TEXT_CAPACITY = 8
+    @list_of_recent_texts = StaticArray(String, RECENT_TEXT_CAPACITY).new("")
+    @recent_text_count = 0
+
     private def text(token : Token) : String
-      @tokenizer.text(token)
+      known_count = Math.min(@recent_text_count, RECENT_TEXT_CAPACITY)
+      known_count.times do |index|
+        known = @list_of_recent_texts.unsafe_fetch(index)
+        return known if @tokenizer.text_is?(token, known)
+      end
+      fresh = @tokenizer.text(token)
+      @list_of_recent_texts[@recent_text_count % RECENT_TEXT_CAPACITY] = fresh
+      @recent_text_count &+= 1
+      fresh
     end
 
     # parse.y's %syntax_error: `near "X": syntax error`, or `incomplete

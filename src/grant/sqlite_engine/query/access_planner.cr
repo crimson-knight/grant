@@ -164,7 +164,9 @@ module Grant::SQLiteEngine::Query
           pushed[owner] << term
         end
       end
-      source = SingleRowSource.new.as(RowSource)
+      # The rows of the steps so far: nil before the first, which is never
+      # a LEFT JOIN's right side (outer[0] is false).
+      joined = nil.as(RowSource?)
       # The slots of the steps before the current one, filled as the loop
       # moves on (none before a lone step).
       available = steps.size > 1 ? Set(Int32).new : NO_SLOTS
@@ -172,7 +174,7 @@ module Grant::SQLiteEngine::Query
         available << steps[index - 1].entry.slot if index > 0
         if outer && outer[index]
           access = choose_access(step, ExpressionWalk.conjuncts(step.on), available, context).source
-          source = JoinSource.new(source, access, step.on, true, [step.entry.slot])
+          joined = JoinSource.new(joined || SingleRowSource.new, access, step.on, true, [step.entry.slot])
           next
         end
         # The WHERE terms this step completes (ON terms of inner joins among
@@ -195,8 +197,9 @@ module Grant::SQLiteEngine::Query
         elsif filter = ExpressionWalk.conjunction(filter_terms)
           access = FilterSource.new(access, filter)
         end
-        source = index == 0 ? access : JoinSource.new(source, access, nil, false, [step.entry.slot])
+        joined = joined ? JoinSource.new(joined, access, nil, false, [step.entry.slot]) : access
       end
+      source = joined || SingleRowSource.new
       if gate = constant_terms.try { |terms| ExpressionWalk.conjunction(terms) }
         source = ConstantGateSource.new(source, gate)
       end

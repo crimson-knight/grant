@@ -212,3 +212,62 @@ describe Grant::SQLiteEngine::Query::BTreeCount do
     end
   end
 end
+
+# A session on a fresh database holding tables `u` (rowid alias `id`) and
+# `p` (rows of `u` by `u_id`) with a few rows.
+private def session_with_users_and_posts : Grant::SQLiteEngine::Query::Session
+  path = File.tempname("shared_lists", ".db")
+  database = Grant::SQLiteEngine::Database.open(path, read_write: true)
+  session = Grant::SQLiteEngine::Query::Session.new(database)
+  ["CREATE TABLE u (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)",
+   "CREATE TABLE p (id INTEGER PRIMARY KEY, u_id INTEGER, title TEXT)",
+   "CREATE INDEX p_u ON p (u_id)",
+   "INSERT INTO u VALUES (1, 'ann', 30), (2, 'bob', 40), (3, 'cy', 50)",
+   "INSERT INTO p (u_id, title) VALUES (1, 'a'), (1, 'b'), (2, 'c')"].each do |sql|
+    query = session.prepare(sql)
+    while query.step
+    end
+  end
+  session
+end
+
+private def rows_of(session : Grant::SQLiteEngine::Query::Session, sql : String) : Array(Array(Grant::SQLiteEngine::Value))
+  query = session.prepare(sql)
+  list_of_rows = [] of Array(Grant::SQLiteEngine::Value)
+  while query.step
+    list_of_rows << query.row.dup
+  end
+  list_of_rows
+end
+
+describe Grant::SQLiteEngine::Query::Compiler do
+  it "names result columns by alias, column name, then source text" do
+    session = session_with_users_and_posts
+    query = session.prepare("SELECT u.name, age AS years,  age + 1 , upper( name ) FROM u WHERE id = ?")
+    query.list_of_column_names.should eq(["name", "years", "age + 1", "upper( name )"])
+  end
+
+  it "leaves the shared empty lists empty after a mix of statements" do
+    session = session_with_users_and_posts
+    rows_of(session, "SELECT name FROM u WHERE id = 2").should eq([["bob"]])
+    rows_of(session, "SELECT u.name, count(p.id) FROM u LEFT JOIN p ON p.u_id = u.id GROUP BY u.id ORDER BY u.id")
+      .should eq([["ann", 2_i64], ["bob", 1_i64], ["cy", 0_i64]])
+    rows_of(session, "SELECT name FROM u WHERE age > 35 UNION ALL SELECT title FROM p WHERE u_id = 1")
+      .should eq([["bob"], ["cy"], ["a"], ["b"]])
+    rows_of(session, "SELECT EXISTS (SELECT 1 FROM p WHERE p.u_id = u.id) FROM u ORDER BY id")
+      .should eq([[1_i64], [1_i64], [0_i64]])
+    rows_of(session, "SELECT * FROM u, p WHERE p.u_id = u.id AND p.title = 'c'")
+      .should eq([[2_i64, "bob", 40_i64, 3_i64, 2_i64, "c"]])
+    rows_of(session, "SELECT count(*) FROM p").should eq([[3_i64]])
+    Grant::SQLiteEngine::Query::Frame::NO_ROW_YET.should be_empty
+    Grant::SQLiteEngine::Query::Frame::NO_AGGREGATE_VALUES.should be_empty
+    Grant::SQLiteEngine::Query::Compiler::NO_SORT_KEYS.should be_empty
+    Grant::SQLiteEngine::Query::Compiler::NO_UNKNOWN_COLLATIONS.should be_empty
+    Grant::SQLiteEngine::Query::Compiler::NO_EXPRESSIONS.should be_empty
+    Grant::SQLiteEngine::Query::Compiler::NO_ORDERING.should be_empty
+    Grant::SQLiteEngine::SQL::Parser::NO_COMPOUND_OPERATORS.should be_empty
+    Grant::SQLiteEngine::SQL::Parser::NO_EXPRESSIONS.should be_empty
+    Grant::SQLiteEngine::SQL::Parser::NO_WINDOWS.should be_empty
+    Grant::SQLiteEngine::SQL::Parser::NO_ORDERING_TERMS.should be_empty
+  end
+end

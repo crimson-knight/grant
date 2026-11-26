@@ -11,19 +11,44 @@ module Grant::SQLiteEngine::SQL
         if with_clause.nil? && kind.with?
           with_clause = parse_with_clause
         end
-        parts = [parse_select_core]
-        operators = [] of CompoundOperator
-        while operator = parse_compound_operator
-          operators << operator
-          parts << parse_select_core
+        first = parse_select_core
+        operator = parse_compound_operator
+        if operator
+          parse_compound(with_clause, first, operator)
+        else
+          # Most SELECTs have one core: its statement needs no list of parts.
+          query = SelectStatement.new(with_clause, [first.core], NO_COMPOUND_OPERATORS, first.order_by, first.limit)
+          query.expression_height = first.height
+          query
         end
-        check_compound(parts, operators)
-        last = parts.last
-        query = SelectStatement.new(with_clause, parts.map(&.core), operators, last.order_by, last.limit)
-        query.expression_height = parts.max_of(&.height)
-        query
       end
     end
+
+    # The rest of a compound SELECT whose *first* core and first *operator*
+    # are read.
+    private def parse_compound(with_clause : WithClause?, first : CoreWithTail, operator : CompoundOperator) : SelectStatement
+      parts = [first]
+      operators = [] of CompoundOperator
+      next_operator = operator
+      while next_operator
+        operators << next_operator
+        parts << parse_select_core
+        next_operator = parse_compound_operator
+      end
+      check_compound(parts, operators)
+      last = parts.last
+      query = SelectStatement.new(with_clause, parts.map(&.core), operators, last.order_by, last.limit)
+      query.expression_height = parts.max_of(&.height)
+      query
+    end
+
+    # The empty lists a SELECT without a compound operator, GROUP BY,
+    # WINDOW or ORDER BY clause holds, shared: nothing adds to a parsed
+    # statement's lists.
+    NO_COMPOUND_OPERATORS = [] of CompoundOperator
+    NO_EXPRESSIONS        = [] of Expression
+    NO_WINDOWS            = [] of WindowDefinition
+    NO_ORDERING_TERMS     = [] of OrderingTerm
 
     # parse.y's parserDoubleLinkSelect: ORDER BY and LIMIT belong after the
     # last core, and a compound has at most 500 terms.
@@ -62,7 +87,7 @@ module Grant::SQLiteEngine::SQL
     private def parse_select_core : CoreWithTail
       if kind.values?
         rows, height = parse_values_rows
-        return CoreWithTail.new(ValuesClause.new(rows), [] of OrderingTerm, nil, height)
+        return CoreWithTail.new(ValuesClause.new(rows), NO_ORDERING_TERMS, nil, height)
       end
       expect(TokenKind::Select)
       distinct = DistinctMode::None
@@ -74,14 +99,15 @@ module Grant::SQLiteEngine::SQL
       columns, height = parse_result_columns
       from = accept(TokenKind::From) ? parse_from : nil
       where = accept(TokenKind::Where) ? parse_expression : nil
-      group_by = [] of Expression
+      group_by = NO_EXPRESSIONS
       if accept(TokenKind::Group)
         expect(TokenKind::By)
         group_by = parse_expression_list
       end
       having = accept(TokenKind::Having) ? parse_expression : nil
-      windows = [] of WindowDefinition
+      windows = NO_WINDOWS
       if accept(TokenKind::Window)
+        windows = [] of WindowDefinition
         loop do
           name = parse_nm
           expect(TokenKind::As)
@@ -182,7 +208,7 @@ module Grant::SQLiteEngine::SQL
     end
 
     private def parse_order_by : Array(OrderingTerm)
-      return [] of OrderingTerm unless accept(TokenKind::Order)
+      return NO_ORDERING_TERMS unless accept(TokenKind::Order)
       expect(TokenKind::By)
       parse_ordering_terms
     end
@@ -216,21 +242,17 @@ module Grant::SQLiteEngine::SQL
           span_start = peek.start
           expression = parse_expression
           height = Math.max(height, expression.height)
-          span = span_text(span_start, peek.start)
+          # The text SQLite names an unaliased result column by: from the
+          # start of the expression to the start of the token after it,
+          # trimmed of whitespace (parse.y `scanpt`, sqlite3DbSpanDup).
+          span_start, span_size = @tokenizer.span_bounds(span_start, peek.start)
           column = ExpressionColumn.new(expression, parse_alias)
-          column.span = span
+          column.mark_span(@tokenizer.source, span_start, span_size)
           columns << column
         end
         break unless accept(TokenKind::Comma)
       end
       {columns, height}
-    end
-
-    # The text SQLite names an unaliased result column by: from the start of
-    # the expression to the start of the token after it, trimmed of
-    # whitespace (parse.y `scanpt`, sqlite3DbSpanDup).
-    private def span_text(start : Int32, finish : Int32) : String
-      @tokenizer.span(start, finish)
     end
 
     # parse.y's `as`: `AS nm`, a bare ID or STRING, or nothing.
