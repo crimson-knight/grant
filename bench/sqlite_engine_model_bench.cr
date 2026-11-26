@@ -20,6 +20,7 @@
 require "json"
 require "../src/grant"
 require "../src/adapter/sqlite"
+require "../src/adapter/sqlite/grant_engine"
 
 module SQLiteEngineModelBench
   WORKLOADS      = %w[create update destroy transaction_batch]
