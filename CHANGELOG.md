@@ -4,11 +4,7 @@
 
 - **SQL migrations are found on Windows.** `MigrationContext` listed a
   migration directory with `Dir.glob(File.join(directory, "*.sql"))`. On
-  Windows `File.join` puts `# Changelog
-
- between the parts, and `Dir.glob` reads `# Changelog
-
- as
+  Windows `File.join` puts `\` between the parts, and `Dir.glob` reads `\` as
   an escape, so the pattern matched no file and `migrate` reported nothing to
   run. The pattern is now a `Path`, which `Dir.glob` reads with `/` on every
   platform. Nothing changes on macOS or Linux.
