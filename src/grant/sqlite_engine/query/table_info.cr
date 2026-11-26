@@ -102,8 +102,17 @@ module Grant::SQLiteEngine::Query
       @stored_order.index(column_index)
     end
 
+    # The stored record positions holding the columns *use* includes.
+    def stored_mask_for(use : ColumnUse) : Array(Bool)
+      mask = Array(Bool).new(@stored_order.size, false)
+      @stored_order.each_with_index do |column_index, position|
+        mask[position] = true if use.includes?(column_index)
+      end
+      mask
+    end
+
     # The stored record positions holding *columns* (declared indexes; nil
-    # for every column), for `ColumnUse`.
+    # for every column).
     def stored_mask_for(columns : Set(Int32)?) : Array(Bool)
       mask = Array(Bool).new(@stored_order.size, false)
       @stored_order.each_with_index do |column_index, position|

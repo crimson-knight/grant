@@ -78,7 +78,7 @@ module Grant::SQLiteEngine::Query
 
     private def choose_access(step : JoinStep, terms : Array(Expr), available : Set(Int32), context : QueryContext) : AccessChoice
       if step.reads_a_pseudo_table?
-        return AccessChoice.new(step.base_source, 1.0, 1.0, [] of OrderElement, [] of Int32)
+        return AccessChoice.new(step.base_source, 1.0, 1.0, NO_ORDER, NO_FIXED_COLUMNS)
       end
       choice = previous_def
       source = choice.source

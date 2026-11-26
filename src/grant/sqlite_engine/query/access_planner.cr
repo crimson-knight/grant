@@ -287,7 +287,7 @@ module Grant::SQLiteEngine::Query
       table = entry.table
       rows_order = [OrderElement.new(entry.slot, nil, Collation::Binary, false, true)]
       if table.nil? || table.without_rowid?
-        return AccessChoice.new(step.base_source, DEFAULT_TABLE_ROWS, DEFAULT_TABLE_ROWS, [] of OrderElement, [] of Int32)
+        return AccessChoice.new(step.base_source, DEFAULT_TABLE_ROWS, DEFAULT_TABLE_ROWS, NO_ORDER, NO_FIXED_COLUMNS)
       end
       database = table.database
       seek_cost = Math.log2(DEFAULT_TABLE_ROWS)
@@ -298,7 +298,7 @@ module Grant::SQLiteEngine::Query
            term.list.all? { |value| available?(value, entry.slot, available, context) }
           keys = term.list.size.to_f64
           return AccessChoice.new(RowidLookupSource.new(database, table, entry.slot, term.list, entry.column_use),
-            keys * seek_cost, keys, rows_order, [] of Int32)
+            keys * seek_cost, keys, rows_order, NO_FIXED_COLUMNS)
         end
         oriented = oriented(term, entry, available, context)
         next unless oriented
@@ -307,7 +307,7 @@ module Grant::SQLiteEngine::Query
         case operator
         when .equal?
           return AccessChoice.new(RowidLookupSource.new(database, table, entry.slot, [other], entry.column_use),
-            seek_cost, 1.0, rows_order, [] of Int32)
+            seek_cost, 1.0, rows_order, NO_FIXED_COLUMNS)
         when .greater?, .greater_or_equal?
           low ||= other
         when .less?, .less_or_equal?
@@ -325,14 +325,14 @@ module Grant::SQLiteEngine::Query
         rows /= 4.0 if high
         rows /= 4.0 if low && high
         return AccessChoice.new(RowidRangeSource.new(database, table, entry.slot, low, high, entry.column_use),
-          3.0 * rows + seek_cost, rows, rows_order, [] of Int32)
+          3.0 * rows + seek_cost, rows, rows_order, NO_FIXED_COLUMNS)
       end
       unless entry.not_indexed?
         if partial = partial_index_scan(entry, table, terms)
           return partial
         end
       end
-      AccessChoice.new(step.base_source, 3.0 * DEFAULT_TABLE_ROWS, DEFAULT_TABLE_ROWS, rows_order, [] of Int32)
+      AccessChoice.new(step.base_source, 3.0 * DEFAULT_TABLE_ROWS, DEFAULT_TABLE_ROWS, rows_order, NO_FIXED_COLUMNS)
     end
 
     # A full scan of a partial index the WHERE implies, which costs less

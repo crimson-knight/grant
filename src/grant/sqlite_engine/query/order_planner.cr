@@ -17,6 +17,11 @@ module Grant::SQLiteEngine::Query
     fixed : Array(Int32)
 
   class Compiler
+    # The empty order and fixed-column lists access choices share: a
+    # choice's lists are only read.
+    NO_ORDER         = [] of OrderElement
+    NO_FIXED_COLUMNS = [] of Int32
+
     # SQLite assumes a table of about a million rows when it has no
     # statistics (sqlite3DefaultRowEst: nRowLogEst 200, about 2^20).
     DEFAULT_TABLE_ROWS = 1_048_576.0
@@ -76,7 +81,7 @@ module Grant::SQLiteEngine::Query
       return choices if table.nil? || table.without_rowid?
       unless entry.indexed_by
         choices << AccessChoice.new(step.base_source, 3.0 * DEFAULT_TABLE_ROWS, DEFAULT_TABLE_ROWS,
-          [OrderElement.new(entry.slot, nil, Collation::Binary, false, true)], [] of Int32)
+          [OrderElement.new(entry.slot, nil, Collation::Binary, false, true)], NO_FIXED_COLUMNS)
       end
       return choices if entry.not_indexed?
       table.list_of_indexes.each do |layout|
