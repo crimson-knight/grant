@@ -22,7 +22,6 @@
 # Only this benchmark links libsqlite3; the engine itself links no native
 # library.
 require "file_utils"
-require "json"
 require "../src/grant/sqlite_engine"
 
 @[Link("sqlite3")]
@@ -253,18 +252,17 @@ module SQLiteEngineWriteBench
     (Time.instant - started).total_seconds
   end
 
-  # The seconds of every round of one workload, printed to stderr as one
-  # JSON line after the workload's summary line, so the median ratio can be
-  # recomputed exactly: "round seconds: {...}".
-  struct RoundSeconds
-    include JSON::Serializable
-
-    getter workload : String
-    getter engine : Array(Float64)
-    getter c_library : Array(Float64)
-
-    def initialize(@workload, @engine, @c_library)
-    end
+  # Writes the seconds of every round of one workload to *io* as one line,
+  # after the workload's summary line, so the median ratio can be recomputed
+  # exactly: "round seconds: WORKLOAD; engine S S ...; c_library S S ...".
+  # Plain IO writes, as in the read bench, which the JSON shard's code
+  # slowed.
+  def self.print_round_seconds(io : IO, workload_name : String, engine_times : Array(Float64), c_times : Array(Float64)) : Nil
+    io << "round seconds: " << workload_name << "; engine"
+    engine_times.each { |seconds| io << ' ' << seconds }
+    io << "; c_library"
+    c_times.each { |seconds| io << ' ' << seconds }
+    io << '\n'
   end
 
   def self.describe_ratio(ratio : Float64) : String
@@ -316,7 +314,7 @@ module SQLiteEngineWriteBench
       STDOUT.puts "#{workload.workload_name}: engine #{(engine_times.sort[rounds // 2] * 1000).round(2)} ms, " \
                   "C #{(c_times.sort[rounds // 2] * 1000).round(2)} ms median; " \
                   "#{describe_ratio(median)} (rounds' range #{describe_ratio(low)} to #{describe_ratio(high)})"
-      STDERR.puts "round seconds: #{RoundSeconds.new(workload.workload_name, engine_times, c_times).to_json}"
+      print_round_seconds(STDERR, workload.workload_name, engine_times, c_times)
     end
   end
 end
