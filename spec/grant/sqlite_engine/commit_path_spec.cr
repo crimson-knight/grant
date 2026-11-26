@@ -72,7 +72,7 @@ describe "the SQLite engine's commit path" do
       seen.should eq(model)
       keys = [] of UInt32
       table.each_key { |page_number| keys << page_number }
-      keys.sort.should eq(model.keys.sort)
+      keys.sort.should eq(model.keys.sort!)
     end
 
     it "drops the entries reject! picks and keeps the others reachable" do

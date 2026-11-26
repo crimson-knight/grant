@@ -40,10 +40,10 @@ module Grant::SQLiteEngine
     def []?(page_number : UInt32) : Bytes?
       mask = @capacity - 1
       slot = slot_of(page_number)
-      while true
+      loop do
         key = @keys[slot]
         return @values[slot] if key == page_number
-        return nil if key == 0
+        return if key == 0
         slot = (slot + 1) & mask
       end
     end
@@ -57,7 +57,7 @@ module Grant::SQLiteEngine
       grow if (@size + 1) * 4 > @capacity * 3
       mask = @capacity - 1
       slot = slot_of(page_number)
-      while true
+      loop do
         key = @keys[slot]
         if key == page_number
           @values[slot] = buffer
@@ -76,9 +76,9 @@ module Grant::SQLiteEngine
     def delete(page_number : UInt32) : Bytes?
       mask = @capacity - 1
       slot = slot_of(page_number)
-      while true
+      loop do
         key = @keys[slot]
-        return nil if key == 0
+        return if key == 0
         break if key == page_number
         slot = (slot + 1) & mask
       end
