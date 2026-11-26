@@ -49,27 +49,27 @@ require "./strict_annotations"
 # Todo.unscoped { |q| q.select } # deliberate cross-tenant access
 # ```
 module Grant::Scoping
-  @@unscoped_fibers = {} of {Fiber, String} => Int32
-  @@unscoped_mutex = Mutex.new
-
   # Tracks unscoped blocks per model and fiber so one request cannot disable
-  # another request's default scope.
+  # another request's default scope. The names of the unscoped models live in
+  # a slot on the fiber, which only that fiber reads or writes, so no lock is
+  # taken.
   @[TypeOnce]
   def self.unscoped?(model_name : String) : Bool
-    @@unscoped_mutex.synchronize do
-      @@unscoped_fibers[{Fiber.current, model_name}]? == 1
+    if list_of_model_names = Fiber.current.grant_unscoped_models
+      list_of_model_names.includes?(model_name)
+    else
+      false
     end
   end
 
   @[TypeOnce]
   def self.set_unscoped(model_name : String, value : Bool) : Nil
-    @@unscoped_mutex.synchronize do
-      key = {Fiber.current, model_name}
-      if value
-        @@unscoped_fibers[key] = 1
-      else
-        @@unscoped_fibers.delete(key)
-      end
+    fiber = Fiber.current
+    if value
+      (fiber.grant_unscoped_models ||= Set(String).new) << model_name
+    elsif list_of_model_names = fiber.grant_unscoped_models
+      list_of_model_names.delete(model_name)
+      fiber.grant_unscoped_models = nil if list_of_model_names.empty?
     end
   end
 
@@ -750,4 +750,8 @@ class Fiber
   # Fiber-local stacks of `scoping { }` relations, keyed by model name.
   # :nodoc:
   property grant_scoping_stacks : Hash(String, Array(Grant::Scoping::ScopeEntry))?
+
+  # Fiber-local names of the models inside an `unscoped { }` block.
+  # :nodoc:
+  property grant_unscoped_models : Set(String)?
 end

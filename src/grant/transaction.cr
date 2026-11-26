@@ -346,39 +346,33 @@ module Grant::Transaction
     end
   end
 
-  # Module-level fiber-keyed transaction stacks.  All model classes share this
-  # single hash so that cross-model transactions (e.g. User.transaction { post.save! })
-  # work correctly.  ClassMethods delegates to these module-level helpers so that
+  # The transaction stack of each fiber lives in a slot on that fiber
+  # (`Fiber#grant_transaction_stack`). All model classes share it, so that
+  # cross-model transactions (e.g. User.transaction { post.save! }) work
+  # correctly. ClassMethods delegates to these module-level helpers so that
   # the Crystal class-variable scoping rule (@@var in an extended module is
-  # per-including-class, not per-module) does not create per-model isolated stacks.
+  # per-including-class, not per-module) does not create per-model isolated
+  # stacks.
   #
-  # The hash is shared by every fiber (and every thread under
-  # `-Dpreview_mt`), so reads and writes of it go through a mutex. Each stack
-  # array is owned by its fiber and needs no lock.
-  @@transaction_stacks = {} of Fiber => Array(TransactionState)
-  @@transaction_stacks_mutex = Mutex.new
-
+  # Only the fiber itself reads or writes its slot, so no lock is taken, also
+  # with fibers on several threads (`-Dpreview_mt`). A fiber spawned inside a
+  # transaction starts with no stack.
   @[TypeOnce]
   private def self.stack_for_current_fiber? : Array(TransactionState)?
-    fiber = Fiber.current
-    @@transaction_stacks_mutex.synchronize { @@transaction_stacks[fiber]? }
+    Fiber.current.grant_transaction_stack
   end
 
   # Returns the transaction stack for the current fiber, lazily creating it.
   @[TypeOnce]
   def self.fiber_stack : Array(TransactionState)
     fiber = Fiber.current
-    @@transaction_stacks_mutex.synchronize do
-      @@transaction_stacks[fiber] ||= [] of TransactionState
-    end
+    fiber.grant_transaction_stack ||= [] of TransactionState
   end
 
-  # Removes the current fiber's stack entry (called after the outermost transaction exits).
+  # Removes the current fiber's stack (called after the outermost transaction exits).
   @[TypeOnce]
   def self.clear_fiber_stack : Nil
-    fiber = Fiber.current
-    @@transaction_stacks_mutex.synchronize { @@transaction_stacks.delete(fiber) }
-    nil
+    Fiber.current.grant_transaction_stack = nil
   end
 
   # Returns true when the current fiber has at least one explicit transaction open.
@@ -1091,4 +1085,10 @@ module Grant::Transaction
   def transaction(options : Transaction::Options, & : -> T) : T? forall T
     self.class.transaction(options) { yield }
   end
+end
+
+class Fiber
+  # Fiber-local stack of `Grant::Transaction` states, innermost last.
+  # :nodoc:
+  property grant_transaction_stack : Array(Grant::Transaction::TransactionState)?
 end
