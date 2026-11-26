@@ -30,9 +30,12 @@ module Grant::SQLiteEngine
       btree_writer.table_contains?(layout.entry.root_page, rowid)
     end
 
-    # The row with *rowid* in declared order, or nil.
-    def row_at(layout : TableLayout, rowid : Int64) : Array(Value)?
-      read_row(layout, rowid)
+    # The row with *rowid* in declared order, or nil. With *buffer* the
+    # record is decoded into it, and a table whose record holds every column
+    # in declared order returns *buffer* itself; the caller must be done
+    # with the row before it reads the next one into the same buffer.
+    def row_at(layout : TableLayout, rowid : Int64, buffer : Array(Value)? = nil) : Array(Value)?
+      read_row(layout, rowid, buffer)
     end
 
     # The row of a WITHOUT ROWID table whose primary key equals the key

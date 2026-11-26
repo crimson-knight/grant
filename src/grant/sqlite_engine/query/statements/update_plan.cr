@@ -36,6 +36,8 @@ module Grant::SQLiteEngine::Query
       @slot = compiler.captured_slot || raise Error.new("the target table of a write was not compiled")
       @scan_index_root = compiler.captured_index_root
       @list_of_column_names = @compiled.list_of_column_names
+      # collect_in copies each row's values out before it asks for the next.
+      @compiled.producer.lend_rows
     end
 
     # Yields every target row once (the first match of an UPDATE ... FROM):
@@ -52,12 +54,29 @@ module Grant::SQLiteEngine::Query
       begin
         yield rows
       ensure
+        rows.each do |(_, _, values)|
+          break if @list_of_spare_values.size >= SPARE_VALUE_LIMIT
+          @list_of_spare_values << values
+        end
         rows.clear
         @spare_rows = rows
       end
     end
 
     @spare_rows : Array({Int64?, Array(Value), Array(Value)})? = nil
+
+    # The value arrays of the last run's rows, refilled by the next run; at
+    # most SPARE_VALUE_LIMIT are kept, so a run over many rows does not keep
+    # them all.
+    @list_of_spare_values = [] of Array(Value)
+    SPARE_VALUE_LIMIT = 8
+
+    # A copy of the lent *values*, in an array kept from an earlier run when
+    # there is one.
+    private def copy_of(values : Array(Value)) : Array(Value)
+      copy = @list_of_spare_values.pop? || Array(Value).new(values.size)
+      copy.clear.concat(values)
+    end
 
     # The frame collect runs in, kept for the next run.
     @frame_keeper = FrameKeeper.new
@@ -77,8 +96,23 @@ module Grant::SQLiteEngine::Query
         frame.complete_row(@slot)
         # A rowid table finds the row again by its rowid; only a WITHOUT
         # ROWID table reads the snapshot (its primary key).
-        rows << {rowid, rowid ? NO_SNAPSHOT : frame.list_of_rows[@slot].dup, values}
+        rows << {rowid, rowid ? NO_SNAPSHOT : frame.list_of_rows[@slot].dup, copy_of(values)}
       end
+    end
+  end
+
+  # The arrays an UPDATE or DELETE reads each target row into (and an
+  # UPDATE builds the new row in), kept by the plan from run to run. A run
+  # takes its plan's scratch and gives it back when it ends, so a run that
+  # starts inside it (a trigger that comes back to the same plan) reads
+  # into a scratch of its own.
+  class RowScratch
+    getter old_row = [] of Value
+    @new_row = [] of Value
+
+    # The new row, starting as a copy of *old*.
+    def new_row_from(old : Array(Value)) : Array(Value)
+      @new_row.clear.concat(old)
     end
   end
 
@@ -114,6 +148,8 @@ module Grant::SQLiteEngine::Query
     @trigger_programs : TriggerProgramCache?
     # The SET list's column names as written (UPDATE OF triggers match them).
     @list_of_changed_names : Array(String)
+    # The row arrays each target is read and rebuilt in, kept for the next run.
+    @spare_scratch : RowScratch? = nil
 
     # *override* is the conflict policy of the statement whose trigger runs
     # this one: when it gave one, it replaces this statement's own.
@@ -191,10 +227,23 @@ module Grant::SQLiteEngine::Query
           targets = WithoutRowidScan.sort(@table, targets, layout)
         end
       end
+      scratch = @spare_scratch || RowScratch.new
+      @spare_scratch = nil
+      begin
+        write_targets_with(scratch, run, list_of_parameters, returned, targets)
+      ensure
+        @spare_scratch = scratch
+      end
+    end
+
+    # Writes each target, reading its row into *scratch*.
+    private def write_targets_with(scratch : RowScratch, run : WriteRun, list_of_parameters : Array(Value),
+                                   returned : Array(Array(Value)), targets : Array({Int64?, Array(Value), Array(Value)})) : Nil
+      positions = @assignments.list_of_positions
       targets.each do |rowid, snapshot, values|
-        old = rowid ? @table.database.row_at(@table.layout, rowid) : @table.database.row_with_key_of(@table.layout, snapshot)
+        old = rowid ? @table.database.row_at(@table.layout, rowid, scratch.old_row) : @table.database.row_with_key_of(@table.layout, snapshot)
         next unless old
-        new_row = old.dup
+        new_row = scratch.new_row_from(old)
         explicit_rowid = nil.as(Value)
         positions.each_with_index do |position, index|
           if position < 0
@@ -231,6 +280,8 @@ module Grant::SQLiteEngine::Query
     @returning_pseudo : PseudoTable?
     @statement : SQL::Delete
     @trigger_programs : TriggerProgramCache?
+    # The row array each target is read into, kept for the next run.
+    @spare_scratch : RowScratch? = nil
 
     def initialize(@session : Session, statement : SQL::Delete)
       @statement = statement
@@ -294,8 +345,20 @@ module Grant::SQLiteEngine::Query
           targets = WithoutRowidScan.sort(@table, targets, layout)
         end
       end
+      scratch = @spare_scratch || RowScratch.new
+      @spare_scratch = nil
+      begin
+        write_targets_with(scratch, run, list_of_parameters, returned, targets)
+      ensure
+        @spare_scratch = scratch
+      end
+    end
+
+    # Writes each target, reading its row into *scratch*.
+    private def write_targets_with(scratch : RowScratch, run : WriteRun, list_of_parameters : Array(Value),
+                                   returned : Array(Array(Value)), targets : Array({Int64?, Array(Value), Array(Value)})) : Nil
       targets.each do |rowid, snapshot, _values|
-        old = rowid ? @table.database.row_at(@table.layout, rowid) : @table.database.row_with_key_of(@table.layout, snapshot)
+        old = rowid ? @table.database.row_at(@table.layout, rowid, scratch.old_row) : @table.database.row_with_key_of(@table.layout, snapshot)
         next unless old
         if program = @returning
           pseudo = @returning_pseudo || raise Error.new("RETURNING without its row")
