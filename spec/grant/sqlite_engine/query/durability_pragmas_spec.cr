@@ -353,4 +353,62 @@ describe "Grant::SQLiteEngine PRAGMA fullfsync and checkpoint_fullfsync" do
       end
     {% end %}
   end
+
+  describe "Grant::SQLiteEngine::PosixFileSystem#create_journal" do
+    it "opens the journal empty, cutting a stale one, and reads and writes at offsets" do
+      path = File.tempname("journal", ".db-journal")
+      File.write(path, "a stale journal left behind")
+      journal = Grant::SQLiteEngine::PosixFileSystem.new.create_journal(path)
+      begin
+        journal.size.should eq(0)
+        journal.write_at(4_i64, "page".to_slice)
+        journal.write_at(0_i64, "head".to_slice)
+        # The first sync also syncs the folder; the second syncs the file only.
+        journal.sync
+        journal.sync(Grant::SQLiteEngine::SyncMode::Full)
+        journal.size.should eq(8)
+        buffer = Bytes.new(4)
+        journal.read_at(4_i64, buffer).should eq(4)
+        String.new(buffer).should eq("page")
+        journal.read_at(8_i64, buffer).should eq(0)
+      ensure
+        journal.close
+        File.delete?(path)
+      end
+    end
+
+    it "writes a hot journal of 512-byte sectors that C SQLite rolls back" do
+      directory = File.tempname("journal-real")
+      Dir.mkdir_p(directory)
+      path = File.join(directory, "real.db")
+      begin
+        code, database = Grant::SQLite3::Engine::GrantEngine.new.open(path)
+        code.should eq(Grant::SQLite3::Engine::OK_CODE)
+        database.exec("CREATE TABLE notes(id INTEGER PRIMARY KEY, body TEXT); INSERT INTO notes(body) VALUES ('first')").should eq(0)
+        database.close
+        original = File.open(path, "rb", &.getb_to_end)
+        list_of_images = (0...original.size // 4096).map { |index| {(index + 1).to_u32, original[index * 4096, 4096].dup} }
+        code, database = Grant::SQLite3::Engine::GrantEngine.new.open(path)
+        database.exec("INSERT INTO notes(body) VALUES ('second')").should eq(0)
+        database.close
+        journal = Grant::SQLiteEngine::PosixFileSystem.new.create_journal("#{path}-journal")
+        begin
+          Grant::SQLiteEngine::RollbackJournal.write(journal, 4096, list_of_images.size.to_u32, list_of_images, 7_u32)
+          header = Bytes.new(28)
+          journal.read_at(0_i64, header)
+          header[20, 4].should eq(Bytes[0, 0, 2, 0])
+          journal.size.should eq(512 + list_of_images.size * (4096 + 8))
+        ensure
+          journal.close
+        end
+        code, database = Grant::SQLite3::Engine::LibSQLite3Engine.new.open(path)
+        code.should eq(Grant::SQLite3::Engine::OK_CODE)
+        DurabilityDifferential.outcome(database, "SELECT body FROM notes").should eq(%(code=101  ["body"] [["t:first"]]))
+        database.close
+        File.exists?("#{path}-journal").should be_false
+      ensure
+        FileUtils.rm_rf(directory)
+      end
+    end
+  end
 end
