@@ -332,7 +332,8 @@ module Grant::SQLiteEngine::Query
     getter trigger_depth = 0
     # Rows the running trigger step changed (Vdbe.nChange of its frame).
     @step_changes = 0_i64
-    @list_of_running_triggers = [] of TriggerDefinition
+    # Made when the first trigger fires: most statements fire none.
+    private getter list_of_running_triggers : Array(TriggerDefinition) { [] of TriggerDefinition }
 
     # Fires the triggers of *table* that *event* fires at this time.
     def fire_table_triggers(table : WriteTable, event : SQL::TriggerEvent, before : Bool, old_rowid : Int64?,
@@ -353,7 +354,7 @@ module Grant::SQLiteEngine::Query
                       override : ConflictAction, list_of_changed_names : Array(String)? = nil) : Nil
       list.each do |trigger|
         next unless trigger.event == event && trigger.before? == before && trigger.fires_for?(list_of_changed_names)
-        next if !@session.recursive_triggers? && @list_of_running_triggers.any?(&.same?(trigger))
+        next if !@session.recursive_triggers? && list_of_running_triggers.any?(&.same?(trigger))
         cache = @trigger_programs ||= TriggerProgramCache.new
         program = cache.program_for(@session, trigger, target, override)
         program.fire(self, old_rowid, old, new_rowid, new)
@@ -385,12 +386,12 @@ module Grant::SQLiteEngine::Query
       @nested = 0
       @step_changes = 0_i64
       @trigger_depth += 1
-      @list_of_running_triggers << trigger
+      list_of_running_triggers << trigger
       state
     end
 
     def leave_trigger(state : TriggerFrameState) : Nil
-      @list_of_running_triggers.pop
+      list_of_running_triggers.pop
       @trigger_depth -= 1
       @nested = state.nested
       @step_changes = state.step_changes

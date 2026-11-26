@@ -251,6 +251,7 @@ module Grant::SQLite3
       end
 
       def clear_bindings : Int32
+        return Engine::MISUSE_CODE if @finalized
         @query.clear_bindings
         Engine::OK_CODE
       end
@@ -260,6 +261,7 @@ module Grant::SQLite3
       @reading = false
 
       def step : Int32
+        return Engine::MISUSE_CODE if @finalized
         if !@reading && @query.reads_database?
           @database.session.begin_statement_read
           @reading = true
@@ -320,6 +322,7 @@ module Grant::SQLite3
       # RETURNING rows were not all read; its failure is the reset's result,
       # as sqlite3_reset reports it.
       def reset : Int32
+        return Engine::MISUSE_CODE if @finalized
         @query.reset
         finish_reading
         begin
@@ -335,12 +338,15 @@ module Grant::SQLite3
 
       @finalized = false
 
+      # sqlite3_finalize: the first call ends the statement and hands its
+      # query back to the session, which may reuse it for a later prepare,
+      # so a repeated call leaves the query alone.
       def finalize_statement : Int32
+        return Engine::OK_CODE if @finalized
         code = reset
-        unless @finalized
-          @finalized = true
-          @database.statement_finalized
-        end
+        @finalized = true
+        @database.statement_finalized
+        @database.session.take_back_finalized(@query)
         code
       end
 
@@ -354,6 +360,7 @@ module Grant::SQLite3
       end
 
       private def bind(index : Int32, value : SQLiteEngine::Value) : Int32
+        return Engine::MISUSE_CODE if @finalized
         @query.bind(index, value)
         Engine::OK_CODE
       rescue error : SQLiteEngine::SQLError

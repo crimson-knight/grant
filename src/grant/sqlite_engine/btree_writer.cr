@@ -145,7 +145,7 @@ module Grant::SQLiteEngine
 
     # The record stored under *rowid*, or nil.
     def table_record(root : UInt32, rowid : Int64) : Bytes?
-      _path, leaf, index, found = seek_rowid(root, rowid)
+      _path, leaf, index, found = borrowing_scratch { seek_rowid(root, rowid) }
       return unless found
       page = BTreePage.read(@pager, leaf)
       PayloadReader.read(@pager, page, page.payload(index)).dup
@@ -180,7 +180,7 @@ module Grant::SQLiteEngine
 
     # Whether the table holds a row with *rowid*.
     def table_contains?(root : UInt32, rowid : Int64) : Bool
-      seek_rowid(root, rowid)[3]
+      borrowing_scratch { seek_rowid(root, rowid)[3] }
     end
 
     # The largest rowid of the table, or nil when it is empty.
@@ -210,7 +210,7 @@ module Grant::SQLiteEngine
       if appended = seek_past_rightmost(root, rowid)
         return appended
       end
-      path = [] of PathEntry
+      path = @scratch.path
       page_number = root
       rightmost = true
       Limits::MAX_BTREE_DEPTH.times do
@@ -248,7 +248,7 @@ module Grant::SQLiteEngine
       hint_root, hint_path, leaf = hint
       return unless hint_root == root
       expected = root
-      path = Array(PathEntry).new(hint_path.size)
+      path = @scratch.path
       hint_path.each do |page_number, _child_index|
         return unless page_number == expected
         page = BTreePage.read(@pager, page_number)
@@ -353,7 +353,7 @@ module Grant::SQLiteEngine
     end
 
     private def seek_key(root : UInt32, key : Array(Value), comparator : KeyComparator) : {Array(PathEntry), UInt32, Int32, Bool, Bool}
-      path = [] of PathEntry
+      path = @scratch.path
       page_number = root
       Limits::MAX_BTREE_DEPTH.times do
         page = BTreePage.read(@pager, page_number)

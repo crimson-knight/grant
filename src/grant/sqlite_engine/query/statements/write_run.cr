@@ -112,7 +112,12 @@ module Grant::SQLiteEngine::Query
         child_added(table, row)
         parent_added(table, rowid, row)
       end
-      table.database.write_row(table.layout, rowid, row, index_entries(table, row, rowid))
+      entry_list = @session.take_index_entry_list
+      begin
+        table.database.write_row(table.layout, rowid, row, index_entries_into(entry_list, table, row, rowid))
+      ensure
+        @session.give_back_index_entry_list(entry_list)
+      end
       if rowid && @nested == 0 && !@silent
         @session.last_insert_rowid = rowid
       end
@@ -450,8 +455,12 @@ module Grant::SQLiteEngine::Query
     # The entry of *index* for the row: the key terms (expression terms
     # evaluated over the row, sqlite3ExprCodeLoadIndexColumn) and the rowid
     # or primary key.
-    def index_entry(table : WriteTable, index : IndexLayout, row : Array(Value), rowid : Int64?) : Array(Value)
-      return index.entry_for(row, rowid) unless index.has_expressions?
+    #
+    # With *key*, the entry is written into that array instead of a new one.
+    def index_entry(table : WriteTable, index : IndexLayout, row : Array(Value), rowid : Int64?, key : Array(Value)? = nil) : Array(Value)
+      unless index.has_expressions?
+        return key ? index.fill_entry(key, row, rowid) : index.entry_for(row, rowid)
+      end
       rule = table.list_of_indexes.find(&.layout.same?(index)) ||
              table.list_of_indexes.find { |candidate| candidate.layout.entry.object_name == index.entry.object_name } ||
              raise Error.new("index #{index.entry.object_name} is not an index of #{table.name}")
@@ -460,7 +469,7 @@ module Grant::SQLiteEngine::Query
       pseudo.row = row
       pseudo.rowid = rowid
       values = program.evaluate(@list_of_parameters) || raise Error.new("index #{index.entry.object_name} expressions gave no row")
-      index.entry_for(row, rowid, values)
+      key ? index.fill_entry(key, row, rowid, values) : index.entry_for(row, rowid, values)
     end
 
     # Compiles the expression terms of *rule*, raising what C's
@@ -541,6 +550,17 @@ module Grant::SQLiteEngine::Query
       return false unless value.class == other.class && value == other
       # -0.0 equals 0.0 but is stored with its own bits.
       !(value.is_a?(Float64) && other.is_a?(Float64) && value.unsafe_as(UInt64) != other.unsafe_as(UInt64))
+    end
+
+    # `index_entries`, built in *entry_list*: its arrays from the row before
+    # are refilled, so a row written at once allocates no entries.
+    def index_entries_into(entry_list : IndexEntryList, table : WriteTable, row : Array(Value), rowid : Int64?) : Array({IndexLayout, Array(Value)})
+      entry_list.start
+      table.list_of_index_layouts.each do |index|
+        next unless index_includes?(table, index, row, rowid)
+        entry_list.add(index, index_entry(table, index, row, rowid, entry_list.spare_key))
+      end
+      entry_list.list_of_entries
     end
 
     # Each index of *table* that holds the row, with the row's entry.
@@ -1034,6 +1054,45 @@ module Grant::SQLiteEngine::Query
       @list_of_parent_positions.each_with_index.all? do |position, offset|
         ValueSemantics.compare(row[position], key[offset]) == 0
       end
+    end
+  end
+
+  # The index entries of the row being written, kept from row to row: each
+  # entry array is refilled for the next row once the last one is written.
+  class IndexEntryList
+    getter list_of_entries = [] of {IndexLayout, Array(Value)}
+    @list_of_spare_keys = [] of Array(Value)
+
+    # Empties the list for the next row, keeping its arrays.
+    def start : Nil
+      @list_of_entries.each { |(_, key)| @list_of_spare_keys << key }
+      @list_of_entries.clear
+    end
+
+    # An array to write the next entry into.
+    def spare_key : Array(Value)
+      @list_of_spare_keys.pop? || [] of Value
+    end
+
+    def add(index : IndexLayout, key : Array(Value)) : Nil
+      @list_of_entries << {index, key}
+    end
+  end
+
+  class Session
+    @spare_index_entry_list : IndexEntryList? = nil
+
+    # The list a row's index entries are built in. A row written while
+    # another is (a trigger, a foreign key action) gets a list of its own.
+    def take_index_entry_list : IndexEntryList
+      list = @spare_index_entry_list
+      return IndexEntryList.new unless list
+      @spare_index_entry_list = nil
+      list
+    end
+
+    def give_back_index_entry_list(list : IndexEntryList) : Nil
+      @spare_index_entry_list = list
     end
   end
 end

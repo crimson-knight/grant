@@ -366,7 +366,7 @@ module Grant::SQLiteEngine::Query
       end
       mark = @list_of_savepoints[position]
       release_savepoint_everywhere(mark.depth) if mark.depth >= 0
-      @list_of_savepoints.delete_at(position..)
+      @list_of_savepoints.truncate(0, position)
     end
 
     # ROLLBACK TO: undoes everything since the savepoint, which stays open.
@@ -374,7 +374,7 @@ module Grant::SQLiteEngine::Query
       position = savepoint_position(name)
       mark = @list_of_savepoints[position]
       rollback_to_savepoint_everywhere(mark.depth) if mark.depth >= 0
-      @list_of_savepoints.delete_at((position + 1)..)
+      @list_of_savepoints.truncate(0, position + 1)
       @deferred_violations = mark.deferred_violations
       reset_schema
     end
