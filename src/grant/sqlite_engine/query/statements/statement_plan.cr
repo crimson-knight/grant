@@ -15,6 +15,12 @@ module Grant::SQLiteEngine::Query
 
     abstract def run(list_of_parameters : Array(Value)) : Array(Array(Value))
 
+    # Writes the statement's rows inside *run*, as one step of a trigger
+    # body: no statement journal, savepoint or RETURNING of its own.
+    def write_rows(run : WriteRun, list_of_parameters : Array(Value)) : Nil
+      raise Error.new("#{self.class.name} cannot run in a trigger")
+    end
+
     # The schema generation the plan was compiled against; a plan older
     # than the session's schema is compiled again before it runs.
     property schema_generation = 0
@@ -177,6 +183,9 @@ module Grant::SQLiteEngine::Query
     getter assignments : AssignmentList?
 
     @program : RowProgram? = nil
+    # NEW and OLD when the INSERT is a trigger step: the program compiles
+    # on first use, after the trigger statements did.
+    property trigger_scope : TriggerScope? = nil
 
     def initialize(@untargeted : Bool, @targets_rowid : Bool, @index_rule : IndexRule?, @assignments : AssignmentList?,
                    @where : SQL::Expression?, @target_name : String)
@@ -196,7 +205,9 @@ module Grant::SQLiteEngine::Query
         existing = PseudoTable.new(@target_name, table.table_info)
         excluded = PseudoTable.new("excluded", table.table_info)
         excluded.qualified_only = true
-        RowProgram.new(run.session, RowProgram.columns(assignments.list_of_expressions), [existing, excluded], @where)
+        run.session.with_trigger_scope(@trigger_scope) do
+          RowProgram.new(run.session, RowProgram.columns(assignments.list_of_expressions), [existing, excluded], @where)
+        end
       end
     end
   end

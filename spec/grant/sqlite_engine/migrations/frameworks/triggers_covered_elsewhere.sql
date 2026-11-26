@@ -1,5 +1,5 @@
 -- CREATE TRIGGER statements migrations write (updated_at touch, audit log, soft-delete guard).
--- Trigger support is the parallel S2 trigger chunk's work; differences here are listed as covered elsewhere.
+-- The engine runs these triggers; spec/grant/sqlite_engine/corpus/trigger_scenarios.sql covers triggers in depth.
 CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT, updated_at TEXT);
 CREATE TABLE notes_audit (id INTEGER PRIMARY KEY, note_id INTEGER, action TEXT);
 CREATE TRIGGER notes_touch AFTER UPDATE OF body ON notes FOR EACH ROW BEGIN UPDATE notes SET updated_at = '2026-11-25' WHERE id = NEW.id; END;

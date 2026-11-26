@@ -55,6 +55,11 @@ module Grant::SQLiteEngine::Query
         raise SQLError.new("table #{entry.object_name} may not be altered")
       end
       action = @statement.action
+      if action.is_a?(SQL::DropColumn)
+        refuse_column_change_under_triggers(entry.object_name, action.column_name.value)
+      elsif action.is_a?(SQL::RenameColumn)
+        refuse_column_change_under_triggers(entry.object_name, action.old_name.value)
+      end
       case action
       when SQL::RenameTable  then rename_table(entry, action.new_name)
       when SQL::RenameColumn then rename_column(entry, action.old_name, action.new_name)
@@ -62,6 +67,20 @@ module Grant::SQLiteEngine::Query
       when SQL::DropColumn   then drop_column(entry, action.column_name)
       end
       @session.reset_schema
+    end
+
+    # renameColumnFunc and the DROP COLUMN schema test also rewrite and
+    # check trigger bodies, which the engine does not do: a change to a
+    # column that a trigger on (or naming) the table also names is refused.
+    private def refuse_column_change_under_triggers(table_name : String, column_name : String) : Nil
+      database.schema.list_of_entries.each do |candidate|
+        next unless candidate.object_type == "trigger"
+        sql = candidate.sql || ""
+        tokens = SchemaAlteration.tokens(sql)
+        named = candidate.table_name.compare(table_name, case_insensitive: true) == 0 || tokens.any?(&.same_name?(table_name))
+        next unless named && tokens.any?(&.same_name?(column_name))
+        raise UnsupportedSQL.new("ALTER TABLE ... #{@statement.action.is_a?(SQL::DropColumn) ? "DROP" : "RENAME"} COLUMN #{column_name} of table #{table_name}, which trigger #{candidate.object_name} names")
+      end
     end
 
     def self.tokens(sql : String) : Array(SourceToken)
@@ -152,7 +171,10 @@ module Grant::SQLiteEngine::Query
                 when previous.kind.table? && own  then type == "table"
                 when previous.kind.exists? && own then type == "table"
                 when previous.kind.references?    then true
-                when previous.kind.on? && own     then type == "index"
+                when previous.kind.on? && own     then type == "index" || type == "trigger"
+                when type == "trigger"
+                  previous.kind.into? || previous.kind.update? || previous.kind.from? || previous.kind.join_keyword? ||
+                    previous.kind.join? || (previous.kind.comma? && view_from_list?(tokens, index)) || following.try(&.kind.dot?) || false
                 when type == "view"
                   previous.kind.from? || previous.kind.join_keyword? || previous.kind.join? ||
                     (previous.kind.comma? && view_from_list?(tokens, index)) || following.try(&.kind.dot?) || false

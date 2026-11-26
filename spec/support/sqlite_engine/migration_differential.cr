@@ -31,9 +31,6 @@ module MigrationDifferential
 
   # The differences that stay, each with why.
   LIST_OF_REMAINING = [
-    Remaining.new("frameworks/triggers_covered_elsewhere.sql", "",
-      "CREATE TRIGGER is the parallel S2 trigger chunk's work: the engine refuses CREATE TRIGGER, so every later " \
-      "statement of this file sees no trigger effects (audit rows, updated_at, RAISE) and the schema lacks the triggers"),
     Remaining.new("frameworks/ecto.sql", "DROP COLUMN of a WITHOUT ROWID table",
       "DROP COLUMN of a WITHOUT ROWID table is not implemented (UnsupportedSQL); no framework migration in the corpus " \
       "drops a column of a WITHOUT ROWID table except this contrived Ecto case"),

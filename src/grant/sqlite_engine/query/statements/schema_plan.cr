@@ -31,15 +31,12 @@ module Grant::SQLiteEngine::Query
           return if statement.if_exists
           raise SQLError.new("no such #{statement.kind.to_s.downcase}: #{schema.value}.#{statement.name.value}")
         end
-        if statement.kind.trigger?
-          raise SQLError.new("no such trigger: #{statement.name.value}") unless statement.if_exists
-        end
       when SQL::AlterTable
         if (schema = statement.schema) && !@session.schema?(schema.value)
           raise SQLError.new("no such table: #{schema.value}.#{statement.table.value}")
         end
       when SQL::CreateTrigger
-        raise UnsupportedSQL.new("triggers (CREATE TRIGGER)")
+        check_schema_name(statement.schema)
       when SQL::CreateVirtualTable
         raise UnsupportedSQL.new("virtual tables (CREATE VIRTUAL TABLE)")
       end
@@ -93,11 +90,12 @@ module Grant::SQLiteEngine::Query
       @session.run_write(list_of_parameters, counts_changes: counts) do |run|
         choose_target(statement)
         case statement
-        when SQL::CreateTable then create_table(statement, run)
-        when SQL::CreateIndex then create_index(statement, run)
-        when SQL::CreateView  then create_view(statement)
-        when SQL::Drop        then drop(statement, run)
-        when SQL::AlterTable  then SchemaAlteration.new(@session, run, statement, @text).perform
+        when SQL::CreateTable   then create_table(statement, run)
+        when SQL::CreateIndex   then create_index(statement, run)
+        when SQL::CreateView    then create_view(statement)
+        when SQL::CreateTrigger then create_trigger(statement)
+        when SQL::Drop          then statement.kind.trigger? ? drop_trigger(statement) : drop(statement, run)
+        when SQL::AlterTable    then SchemaAlteration.new(@session, run, statement, @text).perform
         end
       rescue error : SchemaError
         raise SQLError.new(error.message || "schema error")
@@ -275,6 +273,7 @@ module Grant::SQLiteEngine::Query
         end
         drop_table_rows(entry.object_name, run)
         database.drop(entry.object_name)
+        drop_temp_triggers_of(entry.object_name)
       when .view?
         unless entry && entry.object_type == "view"
           if entry && entry.table?
@@ -284,7 +283,11 @@ module Grant::SQLiteEngine::Query
           raise SQLError.new("no such view: #{name}")
         end
         view_name = entry.object_name
-        database.delete_schema_rows { |record| record[0]? == "view" && record[1]? == view_name }
+        database.delete_schema_rows do |record|
+          (record[0]? == "view" && record[1]? == view_name) ||
+            (record[0]? == "trigger" && record[2]?.as?(String).try(&.compare(view_name, case_insensitive: true)) == 0)
+        end
+        drop_temp_triggers_of(view_name)
       when .index?
         unless entry && entry.index?
           return if statement.if_exists
@@ -317,7 +320,12 @@ module Grant::SQLiteEngine::Query
       table = run.table(name, schema_name)
       rows = [] of {Int64?, Array(Value)}
       run.cursor_rows(table) { |rowid, row| rows << {rowid, row} }
-      rows.each { |rowid, row| run.delete_row(table, rowid, row) }
+      run.triggers_disabled = true
+      begin
+        rows.each { |rowid, row| run.delete_row(table, rowid, row) }
+      ensure
+        run.triggers_disabled = false
+      end
       unless @session.defer_foreign_keys?
         raise ConstraintError.new("FOREIGN KEY constraint failed") if run.immediate_violations > 0
       end

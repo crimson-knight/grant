@@ -84,6 +84,10 @@ module Grant::SQLiteEngine::Query
     # outcome, the rowid and the row as stored.
     def insert_row(table : WriteTable, row : Array(Value), explicit_rowid : Value, override : ConflictAction,
                    upsert : UpsertPlan? = nil) : {InsertResult, Int64?, Array(Value)}
+      if triggers_fire?(table, SQL::TriggerEvent::Insert, before: true)
+        new_rowid, new = new_row_before_insert(table, row, explicit_rowid)
+        fire_table_triggers(table, SQL::TriggerEvent::Insert, true, nil, nil, new_rowid, new, override)
+      end
       rowid = nil.as(Int64?)
       unless table.without_rowid?
         alias_index = table.rowid_alias
@@ -102,7 +106,7 @@ module Grant::SQLiteEngine::Query
       result = check_constraints(table, rowid, row, nil, override, upsert)
       return {result[0], result[1], result[2]} unless result[0].inserted?
       if replaced = result[3]
-        delete_row(table, replaced[0], replaced[1], replace: true)
+        delete_row(table, replaced[0], replaced[1], replace: true, override: ConflictAction::Replace)
       end
       if foreign_keys?
         child_added(table, row)
@@ -113,18 +117,24 @@ module Grant::SQLiteEngine::Query
         @session.last_insert_rowid = rowid
       end
       count_change
+      unless @silent
+        fire_table_triggers(table, SQL::TriggerEvent::Insert, false, nil, nil, rowid, row, override)
+      end
       {InsertResult::Inserted, rowid, row}
     end
 
-    # A row the statement changed counts in changes(); a row a foreign key
-    # action changed counts at once in total_changes(), as the rows of C's
-    # trigger programs do, even when the statement then fails.
+    # A row the statement changed counts in changes(); a row a trigger step
+    # changed counts in total_changes() when the step ends (OP_ResetCount);
+    # a row a foreign key action changed counts there at once, as the rows
+    # of C's action programs do, even when the statement then fails.
     private def count_change : Nil
       return if @silent
-      if @nested == 0
-        @changes += 1
-      else
+      if @nested > 0
         @session.total_changes += 1
+      elsif @trigger_depth > 0
+        @step_changes += 1
+      else
+        @changes += 1
       end
     end
 
@@ -323,7 +333,7 @@ module Grant::SQLiteEngine::Query
         when .replace?
           victim = existing_row(table, existing_key)
           if victim
-            delete_row(table, victim[0], victim[1], replace: true)
+            delete_row(table, victim[0], victim[1], replace: true, override: ConflictAction::Replace)
           end
         else
           raise ConstraintError.new(unique_message(rule), action)
@@ -384,7 +394,7 @@ module Grant::SQLiteEngine::Query
       when .update?
         upsert_update(table, {nil.as(Int64?), existing}, row, clause || raise Error.new("upsert without a clause"))
       when .replace?
-        delete_row(table, nil, existing, replace: true)
+        delete_row(table, nil, existing, replace: true, override: ConflictAction::Replace)
         nil
       else
         columns = positions.map { |position| "#{table.name}.#{table.list_of_columns[position].column_name}" }
@@ -608,8 +618,12 @@ module Grant::SQLiteEngine::Query
     # *list_of_changed* holds the positions the statement assigned (-1 for
     # the rowid). Returns the rowid and the row as stored, or nil for a row
     # an IGNORE conflict skipped.
+    #
+    # *list_of_changed_names* are the SET list's names as written, which
+    # UPDATE OF triggers match; by default the names of *list_of_changed*.
     def update_row(table : WriteTable, old_rowid : Int64?, old_row : Array(Value), new_row : Array(Value),
-                   explicit_rowid : Value, override : ConflictAction, list_of_changed : Array(Int32)) : {Int64?, Array(Value)}?
+                   explicit_rowid : Value, override : ConflictAction, list_of_changed : Array(Int32),
+                   list_of_changed_names : Array(String)? = nil) : {Int64?, Array(Value)}?
       rowid = old_rowid
       unless table.without_rowid?
         if alias_index = table.rowid_alias
@@ -625,6 +639,18 @@ module Grant::SQLiteEngine::Query
       end
       fill_virtual_columns(table, old_row, old_rowid)
       compute_generated(table, new_row, rowid)
+      original_old_row = old_row
+      names = nil.as(Array(String)?)
+      if triggers_for?(table, SQL::TriggerEvent::Update)
+        names = list_of_changed_names || WriteRun.changed_names(table, list_of_changed)
+        if triggers_fire?(table, SQL::TriggerEvent::Update, before: true)
+          fire_table_triggers(table, SQL::TriggerEvent::Update, true, old_rowid, old_row, rowid,
+            new_row_before_update(table, new_row, rowid), override, names)
+          current = reloaded_after_before_triggers(table, old_rowid, old_row, new_row, rowid, list_of_changed)
+          return unless current
+          old_row = current
+        end
+      end
       result = check_constraints(table, rowid, new_row, {old_rowid, old_row}, override, nil)
       return if result[0].ignored?
       if foreign_keys?
@@ -643,7 +669,7 @@ module Grant::SQLiteEngine::Query
         new_entries = index_entries(table, new_row, rowid)
         table.database.remove_row(table.layout, old_rowid, old_row, old_entries)
         if replaced = result[3]
-          delete_row(table, replaced[0], replaced[1], replace: true)
+          delete_row(table, replaced[0], replaced[1], replace: true, override: ConflictAction::Replace)
         end
         table.database.write_row(table.layout, rowid, new_row, new_entries)
       end
@@ -653,15 +679,54 @@ module Grant::SQLiteEngine::Query
         parent_actions(table, old_row, new_row, list_of_changed)
       end
       count_change
+      if names
+        fire_table_triggers(table, SQL::TriggerEvent::Update, false, old_rowid, original_old_row, rowid, new_row, override, names)
+      end
       {rowid, new_row}
+    end
+
+    # The column names of the positions an UPDATE changes (-1: the rowid).
+    def self.changed_names(table : WriteTable, list_of_changed : Array(Int32)) : Array(String)
+      list_of_changed.map { |position| position < 0 ? "rowid" : table.list_of_columns[position].column_name }
+    end
+
+    # After BEFORE UPDATE triggers C finds the row again: gone, the row is
+    # skipped (nil); otherwise the columns the statement does not set take
+    # the values the triggers left. Returns the row as it now is.
+    private def reloaded_after_before_triggers(table : WriteTable, old_rowid : Int64?, old_row : Array(Value),
+                                               new_row : Array(Value), rowid : Int64?,
+                                               list_of_changed : Array(Int32)) : Array(Value)?
+      current = refreshed(table, old_rowid, old_row)
+      return unless current
+      fill_virtual_columns(table, current, old_rowid)
+      table.list_of_columns.each do |column|
+        position = column.position
+        next if position == table.rowid_alias || list_of_changed.includes?(position)
+        new_row[position] = current[position]
+      end
+      compute_generated(table, new_row, rowid)
+      current
     end
 
     # --- DELETE -------------------------------------------------------------
 
     # Deletes the row with its index entries, with foreign key processing.
     # *replace* marks a delete REPLACE makes (not counted in changes()).
-    def delete_row(table : WriteTable, rowid : Int64?, row : Array(Value), replace : Bool = false) : Nil
+    # DELETE triggers fire, except for a REPLACE with recursive_triggers
+    # off; *override* is the conflict policy their programs take.
+    def delete_row(table : WriteTable, rowid : Int64?, row : Array(Value), replace : Bool = false,
+                   override : ConflictAction = ConflictAction::Default) : Nil
       fill_virtual_columns(table, row, rowid)
+      original_row = row
+      fires = (!replace || @session.recursive_triggers?) && triggers_for?(table, SQL::TriggerEvent::Delete)
+      if fires && triggers_fire?(table, SQL::TriggerEvent::Delete, before: true)
+        fire_table_triggers(table, SQL::TriggerEvent::Delete, true, rowid, row, nil, nil, override)
+        # A BEFORE trigger that deleted the row leaves nothing to delete.
+        current = refreshed(table, rowid, row)
+        return unless current
+        fill_virtual_columns(table, current, rowid)
+        row = current
+      end
       if foreign_keys?
         child_removed(table, row)
         parent_removed(table, rowid, row)
@@ -669,6 +734,7 @@ module Grant::SQLiteEngine::Query
       table.database.remove_row(table.layout, rowid, row, index_entries(table, row, rowid))
       parent_actions(table, row, nil) if foreign_keys?
       count_change unless replace
+      fire_table_triggers(table, SQL::TriggerEvent::Delete, false, rowid, original_row, nil, nil, override) if fires
     end
 
     # --- Foreign keys -------------------------------------------------------
@@ -778,7 +844,7 @@ module Grant::SQLiteEngine::Query
                 end
                 update_row(child_table, child_rowid, current, updated, nil, ConflictAction::Abort, rule.list_of_child_positions)
               else
-                delete_row(child_table, child_rowid, current)
+                delete_row(child_table, child_rowid, current, override: ConflictAction::Abort)
               end
             when "SET NULL", "SET DEFAULT"
               updated = current.dup

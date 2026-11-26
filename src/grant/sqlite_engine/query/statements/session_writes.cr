@@ -16,6 +16,12 @@ module Grant::SQLiteEngine::Query
     # The values the PRAGMAs the engine accepts without acting on report.
     getter pragma_values = {} of String => Value
 
+    # PRAGMA writable_schema is on: C then lets statements write
+    # sqlite_schema rows, which the engine does not do.
+    def writable_schema? : Bool
+      @pragma_values["writable_schema"]? == 1_i64
+    end
+
     # True between BEGIN (or a SAVEPOINT outside a transaction) and the
     # COMMIT or ROLLBACK that ends it.
     getter? in_transaction = false

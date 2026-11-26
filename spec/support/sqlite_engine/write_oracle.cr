@@ -194,13 +194,13 @@ module SQLiteWriteOracle
     # an AUTOINCREMENT temp table) does not hide them.
     def self.dump(connection : SQLiteQueryOracle::Connection) : Array(String)
       lines = [] of String
-      schema = connection.query("SELECT type, name, tbl_name, sql FROM sqlite_master ORDER BY type, name")
+      schema = connection.query("SELECT type, name, tbl_name, sql FROM main.sqlite_master ORDER BY type, name")
       schema.list_of_rows.each { |row| lines << "schema #{SQLiteQueryOracle.row_token(row)}" }
       schema.list_of_rows.each do |row|
         next unless row[0] == "table"
         name = row[1].as(String)
         sql = row[3].as?(String) || ""
-        quoted = %("#{name.gsub('"', "\"\"")}")
+        quoted = %(main."#{name.gsub('"', "\"\"")}")
         query = if sql.matches?(/without\s+rowid/i)
                   "SELECT * FROM main.#{quoted} ORDER BY 1"
                 else
@@ -210,7 +210,7 @@ module SQLiteWriteOracle
         lines << "rows of #{name}: #{result.error}" if result.error
         result.list_of_rows.each { |values| lines << "#{name} #{SQLiteQueryOracle.row_token(values)}" }
       end
-      header = connection.query("PRAGMA user_version")
+      header = connection.query("PRAGMA main.user_version")
       lines << "user_version #{SQLiteQueryOracle.row_token(header.list_of_rows.first? || [] of Value)}"
       lines
     end

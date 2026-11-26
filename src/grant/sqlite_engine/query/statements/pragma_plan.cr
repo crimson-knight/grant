@@ -25,6 +25,7 @@ module Grant::SQLiteEngine::Query
       "trusted_schema"            => {1_i64, "trusted_schema"},
       "max_page_count"            => {4294967294_i64, "max_page_count"},
       "threads"                   => {0_i64, "threads"},
+      "writable_schema"           => {0_i64, "writable_schema"},
     }
 
     # PRAGMAs that answer with one row named after themselves.
@@ -105,6 +106,8 @@ module Grant::SQLiteEngine::Query
       when "schema_version"
         [[header_field(40).to_i64] of Value]
       when "page_size"
+        # Setting it reports nothing (the engine keeps its page size).
+        return [] of Array(Value) if value
         [[(@session.database.header.try(&.page_size) || Limits::DEFAULT_PAGE_SIZE).to_i64] of Value]
       when "page_count"
         [[@session.database.page_count.to_i64] of Value]

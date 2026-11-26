@@ -204,6 +204,10 @@ module Grant::SQLiteEngine::Query
       when SQL::RowValue
         VectorExpr.new(expression.elements.map { |element| compile_expression(element, context) })
       when SQL::Raise
+        if @trigger_scope
+          message = expression.message.try { |text| compile_expression(text, context) }
+          return RaiseExpr.new(expression.action, message)
+        end
         # sqlite3ExprCodeTarget reports RAISE() outside a trigger when it
         # generates code, after every name has resolved.
         record_codegen_error("RAISE() may only be used within a trigger-program")
@@ -279,6 +283,12 @@ module Grant::SQLiteEngine::Query
         if found = resolve_in(current, column_name, table_name, schema_database)
           mark_correlated(context, current, found)
           return found
+        end
+        # lookupName tries NEW and OLD at each level whose FROM has no match.
+        if table_name && schema_name.nil? && (scope = @trigger_scope)
+          if found = scope.resolve(table_name, column_name)
+            return found
+          end
         end
         if table_name.nil? && current.aliases_visible?
           # lookupName checks each enclosing query's result aliases too

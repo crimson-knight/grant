@@ -14,9 +14,9 @@ module Grant::SQLiteEngine::Query
   module StatementCompiler
     def self.compile(session : Session, statement : SQL::Statement, text : String) : StatementPlan
       plan = case statement
-             when SQL::Insert then InsertPlan.new(session, statement)
-             when SQL::Update then UpdatePlan.new(session, statement)
-             when SQL::Delete then DeletePlan.new(session, statement)
+             when SQL::Insert then insert_plan(session, statement)
+             when SQL::Update then update_plan(session, statement)
+             when SQL::Delete then delete_plan(session, statement)
              when SQL::Begin, SQL::Commit, SQL::Rollback, SQL::Savepoint, SQL::Release
                TransactionPlan.new(session, statement)
              when SQL::Pragma then PragmaPlan.new(session, statement)
