@@ -105,11 +105,15 @@ module Grant::SQLiteEngine::Query
         fire_table_triggers(table, SQL::TriggerEvent::Insert, true, nil, nil, new_rowid, new, override)
       end
       rowid = nil.as(Int64?)
+      # A rowid new_rowid chose is one no row has (the largest plus one, or
+      # a random one checked to be unused), so no check looks it up again.
+      rowid_is_new = false
       unless table.without_rowid?
         alias_index = table.rowid_alias
         candidate = alias_index ? row[alias_index] : explicit_rowid
         if candidate.nil?
           rowid = new_rowid(table)
+          rowid_is_new = true
         else
           rowid = WriteRun.must_be_int(candidate)
         end
@@ -119,7 +123,7 @@ module Grant::SQLiteEngine::Query
         note_autoincrement(table, rowid)
       end
       compute_generated(table, row, rowid)
-      result = check_constraints(table, rowid, row, nil, override, upsert)
+      result = check_constraints(table, rowid, row, nil, override, upsert, rowid_is_new)
       return {result[0], result[1], result[2]} unless result[0].inserted?
       if replaced = result[3]
         delete_row(table, replaced[0], replaced[1], replace: true, override: ConflictAction::Replace)
@@ -224,7 +228,8 @@ module Grant::SQLiteEngine::Query
     # the outcome (Inserted means "write it"), the rowid and row of an
     # upsert, and the row a REPLACE of the rowid must delete first.
     def check_constraints(table : WriteTable, rowid : Int64?, row : Array(Value), old : {Int64?, Array(Value)}?,
-                          override : ConflictAction, upsert : UpsertPlan?) : {InsertResult, Int64?, Array(Value), {Int64?, Array(Value)}?}
+                          override : ConflictAction, upsert : UpsertPlan?,
+                          rowid_is_new : Bool = false) : {InsertResult, Int64?, Array(Value), {Int64?, Array(Value)}?}
       definition = table.definition
       # NOT NULL, in column order. REPLACE puts the DEFAULT in and the
       # column is checked again only after every other column (C's second
@@ -313,7 +318,7 @@ module Grant::SQLiteEngine::Query
         delay_rowid = true
       end
       unless delay_rowid
-        outcome = check_rowid(table, rowid, row, old, rowid_action, rowid_clause, upsert)
+        outcome = check_rowid(table, rowid, row, old, rowid_action, rowid_clause, upsert, rowid_is_new)
         return outcome if outcome
         rowid_checked = true
       end
@@ -361,10 +366,10 @@ module Grant::SQLiteEngine::Query
         end
       end
       unless rowid_checked
-        outcome = check_rowid(table, rowid, row, old, rowid_action, rowid_clause, upsert)
+        outcome = check_rowid(table, rowid, row, old, rowid_action, rowid_clause, upsert, rowid_is_new)
         return outcome if outcome
       end
-      if rowid && !table.without_rowid? && rowid_action.replace? && !(old && old[0] == rowid)
+      if rowid && !rowid_is_new && !table.without_rowid? && rowid_action.replace? && !(old && old[0] == rowid)
         if victim = table.database.row_at(table.layout, rowid)
           replace_row = {rowid.as(Int64?), victim}
         end
@@ -375,8 +380,8 @@ module Grant::SQLiteEngine::Query
     # The rowid uniqueness check (nil when it passes or REPLACE resolves it).
     private def check_rowid(table : WriteTable, rowid : Int64?, row : Array(Value), old : {Int64?, Array(Value)}?,
                             action : ConflictAction, clause : UpsertClause?,
-                            upsert : UpsertPlan?) : {InsertResult, Int64?, Array(Value), {Int64?, Array(Value)}?}?
-      return if rowid.nil? || table.without_rowid?
+                            upsert : UpsertPlan?, rowid_is_new : Bool) : {InsertResult, Int64?, Array(Value), {Int64?, Array(Value)}?}?
+      return if rowid.nil? || rowid_is_new || table.without_rowid?
       return if old && old[0] == rowid
       return unless table.database.row_exists?(table.layout, rowid)
       case action
