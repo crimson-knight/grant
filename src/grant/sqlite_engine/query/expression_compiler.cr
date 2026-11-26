@@ -112,7 +112,6 @@ module Grant::SQLiteEngine::Query
     # errors are recorded and the walk goes on; the first one is raised.
     def resolve_expression(expression : SQL::Expression, context : QueryContext) : Expr
       saved = start_name_resolution
-      errors = nil
       begin
         compiled = compile_expression(expression, context)
       ensure
