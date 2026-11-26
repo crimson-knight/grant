@@ -277,10 +277,17 @@ module Grant::SQLiteEngine
 
     # Replaces the row with *rowid*. Setting the INTEGER PRIMARY KEY column
     # moves the row to that rowid. Returns false when there is no such row.
+    #
+    # A row that keeps its rowid in a table without indexes is replaced in
+    # one descent of the tree, without decoding the old row. Every check
+    # runs before a page changes, so inside a transaction that write needs
+    # no statement savepoint, as an insert needs none.
     def update(table_name : String, rowid : Int64, values : Array(Value)) : Bool
-      write_statement do
+      in_place = @pager.in_write_transaction? && replaces_in_place?(table_layout(table_name), rowid, values)
+      write_statement(journal: !in_place) do
         layout = table_layout(table_name)
         raise UnsupportedSQL.new("rowid lookup in WITHOUT ROWID table #{layout.table_name}") if layout.definition.without_rowid?
+        next replace_row(layout, rowid, values) if replaces_in_place?(layout, rowid, values)
         old = read_row(layout, rowid)
         next false unless old
         delete_row(layout, old, rowid)
@@ -480,7 +487,35 @@ module Grant::SQLiteEngine
       end
     end
 
-    private def insert_row(layout : TableLayout, rowid : Int64?, values : Array(Value), update_sequence : Bool) : Int64?
+    # Whether `update` can replace the row with *rowid* in place: a rowid
+    # table without indexes, and *values* keep the rowid.
+    private def replaces_in_place?(layout : TableLayout, rowid : Int64, values : Array(Value)) : Bool
+      definition = layout.definition
+      return false if definition.without_rowid? || !layout.list_of_indexes.empty?
+      alias_index = definition.rowid_alias_index
+      return true unless alias_index
+      new_rowid = values[alias_index]?
+      new_rowid.nil? || (new_rowid.is_a?(Int64) && new_rowid == rowid)
+    end
+
+    # Replaces the record under *rowid* (see `replaces_in_place?`); false
+    # when there is no such row.
+    private def replace_row(layout : TableLayout, rowid : Int64, values : Array(Value)) : Bool
+      row = checked_row(layout, values)
+      alias_index = layout.definition.rowid_alias_index
+      positions = layout.list_of_stored_positions
+      # Encoded into the database's record buffer: the table b-tree copies
+      # the record into its cell before anything encodes into it again.
+      record = RecordEncoder.encode(positions.size, text_encoding, writer_schema_format, @record_buffer) do |index|
+        position = positions.unsafe_fetch(index)
+        position == alias_index ? nil : row[position]
+      end
+      btree_writer.table_replace(layout.entry.root_page, rowid, record)
+    end
+
+    # The stored values of a row about to be written (see `stored_row`),
+    # after the column count, generated column and NOT NULL checks.
+    private def checked_row(layout : TableLayout, values : Array(Value)) : Array(Value)
       definition = layout.definition
       columns = definition.list_of_columns
       unless values.size == columns.size
@@ -488,11 +523,6 @@ module Grant::SQLiteEngine
       end
       if generated = columns.find { |column| !column.generated.none? }
         raise UnsupportedSQL.new("writing generated column #{layout.table_name}.#{generated.column_name}")
-      end
-      layout.list_of_indexes.each do |index|
-        if index.needs_evaluation?
-          raise UnsupportedSQL.new("writing index #{index.entry.object_name} outside a SQL session (its WHERE or expression terms)")
-        end
       end
       row = stored_row(definition, values)
       alias_index = definition.rowid_alias_index
@@ -503,6 +533,19 @@ module Grant::SQLiteEngine
           raise ConstraintViolation.new(ConstraintViolation::Kind::NotNull, "#{layout.table_name}.#{column.column_name}")
         end
       end
+      row
+    end
+
+    private def insert_row(layout : TableLayout, rowid : Int64?, values : Array(Value), update_sequence : Bool) : Int64?
+      layout.list_of_indexes.each do |index|
+        if index.needs_evaluation?
+          raise UnsupportedSQL.new("writing index #{index.entry.object_name} outside a SQL session (its WHERE or expression terms)")
+        end
+      end
+      row = checked_row(layout, values)
+      definition = layout.definition
+      columns = definition.list_of_columns
+      alias_index = definition.rowid_alias_index
       writer = btree_writer
       if definition.without_rowid?
         raise ArgumentError.new("WITHOUT ROWID table #{layout.table_name} has no rowid") if rowid

@@ -94,13 +94,27 @@ module Grant::SQLiteEngine
       table_insert(root, rowid, record, replace: false)
     end
 
-    private def table_insert(root : UInt32, rowid : Int64, record : Bytes, *, replace : Bool) : Bool
-      borrowing_scratch { table_insert_borrowing(root, rowid, record, replace) }
+    # Replaces the record stored under *rowid* in one descent of the tree;
+    # returns false (changing nothing) when there is no such row.
+    def table_replace(root : UInt32, rowid : Int64, record : Bytes) : Bool
+      borrowing_scratch { table_insert_borrowing(root, rowid, record, Placement::Existing) }
     end
 
-    private def table_insert_borrowing(root : UInt32, rowid : Int64, record : Bytes, replace : Bool) : Bool
+    # Which rows a table insert may land on: only an absent rowid, either,
+    # or only a present one.
+    private enum Placement
+      New
+      Any
+      Existing
+    end
+
+    private def table_insert(root : UInt32, rowid : Int64, record : Bytes, *, replace : Bool) : Bool
+      borrowing_scratch { table_insert_borrowing(root, rowid, record, replace ? Placement::Any : Placement::New) }
+    end
+
+    private def table_insert_borrowing(root : UInt32, rowid : Int64, record : Bytes, placement : Placement) : Bool
       path, leaf, index, found = seek_rowid(root, rowid)
-      return false if found && !replace
+      return false if found ? placement.new? : placement.existing?
       cell = build_cell(PageType::LeafTable, record, rowid, scratch: true)
       editor = PageEditor.new(@pager.page_for_write(leaf), leaf, usable)
       if found
