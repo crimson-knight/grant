@@ -95,6 +95,9 @@ module Grant::SQLiteEngine
       when 1, 2, 3, 4, 5, 6
         value = payload.unsafe_fetch(offset).to_i8!.to_i64
         (1...size).each { |step| value = (value << 8) | payload.unsafe_fetch(offset + step) }
+        # An integer key against an integer, the usual index seek, is the
+        # comparison compare_values ends with for two integers.
+        return value <=> right if right.is_a?(Int64)
         return compare_values(value, right, collation)
       when 7
         bits = 0_u64

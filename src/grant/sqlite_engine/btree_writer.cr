@@ -496,11 +496,14 @@ module Grant::SQLiteEngine
       used_space(node) <= PageEditor.capacity(node.page_number, node.page_type, usable)
     end
 
-    # btree.c balances a non-root page whose free space passes two thirds
-    # of the page.
-    private def underfull?(node : TreeNode) : Bool
-      free = PageEditor.capacity(node.page_number, node.page_type, usable) - used_space(node)
-      free * 3 > usable * 2
+    # Whether *node* fits its page and is not underfull: btree.c balances a
+    # non-root page whose free space passes two thirds of the page. The
+    # cells are summed once (a parent after balance_nonroot holds every
+    # divider).
+    private def fits_without_balancing?(node : TreeNode) : Bool
+      capacity = PageEditor.capacity(node.page_number, node.page_type, usable)
+      used = used_space(node)
+      used <= capacity && !((capacity - used) * 3 > usable * 2)
     end
 
     private def underfull?(path : Array(PathEntry), editor : PageEditor) : Bool
@@ -561,7 +564,7 @@ module Grant::SQLiteEngine
           end
           return
         end
-        if fits?(node) && !underfull?(node)
+        if fits_without_balancing?(node)
           write_node(node)
           return if list_of_pending.empty?
           pending = nil
