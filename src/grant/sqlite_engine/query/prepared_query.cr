@@ -271,7 +271,7 @@ module Grant::SQLiteEngine::Query
         visit_expression(expression.operand, &block)
         expression.arguments.try(&.each { |argument| visit_expression(argument, &block) })
       else
-        Walker.children(expression).each { |child| visit_expression(child, &block) }
+        Walker.each_child(expression) { |child| visit_expression(child, &block) }
       end
     end
 
@@ -281,6 +281,10 @@ module Grant::SQLiteEngine::Query
 
       def self.children(expression : SQL::Expression) : Array(SQL::Expression)
         children_of(expression)
+      end
+
+      def self.each_child(expression : SQL::Expression, & : SQL::Expression ->) : Nil
+        each_child_of(expression) { |child| yield child }
       end
     end
   end

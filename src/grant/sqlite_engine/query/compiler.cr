@@ -300,7 +300,8 @@ module Grant::SQLiteEngine::Query
     private def contains_collate?(expression : SQL::Expression) : Bool
       return true if expression.is_a?(SQL::Collate)
       return false if expression.is_a?(SQL::ScalarSubquery) || expression.is_a?(SQL::Exists)
-      children_of(expression).any? { |child| contains_collate?(child) }
+      each_child_of(expression) { |child| return true if contains_collate?(child) }
+      false
     end
 
     # A compound's ORDER BY term must name a result column: by number, by
@@ -593,16 +594,15 @@ module Grant::SQLiteEngine::Query
       context.aliases_visible = false
       # selectCheckOnClauses runs once the whole SELECT has resolved.
       raise SQLError.new("ON clause references tables to its right") if on_reaches_right
-      distinct_unknowns = core.distinct.distinct? ? expanded.map(&.unknown_collation) : [] of String?
-      record_collation_error(group_keys.map(&.unknown_collation), sort_unknowns, distinct_unknowns,
-        [where_uses, having_uses, result_uses])
+      record_collation_error(group_keys, sort_unknowns, core.distinct.distinct? ? expanded : nil,
+        where_uses, having_uses, result_uses)
       aggregation = nil
       if aggregate
         key_collations = group_keys.map { |key| key.collation_sequence || Collation::Binary }
         slots = context.list_of_entries.map(&.slot)
         aggregation = Aggregation.new(group_keys, key_collations, collector.list_of_calls, having_expression, slots)
       end
-      if !aggregate && !core.distinct.distinct?
+      if !aggregate && !core.distinct.distinct? && !sort_keys.empty?
         local = context.list_of_entries.map(&.slot).to_set
         sort_keys = sort_keys.reject do |key|
           term = extras[key.position - expanded.size]?
@@ -831,11 +831,19 @@ module Grant::SQLiteEngine::Query
     # before it codes WHERE, HAVING and the result set (where code
     # generation stops at the first unknown one); the first step that
     # meets one decides the message.
-    private def record_collation_error(group_keys : Array(String?), sort_keys : Array(String?), distinct_keys : Array(String?),
-                                       clauses : Array(Array(String))) : Nil
-      name = group_keys.compact.last? || sort_keys.compact.last? || distinct_keys.compact.last?
-      name ||= clauses.compact_map(&.first?).first?
+    private def record_collation_error(group_keys : Array(Expr), sort_keys : Array(String?), distinct_keys : Array(Expr)?,
+                                       *clauses : Array(String)) : Nil
+      name = last_unknown_collation(group_keys)
+      sort_keys.reverse_each { |unknown| break name = unknown if unknown } unless name
+      name ||= distinct_keys.try { |keys| last_unknown_collation(keys) }
+      clauses.each { |uses| break name = uses.first if !name && !uses.empty? }
       record_codegen_error("no such collation sequence: #{name}") if name
+    end
+
+    # The unknown collation of the last of *keys* that has one.
+    private def last_unknown_collation(keys : Array(Expr)) : String?
+      keys.reverse_each { |key| key.unknown_collation.try { |unknown| return unknown } }
+      nil
     end
   end
 end

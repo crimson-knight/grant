@@ -14,9 +14,9 @@ module Grant::SQLiteEngine::Query
       when RowidExpr  then into << expression.slot
       when SubqueryExpr
         expression.list_of_outer_slots.each { |slot| into << slot }
-        ExpressionWalk.children(expression).each { |child| slots(child, into) }
+        expression.each_child { |child| slots(child, into) }
       else
-        ExpressionWalk.children(expression).each { |child| slots(child, into) }
+        expression.each_child { |child| slots(child, into) }
       end
       into
     end
@@ -28,12 +28,12 @@ module Grant::SQLiteEngine::Query
       when ColumnExpr
         into << expression.column if expression.slot == slot
         # A VIRTUAL generated column reads the columns of its expression.
-        expression.children.each { |child| return unless columns_of(child, slot, into) }
+        expression.each_child { |child| return unless columns_of(child, slot, into) }
       when SubqueryExpr
         return if expression.list_of_outer_slots.includes?(slot)
-        expression.children.each { |child| return unless columns_of(child, slot, into) }
+        expression.each_child { |child| return unless columns_of(child, slot, into) }
       else
-        expression.children.each { |child| return unless columns_of(child, slot, into) }
+        expression.each_child { |child| return unless columns_of(child, slot, into) }
       end
       into
     end
@@ -46,7 +46,8 @@ module Grant::SQLiteEngine::Query
       return false if expression.is_a?(ColumnExpr) || expression.is_a?(RowidExpr) || expression.is_a?(SubqueryExpr) ||
                       expression.is_a?(AggregateResultExpr) || expression.is_a?(UserFunctionExpr)
       return false if expression.is_a?(FunctionExpr) && NONDETERMINISTIC.includes?(expression.function_name)
-      ExpressionWalk.children(expression).all? { |child| constant_term?(child) }
+      expression.each_child { |child| return false unless constant_term?(child) }
+      true
     end
 
     # sqlite3ExprImpliesNonNullRow (expr.c): true when *expression* cannot
@@ -86,7 +87,8 @@ module Grant::SQLiteEngine::Query
       when InListExpr
         !expression.list.empty? && walk_non_null(expression.operand, slot)
       when NotExpr, ArithmeticExpr, BitwiseExpr, ConcatExpr, NegateExpr, BitNotExpr, CollateExpr, UnaryPlusExpr, CastExpr
-        expression.children.any? { |child| walk_non_null(child, slot) }
+        expression.each_child { |child| return true if walk_non_null(child, slot) }
+        false
       else
         false
       end
@@ -141,8 +143,12 @@ module Grant::SQLiteEngine::Query
       pushed = Array(Array(Expr)).new(steps.size) { [] of Expr }
       residual = [] of Expr
       terms.each do |term|
-        used = ExpressionWalk.slots(term).compact_map { |slot| slot_position[slot]? }
-        owner = used.max? || 0
+        # The last step whose row the term reads (the first when it reads none).
+        owner = 0
+        ExpressionWalk.slots(term).each do |slot|
+          position = slot_position[slot]?
+          owner = position if position && position > owner
+        end
         if outer[owner] || term.is_a?(AggregateResultExpr)
           residual << term
         else
@@ -151,7 +157,8 @@ module Grant::SQLiteEngine::Query
       end
       source = SingleRowSource.new.as(RowSource)
       steps.each_with_index do |step, index|
-        available = steps[0, index].map(&.entry.slot).to_set
+        available = Set(Int32).new
+        index.times { |prior| available << steps[prior].entry.slot }
         if outer[index]
           access = choose_access(step, ExpressionWalk.conjuncts(step.on), available, context).source
           source = JoinSource.new(source, access, step.on, true, [step.entry.slot])
