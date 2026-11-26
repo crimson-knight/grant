@@ -19,6 +19,42 @@
 - Tested against PostgreSQL 17.12 with `ssl_min_protocol_version = TLSv1.3`
   and `hostssl all all all cert clientcert=verify-full`.
 
+## 0.28.2 (2026-11-25)
+
+- **SQL migrations are found on Windows.** `MigrationContext` listed a
+  migration directory with `Dir.glob(File.join(directory, "*.sql"))`. On
+  Windows `File.join` puts `\` between the parts, and `Dir.glob` reads `\` as
+  an escape, so the pattern matched no file and `migrate` reported nothing to
+  run. The pattern is now a `Path`, which `Dir.glob` reads with `/` on every
+  platform. Nothing changes on macOS or Linux.
+
+Minimum Crystal: 1.19.0
+
+## 0.28.1 (2026-11-25)
+
+Grant builds on Windows again, and an app on the C SQLite library compiles
+only the C library's path.
+
+- **The engine is compiled in only when an app asks for it.**
+  `require "grant/adapter/sqlite"` (the C library, the default) no longer
+  compiles Grant's own engine; `require "grant/adapter/sqlite/grant_engine"`
+  does, as before. On 0.27.0 and 0.28.0 the driver compiled the engine for
+  every SQLite app, so an app on the C library reached PCRE2 through the
+  engine's regexes on stock Crystal (13 `pcre2_` imports for a one-model app
+  on Crystal 1.22.3; 0 now) and did not compile for Windows. Setting
+  `Grant.settings.sqlite_engine = :grant` in a program that did not require
+  the engine raises `ArgumentError`, naming the require, as `:libsqlite3`
+  already did without the C library.
+- **Windows.** The engine's operating-system files use POSIX locks, mmap(2)
+  and localtime_r. On Windows they are left out: opening a database file
+  through the engine raises `Grant::SQLiteEngine::UnsupportedPlatform`,
+  naming the C library, and the engine's date functions take local time
+  from Crystal's `Time`. Nothing changes on macOS or Linux. A CI job now
+  type-checks Grant for x86_64-windows-msvc
+  (`scripts/windows_type_check.cr`).
+
+Minimum Crystal: 1.19.0
+
 ## 0.28.0 (2026-11-25)
 
 Grant 0.28.0 connects to PostgreSQL over Beryl TLS 1.3 and runs its tests
