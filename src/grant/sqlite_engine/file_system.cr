@@ -9,9 +9,9 @@ module Grant::SQLiteEngine
   end
 
   # How hard a sync pushes a file to the disk (SQLITE_SYNC_NORMAL and
-  # SQLITE_SYNC_FULL of os_unix.c): `Normal` is fsync; `Full` is macOS's
-  # `fcntl(F_FULLFSYNC)`, which also empties the drive's write cache, and is
-  # fsync on the other systems.
+  # SQLITE_SYNC_FULL of os_unix.c): `Normal` is fdatasync on Linux and fsync
+  # elsewhere; `Full` is macOS's `fcntl(F_FULLFSYNC)`, which also empties the
+  # drive's write cache, and is the `Normal` sync on the other systems.
   enum SyncMode
     Normal
     Full
@@ -195,10 +195,23 @@ module Grant::SQLiteEngine
 
     # unixSync and full_fsync: a `Full` sync on macOS asks the drive itself
     # to write its cache (F_FULLFSYNC), and falls back to fsync on a file
-    # system that refuses the request; every other sync is fsync.
+    # system that refuses the request. Every other sync is fdatasync on
+    # Linux, as C SQLite's build there does (HAVE_FDATASYNC): it flushes the
+    # data and the metadata needed to read it back (the file size), and
+    # leaves out the timestamps. Elsewhere it is fsync.
     def sync(mode : SyncMode) : Nil
       return if mode.full? && PosixFile.full_fsync?(@file.fd)
-      @file.fsync
+      @file.fsync(flush_metadata: PosixFile.sync_flushes_metadata?)
+    end
+
+    # True where a sync is fsync (every metadata field); false on Linux,
+    # where it is fdatasync.
+    def self.sync_flushes_metadata? : Bool
+      {% if flag?(:linux) %}
+        false
+      {% else %}
+        true
+      {% end %}
     end
 
     # Runs `fcntl(F_FULLFSYNC)` on *descriptor* and tells whether it
