@@ -7,8 +7,11 @@ module Grant::SQLiteEngine
     MAX_RECORD_COLUMNS = 32_767
 
     # Decodes every value of *payload*. *page_number* names the page in a
-    # corruption error.
-    def self.decode(payload : Bytes, encoding : TextEncoding, page_number : UInt32) : Array(Value)
+    # corruption error. With *buffer* the values are decoded into it (its
+    # old contents cleared) and it is returned, so a caller that reads one
+    # row at a time allocates no array per row.
+    def self.decode(payload : Bytes, encoding : TextEncoding, page_number : UInt32,
+                    buffer : Array(Value)? = nil) : Array(Value)
       header_size, length = Varint.decode(payload, 0)
       corrupt(page_number, "record header varint is truncated") if length == 0
       if header_size < length || header_size > payload.size
@@ -19,7 +22,7 @@ module Grant::SQLiteEngine
       body = header_end
       # Most serial types take one header byte, so the header size is a
       # close estimate of the column count.
-      values = Array(Value).new(header_end - length)
+      values = buffer ? buffer.clear : Array(Value).new(header_end - length)
       while position < header_end
         serial_type, used = Varint.decode(payload, position, header_end)
         corrupt(page_number, "record serial type varint is truncated") if used == 0

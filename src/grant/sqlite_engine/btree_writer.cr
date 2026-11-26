@@ -153,8 +153,9 @@ module Grant::SQLiteEngine
 
     # The values of the row stored under *rowid*, or nil: decoded where the
     # record lies, without copying it or keeping the path to it (*page*
-    # names the table in a corruption report).
-    def table_values(root : UInt32, rowid : Int64, page : UInt32) : Array(Value)?
+    # names the table in a corruption report). With *buffer* the values are
+    # decoded into it (see `Record.decode`).
+    def table_values(root : UInt32, rowid : Int64, page : UInt32, buffer : Array(Value)? = nil) : Array(Value)?
       page_number = root
       Limits::MAX_BTREE_DEPTH.times do
         node = BTreePage.read(@pager, page_number)
@@ -171,7 +172,7 @@ module Grant::SQLiteEngine
         end
         if node.page_type.leaf_table?
           return unless low < node.cell_count && node.rowid(low) == rowid
-          return Record.decode(PayloadReader.read(@pager, node, node.payload(low)), @encoding, page)
+          return Record.decode(PayloadReader.read(@pager, node, node.payload(low)), @encoding, page, buffer)
         end
         page_number = low < node.cell_count ? node.left_child(low) : node.right_child
       end
