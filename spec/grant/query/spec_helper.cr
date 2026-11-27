@@ -43,6 +43,12 @@ class Model
   def self.implicit_order_columns : Array(String)
     [] of String
   end
+
+  # The stub has no Grant::Decimal128 or Grant::Money column, so every
+  # condition value binds as given.
+  def self.coerce_exact_decimal_value(field : String, value)
+    value
+  end
 end
 
 # The stub-model assembler and builder specs pin the exact SQL of the legacy

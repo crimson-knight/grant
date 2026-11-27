@@ -122,6 +122,97 @@ class AdvancedModel < Grant::Base
 end
 ```
 
+### Exact Decimals and Money
+
+`Grant::Decimal128` is an exact decimal of up to 38 digits, and
+`Grant::Money` is a `Grant::Decimal128` amount in one ISO 4217
+`Grant::Currency`. Both come from Mica (vendored under `Grant::Mica`), need no
+C library and no `big`, and are always available: an app that uses them links
+no GMP.
+
+```crystal
+class Invoice < Grant::Base
+  connection pg
+  table invoices
+
+  column id : Int64, primary: true
+  column subtotal : Grant::Decimal128, precision: 12, scale: 2
+  column tax_rate : Grant::Decimal128?                      # precision 18, scale 4
+  column total : Grant::Money, precision: 14, scale: 2      # + total_currency VARCHAR(3)
+  column shipping : Grant::Money?, scale: 2, currency: "USD" # currency fixed, no companion column
+end
+
+invoice = Invoice.new(subtotal: "19.99", total: Grant::Money.new("21.59", "USD"))
+invoice.save!
+Invoice.where(subtotal: Grant::Decimal128.parse("19.99")).count # exact equality
+Invoice.sum(:subtotal)                                          # => Grant::Decimal128 at scale 2
+```
+
+`precision:` is 1 to 38 and `scale:` 0 to the precision (defaults 18 and 4);
+anything else stops the build with a message naming the column.
+
+**Storage.** Each database keeps every digit:
+
+| Database   | Column type                | Stored value                              |
+|------------|----------------------------|-------------------------------------------|
+| PostgreSQL | `NUMERIC(p, s)`            | the decimal                               |
+| MySQL      | `DECIMAL(p, s)`            | the decimal                               |
+| SQLite     | `INTEGER` when p <= 18     | the coefficient at scale s (12.30 at scale 2 is 1230) |
+| SQLite     | `TEXT` when 19 <= p <= 38  | the plain decimal at scale s (`"12.30"`)  |
+
+SQLite's own NUMERIC type converts a value to a 64-bit float or integer and
+keeps only about 15 significant digits, so Grant uses neither. Both SQLite
+forms are written by Grant's C-library driver and by Grant's own SQLite engine
+alike. The migration DSL builds the same types: `t.decimal128 :subtotal,
+precision: 12, scale: 2` and `t.money_amount :total, precision: 14, scale: 2`
+(add `fixed_currency: true` for a column with `currency:`). `t.money` remains
+PostgreSQL's native `money` type.
+
+**Reading.** A value read back is at the column scale: `12.0` stored in a
+scale-2 column reads `12.00`, and `12.30` reads `12.30`. Comparison and
+hashing are by value (`12.30 == 12.3`), so dirty tracking sees no change when
+the same amount is assigned at another scale.
+
+**Values past the scale are an error, never rounded.** Assigning a value with
+more fractional digits than the column scale (`1.005` to a scale-2 column), or
+more digits than the precision allows, raises `Grant::DecimalColumnError` (an
+`ArgumentError`) at the assignment, and the attribute keeps its old value.
+Round explicitly first (`value.round(2, :ties_even)`). Mass assignment
+(`new`, `set_attributes`, `update`) reports the same error as a conversion
+error on the attribute, so `save` returns false with the message in `errors`,
+as for any value Grant cannot convert. A trailing zero past the scale is not
+lost information: `1.500` is stored as `1.50`.
+
+**Mass assignment from params.** A String parses: `"19.99"` for a
+`Grant::Decimal128` column; `"19.99 USD"` for a `Grant::Money` column, or a
+bare `"19.99"` in the fixed `currency:` (or in the record's current
+`<name>_currency`).
+
+**Money.** The amount is stored like a `Grant::Decimal128` column and the
+currency code in the companion column `<name>_currency`, which assigning the
+Money column sets; `currency: "USD"` fixes the currency instead, and assigning
+Money in another currency to that column raises `Grant::DecimalColumnError`.
+A Money column read in a query that does not select its companion column is
+nil.
+
+**Queries.** `where(subtotal: value)`, `where(subtotal: [a, b])`, `find_by`,
+`where(:subtotal, :gt, value)` and the `where.gt`/`lt`/`gteq`/`lteq` chain
+bind the column's stored form, so they compare exactly on every database
+(on SQLite an `INTEGER` column compares coefficients). Raw SQL fragments
+(`where("subtotal > ?", value)`) bind a `Grant::Decimal128` as its plain text,
+which PostgreSQL and MySQL compare exactly; on SQLite compare against the
+stored form yourself (`Invoice.coerce_exact_decimal_value("subtotal", value)`).
+
+**Sums.** `sum(:subtotal)` (and `sum(:subtotal, as: Grant::Decimal128)`) is an
+exact `Grant::Decimal128` at the column scale. PostgreSQL and MySQL sum
+NUMERIC/DECIMAL exactly. On SQLite an `INTEGER` column sums coefficients
+exactly (a total past Int64 is a database error, never a rounded result); a
+`TEXT` column (precision 19 to 38) would sum as a float there, so Grant reads
+its values and adds them as `Grant::Decimal128`, raising
+`Grant::Mica::Decimal128::OverflowError` past 38 digits; a grouped sum of such
+a column on SQLite raises `ArgumentError`. A Money column sums its amounts;
+filter by currency first.
+
 ## Primary Keys
 
 ### Standard Primary Key
@@ -600,7 +691,7 @@ end
 ### 1. Choose Appropriate Types
 ```crystal
 # Good: Use specific types
-column price_cents : Int32      # Store money as integers
+column price : Grant::Decimal128, precision: 12, scale: 2 # Exact money amounts
 column email : String            # Validated elsewhere
 column published : Bool          # Clear boolean
 

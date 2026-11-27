@@ -36,9 +36,9 @@ class Grant::Query::Builder(Model)
   # `BigDecimal`: such a sum is an `Int64` when it is a whole number in range
   # and a `Float64` otherwise.
   {% if Grant::BIG_DECIMAL_SUPPORT %}
-    alias SumValue = Int64 | Float64 | BigDecimal
+    alias SumValue = Int64 | Float64 | BigDecimal | Grant::Decimal128
   {% else %}
-    alias SumValue = Int64 | Float64
+    alias SumValue = Int64 | Float64 | Grant::Decimal128
   {% end %}
 
   alias SumResult = SumValue | Hash(Grant::Columns::Type, SumValue) | Hash(Array(Grant::Columns::Type), SumValue)
@@ -89,7 +89,10 @@ class Grant::Query::Builder(Model)
   # The sum of *column* over the relation. An integer column gives an exact
   # `Int64` (no Float64 rounding above 2**53), a float column a `Float64`, and
   # an expression or joined column an `Int64` or `BigDecimal` (see `SumValue`
-  # for apps without `grant/big_decimal`). An empty relation
+  # for apps without `grant/big_decimal`). A `Grant::Decimal128` or
+  # `Grant::Money` column gives an exact `Grant::Decimal128` at the column
+  # scale (a Money column sums its amounts; filter by currency first). An
+  # empty relation
   # sums to zero. A grouped relation returns one `Hash` entry per group from a
   # single GROUP BY statement.
   #
@@ -100,6 +103,9 @@ class Grant::Query::Builder(Model)
   @[TypeOnce]
   def sum(column : Symbol | String) : SumResult
     name = column.to_s
+    if shape = exact_decimal_shape(name)
+      return exact_decimal_sum(name, shape[0], shape[1])
+    end
     kind = numeric_kind(name)
     zero = zero_sum(kind)
     if is_none?
@@ -127,6 +133,12 @@ class Grant::Query::Builder(Model)
   # ```
   def sum(column : Symbol | String, as type : T.class) : T forall T
     raise ArgumentError.new("sum(as:) returns one value; use sum(column) on a grouped relation") unless group_fields.empty?
+    {% if T == Grant::Decimal128 %}
+      if shape = exact_decimal_shape(column.to_s)
+        total = exact_decimal_sum(column.to_s, shape[0], shape[1])
+        return total if total.is_a?(Grant::Decimal128)
+      end
+    {% end %}
     return numeric_from_text("0", type) if is_none?
 
     if should_chunk_in?
@@ -321,6 +333,82 @@ class Grant::Query::Builder(Model)
     {% end %}
   end
 
+  # `{precision, scale}` of *column* when it is a `Grant::Decimal128` or
+  # `Grant::Money` column of this model, else nil.
+  @[TypeOnce]
+  private def exact_decimal_shape(column : String) : {Int32, Int32}?
+    parts = column.split('.')
+    return unless parts.size == 1 || (parts.size == 2 && parts[0] == Model.table_name)
+
+    {% begin %}
+  case parts.last
+  {% for ivar in Model.instance_vars %}
+    {% ann = ivar.annotation(Grant::Column) %}
+    {% if ann && ann[:exact_decimal] %}
+  when {{ivar.name.stringify}}
+    { {{ann[:precision]}}, {{ann[:scale]}} }
+    {% end %}
+  {% end %}
+  else
+    nil
+  end
+  {% end %}
+  end
+
+  # The exact sum of a decimal column at its *scale*. PostgreSQL and MySQL
+  # sum NUMERIC/DECIMAL exactly; SQLite sums an `INTEGER` coefficient column
+  # exactly (an overflow past Int64 is an error, never a rounded total). A
+  # SQLite `TEXT` column (precision 19 to 38) would sum as REAL there, so its
+  # values are read and added as `Grant::Decimal128`, which raises
+  # `Grant::Decimal128::OverflowError` past 38 digits.
+  @[TypeOnce]
+  private def exact_decimal_sum(column : String, precision : Int32, scale : Int32) : SumResult
+    zero = Grant::Decimal128.new(0, scale)
+    if is_none?
+      return group_fields.empty? ? zero : empty_aggregate_hash(SumValue)
+    end
+
+    stored_as_integer = Model.adapter.sqlite? && precision <= 18
+    if Model.adapter.sqlite? && !stored_as_integer
+      raise ArgumentError.new("sum of #{column} on a grouped relation is not exact on SQLite (a TEXT decimal column); sum each group's rows") unless group_fields.empty?
+      total = zero
+      pluck(column).each do |row|
+        value = row.first
+        total += Grant::Decimal128.parse(value.to_s).rescale(scale) unless value.nil?
+      end
+      return total
+    end
+
+    if should_chunk_in?
+      raise ArgumentError.new("sum with a chunked IN list cannot preserve group, limit, offset or distinct") if group_fields.any? || @limit || @offset || distinct?
+      total = zero
+      each_in_chunk do |chunk_query|
+        text = chunk_query.aggregate_rows("SUM", column, :text, false).first?.try(&.[1])
+        total += exact_decimal_from_sum_text(text, scale, stored_as_integer)
+      end
+      return total
+    end
+
+    rows = with_index_hint_fallback { |query| query.aggregate_rows("SUM", column, :text, distinct?) }
+    if group_fields.empty?
+      exact_decimal_from_sum_text(rows.first?.try(&.[1]), scale, stored_as_integer)
+    else
+      grouped_values(rows, SumValue) { |value| exact_decimal_from_sum_text(value, scale, stored_as_integer).as(SumValue) }
+    end
+  end
+
+  @[TypeOnce]
+  private def exact_decimal_from_sum_text(value : Grant::Columns::Type, scale : Int32, stored_as_integer : Bool) : Grant::Decimal128
+    return Grant::Decimal128.new(0, scale) if value.nil?
+    text = value.to_s
+    if stored_as_integer
+      coefficient = text.to_i128? || raise ArgumentError.new("SUM returned #{text.inspect} for an INTEGER decimal column")
+      Grant::Decimal128.new(coefficient, scale)
+    else
+      Grant::Decimal128.parse(text).rescale(scale)
+    end
+  end
+
   @[TypeOnce]
   private def zero_sum(kind : Symbol) : SumValue
     kind == :float ? 0.0 : 0_i64
@@ -367,12 +455,14 @@ class Grant::Query::Builder(Model)
       {% end %}
     {% elsif T == Float64 %}
       text.to_f64
+    {% elsif T == Grant::Decimal128 %}
+      Grant::Decimal128.parse?(text) || raise ArgumentError.new("#{text} is not a decimal")
     {% elsif T.stringify == "BigDecimal" && Grant::BIG_DECIMAL_SUPPORT %}
       BigDecimal.new(text)
     {% elsif T.stringify == "BigDecimal" %}
       {% raise "sum(as: BigDecimal) needs Grant's BigDecimal support: add `require \"grant/big_decimal\"` before `require \"grant\"`." %}
     {% else %}
-      {% raise "sum(as:) takes Int64, Float64 or BigDecimal, not #{T}" %}
+      {% raise "sum(as:) takes Int64, Float64, Grant::Decimal128 or BigDecimal, not #{T}" %}
     {% end %}
   end
 

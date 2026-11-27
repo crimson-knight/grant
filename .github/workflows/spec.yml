@@ -37,7 +37,10 @@ jobs:
         # No runtime dependency may need a newer Crystal than shard.yml declares.
         run: scripts/crystal-floor.sh check-deps
       - name: Check formatting
-        run: crystal tool format --check
+        # The pinned vendor copies hold their upstream bytes (each MICA_VENDORED.json
+        # / BERYL_VENDORED.json records the sha256s), so they are formatted in their
+        # own repositories; the namespace rewrite can shift aligned `# =>` comments.
+        run: crystal tool format --check --exclude src/grant/vendor
       - name: Check linting
         run: ./bin/ameba
 

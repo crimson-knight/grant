@@ -65,15 +65,21 @@ abstract class Grant::Adapter::Base
     values.map { |value| normalize_bind_value(value) }
   end
 
+  # Whether *value* is a `Grant::Decimal128`, `Grant::Money` or
+  # `Grant::StoredDecimal`, which every adapter binds in its own exact form.
+  protected def exact_decimal_value?(value) : Bool
+    value.is_a?(Grant::StoredDecimal) || value.is_a?(Grant::Decimal128) || value.is_a?(Grant::Money)
+  end
+
   # True for a value `normalize_bind_value` converts. An adapter that converts
   # more types overrides this and adds them to `super`. Every adapter converts
   # `Int8` and `Int16`, and `BigDecimal` when its support is compiled in (see
   # `Grant::Converters::Decimal`).
   protected def bind_value_needs_normalization?(value) : Bool
     {% if Grant::BIG_DECIMAL_SUPPORT %}
-      value.is_a?(::BigDecimal) || value.is_a?(::Int8) || value.is_a?(::Int16)
+      value.is_a?(::BigDecimal) || value.is_a?(::Int8) || value.is_a?(::Int16) || exact_decimal_value?(value)
     {% else %}
-      value.is_a?(::Int8) || value.is_a?(::Int16)
+      value.is_a?(::Int8) || value.is_a?(::Int16) || exact_decimal_value?(value)
     {% end %}
   end
 
