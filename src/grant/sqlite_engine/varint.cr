@@ -19,10 +19,26 @@ module Grant::SQLiteEngine
         first = bytes.unsafe_fetch(offset)
         return {first.to_i64, 1} if first < 0x80_u8
       end
+      {% if flag?(:x86_64) && !flag?(:grant_generic_kernels) && compare_versions(Crystal::VERSION, "1.20.0") >= 0 %}
+        return decode_long_with_bit_extract(bytes, offset, limit) if ProcessorKernels::X86_64_V3
+      {% end %}
       decode_long(bytes, offset, limit)
     end
 
-    # `decode` for a varint of two bytes or more (or one out of range).
+    # The name of the body `decode` runs for a varint of two bytes or more
+    # on this processor (`ProcessorKernels`). AArch64 keeps the generic body:
+    # a branch-free shift-and-mask body measured 2.1x faster on varints of
+    # mixed length but 15-25% slower on the 3-byte rowids that B-tree seeks
+    # decode (Neoverse-N2, Apple M1 Max, 2026-11-27).
+    def self.decode_variant : String
+      {% if flag?(:x86_64) && !flag?(:grant_generic_kernels) && compare_versions(Crystal::VERSION, "1.20.0") >= 0 %}
+        return "x86-64-v3" if ProcessorKernels::X86_64_V3
+      {% end %}
+      "generic"
+    end
+
+    # `decode` for a varint of two bytes or more (or one out of range): the
+    # generic body, the reference every variant matches.
     @[NoInline]
     def self.decode_long(bytes : Bytes, offset : Int32, limit : Int32) : {Int64, Int32}
       limit = Math.min(limit, bytes.size)
@@ -82,3 +98,40 @@ module Grant::SQLiteEngine
     end
   end
 end
+
+{% if flag?(:x86_64) && compare_versions(Crystal::VERSION, "1.20.0") >= 0 %}
+  module Grant::SQLiteEngine
+    module Varint
+      lib LibBitManipulation
+        fun parallel_bits_extract = "llvm.x86.bmi.pext.64"(source : UInt64, mask : UInt64) : UInt64
+      end
+
+      # The seven value bits of each of eight bytes.
+      private SEVEN_BIT_MASK = 0x7f7f_7f7f_7f7f_7f7f_u64
+      # The continuation bit of each of eight bytes.
+      private CONTINUATION_BITS = 0x8080_8080_8080_8080_u64
+
+      # `decode_long` on x86-64-v3 (BMI2 `pext`, LZCNT, MOVBE): one 8-byte
+      # big-endian load, the first byte without its continuation bit found
+      # by counting leading zeros, and the value bits gathered by `pext`
+      # in one instruction. A varint within 9 bytes of *limit* takes the
+      # generic body, which checks every byte against it.
+      @[TargetFeature("+bmi,+bmi2,+lzcnt,+movbe")]
+      def self.decode_long_with_bit_extract(bytes : Bytes, offset : Int32, limit : Int32) : {Int64, Int32}
+        end_of_bytes = Math.min(limit, bytes.size)
+        return decode_long(bytes, offset, limit) unless 0 <= offset && offset <= end_of_bytes - 9
+        word = 0_u64
+        pointerof(word).as(UInt8*).copy_from(bytes.to_unsafe + offset, 8)
+        word = word.byte_swap
+        stops = ~word & CONTINUATION_BITS
+        if stops == 0
+          value = (LibBitManipulation.parallel_bits_extract(word, SEVEN_BIT_MASK) << 8) | bytes.unsafe_fetch(offset + 8)
+          return {value.to_i64!, 9}
+        end
+        length = stops.leading_zeros_count // 8 + 1
+        value = LibBitManipulation.parallel_bits_extract(word >> (64 - 8 * length), SEVEN_BIT_MASK)
+        {value.to_i64!, length.to_i32}
+      end
+    end
+  end
+{% end %}
