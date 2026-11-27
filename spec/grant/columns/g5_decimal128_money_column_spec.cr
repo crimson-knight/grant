@@ -131,6 +131,11 @@ describe "Grant::Decimal128 and Grant::Money columns on #{CURRENT_ADAPTER}" do
     mass_assigned.errors.map(&.field.to_s).should contain "price"
     mass_assigned.save.should be_false
     G5PriceRow.count.should eq 0
+
+    from_params = G5PriceRow.new(price: decimal("1"))
+    from_params.set_attributes({"price" => "3.333"} of String | Symbol => Grant::Columns::Type)
+    from_params.errors.map(&.field.to_s).should contain "price"
+    from_params.price.should eq decimal("1")
   end
 
   it "refuses a value with more digits than the precision" do

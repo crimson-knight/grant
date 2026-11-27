@@ -854,11 +854,17 @@ module Grant::Columns
         if !val.is_a? {{setter_type}}
           error = Grant::ConversionError.new({{column.name.stringify}}, "Expected {{column.id}} to be {{setter_type}} but got #{typeof(val)}.")
         else
-          self.{{column}} = val
-          # Keep the raw input only when conversion changed it.
-          raw_input = hash[{{column.stringify}}]
-          if raw_input.is_a?(Grant::Columns::Type) && raw_input != val
-            capture_before_type_cast({{column.stringify}}, raw_input)
+          begin
+            self.{{column}} = val
+            # Keep the raw input only when conversion changed it.
+            raw_input = hash[{{column.stringify}}]
+            if raw_input.is_a?(Grant::Columns::Type) && raw_input != val
+              capture_before_type_cast({{column.stringify}}, raw_input)
+            end
+          rescue ex : ArgumentError
+            # A setter that refuses the value (a decimal past its column's
+            # scale, say) is a conversion error, as on the keyword path.
+            error = Grant::ConversionError.new({{column.name.stringify}}, ex.message)
           end
         end
 
