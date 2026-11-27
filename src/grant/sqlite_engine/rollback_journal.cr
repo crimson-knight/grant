@@ -115,7 +115,10 @@ module Grant::SQLiteEngine
       # Writes the gathered header and records to the file.
       def flush : Nil
         return if @filled == 0
-        current_journal.write_at(@buffer_offset, @buffer[0, @filled])
+        journal = current_journal
+        journal.write_at(@buffer_offset, @buffer[0, @filled])
+        # The write-out starts now, so the segment's sync waits on less.
+        journal.start_writeback(@buffer_offset, @filled.to_i64) unless @synchronous.off?
         @buffer_offset += @filled
         @filled = 0
       end

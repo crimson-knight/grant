@@ -32,6 +32,13 @@ module Grant::SQLiteEngine
       sync
     end
 
+    # Asks the system to start writing the *length* bytes at *offset* to the
+    # disk now, without waiting for them; a later `#sync` then has less to
+    # wait for. It promises nothing about durability, so a file without
+    # such a request does nothing.
+    def start_writeback(offset : Int64, length : Int64) : Nil
+    end
+
     abstract def truncate(size : Int64) : Nil
 
     # Moves this connection's lock up to *level*. Returns false, holding the
@@ -169,6 +176,16 @@ module Grant::SQLiteEngine
     fun pwrite(fd : Int32, buffer : Void*, count : LibC::SizeT, offset : LibC::OffT) : LibC::SSizeT
   end
 
+  {% if flag?(:linux) %}
+    # sync_file_range(2), Linux's request to start write-out of a range of
+    # a file's cached pages.
+    lib LibWriteback
+      SYNC_FILE_RANGE_WRITE = 2_u32
+
+      fun sync_file_range(fd : Int32, offset : LibC::OffT, nbytes : LibC::OffT, flags : UInt32) : Int32
+    end
+  {% end %}
+
   # Reads and writes at an offset of a descriptor with pread(2) and
   # pwrite(2), as os_unix.c's seekAndRead and seekAndWrite do: one call per
   # transfer, with no lseek(2) first.
@@ -201,6 +218,16 @@ module Grant::SQLiteEngine
         end
         written += count
       end
+    end
+
+    # Starts write-out of *length* bytes at *offset* of *descriptor* and
+    # returns at once (sync_file_range with SYNC_FILE_RANGE_WRITE), on Linux;
+    # elsewhere it does nothing. The request is advice: its failure changes
+    # nothing a sync promises, so it is not reported.
+    def self.start_writeback(descriptor : Int32, offset : Int64, length : Int64) : Nil
+      {% if flag?(:linux) %}
+        LibWriteback.sync_file_range(descriptor, offset, length, LibWriteback::SYNC_FILE_RANGE_WRITE)
+      {% end %}
     end
 
     # unixSync on *descriptor*: `fcntl(F_FULLFSYNC)` for a `Full` sync on
@@ -247,6 +274,10 @@ module Grant::SQLiteEngine
 
     def write_at(offset : Int64, bytes_to_write : Bytes) : Nil
       PositionedIO.write_at(@file.fd, offset, bytes_to_write, @file.path)
+    end
+
+    def start_writeback(offset : Int64, length : Int64) : Nil
+      PositionedIO.start_writeback(@file.fd, offset, length)
     end
 
     def sync : Nil
@@ -424,6 +455,10 @@ module Grant::SQLiteEngine
 
     def write_at(offset : Int64, bytes_to_write : Bytes) : Nil
       PositionedIO.write_at(@descriptor, offset, bytes_to_write, @path)
+    end
+
+    def start_writeback(offset : Int64, length : Int64) : Nil
+      PositionedIO.start_writeback(@descriptor, offset, length)
     end
 
     def sync : Nil
