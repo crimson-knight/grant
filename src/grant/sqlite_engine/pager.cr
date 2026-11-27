@@ -70,6 +70,26 @@ module Grant::SQLiteEngine
     # SQLITE_DEFAULT_WAL_AUTOCHECKPOINT: a commit that leaves at least this
     # many frames in the WAL runs a passive checkpoint.
     DEFAULT_WAL_AUTOCHECKPOINT = 1_000
+
+    # The page cache defaults of the C library each platform ships, so a
+    # transaction spills changed pages where that library does.
+    {% if flag?(:darwin) %}
+      # Apple's /usr/lib/libsqlite3.dylib (SQLite 3.51.0 on macOS 26): its
+      # PRAGMA compile_options lists DEFAULT_CACHE_SIZE=2000, and PRAGMA
+      # cache_size reads 2000 (pages) on a new connection.
+      DEFAULT_CACHE_SIZE = 2_000_i64
+      # Apple's build: PRAGMA cache_spill reads 20000 on a new connection at
+      # page sizes 1,024, 4,096 and 65,536 alike, so its szSpill starts at
+      # 20,000 pages (no compile option names it).
+      DEFAULT_CACHE_SPILL_PAGES = 20_000_i64
+    {% else %}
+      # SQLITE_DEFAULT_CACHE_SIZE in upstream sqliteLimit.h (Ubuntu 24.04's
+      # libsqlite3 3.45.1 too): 2,000 KiB of pages.
+      DEFAULT_CACHE_SIZE = -2_000_i64
+      # sqlite3PcacheOpen in upstream pcache.c sets szSpill = 1, so the cache
+      # spills as soon as pcache1 refuses a page.
+      DEFAULT_CACHE_SPILL_PAGES = 1_i64
+    {% end %}
     # PRAGMA synchronous: FULL (sync at every commit) by default, as C's
     # default build.
     getter synchronous : Synchronous = Synchronous::Full
@@ -110,7 +130,17 @@ module Grant::SQLiteEngine
     # PRAGMA cache_size: pages when positive, KiB when negative. In a
     # rollback-journal transaction it sets when changed pages spill to the
     # database file (`#spill_threshold`).
-    getter cache_size : Int64 = -Limits::DEFAULT_CACHE_KIBIBYTES.to_i64
+    getter cache_size : Int64 = DEFAULT_CACHE_SIZE
+    # PRAGMA cache_spill: pcache's szSpill, the pages the cache may hold
+    # before a fetch spills (`#cache_spill_size=`), and whether spills happen
+    # at all (SQLITE_CacheSpill, PAGER_CACHESPILL).
+    getter cache_spill_pages : Int64 = DEFAULT_CACHE_SPILL_PAGES
+    property? cache_spill_allowed = true
+    # The busy handler of the statement running now (C keeps one per
+    # connection, its count reset as each statement starts): a cache spill
+    # and the COMMIT of an autocommit statement wait on it, so the waits of
+    # one statement together last no longer than busy_timeout.
+    getter busy_handler = BusyWait::Handler.new(Time::Span.zero)
     # Cache spill state of a rollback-journal transaction (pagerStress):
     # the pages written to the database file before commit, keeping the
     # bytes written (their journal records are synced); the changed pages
@@ -219,18 +249,57 @@ module Grant::SQLiteEngine
       @cache_size
     end
 
+    # PRAGMA cache_spill N (sqlite3PcacheSetSpillsize): N pages, or with a
+    # negative N that many KiB of pages at the current page size; 0 keeps
+    # the size there is.
+    def cache_spill_size=(size : Int64) : Int64
+      unless size == 0
+        @cache_spill_pages = size < 0 ? Pager.cache_page_count(size, current_page_size) : size
+      end
+      size
+    end
+
+    # PRAGMA cache_spill as C reads it (sqlite3BtreeSetSpillSize(pBt, 0)):
+    # the larger of the cache size and szSpill in pages, or 0 while spills
+    # are off.
+    def cache_spill_report : Int64
+      return 0_i64 unless @cache_spill_allowed
+      Math.max(cache_page_limit, @cache_spill_pages)
+    end
+
     # ROUND8(sizeof(MemPage)) of a 64-bit C SQLite 3.51.0: the bytes C adds
     # to each cached page when it turns a cache_size in KiB into pages
     # (numberOfCachePages).
     C_PAGE_EXTRA = 136
 
+    # numberOfCachePages: *size* pages when positive, else -*size* KiB of
+    # pages of *page_size* bytes plus C's per-page extra, at most 10^9.
+    def self.cache_page_count(size : Int64, page_size : Int32) : Int64
+      return size if size >= 0
+      Math.min(-1024_i64 * size // (page_size + C_PAGE_EXTRA), 1_000_000_000_i64)
+    end
+
+    # pcache1's nMax: the pages the cache keeps at the current cache_size.
+    private def cache_page_limit : Int64
+      Pager.cache_page_count(@cache_size, current_page_size)
+    end
+
+    private def current_page_size : Int32
+      @page_size > 0 ? @page_size : @new_page_size
+    end
+
     # pcache1's n90pct: once this many pages are pinned (changed and not
     # yet written, or held by a cursor), the next page C fetches into its
-    # cache first spills (sqlite3PcacheFetch, pcache1FetchStage2).
+    # cache asks for a spill (sqlite3PcacheFetch, pcache1FetchStage2).
     def spill_threshold : Int64
-      page_size = @page_size > 0 ? @page_size : @new_page_size
-      cache_pages = @cache_size >= 0 ? @cache_size : Math.min(-1024_i64 * @cache_size // (page_size + C_PAGE_EXTRA), 1_000_000_000_i64)
-      cache_pages * 9 // 10
+      cache_page_limit * 9 // 10
+    end
+
+    # Starts the busy handler of a new statement with the current
+    # busy_timeout (C sets db->busyHandler.nBusy to 0 as sqlite3VdbeExec
+    # starts).
+    def start_busy_handler : Nil
+      @busy_handler.restart(@busy_timeout)
     end
 
     def synchronous=(level : Synchronous) : Synchronous
@@ -1091,21 +1160,29 @@ module Grant::SQLiteEngine
     # --- Cache spill (rollback journal) ----------------------------------
 
     # pagerStress, at the moment C's page cache would call it: a page is
-    # about to come into the cache while pages are changed, and the
-    # changed pages and the pages held reach `#spill_threshold`. Pages that
-    # wait for no sync (journaled in a synced segment, or added past the
-    # original end after the first sync) are written without one, as C
-    # spills them first. Otherwise the spill takes the EXCLUSIVE lock (when
-    # another connection reads, the spill is skipped and the pages stay in
-    # memory, as C does), syncs the journal's segment and starts the next
-    # one (syncJournal). The pages are written at the next `#start_change`;
-    # while they wait no new spill starts.
+    # about to come into the cache while pages are changed, the changed
+    # pages and the pages held reach `#spill_threshold`, the cache holds
+    # more than cache_spill's szSpill pages (sqlite3PcacheFetchStress; the
+    # pages pinned stand for pcache1's nPage, which the clean pages C
+    # keeps unpinned can raise when szSpill lies between n90pct and the
+    # cache size), and PRAGMA cache_spill is on (SPILLFLAG_OFF). Pages
+    # that wait for no sync (journaled in a synced segment, or added past
+    # the original end after the first sync) are written without one, as
+    # C spills them first. Otherwise the spill takes the EXCLUSIVE lock,
+    # calling the statement's busy handler while another connection reads
+    # (syncJournal's sqlite3PagerExclusiveLock, pager_wait_on_lock); still
+    # refused, the spill is skipped and the pages stay in memory, as C's
+    # sqlite3PcacheFetchStress ignores SQLITE_BUSY. With the lock it syncs
+    # the journal's segment and starts the next one (syncJournal). The
+    # pages are written at the next `#start_change`; while they wait no
+    # new spill starts.
     private def spill_when_full : Nil
-      return if @dirty.empty? || @spill_due || !@wal_log.nil? || @path == ":memory:"
+      return if @dirty.empty? || @spill_due || !@wal_log.nil? || @path == ":memory:" || !@cache_spill_allowed
       held = @held_pages + (@dirty.has_key?(1_u32) ? 0 : 1)
-      return if @dirty.size + held < spill_threshold
+      pinned = @dirty.size + held
+      return if pinned < spill_threshold || pinned <= @cache_spill_pages
       unless @journal_synced && @dirty.size > @unsynced.size
-        return unless writer_file.lock(LockLevel::Exclusive)
+        return unless BusyWait.attempt(@busy_handler) { writer_file.lock(LockLevel::Exclusive) }
         @journal_writer.sync_segment(new_segment: true)
         @unsynced.clear
         @journal_synced = true

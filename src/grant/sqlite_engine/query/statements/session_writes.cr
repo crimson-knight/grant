@@ -222,9 +222,9 @@ module Grant::SQLiteEngine::Query
     # C's busy handler does for up to busy_timeout milliseconds
     # (sqlite3_busy_timeout), then raises "database is locked". With
     # *yielding_reads* the connection's reads give up their lock before
-    # each sleep (`Pager#yield_read_lock`).
-    private def wait_while_busy(yielding_reads : Bool = false, & : ->) : Nil
-      handler = nil
+    # each sleep (`Pager#yield_read_lock`). *handler* is a busy handler
+    # whose earlier waits count (nil: a new one).
+    private def wait_while_busy(yielding_reads : Bool = false, handler : BusyWait::Handler? = nil, & : ->) : Nil
       loop do
         yield
         return
@@ -485,13 +485,15 @@ module Grant::SQLiteEngine::Query
       commit_statement_transaction
     end
 
-    # Commits one autocommit statement's transaction, waiting up to
-    # busy_timeout for readers; a commit still refused rolls back.
+    # Commits one autocommit statement's transaction, waiting for readers
+    # on the statement's busy handler, which the statement's cache spills
+    # may have used already (vdbeCommit's sqlite3PagerExclusiveLock); a
+    # commit still refused rolls back.
     private def commit_statement_transaction : Nil
       @deferred_violations = 0_i64
       @defer_foreign_keys = false
       begin
-        wait_while_busy { @database.pager.commit }
+        wait_while_busy(handler: @database.pager.busy_handler) { @database.pager.commit }
         commit_secondaries
       rescue error
         rollback_everywhere

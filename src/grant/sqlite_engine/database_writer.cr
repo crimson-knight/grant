@@ -116,6 +116,7 @@ module Grant::SQLiteEngine
     # lock.
     def transaction(& : Database ->) : Nil
       raise Error.new("transactions do not nest") if @pager.in_write_transaction?
+      @pager.start_busy_handler
       began = BusyWait.attempt(@pager.busy_timeout) do
         @pager.begin_write
         true

@@ -86,6 +86,9 @@ module SQLiteEngineCrashDriver
         text_encoding: sequence.text_encoding, file_system: file_system,
         journal_mode: wal ? Grant::SQLiteEngine::JournalMode::Wal : nil,
         synchronous: synchronous, wal_autocheckpoint: WAL_AUTOCHECKPOINT)
+      # Upstream C's szSpill of 1, so a small cache spills on every platform
+      # (the macOS default of 20,000 pages would hold every unit in memory).
+      database.pager.cache_spill_size = 1_i64 if cache_pages
       outcome = SQLiteEngineWriteDriver::Outcome.new
       written = [] of {String, String, String, Bool}
       list_of_steps(sequence, wal, Random.new(seed + number)).each_with_index do |step, unit_number|

@@ -58,12 +58,31 @@ module JournalSpill
   class_getter? upstream_page_cache : Bool { SQLiteEngineReferenceLibrary.linked? && default_cache_size == "-2000" }
 
   def self.default_cache_size : String
-    database = open(:libsqlite3, ":memory:")
-    code, statement = database.prepare("PRAGMA cache_size")
-    default_size = code == Engine::OK_CODE && statement.step == Engine::ROW_CODE ? statement.column_text(0) : ""
+    answer(:libsqlite3, "PRAGMA cache_size")
+  end
+
+  # The first column of *sql*'s first row on a new in-memory connection.
+  def self.answer(engine : Symbol, sql : String) : String
+    database = open(engine, ":memory:")
+    code, statement = database.prepare(sql)
+    text = code == Engine::OK_CODE && statement.step == Engine::ROW_CODE ? statement.column_text(0) : ""
     statement.finalize_statement
     database.close
-    default_size
+    text
+  end
+
+  # True when the engine's page cache defaults (cache_size and the
+  # cache_spill it reads) are the linked C library's: the C library is
+  # the build this platform ships, whose defaults the engine takes.
+  def self.same_cache_defaults? : Bool
+    {"PRAGMA cache_size", "PRAGMA cache_spill"}.all? { |sql| answer(:grant, sql) == answer(:libsqlite3, sql) }
+  end
+
+  # The sector size field (header bytes 20 to 23) of the hot journal
+  # *engine* leaves once its transaction has synced a journal segment.
+  def self.journal_sector_size(engine : Symbol) : UInt32
+    journal = crash_after_spills(engine, 1, "FULL").journal
+    IO::ByteFormat::BigEndian.decode(UInt32, journal[20, 4])
   end
 
   def self.read(path : String) : Bytes
@@ -89,10 +108,13 @@ module JournalSpill
 
   # Runs *statements* in one transaction on *engine* and returns the
   # record count of each synced journal segment just before COMMIT.
-  def self.segment_layout(engine : Symbol, setup : String, statements : Array(String), cache_size : Int32) : Array(UInt32)
+  # *pragmas* set the page cache first (by default cache_size and
+  # upstream's cache_spill of 1).
+  def self.segment_layout(engine : Symbol, setup : String, statements : Array(String), cache_size : Int32,
+                          pragmas : String = "PRAGMA cache_size=#{cache_size}; PRAGMA cache_spill=1;") : Array(UInt32)
     path = fresh_database("layout_#{engine}.db", setup)
     database = open(engine, path)
-    run(database, "PRAGMA cache_size=#{cache_size}; PRAGMA cache_spill=1; BEGIN")
+    run(database, "#{pragmas} BEGIN")
     statements.each { |sql| run(database, sql) }
     layout = SQLiteEngineHotJournal.list_of_segments(read("#{path}-journal")).select(&.synced?).map(&.record_count)
     run(database, "COMMIT")
@@ -199,6 +221,49 @@ describe "Grant::SQLiteEngine rollback journal with cache spills" do
     end
   end
 
+  it "spills where the linked C library does with this platform's page cache defaults" do
+    pending!("needs C SQLite 3.51.0 with this platform's page cache defaults") unless SQLiteEngineReferenceLibrary.linked? && JournalSpill.same_cache_defaults?
+    setup = JournalSpill::PAGE_ROWS % 2600
+    statements = JournalSpill.page_statements(2600)[0, 2600]
+    engine = JournalSpill.segment_layout(:grant, setup, statements, 0, pragmas: "")
+    c_layout = JournalSpill.segment_layout(:libsqlite3, setup, statements, 0, pragmas: "")
+    JournalSpill.first_difference(engine, c_layout).should be_nil
+    {% if flag?(:darwin) %}
+      # Apple's build holds 20,000 pages before it spills.
+      engine.should be_empty
+    {% else %}
+      engine.size.should be > 3
+    {% end %}
+  end
+
+  it "spills where C does when cache_spill lies past the cache size (cache_size=2000, cache_spill=2500)" do
+    pending!("needs C SQLite 3.51.0") unless SQLiteEngineReferenceLibrary.linked?
+    setup = JournalSpill::PAGE_ROWS % 3500
+    statements = JournalSpill.page_statements(3500)[0, 3500]
+    pragmas = "PRAGMA cache_size=2000; PRAGMA cache_spill=2500;"
+    engine = JournalSpill.segment_layout(:grant, setup, statements, 2000, pragmas: pragmas)
+    c_layout = JournalSpill.segment_layout(:libsqlite3, setup, statements, 2000, pragmas: pragmas)
+    JournalSpill.first_difference(engine, c_layout).should be_nil
+    engine.should eq([2498_u32])
+  end
+
+  it "spills nothing with cache_spill off" do
+    setup = JournalSpill::PAGE_ROWS % 600
+    statements = JournalSpill.page_statements(600)[0, 600]
+    pragmas = "PRAGMA cache_size=10; PRAGMA cache_spill=1; PRAGMA cache_spill=off;"
+    JournalSpill.segment_layout(:grant, setup, statements, 10, pragmas: pragmas).should be_empty
+    JournalSpill.segment_layout(:libsqlite3, setup, statements, 10, pragmas: pragmas).should be_empty
+  end
+
+  # Upstream's pager and Apple's build alike journal in 512-byte sectors
+  # (setSectorSize with SQLITE_IOCAP_POWERSAFE_OVERWRITE), though Apple's
+  # compile options list DEFAULT_SECTOR_SIZE=4096.
+  it "writes the sector size into the journal header that the linked C library writes" do
+    c_sector = JournalSpill.journal_sector_size(:libsqlite3)
+    c_sector.should eq(512_u32)
+    JournalSpill.journal_sector_size(:grant).should eq(c_sector)
+  end
+
   {"FULL", "NORMAL", "OFF"}.each do |synchronous|
     it "leaves a hot journal of several segments that C and the engine both roll back (synchronous=#{synchronous})" do
       crash = JournalSpill.crash_after_spills(:grant, 3, synchronous)
@@ -217,7 +282,7 @@ describe "Grant::SQLiteEngine rollback journal with cache spills" do
     path = JournalSpill.fresh_database("rollback.db", JournalSpill::INDEXED_ROWS % 2000)
     before = JournalSpill.read(path)
     database = JournalSpill.open(:grant, path)
-    JournalSpill.run(database, "PRAGMA cache_size=10; BEGIN")
+    JournalSpill.run(database, "PRAGMA cache_size=10; PRAGMA cache_spill=1; BEGIN")
     JournalSpill.indexed_statements(300, 2000).each { |sql| JournalSpill.run(database, sql) }
     JournalSpill.read(path).should_not eq(before)
     JournalSpill.run(database, "ROLLBACK")
