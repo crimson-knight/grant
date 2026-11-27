@@ -347,6 +347,11 @@ module Grant::Columns
 
     {% if emit %}
     @[Grant::Column(column_type: {{column_type}}, converter: {{converter}}, auto: {{auto}}, primary: {{primary}}, nilable: {{nilable}}, setter_type: {{not_nilable_type}}, null: {{options[:null]}}, limit: {{options[:limit]}}, precision: {{column_precision}}, scale: {{column_scale}}, comment: {{options[:comment]}}, collation: {{options[:collation]}}, default_sql: {{options[:default_sql]}}, uuid_version: {{options[:uuid_version]}}, exact_decimal: {{decimal128_column || money_column}}, money: {{money_column}}, money_currency: {{money_currency}})]
+    {% if options[:money_companion] %}
+      # The currency appears inside the Money column's JSON and YAML object.
+      @[JSON::Field(ignore: true)]
+      @[YAML::Field(ignore: true)]
+    {% end %}
     @{{decl.var}} : {{decl.type}}? {% unless decl.value.is_a? Nop %} = {{decl.value}} {% end %}
 
     # The value assigned by mass assignment before conversion, when it
@@ -528,7 +533,7 @@ module Grant::Columns
     {% end %}
 
     {% if money_column && !money_currency %}
-      column {{decl.var.id}}_currency : String?, limit: 3, null: {{nilable ? true : false}}
+      column {{decl.var.id}}_currency : String?, limit: 3, null: {{nilable ? true : false}}, money_companion: true
     {% end %}
 
     # Turns a value kept by dirty tracking (the database representation) back

@@ -590,6 +590,12 @@ abstract class Grant::Base
     # Hook for JSON/YAML deserialization
     def after_initialize
       ensure_dirty_tracking_initialized
+      # A Money column's JSON carries its currency inside the money object,
+      # and the companion `<name>_currency` column is not serialized: fill it
+      # in from the money value.
+      \{% for column in @type.instance_vars.select { |ivar| (ann = ivar.annotation(Grant::Column)) && ann[:money] && !ann[:money_currency] } %}
+        @\{{column.id}}_currency = @\{{column.id}}.try(&.currency.code)
+      \{% end %}
     end
 
     macro finished

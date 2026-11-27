@@ -18,6 +18,7 @@ class G5LedgerEntry < Grant::Base
   column id : Int64, primary: true
   column total : Grant::Money, precision: 18, scale: 4
   column fee : Grant::Money?, precision: 10, scale: 2, currency: "USD"
+  column refund : Grant::Money?, precision: 18, scale: 4
 end
 
 private def decimal(text : String) : Grant::Decimal128
@@ -63,6 +64,7 @@ describe "Grant::Decimal128 and Grant::Money columns on #{CURRENT_ADAPTER}" do
       money_sql.should contain %("fee" INTEGER)
     end
     money_sql.should_not contain "fee_currency"
+    money_sql.should match /.refund_currency. VARCHAR\(3\)\n/
   end
 
   it "builds the same column types in the create_table DSL" do
@@ -203,6 +205,12 @@ describe "Grant::Decimal128 and Grant::Money columns on #{CURRENT_ADAPTER}" do
     found.total.currency.code.should eq "EUR"
     found.total.amount.to_s.should eq "12.3000"
     found.fee.should be_nil
+    found.refund.should be_nil
+    found.refund_currency.should be_nil
+    found.update!(refund: Grant::Money.new(decimal("2.50"), "JPY"))
+    G5LedgerEntry.find!(entry.id).refund.should eq Grant::Money.new(decimal("2.5"), "JPY")
+    found.update!(refund: nil)
+    G5LedgerEntry.find!(entry.id).refund_currency.should be_nil
   end
 
   it "stores 100.00 USD split into 3 as rows that read back 33.34, 33.33 and 33.33" do
@@ -259,5 +267,23 @@ describe "Grant::Decimal128 and Grant::Money columns on #{CURRENT_ADAPTER}" do
     entry.total_currency_changed?.should be_true
     entry.save!
     G5LedgerEntry.find!(entry.id).total.currency.code.should eq "EUR"
+  end
+  it "serializes decimals as JSON strings and Money as an amount and currency object" do
+    row = G5PriceRow.create!(price: decimal("19.99"), wide: decimal("1234567890123456789012345678.0123456789"))
+    json = JSON.parse(G5PriceRow.find!(row.id).to_json)
+    json["price"].as_s.should eq "19.99"
+    json["wide"].as_s.should eq "1234567890123456789012345678.0123456789"
+    G5PriceRow.from_json(row.to_json).wide.should eq decimal("1234567890123456789012345678.0123456789")
+
+    entry = G5LedgerEntry.create!(total: Grant::Money.new(decimal("19.99"), "EUR"), fee: Grant::Money.new(decimal("1.25"), "USD"))
+    entry_json = JSON.parse(G5LedgerEntry.find!(entry.id).to_json)
+    entry_json["total"]["amount"].as_s.should eq "19.9900"
+    entry_json["total"]["currency"].as_s.should eq "EUR"
+    entry_json["fee"]["currency"].as_s.should eq "USD"
+    entry_json.as_h.has_key?("total_currency").should be_false
+
+    copy = G5LedgerEntry.from_json(%({"total":{"amount":"5.50","currency":"JPY"}}))
+    copy.total_currency.should eq "JPY"
+    copy.total.should eq Grant::Money.new(decimal("5.5"), "JPY")
   end
 end
