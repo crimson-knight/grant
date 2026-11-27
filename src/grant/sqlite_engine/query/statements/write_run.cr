@@ -98,8 +98,11 @@ module Grant::SQLiteEngine::Query
     # rowid or NULL) into *table*. *explicit_rowid* is a rowid given by name
     # (`INSERT INTO t(rowid, ...)`) for a table without an alias. Returns the
     # outcome, the rowid and the row as stored.
+    #
+    # *unchecked* is a foreign key whose new parent C does not look up for
+    # this statement's rows (`unchecked_after_replace`).
     def insert_row(table : WriteTable, row : Array(Value), explicit_rowid : Value, override : ConflictAction,
-                   upsert : UpsertPlan? = nil) : {InsertResult, Int64?, Array(Value)}
+                   upsert : UpsertPlan? = nil, unchecked : ForeignKeyRule? = nil) : {InsertResult, Int64?, Array(Value)}
       if triggers_fire?(table, SQL::TriggerEvent::Insert, before: true)
         new_rowid, new = new_row_before_insert(table, row, explicit_rowid)
         fire_table_triggers(table, SQL::TriggerEvent::Insert, true, nil, nil, new_rowid, new, override)
@@ -129,7 +132,7 @@ module Grant::SQLiteEngine::Query
         delete_row(table, replaced[0], replaced[1], replace: true, override: ConflictAction::Replace)
       end
       if foreign_keys?
-        child_added(table, row)
+        child_added(table, row, unchecked: unchecked)
         parent_added(table, rowid, row)
       end
       entry_list = @session.take_index_entry_list
@@ -682,7 +685,7 @@ module Grant::SQLiteEngine::Query
     # UPDATE OF triggers match; by default the names of *list_of_changed*.
     def update_row(table : WriteTable, old_rowid : Int64?, old_row : Array(Value), new_row : Array(Value),
                    explicit_rowid : Value, override : ConflictAction, list_of_changed : Array(Int32),
-                   list_of_changed_names : Array(String)? = nil) : {Int64?, Array(Value)}?
+                   list_of_changed_names : Array(String)? = nil, unchecked : ForeignKeyRule? = nil) : {Int64?, Array(Value)}?
       rowid = old_rowid
       unless table.without_rowid?
         if alias_index = table.rowid_alias
@@ -745,7 +748,7 @@ module Grant::SQLiteEngine::Query
         table.database.write_row(table.layout, rowid, new_row, new_entries)
       end
       if foreign_keys?
-        child_added(table, new_row, old_row, list_of_changed)
+        child_added(table, new_row, old_row, list_of_changed, unchecked)
         parent_added(table, rowid, new_row, old_row, list_of_changed)
         parent_actions(table, old_row, new_row, list_of_changed)
       end
@@ -847,9 +850,10 @@ module Grant::SQLiteEngine::Query
 
     # A child row was added: a missing parent is a violation.
     private def child_added(table : WriteTable, row : Array(Value), old_row : Array(Value)? = nil,
-                            list_of_changed : Array(Int32)? = nil) : Nil
+                            list_of_changed : Array(Int32)? = nil, unchecked : ForeignKeyRule? = nil) : Nil
       table.list_of_foreign_keys.each do |rule|
         next unless touches?(rule.list_of_child_positions, list_of_changed, table) || same_table?(rule.parent_table, table.name)
+        next if unchecked && WriteRun.same_rule?(rule, unchecked)
         lookup = parent_lookup(rule)
         next unless lookup
         values = rule.list_of_child_positions.map { |position| row[position].as(Value) }
@@ -923,6 +927,47 @@ module Grant::SQLiteEngine::Query
                                  child_rowid : Int64?, child_row : Array(Value)) : Bool
       return child_rowid == rowid if rowid
       parent_positions.each_with_index.all? { |position, offset| WriteRun.same_value?(child_row[position], key[offset]) }
+    end
+
+    # The foreign key whose new parent C does not look up for the rows of a
+    # statement that codes a REPLACE delete on *table*, or nil.
+    #
+    # isSetNullAction (fkey.c) skips the new-parent check when the newest
+    # trigger program the statement has coded is the foreign key's own SET
+    # NULL action. The REPLACE delete codes the ON DELETE action of every
+    # foreign key that names *table* (sqlite3FkActions, newest key first);
+    # its DELETE triggers were coded before them, for their column mask
+    # (sqlite3TriggerColmask). When the last program coded is a
+    # self-reference's SET NULL whose UPDATE codes no program of its own (no
+    # UPDATE trigger on the key's columns, no ON UPDATE action on them), C
+    # skips that key's check of every new row of the statement.
+    def unchecked_after_replace(table : WriteTable) : ForeignKeyRule?
+      return unless foreign_keys?
+      coded = referencing(table).select { |_, candidate, _| action_program?(candidate.on_delete) }
+      last = coded.last?
+      return unless last
+      child, rule, _ = last
+      return unless rule.on_delete == "SET NULL" && same_table?(child.name, table.name) && child.database.same?(table.database)
+      list_of_triggers = table.list_of_triggers(@session)
+      names = rule.list_of_child_positions.map { |position| table.list_of_columns[position].column_name }
+      return if list_of_triggers.any? { |trigger| trigger.event.update? && trigger.fires_for?(names) }
+      return if referencing(table).any? do |_, other, parent_positions|
+                  action_program?(other.on_update) && parent_positions.any? { |position| rule.list_of_child_positions.includes?(position) }
+                end
+      rule
+    end
+
+    # fkActionTrigger makes a program for every action but NO ACTION, and
+    # for RESTRICT only while foreign keys are not deferred.
+    private def action_program?(action : String) : Bool
+      action != "NO ACTION" && !(action == "RESTRICT" && @session.defer_foreign_keys?)
+    end
+
+    # The same foreign key, read from two copies of its table's rules.
+    def self.same_rule?(rule : ForeignKeyRule, other : ForeignKeyRule) : Bool
+      rule.child_table.compare(other.child_table, case_insensitive: true) == 0 &&
+        rule.parent_table.compare(other.parent_table, case_insensitive: true) == 0 &&
+        rule.list_of_child_positions == other.list_of_child_positions
     end
 
     # The ON DELETE / ON UPDATE actions (sqlite3FkActions), after the

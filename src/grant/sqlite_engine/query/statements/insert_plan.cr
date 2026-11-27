@@ -12,6 +12,8 @@ module Grant::SQLiteEngine::Query
     @source : CompiledSelect?
     @override : ConflictAction
     @upsert : UpsertPlan?
+    # Whether C codes a REPLACE delete for this INSERT.
+    @codes_replace = false
     @returning : RowProgram?
 
     @trigger_programs : TriggerProgramCache?
@@ -75,6 +77,7 @@ module Grant::SQLiteEngine::Query
         compiled.producer.lend_rows if single_values_row?
       end
       @upsert = UpsertPlan.compile(@table, @statement.upserts, @target_name)
+      @codes_replace = StatementJournal.insert_codes_replace?(@table, @statement, @override, @list_of_source_positions)
       if (upsert = @upsert) && (scope = @session.trigger_scope)
         upsert.list_of_clauses.each(&.trigger_scope=(scope))
       end
@@ -127,6 +130,7 @@ module Grant::SQLiteEngine::Query
     private def write_returning_rows(run : WriteRun, list_of_parameters : Array(Value)) : Nil
       run.open_autoincrement(@table)
       @upsert.try(&.start_run)
+      unchecked = @codes_replace ? run.unchecked_after_replace(@table) : nil
       each_source_row(list_of_parameters) do |values|
         row = take_row_buffer
         begin
@@ -149,7 +153,7 @@ module Grant::SQLiteEngine::Query
             row[column.position] = run.default_value(@table, column)
           end
           begin
-            run.insert_row(@table, row, explicit_rowid, @override, @upsert)
+            run.insert_row(@table, row, explicit_rowid, @override, @upsert, unchecked)
           rescue TriggerIgnore
           end
         ensure

@@ -170,6 +170,68 @@ module Grant::SQLiteEngine::Query
       multi && may_abort
     end
 
+    # Whether C codes a REPLACE delete (sqlite3GenerateConstraintChecks
+    # with sqlite3GenerateRowDelete) for an UPDATE that changes the columns
+    # *list_of_changed*: the rowid's REPLACE when the rowid changes, a unique
+    # index's REPLACE when update.c visits the index (aRegIdx).
+    def self.update_codes_replace?(session : Session, table : WriteTable, statement : SQL::Update, override : ConflictAction,
+                                   list_of_changed : Array(Int32)) : Bool
+      rowid_changed = list_of_changed.includes?(-1) || table.rowid_alias.try { |position| list_of_changed.includes?(position) } || false
+      return true if rowid_changed && !table.without_rowid? && resolved(override, table.rowid_conflict).replace?
+      every_index = rowid_changed || fk_required_twice?(session, table, list_of_changed)
+      changed_names = list_of_changed.compact_map { |position| position >= 0 ? table.list_of_columns[position].column_name.downcase : nil }
+      table.list_of_indexes.any? do |rule|
+        next false unless rule.unique? && resolved(override, rule.conflict).replace?
+        next true if every_index || rule.layout.list_of_key_positions.any? { |position| list_of_changed.includes?(position) }
+        where = rule.where
+        !where.nil? && mentions_any?(where.to_sql, changed_names)
+      end
+    end
+
+    # sqlite3FkRequired's 2 for an UPDATE: it changes a child key of a
+    # self-reference, or a parent key whose foreign key has an ON UPDATE
+    # action; update.c then visits every index.
+    private def self.fk_required_twice?(session : Session, table : WriteTable, list_of_changed : Array(Int32)) : Bool
+      return false unless session.foreign_keys?
+      self_reference_changed = table.list_of_foreign_keys.any? do |rule|
+        rule.parent_table.compare(table.name, case_insensitive: true) == 0 &&
+          rule.list_of_child_positions.any? { |position| list_of_changed.includes?(position) }
+      end
+      return true if self_reference_changed
+      rowid_changed = list_of_changed.includes?(-1) || table.rowid_alias.try { |position| list_of_changed.includes?(position) } || false
+      session.list_of_child_tables(table.name).any? do |child_name|
+        child = session.write_table(child_name)
+        next false unless child
+        child.list_of_foreign_keys.any? do |rule|
+          next false unless rule.parent_table.compare(table.name, case_insensitive: true) == 0 && rule.on_update != "NO ACTION"
+          # A key without parent columns names the parent's primary key.
+          parent_columns = rule.list_of_parent_columns
+          next rowid_changed unless parent_columns
+          parent_columns.any? { |name| table.table_info.column_index(name).try { |position| list_of_changed.includes?(position) } }
+        end
+      end
+    end
+
+    # Whether C codes a REPLACE delete for an INSERT: the rowid's when the
+    # INSERT gives the rowid, a WITHOUT ROWID primary key's or a unique
+    # index's, unless an upsert takes that conflict.
+    def self.insert_codes_replace?(table : WriteTable, statement : SQL::Insert, override : ConflictAction,
+                                   list_of_positions : Array(Int32)) : Bool
+      untargeted_nothing = statement.upserts.any? { |upsert| upsert.target.nil? && upsert.assignments.nil? }
+      rowid_given = table.rowid_alias.try { |position| list_of_positions.includes?(position) } || list_of_positions.includes?(-1)
+      if rowid_given && !table.without_rowid? && !untargeted_nothing && !targets_rowid_in?(table, statement)
+        return true if resolved(override, table.rowid_conflict).replace?
+      end
+      if table.without_rowid? && !untargeted_nothing && !targets_columns?(statement, table.definition.list_of_primary_key_columns)
+        return true if resolved(override, table.primary_key_conflict).replace?
+      end
+      table.list_of_indexes.any? do |rule|
+        next false unless rule.unique?
+        names = rule.layout.list_of_key_positions.map { |position| position >= 0 ? table.list_of_columns[position].column_name : "" }
+        !untargeted_nothing && !targets_columns?(statement, names) && resolved(override, rule.conflict).replace?
+      end
+    end
+
     def self.for_delete(session : Session, table : WriteTable, statement : SQL::Delete) : Bool
       multi = !single_row?(table, statement.where) || !statement.returning.nil?
       texts = [] of String

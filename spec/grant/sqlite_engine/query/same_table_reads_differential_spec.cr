@@ -109,6 +109,49 @@ module SameTableReadsDifferentialFixture
     ]
   end
 
+  # #153: isSetNullAction (fkey.c) skips the new-parent check when the
+  # newest trigger program the statement has coded is the foreign key's
+  # own SET NULL action. A REPLACE delete on a self-reference codes it, so
+  # C lets each new row of the statement keep a parent that is gone,
+  # unless the action's UPDATE codes a program after it (an UPDATE trigger
+  # on the key's column) or the statement codes no REPLACE.
+  def self.list_of_replace_set_null_scenarios : Array(TriggerScenario)
+    three_rows = "INSERT INTO p VALUES (1, NULL, 0), (2, 1, 0), (3, NULL, 0), (4, 2, 0), (5, 2, 0)"
+    two_rows = "UPDATE OR REPLACE p SET id = CASE id WHEN 2 THEN 1 ELSE id END WHERE id IN (2, 4)"
+    three = "UPDATE OR REPLACE p SET id = CASE id WHEN 2 THEN 1 ELSE id END, n = coalesce(parent, -1) WHERE id IN (2, 4, 5)"
+    finish = ["SELECT changes(), total_changes()", "SELECT * FROM p ORDER BY id"]
+    list = [] of TriggerScenario
+    list << TriggerScenario.new("UPDATE OR REPLACE of two rows of a self-reference with ON DELETE SET NULL",
+      self_reference("DELETE", "SET NULL") + [two_rows] + finish)
+    {"SET NULL", "CASCADE", "SET DEFAULT"}.each do |action|
+      list << TriggerScenario.new("UPDATE OR REPLACE of three rows of a self-reference with ON DELETE #{action}",
+        self_reference("DELETE", action)[0, 2] + [three_rows, three] + finish)
+    end
+    list << TriggerScenario.new("UPDATE OR REPLACE with ON DELETE SET NULL and an UPDATE trigger on the key: C checks the parent",
+      self_reference("DELETE", "SET NULL") + [
+        "CREATE TRIGGER p_parent AFTER UPDATE OF parent ON p BEGIN SELECT 1; END",
+        two_rows,
+      ] + finish)
+    list << TriggerScenario.new("UPDATE OR REPLACE with ON DELETE SET NULL and an unrelated UPDATE trigger",
+      self_reference("DELETE", "SET NULL") + [
+        "CREATE TRIGGER p_n AFTER UPDATE OF n ON p BEGIN SELECT 1; END",
+        "PRAGMA recursive_triggers = ON",
+        "CREATE TRIGGER p_gone AFTER DELETE ON p BEGIN SELECT 1; END",
+        two_rows,
+      ] + finish)
+    list << TriggerScenario.new("UPDATE OR REPLACE that codes no REPLACE: C checks the parent",
+      self_reference("DELETE", "SET NULL") + ["UPDATE OR REPLACE p SET parent = 9 WHERE id = 2"] + finish)
+    list << TriggerScenario.new("INSERT OR REPLACE into a self-reference with ON DELETE SET NULL", [
+      "PRAGMA foreign_keys = ON",
+      "CREATE TABLE p(id INTEGER PRIMARY KEY, parent INTEGER REFERENCES p(id) ON DELETE SET NULL, n INTEGER)",
+      "INSERT INTO p VALUES (1, NULL, 0), (2, 1, 0)",
+      "INSERT OR REPLACE INTO p VALUES (1, 9, 5)",
+      "INSERT OR REPLACE INTO p VALUES (5, 8, 5), (6, 7, 6)",
+      "INSERT INTO p VALUES (7, 99, 0)",
+    ] + finish)
+    list
+  end
+
   def self.list_of_foreign_key_scenarios : Array(TriggerScenario)
     list = [] of TriggerScenario
     {"CASCADE", "SET NULL", "SET DEFAULT"}.each do |action|
@@ -149,6 +192,7 @@ module SameTableReadsDifferentialFixture
         "SELECT * FROM q ORDER BY id",
       ])
     end
+    list.concat(list_of_replace_set_null_scenarios)
     list << TriggerScenario.new("UPDATE of a parent whose child table has ON UPDATE CASCADE", [
       "PRAGMA foreign_keys = ON",
       "CREATE TABLE parent_rows(id INTEGER PRIMARY KEY, n INTEGER)",
@@ -183,14 +227,6 @@ describe "Grant::SQLiteEngine::Query writes that read their own table against C 
         report.list_of_unexpressed.should eq([] of String)
       end
     end
-
-    # isSetNullAction (fkey.c) asks whether the newest trigger program the
-    # top-level statement has coded is this foreign key's SET NULL action.
-    # After a REPLACE has coded that action for a self-reference, the
-    # answer is yes for the statement's own rows too, so C skips the check
-    # of each later row's new parent and lets a dangling child through.
-    pending "matches C's skipped parent check after a REPLACE coded a self-reference's ON DELETE SET NULL " \
-            "(UPDATE OR REPLACE p SET id = CASE id WHEN 2 THEN 1 ELSE id END WHERE id IN (2, 4))"
   else
     pending "matches C on writes that read their own table (the linked libsqlite3 is #{linked})"
   end
