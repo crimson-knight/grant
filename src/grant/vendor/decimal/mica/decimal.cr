@@ -41,7 +41,9 @@ module Grant::Mica
 
     def self.parse?(text : String) : Decimal128?
       text = text.strip
-      return nil unless text.matches?(/\A[+-]?(\d+(\.\d*)?|\.\d+)\z/)
+      body_text = text.lchop('-').lchop('+')
+      return nil if body_text.empty? || body_text == "." || body_text.count('.') > 1
+      return nil unless body_text.each_char.all? { |char| char.ascii_number? || char == '.' }
       negative = text.starts_with?('-')
       body = text.lchop('-').lchop('+')
       whole, _, fraction = body.partition('.')
