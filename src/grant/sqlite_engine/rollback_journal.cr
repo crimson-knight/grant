@@ -121,53 +121,93 @@ module Grant::SQLiteEngine
     end
 
     # Copies the original pages back into *database*, as pager_playback
-    # does: the file is cut to its size before the transaction, and records
-    # are applied until the count runs out, a record is short, names page 0
-    # or the lock-byte page, or fails its checksum. Syncs the database in
-    # *sync_mode* (nil: no sync, as synchronous=OFF asks).
+    # does, segment by segment. A journal holds one segment (a header and
+    # its records) for each time the transaction synced it, which C does
+    # before every spill of dirty pages to the database file
+    # (readJournalHdr):
+    #
+    # * Each header starts at the next multiple of the sector size the
+    #   first header names, and must start with the magic; a header that
+    #   does not fit in the file, or lacks the magic, ends the playback.
+    # * The first header's page and sector sizes must be powers of two in
+    #   range, or nothing is played back; its page count is the size the
+    #   file is cut or grown to, and the last page a record may restore.
+    #   Later headers' sizes and page counts are not read.
+    # * A record count of 0xffffffff means the rest of the file is records
+    #   (counted from the file size past one header, as C counts); 0 means
+    #   the segment has none, and the next header follows.
+    # * Each record is checked against its own segment's nonce. Playback
+    #   ends at a record cut short, or one naming page 0 or the lock-byte
+    #   page, or (for a page within the original count) one whose checksum
+    #   fails; a record past the original count is skipped unchecked.
+    # * Every record is written, so a page journaled twice ends with its
+    #   later image, as C's main-journal playback (no pDone) leaves it.
+    #
+    # Syncs the database in *sync_mode* (nil: no sync, as synchronous=OFF
+    # asks).
     def self.play_back(journal : DatabaseFile, database : DatabaseFile, sync_mode : SyncMode? = SyncMode::Normal) : Nil
-      journal_size = journal.size
-      return if journal_size < SECTOR_SIZE
-      header = Bytes.new(28)
-      return if journal.read_at(0, header) < 28
-      return unless header[0, 8] == MAGIC
-      record_count = get_u32(header, 8)
-      nonce = get_u32(header, 12)
-      initial_page_count = get_u32(header, 16)
-      sector_size = get_u32(header, 20).to_i64
-      page_size = get_u32(header, 24).to_i32
-      unless power_of_two_between?(page_size.to_i64, Limits::MIN_PAGE_SIZE.to_i64, Limits::MAX_PAGE_SIZE.to_i64) &&
-             power_of_two_between?(sector_size, 32_i64, 65_536_i64)
-        raise CorruptDatabase.new("rollback journal header names page size #{page_size} and sector size #{sector_size}")
-      end
-      record_size = page_size.to_i64 + 8
-      record_count = ((journal_size - sector_size) // record_size).to_u32 if record_count == RECORD_COUNT_FROM_SIZE
-      resize(database, initial_page_count.to_i64 * page_size)
-      lock_byte_page = (Pager::PENDING_BYTE_OFFSET // page_size + 1).to_u32
-      offset = sector_size
-      record = Bytes.new(record_size)
-      record_count.times do
-        break if offset + record_size > journal_size
-        break if journal.read_at(offset, record) < record_size
-        offset += record_size
-        page_number = get_u32(record, 0)
-        break if page_number == 0 || page_number == lock_byte_page
-        image = record[4, page_size]
-        break unless checksum(nonce, image) == get_u32(record, page_size + 4)
-        next if page_number > initial_page_count
-        database.write_at((page_number.to_i64 - 1) * page_size, image)
-      end
+      play_back_segments(journal, database)
       database.sync(sync_mode) if sync_mode
     end
 
-    # pager_truncate: cut the file, or grow it to the size with a write at
-    # its last page.
-    private def self.resize(database : DatabaseFile, size : Int64) : Nil
+    private def self.play_back_segments(journal : DatabaseFile, database : DatabaseFile) : Nil
+      journal_size = journal.size
+      header = Bytes.new(28)
+      header_size = SECTOR_SIZE.to_i64
+      page_size = 0
+      initial_page_count = 0_u32
+      lock_byte_page = 0_u32
+      record = Bytes.empty
+      offset = 0_i64
+      loop do
+        offset = next_header_offset(offset, header_size)
+        return if offset + header_size > journal_size
+        return if journal.read_at(offset, header) < 28
+        return unless header[0, 8] == MAGIC
+        record_count = get_u32(header, 8)
+        nonce = get_u32(header, 12)
+        if offset == 0
+          sector_size = get_u32(header, 20).to_i64
+          page_size = get_u32(header, 24).to_i32
+          return unless power_of_two_between?(page_size.to_i64, Limits::MIN_PAGE_SIZE.to_i64, Limits::MAX_PAGE_SIZE.to_i64) &&
+                        power_of_two_between?(sector_size, 32_i64, 65_536_i64)
+          header_size = sector_size
+          initial_page_count = get_u32(header, 16)
+          lock_byte_page = (Pager::PENDING_BYTE_OFFSET // page_size + 1).to_u32
+          record = Bytes.new(page_size + 8)
+        end
+        offset += header_size
+        record_size = record.size.to_i64
+        record_count = ((journal_size - header_size) // record_size).to_u32 if record_count == RECORD_COUNT_FROM_SIZE
+        resize(database, initial_page_count.to_i64 * page_size, page_size) if offset == header_size
+        record_count.times do
+          return if offset + record_size > journal_size
+          return if journal.read_at(offset, record) < record_size
+          offset += record_size
+          page_number = get_u32(record, 0)
+          return if page_number == 0 || page_number == lock_byte_page
+          next if page_number > initial_page_count
+          image = record[4, page_size]
+          return unless checksum(nonce, image) == get_u32(record, page_size + 4)
+          database.write_at((page_number.to_i64 - 1) * page_size, image)
+        end
+      end
+    end
+
+    # journalHdrOffset: the first multiple of *header_size* at or past
+    # *offset*.
+    private def self.next_header_offset(offset : Int64, header_size : Int64) : Int64
+      offset == 0 ? 0_i64 : ((offset - 1) // header_size + 1) * header_size
+    end
+
+    # pager_truncate: cut the file, or grow it to the size with a page of
+    # zeros at its end when it is at least a page short.
+    private def self.resize(database : DatabaseFile, size : Int64, page_size : Int32) : Nil
       current = database.size
       if current > size
         database.truncate(size)
-      elsif current < size
-        database.write_at(size - 1, Bytes.new(1))
+      elsif current + page_size <= size
+        database.write_at(size - page_size, Bytes.new(page_size))
       end
     end
 
