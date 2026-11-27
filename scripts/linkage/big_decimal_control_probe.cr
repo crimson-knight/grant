@@ -1,6 +1,8 @@
-# The control for `scripts/check_gmp_linkage.rb`: a program that opts in to
-# BigDecimal support must show GMP, which proves the check can fail. It also
-# stores and reads back a decimal column.
+# The BigDecimal probe for `scripts/check_gmp_linkage.rb`: a program that opts
+# in to BigDecimal support. On a stdlib whose `big` links GMP it is the control
+# that must show GMP, which proves the check can fail; on a stdlib with the
+# pure Crystal::BigNum engine it must show none, and its `-Duse_gmp` build is
+# the control. It also stores and reads back a decimal column.
 require "../../src/grant/big_decimal"
 require "../../src/grant"
 require "../../src/adapter/sqlite"
