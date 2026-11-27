@@ -222,6 +222,32 @@ module BusyParity
         steps.run('B', "COMMIT", "0/0")
         steps.run('A', "COMMIT", {"0/0", "1/1"})
       end,
+      # A's transaction outgrows its ten-page cache. Rollback journal: a
+      # cache spill needs EXCLUSIVE, so while B reads C skips the spill and
+      # keeps the pages in memory, B still reads the committed rows, and A's
+      # COMMIT waits for B; once B has gone, A's next spill takes EXCLUSIVE
+      # and a new read by B is refused until A commits. WAL: nothing waits.
+      # (cache_spill=1 is C's default; the macOS build sets it far higher.)
+      "a reader holding SHARED while another connection's transaction spills its cache" => Case.new do |steps|
+        rows = "WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM n WHERE x < 2000) " \
+               "INSERT INTO entries (label) SELECT hex(zeroblob(100)) || x FROM n"
+        steps.run('A', "PRAGMA cache_size=10", "0/0")
+        steps.run('A', "PRAGMA cache_spill=1", "0/0")
+        steps.run('B', "BEGIN", "0/0")
+        steps.run('B', "SELECT count(*) FROM entries", "0/0")
+        steps.run('A', "BEGIN", "0/0")
+        steps.run('A', rows, "0/0")
+        steps.run('B', "SELECT count(*) FROM entries", "0/0")
+        steps.run('A', "COMMIT", {"5/5", "0/0"})
+        steps.run('B', "SELECT count(*) FROM entries", "0/0")
+        steps.run('B', "COMMIT", "0/0")
+        steps.run('A', "COMMIT", {"0/0", "1/1"})
+        steps.run('A', "BEGIN", "0/0")
+        steps.run('A', rows, "0/0")
+        steps.run('B', "SELECT count(*) FROM entries", {"5/5", "0/0"})
+        steps.run('A', "COMMIT", "0/0")
+        steps.run('B', "SELECT count(*) FROM entries", "0/0")
+      end,
       "a deferred transaction that reads and writes after another connection's commit" => Case.new do |steps|
         steps.run('B', "BEGIN", "0/0")
         steps.run('A', "INSERT INTO entries (label) VALUES ('a1')", "0/0")
