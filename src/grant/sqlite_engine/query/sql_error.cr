@@ -11,8 +11,11 @@ module Grant::SQLiteEngine
     RANGE      = 25
 
     getter result_code : Int32
+    # The extended result code (sqlite3_extended_errcode): *result_code* in
+    # its low byte, with C's detail above it (SQLITE_BUSY_SNAPSHOT is 517).
+    getter extended_result_code : Int32
 
-    def initialize(message : String, @result_code : Int32 = ERROR)
+    def initialize(message : String, @result_code : Int32 = ERROR, @extended_result_code : Int32 = result_code)
       super(message)
     end
   end

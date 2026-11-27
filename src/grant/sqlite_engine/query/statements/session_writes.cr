@@ -192,8 +192,8 @@ module Grant::SQLiteEngine::Query
       if @transaction_snapshot_pinned || @open_statement_reads > 1
         begin
           pager.begin_write(refresh_snapshot: false, exclusive: exclusive)
-        rescue Busy
-          raise SQLError.new("database is locked", 5)
+        rescue error : Busy
+          raise SQLError.new("database is locked", 5, error.extended_result_code)
         end
       else
         generation = pager.generation

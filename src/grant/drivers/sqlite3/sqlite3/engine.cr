@@ -98,6 +98,12 @@ module Grant::SQLite3
       # The result code of the most recent failed call.
       abstract def error_code : Int32
 
+      # The extended result code of the most recent failed call
+      # (sqlite3_extended_errcode): `error_code` in its low byte, and above
+      # it the detail C adds, such as SQLITE_BUSY_SNAPSHOT (517) for a write
+      # refused because another connection committed after this one read.
+      abstract def extended_error_code : Int32
+
       # The message of the most recent failed call.
       abstract def error_message : String
 

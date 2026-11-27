@@ -54,8 +54,17 @@ module Grant::SQLiteEngine
   # Raised when another connection holds a lock this one needs
   # (SQLITE_BUSY, https://www.sqlite.org/lockingv3.html).
   class Busy < Error
+    # SQLITE_BUSY.
+    EXTENDED_RESULT_CODE = 5
+
     def initialize(message : String = "database is locked")
       super(message)
+    end
+
+    # The extended result code C reports for this refusal
+    # (https://www.sqlite.org/rescode.html#extrc).
+    def extended_result_code : Int32
+      EXTENDED_RESULT_CODE
     end
   end
 
