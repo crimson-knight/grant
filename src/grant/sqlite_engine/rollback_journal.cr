@@ -23,7 +23,7 @@ module Grant::SQLiteEngine
     WRITEBACK_ALIGNMENT = 4_096_i64
 
     # The least the journal's write-out is started for at a time.
-    WRITEBACK_BYTES = 0_i64
+    WRITEBACK_BYTES = 1_048_576_i64
 
     # nRec of a journal whose record count is the file size's to tell.
     RECORD_COUNT_FROM_SIZE = 0xffff_ffff_u32
