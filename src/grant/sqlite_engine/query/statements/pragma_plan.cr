@@ -183,6 +183,8 @@ module Grant::SQLiteEngine::Query
       case name
       when "synchronous"
         pager.synchronous = Synchronous.from_value(number.clamp(0_i64, 3_i64).to_i32)
+      when "cache_size"
+        pager.cache_size = number
       when "wal_autocheckpoint"
         pager.wal_autocheckpoint = number.clamp(Int32::MIN.to_i64, Int32::MAX.to_i64).to_i32
       end

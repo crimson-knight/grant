@@ -27,53 +27,154 @@ module Grant::SQLiteEngine
 
     # Writes and syncs a journal holding *list_of_images* (page number and
     # original bytes) into the empty file *journal* (from
-    # `FileSystem#create_journal`), the way syncJournal does: the header
-    # (with a record count of 0) and the records, a sync when *synchronous*
-    # is FULL or EXTRA, then the record count, then a sync. Each sync is
-    # made in *sync_mode*. With *synchronous* OFF nothing is synced, and the
-    # header says from the start that the file's size tells the record
-    # count, as C's header does when it will not be synced
-    # (writeJournalHdr). The header and the records go out together, up to
-    # `RECORDS_PER_WRITE` records a write.
+    # `FileSystem#create_journal`) as one segment of a `Writer`: the header
+    # and the records, then the segment's syncs as *synchronous* asks (see
+    # `Writer#sync_segment`), the segment's checksums keyed by *nonce*. Each
+    # sync is made in *sync_mode*.
     #
     # The writes are gathered in *write_buffer*, which a caller keeps from
     # one commit to the next so a commit allocates nothing.
     def self.write(journal : DatabaseFile, page_size : Int32, initial_page_count : UInt32, list_of_images : Array({UInt32, Bytes}), nonce : UInt32,
                    synchronous : Synchronous = Synchronous::Full, sync_mode : SyncMode = SyncMode::Normal,
                    write_buffer : WriteBuffer = WriteBuffer.new) : Nil
-      record_size = page_size + 8
-      buffer = write_buffer.take(SECTOR_SIZE + record_size * Math.min(list_of_images.size, RECORDS_PER_WRITE))
-      # The header sector's bytes past its fields stay zero, as C's do.
-      buffer.to_unsafe.clear(SECTOR_SIZE)
-      buffer.copy_from(MAGIC.to_unsafe, MAGIC.size)
-      put_u32(buffer, 8, synchronous.off? ? RECORD_COUNT_FROM_SIZE : 0_u32)
-      put_u32(buffer, 12, nonce)
-      put_u32(buffer, 16, initial_page_count)
-      put_u32(buffer, 20, SECTOR_SIZE.to_u32)
-      put_u32(buffer, 24, page_size.to_u32)
-      file_offset = 0_i64
-      filled = SECTOR_SIZE
-      list_of_images.each do |page_number, image|
-        if filled + record_size > buffer.size
-          journal.write_at(file_offset, buffer[0, filled])
-          file_offset += filled
-          filled = 0
-        end
-        raise ArgumentError.new("page image of #{image.size} bytes for #{page_size}-byte pages") unless image.size == page_size
-        put_u32(buffer, filled, page_number)
-        (buffer.to_unsafe + filled + 4).copy_from(image.to_unsafe, page_size)
-        put_u32(buffer, filled + 4 + page_size, checksum(nonce, image))
-        filled += record_size
+      writer = Writer.new(write_buffer)
+      writer.start(journal, page_size, initial_page_count, synchronous, sync_mode, nonce)
+      list_of_images.each { |page_number, image| writer.append(page_number, image) }
+      writer.sync_segment(new_segment: false)
+    end
+
+    # Writes a rollback journal while its transaction runs, as C's pager
+    # does (writeJournalHdr, pager_write, syncJournal): a segment header,
+    # then each page's original image as the page is first changed, and at
+    # each cache spill and at commit the segment's syncs, after which a
+    # new segment starts at the next sector. The header and the records go
+    # to the file through a kept `WriteBuffer`, up to `RECORDS_PER_WRITE`
+    # records a write; `#flush` sends what is gathered.
+    #
+    # A segment's header carries zeros where the magic and the record count
+    # go until the segment is synced, so a crash before then leaves a
+    # journal that is not hot. With synchronous=OFF the one header says
+    # from the start that the file's size tells the record count, and the
+    # journal stays one segment (nothing is synced).
+    class Writer
+      @journal : DatabaseFile? = nil
+      @page_size = 0
+      @initial_page_count = 0_u32
+      @synchronous = Synchronous::Full
+      @sync_mode = SyncMode::Normal
+      @buffer = Bytes.empty
+      # The file offset of the buffer's first byte, and the bytes gathered.
+      @buffer_offset = 0_i64
+      @filled = 0
+      # Where the current segment's header is, and its records so far.
+      @header_offset = 0_i64
+      @record_count = 0_u32
+      @nonce = 0_u32
+      # The 8 bytes read at the next header's place, and the 12 bytes of a
+      # synced header's magic and record count.
+      @next_magic = Bytes.new(8)
+      @synced_header = Bytes.new(12)
+
+      ZERO_BYTE = Bytes[0]
+
+      def initialize(@write_buffer : WriteBuffer = WriteBuffer.new)
       end
-      journal.write_at(file_offset, buffer[0, filled])
-      return if synchronous.off?
-      journal.sync(sync_mode) if synchronous >= Synchronous::Full
-      # The records are on their way to the disk; the buffer's first bytes
-      # carry the record count now.
-      count = buffer[0, 12]
-      put_u32(count, 8, list_of_images.size.to_u32)
-      journal.write_at(0, count)
-      journal.sync(sync_mode)
+
+      # The journal being written, or nil between transactions.
+      getter journal : DatabaseFile?
+
+      # Starts the journal's first segment in *journal*, an empty file; its
+      # checksums are keyed by *nonce* (nil: a random one, as every later
+      # segment's is).
+      def start(journal : DatabaseFile, @page_size : Int32, @initial_page_count : UInt32,
+                @synchronous : Synchronous, @sync_mode : SyncMode, nonce : UInt32? = nil) : Nil
+        @journal = journal
+        @buffer = @write_buffer.take(SECTOR_SIZE + record_size * RECORDS_PER_WRITE)
+        @buffer_offset = 0_i64
+        @filled = 0
+        start_segment(nonce)
+      end
+
+      # Leaves the journal (the caller closes and deletes the file).
+      def finish : Nil
+        @journal = nil
+      end
+
+      # pagerAddPageToRollbackJournal: the record of *page_number*'s
+      # original *image*, gathered with the records before it.
+      def append(page_number : UInt32, image : Bytes) : Nil
+        raise ArgumentError.new("page image of #{image.size} bytes for #{@page_size}-byte pages") unless image.size == @page_size
+        flush if @filled + record_size > @buffer.size
+        RollbackJournal.put_u32(@buffer, @filled, page_number)
+        (@buffer.to_unsafe + @filled + 4).copy_from(image.to_unsafe, @page_size)
+        RollbackJournal.put_u32(@buffer, @filled + 4 + @page_size, RollbackJournal.checksum(@nonce, image))
+        @filled += record_size
+        @record_count += 1
+      end
+
+      # Writes the gathered header and records to the file.
+      def flush : Nil
+        return if @filled == 0
+        current_journal.write_at(@buffer_offset, @buffer[0, @filled])
+        @buffer_offset += @filled
+        @filled = 0
+      end
+
+      # syncJournal: makes the segment's records durable before any page
+      # they guard is written to the database. Unless synchronous is OFF:
+      # the next header's place is read (and its first byte zeroed when it
+      # holds a stale magic), the journal synced when synchronous is FULL or
+      # EXTRA, the magic and record count written into the segment's
+      # header, and the journal synced again; then, with *new_segment*, the
+      # next segment starts at the next sector boundary.
+      def sync_segment(new_segment : Bool) : Nil
+        flush
+        return if @synchronous.off?
+        journal = current_journal
+        next_header_offset = sector_boundary(@buffer_offset)
+        read = journal.read_at(next_header_offset, @next_magic)
+        journal.write_at(next_header_offset, ZERO_BYTE) if read == @next_magic.size && @next_magic == MAGIC
+        journal.sync(@sync_mode) if @synchronous >= Synchronous::Full
+        @synced_header.copy_from(MAGIC.to_unsafe, MAGIC.size)
+        RollbackJournal.put_u32(@synced_header, 8, @record_count)
+        journal.write_at(@header_offset, @synced_header)
+        journal.sync(@sync_mode)
+        start_segment if new_segment
+      end
+
+      # writeJournalHdr: a header at the next sector boundary, with a fresh
+      # nonce, gathered into the buffer ahead of the segment's records.
+      private def start_segment(nonce : UInt32? = nil) : Nil
+        flush
+        @header_offset = sector_boundary(@buffer_offset)
+        @buffer_offset = @header_offset
+        @record_count = 0_u32
+        @nonce = nonce || Random.rand(UInt32)
+        header = @buffer
+        # The header sector's bytes past its fields stay zero, as C's do.
+        header.to_unsafe.clear(SECTOR_SIZE)
+        if @synchronous.off?
+          header.copy_from(MAGIC.to_unsafe, MAGIC.size)
+          RollbackJournal.put_u32(header, 8, RECORD_COUNT_FROM_SIZE)
+        end
+        RollbackJournal.put_u32(header, 12, @nonce)
+        RollbackJournal.put_u32(header, 16, @initial_page_count)
+        RollbackJournal.put_u32(header, 20, SECTOR_SIZE.to_u32)
+        RollbackJournal.put_u32(header, 24, @page_size.to_u32)
+        @filled = SECTOR_SIZE
+      end
+
+      private def record_size : Int32
+        @page_size + 8
+      end
+
+      private def sector_boundary(offset : Int64) : Int64
+        (offset + SECTOR_SIZE - 1) // SECTOR_SIZE * SECTOR_SIZE
+      end
+
+      private def current_journal : DatabaseFile
+        @journal || raise Error.new("no rollback journal is being written")
+      end
     end
 
     # pager_cksum: the nonce plus every 200th byte of the page, counting

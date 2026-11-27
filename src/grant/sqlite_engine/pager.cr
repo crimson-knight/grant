@@ -107,6 +107,22 @@ module Grant::SQLiteEngine
     # with. The statement journal is the innermost level.
     @list_of_savepoint_levels = [] of SavepointLevel
 
+    # PRAGMA cache_size: pages when positive, KiB when negative. In a
+    # rollback-journal transaction it sets when changed pages spill to the
+    # database file (`#spill_threshold`).
+    getter cache_size : Int64 = -Limits::DEFAULT_CACHE_KIBIBYTES.to_i64
+    # Cache spill state of a rollback-journal transaction (pagerStress):
+    # the pages written to the database file before commit, keeping the
+    # bytes written (their journal records are synced); the pages journaled
+    # since the last spill's sync, which wait for the next one; whether a
+    # spill has synced the journal and its pages wait for their write; and
+    # the clean pages read since the current change began, which stand for
+    # the pages C's cursors hold.
+    @spilled = PageTable.new
+    @unsynced = PageTable.new
+    @spill_due = false
+    @held_pages = 0
+
     # A database with no pages (a zero-length file and no WAL) is an empty
     # database, as in SQLite.
     #
@@ -192,6 +208,26 @@ module Grant::SQLiteEngine
                                 @new_text_encoding : TextEncoding, cache_pages : Int32?) : Nil
       page_size = @page_size > 0 ? @page_size : @new_page_size
       @cache_pages = cache_pages || Math.max(16, Limits::DEFAULT_CACHE_KIBIBYTES * 1024 // page_size)
+      @cache_size = cache_pages.to_i64 if cache_pages
+    end
+
+    # PRAGMA cache_size N.
+    def cache_size=(@cache_size : Int64) : Int64
+      @cache_size
+    end
+
+    # ROUND8(sizeof(MemPage)) of a 64-bit C SQLite 3.51.0: the bytes C adds
+    # to each cached page when it turns a cache_size in KiB into pages
+    # (numberOfCachePages).
+    C_PAGE_EXTRA = 136
+
+    # pcache1's n90pct: once this many pages are pinned (changed and not
+    # yet written, or held by a cursor), the next page C fetches into its
+    # cache first spills (sqlite3PcacheFetch, pcache1FetchStage2).
+    def spill_threshold : Int64
+      page_size = @page_size > 0 ? @page_size : @new_page_size
+      cache_pages = @cache_size >= 0 ? @cache_size : Math.min(-1024_i64 * @cache_size // (page_size + C_PAGE_EXTRA), 1_000_000_000_i64)
+      cache_pages * 9 // 10
     end
 
     def synchronous=(level : Synchronous) : Synchronous
@@ -289,9 +325,12 @@ module Grant::SQLiteEngine
         return dirty
       end
       if cached = @cache[page_number]?
+        @held_pages &+= 1 unless page_number == 1
         return cached
       end
       check_page_number(page_number)
+      spill_when_full
+      @held_pages &+= 1 unless page_number == 1
       buffer = Bytes.new(@page_size)
       wal = @wal
       log = @wal_log
@@ -675,7 +714,8 @@ module Grant::SQLiteEngine
     def commit : Nil
       file = writer_file
       raise Error.new("no write transaction is open") unless @in_write_transaction
-      if @dirty.empty?
+      if @dirty.empty? && @spilled.empty?
+        end_journal
         finish_transaction(file)
         return
       end
@@ -692,31 +732,26 @@ module Grant::SQLiteEngine
       put_u32(page_one, PAGE_COUNT_OFFSET, @page_count)
       put_u32(page_one, VERSION_VALID_FOR_OFFSET, counter)
       put_u32(page_one, VERSION_NUMBER_OFFSET, WRITER_VERSION_NUMBER)
-      file_system = writer_file_system
-      journal_path = RollbackJournal.path_for(@path)
-      # The page images and the changed pages, each in page order, in lists
-      # kept from one commit to the next (as `commit_to_log` keeps its own).
-      list_of_images = @commit_images
-      list_of_images.clear
-      @journal_images.each { |page_number, image| list_of_images << {page_number, image} }
-      list_of_images.sort! { |left, right| left[0] <=> right[0] }
+      # The journal's last segment is synced (syncJournal), then the pages
+      # not yet written go out in page order, in a list kept from one
+      # commit to the next (as `commit_to_log` keeps its own).
+      start_journal unless @journal_writer.journal
+      @journal_writer.sync_segment(new_segment: false)
       list_of_pages = @commit_pages
       list_of_pages.clear
       @dirty.each { |page_number, buffer| list_of_pages << {page_number, buffer} }
       list_of_pages.sort! { |left, right| left[0] <=> right[0] }
-      journal = file_system.create_journal(journal_path)
-      begin
-        RollbackJournal.write(journal, @page_size, @original_page_count, list_of_images, Random.rand(UInt32), @synchronous, sync_mode,
-          @journal_write_buffer)
-      ensure
-        journal.close
-      end
-      list_of_images.clear
       list_of_pages.each do |page_number, buffer|
         file.write_at((page_number.to_i64 - 1) * @page_size, buffer)
       end
+      # A savepoint rolled back after a spill can leave pages past the end
+      # (C's pager_truncate when the size differs).
+      unless @spilled.empty?
+        size = @page_count.to_i64 * @page_size
+        file.truncate(size) if file.size > size
+      end
       file.sync(sync_mode) unless @synchronous.off?
-      file_system.delete(journal_path)
+      end_journal
       list_of_pages.each { |page_number, buffer| @cache[page_number] = buffer }
       list_of_pages.clear
       @header = DatabaseHeader.parse(page_one)
@@ -730,7 +765,10 @@ module Grant::SQLiteEngine
       written_first_page = @dirty[1_u32]?
       written_cookie = written_first_page ? get_u32(written_first_page, SCHEMA_COOKIE_OFFSET) : nil
       @rightmost_path_hint = nil
+      restore_spilled_pages(file) unless @spilled.empty?
+      end_journal
       @dirty.each_key { |page_number| @cache.delete(page_number) }
+      @spilled.each_key { |page_number| @cache.delete(page_number) }
       # Page 1 below comes from the snapshot, not from the rolled-back pages.
       @dirty.clear
       @page_count = @original_page_count
@@ -781,7 +819,7 @@ module Grant::SQLiteEngine
 
     @commit_pages = [] of {UInt32, Bytes}
     @commit_images = [] of {UInt32, Bytes}
-    @journal_write_buffer = RollbackJournal::WriteBuffer.new
+    @journal_writer = RollbackJournal::Writer.new
 
     private def finish_transaction(file : DatabaseFile) : Nil
       @dirty.clear
@@ -789,6 +827,9 @@ module Grant::SQLiteEngine
       # back); the next transaction's images reuse them.
       @journal_images.each_value { |image| recycle_image(image) }
       @journal_images.clear
+      @spilled.clear
+      @unsynced.clear
+      @spill_due = false
       @list_of_savepoint_levels.clear
       @in_write_transaction = false
       if log = @wal_log
@@ -825,6 +866,7 @@ module Grant::SQLiteEngine
     # depth (1 for the outermost).
     def open_savepoint : Int32
       raise Error.new("no write transaction is open") unless @in_write_transaction
+      start_change
       level = @spare_levels.pop?.try(&.reopen(@page_count)) || SavepointLevel.new(@page_count)
       @list_of_savepoint_levels << level
       @list_of_savepoint_levels.size
@@ -905,13 +947,18 @@ module Grant::SQLiteEngine
               buffer.copy_from(image.to_unsafe, image.size)
               recycle_image(image)
             else
+              # A spilled page: its cached copy holds the bytes written.
+              @cache.delete(page_number)
               @dirty[page_number] = image
             end
           else
             @dirty.delete(page_number)
             @cache.delete(page_number)
-            if journal_image = @journal_images.delete(page_number)
-              recycle_image(journal_image)
+            # The page was as the transaction found it. Its journal record
+            # stays (the journal holds it already); a spill wrote changed
+            # bytes over the original, which goes back as a changed page.
+            if @spilled.has_key?(page_number) && (original = @journal_images[page_number]?)
+              @dirty[page_number] = image_of(original)
             end
           end
         end
@@ -935,14 +982,19 @@ module Grant::SQLiteEngine
         end
         return buffer
       end
+      spill_when_full if page_number > @page_count
       buffer = page_number <= @page_count ? read_page(page_number) : Bytes.new(@page_size)
-      # A rollback journal needs each page's original; in WAL mode a rollback
-      # reads the originals back from the snapshot.
-      if @wal_log.nil? && page_number <= @original_page_count && !@journal_images.has_key?(page_number)
-        @journal_images[page_number] = image_of(buffer)
+      # A rollback journal needs each page's original, appended as the page
+      # is first changed; in WAL mode a rollback reads the originals back
+      # from the snapshot.
+      if @wal_log.nil?
+        start_journal unless @journal_writer.journal
+        journal_original(page_number, buffer) if page_number <= @original_page_count && !@journal_images.has_key?(page_number)
       end
       if level = imaging_level
-        level.images[page_number] = nil unless level.images.has_key?(page_number)
+        # nil: the page is as the database file holds it, unless a spill
+        # wrote it, when the level keeps the bytes themselves.
+        level.images[page_number] = @spilled.has_key?(page_number) ? image_of(buffer) : nil unless level.images.has_key?(page_number)
       end
       @dirty[page_number] = buffer
       buffer
@@ -979,6 +1031,8 @@ module Grant::SQLiteEngine
       if page_number > Limits::MAX_PAGE_NUMBER
         raise LimitExceeded.new("SQLITE_MAX_PAGE_COUNT", "the database would pass #{Limits::MAX_PAGE_NUMBER} pages")
       end
+      spill_when_full
+      start_journal if @wal_log.nil? && @journal_writer.journal.nil?
       @page_count = page_number
       @dirty[page_number] = Bytes.new(@page_size)
       if level = @list_of_savepoint_levels.last?
@@ -1018,6 +1072,104 @@ module Grant::SQLiteEngine
       put_u32(page_for_write(1_u32), offset, value)
     end
 
+    # Marks the start of one change of the database: a statement, or one
+    # b-tree operation. No page of an earlier change is still being edited
+    # here, so the pages a spill has synced go to the database file now
+    # (C writes only pages no cursor holds), and the pages the change holds
+    # are counted afresh.
+    def start_change : Nil
+      @held_pages = 0
+      write_spilled_pages if @spill_due
+    end
+
+    # --- Cache spill (rollback journal) ----------------------------------
+
+    # pagerStress, at the moment C's page cache would call it: a page is
+    # about to come into the cache while pages are changed, and the
+    # changed pages and the pages held reach `#spill_threshold`. The spill
+    # takes the EXCLUSIVE lock (when another connection reads, the spill is
+    # skipped and the pages stay in memory, as C does), syncs the journal's
+    # segment and starts the next one (syncJournal); the synced pages are
+    # written at the next `#start_change`. While they wait no new spill
+    # starts, as C spills the synced pages first.
+    private def spill_when_full : Nil
+      return if @dirty.empty? || @spill_due || !@wal_log.nil? || @path == ":memory:"
+      held = @held_pages + (@dirty.has_key?(1_u32) ? 0 : 1)
+      return if @dirty.size + held < spill_threshold
+      return unless writer_file.lock(LockLevel::Exclusive)
+      @journal_writer.sync_segment(new_segment: true)
+      @spill_due = true
+    end
+
+    # pager_write_pagelist for a spill: every changed page whose journal
+    # record is synced, in page order. The pages leave the changed set for
+    # the cache, still readable; one changed again is written again later.
+    private def write_spilled_pages : Nil
+      file = writer_file
+      list_of_pages = @commit_pages
+      list_of_pages.clear
+      @dirty.each { |page_number, buffer| list_of_pages << {page_number, buffer} unless @unsynced.has_key?(page_number) }
+      list_of_pages.sort! { |left, right| left[0] <=> right[0] }
+      list_of_pages.each do |page_number, buffer|
+        file.write_at((page_number.to_i64 - 1) * @page_size, buffer)
+        @dirty.delete(page_number)
+        @cache[page_number] = buffer
+        @spilled[page_number] = buffer
+      end
+      list_of_pages.clear
+      @unsynced.clear
+      @spill_due = false
+    end
+
+    # Keeps *page_number*'s original bytes for the transaction and appends
+    # them to the journal. A record appended after a spill's sync waits for
+    # the next sync before its page is written.
+    private def journal_original(page_number : UInt32, buffer : Bytes) : Nil
+      image = image_of(buffer)
+      @journal_images[page_number] = image
+      @journal_writer.append(page_number, image)
+      @unsynced[page_number] = buffer if @spill_due
+    end
+
+    # pager_open_journal, at the transaction's first changed page.
+    private def start_journal : Nil
+      journal = writer_file_system.create_journal(RollbackJournal.path_for(@path))
+      page_size = @page_size > 0 ? @page_size : @new_page_size
+      @journal_writer.start(journal, page_size, @original_page_count, @synchronous, sync_mode)
+    end
+
+    # pager_end_transaction: closes and deletes the journal, which commits
+    # or ends the transaction.
+    private def end_journal : Nil
+      journal = @journal_writer.journal
+      return unless journal
+      @journal_writer.finish
+      journal.close
+      writer_file_system.delete(RollbackJournal.path_for(@path))
+    end
+
+    # pager_playback of a transaction a spill wrote into: the file is cut
+    # to its size before the transaction (pager_truncate), the original of
+    # every page written goes back, and the file is synced unless
+    # synchronous is OFF.
+    private def restore_spilled_pages(file : DatabaseFile) : Nil
+      size = @original_page_count.to_i64 * @page_size
+      file.truncate(size) if file.size > size
+      list_of_images = @commit_images
+      list_of_images.clear
+      @spilled.each_key do |page_number|
+        if image = @journal_images[page_number]?
+          list_of_images << {page_number, image}
+        end
+      end
+      list_of_images.sort! { |left, right| left[0] <=> right[0] }
+      list_of_images.each do |page_number, image|
+        file.write_at((page_number.to_i64 - 1) * @page_size, image)
+      end
+      list_of_images.clear
+      file.sync(sync_mode) unless @synchronous.off?
+    end
+
     # --- Internals ---------------------------------------------------------
 
     private def writer_file : DatabaseFile
@@ -1052,6 +1204,7 @@ module Grant::SQLiteEngine
       @page_size = @new_page_size
       @usable_size = @new_page_size
       @page_count = 1_u32
+      start_journal if @wal_log.nil? && @journal_writer.journal.nil?
       page = Bytes.new(@page_size)
       @dirty[1_u32] = page
       if level = @list_of_savepoint_levels.last?
