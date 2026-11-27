@@ -238,8 +238,12 @@ jobs:
       - name: Install shards
         run: shards install --frozen --skip-postinstall --skip-executables
       - name: Check that the default path links no GMP
-        # Builds the probe apps in scripts/linkage; the BigDecimal control
-        # probe must link GMP, so the check is known to be able to fail.
+        # Builds the probe apps in scripts/linkage and prints the mode it
+        # detects from the compiler. Stock Crystal's `big` links GMP, so here
+        # the BigDecimal probe is the control that must link GMP; on a stdlib
+        # with the pure Crystal::BigNum engine the BigDecimal probe must link
+        # none and its -Duse_gmp build is the control. Either way the check is
+        # known to be able to fail.
         if: matrix.shard == 1
         run: ruby scripts/check_gmp_linkage.rb
         env:
