@@ -142,10 +142,24 @@ module Grant::SQLiteEngine::Query
         @session.last_insert_rowid = rowid
       end
       count_change
+      capture_returning(rowid, row)
       unless @silent
         fire_table_triggers(table, SQL::TriggerEvent::Insert, false, nil, nil, rowid, row, override)
       end
       {InsertResult::Inserted, rowid, row}
+    end
+
+    # The RETURNING rows of the statement this run writes; nil without
+    # RETURNING.
+    property returning : ReturningRows? = nil
+
+    # codeReturningTrigger: a row the statement itself writes (not a
+    # trigger step's, a foreign key action's or a REPLACE's) is returned as
+    # it is written, before its AFTER triggers fire.
+    private def capture_returning(rowid : Int64?, row : Array(Value)) : Nil
+      returning = @returning
+      return unless returning && @nested == 0 && @trigger_depth == 0
+      returning.capture(rowid, row)
     end
 
     # A row the statement changed counts in changes(); a row a trigger step
@@ -640,7 +654,7 @@ module Grant::SQLiteEngine::Query
       existing_pseudo.rowid = target[0]
       excluded_pseudo.row = proposed
       excluded_pseudo.rowid = target[0]
-      values = program.evaluate(@list_of_parameters)
+      values = program.evaluate_in(clause.run_frame(program, @list_of_parameters))
       return {InsertResult::Ignored, target[0], target[1], nil} unless values
       new_row = target[1].dup
       explicit_rowid = nil.as(Value)
@@ -698,11 +712,26 @@ module Grant::SQLiteEngine::Query
       end
       result = check_constraints(table, rowid, new_row, {old_rowid, old_row}, override, nil)
       return if result[0].ignored?
+      replaced = result[3]
+      # The row as stored now, which the old cell and index entries come from.
+      stored_row = old_row
+      if replaced
+        # sqlite3GenerateConstraintChecks deletes the row a REPLACE conflicts
+        # with before this row is written. Its DELETE triggers and foreign
+        # key actions can change or delete this row: C finds it again and
+        # skips it when it is gone. The foreign key checks and actions read
+        # the old values as they were (regOld).
+        delete_row(table, replaced[0], replaced[1], replace: true, override: ConflictAction::Replace)
+        current = refreshed(table, old_rowid, old_row)
+        return unless current
+        fill_virtual_columns(table, current, old_rowid)
+        stored_row = current
+      end
       if foreign_keys?
         child_removed(table, old_row, new_row, list_of_changed)
         parent_removed(table, old_rowid, old_row, new_row, list_of_changed)
       end
-      if rowid && rowid == old_rowid && result[3].nil?
+      if rowid && rowid == old_rowid && replaced.nil?
         # The row keeps its rowid: its cell is overwritten in place, and only
         # the index entries whose keys changed move (C leaves an index whose
         # columns the UPDATE does not change alone).
@@ -710,12 +739,9 @@ module Grant::SQLiteEngine::Query
         table.database.remove_index_entries(table.layout, removed)
         table.database.write_row(table.layout, rowid, new_row, added)
       else
-        old_entries = index_entries(table, old_row, old_rowid)
+        old_entries = index_entries(table, stored_row, old_rowid)
         new_entries = index_entries(table, new_row, rowid)
-        table.database.remove_row(table.layout, old_rowid, old_row, old_entries)
-        if replaced = result[3]
-          delete_row(table, replaced[0], replaced[1], replace: true, override: ConflictAction::Replace)
-        end
+        table.database.remove_row(table.layout, old_rowid, stored_row, old_entries)
         table.database.write_row(table.layout, rowid, new_row, new_entries)
       end
       if foreign_keys?
@@ -724,6 +750,7 @@ module Grant::SQLiteEngine::Query
         parent_actions(table, old_row, new_row, list_of_changed)
       end
       count_change
+      capture_returning(rowid, new_row)
       if names
         fire_table_triggers(table, SQL::TriggerEvent::Update, false, old_rowid, original_old_row, rowid, new_row, override, names)
       end
@@ -785,7 +812,10 @@ module Grant::SQLiteEngine::Query
         @session.give_back_index_entry_list(entry_list)
       end
       parent_actions(table, row, nil) if foreign_keys?
-      count_change unless replace
+      unless replace
+        count_change
+        capture_returning(rowid, original_row)
+      end
       fire_table_triggers(table, SQL::TriggerEvent::Delete, false, rowid, original_row, nil, nil, override) if fires
     end
 
@@ -796,6 +826,16 @@ module Grant::SQLiteEngine::Query
         @session.deferred_violations += amount
       else
         @immediate_violations += amount
+      end
+    end
+
+    # OP_FkIfZero: fkLookupParent and fkScanChildren skip a decrement while
+    # the counter it would lower is zero.
+    private def no_violations_counted?(rule : ForeignKeyRule) : Bool
+      if rule.deferred? || @session.defer_foreign_keys?
+        @session.deferred_violations == 0
+      else
+        @immediate_violations == 0
       end
     end
 
@@ -832,6 +872,7 @@ module Grant::SQLiteEngine::Query
         next unless lookup
         values = rule.list_of_child_positions.map { |position| row[position].as(Value) }
         next if values.any?(Nil)
+        next if no_violations_counted?(rule)
         count_violation(rule, -1) unless lookup.parent_exists?(values)
       end
     end
@@ -842,10 +883,16 @@ module Grant::SQLiteEngine::Query
                              list_of_changed : Array(Int32)? = nil) : Nil
       referencing(table).each do |child_table, rule, parent_positions|
         next unless touches?(parent_positions, list_of_changed, table)
-        next if old_row.nil? && !rule.deferred? && !@session.defer_foreign_keys? && @immediate_violations == 0
+        next if no_violations_counted?(rule)
         key = parent_positions.map { |position| (position == table.rowid_alias ? rowid : row[position]).as(Value) }
         next if key.any?(Nil)
-        count = matching_children(child_table, rule, table, parent_positions, key).size
+        children = matching_children(child_table, rule, table, parent_positions, key)
+        count = children.size
+        if count > 0 && same_table?(child_table.name, table.name) && child_table.database.same?(table.database)
+          # C counts the children before it writes the row, so the row
+          # itself is not among them.
+          count = children.count { |child_rowid, child_row| !same_parent_row?(table, rowid, key, parent_positions, child_rowid, child_row) }
+        end
         count_violation(rule, -count.to_i64) if count > 0
       end
     end
@@ -858,9 +905,24 @@ module Grant::SQLiteEngine::Query
         next unless touches?(parent_positions, list_of_changed, table)
         key = parent_positions.map { |position| (position == table.rowid_alias ? rowid : row[position]).as(Value) }
         next if key.any?(Nil)
-        count = matching_children(child_table, rule, table, parent_positions, key).size
+        children = matching_children(child_table, rule, table, parent_positions, key)
+        count = children.size
+        if count > 0 && same_table?(child_table.name, table.name) && child_table.database.same?(table.database)
+          # fkScanChildren leaves out the row being changed itself when the
+          # child table is the parent table.
+          count = children.count { |child_rowid, child_row| !same_parent_row?(table, rowid, key, parent_positions, child_rowid, child_row) }
+        end
         count_violation(rule, count.to_i64) if count > 0
       end
+    end
+
+    # Whether the child row *child_row* at *child_rowid* is the parent row
+    # at *rowid* whose key is *key*: by rowid, or for a WITHOUT ROWID table
+    # by the parent key columns (`NOT($current_a==a AND ...)`).
+    private def same_parent_row?(table : WriteTable, rowid : Int64?, key : Array(Value), parent_positions : Array(Int32),
+                                 child_rowid : Int64?, child_row : Array(Value)) : Bool
+      return child_rowid == rowid if rowid
+      parent_positions.each_with_index.all? { |position, offset| WriteRun.same_value?(child_row[position], key[offset]) }
     end
 
     # The ON DELETE / ON UPDATE actions (sqlite3FkActions), after the

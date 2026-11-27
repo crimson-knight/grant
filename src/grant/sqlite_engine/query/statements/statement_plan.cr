@@ -107,6 +107,12 @@ module Grant::SQLiteEngine::Query
     end
 
     # sqlite3UpsertOfIndex for the rowid.
+    # Starts a run of the INSERT: each clause's expressions are evaluated in
+    # a frame of the run's own (an uncorrelated subquery once per run).
+    def start_run : Nil
+      @list_of_clauses.each(&.start_run)
+    end
+
     def clause_for_rowid : UpsertClause?
       @list_of_clauses.find(&.targets_rowid?) || @list_of_clauses.find(&.untargeted?)
     end
@@ -199,11 +205,22 @@ module Grant::SQLiteEngine::Query
       @assignments.try(&.list_of_positions) || [] of Int32
     end
 
+    # The frame of the current run of the INSERT, made on first use.
+    @run_frame : Frame? = nil
+
+    def start_run : Nil
+      @run_frame = nil
+    end
+
+    def run_frame(program : RowProgram, list_of_parameters : Array(Value)) : Frame
+      @run_frame ||= program.frame_for_run(list_of_parameters)
+    end
+
     def program(run : WriteRun, table : WriteTable) : RowProgram
       @program ||= begin
         assignments = @assignments || raise Error.new("DO NOTHING has no assignments")
-        existing = PseudoTable.new(@target_name, table.table_info)
-        excluded = PseudoTable.new("excluded", table.table_info)
+        existing = PseudoTable.new(@target_name, table.table_info, outermost_only: true)
+        excluded = PseudoTable.new("excluded", table.table_info, outermost_only: true)
         excluded.qualified_only = true
         run.session.with_trigger_scope(@trigger_scope) do
           RowProgram.new(run.session, RowProgram.columns(assignments.list_of_expressions), [existing, excluded], @where)
