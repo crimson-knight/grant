@@ -257,11 +257,11 @@ module Grant::SQLiteEngine::Query
           hex = hex &* 16 &+ digit
           count += 1
         end
-        return nil if (hex & 0x80000000_u32) != 0 || hex_digit(bytes[position + count]?)
+        return if (hex & 0x80000000_u32) != 0 || hex_digit(bytes[position + count]?)
         return hex.to_i32
       end
       byte = bytes[position]?
-      return nil unless byte && byte.chr.ascii_number?
+      return unless byte && byte.chr.ascii_number?
       while bytes[position]? == '0'.ord
         position += 1
       end
@@ -271,7 +271,7 @@ module Grant::SQLiteEngine::Query
         number = number * 10 + (byte - '0'.ord)
         count += 1
       end
-      return nil if count > 10 || number - (negative ? 1 : 0) > Int32::MAX
+      return if count > 10 || number - (negative ? 1 : 0) > Int32::MAX
       (negative ? -number : number).to_i32
     end
 
