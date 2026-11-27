@@ -1,0 +1,75 @@
+{
+  "source": "https://github.com/amberframework/mica",
+  "commit": "843555bdae8da7ddf018b7bf53c223fdc4a51609",
+  "component": "decimal",
+  "namespace": "Grant::Mica",
+  "made_by": "scripts/vendor_into.rb",
+  "note": "A pinned copy. Change Mica in its own repository, then run the script again; edits made here fail the check.",
+  "list_of_files": [
+    {
+      "path": "MICA_LICENSE",
+      "sha256": "8ed2027bc114d15ffb780e43443aaf73e2791517411ee570aac3262627ba3f26",
+      "source_sha256": "8ed2027bc114d15ffb780e43443aaf73e2791517411ee570aac3262627ba3f26"
+    },
+    {
+      "path": "mica/decimal.cr",
+      "sha256": "2e3622f9379f4dff23d07871701a07e42af9b566c8e2a4568483ced53a85abc1",
+      "source_sha256": "569da52c834b7564ddda2cca8a04ebc994ecddc5630773459e53021886d0df4f"
+    },
+    {
+      "path": "mica/decimal/arithmetic.cr",
+      "sha256": "d3b22baa4b8c5ceecda2eaae568e9270d379323488207a310aa363405926770f",
+      "source_sha256": "6c68a90c1f21b2f510f10946d5cbc0489963f600ecc7f1c4fbd785a94f0c06b0"
+    },
+    {
+      "path": "mica/decimal/currency.cr",
+      "sha256": "f7d1c0d48ec34ea7ad91c684e2d5d855f6512527e11cadc5e7f5714ef080e357",
+      "source_sha256": "704b14074e2be5b565ccdafad34628750771f6f8583745093faed76e70a14a56"
+    },
+    {
+      "path": "mica/decimal/currency_table.cr",
+      "sha256": "29056ee68e1ed53566dd66fc8a80ab7e8e8dbd95b23f542121e6becf8f1d6f52",
+      "source_sha256": "edc521a90691be1f04894ee2e0bc4ace963ececfe62a5217a03614398c5564c3"
+    },
+    {
+      "path": "mica/decimal/decimal128.cr",
+      "sha256": "3d496a9b0121dfc028d58b67aff494b0f6c01f7d915467ff060a3f3670bb161d",
+      "source_sha256": "54fddc41305039118412df75071397a35a3e75576d443d269a3dca2116e3f662"
+    },
+    {
+      "path": "mica/decimal/errors.cr",
+      "sha256": "9600d765887e0a33fff6db72914727eeb3e0174682bfdb8ea0912573f2d76add",
+      "source_sha256": "7856a27095d6f64abcd0c291da26fa79a7ac4684f60d7bb90d0a72f1c4d9c0d0"
+    },
+    {
+      "path": "mica/decimal/json.cr",
+      "sha256": "bc4211d65bfb3d1959adf230ca9ee9face13db779576d8e0200a62d8a65e2451",
+      "source_sha256": "f6428b9162473ae716f46cf9eb0b8871556923da26375d11e556cc57c478d231"
+    },
+    {
+      "path": "mica/decimal/money.cr",
+      "sha256": "588525b6d1f65df782e1e8561c23faf14204a415ba7ee9a5d2df4298ba28c8fc",
+      "source_sha256": "b9446e35d0be9d53b89148fe7c39755658058ee47d61aacf79d3fcde4918ad8d"
+    },
+    {
+      "path": "mica/decimal/rounding_mode.cr",
+      "sha256": "29458e57f3e5325075f84790573dbb8ed36beae796521fa042667b97cc4c8566",
+      "source_sha256": "9e517d4a0d1bec7b20e8433fea2d8ccee54ca31d0c8cdaac92cbd183d5dafb25"
+    },
+    {
+      "path": "mica/decimal/text.cr",
+      "sha256": "4e3190c4642ef91cafdcbc1e7b05b011659c17d4f0a05bb838500e4a9840b0d1",
+      "source_sha256": "f3eb44e9c904ab31e6570d8b8496616d84d2dd48633984345b20b7cd2142b9d8"
+    },
+    {
+      "path": "mica/decimal/wide.cr",
+      "sha256": "d76772f8b23de944f95136aac9bd99e93b042729b79027164747a74af09a9ebe",
+      "source_sha256": "3abec69fc6848bcca096ea52b7af99045db5b0b8b64a8368c4434d7bd5d2a12a"
+    },
+    {
+      "path": "mica/decimal/yaml.cr",
+      "sha256": "f0135ecc2798caeff6c34dc6c3c7692267231f5543290386de64c470d5ced1a7",
+      "source_sha256": "d87c55ff1484b06623a9dc9392c72285cbb4543bc1f4971b024d3e6d54c86db8"
+    }
+  ]
+}

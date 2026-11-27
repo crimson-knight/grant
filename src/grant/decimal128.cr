@@ -70,3 +70,58 @@ module Grant
     end
   end
 end
+
+# Mica's decimal component gives `Decimal128` its JSON and YAML forms but
+# leaves `Money` without one, since the shape of a money value on the wire
+# is the caller's choice. Grant writes a Money column as an object of the
+# plain amount text and the currency code, `{"amount": "12.30",
+# "currency": "USD"}`, and reads the same object back.
+struct Grant::Mica::Money
+  # Reads `{"amount": …, "currency": "USD"}`. The amount may be a JSON
+  # string or number (see `Decimal128.new(JSON::PullParser)`).
+  def self.new(pull : ::JSON::PullParser) : Money
+    location = pull.location
+    amount = nil
+    currency_code = nil
+    pull.read_object do |key|
+      case key
+      when "amount"   then amount = Decimal128.new(pull)
+      when "currency" then currency_code = pull.read_string
+      else                 pull.skip
+      end
+    end
+    unless amount && currency_code
+      raise ::JSON::ParseException.new("Expected a money object with \"amount\" and \"currency\"", *location)
+    end
+    currency = Currency.find?(currency_code) || raise ::JSON::ParseException.new("Unknown currency: #{currency_code.inspect}", *location)
+    new(amount, currency)
+  end
+
+  # Writes `{"amount": "12.30", "currency": "USD"}`.
+  def to_json(json : ::JSON::Builder) : Nil
+    json.object do
+      json.field "amount", amount.to_s
+      json.field "currency", currency.code
+    end
+  end
+
+  # Reads a mapping with `amount` and `currency` keys.
+  def self.new(context : ::YAML::ParseContext, node : ::YAML::Nodes::Node) : Money
+    mapping = Hash(String, String).new(context, node)
+    amount_text = mapping["amount"]? || node.raise "Expected a money mapping with an amount"
+    currency_code = mapping["currency"]? || node.raise "Expected a money mapping with a currency"
+    amount = Decimal128.parse?(amount_text) || node.raise "Expected a decimal amount, not #{amount_text.inspect}"
+    currency = Currency.find?(currency_code) || node.raise "Unknown currency: #{currency_code.inspect}"
+    new(amount, currency)
+  end
+
+  # Writes a mapping with `amount` and `currency` keys.
+  def to_yaml(yaml : ::YAML::Nodes::Builder) : Nil
+    yaml.mapping do
+      yaml.scalar "amount"
+      yaml.scalar amount.to_s
+      yaml.scalar "currency"
+      yaml.scalar currency.code
+    end
+  end
+end

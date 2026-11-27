@@ -1,35 +1,40 @@
-# TEMPORARY development stub (contract only).
 require "json"
 require "../decimal"
 
-struct Grant::Mica::Decimal128
-  def self.new(pull : JSON::PullParser)
-    parse(pull.read_string)
-  end
-
-  def to_json(json : JSON::Builder) : Nil
-    json.string(to_s)
-  end
-end
-
-struct Grant::Mica::Money
-  def self.new(pull : JSON::PullParser)
-    amount = nil
-    code = nil
-    pull.read_object do |key|
-      case key
-      when "amount"   then amount = pull.read_string
-      when "currency" then code = pull.read_string
-      else                 pull.skip
+# JSON for `Grant::Mica::Decimal128` (opt-in: `require "mica/decimal/json"`).
+#
+# A value is written as a JSON string in its plain form (`"12.30"`), so no
+# reader turns it into a binary float. Reading accepts a JSON string, or an
+# integer or float token parsed from its text, so `12.30` keeps its digits.
+#
+# ```
+# Grant::Mica::Decimal128.parse("12.30").to_json    # => "\"12.30\""
+# Grant::Mica::Decimal128.from_json(%(12.30)).scale # => 2
+# ```
+module Grant::Mica
+  struct Decimal128
+    # Reads a JSON string, integer or float. Raises `JSON::ParseException`
+    # for any other token and `Decimal128::ParseError` or `OverflowError`
+    # for text that is not a decimal of up to 38 digits.
+    def self.new(pull : ::JSON::PullParser) : Decimal128
+      case pull.kind
+      when .string?
+        parse(pull.read_string)
+      when .int?, .float?
+        parse(pull.read_raw)
+      else
+        pull.raise "Expected a decimal string or number, not #{pull.kind}"
       end
     end
-    new(amount.not_nil!, code.not_nil!)
-  end
 
-  def to_json(json : JSON::Builder) : Nil
-    json.object do
-      json.field "amount", amount.to_s
-      json.field "currency", currency.code
+    # Writes the plain form as a JSON string.
+    def to_json(json : ::JSON::Builder) : Nil
+      json.string(to_s)
+    end
+
+    # Writes the plain form as an object key.
+    def to_json_object_key : String
+      to_s
     end
   end
 end

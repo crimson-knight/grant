@@ -287,3 +287,23 @@ describe "Grant::Decimal128 and Grant::Money columns on #{CURRENT_ADAPTER}" do
     copy.total.should eq Grant::Money.new(decimal("5.5"), "JPY")
   end
 end
+
+describe "Grant::Money JSON and YAML" do
+  it "round trips an amount and currency object through JSON" do
+    money = Grant::Money.new(Grant::Decimal128.parse("12.30"), "USD")
+    money.to_json.should eq %({"amount":"12.30","currency":"USD"})
+    Grant::Money.from_json(money.to_json).should eq money
+    Grant::Money.from_json(%({"currency":"JPY","amount":500})).should eq Grant::Money.new(Grant::Decimal128.new(500), "JPY")
+  end
+
+  it "refuses a JSON money object without a currency or with an unknown one" do
+    expect_raises(JSON::ParseException, /"amount" and "currency"/) { Grant::Money.from_json(%({"amount":"1.00"})) }
+    expect_raises(JSON::ParseException, /Unknown currency/) { Grant::Money.from_json(%({"amount":"1.00","currency":"ZZZ"})) }
+  end
+
+  it "round trips an amount and currency mapping through YAML" do
+    money = Grant::Money.new(Grant::Decimal128.parse("0.125"), "BHD")
+    Grant::Money.from_yaml(money.to_yaml).should eq money
+    expect_raises(YAML::ParseException, /Unknown currency/) { Grant::Money.from_yaml("amount: '1.00'\ncurrency: ZZZ\n") }
+  end
+end
