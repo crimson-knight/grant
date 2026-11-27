@@ -128,6 +128,31 @@ describe "Grant::SQLiteEngine writes" do
     sqlite3(path, "SELECT count(*), sum(a) FROM t;").should eq("666|#{(1..666).sum { |n| n * 3 - 1 }}\n")
   end
 
+  it "deletes rows by rowid in a table without indexes as C does: the same rows, pages and freelist, overflow pages and emptied leaves included" do
+    path = temporary_database("deletes_without_indexes")
+    database = Engine::Database.open(path, read_write: true, page_size: 512)
+    database.create_table("CREATE TABLE t(id INTEGER PRIMARY KEY, label TEXT, body BLOB)")
+    database.transaction do |writer|
+      (1_i64..1_500_i64).each do |number|
+        writer.insert("t", nil, values(nil, "label #{number}", Bytes.new(number % 11 == 0 ? 1_800 : (number % 90).to_i32, 3_u8)))
+      end
+    end
+    database.close
+    c_path = "#{path}.c.db"
+    File.copy(path, c_path)
+    list_of_deletes = (1_i64..1_600_i64).to_a.shuffle(Random.new(11)).first(1_100)
+    database = Engine::Database.open(path, read_write: true)
+    database.transaction do |writer|
+      list_of_deletes.each { |rowid| writer.delete("t", rowid).should eq(rowid <= 1_500) }
+    end
+    database.delete("t", 1_501_i64).should be_false
+    database.close
+    sqlite3(c_path, "BEGIN; " + list_of_deletes.map { |rowid| "DELETE FROM t WHERE rowid = #{rowid};" }.join(" ") + " COMMIT;")
+    check = "PRAGMA integrity_check; PRAGMA page_count; PRAGMA freelist_count; SELECT count(*), sum(id), sum(length(body)) FROM t;"
+    sqlite3(path, check).should eq(sqlite3(c_path, check))
+    sqlite3(path, "PRAGMA integrity_check;").should eq("ok\n")
+  end
+
   it "maintains index entries on update and keeps nothing of a failed statement" do
     path = temporary_database("updates")
     database = Engine::Database.open(path, read_write: true)
