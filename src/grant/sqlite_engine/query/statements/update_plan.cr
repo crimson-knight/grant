@@ -153,6 +153,8 @@ module Grant::SQLiteEngine::Query
     # it again, when a trigger can change rows between the scan and the
     # write (nil: the scan computes the values).
     @current_values : RowProgram? = nil
+    # Whether C codes a REPLACE delete for this UPDATE.
+    @codes_replace = false
 
     # *override* is the conflict policy of the statement whose trigger runs
     # this one: when it gave one, it replaces this statement's own.
@@ -189,6 +191,7 @@ module Grant::SQLiteEngine::Query
       @table.list_of_generated_in_order(@session)
       @trigger_programs = TriggerProgramCache.for_plan(@session, @table.list_of_triggers(@session), @table.trigger_target,
         SQL::TriggerEvent::Update, @list_of_changed_names, @override)
+      @codes_replace = StatementJournal.update_codes_replace?(@session, @table, statement, @override, @assignments.list_of_positions)
     end
 
     def run(list_of_parameters : Array(Value)) : Array(Array(Value))
@@ -260,6 +263,7 @@ module Grant::SQLiteEngine::Query
       # One frame for the run: an uncorrelated subquery of the SET list is
       # computed once, as C's OP_Once does.
       frame = program.try(&.frame_for_run(list_of_parameters))
+      unchecked = @codes_replace ? run.unchecked_after_replace(@table) : nil
       targets.each do |rowid, snapshot, values|
         old = rowid ? @table.database.row_at(@table.layout, rowid, scratch.old_row) : @table.database.row_with_key_of(@table.layout, snapshot)
         next unless old
@@ -276,7 +280,7 @@ module Grant::SQLiteEngine::Query
           end
         end
         begin
-          run.update_row(@table, rowid, old, new_row, explicit_rowid, @override, positions, @list_of_changed_names)
+          run.update_row(@table, rowid, old, new_row, explicit_rowid, @override, positions, @list_of_changed_names, unchecked)
         rescue TriggerIgnore
         end
       end
