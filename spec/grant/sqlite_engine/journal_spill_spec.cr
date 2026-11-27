@@ -5,8 +5,13 @@ require "../../support/sqlite_engine/counting_file_system"
 
 # The rollback journal written while the transaction runs, with C's cache
 # spills (pagerStress): once the changed pages reach C's cache limit, the
-# journal's segment is synced, the next segment starts, and the changed
-# pages go to the database file before COMMIT. Each case runs the same
+# journal's segment is synced under the EXCLUSIVE lock, the next segment
+# starts, and C writes the changed pages to the database file before
+# COMMIT. Grant's engine keeps them in memory and writes each changed page
+# once at COMMIT instead (S5 piece E: database pages deferred to COMMIT):
+# no other connection reads the file while the EXCLUSIVE lock is held, and
+# a crash leaves a hot journal that gives the same database, so the cases
+# compare the journal, the lock and the rows. Each case runs the same
 # statements on Grant's engine and on C SQLite in this process and
 # compares what each leaves: the journal's segments, the hot journal a
 # crash would leave (which the other engine must roll back), and the rows
@@ -110,12 +115,21 @@ module JournalSpill
   # Runs *statements* in one transaction on *engine* and returns the
   # record count of each synced journal segment just before COMMIT.
   # *pragmas* set the page cache first (by default cache_size and
-  # upstream's cache_spill of 1).
+  # upstream's cache_spill of 1). *list_of_earlier_statements* run first in
+  # a transaction of their own on the same connection, so the measured one
+  # starts with the page cache that transaction left.
   def self.segment_layout(engine : Symbol, setup : String, statements : Array(String), cache_size : Int32,
-                          pragmas : String = "PRAGMA cache_size=#{cache_size}; PRAGMA cache_spill=1;") : Array(UInt32)
+                          pragmas : String = "PRAGMA cache_size=#{cache_size}; PRAGMA cache_spill=1;",
+                          list_of_earlier_statements : Array(String) = [] of String) : Array(UInt32)
     path = fresh_database("layout_#{engine}.db", setup)
     database = open(engine, path)
-    run(database, "#{pragmas} BEGIN")
+    run(database, pragmas) unless pragmas.empty?
+    unless list_of_earlier_statements.empty?
+      run(database, "BEGIN")
+      list_of_earlier_statements.each { |sql| run(database, sql) }
+      run(database, "COMMIT")
+    end
+    run(database, "BEGIN")
     statements.each { |sql| run(database, sql) }
     layout = SQLiteEngineHotJournal.list_of_segments(read("#{path}-journal")).select(&.synced?).map(&.record_count)
     run(database, "COMMIT")
@@ -127,6 +141,9 @@ module JournalSpill
   # *spills* journal segments: the database and journal bytes as they are
   # on disk at that moment (the process is still running; nothing more is
   # written before the copy), and the database before the transaction.
+  # C has spilled once the database file has changed; Grant's engine, which
+  # leaves the file as it is until COMMIT, once it holds the EXCLUSIVE lock
+  # a spill takes.
   def self.crash_after_spills(engine : Symbol, spills : Int32, synchronous : String) : Differential::Crash
     path = fresh_database("crash_#{engine}.db", INDEXED_ROWS % 2000)
     before = read(path)
@@ -138,8 +155,9 @@ module JournalSpill
       journal = read(journal_path)
       synced = SQLiteEngineHotJournal.list_of_segments(journal).count(&.synced?)
       written = read(path)
+      spilled = engine == :grant ? JournalSpill.exclusive?(database) : written != before
       # synchronous=OFF keeps one segment, whose count the size tells.
-      if (synchronous == "OFF" || synced >= spills) && written != before
+      if (synchronous == "OFF" || synced >= spills) && spilled
         run(database, "ROLLBACK")
         database.close
         return Differential::Crash.new(written, journal, before)
@@ -183,6 +201,14 @@ module JournalSpill
     "entry #{index} of #{engine.size} (C: #{c_list.size}): engine #{engine[index, 3].inspect[0, 200]}, C #{c_list[index, 3].inspect[0, 200]}"
   end
 
+  # Whether Grant's engine behind *database* holds the database file's
+  # EXCLUSIVE lock.
+  def self.exclusive?(database : Engine::Database) : Bool
+    grant_database = database.as?(Engine::GrantEngine::Database)
+    raise "not Grant's engine: #{database.class}" unless grant_database
+    grant_database.engine_database.pager.lock_level.exclusive?
+  end
+
   def self.both_roll_back(crash : Differential::Crash) : Nil
     c_rollback = Differential.roll_back(:libsqlite3, crash.database, crash.journal, scratch)
     engine_rollback = Differential.roll_back(:grant, crash.database, crash.journal, scratch)
@@ -220,6 +246,21 @@ describe "Grant::SQLiteEngine rollback journal with cache spills" do
       c_layout = JournalSpill.segment_layout(:libsqlite3, setup, statements, cache_size)
       JournalSpill.first_difference(engine, c_layout).should be_nil
     end
+  end
+
+  # A spill's pages are written at COMMIT and stay out of the clean cache
+  # unless a read cached them, as when C's spill wrote them; a cache that
+  # kept them all would leave the next transaction few fetches and fewer
+  # spills than C's.
+  it "spills where C does in a transaction after one that spilled (cache_size=10)" do
+    pending!("needs C SQLite 3.51.0 with upstream's page cache") unless JournalSpill.upstream_page_cache?
+    setup = JournalSpill::PAGE_ROWS % 1200
+    statements = JournalSpill.page_statements(1200)
+    list_of_earlier_statements = statements[0, 600]
+    engine = JournalSpill.segment_layout(:grant, setup, statements[600, 600], 10, list_of_earlier_statements: list_of_earlier_statements)
+    c_layout = JournalSpill.segment_layout(:libsqlite3, setup, statements[600, 600], 10, list_of_earlier_statements: list_of_earlier_statements)
+    engine.size.should be > 3
+    JournalSpill.first_difference(engine, c_layout).should be_nil
   end
 
   it "spills where the linked C library does with this platform's page cache defaults" do
@@ -270,6 +311,8 @@ describe "Grant::SQLiteEngine rollback journal with cache spills" do
       crash = JournalSpill.crash_after_spills(:grant, 3, synchronous)
       synced = crash.list_of_segments.count(&.synced?)
       synchronous == "OFF" ? crash.list_of_segments.size.should(eq(1)) : synced.should(be >= 3)
+      # The spills left the database file as it was; COMMIT writes it.
+      crash.database.should eq(crash.before_transaction)
       JournalSpill.both_roll_back(crash)
     end
 
@@ -279,13 +322,18 @@ describe "Grant::SQLiteEngine rollback journal with cache spills" do
     end
   end
 
+  # C writes spilled pages into the file and plays the journal back; the
+  # engine has written none (S5 piece E: database pages deferred to
+  # COMMIT), so its spills show in the lock and the journal's segments.
   it "rolls back a transaction that spilled, leaving the database file as it was" do
     path = JournalSpill.fresh_database("rollback.db", JournalSpill::INDEXED_ROWS % 2000)
     before = JournalSpill.read(path)
     database = JournalSpill.open(:grant, path)
     JournalSpill.run(database, "PRAGMA cache_size=10; PRAGMA cache_spill=1; BEGIN")
     JournalSpill.indexed_statements(300, 2000).each { |sql| JournalSpill.run(database, sql) }
-    JournalSpill.read(path).should_not eq(before)
+    JournalSpill.exclusive?(database).should be_true
+    SQLiteEngineHotJournal.list_of_segments(JournalSpill.read("#{path}-journal")).count(&.synced?).should be > 1
+    JournalSpill.read(path).should eq(before)
     JournalSpill.run(database, "ROLLBACK")
     JournalSpill.read(path).should eq(before)
     File.exists?("#{path}-journal").should be_false

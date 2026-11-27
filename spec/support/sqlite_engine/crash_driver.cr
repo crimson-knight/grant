@@ -54,13 +54,30 @@ module SQLiteEngineCrashDriver
     steps
   end
 
-  # A unit spilled when it wrote the database file before it last wrote
-  # the journal: a cache spill's pages go out between journal segments.
+  # A unit spilled when, after a sync of its journal, it wrote the journal
+  # past everything written before that sync: a cache spill syncs the
+  # journal's segment and the transaction's next records start a new one.
+  # (A commit's sync only rewrites the segment's header behind it.) Spills
+  # no longer write database pages before COMMIT (S5 piece E: database
+  # pages deferred to COMMIT), so the journal is what shows a spill.
   def self.spilled?(operations : Array(SQLiteEngineCrashFileSystem::Operation)) : Bool
     journal = Grant::SQLiteEngine::RollbackJournal.path_for(DATABASE)
-    first_database_write = operations.index { |operation| operation.kind.write? && operation.path == DATABASE }
-    last_journal_write = operations.rindex { |operation| operation.kind.write? && operation.path == journal }
-    !first_database_write.nil? && !last_journal_write.nil? && first_database_write < last_journal_write
+    written_end = 0_i64
+    synced_end : Int64? = nil
+    operations.each do |operation|
+      next unless operation.path == journal
+      if operation.kind.write?
+        return true if (end_before_sync = synced_end) && operation.offset >= end_before_sync
+        written_end = Math.max(written_end, operation.offset + operation.bytes.size)
+      elsif operation.kind.sync?
+        synced_end = written_end
+      else
+        # A truncate or delete ends the journal; the next one starts over.
+        written_end = 0_i64
+        synced_end = nil
+      end
+    end
+    false
   end
 
   # *cache_pages* is the cache_size the engine runs with (nil: C's

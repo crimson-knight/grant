@@ -142,8 +142,9 @@ module Grant::SQLiteEngine
     # one statement together last no longer than busy_timeout.
     getter busy_handler = BusyWait::Handler.new(Time::Span.zero)
     # Cache spill state of a rollback-journal transaction (pagerStress):
-    # the pages written to the database file before commit, keeping the
-    # bytes written (their journal records are synced); the changed pages
+    # the pages a spill took from the changed pages, which C's cache then
+    # counts clean, each holding the bytes COMMIT writes (their journal
+    # records are synced; see `#spill_pages`); the changed pages
     # journaled since the journal was last synced, which wait for the next
     # sync (PGHDR_NEED_SYNC); whether the journal has been synced in this
     # transaction (PAGER_WRITER_DBMOD: before then every changed page waits
@@ -155,6 +156,9 @@ module Grant::SQLiteEngine
     @journal_synced = false
     @spill_due = false
     @held_pages = 0
+    # Set once COMMIT starts writing database pages: a rollback after that
+    # (a failed write or sync) plays the journal back.
+    @database_file_changed = false
 
     # A database with no pages (a zero-length file and no WAL) is an empty
     # database, as in SQLite.
@@ -384,6 +388,13 @@ module Grant::SQLiteEngine
       @in_write_transaction
     end
 
+    # The lock this connection holds on the database file (`LockLevel::None`
+    # for a read-only pager).
+    def lock_level : LockLevel
+      file = @file
+      file ? file.lock_level : LockLevel::None
+    end
+
     # The text encoding of the database, or of the database the first
     # transaction will create.
     def text_encoding : TextEncoding
@@ -403,10 +414,9 @@ module Grant::SQLiteEngine
       check_page_number(page_number)
       spill_when_full
       @held_pages &+= 1 unless page_number == 1
-      # A page a spill wrote keeps the bytes written, which are the file's
-      # until the page is changed again (that puts it back among the
-      # changed pages), so it comes back from memory, as from C's page
-      # cache; the fetch counts as a read all the same.
+      # A page a spill took holds the bytes COMMIT will write (the file
+      # keeps the original until then), so it comes back from memory, as
+      # from C's page cache; the fetch counts as a read all the same.
       buffer = @spilled[page_number]? || read_from_file(page_number)
       @cache.clear if @cache.size >= @cache_pages
       @cache[page_number] = buffer
@@ -814,28 +824,32 @@ module Grant::SQLiteEngine
       put_u32(page_one, PAGE_COUNT_OFFSET, @page_count)
       put_u32(page_one, VERSION_VALID_FOR_OFFSET, counter)
       put_u32(page_one, VERSION_NUMBER_OFFSET, WRITER_VERSION_NUMBER)
-      # The journal's last segment is synced (syncJournal), then the pages
-      # not yet written go out in page order, in a list kept from one
-      # commit to the next (as `commit_to_log` keeps its own).
+      # The journal's last segment is synced (syncJournal), then every
+      # changed page goes out once, in page order: the changed pages and
+      # the pages spills took (a page changed again after its spill is
+      # among the changed pages, with its newest bytes), in a list kept
+      # from one commit to the next (as `commit_to_log` keeps its own). A
+      # spilled page past the end a savepoint rollback left is not written.
       start_journal unless @journal_writer.journal
       @journal_writer.sync_segment(new_segment: false)
       list_of_pages = @commit_pages
       list_of_pages.clear
       @dirty.each { |page_number, buffer| list_of_pages << {page_number, buffer} }
+      @spilled.each do |page_number, buffer|
+        list_of_pages << {page_number, buffer} unless page_number > @page_count || @dirty.has_key?(page_number)
+      end
       list_of_pages.sort! { |left, right| left[0] <=> right[0] }
+      @database_file_changed = true
       list_of_pages.each do |page_number, buffer|
         file.write_at((page_number.to_i64 - 1) * @page_size, buffer)
       end
-      # A savepoint rolled back after a spill can leave pages past the end
-      # (C's pager_truncate when the size differs).
-      unless @spilled.empty?
-        size = @page_count.to_i64 * @page_size
-        file.truncate(size) if file.size > size
-      end
       file.sync(sync_mode) unless @synchronous.off?
       end_journal
-      list_of_pages.each { |page_number, buffer| @cache[page_number] = buffer }
       list_of_pages.clear
+      # The changed pages stay in the clean cache; a page a spill took
+      # stays only where a read cached it, as when the spill wrote it, so
+      # the next transaction fetches (and spills) where C's does.
+      @dirty.each { |page_number, buffer| @cache[page_number] = buffer }
       @header = DatabaseHeader.parse(page_one)
       finish_transaction(file)
     end
@@ -844,16 +858,16 @@ module Grant::SQLiteEngine
     def rollback : Nil
       file = writer_file
       return unless @in_write_transaction
-      # Page 1 as the transaction left it, from memory or from a spill.
-      written_first_page = @dirty[1_u32]? || (@spilled.has_key?(1_u32) ? read_page(1_u32) : nil)
+      # Page 1 as the transaction left it, changed or taken by a spill.
+      written_first_page = @dirty[1_u32]? || @spilled[1_u32]?
       written_cookie = written_first_page ? get_u32(written_first_page, SCHEMA_COOKIE_OFFSET) : nil
       @rightmost_path_hint = nil
-      restore_spilled_pages(file) unless @spilled.empty?
+      # Spills write no database page, so the file holds every original
+      # unless a COMMIT failed partway through its writes.
+      play_back_journal(file) if @database_file_changed
       end_journal
       @dirty.each_key { |page_number| @cache.delete(page_number) }
       @spilled.each_key { |page_number| @cache.delete(page_number) }
-      # The file holds the originals again, so no page comes back from what
-      # a spill wrote.
       @spilled.clear
       # Page 1 below comes from the snapshot, not from the rolled-back pages.
       @dirty.clear
@@ -917,6 +931,7 @@ module Grant::SQLiteEngine
       @unsynced.clear
       @journal_synced = false
       @spill_due = false
+      @database_file_changed = false
       @list_of_savepoint_levels.clear
       @in_write_transaction = false
       if log = @wal_log
@@ -1034,7 +1049,8 @@ module Grant::SQLiteEngine
               buffer.copy_from(image.to_unsafe, image.size)
               recycle_image(image)
             else
-              # A spilled page: its cached copy holds the bytes written.
+              # A page a spill took: the image comes back as a changed
+              # page, ahead of the bytes the spill took.
               @cache.delete(page_number)
               @dirty[page_number] = image
             end
@@ -1043,9 +1059,10 @@ module Grant::SQLiteEngine
             @unsynced.delete(page_number)
             @cache.delete(page_number)
             # The page was as the transaction found it. Its journal record
-            # stays (the journal holds it already); a spill wrote changed
-            # bytes over the original, which goes back as a changed page.
-            if @spilled.has_key?(page_number) && (original = @journal_images[page_number]?)
+            # stays (the journal holds it already); a spill took changed
+            # bytes, which give way to the original, back as a changed page
+            # (as C's cache counts it).
+            if @spilled.delete(page_number) && (original = @journal_images[page_number]?)
               @dirty[page_number] = image_of(original)
             end
           end
@@ -1081,7 +1098,7 @@ module Grant::SQLiteEngine
       end
       if level = imaging_level
         # nil: the page is as the database file holds it, unless a spill
-        # wrote it, when the level keeps the bytes themselves.
+        # took it, when the level keeps the bytes themselves.
         level.images[page_number] = @spilled.has_key?(page_number) ? image_of(buffer) : nil unless level.images.has_key?(page_number)
       end
       @dirty[page_number] = buffer
@@ -1162,12 +1179,12 @@ module Grant::SQLiteEngine
 
     # Marks the start of one change of the database: a statement, or one
     # b-tree operation. No page of an earlier change is still being edited
-    # here, so the pages a spill has synced go to the database file now
-    # (C writes only pages no cursor holds), and the pages the change holds
+    # here, so the pages a spill has synced leave the changed pages now (C
+    # writes only pages no cursor holds), and the pages the change holds
     # are counted afresh.
     def start_change : Nil
       @held_pages = 0
-      write_spilled_pages if @spill_due
+      spill_pages if @spill_due
     end
 
     # --- Cache spill (rollback journal) ----------------------------------
@@ -1187,8 +1204,8 @@ module Grant::SQLiteEngine
     # refused, the spill is skipped and the pages stay in memory, as C's
     # sqlite3PcacheFetchStress ignores SQLITE_BUSY. With the lock it syncs
     # the journal's segment and starts the next one (syncJournal). The
-    # pages are written at the next `#start_change`; while they wait no
-    # new spill starts.
+    # pages leave the changed pages at the next `#start_change`
+    # (`#spill_pages`); while they wait no new spill starts.
     private def spill_when_full : Nil
       return if @dirty.empty? || @spill_due || !@wal_log.nil? || @path == ":memory:" || !@cache_spill_allowed
       held = @held_pages + (@dirty.has_key?(1_u32) ? 0 : 1)
@@ -1203,18 +1220,21 @@ module Grant::SQLiteEngine
       @spill_due = true
     end
 
-    # pager_write_pagelist for a spill: every changed page whose journal
-    # record is synced, in page order. The pages stay in memory as clean
-    # pages (`#read_page` returns them without reading the file); one
-    # changed again is written again later.
-    private def write_spilled_pages : Nil
-      file = writer_file
+    # pager_write_pagelist for a spill, as far as anyone can see it: every
+    # changed page whose journal record is synced leaves the changed pages,
+    # as C's cache counts it clean, and keeps its bytes in memory
+    # (`#read_page` returns them) until `#commit` writes each changed page
+    # once. The database file is left as it is: from the spill's EXCLUSIVE
+    # lock to COMMIT no other connection reads it, and a crash leaves a hot
+    # journal whose playback over the untouched pages gives the same
+    # database. So results, locks, result codes and the journal's bytes are
+    # C's, and a page changed again after a spill is not written twice (S5
+    # piece E: database pages deferred to COMMIT, C1's I/O shape J).
+    private def spill_pages : Nil
       list_of_pages = @commit_pages
       list_of_pages.clear
       @dirty.each { |page_number, buffer| list_of_pages << {page_number, buffer} unless @unsynced.has_key?(page_number) }
-      list_of_pages.sort! { |left, right| left[0] <=> right[0] }
       list_of_pages.each do |page_number, buffer|
-        file.write_at((page_number.to_i64 - 1) * @page_size, buffer)
         @dirty.delete(page_number)
         @spilled[page_number] = buffer
       end
@@ -1249,20 +1269,16 @@ module Grant::SQLiteEngine
       writer_file_system.delete(RollbackJournal.path_for(@path))
     end
 
-    # pager_playback of a transaction a spill wrote into: the file is cut
-    # to its size before the transaction (pager_truncate), the original of
-    # every page written goes back, and the file is synced unless
-    # synchronous is OFF.
-    private def restore_spilled_pages(file : DatabaseFile) : Nil
+    # pager_playback of a transaction whose COMMIT failed after it began
+    # writing the database file: the file is cut to its size before the
+    # transaction (pager_truncate), the original of every journaled page
+    # goes back, and the file is synced unless synchronous is OFF.
+    private def play_back_journal(file : DatabaseFile) : Nil
       size = @original_page_count.to_i64 * @page_size
       file.truncate(size) if file.size > size
       list_of_images = @commit_images
       list_of_images.clear
-      @spilled.each_key do |page_number|
-        if image = @journal_images[page_number]?
-          list_of_images << {page_number, image}
-        end
-      end
+      @journal_images.each { |page_number, image| list_of_images << {page_number, image} }
       list_of_images.sort! { |left, right| left[0] <=> right[0] }
       list_of_images.each do |page_number, image|
         file.write_at((page_number.to_i64 - 1) * @page_size, image)
