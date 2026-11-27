@@ -29,6 +29,7 @@ module Grant::SQLite3
       getter engine_database : SQLiteEngine::Database
       getter session : SQLiteEngine::Query::Session
       getter error_code : Int32 = Engine::OK_CODE
+      getter extended_error_code : Int32 = Engine::OK_CODE
       getter error_message : String = "not an error"
 
       def initialize(@engine_database : SQLiteEngine::Database)
@@ -106,7 +107,7 @@ module Grant::SQLite3
         @open_statement_count += 1
         {Engine::OK_CODE, PreparedStatement.new(self, query).as(Engine::PreparedStatement)}
       rescue error : SQLiteEngine::SQLError
-        {fail(error.result_code, error.message || "SQL error"), FailedStatement.new.as(Engine::PreparedStatement)}
+        {fail(error.result_code, error.message || "SQL error", error.extended_result_code), FailedStatement.new.as(Engine::PreparedStatement)}
       rescue error : SQLiteEngine::Error
         {fail(Engine::ERROR_CODE, error.message || "SQL error"), FailedStatement.new.as(Engine::PreparedStatement)}
       end
@@ -174,9 +175,9 @@ module Grant::SQLite3
       # Records *error* as C reports it: the result code and its message.
       private def fail_with(error : ::Exception) : Int32
         if error.is_a?(SQLiteEngine::SQLError)
-          fail(error.result_code, error.message || "SQL error")
+          fail(error.result_code, error.message || "SQL error", error.extended_result_code)
         elsif error.is_a?(SQLiteEngine::Busy)
-          fail(BUSY_CODE, "database is locked")
+          fail(BUSY_CODE, "database is locked", error.extended_result_code)
         elsif error.is_a?(SQLiteEngine::ReadOnlyDatabase)
           fail(READ_ONLY_CODE, "attempt to write a readonly database")
         elsif error.is_a?(SQLiteEngine::CorruptDatabase)
@@ -210,13 +211,15 @@ module Grant::SQLite3
       # :nodoc:
       protected def succeed : Int32
         @error_code = Engine::OK_CODE
+        @extended_error_code = Engine::OK_CODE
         @error_message = "not an error"
         Engine::OK_CODE
       end
 
       # :nodoc:
-      protected def fail(code : Int32, message : String) : Int32
+      protected def fail(code : Int32, message : String, extended_code : Int32 = code) : Int32
         @error_code = code
+        @extended_error_code = extended_code
         @error_message = message
         code
       end
@@ -272,7 +275,7 @@ module Grant::SQLite3
         @last_code
       rescue error : SQLiteEngine::SQLError
         finish_reading
-        @last_code = @database.fail(error.result_code, error.message || "SQL error")
+        @last_code = @database.fail(error.result_code, error.message || "SQL error", error.extended_result_code)
       rescue error : SQLiteEngine::Error
         finish_reading
         @last_code = @database.fail(Engine::ERROR_CODE, error.message || "SQL error")
@@ -329,7 +332,7 @@ module Grant::SQLite3
           @database.session.finish_pending_commit
         rescue error : SQLiteEngine::SQLError
           @last_code = Engine::OK_CODE
-          return @database.fail(error.result_code, error.message || "SQL error")
+          return @database.fail(error.result_code, error.message || "SQL error", error.extended_result_code)
         end
         code = @last_code
         @last_code = Engine::OK_CODE
@@ -364,7 +367,7 @@ module Grant::SQLite3
         @query.bind(index, value)
         Engine::OK_CODE
       rescue error : SQLiteEngine::SQLError
-        @database.fail(error.result_code, error.message || "bind failed")
+        @database.fail(error.result_code, error.message || "bind failed", error.extended_result_code)
       end
     end
 
@@ -375,6 +378,10 @@ module Grant::SQLite3
       getter error_message : String
 
       def initialize(@error_message : String)
+      end
+
+      def extended_error_code : Int32
+        @error_code
       end
 
       def exec(sql : String) : Int32

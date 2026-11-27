@@ -2,6 +2,9 @@
 class Grant::SQLite3::Exception < ::Exception
   # The internal code associated with the failure.
   getter code : Int32
+  # The extended result code, such as 517 (SQLITE_BUSY_SNAPSHOT) where
+  # `code` is 5 (SQLITE_BUSY).
+  getter extended_code : Int32
 
   # The most recent error of *connection*'s database.
   def self.new(connection : Connection) : self
@@ -12,5 +15,6 @@ class Grant::SQLite3::Exception < ::Exception
   def initialize(database : Engine::Database)
     super(database.error_message)
     @code = database.error_code
+    @extended_code = database.extended_error_code
   end
 end

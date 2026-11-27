@@ -43,6 +43,10 @@
           LibSQLite3.errcode(@handle)
         end
 
+        def extended_error_code : Int32
+          LibSQLite3.extended_errcode(@handle)
+        end
+
         def error_message : String
           String.new(LibSQLite3.errmsg(@handle))
         end

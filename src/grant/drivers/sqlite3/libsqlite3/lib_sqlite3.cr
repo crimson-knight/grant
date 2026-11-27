@@ -94,6 +94,7 @@ module Grant
       fun open_v2 = {{ symbol_prefix + "sqlite3_open_v2" }}(filename : UInt8*, db : SQLite3*, flags : ::Grant::SQLite3::Flag, zVfs : UInt8*) : Int32
   
       fun errcode = {{ symbol_prefix + "sqlite3_errcode" }}(SQLite3) : Int32
+      fun extended_errcode = {{ symbol_prefix + "sqlite3_extended_errcode" }}(SQLite3) : Int32
       fun errmsg = {{ symbol_prefix + "sqlite3_errmsg" }}(SQLite3) : UInt8*
   
       fun libversion = {{ symbol_prefix + "sqlite3_libversion" }} : UInt8*

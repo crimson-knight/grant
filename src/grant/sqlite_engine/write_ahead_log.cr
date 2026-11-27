@@ -27,6 +27,12 @@ module Grant::SQLiteEngine
   # another connection committed (SQLITE_BUSY_SNAPSHOT): waiting cannot
   # help, the transaction must start again.
   class BusySnapshot < Busy
+    # SQLITE_BUSY_SNAPSHOT: SQLITE_BUSY | (2 << 8).
+    EXTENDED_RESULT_CODE = 517
+
+    def extended_result_code : Int32
+      EXTENDED_RESULT_CODE
+    end
   end
 
   # Waits for a lock the way C SQLite's default busy handler does
