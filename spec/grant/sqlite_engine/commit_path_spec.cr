@@ -24,18 +24,19 @@ private def journal_bytes(file_system : Grant::SQLiteEngine::MemoryFileSystem, p
   bytes
 end
 
-# A rollback-journal transaction that changes about 120 pages of
-# entries_writeback.db in *file_system*, at *synchronous*.
+# A rollback-journal transaction that changes about 750 pages of
+# entries_writeback.db in *file_system* (a journal of three times
+# `RollbackJournal::WRITEBACK_BYTES`), at *synchronous*.
 private def change_many_pages(file_system : SQLiteEngineCountingFileSystem, synchronous : Grant::SQLiteEngine::Synchronous) : Nil
   database = Grant::SQLiteEngine::Database.open("entries_writeback.db", read_write: true, file_system: file_system,
     journal_mode: Grant::SQLiteEngine::JournalMode::Delete, synchronous: synchronous)
   database.create_table("CREATE TABLE entries (id INTEGER PRIMARY KEY, payload TEXT)")
   database.transaction do |writer|
-    (1_i64..400_i64).each { |rowid| writer.insert("entries", rowid, [rowid, "p" * 1000] of Grant::SQLiteEngine::Value) }
+    (1_i64..3_000_i64).each { |rowid| writer.insert("entries", rowid, [rowid, "p" * 1000] of Grant::SQLiteEngine::Value) }
   end
   file_system.list_of_writeback_requests.clear
   database.transaction do |writer|
-    (1_i64..400_i64).each { |rowid| writer.update("entries", rowid, [rowid, "q" * 1000] of Grant::SQLiteEngine::Value) }
+    (1_i64..3_000_i64).each { |rowid| writer.update("entries", rowid, [rowid, "q" * 1000] of Grant::SQLiteEngine::Value) }
   end
   database.close
 end
