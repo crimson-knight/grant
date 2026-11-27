@@ -104,3 +104,50 @@ describe "the SQLite engine's commit path" do
     end
   end
 end
+
+describe "the SQLite engine's database file writes" do
+  it "writes a run of buffers with write_run_at exactly as one write_at per buffer, past the vector limit" do
+    random = Random.new(20261127)
+    list_of_buffers = Array(Bytes).new(2_600) { Bytes.new(random.rand(1..700)) { random.rand(UInt8) } }
+    directory = Path[Dir.tempdir] / "grant-sqlite-engine-runs-#{Process.pid}"
+    Dir.mkdir_p(directory)
+    batched_path = (directory / "batched.bin").to_s
+    single_path = (directory / "single.bin").to_s
+    File.delete?(batched_path)
+    File.delete?(single_path)
+    batched = Grant::SQLiteEngine::PosixFile.new(batched_path)
+    single = Grant::SQLiteEngine::PosixFile.new(single_path)
+    batched.write_at(0_i64, Bytes.new(64, 9_u8))
+    single.write_at(0_i64, Bytes.new(64, 9_u8))
+    batched.write_run_at(37_i64, list_of_buffers)
+    offset = 37_i64
+    list_of_buffers.each do |buffer|
+      single.write_at(offset, buffer)
+      offset += buffer.size
+    end
+    batched.close
+    single.close
+    File.read(batched_path).should eq(File.read(single_path))
+    File.size(batched_path).should eq(37 + list_of_buffers.sum(&.size))
+  end
+
+  it "commits runs of changed pages that read back as C reads them" do
+    path = (Path[Dir.tempdir] / "grant-sqlite-engine-runs-#{Process.pid}-commit.db").to_s
+    File.delete?(path)
+    File.delete?("#{path}-journal")
+    database = Grant::SQLiteEngine::Database.open(path, read_write: true, page_size: 512)
+    database.create_table("CREATE TABLE t(id INTEGER PRIMARY KEY, body TEXT)")
+    database.transaction do |writer|
+      (1_i64..3_000_i64).each { |rowid| writer.insert("t", nil, [nil, "row #{rowid} #{"b" * (rowid % 200)}"] of Grant::SQLiteEngine::Value) }
+    end
+    database.transaction do |writer|
+      (1_i64..3_000_i64).step(3).each { |rowid| writer.delete("t", rowid) }
+      (2_i64..3_000_i64).step(7).each { |rowid| writer.update("t", rowid, [rowid, "new #{rowid}"] of Grant::SQLiteEngine::Value) }
+    end
+    database.close
+    output = IO::Memory.new
+    Process.run("sqlite3", [path, "PRAGMA integrity_check; SELECT count(*), sum(length(body)) FROM t;"], output: output).success?.should be_true
+    expected = (1..3_000).reject { |rowid| rowid % 3 == 1 }.sum { |rowid| (rowid - 2) % 7 == 0 ? "new #{rowid}".size : "row #{rowid} #{"b" * (rowid % 200)}".size }
+    output.to_s.should eq("ok\n2000|#{expected}\n")
+  end
+end
