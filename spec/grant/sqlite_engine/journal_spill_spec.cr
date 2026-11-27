@@ -115,12 +115,21 @@ module JournalSpill
   # Runs *statements* in one transaction on *engine* and returns the
   # record count of each synced journal segment just before COMMIT.
   # *pragmas* set the page cache first (by default cache_size and
-  # upstream's cache_spill of 1).
+  # upstream's cache_spill of 1). *list_of_earlier_statements* run first in
+  # a transaction of their own on the same connection, so the measured one
+  # starts with the page cache that transaction left.
   def self.segment_layout(engine : Symbol, setup : String, statements : Array(String), cache_size : Int32,
-                          pragmas : String = "PRAGMA cache_size=#{cache_size}; PRAGMA cache_spill=1;") : Array(UInt32)
+                          pragmas : String = "PRAGMA cache_size=#{cache_size}; PRAGMA cache_spill=1;",
+                          list_of_earlier_statements : Array(String) = [] of String) : Array(UInt32)
     path = fresh_database("layout_#{engine}.db", setup)
     database = open(engine, path)
-    run(database, "#{pragmas} BEGIN")
+    run(database, pragmas) unless pragmas.empty?
+    unless list_of_earlier_statements.empty?
+      run(database, "BEGIN")
+      list_of_earlier_statements.each { |sql| run(database, sql) }
+      run(database, "COMMIT")
+    end
+    run(database, "BEGIN")
     statements.each { |sql| run(database, sql) }
     layout = SQLiteEngineHotJournal.list_of_segments(read("#{path}-journal")).select(&.synced?).map(&.record_count)
     run(database, "COMMIT")
@@ -237,6 +246,21 @@ describe "Grant::SQLiteEngine rollback journal with cache spills" do
       c_layout = JournalSpill.segment_layout(:libsqlite3, setup, statements, cache_size)
       JournalSpill.first_difference(engine, c_layout).should be_nil
     end
+  end
+
+  # A spill's pages are written at COMMIT and stay out of the clean cache
+  # unless a read cached them, as when C's spill wrote them; a cache that
+  # kept them all would leave the next transaction few fetches and fewer
+  # spills than C's.
+  it "spills where C does in a transaction after one that spilled (cache_size=10)" do
+    pending!("needs C SQLite 3.51.0 with upstream's page cache") unless JournalSpill.upstream_page_cache?
+    setup = JournalSpill::PAGE_ROWS % 1200
+    statements = JournalSpill.page_statements(1200)
+    list_of_earlier_statements = statements[0, 600]
+    engine = JournalSpill.segment_layout(:grant, setup, statements[600, 600], 10, list_of_earlier_statements: list_of_earlier_statements)
+    c_layout = JournalSpill.segment_layout(:libsqlite3, setup, statements[600, 600], 10, list_of_earlier_statements: list_of_earlier_statements)
+    engine.size.should be > 3
+    JournalSpill.first_difference(engine, c_layout).should be_nil
   end
 
   it "spills where the linked C library does with this platform's page cache defaults" do
