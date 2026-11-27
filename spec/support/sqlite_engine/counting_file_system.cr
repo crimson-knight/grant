@@ -18,6 +18,9 @@ class SQLiteEngineCountingFileSystem < Grant::SQLiteEngine::FileSystem
   end
 
   getter list_of_sync_calls = [] of SyncCall
+  # The offset of every read of the database file (not the journal or
+  # WAL).
+  getter list_of_database_read_offsets = [] of Int64
   # The label the next syncs are recorded under.
   property phase = "open"
 
@@ -62,7 +65,9 @@ class SQLiteEngineCountingFileSystem < Grant::SQLiteEngine::FileSystem
     end
 
     def read_at(offset : Int64, buffer : Bytes) : Int32
-      @file.read_at(offset, buffer)
+      read = @file.read_at(offset, buffer)
+      @file_system.list_of_database_read_offsets << offset if @kind.database?
+      read
     end
 
     def write_at(offset : Int64, bytes_to_write : Bytes) : Nil
