@@ -13,7 +13,6 @@ module Grant::SQLiteEngine::Query
     @override : ConflictAction
     @upsert : UpsertPlan?
     @returning : RowProgram?
-    @returning_pseudo : PseudoTable?
 
     @trigger_programs : TriggerProgramCache?
 
@@ -80,9 +79,10 @@ module Grant::SQLiteEngine::Query
         upsert.list_of_clauses.each(&.trigger_scope=(scope))
       end
       if returning = @statement.returning
-        pseudo = PseudoTable.new(@target_name, info)
-        @returning_pseudo = pseudo
-        program = RowProgram.new(@session, returning, [pseudo])
+        # RETURNING names the table, never its alias (C resolves it
+        # against the table itself).
+        pseudo = PseudoTable.new(info.name, info, outermost_only: true)
+        program = RowProgram.new(@session, returning, [pseudo], returning: true)
         @returning = program
         @list_of_column_names = program.list_of_column_names
       end
@@ -112,17 +112,21 @@ module Grant::SQLiteEngine::Query
         run.single_row = !multi
         run.statement_journal = journal
         run.trigger_programs = @trigger_programs
-        write_returning_rows(run, list_of_parameters, returned)
+        if program = @returning
+          run.returning = ReturningRows.new(program, list_of_parameters, returned)
+        end
+        write_returning_rows(run, list_of_parameters)
       end
       returned
     end
 
     def write_rows(run : WriteRun, list_of_parameters : Array(Value)) : Nil
-      write_returning_rows(run, list_of_parameters, NO_ROWS)
+      write_returning_rows(run, list_of_parameters)
     end
 
-    private def write_returning_rows(run : WriteRun, list_of_parameters : Array(Value), returned : Array(Array(Value))) : Nil
+    private def write_returning_rows(run : WriteRun, list_of_parameters : Array(Value)) : Nil
       run.open_autoincrement(@table)
+      @upsert.try(&.start_run)
       each_source_row(list_of_parameters) do |values|
         row = take_row_buffer
         begin
@@ -144,19 +148,9 @@ module Grant::SQLiteEngine::Query
             next if column.position == @table.rowid_alias
             row[column.position] = run.default_value(@table, column)
           end
-          result, rowid, stored = begin
+          begin
             run.insert_row(@table, row, explicit_rowid, @override, @upsert)
           rescue TriggerIgnore
-            next
-          end
-          next if result.ignored?
-          if program = @returning
-            pseudo = @returning_pseudo || raise Error.new("RETURNING without its row")
-            pseudo.row = stored
-            pseudo.rowid = rowid
-            if returned_row = program.evaluate(list_of_parameters)
-              returned << returned_row
-            end
           end
         ensure
           give_back_row_buffer(row)

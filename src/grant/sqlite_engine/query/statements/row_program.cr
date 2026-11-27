@@ -12,9 +12,9 @@ module Grant::SQLiteEngine::Query
     property? qualified_only = false
     # Reached only from the FROM of the outermost query, so a subquery that
     # names the same table reads the table itself.
-    property? outermost_only = false
+    property? outermost_only : Bool
 
-    def initialize(@name : String, @table : TableInfo)
+    def initialize(@name : String, @table : TableInfo, @outermost_only : Bool = false)
     end
   end
 
@@ -51,6 +51,7 @@ module Grant::SQLiteEngine::Query
          (!pseudo.outermost_only? || @query_depth == 1)
         slot = allocate_slot
         table = pseudo.table
+        @returning_slot = slot if @query_depth == 1 && table.same?(@returning_table)
         columns = (0...table.list_of_column_names.size).map do |index|
           SourceColumn.new(table.list_of_column_names[index], table.list_of_affinities[index], table.list_of_collations[index])
         end
@@ -74,6 +75,36 @@ module Grant::SQLiteEngine::Query
         end
       end
       result
+    end
+
+    # The table a RETURNING list belongs to, and the slot of its row: a
+    # subquery whose own FROM names that table is computed again for each
+    # row, as if it read the row (sqlite3ReturningSubqueryCorrelated);
+    # any other uncorrelated subquery once per run.
+    property returning_table : TableInfo? = nil
+    @returning_slot : Int32? = nil
+
+    private def compile_subquery(query : SQL::SelectStatement, context : QueryContext) : QueryPlan
+      plan = super
+      slot = @returning_slot
+      table = @returning_table
+      return plan unless slot && table && names_table_in_from?(query, table)
+      plan.copy_with(outer_slots: plan.outer_slots.dup.add(slot))
+    end
+
+    # Whether the FROM of *query*'s last SELECT (the top Select of a
+    # compound) names *table* itself.
+    private def names_table_in_from?(query : SQL::SelectStatement, table : TableInfo) : Bool
+      core = query.cores.last
+      return false unless core.is_a?(SQL::SelectClause)
+      from = core.from
+      return false unless from
+      from.items.any? do |item|
+        source = item.source
+        next false unless source.is_a?(SQL::TableReference)
+        found = @session.table(source.name.value, source.schema.try(&.value))
+        !found.nil? && found.name.compare(table.name, case_insensitive: true) == 0 && found.database.same?(table.database)
+      end
     end
 
     # The root page of the index the captured table is read through (nil:
@@ -113,10 +144,11 @@ module Grant::SQLiteEngine::Query
     # names the place whose expressions must be deterministic ("a CHECK
     # constraint", "a generated column", "an index"), where C runs
     # functions as OP_PureFunc. *with_clause* is the WITH of the statement
-    # the expressions belong to.
+    # the expressions belong to. *returning* marks a RETURNING list, whose
+    # subqueries over the table written run again for each row.
     def initialize(@session : Session, columns : Array(SQL::ResultColumn), @list_of_pseudo_tables : Array(PseudoTable),
                    where : SQL::Expression? = nil, @deterministic_context : String? = nil,
-                   with_clause : SQL::WithClause? = nil)
+                   with_clause : SQL::WithClause? = nil, returning : Bool = false)
       items = @list_of_pseudo_tables.map_with_index do |pseudo, index|
         join = index == 0 ? nil : SQL::JoinOperator.new(true, [] of String)
         SQL::FromItem.new(join, SQL::TableReference.new(nil, SQL::Name.bare(pseudo.name), nil, nil, false), nil, nil)
@@ -128,6 +160,7 @@ module Grant::SQLiteEngine::Query
         [] of SQL::OrderingTerm, nil)
       compiler = Compiler.new(@session)
       @list_of_pseudo_tables.each { |pseudo| compiler.pseudo_tables[pseudo.name.downcase] = pseudo }
+      compiler.returning_table = @list_of_pseudo_tables.first?.try(&.table) if returning
       @compiled = compiler.compile(statement)
       @list_of_column_names = @compiled.list_of_column_names
     end
@@ -140,7 +173,18 @@ module Grant::SQLiteEngine::Query
     # The values of the result columns for the rows the pseudo tables hold
     # now, or nil when the WHERE rejects them.
     def evaluate(list_of_parameters : Array(Value)) : Array(Value)?
-      frame = Frame.new(@compiled.slot_count, @compiled.aggregate_count, list_of_parameters, @session)
+      evaluate_in(frame_for_run(list_of_parameters))
+    end
+
+    # A frame for one run of the statement the expressions belong to:
+    # evaluated in it again and again, an uncorrelated subquery computes
+    # its result once (OP_Once).
+    def frame_for_run(list_of_parameters : Array(Value)) : Frame
+      Frame.new(@compiled.slot_count, @compiled.aggregate_count, list_of_parameters, @session)
+    end
+
+    # `evaluate` in *frame*, from `frame_for_run`.
+    def evaluate_in(frame : Frame) : Array(Value)?
       producer = @compiled.producer
       context = @deterministic_context
       unless context
@@ -165,5 +209,26 @@ module Grant::SQLiteEngine::Query
     # statement's row order).
     getter slot : Int32
     getter root_page : UInt32
+  end
+end
+
+module Grant::SQLiteEngine::Query
+  # The rows a RETURNING clause hands out (codeReturningTrigger): each row
+  # the statement writes, evaluated as it is written, in one frame for the
+  # whole run so an uncorrelated subquery is computed once.
+  class ReturningRows
+    def initialize(@program : RowProgram, list_of_parameters : Array(Value), @list_of_rows : Array(Array(Value)))
+      @frame = @program.frame_for_run(list_of_parameters)
+    end
+
+    # Adds the RETURNING row of the row *row* at *rowid*.
+    def capture(rowid : Int64?, row : Array(Value)) : Nil
+      pseudo = @program.list_of_pseudo_tables[0]
+      pseudo.row = row
+      pseudo.rowid = rowid
+      if returned = @program.evaluate_in(@frame)
+        @list_of_rows << returned
+      end
+    end
   end
 end

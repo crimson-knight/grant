@@ -181,6 +181,26 @@ module Grant::SQLiteEngine::Query
       @table_info.without_rowid?
     end
 
+    # True when a foreign key names this table as its parent with an ON
+    # UPDATE or ON DELETE action that writes rows (CASCADE, SET NULL, SET
+    # DEFAULT): changing a row of this table can then change other rows,
+    # of this table too (through the child table's triggers or a
+    # self-reference). Read from the schema, whatever PRAGMA foreign_keys
+    # says when the statement runs.
+    def has_writing_foreign_key_actions?(session : Session) : Bool
+      session.list_of_child_tables(@table_info.name).any? do |child_name|
+        child = session.write_table(child_name)
+        next false unless child
+        child.list_of_foreign_keys.any? do |rule|
+          rule.parent_table.compare(@table_info.name, case_insensitive: true) == 0 &&
+            (WRITING_ACTIONS.includes?(rule.on_update) || WRITING_ACTIONS.includes?(rule.on_delete))
+        end
+      end
+    end
+
+    # The foreign key actions that change child rows.
+    WRITING_ACTIONS = {"CASCADE", "SET NULL", "SET DEFAULT"}
+
     def has_generated_columns? : Bool
       @list_of_columns.any?(&.generated?)
     end

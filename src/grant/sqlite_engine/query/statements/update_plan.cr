@@ -143,7 +143,6 @@ module Grant::SQLiteEngine::Query
     @targets : TargetRows
     @override : ConflictAction
     @returning : RowProgram?
-    @returning_pseudo : PseudoTable?
     @statement : SQL::Update
     @trigger_programs : TriggerProgramCache?
     # The SET list's column names as written (UPDATE OF triggers match them).
@@ -168,21 +167,20 @@ module Grant::SQLiteEngine::Query
       columns = RowProgram.columns(@assignments.list_of_expressions)
       # C computes the SET list in the second pass, from the row as it is
       # then (an UPDATE ... FROM, from the first pass's ephemeral table).
-      # A trigger run for an earlier row can change a later one before it
-      # is written; a table without triggers keeps computing the values in
-      # the scan.
-      if statement.from.nil? && !@table.list_of_triggers(@session).empty?
-        current = PseudoTable.new(statement.table.alias_name.try(&.value) || info.name, info)
-        current.outermost_only = true
+      # A trigger, or a foreign key action, run for an earlier row can
+      # change a later one before it is written; any other table keeps
+      # computing the values in the scan.
+      if statement.from.nil? && (!@table.list_of_triggers(@session).empty? || @table.has_writing_foreign_key_actions?(@session))
+        current = PseudoTable.new(statement.table.alias_name.try(&.value) || info.name, info, outermost_only: true)
         @current_values = RowProgram.new(@session, columns, [current], with_clause: statement.with_clause)
         columns = [] of SQL::ResultColumn
       end
       @targets = TargetRows.new(@session, info, statement.table, statement.indexed_by, statement.not_indexed,
         columns, statement.from, statement.where, statement.with_clause)
       if returning = statement.returning
-        pseudo = PseudoTable.new(statement.table.alias_name.try(&.value) || info.name, info)
-        @returning_pseudo = pseudo
-        program = RowProgram.new(@session, returning, [pseudo])
+        # RETURNING names the table, never its alias.
+        pseudo = PseudoTable.new(info.name, info, outermost_only: true)
+        program = RowProgram.new(@session, returning, [pseudo], returning: true)
         @returning = program
         @list_of_column_names = program.list_of_column_names
       end
@@ -199,13 +197,16 @@ module Grant::SQLiteEngine::Query
         journal, _, in_rowid_order = update_choices
         run.statement_journal = journal
         run.trigger_programs = @trigger_programs
-        write_returning_rows(run, list_of_parameters, returned, in_rowid_order)
+        if program = @returning
+          run.returning = ReturningRows.new(program, list_of_parameters, returned)
+        end
+        write_returning_rows(run, list_of_parameters, in_rowid_order)
       end
       returned
     end
 
     def write_rows(run : WriteRun, list_of_parameters : Array(Value)) : Nil
-      write_returning_rows(run, list_of_parameters, NO_ROWS, update_choices[2])
+      write_returning_rows(run, list_of_parameters, update_choices[2])
     end
 
     # The statement journal and whether rows go in rowid order.
@@ -222,17 +223,16 @@ module Grant::SQLiteEngine::Query
       end
     end
 
-    private def write_returning_rows(run : WriteRun, list_of_parameters : Array(Value), returned : Array(Array(Value)),
-                                     in_rowid_order : Bool) : Nil
+    private def write_returning_rows(run : WriteRun, list_of_parameters : Array(Value), in_rowid_order : Bool) : Nil
       @targets.collect(list_of_parameters) do |collected|
-        write_target_rows(run, list_of_parameters, returned, in_rowid_order, collected)
+        write_target_rows(run, list_of_parameters, in_rowid_order, collected)
       end
     end
 
     # Writes the collected targets; the list is the one TargetRows#collect
     # keeps for its next run, so only this call reads it.
-    private def write_target_rows(run : WriteRun, list_of_parameters : Array(Value), returned : Array(Array(Value)),
-                                  in_rowid_order : Bool, targets : Array({Int64?, Array(Value), Array(Value)})) : Nil
+    private def write_target_rows(run : WriteRun, list_of_parameters : Array(Value), in_rowid_order : Bool,
+                                  targets : Array({Int64?, Array(Value), Array(Value)})) : Nil
       positions = @assignments.list_of_positions
       if !@table.without_rowid? && in_rowid_order && targets.size > 1
         targets = targets.sort_by { |target| target[0] || 0_i64 }
@@ -246,7 +246,7 @@ module Grant::SQLiteEngine::Query
       scratch = @spare_scratch || RowScratch.new
       @spare_scratch = nil
       begin
-        write_targets_with(scratch, run, list_of_parameters, returned, targets)
+        write_targets_with(scratch, run, list_of_parameters, targets)
       ensure
         @spare_scratch = scratch
       end
@@ -254,13 +254,17 @@ module Grant::SQLiteEngine::Query
 
     # Writes each target, reading its row into *scratch*.
     private def write_targets_with(scratch : RowScratch, run : WriteRun, list_of_parameters : Array(Value),
-                                   returned : Array(Array(Value)), targets : Array({Int64?, Array(Value), Array(Value)})) : Nil
+                                   targets : Array({Int64?, Array(Value), Array(Value)})) : Nil
       positions = @assignments.list_of_positions
+      program = @current_values
+      # One frame for the run: an uncorrelated subquery of the SET list is
+      # computed once, as C's OP_Once does.
+      frame = program.try(&.frame_for_run(list_of_parameters))
       targets.each do |rowid, snapshot, values|
         old = rowid ? @table.database.row_at(@table.layout, rowid, scratch.old_row) : @table.database.row_with_key_of(@table.layout, snapshot)
         next unless old
-        if program = @current_values
-          values = values_for_current_row(program, run, rowid, old, list_of_parameters)
+        if program && frame
+          values = values_for_current_row(program, frame, run, rowid, old)
         end
         new_row = scratch.new_row_from(old)
         explicit_rowid = nil.as(Value)
@@ -271,33 +275,21 @@ module Grant::SQLiteEngine::Query
             new_row[position] = values[index]
           end
         end
-        # A row an IGNORE conflict skipped returns nothing.
-        updated = begin
+        begin
           run.update_row(@table, rowid, old, new_row, explicit_rowid, @override, positions, @list_of_changed_names)
         rescue TriggerIgnore
-          next
-        end
-        next unless updated
-        new_rowid, stored = updated
-        if program = @returning
-          pseudo = @returning_pseudo || raise Error.new("RETURNING without its row")
-          pseudo.row = stored
-          pseudo.rowid = new_rowid
-          if returned_row = program.evaluate(list_of_parameters)
-            returned << returned_row
-          end
         end
       end
     end
 
     # The SET list's values for the row *old* at *rowid*, as it is now.
-    private def values_for_current_row(program : RowProgram, run : WriteRun, rowid : Int64?, old : Array(Value),
-                                       list_of_parameters : Array(Value)) : Array(Value)
+    private def values_for_current_row(program : RowProgram, frame : Frame, run : WriteRun, rowid : Int64?,
+                                       old : Array(Value)) : Array(Value)
       run.fill_virtual_columns(@table, old, rowid)
       current = program.list_of_pseudo_tables[0]
       current.row = old
       current.rowid = rowid
-      program.evaluate(list_of_parameters) || raise Error.new("the SET list of an UPDATE returned no row")
+      program.evaluate_in(frame) || raise Error.new("the SET list of an UPDATE returned no row")
     end
   end
 
@@ -306,7 +298,6 @@ module Grant::SQLiteEngine::Query
     @table : WriteTable
     @targets : TargetRows
     @returning : RowProgram?
-    @returning_pseudo : PseudoTable?
     @statement : SQL::Delete
     @trigger_programs : TriggerProgramCache?
     # The row array each target is read into, kept for the next run.
@@ -319,9 +310,9 @@ module Grant::SQLiteEngine::Query
       @targets = TargetRows.new(@session, info, statement.table, statement.indexed_by, statement.not_indexed,
         [] of SQL::ResultColumn, nil, statement.where, statement.with_clause)
       if returning = statement.returning
-        pseudo = PseudoTable.new(statement.table.alias_name.try(&.value) || info.name, info)
-        @returning_pseudo = pseudo
-        program = RowProgram.new(@session, returning, [pseudo])
+        # RETURNING names the table, never its alias.
+        pseudo = PseudoTable.new(info.name, info, outermost_only: true)
+        program = RowProgram.new(@session, returning, [pseudo], returning: true)
         @returning = program
         @list_of_column_names = program.list_of_column_names
       end
@@ -335,13 +326,16 @@ module Grant::SQLiteEngine::Query
         journal, _, in_rowid_order = delete_choices
         run.statement_journal = journal
         run.trigger_programs = @trigger_programs
-        write_returning_rows(run, list_of_parameters, returned, in_rowid_order)
+        if program = @returning
+          run.returning = ReturningRows.new(program, list_of_parameters, returned)
+        end
+        write_returning_rows(run, list_of_parameters, in_rowid_order)
       end
       returned
     end
 
     def write_rows(run : WriteRun, list_of_parameters : Array(Value)) : Nil
-      write_returning_rows(run, list_of_parameters, NO_ROWS, delete_choices[2])
+      write_returning_rows(run, list_of_parameters, delete_choices[2])
     end
 
     # The statement journal and whether rows go in rowid order.
@@ -356,17 +350,16 @@ module Grant::SQLiteEngine::Query
       end
     end
 
-    private def write_returning_rows(run : WriteRun, list_of_parameters : Array(Value), returned : Array(Array(Value)),
-                                     in_rowid_order : Bool) : Nil
+    private def write_returning_rows(run : WriteRun, list_of_parameters : Array(Value), in_rowid_order : Bool) : Nil
       @targets.collect(list_of_parameters) do |collected|
-        write_target_rows(run, list_of_parameters, returned, in_rowid_order, collected)
+        write_target_rows(run, list_of_parameters, in_rowid_order, collected)
       end
     end
 
     # Writes the collected targets; the list is the one TargetRows#collect
     # keeps for its next run, so only this call reads it.
-    private def write_target_rows(run : WriteRun, list_of_parameters : Array(Value), returned : Array(Array(Value)),
-                                  in_rowid_order : Bool, targets : Array({Int64?, Array(Value), Array(Value)})) : Nil
+    private def write_target_rows(run : WriteRun, list_of_parameters : Array(Value), in_rowid_order : Bool,
+                                  targets : Array({Int64?, Array(Value), Array(Value)})) : Nil
       if !@table.without_rowid? && in_rowid_order && targets.size > 1
         targets = targets.sort_by { |target| target[0] || 0_i64 }
       elsif @table.without_rowid? && !in_rowid_order
@@ -377,7 +370,7 @@ module Grant::SQLiteEngine::Query
       scratch = @spare_scratch || RowScratch.new
       @spare_scratch = nil
       begin
-        write_targets_with(scratch, run, list_of_parameters, returned, targets)
+        write_targets_with(scratch, run, list_of_parameters, targets)
       ensure
         @spare_scratch = scratch
       end
@@ -385,18 +378,10 @@ module Grant::SQLiteEngine::Query
 
     # Writes each target, reading its row into *scratch*.
     private def write_targets_with(scratch : RowScratch, run : WriteRun, list_of_parameters : Array(Value),
-                                   returned : Array(Array(Value)), targets : Array({Int64?, Array(Value), Array(Value)})) : Nil
+                                   targets : Array({Int64?, Array(Value), Array(Value)})) : Nil
       targets.each do |rowid, snapshot, _values|
         old = rowid ? @table.database.row_at(@table.layout, rowid, scratch.old_row) : @table.database.row_with_key_of(@table.layout, snapshot)
         next unless old
-        if program = @returning
-          pseudo = @returning_pseudo || raise Error.new("RETURNING without its row")
-          pseudo.row = old
-          pseudo.rowid = rowid
-          if returned_row = program.evaluate(list_of_parameters)
-            returned << returned_row
-          end
-        end
         begin
           run.delete_row(@table, rowid, old)
         rescue TriggerIgnore
