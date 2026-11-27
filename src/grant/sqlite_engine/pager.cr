@@ -840,9 +840,7 @@ module Grant::SQLiteEngine
       end
       list_of_pages.sort! { |left, right| left[0] <=> right[0] }
       @database_file_changed = true
-      list_of_pages.each do |page_number, buffer|
-        file.write_at((page_number.to_i64 - 1) * @page_size, buffer)
-      end
+      write_page_runs(file, list_of_pages)
       file.sync(sync_mode) unless @synchronous.off?
       end_journal
       list_of_pages.clear
@@ -853,6 +851,33 @@ module Grant::SQLiteEngine
       @header = DatabaseHeader.parse(page_one)
       finish_transaction(file)
     end
+
+    # Writes *list_of_pages* (in page order) to the database file: each run
+    # of consecutive page numbers in one `write_run_at`, the same bytes in
+    # the same order as one write per page, in fewer system calls.
+    private def write_page_runs(file : DatabaseFile, list_of_pages : Array({UInt32, Bytes})) : Nil
+      run = @commit_run
+      start = 0
+      while start < list_of_pages.size
+        first_page = list_of_pages.unsafe_fetch(start)[0]
+        finish = start + 1
+        while finish < list_of_pages.size && list_of_pages.unsafe_fetch(finish)[0] == first_page + (finish - start)
+          finish += 1
+        end
+        offset = (first_page.to_i64 - 1) * @page_size
+        if finish - start == 1
+          file.write_at(offset, list_of_pages.unsafe_fetch(start)[1])
+        else
+          run.clear
+          (start...finish).each { |index| run << list_of_pages.unsafe_fetch(index)[1] }
+          file.write_run_at(offset, run)
+        end
+        start = finish
+      end
+      run.clear
+    end
+
+    @commit_run = [] of Bytes
 
     # Ends the open write transaction without writing anything.
     def rollback : Nil

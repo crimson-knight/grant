@@ -314,10 +314,14 @@ module Grant::SQLiteEngine
 
     # Deletes the row with *rowid* and its index entries. Returns false when
     # there is no such row.
+    #
+    # In a table without indexes the row is removed in one descent of the
+    # tree, without decoding it, as SQLite deletes a row no index refers to.
     def delete(table_name : String, rowid : Int64) : Bool
       write_statement(journal: false) do
         layout = table_layout(table_name)
         raise UnsupportedSQL.new("rowid lookup in WITHOUT ROWID table #{layout.table_name}") if layout.definition.without_rowid?
+        next btree_writer.table_delete(layout.entry.root_page, rowid) if layout.list_of_indexes.empty?
         old = read_row(layout, rowid)
         next false unless old
         delete_row(layout, old, rowid)

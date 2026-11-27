@@ -23,6 +23,16 @@ module Grant::SQLiteEngine
     # Writes *bytes_to_write* at *offset*, growing the file when needed.
     abstract def write_at(offset : Int64, bytes_to_write : Bytes) : Nil
 
+    # Writes *list_of_buffers* one after another from *offset*: the same
+    # bytes as one `write_at` per buffer, which is what this default does.
+    # A file may send them in fewer calls (see `PosixFile`).
+    def write_run_at(offset : Int64, list_of_buffers : Indexable(Bytes)) : Nil
+      list_of_buffers.each do |buffer|
+        write_at(offset, buffer)
+        offset += buffer.size
+      end
+    end
+
     # Makes every earlier write durable (fsync).
     abstract def sync : Nil
 
@@ -166,7 +176,14 @@ module Grant::SQLiteEngine
 
   # pwrite(2), which the standard library's LibC leaves out (it binds pread).
   lib LibPositionedWrite
+    # struct iovec
+    struct WriteVector
+      base : Void*
+      length : LibC::SizeT
+    end
+
     fun pwrite(fd : Int32, buffer : Void*, count : LibC::SizeT, offset : LibC::OffT) : LibC::SSizeT
+    fun pwritev(fd : Int32, vectors : WriteVector*, count : Int32, offset : LibC::OffT) : LibC::SSizeT
   end
 
   # Reads and writes at an offset of a descriptor with pread(2) and
@@ -200,6 +217,47 @@ module Grant::SQLiteEngine
           raise IO::Error.from_errno("Error writing #{path}")
         end
         written += count
+      end
+    end
+
+    # The most buffers one pwritev(2) takes (IOV_MAX on Linux and macOS).
+    MAX_WRITE_VECTORS = 1024
+
+    # Writes *list_of_buffers* back to back from *offset* with pwritev(2),
+    # up to `MAX_WRITE_VECTORS` buffers a call: the bytes of one pwrite(2)
+    # per buffer in one call per run. A short write finishes with
+    # `write_at` from the first byte not written.
+    def self.write_run_at(descriptor : Int32, offset : Int64, list_of_buffers : Indexable(Bytes), path : String) : Nil
+      vectors = uninitialized LibPositionedWrite::WriteVector[MAX_WRITE_VECTORS]
+      first = 0
+      while first < list_of_buffers.size
+        count = Math.min(MAX_WRITE_VECTORS, list_of_buffers.size - first)
+        expected = 0_i64
+        count.times do |index|
+          buffer = list_of_buffers.unsafe_fetch(first + index)
+          vectors[index] = LibPositionedWrite::WriteVector.new(base: buffer.to_unsafe.as(Void*), length: buffer.size)
+          expected += buffer.size
+        end
+        written = LibPositionedWrite.pwritev(descriptor, vectors.to_unsafe, count, offset)
+        if written < 0
+          next if Errno.value == Errno::EINTR
+          raise IO::Error.from_errno("Error writing #{path}")
+        end
+        if written < expected
+          finish_short_write(descriptor, offset, list_of_buffers, first, count, written.to_i64, path)
+        end
+        offset += expected
+        first += count
+      end
+    end
+
+    private def self.finish_short_write(descriptor : Int32, offset : Int64, list_of_buffers : Indexable(Bytes), first : Int32, count : Int32, written : Int64, path : String) : Nil
+      position = offset
+      count.times do |index|
+        buffer = list_of_buffers.unsafe_fetch(first + index)
+        done = (written - (position - offset)).clamp(0_i64, buffer.size.to_i64)
+        write_at(descriptor, position + done, buffer + done, path) if done < buffer.size
+        position += buffer.size
       end
     end
 
@@ -247,6 +305,10 @@ module Grant::SQLiteEngine
 
     def write_at(offset : Int64, bytes_to_write : Bytes) : Nil
       PositionedIO.write_at(@file.fd, offset, bytes_to_write, @file.path)
+    end
+
+    def write_run_at(offset : Int64, list_of_buffers : Indexable(Bytes)) : Nil
+      PositionedIO.write_run_at(@file.fd, offset, list_of_buffers, @file.path)
     end
 
     def sync : Nil
