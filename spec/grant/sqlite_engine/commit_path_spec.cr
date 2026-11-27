@@ -1,5 +1,7 @@
 require "spec"
 require "../../../src/grant/sqlite_engine"
+require "../../support/sqlite_engine/counting_file_system"
+require "file_utils"
 
 # walformat.html §1's checksum, word by word, as the reference the engine's
 # four-lane checksum must match bit for bit.
@@ -22,7 +24,68 @@ private def journal_bytes(file_system : Grant::SQLiteEngine::MemoryFileSystem, p
   bytes
 end
 
+# A rollback-journal transaction that changes about 120 pages of
+# entries_writeback.db in *file_system*, at *synchronous*.
+private def change_many_pages(file_system : SQLiteEngineCountingFileSystem, synchronous : Grant::SQLiteEngine::Synchronous) : Nil
+  database = Grant::SQLiteEngine::Database.open("entries_writeback.db", read_write: true, file_system: file_system,
+    journal_mode: Grant::SQLiteEngine::JournalMode::Delete, synchronous: synchronous)
+  database.create_table("CREATE TABLE entries (id INTEGER PRIMARY KEY, payload TEXT)")
+  database.transaction do |writer|
+    (1_i64..400_i64).each { |rowid| writer.insert("entries", rowid, [rowid, "p" * 1000] of Grant::SQLiteEngine::Value) }
+  end
+  file_system.list_of_writeback_requests.clear
+  database.transaction do |writer|
+    (1_i64..400_i64).each { |rowid| writer.update("entries", rowid, [rowid, "q" * 1000] of Grant::SQLiteEngine::Value) }
+  end
+  database.close
+end
+
 describe "the SQLite engine's commit path" do
+  describe "DatabaseFile#start_writeback" do
+    it "leaves a file's bytes as they are, for a range inside or past its end" do
+      directory = File.tempname("start_writeback")
+      Dir.mkdir_p(directory)
+      begin
+        path = File.join(directory, "file.db")
+        file = Grant::SQLiteEngine::PosixFile.new(path)
+        bytes = Bytes.new(10_000) { |index| (index % 251).to_u8 }
+        file.write_at(0_i64, bytes)
+        file.start_writeback(0_i64, bytes.size.to_i64)
+        file.start_writeback(8_192_i64, 65_536_i64)
+        file.sync(Grant::SQLiteEngine::SyncMode::Normal)
+        read_back = Bytes.new(bytes.size)
+        file.read_at(0_i64, read_back).should eq(bytes.size)
+        read_back.should eq(bytes)
+        file.size.should eq(bytes.size)
+        file.close
+      ensure
+        FileUtils.rm_rf(directory)
+      end
+    end
+
+    it "is asked for every journal write and every 64 commit pages, each over bytes already written" do
+      file_system = SQLiteEngineCountingFileSystem.new
+      change_many_pages(file_system, Grant::SQLiteEngine::Synchronous::Full)
+      list_of_requests = file_system.list_of_writeback_requests
+      journal_requests = list_of_requests.select(&.kind.journal?)
+      database_requests = list_of_requests.select(&.kind.database?)
+      journal_requests.size.should be > 0
+      database_requests.size.should be > 0
+      list_of_requests.each { |request| (request.offset + request.length).should be <= request.written_size }
+      # Each journal request covers the write just made, so together they
+      # cover the journal from its first byte, write after write.
+      journal_requests.first.offset.should eq(0)
+      journal_requests.each_cons_pair { |earlier, later| later.offset.should be >= earlier.offset + earlier.length }
+      database_requests.each { |request| (request.length % 4096).should eq(0) }
+    end
+
+    it "is never asked for when synchronous is OFF" do
+      file_system = SQLiteEngineCountingFileSystem.new
+      change_many_pages(file_system, Grant::SQLiteEngine::Synchronous::Off)
+      file_system.list_of_writeback_requests.should be_empty
+    end
+  end
+
   describe "WriteAheadLog.checksum" do
     it "matches the word-by-word checksum for every page size and odd lengths" do
       random = Random.new(20261126)

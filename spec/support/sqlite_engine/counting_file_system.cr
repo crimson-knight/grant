@@ -17,7 +17,12 @@ class SQLiteEngineCountingFileSystem < Grant::SQLiteEngine::FileSystem
     end
   end
 
+  record WritebackRequest, kind : FileKind, offset : Int64, length : Int64, written_size : Int64
+
   getter list_of_sync_calls = [] of SyncCall
+  # Every `DatabaseFile#start_writeback` request, with the file's size when
+  # it was made.
+  getter list_of_writeback_requests = [] of WritebackRequest
   # The offset of every read of the database file (not the journal or
   # WAL).
   getter list_of_database_read_offsets = [] of Int64
@@ -46,6 +51,10 @@ class SQLiteEngineCountingFileSystem < Grant::SQLiteEngine::FileSystem
     FileKind::Database
   end
 
+  protected def record_writeback(kind : FileKind, offset : Int64, length : Int64, written_size : Int64) : Nil
+    @list_of_writeback_requests << WritebackRequest.new(kind, offset, length, written_size)
+  end
+
   protected def record_sync(kind : FileKind, mode : Grant::SQLiteEngine::SyncMode) : Nil
     @list_of_sync_calls << SyncCall.new(kind, mode, @phase)
   end
@@ -72,6 +81,10 @@ class SQLiteEngineCountingFileSystem < Grant::SQLiteEngine::FileSystem
 
     def write_at(offset : Int64, bytes_to_write : Bytes) : Nil
       @file.write_at(offset, bytes_to_write)
+    end
+
+    def start_writeback(offset : Int64, length : Int64) : Nil
+      @file_system.record_writeback(@kind, offset, length, @file.size)
     end
 
     def truncate(size : Int64) : Nil
