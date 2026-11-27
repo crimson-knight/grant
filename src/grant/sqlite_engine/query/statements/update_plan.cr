@@ -150,6 +150,10 @@ module Grant::SQLiteEngine::Query
     @list_of_changed_names : Array(String)
     # The row arrays each target is read and rebuilt in, kept for the next run.
     @spare_scratch : RowScratch? = nil
+    # The SET list, evaluated against each target as the second pass reads
+    # it again, when a trigger can change rows between the scan and the
+    # write (nil: the scan computes the values).
+    @current_values : RowProgram? = nil
 
     # *override* is the conflict policy of the statement whose trigger runs
     # this one: when it gave one, it replaces this statement's own.
@@ -161,8 +165,20 @@ module Grant::SQLiteEngine::Query
       @assignments = AssignmentList.compile(info, statement.assignments, generated)
       @override = override.default? ? ConflictAction.from(statement.conflict) : override
       @list_of_changed_names = statement.assignments.flat_map(&.columns).map(&.value)
+      columns = RowProgram.columns(@assignments.list_of_expressions)
+      # C computes the SET list in the second pass, from the row as it is
+      # then (an UPDATE ... FROM, from the first pass's ephemeral table).
+      # A trigger run for an earlier row can change a later one before it
+      # is written; a table without triggers keeps computing the values in
+      # the scan.
+      if statement.from.nil? && !@table.list_of_triggers(@session).empty?
+        current = PseudoTable.new(statement.table.alias_name.try(&.value) || info.name, info)
+        current.outermost_only = true
+        @current_values = RowProgram.new(@session, columns, [current], with_clause: statement.with_clause)
+        columns = [] of SQL::ResultColumn
+      end
       @targets = TargetRows.new(@session, info, statement.table, statement.indexed_by, statement.not_indexed,
-        RowProgram.columns(@assignments.list_of_expressions), statement.from, statement.where, statement.with_clause)
+        columns, statement.from, statement.where, statement.with_clause)
       if returning = statement.returning
         pseudo = PseudoTable.new(statement.table.alias_name.try(&.value) || info.name, info)
         @returning_pseudo = pseudo
@@ -243,6 +259,9 @@ module Grant::SQLiteEngine::Query
       targets.each do |rowid, snapshot, values|
         old = rowid ? @table.database.row_at(@table.layout, rowid, scratch.old_row) : @table.database.row_with_key_of(@table.layout, snapshot)
         next unless old
+        if program = @current_values
+          values = values_for_current_row(program, run, rowid, old, list_of_parameters)
+        end
         new_row = scratch.new_row_from(old)
         explicit_rowid = nil.as(Value)
         positions.each_with_index do |position, index|
@@ -269,6 +288,16 @@ module Grant::SQLiteEngine::Query
           end
         end
       end
+    end
+
+    # The SET list's values for the row *old* at *rowid*, as it is now.
+    private def values_for_current_row(program : RowProgram, run : WriteRun, rowid : Int64?, old : Array(Value),
+                                       list_of_parameters : Array(Value)) : Array(Value)
+      run.fill_virtual_columns(@table, old, rowid)
+      current = program.list_of_pseudo_tables[0]
+      current.row = old
+      current.rowid = rowid
+      program.evaluate(list_of_parameters) || raise Error.new("the SET list of an UPDATE returned no row")
     end
   end
 

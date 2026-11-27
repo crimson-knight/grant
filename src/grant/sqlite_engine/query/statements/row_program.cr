@@ -10,6 +10,9 @@ module Grant::SQLiteEngine::Query
     # Reached only by a qualified name (`excluded.x`), as C's upsert
     # pseudo-table is.
     property? qualified_only = false
+    # Reached only from the FROM of the outermost query, so a subquery that
+    # names the same table reads the table itself.
+    property? outermost_only = false
 
     def initialize(@name : String, @table : TableInfo)
     end
@@ -44,7 +47,8 @@ module Grant::SQLiteEngine::Query
     getter captured_slot : Int32? = nil
 
     private def compile_table_reference(reference : SQL::TableReference, context : QueryContext) : {FromEntry, RowSource?}
-      if reference.schema.nil? && (tables = @pseudo_tables) && (pseudo = tables[reference.name.value.downcase]?)
+      if reference.schema.nil? && (tables = @pseudo_tables) && (pseudo = tables[reference.name.value.downcase]?) &&
+         (!pseudo.outermost_only? || @query_depth == 1)
         slot = allocate_slot
         table = pseudo.table
         columns = (0...table.list_of_column_names.size).map do |index|
@@ -108,9 +112,11 @@ module Grant::SQLiteEngine::Query
     # evaluation the WHERE rejects returns nil). *deterministic_context*
     # names the place whose expressions must be deterministic ("a CHECK
     # constraint", "a generated column", "an index"), where C runs
-    # functions as OP_PureFunc.
+    # functions as OP_PureFunc. *with_clause* is the WITH of the statement
+    # the expressions belong to.
     def initialize(@session : Session, columns : Array(SQL::ResultColumn), @list_of_pseudo_tables : Array(PseudoTable),
-                   where : SQL::Expression? = nil, @deterministic_context : String? = nil)
+                   where : SQL::Expression? = nil, @deterministic_context : String? = nil,
+                   with_clause : SQL::WithClause? = nil)
       items = @list_of_pseudo_tables.map_with_index do |pseudo, index|
         join = index == 0 ? nil : SQL::JoinOperator.new(true, [] of String)
         SQL::FromItem.new(join, SQL::TableReference.new(nil, SQL::Name.bare(pseudo.name), nil, nil, false), nil, nil)
@@ -118,7 +124,7 @@ module Grant::SQLiteEngine::Query
       from = items.empty? ? nil : SQL::From.new(items)
       core = SQL::SelectClause.new(SQL::DistinctMode::None, columns, from, where, [] of SQL::Expression, nil,
         [] of SQL::WindowDefinition)
-      statement = SQL::SelectStatement.new(nil, [core] of SQL::SelectCore, [] of SQL::CompoundOperator,
+      statement = SQL::SelectStatement.new(with_clause, [core] of SQL::SelectCore, [] of SQL::CompoundOperator,
         [] of SQL::OrderingTerm, nil)
       compiler = Compiler.new(@session)
       @list_of_pseudo_tables.each { |pseudo| compiler.pseudo_tables[pseudo.name.downcase] = pseudo }
