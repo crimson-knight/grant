@@ -81,8 +81,8 @@ module BusyParityHelper
       end
     end
     while line = STDIN.gets
-      worker = list_of_workers[line[0]]? || abort("no connection named #{line[0]}")
-      worker.list_of_steps.send(line[2..])
+      step_worker = list_of_workers[line[0]]? || abort("no connection named #{line[0]}")
+      step_worker.list_of_steps.send(line[2..])
     end
     list_of_workers.each_value do |worker|
       worker.list_of_steps.close
