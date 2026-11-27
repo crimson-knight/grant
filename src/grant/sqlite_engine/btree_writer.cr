@@ -34,15 +34,22 @@ module Grant::SQLiteEngine
     end
 
     # Runs one change of the tree; the page copies and cell lists it borrows
-    # go back to the scratch space when it ends.
+    # go back to the scratch space when it ends. The outermost change tells
+    # the pager it starts (`Pager#start_change`), which is when pages a cache
+    # spill synced are written: no page of an earlier change is being edited.
     private def borrowing_scratch(&)
+      @pager.start_change if @change_depth == 0
+      @change_depth += 1
       mark = @scratch.mark
       begin
         yield
       ensure
         @scratch.release(mark)
+        @change_depth -= 1
       end
     end
+
+    @change_depth = 0
 
     private def usable : Int32
       @pager.usable_size
@@ -52,6 +59,7 @@ module Grant::SQLiteEngine
 
     # A new empty b-tree: a table leaf or an index leaf page.
     def create_tree(table : Bool) : UInt32
+      @pager.start_change if @change_depth == 0
       root = @pager.allocate_page
       write_node(TreeNode.new(root, table ? PageType::LeafTable : PageType::LeafIndex, [] of Bytes, 0_u32))
       root

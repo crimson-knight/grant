@@ -52,6 +52,12 @@ module Grant::SQLiteEngine
       def initialize(@timeout : Time::Span)
       end
 
+      # Starts over with *timeout* and no calls made, as C resets nBusy
+      # for each statement.
+      def restart(@timeout : Time::Span) : Nil
+        @count = 0
+      end
+
       # Sleeps the next delay and returns true; returns false, without
       # sleeping, once the timeout is used up (or is zero: no handler).
       def waited_for_another_try? : Bool

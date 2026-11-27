@@ -21,6 +21,25 @@ describe "Grant::SQLiteEngine crash recovery" do
   end
 end
 
+# The same with a two-page cache, so units spill changed pages to the
+# database file between journal segments: each write and sync of a spill
+# is a crash point too. The nightly run sets
+# SQLITE_ENGINE_SPILL_CRASH_SEQUENCES=1000.
+describe "Grant::SQLiteEngine crash recovery with cache spills" do
+  count = ENV.fetch("SQLITE_ENGINE_SPILL_CRASH_SEQUENCES", "6").to_i
+  seed = (ENV["SQLITE_ENGINE_CRASH_SEED"]? || DEFAULT_CRASH_SEED).to_i64
+
+  it "recovers every crash point inside and around a spill to the state before or after the write (#{count} sequences, seed #{seed})" do
+    summary = SQLiteEngineCrashDriver.run(count, seed + 700_000, cache_pages: 2)
+    STDOUT.puts "\n  spill crash simulation: #{summary.sequences} sequences, seed #{seed + 700_000}, #{summary.units} write units " \
+                "(#{summary.spill_units} spilled), #{summary.crash_points} crash points, #{summary.states_checked} distinct crash states " \
+                "opened by the engine, #{summary.sqlite3_states_checked} by sqlite3, #{summary.list_of_failures.size} neither old nor new"
+    summary.list_of_failures.first(10).each { |failure| STDOUT.puts "  #{failure}" }
+    summary.list_of_failures.should be_empty
+    summary.spill_units.should be > 0
+  end
+end
+
 # The same in journal_mode=WAL, with checkpoints as steps, wal-index writes
 # as crash points, and process crashes that leave the wal-index to a
 # surviving process. Half the sequences commit with synchronous=FULL, half

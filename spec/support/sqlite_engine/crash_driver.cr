@@ -21,7 +21,7 @@ module SQLiteEngineCrashDriver
   SURVIVOR_BATCH = 120
 
   record Summary, sequences : Int32, units : Int32, crash_points : Int32, states_checked : Int32,
-    sqlite3_states_checked : Int32, list_of_failures : Array(String)
+    sqlite3_states_checked : Int32, list_of_failures : Array(String), spill_units : Int32 = 0
 
   def self.engine_dump(database : Grant::SQLiteEngine::Database) : String
     canonical(String.build { |io| Grant::SQLiteEngine::Dump.new(database).write(io) })
@@ -54,13 +54,26 @@ module SQLiteEngineCrashDriver
     steps
   end
 
+  # A unit spilled when it wrote the database file before it last wrote
+  # the journal: a cache spill's pages go out between journal segments.
+  def self.spilled?(operations : Array(SQLiteEngineCrashFileSystem::Operation)) : Bool
+    journal = Grant::SQLiteEngine::RollbackJournal.path_for(DATABASE)
+    first_database_write = operations.index { |operation| operation.kind.write? && operation.path == DATABASE }
+    last_journal_write = operations.rindex { |operation| operation.kind.write? && operation.path == journal }
+    !first_database_write.nil? && !last_journal_write.nil? && first_database_write < last_journal_write
+  end
+
+  # *cache_pages* is the cache_size the engine runs with (nil: C's
+  # default); a small one makes the units spill.
   def self.run(count : Int32, seed : Int64, wal : Bool = false,
-               synchronous : Grant::SQLiteEngine::Synchronous = Grant::SQLiteEngine::Synchronous::Full) : Summary
+               synchronous : Grant::SQLiteEngine::Synchronous = Grant::SQLiteEngine::Synchronous::Full,
+               cache_pages : Int32? = nil) : Summary
     failures = [] of String
     units = 0
     crash_points = 0
     states_checked = 0
     sqlite3_checked = 0
+    spill_units = 0
     count.times do |number|
       directory = Path[Dir.tempdir] / "grant-sqlite-engine-crash-#{Process.pid}-#{number}"
       FileUtils.rm_rf(directory)
@@ -69,10 +82,13 @@ module SQLiteEngineCrashDriver
       name = "seq_%05d" % number
       sequence = SQLiteEngineWriteDriver::Sequence.from_json(File.read(directory / "#{name}.json"))
       file_system = SQLiteEngineCrashFileSystem.new
-      database = Grant::SQLiteEngine::Database.open(DATABASE, read_write: true, page_size: sequence.page_size,
+      database = Grant::SQLiteEngine::Database.open(DATABASE, read_write: true, page_size: sequence.page_size, cache_pages: cache_pages,
         text_encoding: sequence.text_encoding, file_system: file_system,
         journal_mode: wal ? Grant::SQLiteEngine::JournalMode::Wal : nil,
         synchronous: synchronous, wal_autocheckpoint: WAL_AUTOCHECKPOINT)
+      # Upstream C's szSpill of 1, so a small cache spills on every platform
+      # (the macOS default of 20,000 pages would hold every unit in memory).
+      database.pager.cache_spill_size = 1_i64 if cache_pages
       outcome = SQLiteEngineWriteDriver::Outcome.new
       written = [] of {String, String, String, Bool}
       list_of_steps(sequence, wal, Random.new(seed + number)).each_with_index do |step, unit_number|
@@ -87,6 +103,7 @@ module SQLiteEngineCrashDriver
         operations = file_system.stop_recording
         new_dump = engine_dump(database)
         units += 1
+        spill_units += 1 if spilled?(operations)
         crash_points += operations.size + 1
         seen = Set(UInt64).new
         (0..operations.size).each do |prefix|
@@ -148,7 +165,7 @@ module SQLiteEngineCrashDriver
       end
       FileUtils.rm_rf(directory) if failures.empty?
     end
-    Summary.new(count, units, crash_points, states_checked, sqlite3_checked, failures)
+    Summary.new(count, units, crash_points, states_checked, sqlite3_checked, failures, spill_units)
   end
 
   def self.first_difference(expected : String, actual : String) : String

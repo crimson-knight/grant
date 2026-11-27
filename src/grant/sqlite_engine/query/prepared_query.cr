@@ -125,6 +125,7 @@ module Grant::SQLiteEngine::Query
     # query is finished.
     def step : Bool
       return false if @done
+      @session.database.pager.start_busy_handler
       outer_clock = @session.statement_clock
       @session.statement_clock = @statement_clock
       begin

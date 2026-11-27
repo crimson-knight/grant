@@ -10,7 +10,7 @@ module Grant::SQLiteEngine::Query
     # with C's default and the column name of the row they return.
     REMEMBERED = {
       "synchronous"               => {2_i64, "synchronous"},
-      "cache_size"                => {-2000_i64, "cache_size"},
+      "cache_size"                => {Pager::DEFAULT_CACHE_SIZE, "cache_size"},
       "wal_autocheckpoint"        => {1000_i64, "wal_autocheckpoint"},
       "temp_store"                => {0_i64, "temp_store"},
       "recursive_triggers"        => {0_i64, "recursive_triggers"},
@@ -49,6 +49,7 @@ module Grant::SQLiteEngine::Query
                               when "table_list"                     then Catalog.function_columns("pragma_table_list")
                               when "integrity_check", "quick_check" then [name]
                               when "busy_timeout"                   then %w[timeout]
+                              when "cache_spill"                    then @statement.value ? [] of String : %w[cache_spill]
                               when "wal_checkpoint"                 then %w[busy log checkpointed]
                               when "foreign_key_check"              then ForeignKeyCheck.columns(@session, @statement.value.try { |text| PragmaPlan.unquote(text) })
                               else
@@ -89,6 +90,8 @@ module Grant::SQLiteEngine::Query
           @session.database.pager.busy_timeout = @session.busy_timeout.milliseconds
         end
         [[@session.busy_timeout.to_i64] of Value]
+      when "cache_spill"
+        cache_spill(value)
       when "journal_mode"
         journal_mode(value)
       when "wal_checkpoint"
@@ -132,6 +135,20 @@ module Grant::SQLiteEngine::Query
         end
         [] of Array(Value)
       end
+    end
+
+    # PRAGMA cache_spill (pragma.c, PragTyp_CACHE_SPILL): read, the spill
+    # size in pages, or 0 while spills are off. Set, a value that reads as
+    # a 32-bit integer (sqlite3GetInt32) sets the size, and the value as a
+    # boolean (sqlite3GetBoolean, defaulting to whether that integer, else
+    # 1, is nonzero) turns spills on or off.
+    private def cache_spill(value : String?) : Array(Array(Value))
+      pager = @session.database.pager
+      return [[pager.cache_spill_report] of Value] unless value
+      size = PragmaPlan.c_int32(value)
+      pager.cache_spill_size = size.to_i64 if size
+      pager.cache_spill_allowed = PragmaPlan.c_boolean(value, (size || 1) != 0)
+      [] of Array(Value)
     end
 
     JOURNAL_MODES = %w[delete persist off truncate memory wal]
@@ -183,6 +200,8 @@ module Grant::SQLiteEngine::Query
       case name
       when "synchronous"
         pager.synchronous = Synchronous.from_value(number.clamp(0_i64, 3_i64).to_i32)
+      when "cache_size"
+        pager.cache_size = number
       when "wal_autocheckpoint"
         pager.wal_autocheckpoint = number.clamp(Int32::MIN.to_i64, Int32::MAX.to_i64).to_i32
       end
@@ -212,6 +231,67 @@ module Grant::SQLiteEngine::Query
 
     def self.integer(text : String) : Int64?
       text.strip.to_i64?
+    end
+
+    # sqlite3GetInt32: an optional sign and decimal digits (whatever
+    # follows them is ignored), or unsigned hex with 0x, that fit in 31
+    # bits and a sign; nil when the text does not start so.
+    def self.c_int32(text : String) : Int32?
+      bytes = text.to_slice
+      position = 0
+      negative = false
+      first = bytes[0]?
+      if first == '-'.ord
+        negative = true
+        position = 1
+      elsif first == '+'.ord
+        position = 1
+      elsif first == '0'.ord && (bytes[1]? == 'x'.ord || bytes[1]? == 'X'.ord) && hex_digit(bytes[2]?)
+        position = 2
+        while bytes[position]? == '0'.ord
+          position += 1
+        end
+        hex = 0_u32
+        count = 0
+        while count < 8 && (digit = hex_digit(bytes[position + count]?))
+          hex = hex &* 16 &+ digit
+          count += 1
+        end
+        return if (hex & 0x80000000_u32) != 0 || hex_digit(bytes[position + count]?)
+        return hex.to_i32
+      end
+      byte = bytes[position]?
+      return unless byte && byte.chr.ascii_number?
+      while bytes[position]? == '0'.ord
+        position += 1
+      end
+      number = 0_i64
+      count = 0
+      while count < 11 && (byte = bytes[position + count]?) && byte.chr.ascii_number?
+        number = number * 10 + (byte - '0'.ord)
+        count += 1
+      end
+      return if count > 10 || number - (negative ? 1 : 0) > Int32::MAX
+      (negative ? -number : number).to_i32
+    end
+
+    private def self.hex_digit(byte : UInt8?) : UInt32?
+      return unless byte
+      byte.chr.to_u32?(16)
+    end
+
+    # sqlite3GetBoolean (getSafetyLevel with omitFull): text starting with
+    # a digit is its sqlite3Atoi value cut to 8 bits, nonzero for true;
+    # on, yes and true are true, no, off and false are false, ignoring
+    # case; anything else is *default*.
+    def self.c_boolean(text : String, default : Bool) : Bool
+      first = text.to_slice[0]?
+      return ((c_int32(text) || 0) & 0xff) != 0 if first && first.chr.ascii_number?
+      case text.downcase
+      when "on", "yes", "true"  then true
+      when "no", "off", "false" then false
+      else                           default
+      end
     end
 
     # The keyword levels of synchronous and temp_store.

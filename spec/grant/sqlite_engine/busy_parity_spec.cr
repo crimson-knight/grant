@@ -127,6 +127,10 @@ module BusyParity
     def initialize(@pair : ConnectionPair, @engine : Symbol, @journal_mode : String)
     end
 
+    def rollback_journal? : Bool
+      @journal_mode != "WAL"
+    end
+
     # Runs *sql* on connection *name*. *wait* is the range of milliseconds
     # the step must take on either engine.
     def run(name : Char, sql : String, c_answers : String | {String, String}, wait : Range(Int32, Int32)? = nil) : Nil
@@ -219,6 +223,87 @@ module BusyParity
         steps.run('A', "COMMIT", {"5/5", "0/0"})
         steps.run('A', "SELECT count(*) FROM entries", "0/0")
         steps.run('B', "SELECT count(*) FROM entries", "0/0")
+        steps.run('B', "COMMIT", "0/0")
+        steps.run('A', "COMMIT", {"0/0", "1/1"})
+      end,
+      # A's transaction outgrows its ten-page cache. Rollback journal: a
+      # cache spill needs EXCLUSIVE, so while B reads C skips the spill and
+      # keeps the pages in memory, B still reads the committed rows, and A's
+      # COMMIT waits for B; once B has gone, A's next spill takes EXCLUSIVE
+      # and a new read by B is refused until A commits. WAL: nothing waits.
+      # (cache_spill=1 is C's default; the macOS build sets it far higher.)
+      "a reader holding SHARED while another connection's transaction spills its cache" => Case.new do |steps|
+        rows = "WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM n WHERE x < 2000) " \
+               "INSERT INTO entries (label) SELECT hex(zeroblob(100)) || x FROM n"
+        steps.run('A', "PRAGMA cache_size=10", "0/0")
+        steps.run('A', "PRAGMA cache_spill=1", "0/0")
+        steps.run('B', "BEGIN", "0/0")
+        steps.run('B', "SELECT count(*) FROM entries", "0/0")
+        steps.run('A', "BEGIN", "0/0")
+        steps.run('A', rows, "0/0")
+        steps.run('B', "SELECT count(*) FROM entries", "0/0")
+        steps.run('A', "COMMIT", {"5/5", "0/0"})
+        steps.run('B', "SELECT count(*) FROM entries", "0/0")
+        steps.run('B', "COMMIT", "0/0")
+        steps.run('A', "COMMIT", {"0/0", "1/1"})
+        steps.run('A', "BEGIN", "0/0")
+        steps.run('A', rows, "0/0")
+        steps.run('B', "SELECT count(*) FROM entries", {"5/5", "0/0"})
+        steps.run('A', "COMMIT", "0/0")
+        steps.run('B', "SELECT count(*) FROM entries", "0/0")
+      end,
+      # Rollback journal: A's COMMIT calls the busy handler while B reads
+      # (vdbeCommit's sqlite3PagerExclusiveLock) and commits once B's read
+      # transaction ends. WAL: the COMMIT does not wait.
+      "busy_timeout: a COMMIT waiting while another connection reads, then succeeding" => Case.new do |steps|
+        steps.run('A', "PRAGMA busy_timeout=5000", "0/0")
+        steps.run('B', "BEGIN", "0/0")
+        steps.run('B', "SELECT count(*) FROM entries", "0/0")
+        steps.run('A', "BEGIN IMMEDIATE", "0/0")
+        steps.run('A', "INSERT INTO entries (label) VALUES ('a1')", "0/0")
+        steps.start('A', "COMMIT")
+        sleep 300.milliseconds
+        steps.run('B', "COMMIT", "0/0")
+        steps.finish('A', "COMMIT", "0/0")
+        steps.run('B', "SELECT count(*) FROM entries", "0/0")
+      end,
+      # Rollback journal: A's cache spill calls the busy handler while B
+      # reads (pagerStress, syncJournal's sqlite3PagerExclusiveLock); once
+      # B's read transaction ends the spill takes EXCLUSIVE, so B's next
+      # read is refused until A commits. WAL: nothing waits.
+      "busy_timeout: a cache spill waiting while another connection reads, then spilling" => Case.new do |steps|
+        rows = "WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM n WHERE x < 2000) " \
+               "INSERT INTO entries (label) SELECT hex(zeroblob(100)) || x FROM n"
+        steps.run('A', "PRAGMA cache_size=10", "0/0")
+        steps.run('A', "PRAGMA cache_spill=1", "0/0")
+        steps.run('A', "PRAGMA busy_timeout=5000", "0/0")
+        steps.run('B', "BEGIN", "0/0")
+        steps.run('B', "SELECT count(*) FROM entries", "0/0")
+        steps.run('A', "BEGIN", "0/0")
+        steps.start('A', rows)
+        sleep 300.milliseconds
+        steps.run('B', "COMMIT", "0/0")
+        steps.finish('A', rows, "0/0")
+        steps.run('B', "SELECT count(*) FROM entries", {"5/5", "0/0"})
+        steps.run('A', "COMMIT", "0/0")
+        steps.run('B', "SELECT count(*) FROM entries", "0/0")
+      end,
+      # Rollback journal, B reading throughout: the first spill of A's
+      # statement waits about 200 ms and is skipped; its later spills do
+      # not wait again (C's busy count stays spent for the statement). The
+      # COMMIT, a statement of its own, waits about 200 ms and fails.
+      "busy_timeout 200: a statement's cache spills wait about 200 ms in all, then COMMIT waits and fails" => Case.new do |steps|
+        rows = "WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM n WHERE x < 2000) " \
+               "INSERT INTO entries (label) SELECT hex(zeroblob(100)) || x FROM n"
+        waited = steps.rollback_journal? ? ABOUT_200_MILLISECONDS : AT_ONCE
+        steps.run('A', "PRAGMA cache_size=10", "0/0")
+        steps.run('A', "PRAGMA cache_spill=1", "0/0")
+        steps.run('A', "PRAGMA busy_timeout=200", "0/0")
+        steps.run('B', "BEGIN", "0/0")
+        steps.run('B', "SELECT count(*) FROM entries", "0/0")
+        steps.run('A', "BEGIN", "0/0")
+        steps.run('A', rows, "0/0", wait: waited)
+        steps.run('A', "COMMIT", {"5/5", "0/0"}, wait: waited)
         steps.run('B', "COMMIT", "0/0")
         steps.run('A', "COMMIT", {"0/0", "1/1"})
       end,
