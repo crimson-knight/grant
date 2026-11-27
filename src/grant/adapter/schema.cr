@@ -104,30 +104,36 @@ module Grant::Schema
   # existing generated SQL does not change.
   module TypeCatalog
     PG = {
-      "Int8"       => "SMALLINT",
-      "Int16"      => "SMALLINT",
-      "Bytes"      => "BYTEA",
-      "Date"       => "DATE",
-      "JSON::Any"  => "JSONB",
-      "BigDecimal" => "NUMERIC",
+      "Int8"                    => "SMALLINT",
+      "Int16"                   => "SMALLINT",
+      "Bytes"                   => "BYTEA",
+      "Date"                    => "DATE",
+      "JSON::Any"               => "JSONB",
+      "BigDecimal"              => "NUMERIC",
+      "Grant::Mica::Decimal128" => "NUMERIC",
+      "Grant::Mica::Money"      => "NUMERIC",
     }
 
     SQLITE = {
-      "Int8"       => "INTEGER",
-      "Int16"      => "INTEGER",
-      "Bytes"      => "BLOB",
-      "Date"       => "DATE",
-      "JSON::Any"  => "TEXT",
-      "BigDecimal" => "NUMERIC",
+      "Int8"                    => "INTEGER",
+      "Int16"                   => "INTEGER",
+      "Bytes"                   => "BLOB",
+      "Date"                    => "DATE",
+      "JSON::Any"               => "TEXT",
+      "BigDecimal"              => "NUMERIC",
+      "Grant::Mica::Decimal128" => "INTEGER",
+      "Grant::Mica::Money"      => "INTEGER",
     }
 
     MYSQL = {
-      "Int8"       => "TINYINT",
-      "Int16"      => "SMALLINT",
-      "Bytes"      => "BLOB",
-      "Date"       => "DATE",
-      "JSON::Any"  => "JSON",
-      "BigDecimal" => "DECIMAL",
+      "Int8"                    => "TINYINT",
+      "Int16"                   => "SMALLINT",
+      "Bytes"                   => "BLOB",
+      "Date"                    => "DATE",
+      "JSON::Any"               => "JSON",
+      "BigDecimal"              => "DECIMAL",
+      "Grant::Mica::Decimal128" => "DECIMAL",
+      "Grant::Mica::Money"      => "DECIMAL",
     }
 
     # Returns the native type for the Crystal type named *key*, or nil.
@@ -140,6 +146,19 @@ module Grant::Schema
       in .pg?     then PG
       in .mysql?  then MYSQL
       in .sqlite? then SQLITE
+      end
+    end
+
+    # The column type of a `Grant::Decimal128` or `Grant::Money` amount:
+    # `NUMERIC(p, s)` on PostgreSQL, `DECIMAL(p, s)` on MySQL, and on SQLite
+    # `INTEGER` (the coefficient at scale *s*) when *precision* is at most 18,
+    # `TEXT` (the plain decimal at scale *s*) above. SQLite's NUMERIC keeps
+    # only about 15 significant digits, so neither form uses it.
+    def self.exact_decimal_type(dialect : Dialect, precision : Int32, scale : Int32) : String
+      case dialect
+      in .pg?     then "NUMERIC(#{precision}, #{scale})"
+      in .mysql?  then "DECIMAL(#{precision}, #{scale})"
+      in .sqlite? then precision <= 18 ? "INTEGER" : "TEXT"
       end
     end
 
@@ -157,6 +176,8 @@ module Grant::Schema
         else
           base
         end
+      when "Grant::Mica::Decimal128", "Grant::Mica::Money"
+        exact_decimal_type(dialect, precision || 18, scale || 4)
       when "Time"
         precision && !dialect.sqlite? ? "#{Grant::TextMatching.remove_parenthesized_number(base)}(#{precision})" : base
       when "Int8", "Int16", "Int32", "Int64"

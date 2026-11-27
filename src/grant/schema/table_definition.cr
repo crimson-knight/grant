@@ -44,6 +44,9 @@ module Grant::Schema
     property collation : ::String?
     property? array : Bool
     property? primary_key : Bool
+    # True for a `Grant::Decimal128` or `Grant::Money` amount (see
+    # `TableDefinition#decimal128`), stored as `TypeCatalog.exact_decimal_type`.
+    property? exact_decimal : Bool = false
     # True for PostgreSQL-only native types (`citext`, `inet`, ...).
     property? pg_only : Bool = false
 
@@ -122,6 +125,7 @@ module Grant::Schema
       in .double?
         dialect.pg? ? "DOUBLE PRECISION" : (dialect.mysql? ? "DOUBLE" : "REAL")
       in .decimal?
+        return TypeCatalog.exact_decimal_type(dialect, @precision || 18, @scale || 4) if exact_decimal?
         precision = @precision
         scale = @scale
         raise InvalidDefinition.new("scale: #{scale} on '#{@name}' needs a precision:") if scale && !precision
@@ -215,6 +219,44 @@ module Grant::Schema
         end
       end
     {% end %}
+
+    # Adds a `Grant::Decimal128` column with the type a model's
+    # `column name : Grant::Decimal128, precision:, scale:` creates:
+    # `NUMERIC(p, s)` on PostgreSQL, `DECIMAL(p, s)` on MySQL, and on SQLite
+    # `INTEGER` when *precision* is at most 18, `TEXT` above.
+    #
+    # ```
+    # create_table :products do |t|
+    #   t.decimal128 :price, precision: 12, scale: 2, null: false
+    # end
+    # ```
+    def decimal128(*names : ::String | Symbol, precision : Int32 = 18, scale : Int32 = 4, null : Bool = true,
+                   comment : ::String? = nil) : Nil
+      Grant::Schema::TableDefinition.check_exact_decimal_shape(precision, scale)
+      names.each do |name|
+        column(name, ColumnKind::Decimal, null, precision: precision, scale: scale, comment: comment).exact_decimal = true
+      end
+    end
+
+    # Adds a `Grant::Money` column (PostgreSQL's native `money` type is
+    # `money`) as a model's `column name : Grant::Money`
+    # creates it: the amount as `decimal128`, plus the companion
+    # `<name>_currency VARCHAR(3)` unless the model fixes the currency
+    # (`fixed_currency: true`).
+    def money_amount(*names : ::String | Symbol, precision : Int32 = 18, scale : Int32 = 4, null : Bool = true,
+                     fixed_currency : Bool = false, comment : ::String? = nil) : Nil
+      names.each do |name|
+        decimal128(name, precision: precision, scale: scale, null: null, comment: comment)
+        string("#{name}_currency", limit: 3, null: null) unless fixed_currency
+      end
+    end
+
+    # Raises `InvalidDefinition` unless 1 <= *precision* <= 38 and
+    # 0 <= *scale* <= *precision*.
+    def self.check_exact_decimal_shape(precision : Int32, scale : Int32) : Nil
+      raise InvalidDefinition.new("precision: #{precision} is outside 1..38") unless 1 <= precision <= 38
+      raise InvalidDefinition.new("scale: #{scale} is outside 0..#{precision}") unless 0 <= scale <= precision
+    end
 
     # Adds `created_at` and `updated_at`. Like ActiveRecord 8 they are
     # `NOT NULL` and carry microsecond precision unless told otherwise.

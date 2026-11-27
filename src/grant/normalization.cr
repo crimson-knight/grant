@@ -103,6 +103,24 @@ module Grant::Normalization
       {% end %}
       value
     end
+
+    # The value a comparison on *field* binds for *value*: a
+    # `Grant::Decimal128` or `Grant::Money` compared with a decimal column
+    # becomes that column's stored form (on SQLite, the coefficient at the
+    # column scale). Any other field or value passes straight through. Use it
+    # to bind a decimal in a raw SQL fragment on SQLite:
+    #
+    # ```
+    # Invoice.where("subtotal > ?", Invoice.coerce_exact_decimal_value("subtotal", value))
+    # ```
+    def coerce_exact_decimal_value(field : String, value)
+      {% for method in @type.class.methods %}
+        {% if method.name.starts_with?("__decimal_bind_") %}
+          return {{ method.name.id }}(value) if field == {{ method.name.gsub(/^__decimal_bind_/, "").stringify }}
+        {% end %}
+      {% end %}
+      value
+    end
   end
 
   # Registers a normalizer for one or more attributes.

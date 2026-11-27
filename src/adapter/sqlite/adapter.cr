@@ -71,6 +71,12 @@ class Grant::Adapter::Sqlite < Grant::Adapter::Base
     value.to_s
   end
 
+  # A decimal column's value: the coefficient for an `INTEGER` column, the
+  # plain decimal text for a `TEXT` column (see `Grant::Converters::Decimal128Column`).
+  def normalize_bind_value(value : Grant::StoredDecimal) : Int64 | String
+    value.sqlite_bind_value
+  end
+
   protected def bind_value_needs_normalization?(value) : Bool
     value.is_a?(Time) || value.is_a?(UUID) || super
   end

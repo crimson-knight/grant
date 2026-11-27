@@ -32,6 +32,7 @@ module Grant
   annotation Table; end
 end
 
+require "./grant/decimal128"
 require "./grant/text/text_matching"
 require "./grant/notifications"
 require "./grant/query_logs"

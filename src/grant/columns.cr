@@ -20,11 +20,11 @@ module Grant::Columns
   # `BigDecimal` and `Array(BigDecimal)` are column values only when
   # `Grant::BIG_DECIMAL_SUPPORT` is true (see `grant/big_decimal`).
   {% if Grant::BIG_DECIMAL_SUPPORT %}
-    alias SupportedArrayTypes = Array(String) | Array(Int16) | Array(Int32) | Array(Int64) | Array(Float32) | Array(Float64) | Array(Bool) | Array(UUID) | Array(Time) | Array(BigDecimal)
-    alias Type = DB::Any | SupportedArrayTypes | UUID | BigDecimal | Int8 | Int16
+    alias SupportedArrayTypes = Array(String) | Array(Int16) | Array(Int32) | Array(Int64) | Array(Float32) | Array(Float64) | Array(Bool) | Array(UUID) | Array(Time) | Array(BigDecimal) | Array(Grant::Decimal128)
+    alias Type = DB::Any | SupportedArrayTypes | UUID | BigDecimal | Int8 | Int16 | Grant::Decimal128 | Grant::Money | Grant::StoredDecimal
   {% else %}
-    alias SupportedArrayTypes = Array(String) | Array(Int16) | Array(Int32) | Array(Int64) | Array(Float32) | Array(Float64) | Array(Bool) | Array(UUID) | Array(Time)
-    alias Type = DB::Any | SupportedArrayTypes | UUID | Int8 | Int16
+    alias SupportedArrayTypes = Array(String) | Array(Int16) | Array(Int32) | Array(Int64) | Array(Float32) | Array(Float64) | Array(Bool) | Array(UUID) | Array(Time) | Array(Grant::Decimal128)
+    alias Type = DB::Any | SupportedArrayTypes | UUID | Int8 | Int16 | Grant::Decimal128 | Grant::Money | Grant::StoredDecimal
   {% end %}
 
   # Virtual attributes can participate in model mass assignment without
@@ -158,6 +158,12 @@ module Grant::Columns
   def from_rs(result : DB::ResultSet, plan : Grant::ColumnPlan) : Nil
     {% begin %}
       {% mapped_columns = @type.instance_vars.select(&.annotation(Grant::Column)) %}
+      {% money_columns = mapped_columns.select { |column| column.annotation(Grant::Column)[:money] } %}
+      {% for column in money_columns %}
+        # A Money column's amount, kept until its currency is read too.
+        loaded_amount_{{column.id}} : Grant::Decimal128? = nil
+        amount_was_read_{{column.id}} = false
+      {% end %}
       ordinals = plan.ordinals
       position = 0
       while position < ordinals.size
@@ -165,6 +171,10 @@ module Grant::Columns
         {% for column, index in mapped_columns %}
           {% ann = column.annotation(Grant::Column) %}
           when {{index}}
+            {% if ann[:money] %}
+              loaded_amount_{{column.id}} = Grant::Converters::Decimal128Column({{ann[:precision]}}, {{ann[:scale]}}).from_rs(result)
+              amount_was_read_{{column.id}} = true
+            {% else %}
             @{{column.id}} = {% if ann[:converter] %}
               {{ann[:converter]}}.from_rs result
             {% else %}
@@ -176,6 +186,7 @@ module Grant::Columns
 
               value
             {% end %}
+            {% end %}
         {% end %}
         else
           # Not a mapped column: a computed `select` expression. Read it so the
@@ -185,6 +196,22 @@ module Grant::Columns
         end
         position += 1
       end
+
+      # Each Money column composes its amount with its fixed currency or the
+      # companion `<name>_currency` column read in the same row.
+      {% for column in money_columns %}
+        {% ann = column.annotation(Grant::Column) %}
+        if amount_was_read_{{column.id}}
+          @{{column.id}} = if amount = loaded_amount_{{column.id}}
+            {% if ann[:money_currency] %}
+              Grant::Money.new(amount, Grant::Currency.find({{ann[:money_currency]}}))
+            {% else %}
+              currency_code = @{{column.id}}_currency
+              currency_code ? Grant::Money.new(amount, Grant::Currency.find(currency_code)) : nil
+            {% end %}
+          end
+        end
+      {% end %}
     {% end %}
 
     # Serialized columns compare their raw value with the value loaded, so they
@@ -231,6 +258,35 @@ module Grant::Columns
     # A BigDecimal column stores exact decimal text; `scale:` also rounds on assignment.
     {% big_decimal_column = Grant::BIG_DECIMAL_SUPPORT && not_nilable_type.resolve.name.stringify == "BigDecimal" %}
     {% converter = "Grant::Converters::Decimal".id if converter == nil && big_decimal_column %}
+    # A Grant::Decimal128 or Grant::Money column keeps every value at its
+    # `scale:` exactly (see `Grant::Converters::Decimal128Column`); a value
+    # that does not fit raises `Grant::DecimalColumnError` instead of rounding.
+    {% exact_type_name = not_nilable_type.resolve.name.stringify %}
+    {% decimal128_column = exact_type_name == "Grant::Mica::Decimal128" %}
+    {% money_column = exact_type_name == "Grant::Mica::Money" %}
+    {% column_precision = options[:precision] %}
+    {% column_scale = options[:scale] %}
+    {% money_currency = nil %}
+    {% if decimal128_column || money_column %}
+      {% column_precision = 18 if column_precision == nil %}
+      {% column_scale = 4 if column_scale == nil %}
+      {% unless column_precision.is_a?(NumberLiteral) && column_precision >= 1 && column_precision <= 38 %}
+        {% raise "The column #{@type.name}##{decl.var} has `precision: #{column_precision}`; a #{exact_type_name.gsub(/Mica::/, "")} column takes a precision from 1 to 38" %}
+      {% end %}
+      {% unless column_scale.is_a?(NumberLiteral) && column_scale >= 0 && column_scale <= column_precision %}
+        {% raise "The column #{@type.name}##{decl.var} has `scale: #{column_scale}`; a #{exact_type_name.gsub(/Mica::/, "")} column takes a scale from 0 to its precision (#{column_precision})" %}
+      {% end %}
+      {% if converter == nil %}
+        {% converter = parse_type("Grant::Converters::#{money_column ? "MoneyColumn".id : "Decimal128Column".id}(#{column_precision}, #{column_scale})") %}
+      {% end %}
+      {% money_currency = options[:currency] if money_column %}
+      {% if money_currency != nil && !money_currency.is_a?(StringLiteral) %}
+        {% raise "The column #{@type.name}##{decl.var} has `currency: #{money_currency}`; give an ISO 4217 code as a string, such as `currency: \"USD\"`" %}
+      {% end %}
+    {% end %}
+    {% if options[:currency] != nil && !money_column %}
+      {% raise "The column #{@type.name}##{decl.var} has `currency:`, which only a Grant::Money column takes" %}
+    {% end %}
     # Int8, Int16 and limited integers are bound and read as Int64 (drivers have nothing narrower).
     {% converter = parse_type("Grant::Converters::SmallInteger(#{not_nilable_type.resolve.id})") if converter == nil && !primary_option && (not_nilable_type.resolve == Int8 || not_nilable_type.resolve == Int16 || (options[:limit] && (not_nilable_type.resolve == Int32 || not_nilable_type.resolve == Int64))) %}
     {% if not_nilable_type.resolve == JSON::Any %}
@@ -290,7 +346,7 @@ module Grant::Columns
     {% end %}
 
     {% if emit %}
-    @[Grant::Column(column_type: {{column_type}}, converter: {{converter}}, auto: {{auto}}, primary: {{primary}}, nilable: {{nilable}}, setter_type: {{not_nilable_type}}, null: {{options[:null]}}, limit: {{options[:limit]}}, precision: {{options[:precision]}}, scale: {{options[:scale]}}, comment: {{options[:comment]}}, collation: {{options[:collation]}}, default_sql: {{options[:default_sql]}}, uuid_version: {{options[:uuid_version]}})]
+    @[Grant::Column(column_type: {{column_type}}, converter: {{converter}}, auto: {{auto}}, primary: {{primary}}, nilable: {{nilable}}, setter_type: {{not_nilable_type}}, null: {{options[:null]}}, limit: {{options[:limit]}}, precision: {{column_precision}}, scale: {{column_scale}}, comment: {{options[:comment]}}, collation: {{options[:collation]}}, default_sql: {{options[:default_sql]}}, uuid_version: {{options[:uuid_version]}}, exact_decimal: {{decimal128_column || money_column}}, money: {{money_column}}, money_currency: {{money_currency}})]
     @{{decl.var}} : {{decl.type}}? {% unless decl.value.is_a? Nop %} = {{decl.value}} {% end %}
 
     # The value assigned by mass assignment before conversion, when it
@@ -386,6 +442,24 @@ module Grant::Columns
     private def __assign_hook_{{decl.var.id}}(value)
       {% if options[:scale] && big_decimal_column %}
         value.is_a?(BigDecimal) ? value.round({{options[:scale]}}, mode: :ties_away) : value
+      {% elsif decimal128_column %}
+        return value unless value.is_a?(Grant::Decimal128)
+        if reason = {{converter}}.reason_value_does_not_fit(value)
+          raise Grant::DecimalColumnError.new({{@type.name.stringify}}, {{decl.var.stringify}}, reason)
+        end
+        {{converter}}.at_column_scale(value)
+      {% elsif money_column %}
+        return value unless value.is_a?(Grant::Money)
+        {% if money_currency %}
+          unless value.currency.code == {{money_currency}}
+            raise Grant::DecimalColumnError.new({{@type.name.stringify}}, {{decl.var.stringify}}, "holds #{{{money_currency}}} only, and #{value} is in #{value.currency.code}")
+          end
+        {% end %}
+        amount_column = Grant::Converters::Decimal128Column({{column_precision}}, {{column_scale}})
+        if reason = amount_column.reason_value_does_not_fit(value.amount)
+          raise Grant::DecimalColumnError.new({{@type.name.stringify}}, {{decl.var.stringify}}, reason)
+        end
+        Grant::Money.new(amount_column.at_column_scale(value.amount), value.currency)
       {% else %}
         value
       {% end %}
@@ -393,13 +467,69 @@ module Grant::Columns
 
     # Called by the setter after the value is accepted (see `enum_attribute`).
     private def __after_assign_{{decl.var.id}}(value)
+      {% if money_column && !money_currency %}
+        # The companion column holds the currency of a Money column.
+        self.{{decl.var.id}}_currency = value.try(&.currency.code)
+      {% end %}
     end
 
     # Lets a column take over mass assignment of a raw value (see
     # `enum_attribute`); returns true when it consumed the value.
     private def __mass_assign_special_{{decl.var.id}}(value) : Bool
-      false
+      {% if money_column %}
+        # A String is "12.30 USD", or a bare amount in the column's fixed
+        # currency (or the currency the record already holds).
+        return false unless value.is_a?(String)
+        begin
+          amount_text, _, code = value.strip.partition(' ')
+          code = code.strip
+          {% if money_currency %}
+            code = {{money_currency}} if code.empty?
+          {% else %}
+            code = @{{decl.var.id}}_currency.to_s if code.empty?
+          {% end %}
+          raise ArgumentError.new("#{value.inspect} names no currency") if code.empty?
+          amount = Grant::Decimal128.parse?(amount_text) || raise ArgumentError.new("Invalid amount: #{value.inspect}")
+          currency = Grant::Currency.find?(code) || raise ArgumentError.new("Unknown currency: #{code.inspect}")
+          self.{{decl.var.id}} = Grant::Money.new(amount, currency)
+        rescue ex : ArgumentError
+          errors << Grant::ConversionError.new({{decl.var.stringify}}, ex.message)
+        end
+        true
+      {% else %}
+        false
+      {% end %}
     end
+
+    {% if decimal128_column || money_column %}
+      # The value a query condition on this column binds for *value* (see
+      # `Grant::Normalization::ClassMethods#coerce_where_value`).
+      #
+      # :nodoc:
+      def self.__coerce_where_{{decl.var.id}}(value)
+        __decimal_bind_{{decl.var.id}}(value)
+      end
+
+      # :nodoc:
+      def self.__decimal_bind_{{decl.var.id}}(value)
+        amount_column = Grant::Converters::Decimal128Column({{column_precision}}, {{column_scale}})
+        if value.is_a?(Grant::Decimal128)
+          amount_column.bind_value(value, adapter)
+        elsif value.is_a?(Grant::Money)
+          amount_column.bind_value(value.amount, adapter)
+        elsif value.is_a?(Array(Grant::Decimal128))
+          amount_column.bind_values(value, adapter)
+        elsif value.is_a?(Array(Grant::Money))
+          amount_column.bind_values(value.map(&.amount), adapter)
+        else
+          value
+        end
+      end
+    {% end %}
+
+    {% if money_column && !money_currency %}
+      column {{decl.var.id}}_currency : String?, limit: 3, null: {{nilable ? true : false}}
+    {% end %}
 
     # Turns a value kept by dirty tracking (the database representation) back
     # into the column type. A converter must define `from_db` for this.

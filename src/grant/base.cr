@@ -34,6 +34,7 @@ require "./connections"
 require "./integrators"
 require "./converters"
 require "./converters/small_integer"
+require "./converters/decimal128_column"
 require "./serializers/jsonb"
 require "./type"
 require "./connection_management"
@@ -64,7 +65,7 @@ require "./integration"
 abstract class Grant::Base
   # Dirty tracking storage - using a union of all possible types
   # We use a broad union type to handle all column types including enums
-  alias DirtyValue = (Bool | Int32 | Int64 | Float32 | Float64 | String | Time | UUID | Slice(UInt8) | Array(String) | Array(Int16) | Array(Int32) | Array(Int64) | Array(Float32) | Array(Float64) | Array(Bool) | Array(UUID) | Array(Time))?
+  alias DirtyValue = (Bool | Int32 | Int64 | Float32 | Float64 | String | Time | UUID | Slice(UInt8) | Array(String) | Array(Int16) | Array(Int32) | Array(Int64) | Array(Float32) | Array(Float64) | Array(Bool) | Array(UUID) | Array(Time) | Grant::StoredDecimal)?
 
   # Keyword attributes as the one String-keyed hash `set_attributes` reads,
   # built in a single pass (`args.to_h.transform_keys(&.to_s)` builds two).

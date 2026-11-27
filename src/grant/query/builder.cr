@@ -416,6 +416,7 @@ class Grant::Query::Builder(Model)
   # ```
   @[TypeOnce]
   def and!(field : (Symbol | String), operator : Symbol, value : Grant::Columns::Type) : self
+    value = Model.coerce_exact_decimal_value(field.to_s, value)
     own_where_fields << {join: :and, field: field.to_s, operator: operator, value: value}
 
     self
@@ -467,6 +468,8 @@ class Grant::Query::Builder(Model)
   # This overload keeps nil inside the list semantics without passing an
   # unsupported Array(Union(...)) value through the DB driver.
   def and_in!(field : Symbol | String, values : Array, negated : Bool = false) : self
+    coerced = Model.coerce_exact_decimal_value(field.to_s, values)
+    values = coerced if coerced.is_a?(Array)
     and_array(field.to_s, negated ? :nin : :in, values)
   end
 
@@ -560,6 +563,7 @@ class Grant::Query::Builder(Model)
   # # => WHERE active = true OR id < 10
   # ```
   def or!(field : (Symbol | String), operator : Symbol, value : Grant::Columns::Type) : self
+    value = Model.coerce_exact_decimal_value(field.to_s, value)
     own_where_fields << {join: :or, field: field.to_s, operator: operator, value: value}
 
     self
@@ -600,6 +604,8 @@ class Grant::Query::Builder(Model)
   # Adds an OR `IN`/`NOT IN` condition. A nullable array becomes one grouped
   # predicate, so a following condition cannot split its NULL branch.
   def or_in!(field : Symbol | String, values : Array, negated : Bool = false) : self
+    coerced = Model.coerce_exact_decimal_value(field.to_s, values)
+    values = coerced if coerced.is_a?(Array)
     or_array(field.to_s, negated ? :nin : :in, values)
   end
 
