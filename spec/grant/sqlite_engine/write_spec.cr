@@ -147,7 +147,9 @@ describe "Grant::SQLiteEngine writes" do
     end
     database.delete("t", 1_501_i64).should be_false
     database.close
-    sqlite3(c_path, "BEGIN; " + list_of_deletes.map { |rowid| "DELETE FROM t WHERE rowid = #{rowid};" }.join(" ") + " COMMIT;")
+    # On sqlite3's input: 1,100 statements are past the length of a Windows command line.
+    deletes_sql = IO::Memory.new("BEGIN;\n" + list_of_deletes.map { |rowid| "DELETE FROM t WHERE rowid = #{rowid};\n" }.join + "COMMIT;\n")
+    Process.run("sqlite3", [c_path], input: deletes_sql).success?.should be_true
     check = "PRAGMA integrity_check; PRAGMA page_count; PRAGMA freelist_count; SELECT count(*), sum(id), sum(length(body)) FROM t;"
     sqlite3(path, check).should eq(sqlite3(c_path, check))
     sqlite3(path, "PRAGMA integrity_check;").should eq("ok\n")
