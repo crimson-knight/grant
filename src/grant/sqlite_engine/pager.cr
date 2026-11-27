@@ -840,7 +840,9 @@ module Grant::SQLiteEngine
       end
       list_of_pages.sort! { |left, right| left[0] <=> right[0] }
       @database_file_changed = true
-      write_commit_pages(file, list_of_pages)
+      list_of_pages.each do |page_number, buffer|
+        file.write_at((page_number.to_i64 - 1) * @page_size, buffer)
+      end
       file.sync(sync_mode) unless @synchronous.off?
       end_journal
       list_of_pages.clear
@@ -1173,29 +1175,6 @@ module Grant::SQLiteEngine
 
     def set_header_field(offset : Int32, value : UInt32) : Nil
       put_u32(page_for_write(1_u32), offset, value)
-    end
-
-    # The pages COMMIT writes between requests to start their write-out.
-    PAGES_PER_WRITEBACK = 64
-
-    # Writes *list_of_pages* (in page order) into *file*. Unless synchronous
-    # is OFF, every `PAGES_PER_WRITEBACK` pages the write-out of the range
-    # just written starts (`DatabaseFile#start_writeback`), so the sync after
-    # the last page waits on less.
-    private def write_commit_pages(file : DatabaseFile, list_of_pages : Array({UInt32, Bytes})) : Nil
-      range_start = -1_i64
-      range_end = 0_i64
-      list_of_pages.each_with_index do |(page_number, buffer), index|
-        offset = (page_number.to_i64 - 1) * @page_size
-        file.write_at(offset, buffer)
-        next if @synchronous.off?
-        range_start = offset if range_start < 0
-        range_end = offset + @page_size
-        if (index + 1) % PAGES_PER_WRITEBACK == 0
-          file.start_writeback(range_start, range_end - range_start)
-          range_start = -1_i64
-        end
-      end
     end
 
     # Marks the start of one change of the database: a statement, or one

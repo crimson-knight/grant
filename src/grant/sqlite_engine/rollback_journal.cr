@@ -17,6 +17,14 @@ module Grant::SQLiteEngine
     # records go to the file in as few writes as this allows.
     RECORDS_PER_WRITE = 64
 
+    # The journal's write-out starts in whole pages of this many bytes (the
+    # system's page cache pages), so no page goes to the disk half written
+    # and again once complete.
+    WRITEBACK_ALIGNMENT = 4_096_i64
+
+    # The least the journal's write-out is started for at a time.
+    WRITEBACK_BYTES = 0_i64
+
     # nRec of a journal whose record count is the file size's to tell.
     RECORD_COUNT_FROM_SIZE = 0xffff_ffff_u32
 
@@ -73,6 +81,8 @@ module Grant::SQLiteEngine
       # The 8 bytes read at the next header's place, and the 12 bytes of a
       # synced header's magic and record count.
       @next_magic = Bytes.new(8)
+      # Where the next request to start the journal's write-out begins.
+      @writeback_offset = 0_i64
       @synced_header = Bytes.new(12)
 
       ZERO_BYTE = Bytes[0]
@@ -92,6 +102,7 @@ module Grant::SQLiteEngine
         @buffer = @write_buffer.take(SECTOR_SIZE + record_size * RECORDS_PER_WRITE)
         @buffer_offset = 0_i64
         @filled = 0
+        @writeback_offset = 0_i64
         start_segment(nonce)
       end
 
@@ -117,10 +128,22 @@ module Grant::SQLiteEngine
         return if @filled == 0
         journal = current_journal
         journal.write_at(@buffer_offset, @buffer[0, @filled])
-        # The write-out starts now, so the segment's sync waits on less.
-        journal.start_writeback(@buffer_offset, @filled.to_i64) unless @synchronous.off?
         @buffer_offset += @filled
         @filled = 0
+        start_writeback(journal) unless @synchronous.off?
+      end
+
+      # Starts the write-out of the whole pages written since the last
+      # request, past the page that holds the segment's header (the sync
+      # rewrites it), once they reach `WRITEBACK_BYTES`; the segment's
+      # sync then waits on less.
+      private def start_writeback(journal : DatabaseFile) : Nil
+        header_page_end = (@header_offset // WRITEBACK_ALIGNMENT + 1) * WRITEBACK_ALIGNMENT
+        first = Math.max(@writeback_offset, header_page_end)
+        last = @buffer_offset // WRITEBACK_ALIGNMENT * WRITEBACK_ALIGNMENT
+        return if last <= first || last - first < WRITEBACK_BYTES
+        journal.start_writeback(first, last - first)
+        @writeback_offset = last
       end
 
       # syncJournal: makes the segment's records durable before any page

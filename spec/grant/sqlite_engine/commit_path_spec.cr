@@ -63,20 +63,23 @@ describe "the SQLite engine's commit path" do
       end
     end
 
-    it "is asked for every journal write and every 64 commit pages, each over bytes already written" do
+    it "is asked for the journal's whole pages past each segment header, never for the database file" do
       file_system = SQLiteEngineCountingFileSystem.new
       change_many_pages(file_system, Grant::SQLiteEngine::Synchronous::Full)
       list_of_requests = file_system.list_of_writeback_requests
       journal_requests = list_of_requests.select(&.kind.journal?)
       database_requests = list_of_requests.select(&.kind.database?)
       journal_requests.size.should be > 0
-      database_requests.size.should be > 0
+      database_requests.should be_empty
       list_of_requests.each { |request| (request.offset + request.length).should be <= request.written_size }
-      # Each journal request covers the write just made, so together they
-      # cover the journal from its first byte, write after write.
-      journal_requests.first.offset.should eq(0)
+      # Whole pages, in file order, none asked for twice; the first header's
+      # page is left to the sync that rewrites it.
+      journal_requests.first.offset.should eq(4096)
+      journal_requests.each do |request|
+        (request.offset % 4096).should eq(0)
+        (request.length % 4096).should eq(0)
+      end
       journal_requests.each_cons_pair { |earlier, later| later.offset.should be >= earlier.offset + earlier.length }
-      database_requests.each { |request| (request.length % 4096).should eq(0) }
     end
 
     it "is never asked for when synchronous is OFF" do
