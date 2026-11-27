@@ -403,6 +403,18 @@ module Grant::SQLiteEngine
       check_page_number(page_number)
       spill_when_full
       @held_pages &+= 1 unless page_number == 1
+      # A page a spill wrote keeps the bytes written, which are the file's
+      # until the page is changed again (that puts it back among the
+      # changed pages), so it comes back from memory, as from C's page
+      # cache; the fetch counts as a read all the same.
+      buffer = @spilled[page_number]? || read_from_file(page_number)
+      @cache.clear if @cache.size >= @cache_pages
+      @cache[page_number] = buffer
+      buffer
+    end
+
+    # The bytes of *page_number* as the WAL or the database file holds them.
+    private def read_from_file(page_number : UInt32) : Bytes
       buffer = Bytes.new(@page_size)
       wal = @wal
       log = @wal_log
@@ -411,8 +423,6 @@ module Grant::SQLiteEngine
         read = @main.read_at(offset, buffer)
         raise CorruptDatabase.new("page is past the end of the file", page_number) if read < @page_size
       end
-      @cache.clear if @cache.size >= @cache_pages
-      @cache[page_number] = buffer
       buffer
     end
 
@@ -842,6 +852,9 @@ module Grant::SQLiteEngine
       end_journal
       @dirty.each_key { |page_number| @cache.delete(page_number) }
       @spilled.each_key { |page_number| @cache.delete(page_number) }
+      # The file holds the originals again, so no page comes back from what
+      # a spill wrote.
+      @spilled.clear
       # Page 1 below comes from the snapshot, not from the rolled-back pages.
       @dirty.clear
       @page_count = @original_page_count
@@ -1191,9 +1204,9 @@ module Grant::SQLiteEngine
     end
 
     # pager_write_pagelist for a spill: every changed page whose journal
-    # record is synced, in page order. The pages leave memory, as C
-    # recycles spilled pages, and are read back from the file; one changed
-    # again is written again later.
+    # record is synced, in page order. The pages stay in memory as clean
+    # pages (`#read_page` returns them without reading the file); one
+    # changed again is written again later.
     private def write_spilled_pages : Nil
       file = writer_file
       list_of_pages = @commit_pages

@@ -1,6 +1,7 @@
 require "spec"
 require "../../support/sqlite_engine/hot_journal_differential"
 require "../../support/sqlite_engine/reference_library"
+require "../../support/sqlite_engine/counting_file_system"
 
 # The rollback journal written while the transaction runs, with C's cache
 # spills (pagerStress): once the changed pages reach C's cache limit, the
@@ -289,6 +290,38 @@ describe "Grant::SQLiteEngine rollback journal with cache spills" do
     JournalSpill.read(path).should eq(before)
     File.exists?("#{path}-journal").should be_false
     JournalSpill.run(database, "INSERT INTO entries (payload) VALUES ('after')")
+    database.close
+  end
+
+  it "reads a changed table page from the database file once, though it spills and changes again" do
+    file_system = SQLiteEngineCountingFileSystem.new
+    database = Grant::SQLiteEngine::Database.open("spill_reads.db", read_write: true, file_system: file_system)
+    database.create_table("CREATE TABLE entries (id INTEGER PRIMARY KEY, payload TEXT)")
+    database.transaction do |writer|
+      (1_i64..3_000_i64).each { |rowid| writer.insert("entries", rowid, [rowid, "p" * 200] of Grant::SQLiteEngine::Value) }
+    end
+    database.close
+    # A 20-page clean cache, emptied as it fills, and spills at C's limit
+    # for a 10-page cache: each pass changes every leaf again after it
+    # spilled and left the clean cache.
+    database = Grant::SQLiteEngine::Database.open("spill_reads.db", read_write: true, cache_pages: 20, file_system: file_system)
+    database.pager.cache_size = 10_i64
+    database.pager.cache_spill_size = 1_i64
+    file_system.list_of_database_read_offsets.clear
+    database.transaction do |writer|
+      3.times do |pass|
+        (1_i64..3_000_i64).step(5) { |rowid| writer.update("entries", rowid, [rowid, pass.to_s * 200] of Grant::SQLiteEngine::Value) }
+      end
+    end
+    file_system.list_of_sync_calls.count(&.kind.journal?).should be > 4
+    page = Bytes.new(database.pager.page_size)
+    file = file_system.open("spill_reads.db")
+    list_of_leaves_read_again = file_system.list_of_database_read_offsets.tally.select do |offset, reads|
+      file.read_at(offset, page)
+      # 0x0d: a table b-tree leaf (page 1 starts with the file header).
+      reads > 1 && offset > 0 && page[0] == 0x0d
+    end
+    list_of_leaves_read_again.should be_empty
     database.close
   end
 
