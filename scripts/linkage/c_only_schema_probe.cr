@@ -25,13 +25,13 @@ statements.add_index(:c_only_pets, :owner_email, unique: true, where: "deleted_a
 
 list_of_indexes = Grant.schema(adapter).indexes(:c_only_pets)
 partial = list_of_indexes.find! { |index| index.columns == ["owner_email"] }
-puts "indexes: #{list_of_indexes.map(&.name).sort.join(" ")}"
+puts "indexes: #{list_of_indexes.map(&.name).sort!.join(" ")}"
 puts "partial where: #{partial.where}"
 
 statements.rename_index(:c_only_pets, "c_only_pets_by_name", "c_only_pets_by_pet_name")
 statements.remove_index(:c_only_pets, :owner_email)
 statements.rename_table(:c_only_pets, :c_only_animals)
-puts "after changes: #{Grant.schema(adapter).indexes(:c_only_animals).map(&.name).sort.join(" ")}"
+puts "after changes: #{Grant.schema(adapter).indexes(:c_only_animals).map(&.name).sort!.join(" ")}"
 
 dump = Grant::Schema::Dumper.dump(adapter)
 puts "dump names the table: #{dump.includes?("c_only_animals")}"
