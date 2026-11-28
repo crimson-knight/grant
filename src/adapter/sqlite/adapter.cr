@@ -2,6 +2,9 @@ require "../base"
 require "../../grant/drivers/sqlite3/sqlite3"
 require "../../grant/sqlite_version_check"
 require "../../grant/schema/column_info"
+# The partial-index WHERE reader; it depends on nothing else of the engine,
+# so the C library path loads it without compiling Grant's engine.
+require "../../grant/sqlite_engine/text_scan"
 require "../registry"
 
 # Patch Grant::SQLite3::Statement so that perform_exec always calls sqlite3_reset in

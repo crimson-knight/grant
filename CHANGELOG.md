@@ -73,6 +73,30 @@ certificates on Beryl TLS.
 - A delete by rowid in a table without indexes takes one B-tree descent and
   decodes nothing; COMMIT writes each run of consecutive changed pages with
   one `pwritev(2)`. The bytes written and the syncs are unchanged (#165).
+- Faster engine writes and reads: fdatasync on Linux, fewer allocations per
+  SELECT prepare and per ORM create, a rollback-journal commit that makes
+  only the system calls C makes, reused row arrays and in-place typed
+  updates, and a cheaper commit path (#136, #137, #138, #139, #140, #141,
+  #142, #144). Varint decode picks a per-chip body once at startup
+  (`Grant::SQLiteEngine::ProcessorKernels`; x86-64-v3 on CPUs that have it,
+  `-Dgrant_generic_kernels` for the generic bodies) (#147).
+
+### ORM
+
+- The transaction stack, the schema tenant and the unscoped model names are
+  kept per fiber on the fiber itself, with no lock, so concurrent fibers no
+  longer contend on a mutex for them (#143).
+- With `sslmode=verify-ca` or `verify-full` and no `sslrootcert`, `pg_dump`
+  and `psql` on macOS trust what the driver trusts (`TrustStore.system`,
+  written once to a cached PEM file), so they no longer refuse a server the
+  app accepts (#135).
+- A SQLite app on the C library alone (`require "grant/adapter/sqlite"`)
+  compiles index introspection, the schema dumper, seeds and advisory locks:
+  the partial-index reader no longer needs the engine, and the
+  PostgreSQL-only checks compare with `true` instead of casting to `Bool`,
+  which failed to compile without the PostgreSQL driver.
+  `scripts/check_sqlite3_linkage.rb` (sqlite-spec in CI) now builds and runs
+  that path.
 
 ### Exact decimals and money
 

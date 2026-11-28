@@ -134,9 +134,10 @@ module Grant
 
     @sqlite_engine : Symbol? = nil
 
-    # Whether the program has the C SQLite engine compiled in. Decided at
-    # compile time from what the program required, so a program without it
-    # never references (or links) libsqlite3.
+    # Whether the program has Grant's own SQLite engine compiled in: it
+    # required `grant/adapter/sqlite/grant_engine` (or was built with
+    # -Dgrant_without_libsqlite3). Decided at compile time from what the
+    # program required, so a program without it compiles none of the engine.
     private def grant_engine_compiled_in? : Bool
       {% if Grant.has_constant?("SQLite3") %}
         Grant::SQLite3::Engine.grant_engine_compiled_in?
@@ -145,6 +146,9 @@ module Grant
       {% end %}
     end
 
+    # Whether the program has the C SQLite engine compiled in. Decided at
+    # compile time from what the program required, so a program without it
+    # never references (or links) libsqlite3.
     private def libsqlite3_compiled_in? : Bool
       {% if Grant.has_constant?("SQLite3") %}
         Grant::SQLite3::Engine.libsqlite3_compiled_in?
