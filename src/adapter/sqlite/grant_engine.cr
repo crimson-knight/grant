@@ -10,3 +10,4 @@
 # `"grant/adapter/sqlite"` (or add `require "grant/adapter/sqlite/libsqlite3"`):
 # the setting then starts at `:libsqlite3`, and `:grant` stays available.
 require "./adapter"
+require "../../grant/drivers/sqlite3/grant_engine"

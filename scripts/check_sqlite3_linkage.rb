@@ -11,6 +11,12 @@
 # (`grant/adapter/sqlite`, no flag) must show libsqlite3 and report
 # `sqlite_engine: libsqlite3`, so the check is known to be able to fail.
 #
+# A fourth build is the C-only path an app gets from `grant/adapter/sqlite`
+# alone (scripts/linkage/c_only_schema_probe.cr): it must link libsqlite3,
+# compile none of the engine (no `Grant::SQLiteEngine` symbol beyond the
+# TextScan the adapter reads partial indexes with), run its schema work on
+# a database file, and refuse `sqlite_engine = :grant`, naming the require.
+#
 #   /usr/bin/ruby scripts/check_sqlite3_linkage.rb
 require "open3"
 require "tmpdir"
@@ -20,14 +26,33 @@ CRYSTAL = ENV.fetch("CRYSTAL", "crystal-alpha")
 LIBRARY_LISTER = RUBY_PLATFORM.include?("darwin") ? %w[otool -L] : %w[ldd]
 DEFAULT_PROBE = "scripts/linkage/default_app_probe.cr"
 GRANT_ENGINE_PROBE = "scripts/linkage/grant_engine_app_probe.cr"
+C_ONLY_PROBE = "scripts/linkage/c_only_schema_probe.cr"
 
-Build = Struct.new(:name, :probe, :flags, :expect_libsqlite3)
+Build = Struct.new(:name, :probe, :flags, :expect_libsqlite3, :expected_lines, :engine_left_out) do
+  def initialize(name, probe, flags, expect_libsqlite3, expected_lines = [], engine_left_out = false)
+    super
+  end
+end
+
+# Lines the C-only probe prints when every step ran as an app expects.
+C_ONLY_LINES = [
+  "partial where: deleted_at IS NULL",
+  "after changes: c_only_pets_by_pet_name",
+  "dump names the table: true",
+  "dump names the index: true",
+  "seed ran: true",
+  "advisory lock taken: true",
+  %(grant engine refused: sqlite_engine :grant needs Grant's own SQLite engine: require "grant/adapter/sqlite/grant_engine"),
+]
 
 BUILDS = [
   Build.new("grant_engine require, no flags", GRANT_ENGINE_PROBE, [], false),
   Build.new("-Dgrant_without_libsqlite3", DEFAULT_PROBE, ["-Dgrant_without_libsqlite3"], false),
   Build.new("control (libsqlite3)", DEFAULT_PROBE, [], true),
+  Build.new("C only (grant/adapter/sqlite)", C_ONLY_PROBE, [], true, C_ONLY_LINES, true),
 ]
+# A symbol of the engine itself (its pager, queries, database), not TextScan.
+ENGINE_SYMBOL = /SQLiteEngine::(?!TextScan)/
 SQLITE_SYMBOL = /\s_?sqlite3_(open_v2|prepare_v2|step|finalize|libversion)(@.*)?$/
 
 def count_matches(command, pattern)
@@ -52,7 +77,15 @@ Dir.mktmpdir("grant-linkage") do |dir|
     if shows_libsqlite3 != build.expect_libsqlite3
       failures << "#{build.name}: expected #{build.expect_libsqlite3 ? "libsqlite3" : "no libsqlite3"}"
     end
-    run_output, run_status = Open3.capture2e(binary)
+    if build.engine_left_out
+      engine_symbols = count_matches(["nm", binary], ENGINE_SYMBOL)
+      puts format("%-32s engine symbols: %d", build.name, engine_symbols)
+      failures << "#{build.name}: #{engine_symbols} symbols of Grant's engine compiled in" if engine_symbols > 0
+    end
+    run_output, run_status = Open3.capture2e(binary, File.join(dir, "c_only_#{index}.sqlite3"))
+    build.expected_lines.each do |line|
+      failures << "#{build.name}: expected the line #{line.inspect}\n#{run_output}" unless run_output.lines.map(&:chomp).include?(line)
+    end
     failures << "#{build.name}: exited #{run_status.exitstatus}\n#{run_output}" unless run_status.success?
     expected_engine = build.expect_libsqlite3 ? "libsqlite3" : "grant"
     unless run_output.include?("sqlite_engine: #{expected_engine}")

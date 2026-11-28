@@ -1,5 +1,8 @@
-require "../engine"
-require "../../../../sqlite_engine"
+# Grant's own SQLite engine for the driver. A program compiles the engine
+# only when it requires this file: `require "grant/adapter/sqlite/grant_engine"`
+# does, `require "grant/adapter/sqlite"` (the C library) does not.
+require "./sqlite3/engine"
+require "../../sqlite_engine"
 
 module Grant::SQLite3
   # Grant's pure-Crystal engine behind the engine interface. It opens the

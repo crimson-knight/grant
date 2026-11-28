@@ -109,7 +109,9 @@ module Grant
     #   program that requires `grant/adapter/sqlite/grant_engine` instead,
     #   which links no C SQLite library.
     #
-    # `:libsqlite3` is refused in a program without the C engine (one that
+    # `:grant` is refused in a program that did not require
+    # `grant/adapter/sqlite/grant_engine` (the engine is compiled in only
+    # then). `:libsqlite3` is refused in a program without the C engine (one that
     # required only `grant/adapter/sqlite/grant_engine`, or was built with
     # `-Dgrant_without_libsqlite3`).
     def sqlite_engine : Symbol
@@ -120,6 +122,9 @@ module Grant
       unless SQLITE_ENGINES.includes?(engine)
         raise ArgumentError.new("sqlite_engine must be :libsqlite3 or :grant (got #{engine.inspect})")
       end
+      if engine == :grant && !grant_engine_compiled_in?
+        raise ArgumentError.new("sqlite_engine :grant needs Grant's own SQLite engine: require \"grant/adapter/sqlite/grant_engine\"")
+      end
       if engine == :libsqlite3 && !libsqlite3_compiled_in?
         raise ArgumentError.new("sqlite_engine :libsqlite3 needs the C SQLite engine: require \"grant/adapter/sqlite\" " \
                                 "(or \"grant/adapter/sqlite/libsqlite3\"), in a program built without -Dgrant_without_libsqlite3")
@@ -128,6 +133,18 @@ module Grant
     end
 
     @sqlite_engine : Symbol? = nil
+
+    # Whether the program has Grant's own SQLite engine compiled in: it
+    # required `grant/adapter/sqlite/grant_engine` (or was built with
+    # -Dgrant_without_libsqlite3). Decided at compile time from what the
+    # program required, so a program without it compiles none of the engine.
+    private def grant_engine_compiled_in? : Bool
+      {% if Grant.has_constant?("SQLite3") %}
+        Grant::SQLite3::Engine.grant_engine_compiled_in?
+      {% else %}
+        false
+      {% end %}
+    end
 
     # Whether the program has the C SQLite engine compiled in. Decided at
     # compile time from what the program required, so a program without it

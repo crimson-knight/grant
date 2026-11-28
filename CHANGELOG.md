@@ -1,6 +1,114 @@
 # Changelog
 
-## Unreleased
+## 0.29.0 (2026-11-28)
+
+Grant 0.29.0 is the release Amber CLI pins when Grant's own SQLite engine
+becomes the default for `amber new -d sqlite`. The engine now runs on
+Windows, matches C SQLite 3.51.0 in the cases found since 0.28.0, writes its
+rollback journal in C's shape, and links no PCRE2. The 0.28.1 and 0.28.2
+fixes, released from a branch, are now on main. Grant also gains exact
+`Grant::Decimal128` and `Grant::Money` columns and PostgreSQL client
+certificates on Beryl TLS.
+
+### The engine is compiled in only when an app asks for it (from 0.28.1)
+
+- `require "grant/adapter/sqlite"` compiles only the C SQLite library;
+  `require "grant/adapter/sqlite/grant_engine"` compiles Grant's engine and
+  links no C SQLite library. An app that requires both keeps both, with the
+  C library as the default. Setting `Grant.settings.sqlite_engine = :grant`
+  (or `Engine.named(:grant)`) in a program without the engine raises
+  `ArgumentError`, naming the require.
+- A program built with `-Dgrant_without_libsqlite3` on
+  `grant/adapter/sqlite` runs on Grant's engine, and
+  `Grant::SQLiteVersionCheck` raises, naming the require, in a program with
+  neither engine.
+- SQL migrations are found on Windows (from 0.28.2): `MigrationContext`
+  globs with a `Path`.
+
+### Grant's engine on Windows
+
+- The engine opens, reads, writes and locks database files on Windows
+  (x86_64-windows-msvc) as SQLite's os_win.c does: `WindowsFileSystem`
+  with `LockFileEx` locks, `FlushFileBuffers`, and a `-shm` wal-index
+  mapped with `MapViewOfFile`, so WAL databases are shared with C SQLite
+  processes. `FileSystem.native` picks the platform's file system. This
+  replaces 0.28.1's stopgap, which raised `UnsupportedPlatform` on Windows
+  (#125).
+- A process that dies with a connection open no longer leaves the next
+  opener failing to reset the wal-index (#129).
+- New CI jobs: `windows-engine` runs an app's round trip and the engine's
+  file, write, WAL, crash-recovery and lock specs on Windows Server 2025;
+  `sqlite-engine-spec` runs the whole SQLite suite on Grant's engine as
+  well as on the C library (#132).
+
+### Grant's engine matches C SQLite in more cases
+
+- A write from a stale WAL snapshot reports `SQLITE_BUSY_SNAPSHOT` (517)
+  as C does; forced-conflict busy cases match C step by step (#146).
+- An UPDATE on a table with triggers reads its SET list from each row as
+  written, so recursive triggers and self-referencing `ON UPDATE CASCADE`
+  give C's rows and change counts (#145, #151).
+- Same-table subqueries in `RETURNING` and upsert `DO UPDATE` read the
+  table, not the one row, as C does (#150).
+- A two-row `UPDATE OR REPLACE` on a self-referencing `ON DELETE SET NULL`
+  key skips the new-parent check exactly where C skips it (#153).
+- Common migrations (Amber CLI's generators, Grant's migrator, and DDL from
+  Rails, Django, Laravel, Prisma and Ecto) give the same database as SQLite
+  3.51.0 (#127); `CREATE TRIGGER` and `DROP TRIGGER` are supported (#126).
+- The engine's regexes are byte scanners, so an app on the engine links no
+  PCRE2 (#124).
+
+### Rollback journal in C's shape
+
+- A hot rollback journal is played back segment by segment, as C does, so
+  a journal left by a C process killed after a cache spill is fully rolled
+  back (#156).
+- The engine writes its journal in C's segmented, spilling shape, with C's
+  per-platform cache defaults and `PRAGMA cache_spill`. COMMIT and a cache
+  spill wait out `busy_timeout` through the busy handler, as C does (#158);
+  a spill's pages stay in memory and COMMIT writes each changed page once.
+
+### Faster deletes and commits
+
+- A delete by rowid in a table without indexes takes one B-tree descent and
+  decodes nothing; COMMIT writes each run of consecutive changed pages with
+  one `pwritev(2)`. The bytes written and the syncs are unchanged (#165).
+- Faster engine writes and reads: fdatasync on Linux, fewer allocations per
+  SELECT prepare and per ORM create, a rollback-journal commit that makes
+  only the system calls C makes, reused row arrays and in-place typed
+  updates, and a cheaper commit path (#136, #137, #138, #139, #140, #141,
+  #142, #144). Varint decode picks a per-chip body once at startup
+  (`Grant::SQLiteEngine::ProcessorKernels`; x86-64-v3 on CPUs that have it,
+  `-Dgrant_generic_kernels` for the generic bodies) (#147).
+
+### ORM
+
+- The transaction stack, the schema tenant and the unscoped model names are
+  kept per fiber on the fiber itself, with no lock, so concurrent fibers no
+  longer contend on a mutex for them (#143).
+- With `sslmode=verify-ca` or `verify-full` and no `sslrootcert`, `pg_dump`
+  and `psql` on macOS trust what the driver trusts (`TrustStore.system`,
+  written once to a cached PEM file), so they no longer refuse a server the
+  app accepts (#135).
+- A SQLite app on the C library alone (`require "grant/adapter/sqlite"`)
+  compiles index introspection, the schema dumper, seeds and advisory locks:
+  the partial-index reader no longer needs the engine, and the
+  PostgreSQL-only checks compare with `true` instead of casting to `Bool`,
+  which failed to compile without the PostgreSQL driver.
+  `scripts/check_sqlite3_linkage.rb` (sqlite-spec in CI) now builds and runs
+  that path.
+
+### Exact decimals and money
+
+- `Grant::Decimal128` and `Grant::Money` columns
+  (`column price : Grant::Decimal128, precision: 10, scale: 2`;
+  `column total : Grant::Money, precision: 12, scale: 2, currency: "USD"`),
+  stored as `NUMERIC`/`DECIMAL` on PostgreSQL and MySQL and as an exact
+  integer or text on SQLite, with exact `where`, comparisons and `sum`. A
+  value with more digits than the column holds raises
+  `Grant::DecimalColumnError`; nothing rounds. No `big` and no GMP (#167).
+- `scripts/check_gmp_linkage.rb` expects no GMP for `BigDecimal` on a
+  pure-Crystal `big` stdlib (#168).
 
 ### PostgreSQL client certificates on Beryl TLS
 
@@ -18,6 +126,8 @@
 - The vendored Beryl moves to 0.2.3 (357b10ad, client certificates).
 - Tested against PostgreSQL 17.12 with `ssl_min_protocol_version = TLSv1.3`
   and `hostssl all all all cert clientcert=verify-full`.
+
+Minimum Crystal: 1.19.0
 
 ## 0.28.2 (2026-11-25)
 

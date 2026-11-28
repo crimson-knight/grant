@@ -67,7 +67,7 @@ jobs:
           CRYSTAL: crystal
 
   # Windows: type-checks the code an app reaches (the SQLite adapter on the C
-  # library, which also compiles Grant's own engine, and PostgreSQL) for
+  # library, Grant's own engine, and PostgreSQL) for
   # x86_64-windows-msvc, so POSIX-only code that would stop a Windows build
   # fails here. Nothing is linked or run.
   windows-type-check:
@@ -259,7 +259,10 @@ jobs:
         # Builds the default app workload on grant/adapter/sqlite/grant_engine
         # (no flags) and with -Dgrant_without_libsqlite3, and runs both; the
         # control build on grant/adapter/sqlite must link libsqlite3, so the
-        # check is known to be able to fail.
+        # check is known to be able to fail. It also builds and runs the C-only
+        # app (grant/adapter/sqlite alone: index introspection, index and table
+        # renames, the schema dumper, seeds, an advisory lock, and the refusal
+        # of sqlite_engine = :grant), which must compile none of the engine.
         if: matrix.shard == 3
         run: ruby scripts/check_sqlite3_linkage.rb
         env:
