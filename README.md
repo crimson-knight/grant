@@ -109,10 +109,11 @@ require "grant/adapter/sqlite/grant_engine"
 ```
 
 `Grant.settings.sqlite_engine` then starts at `:grant`. `require
-"grant/adapter/sqlite"` keeps both engines with the C library as the default;
-with it, `Grant.settings.sqlite_engine = :grant` (in
-`config/initializers/grant.cr`) moves an app onto the engine while keeping
-the C library one setting away. `scripts/check_sqlite3_linkage.rb` builds
+"grant/adapter/sqlite"` alone compiles only the C library, and setting
+`:grant` there raises an `ArgumentError` naming the require. An app that
+requires both keeps both engines with the C library as the default; there
+`Grant.settings.sqlite_engine = :grant` (in `config/initializers/grant.cr`)
+moves it onto the engine while keeping the C library one setting away. `scripts/check_sqlite3_linkage.rb` builds
 probe apps both ways and checks their binaries.
 
 ## Comprehensive Feature Examples

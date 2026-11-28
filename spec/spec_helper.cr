@@ -1,6 +1,10 @@
 require "mysql"
 require "../src/grant/drivers/pg/pg"
 require "../src/grant/drivers/sqlite3/sqlite3"
+# The suite runs every SQLite spec on either engine (GRANT_SQLITE_ENGINE
+# below), so it compiles Grant's own engine in, as an app that requires
+# `grant/adapter/sqlite/grant_engine` has it.
+require "../src/grant/drivers/sqlite3/grant_engine"
 
 # The suite runs with BigDecimal support compiled in, as an app that requires
 # `grant/big_decimal` has it. `spec/grant/big_decimal_opt_in_spec.cr` and

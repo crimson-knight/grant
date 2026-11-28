@@ -5,12 +5,14 @@ module Grant
 
     # Get SQLite version as a string. A program without the C engine (see
     # `Grant::SQLite3::Engine.libsqlite3_compiled_in?`) reports the version
-    # Grant's engine follows.
+    # Grant's engine follows; one with neither engine raises.
     def self.version_string : String
       {% if Grant::SQLite3::Engine.has_constant?("LibSQLite3Engine") %}
         String.new(LibSQLite3.libversion)
-      {% else %}
+      {% elsif Grant::SQLite3::Engine.has_constant?("GrantEngine") %}
         Grant::SQLiteEngine::Query::Session::SQLITE_VERSION
+      {% else %}
+        raise ArgumentError.new(Grant::SQLite3::Engine::GRANT_ENGINE_LEFT_OUT)
       {% end %}
     end
 
@@ -18,8 +20,10 @@ module Grant
     def self.version_number : Int32
       {% if Grant::SQLite3::Engine.has_constant?("LibSQLite3Engine") %}
         LibSQLite3.libversion_number
-      {% else %}
+      {% elsif Grant::SQLite3::Engine.has_constant?("GrantEngine") %}
         Grant::SQLiteEngine::Pager::WRITER_VERSION_NUMBER.to_i32
+      {% else %}
+        raise ArgumentError.new(Grant::SQLite3::Engine::GRANT_ENGINE_LEFT_OUT)
       {% end %}
     end
 

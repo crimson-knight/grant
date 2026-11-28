@@ -1,6 +1,6 @@
 name: grant
 
-version: 0.28.0
+version: 0.28.2
 
 crystal: ">= 1.19.0, < 2.0.0"
 
