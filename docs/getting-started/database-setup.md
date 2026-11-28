@@ -531,8 +531,9 @@ operating system bundle). PostgreSQL client certificates (`sslcert` and
 `sslkey`, given together) work on Beryl with no flag; as with libpq, a key
 file readable by group or others is refused, and unlike libpq no
 `~/.postgresql/postgresql.crt` default is read. MySQL client certificates
-(`ssl-cert`/`ssl-key`) still need the `-Duse_openssl` build flag with the
-pinned MySQL driver.
+(`ssl-cert` and `ssl-key`, given together) work on Beryl with no flag too
+(crystal-mysql 0.18.2 or later). Beryl is the only TLS backend: there is no
+OpenSSL build option.
 
 ## Troubleshooting
 

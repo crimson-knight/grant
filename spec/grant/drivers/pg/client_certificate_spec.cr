@@ -3,9 +3,6 @@ require "spec"
 {% skip_file unless env("CURRENT_ADAPTER") == "pg" %}
 
 require "file_utils"
-{% if flag?(:use_openssl) %}
-  require "openssl"
-{% end %}
 require "process"
 require "random/secure"
 require "socket"
@@ -166,16 +163,10 @@ private def attempt_client_certificate_handshake(files : ClientCertificateFiles,
   ClientCertificateHandshake.new(client_error, server_error, client_common_name)
 end
 
-# The client context of the TLS library this build uses.
-{% if flag?(:use_openssl) %}
-  private def new_client_tls_context : OpenSSL::SSL::Context::Client
-    OpenSSL::SSL::Context::Client.new
-  end
-{% else %}
-  private def new_client_tls_context : Grant::Beryl::TLS::Context::Client
-    Grant::Beryl::TLS::Context::Client.new
-  end
-{% end %}
+# A Beryl client context, the one Grant connects with.
+private def new_client_tls_context : Grant::Beryl::TLS::Context::Client
+  Grant::Beryl::TLS::Context::Client.new
+end
 
 private def with_private_key_permissions(private_key_file : String, permissions : Int32, &)
   File.chmod(private_key_file, permissions)
@@ -310,22 +301,20 @@ describe Grant::PQ::ClientCertificate do
   {% end %}
 
   describe "#apply_to" do
-    {% unless flag?(:use_openssl) %}
-      it "gives a Beryl client context the chain and key to present" do
-        with_client_certificate_files do |files|
-          tls_context = Grant::Beryl::TLS::Context::Client.new
-          tls_context.certified_key?.should be_nil
+    it "gives a Beryl client context the chain and key to present" do
+      with_client_certificate_files do |files|
+        tls_context = Grant::Beryl::TLS::Context::Client.new
+        tls_context.certified_key?.should be_nil
 
-          Grant::PQ::ClientCertificate.new(files.client_certificate_file, files.client_private_key_file).apply_to(tls_context)
+        Grant::PQ::ClientCertificate.new(files.client_certificate_file, files.client_private_key_file).apply_to(tls_context)
 
-          if certified_key = tls_context.certified_key?
-            certified_key.list_of_certificates.first.subject.to_s.should contain("grant_client")
-          else
-            raise "Expected the context to hold the client certificate"
-          end
+        if certified_key = tls_context.certified_key?
+          certified_key.list_of_certificates.first.subject.to_s.should contain("grant_client")
+        else
+          raise "Expected the context to hold the client certificate"
         end
       end
-    {% end %}
+    end
 
     it "names sslcert when the certificate file is not PEM" do
       with_client_certificate_files do |files|
