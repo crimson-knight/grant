@@ -35,14 +35,16 @@ private record DefaultPathBuild, built : Bool, compiler_output : String, binary_
 private def build_on_default_path(body : String, before_grant : String = "", check_only : Bool = false) : DefaultPathBuild
   repo_root = File.expand_path("../..", __DIR__)
   adapter_file, adapter_class = DEFAULT_PATH_ADAPTERS[CURRENT_ADAPTER]
+  # The suite run on Grant's SQLite engine runs these programs on it too, so
+  # C SQLite never turns the shared database file to WAL. The engine is
+  # compiled in only when the program requires it.
+  on_grant_engine = CURRENT_ADAPTER == "sqlite" && GRANT_SQLITE_ENGINE == :grant
+  engine_setup = on_grant_engine ? %(require "../../src/adapter/sqlite/grant_engine"\nGrant.settings.sqlite_engine = :grant) : ""
   source = <<-CR
     #{before_grant}
     require "../../src/grant"
     require "../../src/adapter/#{adapter_file}"
-
-    # The suite run on Grant's SQLite engine runs these programs on it too, so
-    # C SQLite never turns the shared database file to WAL.
-    Grant.settings.sqlite_engine = :grant if ENV["GRANT_SQLITE_ENGINE"]? == "grant"
+    #{engine_setup}
     Grant::Connections << Grant::Adapter::#{adapter_class}.new(name: "primary", url: ENV["GRANT_DEFAULT_PATH_URL"])
 
     #{body}
